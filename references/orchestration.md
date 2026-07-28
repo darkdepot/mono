@@ -188,7 +188,13 @@ restating it.
   otherwise mutate Linear, in this mode that instruction means "produce the
   mutation in its required shape and queue it in `linear_mutations_pending`".
   The orchestrator stays the single Linear writer and applies it with
-  read-back.
+  read-back. Applying that queue is part of consuming the report, not a later
+  chore: on every stage-terminal report the orchestrator applies each queued
+  mutation and verifies it per Linear Write Verification BEFORE it advances
+  the stage pipeline. Advancing a stage while a report's mutations are still
+  unapplied is a contract violation — it strands the Issue in its previous
+  Linear state with the stage's comments missing. The Resume-time sweep of
+  unapplied mutations is a crash-recovery backstop, never the normal path.
 - Split precedence by kind: where a dispatch and its stage skill disagree on a
   rule, the stage skill wins; where they disagree on a fact — identity pins,
   absolute paths, snapshot content, this-Issue constraints — the dispatch
