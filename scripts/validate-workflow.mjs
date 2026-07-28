@@ -5402,6 +5402,154 @@ function validateOpsLessons() {
   }
 }
 
+// MONO-42 — the worker start seam. Mode precedence has exactly one home in
+// references/orchestration.md; the dispatch template and mono-implement point
+// at it. The identity gate is documented as an executable command, and
+// mono-implement carries an orchestration start-checkpoint branch with zero
+// required Linear operations.
+function validateOrchestrationModePrecedence() {
+  for (const required of [
+    "## Orchestration Mode Precedence",
+    "The dispatch snapshot is the single source of Linear state in orchestration",
+    "queue it in `linear_mutations_pending`",
+    "the stage skill wins; where they disagree on a fact",
+    "changes who performs a Linear operation, never whether a",
+    "Applying that queue is part of consuming the report",
+    "BEFORE it advances",
+    "Advancing a stage while a report's mutations are still",
+    "Queued mutations land only when the orchestrator applies them",
+    "do not describe a queued mutation as",
+    "reports `needs-decision` for the orchestrator to sequence",
+    "lifecycle precondition is therefore sequenced by the",
+    "No stage defers an executable check onto a queued mutation",
+    "Interactive mode is unchanged",
+  ]) {
+    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
+  }
+
+  // Single home: pointers only, never a second copy of the rule.
+  const precedenceRule = "The dispatch snapshot is the single source of Linear state in orchestration";
+  const precedencePointer = "Orchestration Mode Precedence";
+  for (const relativePath of [
+    "templates/orchestrator-dispatch.md",
+    "skills/mono-implement/SKILL.md",
+  ]) {
+    if (read(relativePath).includes(precedenceRule)) {
+      fail(
+        `${relativePath} must point at Orchestration Mode Precedence in references/orchestration.md, not restate the rule`
+      );
+    }
+    assertIncludes(relativePath, precedencePointer, `${relativePath}: mode-precedence pointer`);
+    assertIncludes(relativePath, "references/orchestration.md", `${relativePath}: mode-precedence home path`);
+  }
+
+  // The identity command is single-quoted in both canonical copies: single
+  // quotes are literal in POSIX shells, so a resolved installed-skills root
+  // containing spaces or shell metacharacters cannot break the gate.
+  for (const required of [
+    "### Pack identity gate invocation",
+    "node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity",
+    "--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'",
+    "--pack-version '<dispatch packVersion>'",
+    "--source-commit '<dispatch sourceCommit>'",
+    "--surface-revision '<dispatch surfaceRevision>'",
+    "pack-state: identity verified",
+    "relative to the directory of the installed stage skill being read",
+    "Single-quote every substituted path and pin value",
+  ]) {
+    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
+  }
+
+  for (const required of [
+    "node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity",
+    "--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'",
+    "--pack-version '<packVersion above>'",
+    "--source-commit '<sourceCommit above>'",
+    "--surface-revision '<surfaceRevision above>'",
+    "pack-state: identity verified",
+    "Emit it fully resolved",
+    "keep the single quotes shown above",
+    "whether or not Linear MCP is reachable",
+  ]) {
+    assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
+  }
+
+  // No availability-based escape hatch may survive next to the precedence
+  // pointer: reachable Linear must never re-open direct worker access.
+  if (read("templates/orchestrator-dispatch.md").includes("whole world until Linear MCP is up")) {
+    fail(
+      "templates/orchestrator-dispatch.md must not re-open direct Linear access when MCP becomes reachable"
+    );
+  }
+
+  for (const required of [
+    "## Orchestration branch of `start-checkpoint`",
+    "zero required Linear operations",
+    "zero Linear reads, zero Linear writes",
+    "Check the mode first: a stage started from a dispatch runs the",
+    '"Fetch fresh Linear context"; issue no Linear call.',
+    "Perform no lifecycle move and no delivery check against Linear",
+    "the canonical invocation with its",
+    "a gate that must precede a lifecycle change must also precede its queuing",
+  ]) {
+    assertIncludes("skills/mono-implement/SKILL.md", required, JSON.stringify(required));
+  }
+
+  const implementSkill = read("skills/mono-implement/SKILL.md");
+  const branchStart = implementSkill.indexOf("## Orchestration branch of `start-checkpoint`");
+  const branchEnd = implementSkill.indexOf("## Context-seam branch at Delivery Start");
+  if (branchStart < 0 || branchEnd < 0 || branchStart > branchEnd) {
+    fail("mono-implement orchestration branch must sit before the context-seam branch");
+  } else {
+    const branch = implementSkill.slice(branchStart, branchEnd);
+    // The orchestration branch may never require a Linear operation.
+    for (const banned of ["Fetch fresh Linear context.", "Record a human Linear comment"]) {
+      if (branch.includes(banned)) {
+        fail(`mono-implement orchestration branch must not require the Linear operation: ${banned}`);
+      }
+    }
+    // Gate ordering, preserved through queuing: the context seam is resolved
+    // before any lifecycle mutation is queued, and on the issue-only lane the
+    // delivery verdict precedes the queued Issue-to-started move — because
+    // queuing a mutation is how this mode performs it.
+    const seamStep = branch.indexOf("Resolve the context seam through the Context-seam branch below");
+    const lifecycleStep = branch.indexOf("Perform no lifecycle move and no delivery check against Linear");
+    if (seamStep < 0 || lifecycleStep < 0 || seamStep > lifecycleStep) {
+      fail(
+        "mono-implement orchestration branch must resolve the context seam before queuing the lifecycle move"
+      );
+    }
+    // The issue-only lane must actually queue its lifecycle mutation, and
+    // only after the delivery verdict — not merely mention the move.
+    const issueOnlyQueue = branch.indexOf("On `PASS`, queue the Issue-to-started move");
+    const issueOnlyGate = branch.indexOf("Issue-only: the delivery check precedes");
+    if (issueOnlyQueue < 0 || !branch.includes("in `linear_mutations_pending` before writing any code")) {
+      fail(
+        "mono-implement orchestration branch must queue the Issue-to-started move in linear_mutations_pending on a PASS verdict"
+      );
+    } else if (issueOnlyGate < 0 || issueOnlyGate > issueOnlyQueue) {
+      fail(
+        "mono-implement orchestration branch must evaluate the issue-only delivery verdict before queuing the Issue-to-started move"
+      );
+    }
+
+    for (const required of [
+      "the delivery check precedes the Issue-to-started move",
+      "Project-first: queue no lifecycle move in this lane",
+      "sequences the Delivery move before it dispatches this stage",
+      "do not defer the check onto a queued",
+      "`needs-decision` report naming that move for the orchestrator to apply",
+      "treat it as queued, not as done",
+      "What must be true before code is",
+      "is `blocked` naming",
+    ]) {
+      if (!branch.includes(required)) {
+        fail(`mono-implement orchestration branch missing delivery-gate semantics: ${JSON.stringify(required)}`);
+      }
+    }
+  }
+}
+
 validateSkills();
 validateRetiredAdapterReferenceAllowlist();
 validateTemplateSections();
@@ -5426,6 +5574,7 @@ validateCompactionContract();
 validateLiveQaGateContract();
 validateRealBackendContractSampling();
 validateGoalContractBinding();
+validateOrchestrationModePrecedence();
 validateReviewLoopHygiene();
 validateCostTelemetry();
 validateBriefIntegrity();

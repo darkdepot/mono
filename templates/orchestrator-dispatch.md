@@ -2,7 +2,9 @@
 
 Template for spawning one worker session per Issue from `mono-orchestrate`.
 Fill every placeholder. The worker must be able to start immediately with no
-Linear access: the snapshot below is its whole world until Linear MCP is up.
+Linear access: the snapshot below is its whole world for the whole stage,
+whether or not Linear MCP is reachable. Reachability never re-opens direct
+Linear access — see Mode precedence in the AFK Contract below.
 
 ## Assignment
 
@@ -41,11 +43,25 @@ Linear access: the snapshot below is its whole world until Linear MCP is up.
   beside it. (For claude-code-desktop or fallback workers: invoke the
   installed `<stage-skill>` skill instead.)
 - Project config: `.agents/mono-workflow.config.json` at the repo root.
-- Before starting or resuming the stage, compare the installed lockfile with
-  the three dispatch identity pins above via the installed
-  `../.mono-agent-workflow/scripts/verify-pack-state.mjs identity` helper. Any
-  `packVersion`, `sourceCommit`, or `surfaceRevision` mismatch is a hard
-  `blocked` exit; do not continue on the locally installed pack.
+- Pack identity gate — run exactly this command before starting the stage and
+  again after every resume, and require exit 0 with
+  `pack-state: identity verified`:
+
+  ```bash
+  node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \
+    --lock '<installed-skills-root>/.mono-agent-workflow.lock.json' \
+    --pack-version '<packVersion above>' \
+    --source-commit '<sourceCommit above>' \
+    --surface-revision '<surfaceRevision above>'
+  ```
+
+  Emit it fully resolved — absolute paths and the three pins substituted —
+  and keep the single quotes shown above, escaping any embedded single quote
+  as `'\''`, so it runs as written from the worktree with no guessing. Any
+  `packVersion`, `sourceCommit`, or `surfaceRevision` mismatch, or any
+  non-zero exit, is a hard `blocked` exit; do not continue on the locally
+  installed pack. Path base, flags, lockfile, and quoting rules live in the
+  Pack identity gate invocation section of `references/orchestration.md`.
 - Report delivery: write to the mailbox path below. If the sandbox denies
   that write, write the same JSON to
   `<worktree>/.orchestrator/<ISSUE-KEY>-<stage>.json` instead; never commit
@@ -68,6 +84,11 @@ Linear access: the snapshot below is its whole world until Linear MCP is up.
 
 ## AFK Contract
 
+- Mode precedence: this stage runs in orchestration mode, so the Context
+  Snapshot above is your entire Linear world. Apply the
+  Orchestration Mode Precedence section of `references/orchestration.md` to
+  every stage-skill instruction that reads or writes Linear; the rule is
+  stated there, once, and is not repeated here.
 - Do not ask the user. For a mid-stage question that blocks progress: write a
   mailbox report with status `needs-decision`, include your own
   recommendation, and stop. Report stage-terminal exits (including

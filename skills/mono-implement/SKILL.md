@@ -54,11 +54,18 @@ Pack identity gate: before any work in this stage, both on its first start and
 after every resume, read `packVersion`, `sourceCommit`, and `surfaceRevision`
 from the dispatch snapshot and run the installed
 `../.mono-agent-workflow/scripts/verify-pack-state.mjs identity` helper against
-the installed lockfile. Any mismatch exits `blocked` before code or lifecycle
-work; record the mismatch and the same three dispatch identity fields in the
-worker report. Never continue on a different installed pack.
+the installed lockfile — that path is relative to this installed skill's own
+directory, never to the worktree, and the canonical invocation with its
+required flags and lockfile path lives in the Pack identity gate invocation
+section of `references/orchestration.md`. Under orchestration, run the fully
+resolved command the dispatch carries. Any mismatch exits `blocked` before code
+or lifecycle work; record the mismatch and the same three dispatch identity
+fields in the worker report. Never continue on a different installed pack.
 
 1. `start-checkpoint`
+   - Check the mode first: a stage started from a dispatch runs the
+     `start-checkpoint` orchestration branch below instead of the Linear
+     operations in the bullets that follow.
    - Fetch fresh Linear context.
    - Verify approved execution Issue(s) exist.
    - Verify or obtain explicit implementation-start approval.
@@ -78,6 +85,82 @@ worker report. Never continue on a different installed pack.
    - Return exactly one terminal status.
    - Record changed files, tests/checks run, tests/checks not run, branch/dirty state, drift summary, Linear comment outcome, and next workflow.
    - For `blocked`, `needs-human`, and `scope-drift-needs-handoff`: post a short Russian Linear exit comment on the Issue following the Linear Exit Comments rule in `references/human-friendly-output.md`. (`implemented-needs-preflight` is handled by the next workflow — no extra comment needed here.)
+
+## Orchestration branch of `start-checkpoint`
+
+This branch runs when the stage was started from a dispatch built on
+`templates/orchestrator-dispatch.md`. It has zero required Linear operations:
+zero Linear reads, zero Linear writes. Mode precedence itself is single-homed
+in the Orchestration Mode Precedence section of `references/orchestration.md`;
+this branch is only how `start-checkpoint` executes under it.
+
+1. Run the pack identity gate exactly as the dispatch spells it out. A
+   mismatch or a non-zero exit is `blocked` before every other step here.
+2. Take the package context from the dispatch snapshot — Project, PRD, Tech
+   Spec, Issue body, recorded decisions, and recorded approvals. This replaces
+   "Fetch fresh Linear context"; issue no Linear call.
+3. Verify from that snapshot that the approved execution Issue and an explicit
+   implementation-start approval are present, and that required
+   `mono-review handoff` findings are resolved, accepted, or explicitly
+   deferred. A snapshot that cannot show one of these is a `blocked` report
+   naming the missing field — never an assumption, never a Linear lookup.
+4. Resolve the context seam through the Context-seam branch below before any
+   lifecycle mutation is queued, keeping the gate in its existing position
+   ahead of the lifecycle move. Its inputs come from the dispatch's
+   context-seam and issue-only snapshot fields; a snapshot that cannot supply
+   a required input is `blocked`, and a `blocked` report carries no lifecycle
+   mutation. The seam's own fail-closed rules, gate ordering, and exit
+   statuses are unchanged in this mode.
+5. Perform no lifecycle move and no delivery check against Linear. Which
+   mutation you queue depends on the lane, and the two lanes differ. Where a
+   move is queued, treat it as queued, not as done: it lands when the
+   orchestrator applies it at the stage boundary, so Linear lifecycle state
+   lags this worktree for the rest of the stage — per the queued-mutation
+   clause of Orchestration Mode Precedence. What must be true before code is
+   already true: steps 3 and 4 verified it from the snapshot.
+   - Project-first: queue no lifecycle move in this lane. The orchestrator
+     sequences the Delivery move before it dispatches this stage, so the
+     snapshot already shows the Project in Delivery and is the post-move
+     state the interactive order requires; re-queuing it would be a redundant
+     mutation.
+     Take the "report" arm of "run or report": evaluate `mono-check delivery`
+     against that snapshot, record the verdict, and record in `notes` that it
+     is snapshot-based. Do not report a verdict derived from state the
+     snapshot does not show, and do not defer the check onto a queued
+     mutation — this mode has no protocol that would carry a deferred check.
+     A snapshot that shows the Project not yet in Delivery is a
+     `needs-decision` report naming that move for the orchestrator to apply
+     and read back; do not queue the move yourself and continue past it.
+   - Issue-only: the delivery check precedes the Issue-to-started move, and
+     it evaluates the Issue's own inputs — review disposition, marker, label,
+     owner approval, oracle, fingerprint — which the queued move does not
+     change, so the snapshot is the correct evaluation state. Evaluate it
+     there and record the verdict. On `PASS`, queue the Issue-to-started move
+     in `linear_mutations_pending` before writing any code; that entry is
+     this lane's lifecycle mutation and the stage does not proceed without
+     it. A real verdict other than `PASS` stops before code as `needs-human`;
+     a snapshot that cannot supply one of those inputs is `blocked` naming
+     the missing input. Neither of those outcomes queues a lifecycle
+     mutation.
+   Record in the report `notes` which arm of "run or report" applied and on
+   what state. Every queued mutation goes into `linear_mutations_pending` in
+   its required shape and the orchestrator applies it with read-back.
+6. Use the worktree and branch the dispatch names; do not create a branch and
+   do not switch branches.
+7. Consult prior learnings with `gstack-learnings-search` exactly as in the
+   interactive branch, and record `helper unavailable` when the helper is
+   absent.
+8. Queue the implementation-start comment in `linear_mutations_pending` using
+   the Implementation-start comment shape below; do not post it.
+9. The interactive implementation-start approval prompt below is not used in
+   this mode — there is no user on the worker's side and the dispatch carries
+   the recorded approval. A missing recorded approval is `blocked`, never a
+   question to the user.
+
+Ordering in this branch mirrors the interactive one: identity gate, snapshot
+context, approval and findings, context seam, then the lane's own delivery-check
+and lifecycle order. Queuing a mutation is how this mode performs it, so
+a gate that must precede a lifecycle change must also precede its queuing.
 
 ## Context-seam branch at Delivery Start
 
