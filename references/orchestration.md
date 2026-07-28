@@ -173,6 +173,55 @@ Boundaries: the Second Voice never talks to the user, never writes
 Linear, and never dispatches or steers workers; it is discovery work,
 not stage work.
 
+## Orchestration Mode Precedence
+
+Orchestration mode is any stage a worker runs from a dispatch built on
+`templates/orchestrator-dispatch.md`. This section is the single home of the
+rule; the dispatch template and the stage skills point here instead of
+restating it.
+
+- The dispatch snapshot is the single source of Linear state in orchestration
+  mode. Wherever a stage skill tells the worker to fetch, re-read, or
+  re-resolve fresh Linear state, in this mode that instruction means "use the
+  dispatch snapshot".
+- Wherever a stage skill tells the worker to move, comment on, update, or
+  otherwise mutate Linear, in this mode that instruction means "produce the
+  mutation in its required shape and queue it in `linear_mutations_pending`".
+  The orchestrator stays the single Linear writer and applies it with
+  read-back.
+- Split precedence by kind: where a dispatch and its stage skill disagree on a
+  rule, the stage skill wins; where they disagree on a fact — identity pins,
+  absolute paths, snapshot content, this-Issue constraints — the dispatch
+  wins.
+- Mode precedence changes who performs a Linear operation, never whether a
+  gate runs. Every gate, gate ordering, exit status, and fail-closed rule of
+  the stage skill applies unchanged. A snapshot that cannot satisfy a gate is
+  a `blocked` report naming the missing input, never a skipped gate, an
+  inference, or a question to the user.
+- Queued mutations land only when the orchestrator applies them, and it reads
+  the queue from a report — so a mutation queued during a stage lands at the
+  stage boundary, and Linear lifecycle state lags the worktree for the length
+  of that stage. State this lag plainly; do not describe a queued mutation as
+  applied, and do not derive a verdict from state the mutation has not
+  reached yet. The lag is a property of single-writer orchestration, not a
+  licence to skip anything: every precondition a gate places on starting code
+  is verified from the snapshot before code starts, and a mutation whose gate
+  has not passed is never queued at all. A stage that genuinely cannot
+  continue until a mutation has landed cannot get that in this mode and
+  reports `needs-decision` for the orchestrator to sequence.
+- A stage's own lifecycle precondition is therefore sequenced by the
+  orchestrator before dispatch, never queued from inside the stage and
+  stepped over. Dispatch `mono-implement` with the Project already in
+  Delivery, so the snapshot the worker evaluates is already the post-move
+  state. A snapshot showing an unmet lifecycle precondition is a
+  `needs-decision` report naming the move the orchestrator must apply and read
+  back first. No stage defers an executable check onto a queued mutation
+  entry: this mode has no protocol that would carry one, so a check the
+  snapshot cannot answer is sequenced by the orchestrator, never left as
+  descriptive text in a report.
+- Interactive mode is unchanged: a stage run without a dispatch reads and
+  writes Linear directly exactly as its stage skill says.
+
 ## Worker Transports
 
 Three transport operations: spawn worker, continue worker, read worker
@@ -188,6 +237,49 @@ read `packVersion`, `sourceCommit`, and `surfaceRevision` from the installed
 snapshot and the new `workers.json` entry. At the first start and every stage
 resume the worker runs `verify-pack-state.mjs identity`; any identity mismatch
 is a `blocked` report and the stage does not continue.
+
+### Pack identity gate invocation
+
+This is the single home of the gate's executable shape. The dispatch template
+and the stage skills point here; nothing else restates the path, the
+subcommand, or the flags.
+
+```bash
+node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \
+  --lock '<installed-skills-root>/.mono-agent-workflow.lock.json' \
+  --pack-version '<dispatch packVersion>' \
+  --source-commit '<dispatch sourceCommit>' \
+  --surface-revision '<dispatch surfaceRevision>'
+```
+
+Single-quote every substituted path and pin value, as shown. Single quotes are
+literal in POSIX shells, so a root containing spaces, `$`, or backticks still
+reaches the helper unchanged; a value containing a single quote is escaped by
+the generator as `'\''`. Substituting a path unquoted, or inside double
+quotes, leaves it subject to word splitting and command substitution — which
+turns a mechanical gate into a spurious `blocked` or into shell-evaluated
+text.
+
+- Path base: the `../.mono-agent-workflow/…` form used inside stage skills is
+  relative to the directory of the installed stage skill being read, never to
+  the worker's worktree. `<installed-skills-root>` is that skill directory's
+  parent — `~/.codex/skills` for a `codex-cli` worker, `~/.claude/skills` for
+  a Claude worker.
+- Subcommand `identity` is required; without it the helper exits 1 on usage.
+- All four flags are required: `--lock`, `--pack-version`, `--source-commit`,
+  `--surface-revision`.
+- Lockfile: `.mono-agent-workflow.lock.json` sits beside the installed skill
+  directories, so its path is
+  `<installed-skills-root>/.mono-agent-workflow.lock.json`.
+- Success is exit 0 together with `pack-state: identity verified`. Any other
+  exit, output, or mismatch is a `blocked` report before stage work.
+- The dispatch carries this command fully resolved — absolute paths, the three
+  pins substituted — so the worker runs it as written from its worktree and
+  never reconstructs a path or a flag.
+- The pins identify the installed execution protocol. A same-named
+  `SURFACE_REVISION` constant inside the target checkout is repo code that may
+  be under the Issue's scope; changing it neither satisfies nor mutates this
+  gate, and the report repeats the dispatch pins, not the repo constant.
 
 ### Sandbox ladder
 
