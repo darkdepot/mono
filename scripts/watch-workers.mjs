@@ -338,38 +338,61 @@ function isGateEntry(entry) {
 }
 
 function readGateAckAt(ackPath, log) {
-  let stat;
+  // Open ONCE and decide everything from that descriptor — never check a
+  // pathname and then reopen it. The fallback ack path lives inside the
+  // worker's own worktree, so it is worker-controlled: between a path-based
+  // check and a path-based read, the file can be swapped for a symlink, FIFO,
+  // or device (TOCTOU). This watcher is synchronous and single-threaded, so
+  // opening a FIFO would block it forever and a device such as /dev/zero would
+  // read without bound — either one silently ends ALL liveness monitoring for
+  // every worker, which is the exact opposite of what an ack is for.
+  //
+  // O_NOFOLLOW refuses a symlink at open time; O_NONBLOCK keeps a FIFO from
+  // blocking the open itself. Type and size then come from fstat on the
+  // descriptor already held, and the read never resolves the path again.
+  let fd;
   try {
-    // lstat, and BEFORE any read. The fallback ack path lives inside the
-    // worker's own worktree, so it is worker-controlled: a symlink, FIFO, or
-    // device left there would otherwise be opened by the read below. This
-    // watcher is synchronous and single-threaded, so a FIFO would block it
-    // forever and a device such as /dev/zero would read without bound — either
-    // one silently ends ALL liveness monitoring for every worker, which is the
-    // opposite of what an ack is for. Regular files only, and bounded.
-    stat = fs.lstatSync(ackPath);
+    fd = fs.openSync(ackPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   } catch {
     return null;
   }
-  if (!stat.isFile() || stat.size > GATE_ACK_MAX_BYTES) return null;
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > GATE_ACK_MAX_BYTES) return null;
 
-  let ack;
-  try {
-    ack = JSON.parse(fs.readFileSync(ackPath, "utf8"));
-  } catch {
-    return null;
+    const buffer = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < stat.size) {
+      let bytesRead;
+      try {
+        bytesRead = fs.readSync(fd, buffer, offset, stat.size - offset, offset);
+      } catch {
+        return null;
+      }
+      if (bytesRead <= 0) break;
+      offset += bytesRead;
+    }
+
+    let ack;
+    try {
+      ack = JSON.parse(buffer.subarray(0, offset).toString("utf8"));
+    } catch {
+      return null;
+    }
+    if (ack?.issue !== log.issue || ack.phase !== "gate") return null;
+    if (ack.status !== "gates-passed" && ack.status !== "blocked") return null;
+    if (!Array.isArray(ack.gates) || ack.gates.length === 0) return null;
+    if (!ack.gates.every(isGateEntry)) return null;
+    // Gate names are unique. A repeated name can otherwise stand in for an
+    // omitted one under any coverage check that counts entries rather than
+    // comparing the set, and this artifact authorizes lifecycle mutations.
+    const gateNames = ack.gates.map((entry) => entry.gate);
+    if (new Set(gateNames).size !== gateNames.length) return null;
+    if (ack.status === "gates-passed" && !ack.gates.every((entry) => entry.status === "pass")) return null;
+    return { ackPath, stat, status: ack.status };
+  } finally {
+    fs.closeSync(fd);
   }
-  if (ack?.issue !== log.issue || ack.phase !== "gate") return null;
-  if (ack.status !== "gates-passed" && ack.status !== "blocked") return null;
-  if (!Array.isArray(ack.gates) || ack.gates.length === 0) return null;
-  if (!ack.gates.every(isGateEntry)) return null;
-  // Gate names are unique. A repeated name can otherwise stand in for an
-  // omitted one under any coverage check that counts entries rather than
-  // comparing the set, and this artifact authorizes lifecycle mutations.
-  const gateNames = ack.gates.map((entry) => entry.gate);
-  if (new Set(gateNames).size !== gateNames.length) return null;
-  if (ack.status === "gates-passed" && !ack.gates.every((entry) => entry.status === "pass")) return null;
-  return { ackPath, stat, status: ack.status };
 }
 
 // The mailbox path and the sandbox fallback the protocol permits under the
