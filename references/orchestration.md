@@ -193,9 +193,12 @@ put it to the owner with the verdict already attached, and only then write.
   `standard`, `deep`, and `risky`, advisory for `tiny` with the skip reason
   recorded. The orchestrator cannot decide this gate away under «Решил
   сам:»; only findings inside it are its to accept.
-- The reviewed subject is the draft, so no Project, PRD, Tech Spec, or Issue
-  exists in Linear at review time. That absence is expected and is never
-  reported as a missing artifact, per the pre-write `handoff` mode in
+- The reviewed subject is the draft, so none of the drafted bodies — Project
+  brief, PRD, Tech Spec, Issue slicing — is written to Linear at review time.
+  The Project entity itself may already exist, and stays available to the
+  reviewer as surrounding context; what is absent is the drafted content, not
+  necessarily the container. That absence is expected and is never reported as
+  a missing artifact, per the pre-write `handoff` mode in
   `skills/mono-review/SKILL.md`.
 - Workers never run this review. They cannot spawn agents, and a worker is
   not independent of the package it was dispatched from.

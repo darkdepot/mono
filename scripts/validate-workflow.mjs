@@ -5912,6 +5912,8 @@ function validatePreWriteHandoffReviewOrder() {
     "no Linear-write capability and no owner contact",
     "Workers never run this review",
     "pre-write package review, not stage work",
+    // The drafted bodies are unwritten; the Project container may well exist.
+    "The Project entity itself may already exist",
   ]) {
     assertIncludes("references/orchestration.md", required, JSON.stringify(required));
   }
