@@ -857,7 +857,11 @@ directory's history; retired Issues' logs are outside its scope.
   registration, or that rename then fails, nothing would consume the ack at
   all, and freshness against the log never expires by itself: so suppression
   additionally lapses after a few stall thresholds of wall-clock, and the
-  ladder re-arms on its own. That clock runs on the PAUSE — the worker's log
+  ladder re-arms on its own. While an unconsumed `gates-passed` ack is
+  present that bound also governs over ordinary report suppression, which is
+  unbounded by construction: otherwise a report left beside the ack — the
+  very pairing this protocol sends to reconciliation — would silence the
+  worker forever and reconciliation would never be triggered. That clock runs on the PAUSE — the worker's log
   going quiet — never on the ack's own timestamp: the ack sits at a
   worker-writable path, and a deadline the worker can refresh by touching
   the file is no deadline at all. That is an age window rather than a ceiling: an

@@ -5330,6 +5330,34 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // A report beside an unconsumed gates-passed ack must not silence the
+    // worker past the gate-pause bound: that pairing needs reconciliation, and
+    // reconciliation needs a liveness signal to trigger it.
+    const maskedIssue = "MONO-330";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${maskedIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      const longQuiet = new Date(Date.now() - 900_000);
+      fs.utimesSync(logPath, longQuiet, longQuiet);
+      fs.writeFileSync(
+        path.join(reportsDir, `${maskedIssue}-gate-ack-a1.json`),
+        `${JSON.stringify(gateAck(maskedIssue, "gates-passed"), null, 2)}\n`
+      );
+      fs.writeFileSync(
+        path.join(reportsDir, `${maskedIssue}-mono-implement.json`),
+        `${JSON.stringify({ issue: maskedIssue, stage: "mono-implement", status: "implemented-needs-preflight", ...identity }, null, 2)}\n`
+      );
+      workers[maskedIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", maskedIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5444,6 +5472,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-320", "late ack written by a superseded attempt"],
       ["MONO-321", "gate-ack whose pause outlived the suppression bound"],
       ["MONO-328", "freshly touched ack whose pause outlived the bound"],
+      ["MONO-330", "report masking an unconsumed ack past the gate-pause bound"],
       ["MONO-322", "future-dated gate-ack"],
       ["MONO-313", "two ack files for one attempt"],
       ["MONO-323", "ambiguous tie between mailbox and fallback acks"],
@@ -6347,6 +6376,7 @@ function validateTwoPhaseDispatchHandshake() {
     "suppression\n  additionally lapses after a few stall thresholds of wall-clock",
     "is a stuck\n  handshake, not a healthy wait",
     "That clock runs on the PAUSE — the worker's log\n  going quiet — never on the ack's own timestamp",
+    "While an unconsumed `gates-passed` ack is\n  present that bound also governs over ordinary report suppression",
     "a deadline the worker can refresh by touching\n  the file is no deadline at all",
     "That is an age window rather than a ceiling",
     "an\n  ack dated in the future buys no suppression at all",

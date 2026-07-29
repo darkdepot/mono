@@ -626,8 +626,17 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   // The birthtime guard keeps a prior attempt's report from masking a fresh
   // retry log: a report older than this log file's creation belongs to an
   // earlier attempt and proves nothing about this writer.
+  // An unconsumed `gates-passed` ack changes who governs suppression here.
+  // Report suppression is unbounded by construction — both operands of
+  // isFreshForLog are fixed file timestamps — so a report sitting beside an
+  // unconsumed ack would silence this worker forever, masking the gate-pause
+  // bound below and stranding an attempt after its one-shot delivery events.
+  // That pairing is precisely the one the protocol sends to reconciliation, and
+  // reconciliation needs a signal. So while such an ack is present the bounded
+  // rule decides; with no ack present, report suppression is exactly as it was.
+  const pausedOnAck = gateAck !== null && gateAck.status === "gates-passed";
   const reportStat = reportStatFor(reportsDir, log);
-  if (reportStat !== null && isFreshForLog(reportStat, log)) return;
+  if (!pausedOnAck && reportStat !== null && isFreshForLog(reportStat, log)) return;
 
   // The gate pause of the two-phase dispatch handshake is a contracted wait,
   // not a death: a fresh `gates-passed` gate-ack means this worker stopped on
