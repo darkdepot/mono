@@ -5436,6 +5436,37 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // Greptile: a superseded attempt that keeps writing must not hold the
+    // current attempt's gate pause open. Its log is newer and gets selected,
+    // but the pause bound is measured on the registry's attempt log, which has
+    // been quiet far past the bound — so liveness re-arms.
+    const zombieHoldsPauseIssue = "MONO-334";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const zombieLog = path.join(logsDir, `${zombieHoldsPauseIssue}-mono-implement-a1.jsonl`);
+      const pausedLog = path.join(logsDir, `${zombieHoldsPauseIssue}-mono-implement-a2.jsonl`);
+      fs.writeFileSync(pausedLog, logLine);
+      fs.writeFileSync(zombieLog, logLine);
+      const pausedQuiet = new Date(Date.now() - 900_000);
+      fs.utimesSync(pausedLog, pausedQuiet, pausedQuiet);
+      // The zombie is newer, so collectLatestLogs picks it, but it is still old
+      // enough that the pre-existing stall check is reached.
+      const zombieTouch = new Date(Date.now() - 200_000);
+      fs.utimesSync(zombieLog, zombieTouch, zombieTouch);
+      fs.writeFileSync(
+        path.join(reportsDir, `${zombieHoldsPauseIssue}-gate-ack-a2.json`),
+        `${JSON.stringify(gateAck(zombieHoldsPauseIssue, "gates-passed"), null, 2)}\n`
+      );
+      workers[zombieHoldsPauseIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: pausedLog,
+        worktree: path.join(fixtureRoot, "worktrees", zombieHoldsPauseIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5555,6 +5586,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-320", "late ack written by a superseded attempt"],
       ["MONO-321", "gate-ack whose pause outlived the suppression bound"],
       ["MONO-328", "freshly touched ack whose pause outlived the bound"],
+      ["MONO-334", "zombie log holding open an expired gate pause"],
       ["MONO-330", "report masking an unconsumed ack past the gate-pause bound"],
       ["MONO-322", "future-dated gate-ack"],
       ["MONO-313", "two ack files for one attempt"],

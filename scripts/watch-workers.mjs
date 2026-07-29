@@ -636,7 +636,7 @@ function checkReport(log, report, nowMs) {
   );
 }
 
-function checkLog(log, gateAck, reportsDir, registry, nowMs) {
+function checkLog(log, attemptLog, gateAck, reportsDir, registry, nowMs) {
   const { firstLine, hasJsonEvent } = inspectLog(log.filePath);
   if (firstLine !== null && !hasJsonEvent) {
     // A non-empty log with no JSON events means the spawn command failed
@@ -714,7 +714,10 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   // can mint for itself, so there is none: the ack and this watcher share a
   // filesystem, and the protocol says a future-dated ack buys no suppression
   // at all. Past the ceiling the pause is a stuck handshake, not a wait.
-  if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) {
+  // Freshness and the bound are both measured on the ATTEMPT's log, not the
+  // mtime-picked one: otherwise a superseded attempt that keeps writing holds
+  // suppression open long after the current attempt's pause has expired.
+  if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, attemptLog)) {
     // The deadline is measured from the PAUSE — this log's silence — never from
     // the ack's own mtime. The ack sits at a worker-writable path, so anchoring
     // to it let a stuck or superseded worker touch the file before every
@@ -723,7 +726,8 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
     // log is what being alive looks like, and a live log returns above long
     // before this line. Future-dating is separately decided once, at the read
     // boundary, against the clock read there.
-    if (ageSec <= args.stallSec * GATE_PAUSE_SUPPRESSION_STALLS) {
+    const pauseQuietSec = Math.round((nowMs - attemptLog.stat.mtimeMs) / 1000);
+    if (pauseQuietSec <= args.stallSec * GATE_PAUSE_SUPPRESSION_STALLS) {
       return;
     }
   }
@@ -812,9 +816,18 @@ function scan() {
     // apply the moves and resume a worker that has already run — a replay. So
     // the report is read first, and while it stands the ack is consumption
     // recovery, not a signal.
-    const report = correlatedReport(log, reportsDir, registryEntry);
+    // Delivery is evaluated in ONE attempt context. Reading the ack from the
+    // registry-named log while correlating the report against the mtime-picked
+    // log pairs artefacts from two different attempts — and that pairing is
+    // exactly what the reconciliation protocol reasons about, so an incoherent
+    // pair defeats it: a current blocked report would never be emitted, and a
+    // report beside a current `gates-passed` ack would be hidden instead of
+    // producing the ambiguity the consumer must reconcile. With no registry
+    // attempt context the selected log is used, unchanged from before.
     const ackLog = registryGateAckLog(log.issue, registryEntry);
+    const attemptLog = ackLog ?? log;
     const gateAck = ackLog === null ? null : readGateAck(reportsDir, ackLog, registryEntry);
+    const report = correlatedReport(attemptLog, reportsDir, registryEntry);
     // The ack is emitted FIRST, because the consumer contract reads the ack's
     // status before it reads the report and never acts on the report alone. An
     // event-by-event consumer that saw `report` first could advance the stage
@@ -826,9 +839,9 @@ function scan() {
     // worker still alive can write one after its successor's log was born and
     // after that successor's ack, and no timestamp rule tells the two apart.
     // Both events go out; the consumer branches on the ack's status.
-    checkGateAck(ackLog ?? log, gateAck, nowMs);
+    checkGateAck(attemptLog, gateAck, nowMs);
     checkReport(log, report, nowMs);
-    checkLog(log, gateAck, reportsDir, registry, nowMs);
+    checkLog(log, attemptLog, gateAck, reportsDir, registry, nowMs);
   }
   checkRegistry(registry, nowMs);
   checkIdle(registrySnapshot, controlState, nowMs);
