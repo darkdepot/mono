@@ -5467,6 +5467,36 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // A leftover ack from a PRIOR attempt must not switch off report
+    // suppression: the completed worker below has a valid fresh report and must
+    // not be called dead because a stale ack file is still lying around.
+    const staleAckIssue = "MONO-335";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      // Ack first and explicitly old, so it predates the log's birthtime under
+      // either the real-btime or the ctime-fallback reading.
+      const ackPath = path.join(reportsDir, `${staleAckIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(staleAckIssue, "gates-passed"), null, 2)}\n`);
+      const ackAt = new Date(Date.now() - 500_000);
+      fs.utimesSync(ackPath, ackAt, ackAt);
+      const logPath = path.join(logsDir, `${staleAckIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      // Report written last: the stage completed normally.
+      fs.writeFileSync(
+        path.join(reportsDir, `${staleAckIssue}-mono-implement.json`),
+        `${JSON.stringify({ issue: staleAckIssue, stage: "mono-implement", status: "implemented-needs-preflight", ...identity }, null, 2)}\n`
+      );
+      workers[staleAckIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", staleAckIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5559,6 +5589,7 @@ function validateWatcherGateAckBehavior() {
 
     // A healthy gate pause must not read as death, wherever the ack landed.
     for (const [issue, label] of [
+      ["MONO-335", "completed worker whose only ack is from a prior attempt"],
       ["MONO-332", "registry log while a superseded log is newer"],
       ["MONO-301", "mailbox"],
       ["MONO-311", "worktree fallback"],

@@ -676,7 +676,16 @@ function checkLog(log, attemptLog, gateAck, reportsDir, registry, nowMs) {
   // That pairing is precisely the one the protocol sends to reconciliation, and
   // reconciliation needs a signal. So while such an ack is present the bounded
   // rule decides; with no ack present, report suppression is exactly as it was.
-  const pausedOnAck = gateAck !== null && gateAck.status === "gates-passed";
+  // Only an ack that BELONGS to this attempt may override report suppression.
+  // readGateAck deliberately accepts an ack whose attempt has since executed —
+  // delivery needs that — so a stale ack predating this log could otherwise
+  // switch off the normal fresh-report suppression while failing the ack test
+  // just below, and a completed worker holding a perfectly good report would be
+  // reported dead on the strength of a leftover file.
+  const pausedOnAck =
+    gateAck !== null &&
+    gateAck.status === "gates-passed" &&
+    ackBelongsToAttempt(gateAck.stat, attemptLog);
   const reportStat = reportStatFor(reportsDir, log);
   if (!pausedOnAck && reportStat !== null && isFreshForLog(reportStat, log)) return;
 
