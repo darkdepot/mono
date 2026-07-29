@@ -5147,6 +5147,29 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // A forged future date must not buy suppression: the worker sets its own
+    // timestamps on the fallback path, and a negative age would otherwise slip
+    // under a ceiling-only bound and restore unbounded silence.
+    const futureAckIssue = "MONO-322";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${futureAckIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const ackPath = path.join(reportsDir, `${futureAckIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(futureAckIssue, "gates-passed"), null, 2)}\n`);
+      const future = new Date(Date.now() + 3_600_000);
+      fs.utimesSync(ackPath, future, future);
+      workers[futureAckIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", futureAckIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5239,6 +5262,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-316", "ack repeating one gate name"],
       ["MONO-320", "late ack written by a superseded attempt"],
       ["MONO-321", "gate-ack whose pause outlived the suppression bound"],
+      ["MONO-322", "future-dated gate-ack"],
     ]) {
       if (!stdout.includes(`EVENT:dead ${issue}`)) {
         fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
@@ -6136,6 +6160,8 @@ function validateTwoPhaseDispatchHandshake() {
     "That suppression is bounded twice over",
     "suppression\n  additionally lapses after a few stall thresholds of wall-clock",
     "is a stuck\n  handshake, not a healthy wait",
+    "That is an age window rather than a ceiling",
+    "an\n  ack dated in the future buys no suppression at all",
     // Preflight and ship dispatches carry no lifecycle move, so an ack there
     // is spurious however well-formed it looks.
     "is spurious and neither delivers nor suppresses",

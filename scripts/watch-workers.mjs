@@ -585,13 +585,21 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   // bound the watcher would go permanently silent on a parked Issue: no
   // gate-ack, no stall, no dead. Past the bound the pause itself is the
   // anomaly, and the ladder re-arms so the orchestrator hears about it.
-  if (
-    gateAck !== null &&
-    gateAck.status === "gates-passed" &&
-    isFreshForLog(gateAck.stat, log) &&
-    nowMs - gateAck.stat.mtimeMs <= args.stallSec * 1000 * GATE_PAUSE_SUPPRESSION_STALLS
-  ) {
-    return;
+  // The bound is an age WINDOW, not just a ceiling. A negative age means the
+  // ack is dated in the future, and on the worker-controlled fallback path a
+  // worker sets its own mtime — `utimes` and `touch` take any date. A future
+  // date would otherwise buy suppression until that date plus the ceiling,
+  // which is exactly the unbounded silence the ceiling exists to prevent. One
+  // stall threshold of tolerance absorbs ordinary clock skew between the
+  // worker's filesystem and this process.
+  if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) {
+    const pauseAgeMs = nowMs - gateAck.stat.mtimeMs;
+    if (
+      pauseAgeMs >= -args.stallSec * 1000 &&
+      pauseAgeMs <= args.stallSec * 1000 * GATE_PAUSE_SUPPRESSION_STALLS
+    ) {
+      return;
+    }
   }
 
   const pidState = writerPidState(registry[log.issue]);
