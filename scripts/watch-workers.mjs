@@ -51,6 +51,11 @@ const DETAIL_SNIPPET_LENGTH = 80;
 // A gate-ack is a handful of gate entries; anything larger is not one, and the
 // bound keeps a worker-controlled path from feeding the watcher unbounded data.
 const GATE_ACK_MAX_BYTES = 64 * 1024;
+// How long a gate pause may suppress liveness, as a multiple of the stall
+// threshold. The pause waits on the orchestrator applying a couple of Linear
+// mutations and resuming — seconds, not hours — so suppression that outlives
+// this bound is describing a stuck handshake, not a healthy wait.
+const GATE_PAUSE_SUPPRESSION_STALLS = 4;
 
 // <ISSUE-KEY>-<stage>.jsonl or <ISSUE-KEY>-<stage>-a<attempt>.jsonl,
 // where <stage> itself may contain hyphens (e.g. mono-implement).
@@ -570,7 +575,24 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   // identity, non-Codex entry — must not be able to silence liveness either, or
   // an untrustworthy registry entry would leave its worker both unreported and
   // unhealable.
-  if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) return;
+  //
+  // Suppression is bounded in wall-clock as well as against the log. Both
+  // operands of isFreshForLog are FIXED file timestamps, so once the worker
+  // stops writing at its gate pause that predicate never expires on its own.
+  // If lifecycle application succeeds but the resume, the writer registration,
+  // or the consuming rename then fails, the ack stays in place, the gate-phase
+  // pid is already gone, and delivery has been emitted once — so without this
+  // bound the watcher would go permanently silent on a parked Issue: no
+  // gate-ack, no stall, no dead. Past the bound the pause itself is the
+  // anomaly, and the ladder re-arms so the orchestrator hears about it.
+  if (
+    gateAck !== null &&
+    gateAck.status === "gates-passed" &&
+    isFreshForLog(gateAck.stat, log) &&
+    nowMs - gateAck.stat.mtimeMs <= args.stallSec * 1000 * GATE_PAUSE_SUPPRESSION_STALLS
+  ) {
+    return;
+  }
 
   const pidState = writerPidState(registry[log.issue]);
   if (pidState === "dead") {

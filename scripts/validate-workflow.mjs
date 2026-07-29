@@ -5120,6 +5120,33 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // A resume that failed after the moves landed: the ack is never consumed,
+    // and freshness against the log alone would suppress liveness forever
+    // because both its operands are fixed file timestamps. The wall-clock
+    // bound is what re-arms the ladder on a parked Issue.
+    const stalePauseIssue = "MONO-321";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${stalePauseIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      const longAgo = new Date(Date.now() - 900_000);
+      fs.utimesSync(logPath, longAgo, longAgo);
+      const ackPath = path.join(reportsDir, `${stalePauseIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(stalePauseIssue, "gates-passed"), null, 2)}\n`);
+      // Newer than the log's birthtime, so isFreshForLog still accepts it —
+      // only the wall-clock bound (4x the 90s stall threshold) rejects it.
+      const pausedAt = new Date(Date.now() - 700_000);
+      fs.utimesSync(ackPath, pausedAt, pausedAt);
+      workers[stalePauseIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", stalePauseIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5211,6 +5238,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-315", "ack beside a stage that has no gate phase"],
       ["MONO-316", "ack repeating one gate name"],
       ["MONO-320", "late ack written by a superseded attempt"],
+      ["MONO-321", "gate-ack whose pause outlived the suppression bound"],
     ]) {
       if (!stdout.includes(`EVENT:dead ${issue}`)) {
         fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
@@ -6105,6 +6133,9 @@ function validateTwoPhaseDispatchHandshake() {
     "branch on its `status`",
     "`blocked` applies nothing and waits for the",
     "Suppression\n  demands the same registry correlation delivery does",
+    "That suppression is bounded twice over",
+    "suppression\n  additionally lapses after a few stall thresholds of wall-clock",
+    "is a stuck\n  handshake, not a healthy wait",
     // Preflight and ship dispatches carry no lifecycle move, so an ack there
     // is spurious however well-formed it looks.
     "is spurious and neither delivers nor suppresses",

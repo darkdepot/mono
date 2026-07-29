@@ -793,9 +793,17 @@ directory's history; retired Issues' logs are outside its scope.
   `dead` branches for that worker, because the gate pause is a contracted wait
   and the exited pid is its expected state there, not death; a
   `blocked` ack suppresses nothing, since that path also writes the ordinary
-  stage report. That suppression is bounded by the orchestrator consuming the
-  ack at resume time — the watcher cannot distinguish a retained ack from a
-  live pause, so the rename in step 5 is what re-arms the ladder. Suppression
+  stage report. That suppression is bounded twice over. Normally the
+  orchestrator consuming the ack at resume time ends it — the watcher cannot
+  distinguish a retained ack from a live pause, so the rename in step 5 is what
+  re-arms the ladder. But if lifecycle application succeeds and the resume, the
+  registration, or that rename then fails, nothing would consume the ack at
+  all, and freshness against the log never expires by itself: so suppression
+  additionally lapses after a few stall thresholds of wall-clock, and the
+  ladder re-arms on its own. A gate pause that outlives that bound is a stuck
+  handshake, not a healthy wait, and the orchestrator is meant to hear about
+  it — reconcile the worker, then either retry the resume or consume the ack
+  and treat it as the no-ack path. Suppression
   demands the same registry correlation delivery does: an ack the watcher would
   not deliver cannot silence liveness either. On `gate-ack`, read the
   correlated ack and branch on its `status` — `gates-passed` runs step 4 onward
