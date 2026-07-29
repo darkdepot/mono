@@ -5876,6 +5876,10 @@ function validatePreWriteHandoffReviewOrder() {
     "Interactive runs invoke `mono-review handoff` report-only over the draft package",
     "Orchestrated runs delegate the same handoff-review contract",
     "Orchestration Mode Precedence",
+    // An owner-requested revision cannot be approved under the previous
+    // draft's verdict, and a skipped tiny gate has a disposition to show.
+    "returns through steps 5-6 before it is re-presented",
+    "for a `tiny` package whose advisory gate was skipped, the recorded skip reason",
   ]) {
     assertIncludes(handoffPath, required, JSON.stringify(required));
   }
@@ -5896,6 +5900,8 @@ function validatePreWriteHandoffReviewOrder() {
     "`handoff` has a pre-write mode",
     "never a missing artifact and never grounds for `blocked`",
     "In pre-write `handoff` mode the required artifacts are the draft bodies supplied as input",
+    // No escape hatch may reopen the skip the gate exists to close.
+    "no recorded exception substitutes for it",
   ]) {
     assertIncludes("skills/mono-review/SKILL.md", required, JSON.stringify(required));
   }

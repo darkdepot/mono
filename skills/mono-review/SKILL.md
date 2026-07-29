@@ -99,7 +99,7 @@ Hard boundaries:
 - If the only issue is project config or legacy vendored workflow drift, recommend `mono-check project-config`; use `node scripts/project-config.mjs --repo <project> --check` from upstream when available.
 - If the package is missing a required artifact, report `blocked` or `needs-fixes`; do not create it. In the issue-only lane the sole required artifact is the self-contained Issue — an absent Project, PRD, or Tech Spec is expected there, not a missing artifact. In pre-write `handoff` mode the required artifacts are the draft bodies supplied as input; their absence from Linear is expected, not a missing artifact, and never `blocked`.
 - If a review is advisory because the work is tiny, say why it is advisory and what would make it required.
-- If scope is standard, deep, or risky, missing `mono-review` should be treated by `mono-check` as a readiness problem until review runs or an explicit exception is recorded.
+- If scope is standard, deep, or risky, missing `mono-review` should be treated by `mono-check` as a readiness problem until review runs or an explicit exception is recorded. The pre-write handoff gate admits no such exception: at standard, deep, or risky no recorded exception substitutes for it, because the package must not be written before it runs. Only `tiny` may skip it there, and only as the advisory gate with its reason recorded.
 
 Final response must include:
 
