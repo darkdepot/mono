@@ -275,6 +275,16 @@ function validateConfig(config, failures) {
       ) {
         failures.push("Project config orchestration.maxParallelWorkers must be a positive integer");
       }
+      const allowedWorkerAudiences = ["gpt-worker", "claude-5"];
+      if (
+        "workerAudience" in orchestration &&
+        orchestration.workerAudience !== null &&
+        !allowedWorkerAudiences.includes(orchestration.workerAudience)
+      ) {
+        failures.push(
+          `Project config orchestration.workerAudience must be one of: ${allowedWorkerAudiences.join(", ")}`
+        );
+      }
     }
   }
   if (hasPlaceholder(config)) {

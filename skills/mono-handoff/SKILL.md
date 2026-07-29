@@ -11,22 +11,29 @@ Use this skill after discovery and reviews to turn shaped work into a Linear-bac
 
 Read first:
 
+Read now — every run of this stage loads all of these:
+
 1. `AGENTS.md`
 2. `references/contracts/project.md`
 3. `references/contracts/prd.md`
 4. `references/contracts/tech-spec.md`
-5. `skills/mono-issue/SKILL.md`
-6. `skills/mono-review/SKILL.md`
-7. `skills/mono-check/SKILL.md`
-8. `references/artifact-rules.md`
-9. `references/artifact-quality.md`
-10. `references/readiness-gates.md`
-11. `references/execution-quality.md`
-12. `references/artifact-intake.md`
-13. `references/questioning.md`
-14. `references/lifecycle.md`
-15. `references/human-friendly-output.md`
-16. `references/repair-machine.md`
+5. `references/artifact-rules.md`
+6. `references/artifact-quality.md`
+7. `references/artifact-intake.md`
+8. `references/readiness-gates.md`
+9. `references/human-friendly-output.md`
+
+Read when — load the file only when its condition is true for this run:
+
+- `references/questioning.md` — when running interactively and this run puts a question or an Always-ask decision to the owner.
+- `references/lifecycle.md` — when this run creates or queues a Linear entity, or changes or queues its lifecycle state.
+- `references/repair-machine.md` — when the run is a targeted artifact repair rather than a fresh package.
+- `skills/mono-issue/SKILL.md` — when execution Issues are created or renewed from this stage.
+- `skills/mono-review/SKILL.md` — when a `mono-review` report has to be run or judged from this stage.
+- `skills/mono-check/SKILL.md` — when a `mono-check` verdict has to be run or reported from this stage.
+- `references/execution-quality.md` — when the package covers bug or performance work, or introduces architecture the Tech Spec does not yet describe.
+
+Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
 When to use:
 

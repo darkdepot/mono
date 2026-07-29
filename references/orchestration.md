@@ -195,6 +195,13 @@ restating it.
   unapplied is a contract violation — it strands the Issue in its previous
   Linear state with the stage's comments missing. The Resume-time sweep of
   unapplied mutations is a crash-recovery backstop, never the normal path.
+- The same substitution applies to any condition a stage skill places on a
+  read, not only to the instructions themselves. A deferred "Read when" entry
+  whose condition names writing, recording, or moving something in Linear is
+  satisfied in this mode by queuing that mutation. Write such a condition so it
+  names the queued form too: a condition worded only for the interactive path
+  silently excludes every orchestrated run, which is how a worker ends up
+  composing an artifact without the contract that governs it.
 - Split precedence by kind: where a dispatch and its stage skill disagree on a
   rule, the stage skill wins; where they disagree on a fact — identity pins,
   absolute paths, snapshot content, this-Issue constraints — the dispatch
@@ -227,6 +234,45 @@ restating it.
   descriptive text in a report.
 - Interactive mode is unchanged: a stage run without a dispatch reads and
   writes Linear directly exactly as its stage skill says.
+
+### Generated dispatch as audience adapter
+
+The stage skills are one surface for every worker model. The generated dispatch
+is the per-Issue layer that adapts it, so safety redundancy is tuned here and
+never by editing a skill for one model's benefit. Two rules bound this:
+
+- The dispatch may repeat, resolve, and enumerate. It may not soften, reword,
+  or replace a rule. Split precedence above still holds — the skill wins on
+  rules, the dispatch wins on facts — so a redundancy that paraphrases a gate
+  is a defect, not an adaptation.
+- The skill's tier-1 "Read now" ladder is a floor, not a ceiling. A dispatch may
+  promote a "Read when" entry into a required read for that run when it knows
+  the condition already holds; it may never demote a tier-1 entry.
+
+Set `orchestration.workerAudience` in the project config (`gpt-worker` |
+`claude-5`; default `gpt-worker`, which is the safe direction). It selects how
+much redundancy the generator emits:
+
+| Dispatch element | `gpt-worker` | `claude-5` |
+| --- | --- | --- |
+| Identity gate: fully resolved command literal, exit-0 success string, the confusable-pin warning | carried | carried |
+| Byte-frozen paths with their expected hashes; the exact protected-surface list | carried | carried |
+| Verification surface: one runnable command per item, or the item marked as a judgment check | carried | carried |
+| Restating AFK gates the skill already binds — single-writer, no sub-delegation, never-ask, report-before-stop | restated inline | one pointer line to the stage skill and this section |
+| Stage-terminal status semantics (`blocked` vs `needs-human` vs `needs-decision` vs drift) | restated as an explicit decision list | named only where this Issue makes one likely |
+| Worked output shapes (comment, certificate, report skeletons) | inlined in the dispatch | referenced by path, composed at write time |
+| Per-step ordering the skill already fixes | re-enumerated | omitted |
+
+The reason the two columns differ is a measured difference in failure mode. A
+strongly rule-following worker fails by omission, which restatement fixes. A
+strongly synthesizing worker fails by anchoring on the nearest worked example
+and producing something well-shaped and partly invented, which restatement does
+not fix and inlined examples make worse. Every row above still carries the same
+obligations to both audiences; only where the text lives changes.
+
+Anything a worker cannot execute without guessing — an absolute path, a command
+literal, a hash, a confusable pair of values in play — is carried in full to
+both audiences. Facts are never compressed for either column.
 
 ## Worker Transports
 

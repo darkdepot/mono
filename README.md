@@ -208,6 +208,7 @@ See `references/install.md` for install details and `references/versioning.md` f
 - `templates/project.md`: Linear Project body template.
 - `templates/review-output.md`: `mono-review` output template.
 - `templates/ship-output.md`: `mono-ship` output template.
+- `templates/ship-status-ux.md`: interactive `mono-ship` status copy and worked examples.
 - `templates/tech-spec.md`: Linear Tech Spec template.
 
 ## Principles

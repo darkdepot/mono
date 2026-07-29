@@ -13,12 +13,19 @@ Issue-only front door: before treating a request as a Project idea, check its sh
 
 Read first:
 
+Read now — every run of this stage loads all of these:
+
 1. `AGENTS.md`
 2. `references/contracts/project.md`
-3. `skills/mono-check/SKILL.md`
-4. `references/questioning.md`
-5. `references/lifecycle.md`
-6. `references/human-friendly-output.md`
+3. `references/questioning.md`
+4. `references/human-friendly-output.md`
+
+Read when — load the file only when its condition is true for this run:
+
+- `references/lifecycle.md` — when this run creates or queues a Linear entity, or changes or queues its lifecycle state.
+- `skills/mono-check/SKILL.md` — when a `mono-check` verdict has to be run or reported from this stage.
+
+Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
 Workflow:
 
