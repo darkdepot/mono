@@ -701,19 +701,24 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   // switch off the normal fresh-report suppression while failing the ack test
   // just below, and a completed worker holding a perfectly good report would be
   // reported dead on the strength of a leftover file.
-  // "Paused" must mean a CURRENT pause, so this uses the same predicate as the
-  // suppression branch it defers to. Belonging to the attempt is the weaker
-  // question and the wrong one here: a retained crash-window ack still belongs
-  // after the resumed worker has executed for minutes, and treating that as a
-  // pause switched off report suppression while the branch below then declined
-  // to suppress on its own — so a worker that had completed, written a valid
-  // report and exited was reported dead. One predicate, three correct
-  // outcomes: a current pause overrides reports, a prior attempt's ack does
-  // not, and a retained ack whose execution has moved on does not either.
+  // BELONGING governs suppression, in this override and in the branch below
+  // alike, so that any ack belonging to this attempt makes suppression bounded
+  // rather than absolute (orchestrator amendment 3 on MONO-47).
+  //
+  // Two review rounds asked for opposite predicates here and both were right
+  // about their own failure. Requiring a current pause let ordinary report
+  // suppression — which is unbounded — return the moment execution advanced the
+  // log past the ack, and the unconsumed ack/report pair then went silent
+  // forever. Requiring only belonging, with an UNBOUNDED override, reported a
+  // completed worker dead. Bounding it satisfies both: inside the bound the
+  // pair is quiet, so nothing healthy is called dead; past it an event fires,
+  // so the pair the protocol must reconcile cannot be buried. That event is a
+  // consumption boundary, never a healing or replay signal — Monitoring
+  // Protocol, gate-pause carve-out.
   const pausedOnAck =
     gateAck !== null &&
     gateAck.status === "gates-passed" &&
-    isFreshForLog(gateAck.stat, log);
+    ackBelongsToAttempt(gateAck.stat, log);
   const reportStat = reportStatFor(reportsDir, log);
   if (!pausedOnAck && reportStat !== null && isFreshForLog(reportStat, log)) return;
 
@@ -754,7 +759,7 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   // Freshness and the bound are both measured on the ATTEMPT's log, not the
   // mtime-picked one: otherwise a superseded attempt that keeps writing holds
   // suppression open long after the current attempt's pause has expired.
-  if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) {
+  if (gateAck !== null && gateAck.status === "gates-passed" && ackBelongsToAttempt(gateAck.stat, log)) {
     // The deadline is measured from the PAUSE — this log's silence — never from
     // the ack's own mtime. The ack sits at a worker-writable path, so anchoring
     // to it let a stuck or superseded worker touch the file before every

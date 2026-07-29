@@ -797,11 +797,17 @@ never report it as applied.
   lifecycle moves with read-back and resume that worker:
   never a nudge, respawn, session rotation, or owner page. The ladder applies
   only when no gate-ack arrives at all, which is the ordinary liveness case
-  above. A `dead` that lands right after that worker's own `gate-ack` is the
-  consumption boundary rather than a death — the gate-phase process is gone and
-  the resumed one may not be registered yet — so reconcile the registry with the
-  actual writer process before any healing step, exactly as every liveness event
-  already requires.
+  above. Whenever an UNCONSUMED gate-ack exists for that attempt, any `stall` or
+  `dead` for it is a consumption boundary rather than a death — however long
+  after the ack it arrives. Suppression for such an attempt is bounded, so the
+  event is the protocol asking for reconciliation of an ack/report pair it
+  refuses to bury, not evidence the worker died: the gate-phase process is gone
+  by design, the resumed one may never have been registered, and the worker may
+  in fact have completed. Reconcile the registry against the actual writer
+  process and the mailbox first, then consume or resume as that shows. Routing
+  such an event into healing or replay is a contract error — it can respawn a
+  worker whose work already landed. Only an attempt with NO unconsumed ack
+  takes the ordinary healing ladder.
 - Material scope drift: stop the worker and escalate through
   `scope-drift-needs-handoff`; scope is always the user's decision.
 

@@ -4931,27 +4931,49 @@ async function validateWatcherV3Behavior() {
 // suppresses stall/dead: the gate pause of the two-phase dispatch handshake is
 // a contracted wait, while a blocked, stale, or malformed ack proves nothing
 // and must leave the liveness ladder armed.
-// The report override and the suppression branch must ask the SAME question.
-// A runtime fixture cannot pin this: the distinguishing state needs
+// The report override and the suppression branch must both key on BELONGING, so
+// that any ack belonging to the attempt makes suppression bounded rather than
+// absolute (orchestrator amendment 3 on MONO-47). This replaces an earlier pin
+// that required the pause-fresh predicate here: two review rounds asked for
+// mutually inverse predicates, each correct about its own failure — requiring a
+// current pause let unbounded report suppression bury the ack/report pair
+// forever, requiring belonging with an unbounded override called a completed
+// worker dead. Bounding it satisfies both, and the post-bound event is a
+// consumption boundary, never a healing signal.
+//
+// A runtime fixture cannot pin the distinguishing state: it needs
 // birthtime <= ack.mtime < log.mtime - stall with the log already stale, and
-// birthtime cannot be moved backwards portably (macOS pulls it back on an
-// earlier utimes, Linux does not) — the same platform limit documented on the
-// MONO-333 fixture. So it is pinned structurally instead. Using the weaker
-// belonging test here let a retained crash-window ack disable report
-// suppression while the branch below declined to suppress, and a completed
-// worker with a valid report was reported dead.
+// birthtime cannot be moved backwards portably — macOS pulls it back on an
+// earlier utimes, Linux does not — the same limit documented on MONO-333. So it
+// is pinned structurally.
 function validateGateAckSuppressionPredicate() {
   const watcher = read("scripts/watch-workers.mjs");
-  const pausedOnAck = watcher.slice(watcher.indexOf("  const pausedOnAck ="), watcher.indexOf("  const reportStat ="));
-  if (!pausedOnAck.includes("isFreshForLog(gateAck.stat, log)")) {
+  const override = watcher.slice(watcher.indexOf("  const pausedOnAck ="), watcher.indexOf("  const reportStat ="));
+  if (!override.includes("ackBelongsToAttempt(gateAck.stat, log)")) {
     fail(
-      "watch-workers.mjs: pausedOnAck must use isFreshForLog — the same predicate as the suppression branch it defers to — so a retained ack cannot disable report suppression without providing its own"
+      "watch-workers.mjs: pausedOnAck must key on ackBelongsToAttempt so any belonging ack bounds report suppression (amendment 3); requiring a current pause lets unbounded report suppression bury the ack/report pair"
     );
   }
-  if (pausedOnAck.includes("ackBelongsToAttempt")) {
+  if (override.includes("isFreshForLog")) {
     fail(
-      "watch-workers.mjs: pausedOnAck must not use ackBelongsToAttempt; belonging is the delivery question, not evidence of a current pause"
+      "watch-workers.mjs: pausedOnAck must not key on isFreshForLog; a retained crash-window ack still has to bound report suppression after execution advances the log"
     );
+  }
+  const suppression = watcher.slice(watcher.indexOf('if (gateAck !== null && gateAck.status === "gates-passed"'));
+  if (!suppression.startsWith('if (gateAck !== null && gateAck.status === "gates-passed" && ackBelongsToAttempt(gateAck.stat, log))')) {
+    fail(
+      "watch-workers.mjs: the gate-pause suppression branch must use the same belonging predicate as the override, or the two disagree and the pair is neither bounded nor suppressed"
+    );
+  }
+
+  // The post-bound event must route as reconciliation. Without this the earlier
+  // harm returns in delayed form: a completed worker respawned by the ladder.
+  for (const required of [
+    "Whenever an UNCONSUMED gate-ack exists for that attempt, any `stall` or\n  `dead` for it is a consumption boundary rather than a death",
+    "Routing\n  such an event into healing or replay is a contract error",
+    "Only an attempt with NO unconsumed ack\n  takes the ordinary healing ladder.",
+  ]) {
+    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
   }
 }
 
@@ -6591,7 +6613,7 @@ function validateTwoPhaseDispatchHandshake() {
     // is spurious however well-formed it looks.
     "is spurious and neither delivers nor suppresses",
     // The consumption boundary can look like a death for one scan.
-    "is the\n  consumption boundary rather than a death",
+    "Whenever an UNCONSUMED gate-ack exists for that attempt",
   ]) {
     assertIncludes("references/orchestration.md", required, JSON.stringify(required));
   }
