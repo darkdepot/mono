@@ -5449,10 +5449,15 @@ function validateWatcherGateAckBehavior() {
       fs.writeFileSync(zombieLog, logLine);
       const pausedQuiet = new Date(Date.now() - 900_000);
       fs.utimesSync(pausedLog, pausedQuiet, pausedQuiet);
-      // The zombie is newer, so collectLatestLogs picks it, but it is still old
-      // enough that the pre-existing stall check is reached.
-      const zombieTouch = new Date(Date.now() - 200_000);
+      // The zombie is ACTIVELY writing — inside the stall window. That is the
+      // case that reproduces the defect: driven from the mtime-selected log the
+      // scan takes the healthy early return and the paused attempt's expired
+      // bound is never reached. Staging the zombie as merely "older than the
+      // threshold" could not reproduce it, which is what the review caught.
+      const zombieTouch = new Date(Date.now() - 30_000);
       fs.utimesSync(zombieLog, zombieTouch, zombieTouch);
+      // Ack written after both utimes so it post-dates birthtime under either
+      // the real-btime or the ctime-fallback reading.
       fs.writeFileSync(
         path.join(reportsDir, `${zombieHoldsPauseIssue}-gate-ack-a2.json`),
         `${JSON.stringify(gateAck(zombieHoldsPauseIssue, "gates-passed"), null, 2)}\n`

@@ -554,7 +554,14 @@ function registryGateAckLog(issueKey, registryEntry) {
     return null;
   }
   if (!stat.isFile()) return null;
-  return { issue: match[1], stage: match[2], attempt: match[3] ? Number(match[3]) : null, filePath, stat };
+  return {
+    issue: match[1],
+    stage: match[2],
+    attempt: match[3] ? Number(match[3]) : null,
+    name: path.basename(filePath),
+    filePath,
+    stat,
+  };
 }
 
 // Delivery asks only whether the ack BELONGS to this attempt, not whether the
@@ -636,7 +643,15 @@ function checkReport(log, report, nowMs) {
   );
 }
 
-function checkLog(log, attemptLog, gateAck, reportsDir, registry, nowMs) {
+// `log` here is the ATTEMPT log: the scan passes the registry-named attempt when
+// there is one and the mtime-selected log otherwise. Driving liveness from the
+// selected log let a superseded attempt that kept writing trip the healthy early
+// return, so the current attempt's pause bound was never reached and a stuck
+// dispatch could stay silent forever — the recovery guarantee this protocol adds
+// was unreachable exactly when it was needed. Orchestrator amendment 2 on
+// MONO-47 authorises this over the dispatch's additive-only-v3 constraint;
+// without a registry context the behaviour is unchanged.
+function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   const { firstLine, hasJsonEvent } = inspectLog(log.filePath);
   if (firstLine !== null && !hasJsonEvent) {
     // A non-empty log with no JSON events means the spawn command failed
@@ -685,7 +700,7 @@ function checkLog(log, attemptLog, gateAck, reportsDir, registry, nowMs) {
   const pausedOnAck =
     gateAck !== null &&
     gateAck.status === "gates-passed" &&
-    ackBelongsToAttempt(gateAck.stat, attemptLog);
+    ackBelongsToAttempt(gateAck.stat, log);
   const reportStat = reportStatFor(reportsDir, log);
   if (!pausedOnAck && reportStat !== null && isFreshForLog(reportStat, log)) return;
 
@@ -726,7 +741,7 @@ function checkLog(log, attemptLog, gateAck, reportsDir, registry, nowMs) {
   // Freshness and the bound are both measured on the ATTEMPT's log, not the
   // mtime-picked one: otherwise a superseded attempt that keeps writing holds
   // suppression open long after the current attempt's pause has expired.
-  if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, attemptLog)) {
+  if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) {
     // The deadline is measured from the PAUSE — this log's silence — never from
     // the ack's own mtime. The ack sits at a worker-writable path, so anchoring
     // to it let a stuck or superseded worker touch the file before every
@@ -735,8 +750,7 @@ function checkLog(log, attemptLog, gateAck, reportsDir, registry, nowMs) {
     // log is what being alive looks like, and a live log returns above long
     // before this line. Future-dating is separately decided once, at the read
     // boundary, against the clock read there.
-    const pauseQuietSec = Math.round((nowMs - attemptLog.stat.mtimeMs) / 1000);
-    if (pauseQuietSec <= args.stallSec * GATE_PAUSE_SUPPRESSION_STALLS) {
+    if (ageSec <= args.stallSec * GATE_PAUSE_SUPPRESSION_STALLS) {
       return;
     }
   }
@@ -850,7 +864,7 @@ function scan() {
     // Both events go out; the consumer branches on the ack's status.
     checkGateAck(attemptLog, gateAck, nowMs);
     checkReport(log, report, nowMs);
-    checkLog(log, attemptLog, gateAck, reportsDir, registry, nowMs);
+    checkLog(attemptLog, gateAck, reportsDir, registry, nowMs);
   }
   checkRegistry(registry, nowMs);
   checkIdle(registrySnapshot, controlState, nowMs);
