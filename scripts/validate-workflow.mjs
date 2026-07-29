@@ -5251,6 +5251,35 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // A superseded attempt's report must not hide the successor's valid ack.
+    // Reports carry no attempt number, so an older report beside a newer ack
+    // is exactly that shape: the ack still has to be delivered.
+    const staleReportIssue = "MONO-327";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${staleReportIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const reportPath = path.join(reportsDir, `${staleReportIssue}-mono-implement.json`);
+      fs.writeFileSync(
+        reportPath,
+        `${JSON.stringify({ issue: staleReportIssue, stage: "mono-implement", status: "implemented-needs-preflight", ...identity }, null, 2)}\n`
+      );
+      const ackPath = path.join(reportsDir, `${staleReportIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(staleReportIssue, "gates-passed"), null, 2)}\n`);
+      // Report older than the ack; both still fresh against the log.
+      const reportAt = new Date(Date.now() - 60_000);
+      fs.utimesSync(reportPath, reportAt, reportAt);
+      workers[staleReportIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", staleReportIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5290,6 +5319,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-301", "gates-passed"],
       ["MONO-302", "blocked"],
       ["MONO-311", "worktree-fallback"],
+      ["MONO-327", "ack newer than a superseded attempt's report"],
     ]) {
       if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must emit a gate-ack event`);

@@ -56,6 +56,10 @@ const GATE_ACK_MAX_BYTES = 64 * 1024;
 // mutations and resuming — seconds, not hours — so suppression that outlives
 // this bound is describing a stuck handshake, not a healthy wait.
 const GATE_PAUSE_SUPPRESSION_STALLS = 4;
+// Allowance for coarse filesystem timestamp granularity when deciding whether
+// an ack is dated in the future. Seconds-resolution filesystems exist; this is
+// not a tolerance for worker-chosen future dates.
+const FS_TIMESTAMP_SLACK_MS = 1_000;
 
 // <ISSUE-KEY>-<stage>.jsonl or <ISSUE-KEY>-<stage>-a<attempt>.jsonl,
 // where <stage> itself may contain hyphens (e.g. mono-implement).
@@ -417,7 +421,7 @@ function readGateAckAt(ackPath, log) {
 // Both locations are evaluated and the CURRENT candidate wins: a structurally
 // valid mailbox ack left over from an earlier write must not shadow the fresh
 // fallback ack of the worker actually paused right now.
-function readGateAck(reportsDir, log, registryEntry, nowMs) {
+function readGateAck(reportsDir, log, registryEntry) {
   // No attempt number means no attempt identity to bind to. Logs are numbered
   // from -a1 by contract, so this is a malformed or legacy log; failing closed
   // costs only a suppression the handshake never promised for it.
@@ -473,7 +477,14 @@ function readGateAck(reportsDir, log, registryEntry, nowMs) {
   // the suppression branch: a check that lives in one consumer still lets the
   // artifact be delivered and still lets it count as evidence. The worker sets
   // its own mtime on the fallback path, and this watcher shares its clock.
-  if (ack.stat.mtimeMs > nowMs) return null;
+  //
+  // The comparison is against a reading taken NOW, after the file was read —
+  // never the scan-start clock. A worker that acks while the scan is already
+  // running writes a perfectly legitimate mtime that is nonetheless later than
+  // scan start, and rejecting it there would call a worker dead in the same
+  // scan in which it completed its gate pause. The allowance covers coarse
+  // filesystem timestamp granularity, nothing more.
+  if (ack.stat.mtimeMs > Date.now() + FS_TIMESTAMP_SLACK_MS) return null;
   return ack;
 }
 
@@ -739,12 +750,21 @@ function scan() {
     // the report is read first, and while it stands the ack is consumption
     // recovery, not a signal.
     const report = correlatedReport(log, reportsDir, registryEntry);
-    const gateAck =
-      report === null && isCorrelatedGateAckLog(log, registryEntry)
-        ? readGateAck(reportsDir, log, registryEntry, nowMs)
-        : null;
+    const gateAck = isCorrelatedGateAckLog(log, registryEntry)
+      ? readGateAck(reportsDir, log, registryEntry)
+      : null;
+    // Precedence needs the report to be at least as NEW as the ack, because a
+    // report carries no attempt number: a superseded attempt can write one
+    // after its successor's log was born and it would correlate just as well.
+    // Recency is the binding available here, and it is enough — an older
+    // report cannot describe a run that a newer ack has not started yet. The
+    // replay this guards against is independently closed on the consumer side,
+    // where a present stage report means execution ran whatever the watcher
+    // emitted.
+    const supersededByReport =
+      report !== null && (gateAck === null || report.stat.mtimeMs >= gateAck.stat.mtimeMs);
     checkReport(log, report, nowMs);
-    checkGateAck(log, gateAck, nowMs);
+    checkGateAck(log, supersededByReport ? null : gateAck, nowMs);
     checkLog(log, gateAck, reportsDir, registry, nowMs);
   }
   checkRegistry(registry, nowMs);
