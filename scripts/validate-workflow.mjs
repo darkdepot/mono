@@ -1102,11 +1102,22 @@ function validatePackIdentityAndQuiescenceBehavior() {
     if (!surfaceRevisionMatch) {
       fail("install-local must declare the canonical numeric SURFACE_REVISION");
     } else {
-      const reportSurfacePin = `"surfaceRevision": ${surfaceRevisionMatch[1]},`;
-      const reportSurfacePins = read("templates/orchestrator-report.md").split(reportSurfacePin).length - 1;
+      // The report and registry examples must never hand a worker a concrete
+      // revision to copy: during a surface cut-over the code constant and the
+      // dispatch pin are deliberately different numbers, and only the dispatch
+      // pin belongs in a report or a registry entry. The placeholder is
+      // unquoted because the emitted value must be an integer, never a string.
+      const reportTemplate = read("templates/orchestrator-report.md");
+      if (/"surfaceRevision":\s*\d/.test(reportTemplate)) {
+        fail(
+          `orchestrator report template must not pin a concrete surfaceRevision (code constant is ${surfaceRevisionMatch[1]}); its examples repeat the dispatch pin`
+        );
+      }
+      const reportSurfacePin = '"surfaceRevision": <repeat the dispatch pin, integer>,';
+      const reportSurfacePins = reportTemplate.split(reportSurfacePin).length - 1;
       if (reportSurfacePins !== 2) {
         fail(
-          `orchestrator report template must pin ${reportSurfacePin} in both report and registry shapes`
+          `orchestrator report template must show ${reportSurfacePin} in both report and registry shapes`
         );
       }
     }
@@ -5252,6 +5263,50 @@ function validateGoalContractBinding() {
   }
 }
 
+// MONO-43: the stage-report contract has one home per fact. The certificate
+// lives in `certificate` and is referenced, never copied, from a queued
+// mutation; the `verification_items` semantics and status enum are stated
+// once in the report template and pointed at from the dispatch template.
+function validateReportContractSingleHome() {
+  for (const required of [
+    "single home of certificate text",
+    "appears in the report exactly once",
+    "append #/certificate",
+    "an integer, never a string",
+    "repeat the dispatch pin, integer",
+    "One semantics and one status enum, stated here once",
+    "The enum is closed",
+    "is never a status value",
+  ]) {
+    assertIncludes("templates/orchestrator-report.md", required, JSON.stringify(required));
+  }
+
+  for (const required of [
+    "verified as a judgment check",
+    "never as a status value",
+    "item semantics and the status enum have a single home in",
+    "append #/certificate",
+  ]) {
+    assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
+  }
+
+  const dispatchTemplate = read("templates/orchestrator-dispatch.md");
+  // `judgment check` describes how an item was verified, never what its
+  // status is; the enum has no such value and the dispatch must not mint one.
+  if (/marked\s+`judgment check`/.test(dispatchTemplate)) {
+    fail(
+      "templates/orchestrator-dispatch.md must not mark a verification item with a `judgment check` status value"
+    );
+  }
+  // Single home: the dispatch points at the enum instead of restating it, so
+  // the two templates cannot drift into a second, divergent vocabulary.
+  if (dispatchTemplate.includes("pass | deferred | not-run")) {
+    fail(
+      "the verification_items status enum has a single home in templates/orchestrator-report.md; templates/orchestrator-dispatch.md must point at it, not restate it"
+    );
+  }
+}
+
 function validateReviewLoopHygiene() {
   for (const required of [
     "Before the first resolver cycle on a PR, check the review bots' configuration",
@@ -5574,6 +5629,7 @@ validateCompactionContract();
 validateLiveQaGateContract();
 validateRealBackendContractSampling();
 validateGoalContractBinding();
+validateReportContractSingleHome();
 validateOrchestrationModePrecedence();
 validateReviewLoopHygiene();
 validateCostTelemetry();

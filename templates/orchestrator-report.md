@@ -18,17 +18,17 @@ Path: `~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-<stage>
   "status": "<implemented-needs-preflight | ready | green | blocked | needs-decision | needs-human | drift-candidate | timed-out | scope-drift-needs-handoff>",
   "packVersion": "<dispatch packVersion>",
   "sourceCommit": "<dispatch sourceCommit>",
-  "surfaceRevision": 3,
+  "surfaceRevision": <repeat the dispatch pin, integer>,
   "branch": "<branch>",
   "changed_files": ["<path>"],
   "tests": { "run": "<commands>", "result": "<outcome>" },
   "verification_items": [
-    { "item": "<verbatim from Как проверить>", "status": "pass | deferred | not-run", "evidence": "<one line>" }
+    { "item": "<one «Как проверить» line, verbatim>", "status": "pass | deferred | not-run", "evidence": "<one line>" }
   ],
   "question": "<question text, or null>",
   "recommendation": "<the worker's own recommended answer, or null>",
-  "linear_mutations_pending": ["<comment/status text the worker could not apply>"],
-  "certificate": "<preflight certificate or mono-ship green certificate text, or null>",
+  "linear_mutations_pending": ["<comment/status text the worker could not apply; where a certificate belongs, the literal pointer `append #/certificate`>"],
+  "certificate": "<preflight certificate or mono-ship green certificate text — the only home of that text, or null>",
   "notes": "<runtime substitutions or constraints the orchestrator must know, or null>",
   "next": "<mono-preflight | mono-ship | mono-deploy | null>"
 }
@@ -41,6 +41,31 @@ was not available in the worker runtime. It never replaces a status.
 The three pack identity fields are mandatory in every report and repeat the
 dispatch pin the worker verified at stage start or resume. They identify the
 contract that produced the report; `notes` must not substitute for them.
+`surfaceRevision` is an integer, never a string: the orchestrator correlates
+a report only when `packVersion` is a non-empty string, `sourceCommit` a
+40-character hex SHA, and `surfaceRevision` a positive integer.
+
+Both shapes therefore show `surfaceRevision` as an unquoted
+`<repeat the dispatch pin, integer>` placeholder instead of a literal
+number. An example that carries a concrete revision is a revision a worker
+can copy, and during a surface cut-over the repository's own code constant
+and the pin the dispatch carries are deliberately different numbers — only
+the dispatch pin belongs in a report or a registry entry. The dispatch pins
+are the installed lockfile values read at spawn time, so "repeat the
+dispatch pin" and "installed lockfile" name the same number. Because of that
+placeholder both blocks are shape sketches, not parseable JSON.
+
+`certificate` is the single home of certificate text: a preflight or
+`mono-ship` green certificate appears in the report exactly once, as the
+content of that one field. A queued Linear comment references it and never
+copies it — write the comment's own lead text and put the literal pointer
+`append #/certificate` where the certificate belongs, and the orchestrator
+splices the field in when it applies the mutation. Two copies are two
+authorities that can diverge with no rule for resolving the divergence.
+
+```text
+Preflight по <ISSUE-KEY> зелёный. Сертификат: append #/certificate
+```
 
 `verification_items` is optional in shape but mandatory in coverage: a
 stage-terminal report for `mono-implement` or `mono-preflight` MUST
@@ -49,6 +74,22 @@ enumerate every «Как проверить» item of the Issue, each with statu
 `not-run` require a reason in `evidence`; a stage cannot claim completion
 while an item is silently missing. The field is additive — it never changes
 or replaces the report `status` set.
+
+One semantics and one status enum, stated here once. The dispatch template
+and the stage skills point at this list instead of restating it:
+
+- One item per line of the Issue's «Как проверить», in the Issue's own
+  order, with `item` carrying that line verbatim in its original language.
+  Do not decompose one line into several items, do not merge lines, and do
+  not re-key the array to acceptance criteria or to invented check names.
+- `status` is exactly `pass | deferred | not-run`. The enum is closed: no
+  stage, dispatch, or report adds a value to it.
+- A «Как проверить» line with no command shape is still one item with a
+  status from that enum. Its judgment mode is recorded in `evidence`, which
+  opens with `judgment check:` and then states what was inspected and what
+  was observed. `judgment check` is never a status value.
+- An item that a later stage or the orchestrator owns is `deferred`, with
+  the owner named in `evidence`.
 
 Status semantics:
 
@@ -81,7 +122,7 @@ threads (`codex exec resume <thread_id>`) instead of respawning them.
     "stage": "<mono-implement | mono-preflight | mono-ship>",
     "packVersion": "<installed lockfile packVersion>",
     "sourceCommit": "<installed lockfile sourceCommit>",
-    "surfaceRevision": 3,
+    "surfaceRevision": <repeat the dispatch pin, integer>,
     "spawned_at": "<ISO 8601>",
     "last_activity_at": "<ISO 8601>",
     "log": "<absolute path to the worker's JSONL log, or null>",
