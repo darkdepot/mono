@@ -11,19 +11,27 @@ Use this skill to own Delivery Start and implementation execution from approved 
 
 Read first:
 
+Read now — every run of this stage loads all of these:
+
 1. `AGENTS.md`
 2. `skills/mono-check/SKILL.md`
-3. `skills/mono-review/SKILL.md`
-4. `skills/mono-preflight/SKILL.md`
-5. `references/artifact-rules.md`
-6. `references/artifact-quality.md`
-7. `references/artifact-intake.md`
-8. `references/readiness-gates.md`
-9. `references/execution-quality.md`
-10. `references/lifecycle.md`
-11. `references/questioning.md`
-12. `references/human-friendly-output.md`
-13. `references/issue-only-lane.md`
+3. `references/readiness-gates.md`
+4. `references/execution-quality.md`
+5. `references/lifecycle.md`
+6. `references/human-friendly-output.md`
+
+Read when — load the file only when its condition is true for this run:
+
+- `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`, or when a lane park, freeze, or exit decision is in play.
+- `skills/mono-preflight/SKILL.md` — when this stage's exit is being handed to preflight and that stage's entry conditions matter.
+- `skills/mono-review/SKILL.md` — when a `mono-review handoff` finding's disposition has to be judged instead of read off the package context.
+- `references/artifact-rules.md` — when ownership, language, or placement of a Linear artifact or comment is in question.
+- `references/artifact-quality.md` — when Linear artifact text has to be written or judged against the quality bar.
+- `references/artifact-intake.md` — when the handoff recorded an artifact intake summary that has to be reconciled.
+- `references/questioning.md` — when running interactively and a product, UX, or business question has to be asked; an AFK worker never asks.
+- `templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.
+
+Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
 When to use:
 
@@ -231,7 +239,7 @@ Rules:
 - Do not create PRs directly from `mono-implement`.
 - Do not run or claim `mono-review pre-ship` or `mono-check pre-ship`; those belong to `mono-ship`.
 - If material drift appears, stop as `scope-drift-needs-handoff`.
-- The stage exit report enumerates every «Как проверить» item of the Issue, each with a `pass | deferred | not-run` status and one line of evidence (under orchestration this is the `verification_items` array of the mailbox report). The stage cannot claim completion while an item is silently missing; `deferred`/`not-run` are valid only with a recorded reason in the evidence.
+- The stage exit report enumerates every «Как проверить» item of the Issue, each with a `pass | deferred | not-run` status and one line of evidence, in the `verification_items` shape that `templates/orchestrator-report.md` defines. The stage cannot claim completion while an item is silently missing; `deferred`/`not-run` are valid only with a recorded reason in the evidence.
 - Keep Linear-facing comments in the project config language; use Russian when no project config is present.
 
 Implementation-start comment shape:

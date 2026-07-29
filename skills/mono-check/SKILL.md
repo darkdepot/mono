@@ -9,14 +9,21 @@ Use this skill as a report-only, best-effort transition gate. It inspects Linear
 
 Read first:
 
+Read now — every run of this stage loads all of these:
+
 1. `AGENTS.md`
-2. `references/artifact-rules.md`
-3. `references/readiness-gates.md`
-4. `references/execution-quality.md`
-5. `references/lifecycle.md`
-6. `references/human-friendly-output.md`
-7. `templates/check-output.md`
-8. `references/repair-machine.md`
+2. `references/readiness-gates.md`
+3. `references/lifecycle.md`
+4. `templates/check-output.md`
+
+Read when — load the file only when its condition is true for this run:
+
+- `references/execution-quality.md` — when the check has to weigh implementation or verification evidence.
+- `references/human-friendly-output.md` — when the verdict is rendered for a human or queued as Linear-facing text.
+- `references/artifact-rules.md` — when artifact ownership, language, or placement decides the verdict.
+- `references/repair-machine.md` — when the check feeds or gates an artifact repair transaction.
+
+Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
 Statuses:
 

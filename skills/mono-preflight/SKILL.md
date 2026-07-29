@@ -11,17 +11,25 @@ Use this skill after implementation is complete or nearly complete, before `mono
 
 Read first:
 
+Read now — every run of this stage loads all of these:
+
 1. `AGENTS.md`
-2. `skills/mono-check/SKILL.md`
-3. `skills/mono-review/SKILL.md`
-4. `references/artifact-rules.md`
-5. `references/artifact-quality.md`
-6. `references/readiness-gates.md`
-7. `references/autoreview-routing.md`
-8. `references/execution-quality.md`
-9. `references/lifecycle.md`
-10. `references/human-friendly-output.md`
-11. `references/issue-only-lane.md`
+2. `references/autoreview-routing.md`
+3. `references/readiness-gates.md`
+4. `references/execution-quality.md`
+5. `references/human-friendly-output.md`
+
+Read when — load the file only when its condition is true for this run:
+
+- `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`, or when a lane freeze, follow-up, or cancel decision is in play.
+- `skills/mono-check/SKILL.md` — when a `mono-check` verdict has to be run or reported from this stage.
+- `skills/mono-review/SKILL.md` — when a review disposition has to be judged instead of read off the package context.
+- `references/artifact-rules.md` — when ownership, language, or placement of a Linear artifact or comment is in question.
+- `references/artifact-quality.md` — when certificate recovery, marker placement, or artifact text has to be judged against the quality bar.
+- `references/lifecycle.md` — when drift routing turns on Linear lifecycle state.
+- `templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.
+
+Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
 When to use:
 
@@ -122,7 +130,7 @@ Rules:
 - Do not call Compound `ce-code-review` for this gate. It is not an acceptable replacement for `autoreview` inside `mono-preflight`.
 - Do not auto-apply broad rewrites, release-sensitive changes, or fixes that the agent cannot defend after reading the relevant code and contracts.
 - Do not silently reject a repeated `autoreview` finding and mark `ready`. If `autoreview` does not return clean, the certificate must be `blocked` or `needs-human`.
-- The stage exit report enumerates every «Как проверить» item of the Issue, each with a `pass | deferred | not-run` status and one line of evidence (under orchestration this is the `verification_items` array of the mailbox report). The stage cannot claim completion while an item is silently missing; `deferred`/`not-run` are valid only with a recorded reason in the evidence.
+- The stage exit report enumerates every «Как проверить» item of the Issue, each with a `pass | deferred | not-run` status and one line of evidence, in the `verification_items` shape that `templates/orchestrator-report.md` defines. The stage cannot claim completion while an item is silently missing; `deferred`/`not-run` are valid only with a recorded reason in the evidence.
 - Do not mark preflight `ready` when the final `autoreview` command omits explicit `--engine codex`, `--model`, or `--thinking`, selects a non-GPT-5.6 model, or does not match the final risk class in `references/autoreview-routing.md`.
 - Keep Linear-facing comments in the project config language; use Russian when no project config is present.
 - Include a checked/not-checked boundary. Local tests do not imply browser QA, production smoke, mobile QA, deploy verification, or user acceptance.
@@ -130,27 +138,15 @@ Rules:
 
 Human Linear comment/resource shape:
 
-```text
-<1-2 предложения по-русски: итог и следующий шаг>
-
-mono-preflight certificate
-Preflight: <ready|blocked|drift-candidate|needs-human>
-Issue(s): <keys>
-Branch: <branch>; commit state: <clean/dirty/committed>
-Changed files: <count/list or summary>
-Local verification: <commands run + outcome>
-Autoreview: <clean|blocked|needs-human|unavailable>; final command: <selected-scope helper command>; clean result: <exit 0 + clean line or none>
-Autoreview route: risk=<tiny|standard|deep|risky>; source=<Linear artifact or diff inference>; critical=<none|concrete escalation signal>; model=<gpt-5.6-luna|gpt-5.6-sol>; effort=<low|medium|high|xhigh>; reclassified=<no|summary>
-Autoreview loop: <iterations>; accepted findings fixed: <none/list>; residual actionable findings: <none/list, must be none for ready>
-Drift candidate: <none/summary>
-Decision needed: <none | точное решение по-русски>
-Not checked: <manual QA/browser/mobile/deploy/etc.>
-Next: <mono-ship | mono-handoff | needs-human>
-```
+The certificate block above, unchanged, with one addition: a Russian human lead
+`<1-2 предложения по-русски: итог и следующий шаг>` as the first line, then a
+blank line, then the `mono-preflight certificate` marker line and the rest of
+the block exactly as printed. Nothing else differs between the two forms — the
+chat and report form carries the machine core with no lead.
 
 Rules for the Human Linear comment:
 
-- The Russian human lead (1-2 sentences) is required; it states the outcome and next step for the operator.
+- The Russian human lead (1-2 sentences) is required; it states the outcome and next step for the operator. It is required in the Linear comment/resource form and absent from the chat and report form — never optional in either direction.
 - The machine core below the marker line is never translated, reworded, or summarized away — downstream skills recover the certificate by its stable marker and field keys.
 - `Decision needed:` must be non-`none` whenever the certificate status is `needs-human`; name the exact decision or unblock required in Russian.
 

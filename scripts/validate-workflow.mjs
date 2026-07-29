@@ -5613,7 +5613,144 @@ function validateOrchestrationModePrecedence() {
   }
 }
 
+// MONO-45 — two-tier read-first ladders. Tier-1 ("Read now") is the eager
+// closure every run of a stage loads; tier-2 ("Read when") is deferred behind a
+// stated condition and is deliberately outside the validated set, because
+// extractReadFirstEntries stops at the first non-numbered line. The tier is a
+// deferral, never a downgrade: a tier-2 read is mandatory once its condition
+// holds, and the bounded-contract requirement in validateArtifactContractParity
+// still forces its consumers to keep contract paths in tier-1.
+function validateReadFirstTierContract() {
+  const tierNowHeading = "Read now — every run of this stage loads all of these:";
+  const tierWhenHeading = "Read when — load the file only when its condition is true for this run:";
+  const tierRule =
+    'Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.';
+
+  for (const skill of listSkillNames()) {
+    const relativePath = `skills/${skill}/SKILL.md`;
+    if (!exists(relativePath)) continue;
+    const text = read(relativePath);
+    for (const required of [tierNowHeading, tierWhenHeading, tierRule]) {
+      assertIncludes(relativePath, required, JSON.stringify(required));
+    }
+    if (text.indexOf(tierNowHeading) > text.indexOf(tierWhenHeading)) {
+      fail(`${relativePath} must state the "Read now" tier before the "Read when" tier`);
+    }
+
+    const { paths } = extractReadFirstEntries(text);
+    if (paths[0] !== "AGENTS.md") {
+      fail(`${relativePath} must keep AGENTS.md as the first "Read now" entry`);
+    }
+    const tierTwoBlock = text.slice(text.indexOf(tierWhenHeading) + tierWhenHeading.length, text.indexOf(tierRule));
+    for (const line of tierTwoBlock.split("\n")) {
+      if (/^\d+\.\s/.test(line.trim())) {
+        fail(`${relativePath} has a numbered "Read when" entry, which the tier-1 parser would validate: ${line.trim()}`);
+      }
+    }
+    for (const line of tierTwoBlock.split("\n")) {
+      if (!line.trim().startsWith("- ")) continue;
+      if (!line.includes(" — ")) {
+        fail(`${relativePath} has a "Read when" entry without a stated condition: ${line.trim()}`);
+      }
+    }
+  }
+
+  // Parser fixture: a tier-2 bullet is not harvested as a tier-1 path, and a
+  // tier-1 entry carrying extra backticked prose still is — which is why
+  // conditions live on tier-2 lines only.
+  const tieredFixture = [
+    "Read first:",
+    "",
+    tierNowHeading,
+    "",
+    "1. `AGENTS.md`",
+    "2. `references/lifecycle.md`",
+    "",
+    tierWhenHeading,
+    "",
+    "- `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`.",
+    "",
+    tierRule,
+    "",
+  ].join("\n");
+  const tieredPaths = extractReadFirstEntries(tieredFixture).paths;
+  if (tieredPaths.join("|") !== "AGENTS.md|references/lifecycle.md") {
+    fail("two-tier read-first fixture must harvest exactly the tier-1 entries");
+  }
+  if (tieredPaths.includes("lifecycle_state_entity=issue")) {
+    fail("two-tier read-first fixture must not harvest tier-2 condition text as a path");
+  }
+  const conditionOnTierOne = tieredFixture.replace(
+    "2. `references/lifecycle.md`",
+    "2. `references/lifecycle.md` — only when the seam is `lifecycle_state_entity=issue`"
+  );
+  const conditionPaths = extractReadFirstEntries(conditionOnTierOne).paths;
+  if (!conditionPaths.includes("lifecycle_state_entity=issue")) {
+    fail("condition text on a tier-1 entry must expose its backticked tokens to path validation");
+  }
+  if (validateReadFirstPath("lifecycle_state_entity=issue")) {
+    fail("a tier-1 condition token must not pass path validation; conditions belong on tier-2 lines");
+  }
+
+  // Audience split — the interactive ship UX and its worked example live in a
+  // template read at composition time; the worker path keeps every gate.
+  assertIncludes("skills/mono-ship/SKILL.md", "templates/ship-status-ux.md", "ship status UX pointer");
+  for (const inlined of ["Статус ревью:", "Review timeline:", "Для `green`:"]) {
+    if (read("skills/mono-ship/SKILL.md").includes(inlined)) {
+      fail(`mono-ship must not re-inline the interactive ship status UX: ${JSON.stringify(inlined)}`);
+    }
+  }
+  for (const required of [
+    "Shape only.",
+    "Every value comes from something you actually observed",
+    "This\nfile carries no gate",
+    "Статус ревью:",
+    "Review timeline:",
+  ]) {
+    assertIncludes("templates/ship-status-ux.md", required, JSON.stringify(required));
+  }
+
+  // M5 — the coverage rule keeps its enforcement clause in both stage skills
+  // and delegates only the field shape to the report template.
+  for (const relativePath of ["skills/mono-implement/SKILL.md", "skills/mono-preflight/SKILL.md"]) {
+    for (const required of [
+      "each with a `pass | deferred | not-run` status and one line of evidence",
+      "in the `verification_items` shape that `templates/orchestrator-report.md` defines",
+      "The stage cannot claim completion while an item is silently missing; `deferred`/`not-run` are valid only with a recorded reason in the evidence.",
+      "`templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.",
+    ]) {
+      assertIncludes(relativePath, required, JSON.stringify(required));
+    }
+  }
+
+  // M6 — one printed certificate block; the Linear form is described, not
+  // reprinted, and the Russian lead stays required for it.
+  const preflightBody = read("skills/mono-preflight/SKILL.md");
+  const certificateCore = "mono-preflight certificate\nPreflight: <ready|blocked|drift-candidate|needs-human>";
+  if (preflightBody.split(certificateCore).length - 1 !== 1) {
+    fail("mono-preflight must print the certificate machine core exactly once");
+  }
+  for (const required of [
+    "The certificate block above, unchanged, with one addition",
+    "It is required in the Linear comment/resource form and absent from the chat and report form — never optional in either direction.",
+  ]) {
+    assertIncludes("skills/mono-preflight/SKILL.md", required, JSON.stringify(required));
+  }
+
+  // Dispatch-generator audience guidance — one home in orchestration.md.
+  for (const required of [
+    "### Generated dispatch as audience adapter",
+    "orchestration.workerAudience",
+    "It may not soften, reword,\n  or replace a rule",
+    "is a floor, not a ceiling",
+    "Facts are never compressed for either column.",
+  ]) {
+    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
+  }
+}
+
 validateSkills();
+validateReadFirstTierContract();
 validateRetiredAdapterReferenceAllowlist();
 validateTemplateSections();
 validateArtifactContractParity();

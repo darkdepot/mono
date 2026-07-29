@@ -18,15 +18,22 @@ merge/deploy and closeout.
 
 Read first:
 
+Read now — every run of this stage loads all of these:
+
 1. `AGENTS.md`
 2. `references/orchestration.md`
-3. `references/lifecycle.md`
-4. `references/questioning.md`
-5. `references/readiness-gates.md`
-6. `references/human-friendly-output.md`
-7. `templates/orchestrator-dispatch.md`
-8. `templates/orchestrator-brief.md`
-9. `templates/orchestrator-report.md`
+3. `references/human-friendly-output.md`
+4. `templates/orchestrator-dispatch.md`
+5. `templates/orchestrator-brief.md`
+6. `templates/orchestrator-report.md`
+
+Read when — load the file only when its condition is true for this run:
+
+- `references/lifecycle.md` — when a Linear lifecycle move is sequenced or a queued lifecycle mutation is applied.
+- `references/readiness-gates.md` — when a risk class or a stage readiness gate has to be decided for a wave.
+- `references/questioning.md` — when an Always-ask decision has to be put to the owner.
+
+Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
 When to use:
 

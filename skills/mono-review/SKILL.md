@@ -11,15 +11,22 @@ Use this skill to review the quality of Mono workflow artifacts before handoff, 
 
 Read first:
 
+Read now — every run of this stage loads all of these:
+
 1. `AGENTS.md`
-2. `references/artifact-rules.md`
+2. `references/review-rubric.md`
 3. `references/artifact-quality.md`
 4. `references/readiness-gates.md`
-5. `references/execution-quality.md`
-6. `references/review-rubric.md`
-7. `references/human-friendly-output.md`
-8. `templates/review-output.md`
-9. `references/repair-machine.md`
+5. `templates/review-output.md`
+
+Read when — load the file only when its condition is true for this run:
+
+- `references/artifact-rules.md` — when artifact ownership, language, or placement is part of the finding.
+- `references/execution-quality.md` — when the review covers implementation or verification evidence rather than artifact text.
+- `references/human-friendly-output.md` — when the review outcome is rendered for a human or queued as Linear-facing text.
+- `references/repair-machine.md` — when the review classifies or feeds an artifact repair transaction.
+
+Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
 Modes:
 

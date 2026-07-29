@@ -11,20 +11,29 @@ Use this wrapper around the project repo's configured ship, documentation, and r
 
 Read first:
 
+Read now — every run of this stage loads all of these:
+
 1. `AGENTS.md`
-2. `skills/mono-preflight/SKILL.md`
-3. `skills/mono-review/SKILL.md`
-4. `skills/mono-check/SKILL.md`
-5. `references/contracts/prd.md`
-6. `references/contracts/tech-spec.md`
-7. `references/artifact-rules.md`
-8. `references/readiness-gates.md`
-9. `references/execution-quality.md`
-10. `references/install.md`
-11. `references/ship-feedback-loop.md`
-12. `references/human-friendly-output.md`
-13. `references/issue-only-lane.md`
-14. `templates/ship-output.md`
+2. `references/contracts/prd.md`
+3. `references/contracts/tech-spec.md`
+4. `references/readiness-gates.md`
+5. `references/ship-feedback-loop.md`
+6. `references/human-friendly-output.md`
+7. `templates/ship-output.md`
+
+Read when — load the file only when its condition is true for this run:
+
+- `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`, or when the parentless ship gate routes a candidate.
+- `references/install.md` — when the shipped change is a skill-pack delivery that installs or cuts over the pack.
+- `skills/mono-preflight/SKILL.md` — when the recovered preflight certificate has to be judged rather than read.
+- `skills/mono-review/SKILL.md` — when `mono-review pre-ship` is run or its report has to be judged from this stage.
+- `skills/mono-check/SKILL.md` — when `mono-check pre-ship` is run or reported from this stage.
+- `references/artifact-rules.md` — when ownership, language, or placement of a Linear artifact or comment is in question.
+- `references/execution-quality.md` — when scope, drift, or verification evidence in the diff has to be judged.
+- `templates/ship-status-ux.md` — when running interactively and a ship status is composed for a user.
+- `templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.
+
+Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
 Workflow:
 
@@ -68,53 +77,29 @@ User-facing ship status UX:
   - `needs-human`: a specific decision is needed; name the decision, not only the verdict.
   - `blocked`: the workflow cannot proceed because required context, auth, tools, PR state, or Linear state is unavailable.
   - `timed-out`: waiting did not settle; name what is still pending.
-- Для `green`: «PR готов к `mono-deploy`; `mono-ship` не мержил и не деплоил.»
-- Для `needs-human` при зелёном ревью/CI, но с явным deploy approval: «PR готов к деплою, жду твоего подтверждения.» Не звучит как блокер.
-- Для `needs-human` при нерешённом ревью-фидбеке: «Нужно решение по ревью-фидбеку» и список конкретных нерешённых пунктов.
-- Для `blocked`: назови отсутствующий пресреквизит и точный следующий unblock-шаг.
-- Для `timed-out`: назови, что не устаканилось, и известно ли, что PR в целом безопасен.
-- Сделай статус ревью понятным. Укажи кто/что ревьюил, что нашли, что починили, что не решено, статус CI, безопасен ли PR с точки зрения ревью.
-- Если resolver или documentation workflow пушили исправления, укажи точную версию кода после этого пуша и что ревью-статус был перепроверен.
-- Для bug- и performance-работ: оригинальное воспроизведение или базовый замер, доказательство исправления и регрессионного теста или задокументированного gap.
-- Включи компактную границу «проверено / не проверено». Если ручное browser QA, production smoke, mobile QA, верификация деплоя или другие поверхности не запускались — скажи прямо.
-- Не сваливай фазовые имена, git-директивы или внутреннюю workflow-телеметрию, если они не объясняют статус.
-- Заверши конкретными вариантами действий, когда нужно решение человека.
-- Варианты должны объяснять последствия и содержать рекомендацию, когда состояние ревью/CI делает один путь явно предпочтительным.
+- Whatever renders the status, it must carry all of this content: who or what
+  reviewed and the outcome; what was found and what was fixed; the count and
+  state of unresolved threads; CI state; whether the PR is review-safe; and,
+  when a resolver or documentation workflow pushed fixes, the exact head SHA
+  after that push plus the fact that review status was re-checked against it.
+- For bug and performance work the status carries the original reproduction or
+  baseline, the proof of the fix, and the regression proof or the documented
+  gap.
+- The status carries a compact checked / not-checked boundary and says plainly
+  when manual browser QA, production smoke, mobile QA, deploy verification, or
+  any other surface was not run.
+- Do not dump phase names, git directives, or internal workflow telemetry that
+  does not explain the status. When a human decision is needed, end with
+  concrete options that state their consequences, and recommend one when review
+  or CI state makes a path clearly preferable.
 
-Статус ревью при наличии PR:
-
-```text
-Статус ревью:
-- Preflight: <ready/blocked/drift-candidate/needs-human/not run>; <кратко о локальной готовности>.
-- Кто/что ревьюил: <pre-ship review + внешний авто-ревьюер PR — run/skipped/not configured; итог>.
-- Documentation workflow: <run/skipped/not configured>; <изменил ли head — yes/no + итог>.
-- Bug/perf proof: <not applicable or original symptom/baseline + fix proof + regression proof/gap>.
-- Что нашли и что починили: <краткий список исправлений или «нет»>.
-- Нерешённые треды: <количество/статус>.
-
-Проверки CI:
-- <блокирующая проверка>: <состояние>.
-- <прочие релевантные проверки>: <состояние или «блокирующих нет»>.
-
-Проверено:
-- <ревью/проверки/Linear-статус — что реально смотрели>.
-
-Не проверено:
-- <ручное QA/прод/браузер/мобайл/деплой — что не запускали>.
-```
-
-When a feedback loop ran, include a short timeline:
-
-```text
-Review timeline:
-1. Before PR: pre-ship review passed and scope matched the Linear Issue.
-2. After PR: documentation workflow updated repo docs in `<sha>` or made no changes.
-3. CI settled green for latest head `<sha>`.
-4. Greptile left 1 nit.
-5. Nit fixed in `<sha>`.
-6. Re-check: Greptile passed, unresolved threads: 0, merge state: `CLEAN`.
-7. `mono-ship green certificate` recorded for `<sha>`.
-```
+Interactive rendering — the Russian status copy, the «Статус ревью» block, and
+the «Review timeline» worked example live in `templates/ship-status-ux.md` and
+are read at composition time when a user is present. Under orchestration this
+stage runs AFK with no user on its side: it renders none of them, and the
+content requirements above are satisfied by the report and the certificate
+instead. Moving that copy out changes nothing about which gates run or what the
+status must contain.
 
 Green certificate shape:
 

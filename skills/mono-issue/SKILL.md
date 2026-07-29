@@ -11,14 +11,21 @@ Use this skill as the front door for genuinely one-PR, projectless work that qua
 
 Read first:
 
+Read now — every run of this stage loads all of these:
+
 1. `AGENTS.md`
 2. `references/contracts/issue.md`
 3. `references/issue-only-lane.md`
-4. `references/artifact-rules.md`
-5. `references/readiness-gates.md`
-6. `references/human-friendly-output.md`
-7. `skills/mono-idea/SKILL.md`
-8. `templates/issue.md`
+4. `references/readiness-gates.md`
+5. `references/human-friendly-output.md`
+6. `templates/issue.md`
+
+Read when — load the file only when its condition is true for this run:
+
+- `references/artifact-rules.md` — when ownership, language, or placement of a Linear artifact or comment is in question.
+- `skills/mono-idea/SKILL.md` — when the request has to be routed back to discovery or the Idea boundary is in play.
+
+Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
 Contract application:
 
