@@ -481,7 +481,12 @@ function checkGateAck(log, gateAck, nowMs) {
   emitEvent(
     "gate-ack",
     log.issue,
-    `gate-ack ${path.basename(gateAck.ackPath)} status ${gateAck.status} is fresh and registry-correlated (version ${version})`,
+    // The FULL path, never the basename: the mailbox and worktree-fallback
+    // acks share a filename and can coexist while disagreeing, so a basename
+    // would leave the consumer free to coverage-check a different artifact
+    // than the one validated here — and authorize a lifecycle move on gate
+    // evidence this watcher never saw.
+    `gate-ack ${gateAck.ackPath} status ${gateAck.status} is fresh and registry-correlated (version ${version})`,
     `gate-ack:${gateAck.ackPath}:${version}`,
     nowMs
   );

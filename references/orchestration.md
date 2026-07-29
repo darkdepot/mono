@@ -385,6 +385,16 @@ Order, and it is the whole protocol:
    the orchestrator and the watcher read the fallback path as well as the
    mailbox one, because an ack the watcher cannot see reads as a dead worker
    and would send the healing ladder against a worker that is merely waiting.
+
+   Because the two locations share a filename they can coexist and disagree —
+   a leftover mailbox ack beside the fallback ack of the worker paused right
+   now. One resolution rule settles it everywhere: evaluate both, keep the
+   candidates that are fresh for the current attempt's log, and take the newest
+   of those. The `gate-ack` watcher event names the FULL path it validated, and
+   the coverage check in step 4 is performed on that exact artifact — never on
+   "the ack" resolved a second time, which is how an orchestrator ends up
+   authorizing a move against gate evidence nobody validated. A transport with
+   no watcher event applies the same rule when it polls.
 4. Lifecycle application. On `status: gates-passed` the orchestrator first
    checks the ack against the gate list it dispatched — set equality on the
    gate names, not a count, and every one `pass` — because the ack is the only

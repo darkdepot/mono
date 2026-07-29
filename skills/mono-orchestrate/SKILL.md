@@ -154,8 +154,9 @@ Workflow states:
      `mono-implement` dispatch, or an issue-only activation — runs the
      two-phase handshake: emit the pre-move snapshot with the Gate Phase block
      filled, apply no move until the worker's `gates-passed` gate-ack, check
-     that ack against the gate list you dispatched — set equality on the gate
-     names, never a count — then apply every move with
+     the exact ack artifact the event named — mailbox and fallback share a
+     filename and can disagree — against the gate list you dispatched, by set
+     equality on the gate names, never a count, then apply every move with
      read-back, resume that same worker with the read-back as an explicit
      snapshot amendment, and consume the ack by renaming it
      `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in the same immediate post-resume

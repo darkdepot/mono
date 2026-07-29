@@ -5235,6 +5235,23 @@ function validateWatcherGateAckBehavior() {
       }
     }
 
+    // The event must identify WHICH artifact was validated: mailbox and
+    // fallback share a filename, and MONO-313 has both present and disagreeing.
+    const ackLineFor = (issue) =>
+      stdout.split("\n").find((line) => line.includes(`EVENT:gate-ack ${issue}`)) ?? "";
+    for (const [issue, expectedDir] of [
+      ["MONO-301", path.join(fixtureRoot, "reports")],
+      ["MONO-311", path.join(fixtureRoot, "worktrees", "MONO-311", ".orchestrator")],
+      ["MONO-313", path.join(fixtureRoot, "worktrees", "MONO-313", ".orchestrator")],
+    ]) {
+      const line = ackLineFor(issue);
+      if (!line.includes(path.join(expectedDir, `${issue}-gate-ack-a1.json`))) {
+        fail(
+          `watcher gate-ack event for ${issue} must name the full path of the artifact it validated, got: ${JSON.stringify(line)}`
+        );
+      }
+    }
+
     // A healthy gate pause must not read as death, wherever the ack landed.
     for (const [issue, label] of [
       ["MONO-301", "mailbox"],
@@ -6162,6 +6179,9 @@ function validateTwoPhaseDispatchHandshake() {
     "is a stuck\n  handshake, not a healthy wait",
     "That is an age window rather than a ceiling",
     "an\n  ack dated in the future buys no suppression at all",
+    "Because the two locations share a filename they can coexist and disagree",
+    "The `gate-ack` watcher event names the FULL path it validated",
+    "never on\n   \"the ack\" resolved a second time",
     // Preflight and ship dispatches carry no lifecycle move, so an ack there
     // is spurious however well-formed it looks.
     "is spurious and neither delivers nor suppresses",
@@ -6219,7 +6239,8 @@ function validateTwoPhaseDispatchHandshake() {
     "never a «Решил сам:» decision",
     "A `gate-ack` event is a delivery event, not a liveness one",
     "waiting by contract — never\n     heal it",
-    "check\n     that ack against the gate list you dispatched",
+    "check\n     the exact ack artifact the event named",
+    "against the gate list you dispatched, by set\n     equality on the gate names, never a count",
     "consume the ack by renaming it\n     `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in the same immediate post-resume\n     registry update",
     "an ack\n     left in place keeps suppressing that worker's `stall` and `dead` events",
     "while consuming it before the resumed writer is registered leaves a window",
@@ -6272,6 +6293,9 @@ function validateTwoPhaseDispatchHandshake() {
     "A dispatch that carried no\n     Delivery move has no ack and no amendment, and needs none",
     "Either way the state you evaluate must SHOW the Project in Delivery",
     "A dispatch that carried no activation move — a retry on an Issue\n     already in its started state — has no ack and no amendment either",
+    // The closing summary must not move the issue-only delivery gate after the
+    // ack it exists to guard.
+    "that lane's `mono-check delivery`, which gates the move this dispatch\ncarries and therefore runs before the ack, never after it",
     "a dispatch that\n   carried none needed none",
   ]) {
     if (!branch.includes(required)) {

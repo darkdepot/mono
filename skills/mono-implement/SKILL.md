@@ -201,8 +201,12 @@ this branch is only how `start-checkpoint` executes under it.
    question to the user.
 
 Ordering in this branch mirrors the interactive one: identity gate, snapshot
-context, approval and findings, context seam, gate pause, then the lane's own
-delivery-check and lifecycle order. Queuing a mutation is how this mode
+context, approval and findings, context seam, and — on the issue-only lane
+only — that lane's `mono-check delivery`, which gates the move this dispatch
+carries and therefore runs before the ack, never after it. Then the gate
+pause; then, after the resume, the post-move confirmation and, on the
+Project-first lane, its delivery evaluation against the amended state.
+Queuing a mutation is how this mode
 performs a Linear write, which is why
 a gate that must precede a lifecycle change must also precede its queuing —
 and the gate-ack is how this mode places those same gates ahead of a lifecycle
