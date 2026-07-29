@@ -66,11 +66,14 @@ directory beside the lockfile:
   `../.mono-agent-workflow/scripts/<script>.mjs`.
 
 The runtime scripts are the issue-only lane resolver
-`.mono-agent-workflow/scripts/resolve-issue-context.mjs` and the pack guard
-`.mono-agent-workflow/scripts/verify-pack-state.mjs`. Workers use the latter to
-compare their dispatch identity with the installed lock at every stage start or
-resume; future breaking installs use its quiescence probe. Each script's hash
-is recorded in the lockfile
+`.mono-agent-workflow/scripts/resolve-issue-context.mjs`, the pack guard
+`.mono-agent-workflow/scripts/verify-pack-state.mjs`, and the orchestration
+heartbeat watcher `.mono-agent-workflow/scripts/watch-workers.mjs`. Workers use
+the pack guard to compare their dispatch identity with the installed lock at
+every stage start or resume; future breaking installs use its quiescence probe.
+The orchestrator launches the watcher from the installed pack-private copy, so
+it does not depend on a checkout of this repository. Each script's hash is
+recorded in the lockfile
 (`runtimeScripts`), so `--check` fails when an installed runtime script is
 missing, edited, or stale.
 
