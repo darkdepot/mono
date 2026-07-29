@@ -5289,9 +5289,7 @@ function validateWatcherGateAckBehavior() {
     for (const [issue, label] of [
       ["MONO-301", "gates-passed"],
       ["MONO-302", "blocked"],
-      ["MONO-306", "gate-ack beside a stage report"],
       ["MONO-311", "worktree-fallback"],
-      ["MONO-313", "fresh fallback beside a stale mailbox ack"],
     ]) {
       if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must emit a gate-ack event`);
@@ -5310,6 +5308,10 @@ function validateWatcherGateAckBehavior() {
       ["MONO-315", "no-gate-phase-stage"],
       ["MONO-316", "duplicate-gate-name"],
       ["MONO-320", "late-ack-from-a-superseded-attempt"],
+      ["MONO-306", "unconsumed ack beside a completed stage report"],
+      ["MONO-313", "two-files-for-one-attempt"],
+      ["MONO-322", "future-dated"],
+      ["MONO-324", "near-future"],
       ["MONO-323", "ambiguous-tie"],
       ["MONO-325", "leftover-candidate-after-consumption"],
     ]) {
@@ -5325,7 +5327,6 @@ function validateWatcherGateAckBehavior() {
     for (const [issue, expectedDir] of [
       ["MONO-301", path.join(fixtureRoot, "reports")],
       ["MONO-311", path.join(fixtureRoot, "worktrees", "MONO-311", ".orchestrator")],
-      ["MONO-313", path.join(fixtureRoot, "worktrees", "MONO-313", ".orchestrator")],
     ]) {
       const line = ackLineFor(issue);
       if (!line.includes(path.join(expectedDir, `${issue}-gate-ack-a1.json`))) {
@@ -5339,7 +5340,6 @@ function validateWatcherGateAckBehavior() {
     for (const [issue, label] of [
       ["MONO-301", "mailbox"],
       ["MONO-311", "worktree fallback"],
-      ["MONO-313", "worktree fallback beside a stale mailbox ack"],
     ]) {
       if (new RegExp(`EVENT:(stall|dead) ${issue}\\b`).test(stdout)) {
         fail(`a fresh gates-passed gate-ack in the ${label} must suppress stall and dead for that worker`);
@@ -5363,6 +5363,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-320", "late ack written by a superseded attempt"],
       ["MONO-321", "gate-ack whose pause outlived the suppression bound"],
       ["MONO-322", "future-dated gate-ack"],
+      ["MONO-313", "two ack files for one attempt"],
       ["MONO-323", "ambiguous tie between mailbox and fallback acks"],
       ["MONO-324", "near-future gate-ack"],
       ["MONO-325", "leftover ack candidate whose attempt was already consumed"],
@@ -6265,13 +6266,16 @@ function validateTwoPhaseDispatchHandshake() {
     "is a stuck\n  handshake, not a healthy wait",
     "That is an age window rather than a ceiling",
     "an\n  ack dated in the future buys no suppression at all",
-    "Because the two locations share a filename they can coexist and disagree",
     "`gate-ack` watcher event names the FULL path it validated",
     "never on\n   \"the ack\" resolved a second time",
-    "when two of them tie on that timestamp, take neither",
+    "An attempt has exactly ONE ack",
+    "that is a contradiction about which gates ran, and it resolves to no\n   ack at all",
+    "Do not rank them",
     "Consumption is per ATTEMPT, not per file",
-    "renames every candidate for that attempt in BOTH locations",
-    "no\n   remaining file for that attempt is an ack at all",
+    "renames every\n   file for that attempt in BOTH locations",
+    "A completed stage report outranks an unconsumed ack",
+    "consume it, and never read it as a fresh signal to apply\n   moves and resume again",
+    "no remaining file for that\n   attempt is an ack",
     // Preflight and ship dispatches carry no lifecycle move, so an ack there
     // is spurious however well-formed it looks.
     "is spurious and neither delivers nor suppresses",
@@ -6336,7 +6340,8 @@ function validateTwoPhaseDispatchHandshake() {
     "while consuming it before the resumed writer is registered leaves a window",
     // The watcher emits gate-ack for a blocked ack too; the monitor state must
     // branch instead of applying moves on every event.
-    "Read the ack\n     and branch on its `status`",
+    "Otherwise read the ack\n     and branch on its `status`",
+    "If this\n     stage's report is already present, execution has run",
     "`blocked` applies\n     no move at all",
     "renamed `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
   ]) {

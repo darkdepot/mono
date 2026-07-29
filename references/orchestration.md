@@ -386,22 +386,31 @@ Order, and it is the whole protocol:
    mailbox one, because an ack the watcher cannot see reads as a dead worker
    and would send the healing ladder against a worker that is merely waiting.
 
-   Because the two locations share a filename they can coexist and disagree —
-   a leftover mailbox ack beside the fallback ack of the worker paused right
-   now. One resolution rule settles it everywhere: evaluate both, keep the
-   candidates that are fresh for the current attempt's log, and take the newest
-   of those — and when two of them tie on that timestamp, take neither, because
-   an ambiguous ack is the one case where guessing costs the gate itself.
-   Consumption is per ATTEMPT, not per file: renaming only the artifact that
-   was selected leaves the other one to become current on the next scan, so
-   consuming an ack renames every candidate for that attempt in BOTH locations.
-   A consumed marker in either location is a tombstone: while one exists, no
-   remaining file for that attempt is an ack at all. The
+   An attempt has exactly ONE ack. The two locations are two places it may
+   live, never two acks to choose between: if a file for that attempt exists in
+   both, that is a contradiction about which gates ran, and it resolves to no
+   ack at all. Do not rank them — not by freshness, not by recency, not by
+   which one parses. Every such rule hands the gate to whichever artifact
+   scores best, which is how a stale, half-written, or future-dated file comes
+   to authorize a lifecycle move. Reading nothing costs a stall event that
+   reconciles; reading the wrong one costs the gate.
+   Consumption is per ATTEMPT, not per file: consuming an ack renames every
+   file for that attempt in BOTH locations, and a consumed marker in either
+   location is a tombstone — while one exists, no remaining file for that
+   attempt is an ack. A future-dated ack is not read at all, so it is neither
+   delivered nor able to suppress. The
    `gate-ack` watcher event names the FULL path it validated, and
    the coverage check in step 4 is performed on that exact artifact — never on
    "the ack" resolved a second time, which is how an orchestrator ends up
    authorizing a move against gate evidence nobody validated. A transport with
    no watcher event applies the same rule when it polls.
+
+   A completed stage report outranks an unconsumed ack. The two coexist exactly
+   in the crash window above — the resume succeeded, the worker ran and
+   reported, and the orchestrator died before consuming the ack. The report
+   proves execution already happened, so the ack is consumption recovery there
+   and nothing else: consume it, and never read it as a fresh signal to apply
+   moves and resume again.
 4. Lifecycle application. On `status: gates-passed` the orchestrator first
    checks the ack against the gate list it dispatched — set equality on the
    gate names, not a count, and every one `pass` — because the ack is the only

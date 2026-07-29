@@ -417,7 +417,7 @@ function readGateAckAt(ackPath, log) {
 // Both locations are evaluated and the CURRENT candidate wins: a structurally
 // valid mailbox ack left over from an earlier write must not shadow the fresh
 // fallback ack of the worker actually paused right now.
-function readGateAck(reportsDir, log, registryEntry) {
+function readGateAck(reportsDir, log, registryEntry, nowMs) {
   // No attempt number means no attempt identity to bind to. Logs are numbered
   // from -a1 by contract, so this is a malformed or legacy log; failing closed
   // costs only a suppression the handshake never promised for it.
@@ -440,24 +440,41 @@ function readGateAck(reportsDir, log, registryEntry) {
     }
   }
 
-  const candidates = ackDirs
+  // An attempt has exactly ONE ack. The mailbox path and the sandbox fallback
+  // are two places it MAY live, never two acks to choose between.
+  //
+  // Choosing between them was the mistake. Every ranking rule tried here —
+  // newest wins, fresh-first, valid-only — handed the gate to whichever file
+  // happened to score best, which is how a stale, a mid-write, or a
+  // future-dated artifact could outrank the current one and authorize a
+  // lifecycle move on superseded evidence. Two files for one attempt is a
+  // contradiction about which gates ran, and a contradiction fails closed:
+  // delivering nothing costs a stall the orchestrator reconciles, delivering
+  // the wrong ack costs the gate itself.
+  //
+  // Presence is tested with lstat, which opens nothing: a hostile entry counts
+  // toward the contradiction without being read, and the survivor is validated
+  // by readGateAckAt below.
+  const present = ackDirs
     .map((dir) => path.join(dir, ackName))
-    .map((ackPath) => readGateAckAt(ackPath, log))
-    .filter((candidate) => candidate !== null);
-  if (candidates.length === 0) return null;
-  const fresh = candidates.filter((candidate) => isFreshForLog(candidate.stat, log));
-  const pool = fresh.length > 0 ? fresh : candidates;
-  const newestMs = Math.max(...pool.map((candidate) => candidate.stat.mtimeMs));
-  const newest = pool.filter((candidate) => candidate.stat.mtimeMs === newestMs);
-  // A tie is ambiguous, and ambiguity fails closed. Equal mtimes are reachable
-  // on a coarse-resolution filesystem or when a copy preserves timestamps, and
-  // the two locations are allowed to disagree — so picking either one by
-  // position would let a leftover mailbox `gates-passed` shadow the current
-  // fallback `blocked` and authorize a move on failed gates. Delivering
-  // nothing costs a stall event the orchestrator can reconcile; delivering the
-  // wrong ack costs the gate.
-  if (newest.length !== 1) return null;
-  return newest[0];
+    .filter((ackPath) => {
+      try {
+        fs.lstatSync(ackPath);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  if (present.length !== 1) return null;
+
+  const ack = readGateAckAt(present[0], log);
+  if (ack === null) return null;
+  // Future-dated acks are rejected HERE, at the one read boundary, not only in
+  // the suppression branch: a check that lives in one consumer still lets the
+  // artifact be delivered and still lets it count as evidence. The worker sets
+  // its own mtime on the fallback path, and this watcher shares its clock.
+  if (ack.stat.mtimeMs > nowMs) return null;
+  return ack;
 }
 
 function hasPackIdentity(value) {
@@ -515,8 +532,12 @@ function checkGateAck(log, gateAck, nowMs) {
   );
 }
 
-function checkReport(log, reportsDir, registryEntry, nowMs) {
-  if (!isCorrelatedDeliveryLog(log, registryEntry)) return;
+// The stage report for this log, when one exists that is fresh and fully
+// correlated. Split out of checkReport so gate-ack delivery can defer to it:
+// a completed stage report proves execution already resumed, and v2 freshness
+// semantics stay exactly as they were.
+function correlatedReport(log, reportsDir, registryEntry) {
+  if (!isCorrelatedDeliveryLog(log, registryEntry)) return null;
 
   const reportPath = path.join(reportsDir, `${log.issue}-${log.stage}.json`);
   let reportStat;
@@ -525,19 +546,25 @@ function checkReport(log, reportsDir, registryEntry, nowMs) {
     reportStat = fs.statSync(reportPath);
     report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
   } catch {
-    return;
+    return null;
   }
-  if (!reportStat.isFile()) return;
+  if (!reportStat.isFile()) return null;
 
   // This is intentionally the exact v2 freshness predicate. Requiring the
   // report to be as new as the log would create false negatives when Codex
   // appends shutdown-tail events after the worker writes its report.
-  if (!isFreshForLog(reportStat, log)) return;
+  if (!isFreshForLog(reportStat, log)) return null;
 
-  if (report?.issue !== log.issue || report?.stage !== log.stage || !hasPackIdentity(report)) return;
+  if (report?.issue !== log.issue || report?.stage !== log.stage || !hasPackIdentity(report)) return null;
   for (const field of ["packVersion", "sourceCommit", "surfaceRevision"]) {
-    if (report[field] !== registryEntry[field]) return;
+    if (report[field] !== registryEntry[field]) return null;
   }
+  return { reportPath, stat: reportStat };
+}
+
+function checkReport(log, report, nowMs) {
+  if (report === null) return;
+  const { reportPath, stat: reportStat } = report;
 
   const version = `${reportStat.mtimeMs}:${reportStat.size}`;
   if (emittedReportVersions.get(reportPath) === version) return;
@@ -704,11 +731,20 @@ function scan() {
     // One ack snapshot per log per scan, read once and shared: the delivery
     // check and the liveness check must never disagree about whether this
     // worker is in its gate pause.
-    const gateAck = isCorrelatedGateAckLog(log, registryEntry)
-      ? readGateAck(reportsDir, log, registryEntry)
-      : null;
+    // A completed stage report outranks an unconsumed gate-ack. That pairing
+    // is reachable exactly as the protocol's crash window describes: the
+    // resume succeeded and the worker finished, but the orchestrator died
+    // before consuming the ack. Delivering the ack there would tell it to
+    // apply the moves and resume a worker that has already run — a replay. So
+    // the report is read first, and while it stands the ack is consumption
+    // recovery, not a signal.
+    const report = correlatedReport(log, reportsDir, registryEntry);
+    const gateAck =
+      report === null && isCorrelatedGateAckLog(log, registryEntry)
+        ? readGateAck(reportsDir, log, registryEntry, nowMs)
+        : null;
+    checkReport(log, report, nowMs);
     checkGateAck(log, gateAck, nowMs);
-    checkReport(log, reportsDir, registryEntry, nowMs);
     checkLog(log, gateAck, reportsDir, registry, nowMs);
   }
   checkRegistry(registry, nowMs);

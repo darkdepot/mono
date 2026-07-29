@@ -200,7 +200,9 @@ Workflow states:
      the ladder nudge → respawn → session rotation; alert the user only when
      the ladder is exhausted. Record every healing step and its result in
      the ledger (Heartbeat in `references/orchestration.md`).
-   - A `gate-ack` event is a delivery event, not a liveness one. Read the ack
+   - A `gate-ack` event is a delivery event, not a liveness one. If this
+     stage's report is already present, execution has run: consume the ack as
+     recovery and do not re-apply or re-resume anything. Otherwise read the ack
      and branch on its `status`: `gates-passed` applies the dispatch's
      lifecycle moves with read-back and resumes that worker; `blocked` applies
      no move at all and waits for the ordinary stage report that path also
