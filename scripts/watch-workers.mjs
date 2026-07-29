@@ -348,6 +348,11 @@ function readGateAckAt(ackPath, log) {
   if (ack.status !== "gates-passed" && ack.status !== "blocked") return null;
   if (!Array.isArray(ack.gates) || ack.gates.length === 0) return null;
   if (!ack.gates.every(isGateEntry)) return null;
+  // Gate names are unique. A repeated name can otherwise stand in for an
+  // omitted one under any coverage check that counts entries rather than
+  // comparing the set, and this artifact authorizes lifecycle mutations.
+  const gateNames = ack.gates.map((entry) => entry.gate);
+  if (new Set(gateNames).size !== gateNames.length) return null;
   if (ack.status === "gates-passed" && !ack.gates.every((entry) => entry.status === "pass")) return null;
   return { ackPath, stat, status: ack.status };
 }

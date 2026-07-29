@@ -357,9 +357,13 @@ Order, and it is the whole protocol:
    }
    ```
 
-   `gates` is non-empty and names every gate of this dispatch's gate list;
+   `gates` is non-empty and carries each gate name exactly once, and its set of
+   names equals this dispatch's gate list exactly — a repeated name would
+   otherwise stand in for an omitted one under any coverage check that counts
+   entries instead of comparing the set.
    `gates-passed` requires every entry to be `pass`, so an ack that claims
-   `gates-passed` while carrying a blocked or missing gate is self-contradictory
+   `gates-passed` while carrying a blocked, duplicated, or missing gate
+   is self-contradictory
    and is treated as no ack at all.
 
    The gate-ack is not a stage report: it has its own path, its own two-value
@@ -372,8 +376,9 @@ Order, and it is the whole protocol:
    mailbox one, because an ack the watcher cannot see reads as a dead worker
    and would send the healing ladder against a worker that is merely waiting.
 4. Lifecycle application. On `status: gates-passed` the orchestrator first
-   checks the ack against the gate list it dispatched — every gate named, and
-   every one `pass` — because the ack is the only evidence those gates ran:
+   checks the ack against the gate list it dispatched — set equality on the
+   gate names, not a count, and every one `pass` — because the ack is the only
+   evidence those gates ran:
    a gate list the ack does not cover is a blocked ack, not a passed one.
    Rejecting an ack has its own consumption step, because a rejected ack that
    stays in place goes on suppressing liveness for a worker nobody is about to

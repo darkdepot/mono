@@ -5021,6 +5021,15 @@ function validateWatcherGateAckBehavior() {
       ])
     );
     addFixture("MONO-310", gateAck("MONO-310", "gates-passed", [{ gate: "pack identity gate", status: "pass" }]));
+    // A repeated gate name could stand in for an omitted one under a coverage
+    // check that counts entries instead of comparing the set.
+    addFixture(
+      "MONO-316",
+      gateAck("MONO-316", "gates-passed", [
+        { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+        { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+      ])
+    );
     // The documented sandbox fallback must be observed, or a worker that
     // acked from its worktree reads as dead during a contracted wait.
     addFixture("MONO-311", gateAck("MONO-311", "gates-passed"), { fallbackAck: true });
@@ -5087,6 +5096,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-312", "consumed-ack"],
       ["MONO-314", "foreign-stage-registry"],
       ["MONO-315", "no-gate-phase-stage"],
+      ["MONO-316", "duplicate-gate-name"],
     ]) {
       if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must stay silent`);
@@ -5117,6 +5127,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-304", "non-codex entry's ack"],
       ["MONO-314", "ack under a foreign-stage registry entry"],
       ["MONO-315", "ack beside a stage that has no gate phase"],
+      ["MONO-316", "ack repeating one gate name"],
     ]) {
       if (!stdout.includes(`EVENT:dead ${issue}`)) {
         fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
@@ -5957,6 +5968,8 @@ function validateTwoPhaseDispatchHandshake() {
     // consistent, checked against the dispatched gate list, and consumed
     // before the resume so it cannot go on suppressing liveness events.
     "`gates-passed` requires every entry to be `pass`",
+    "carries each gate name exactly once",
+    "set equality on the\n   gate names, not a count",
     "is self-contradictory\n   and is treated as no ack at all",
     "a gate list the ack does not cover is a blocked ack, not a passed one",
     // A rejected ack must be consumed too, or it suppresses liveness for a
