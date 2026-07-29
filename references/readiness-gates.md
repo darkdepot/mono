@@ -53,6 +53,8 @@ final diff disagree, use the higher risk class for review routing.
 - PRD-lite is explicitly accepted;
 - no-spec exception is explicit, low-risk, and recorded.
 
+Handoff-gate timing is pre-write. The handoff review runs on the draft package — draft Project brief, draft PRD, draft Tech Spec, and proposed Issue slicing — before the first durable Linear write of that package, so findings are fixed in the draft instead of in an artifact that is already written. "Before the first durable Linear write" means before the first Linear mutation the run applies, or, where the run queues mutations instead of applying them, before the first mutation it queues; the write-versus-queue substitution has one home in Orchestration Mode Precedence in `references/orchestration.md`. The required-versus-advisory split above is what decides the obligation: `standard`, `deep`, and `risky` cannot skip this review, while `tiny` stays advisory with the skip reason recorded. `mono-handoff` owns the order and applies the accepted fixes; `mono-review` accepts the draft package as its input in this mode and stays report-only.
+
 In the issue-only lane (`package_kind=issue-only`), the self-contained Issue is the sole artifact: `mono-review` and `mono-check` judge it against the issue-only contract and do not require a Project, PRD, or Tech Spec. The required-versus-advisory split is unchanged — standard issue-only still requires review to `ready`; tiny stays advisory with the reason recorded.
 
 ## Gate Outcomes

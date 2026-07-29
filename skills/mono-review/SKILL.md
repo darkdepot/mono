@@ -39,7 +39,7 @@ Modes:
 
 Workflow:
 
-1. Fetch fresh Linear Project, PRD, Tech Spec, and Issue state relevant to the mode.
+1. Fetch fresh Linear Project, PRD, Tech Spec, and Issue state relevant to the mode. In pre-write `handoff` mode the draft package supplied by `mono-handoff` is that state: review the draft bodies handed to you and read Linear only for the surrounding Project context.
 2. Fetch PR, branch, review, and merge state only when running `pre-ship`.
 3. Read project config for Linear-facing language and configured ship, documentation, review feedback, and deploy workflows.
 4. Classify risk using `references/readiness-gates.md`.
@@ -70,6 +70,7 @@ Rules:
 - Include a compact "checked / not checked" boundary. For `pre-ship`, distinguish inspected PR/review/CI state from manual QA, browser QA, deployment verification, or production smoke that did not run.
 - For PRD review, check actor -> capability -> benefit coverage and behavior-validation intent.
 - For Issue review, check two axes: whether a zero-context agent can execute it, and whether the Issue is durable rather than procedural or stale-prone.
+- `handoff` has a pre-write mode, entered when `mono-handoff` submits its drafted package — draft Project brief, draft PRD, draft Tech Spec, and proposed Issue slicing — as the review input before any of it is written to Linear. Authorization comes from that invoking `mono-handoff` run, the same way intake authorizes the issue-only draft review below; the reviewer never needs the artifacts to exist in Linear first. In this mode an absent Linear PRD, Tech Spec, or Issue is the expected state, never a missing artifact and never grounds for `blocked`: judge the supplied draft bodies exactly as if they were the written artifacts. Rubric, risk classification, required-versus-advisory split, and the verdict set are unchanged — only the input and its timing differ. This mode is also report-only: findings go back to `mono-handoff`, which fixes the draft.
 - For issue-only work, the self-contained Issue is the sole artifact and source of truth: review it against the issue-only contract — objective/scope/desired behavior, acceptance criteria with stable IDs, verification, non-goals, the recorded risk class, and a non-vacuous behavioral oracle — and do not require or expect a Project, PRD, or Tech Spec. This mode is entered in two situations. (a) Intake-authorized draft: `mono-issue` invokes it to run the mandatory pre-approval review on the drafted, non-startable Issue before the marker, `issue-only` label, and approval exist — the resolver still returns project-first at that point, so authorization comes from intake, not from the resolver, and the intentionally absent Project/PRD/Tech Spec is never treated as a missing artifact. (b) Resolved: the resolver already returns `package_kind=issue-only` for an activated package. In both situations, standard issue-only still needs a `ready` verdict; tiny stays advisory.
 - For bug and performance work, check that the Issue or PR carries a reproduction or feedback-loop contract and that pre-ship status reports fix proof.
 - For deep or risky work, apply the architecture lens from `references/execution-quality.md`: interface as test surface, deletion test, and no shallow pass-through modules.
@@ -96,7 +97,7 @@ Owner workflows:
 Hard boundaries:
 
 - If the only issue is project config or legacy vendored workflow drift, recommend `mono-check project-config`; use `node scripts/project-config.mjs --repo <project> --check` from upstream when available.
-- If the package is missing a required artifact, report `blocked` or `needs-fixes`; do not create it. In the issue-only lane the sole required artifact is the self-contained Issue — an absent Project, PRD, or Tech Spec is expected there, not a missing artifact.
+- If the package is missing a required artifact, report `blocked` or `needs-fixes`; do not create it. In the issue-only lane the sole required artifact is the self-contained Issue — an absent Project, PRD, or Tech Spec is expected there, not a missing artifact. In pre-write `handoff` mode the required artifacts are the draft bodies supplied as input; their absence from Linear is expected, not a missing artifact, and never `blocked`.
 - If a review is advisory because the work is tiny, say why it is advisory and what would make it required.
 - If scope is standard, deep, or risky, missing `mono-review` should be treated by `mono-check` as a readiness problem until review runs or an explicit exception is recorded.
 

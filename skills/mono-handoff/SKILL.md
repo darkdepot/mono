@@ -27,6 +27,7 @@ Read when — load the file only when its condition is true for this run:
 
 - `references/questioning.md` — when running interactively and this run puts a question or an Always-ask decision to the owner.
 - `references/lifecycle.md` — when this run creates or queues a Linear entity, or changes or queues its lifecycle state.
+- `references/orchestration.md` — when this run is driven from a `mono-orchestrate` session, whose handoff state delegates the pre-write package review to a Second Voice reviewer and governs when a Linear write becomes a queued mutation.
 - `references/repair-machine.md` — when the run is a targeted artifact repair rather than a fresh package.
 - `skills/mono-issue/SKILL.md` — when execution Issues are created or renewed from this stage.
 - `skills/mono-review/SKILL.md` — when a `mono-review` report has to be run or judged from this stage.
@@ -87,6 +88,7 @@ Draft package approval UX:
   - «Решил сам:» — non-contested product choices the agent took itself, each with a one-line reason; overriding any of them is a valid approval answer.
   - Issue slicing, `AFK`/`HITL` readiness, dependencies, and why this split is right.
   - Review gate, risk, and validation plan.
+  - The pre-write handoff review verdict, the fixes already applied to the draft, and anything explicitly deferred. The owner sees the package and its review in one touch, because the review already ran on the draft.
   - Decision options — every option must say which approval(s) it grants.
 - If there is one recommended path, name it plainly.
 
@@ -116,7 +118,7 @@ Issue
 Если что-то из этого не так - скажи, поправлю до записи в Linear.
 
 Review gate
-Risk: `standard`, потому что touched surface широкий: много Settings routes и визуальное качество. Перед Issue будет handoff review; перед PR нужен pre-ship review.
+Risk: `standard`, потому что touched surface широкий: много Settings routes и визуальное качество. Handoff review уже прошёл по этому черновику, до записи в Linear: вердикт `ready`, две находки поправил прямо в драфте (skeleton для logs, границы scope). Перед PR нужен pre-ship review.
 
 Validation
 Static: `pnpm typecheck`, lint/targeted tests по факту diff.
@@ -148,10 +150,11 @@ Plan: turn discovery into a Linear-backed execution package
 3. Prepare the PRD from product and workflow decisions.
 4. Prepare the Tech Spec from engineering and design review decisions.
 5. Classify risk and identify whether `mono-review handoff` is required or advisory.
-6. Present the Linear handoff package and review-gate plan for approval before durable writes.
-7. After approval, update Linear artifacts, run or report `mono-review handoff`, apply accepted artifact fixes through `mono-handoff`, and create Linear Issue(s) as execution contracts.
-8. Return the approved Issue link(s) and stop unless the user explicitly approved starting implementation.
-9. If implementation start is approved, route to `mono-implement` as the Delivery Start owner.
+6. Run the pre-write handoff review on the draft package and apply the accepted fixes to the draft, before any durable write.
+7. Present the Linear handoff package together with the review verdict for approval before durable writes.
+8. After approval, update Linear artifacts, record approval and the review disposition, and create Linear Issue(s) as execution contracts.
+9. Return the approved Issue link(s) and stop unless the user explicitly approved starting implementation.
+10. If implementation start is approved, route to `mono-implement` as the Delivery Start owner.
 
 No code changes happen during handoff.
 ```
@@ -206,19 +209,21 @@ Execution-mode workflow:
    - Issue slices are durable execution contracts, not copied PRD/Spec documents or brittle edit scripts.
    - Bug and performance Issues carry a reproduction or feedback-loop expectation.
    - Operational status, lifecycle gates, and workflow mechanics are absent from Linear-facing bodies.
-5. Present the draft package summary to the user for package approval before durable writes.
-6. If approval is missing, rejected, or changes are requested, do not create Issue(s), do not move the Project to Delivery, revise and re-present or stop as `BLOCKED / INCOMPLETE` with current links.
-7. After package approval, create or update PRD and Tech Spec in Linear.
-8. Update the Project body with only the product brief concerns: what, why, target outcome, in scope, and out of scope. Render headings in the project config language; default Russian headings are `Что`, `Зачем`, `Образ результата`, `Что входит`, and `Что не входит`.
-9. Record approval as a Linear comment. The comment should identify the approved package, PRD/Tech Spec links or intended titles, approved Issue slice titles or ids, and whether implementation may start.
-10. Run or report `mono-review handoff` when the gate is required or advisory.
-11. Present review verdict, blocking findings, proposed fixes, and decisions to the user before Issue creation.
-12. Record accepted review fixes, explicit deferrals, and final approval as a Linear comment.
-13. Apply accepted Project, PRD, Tech Spec, or Issue-plan fixes through `mono-handoff`.
-14. Create or update Linear Issue(s) from the approved package.
-15. Run or report `mono-check handoff` and `mono-check issue`.
-16. If the user explicitly approved implementation start, route to `mono-implement`. `mono-implement` owns Project-to-Delivery movement, `mono-check delivery`, the implementation-start comment, and implementation execution.
-17. If implementation start is not approved, stop after handoff and return the approved Issue link(s).
+5. Run the pre-write handoff review on the draft package, before the first durable Linear write:
+   - The reviewed subject is the draft itself: draft Project brief, draft PRD, draft Tech Spec, and the proposed Issue slicing, submitted to the reviewer as its input. Nothing of the package exists in Linear yet, and that absence is the expected state of this mode, not a missing artifact.
+   - "Before the first durable Linear write" means before the first Linear mutation this run applies — or, where the run queues mutations instead of applying them, before the first mutation it queues. The write-versus-queue substitution has one home, Orchestration Mode Precedence in `references/orchestration.md`; read the timing from there rather than from a second copy of the rule.
+   - The gate is required for `standard`, `deep`, and `risky` per `references/readiness-gates.md`: no durable write of the package happens until the review ran and its blocking findings are resolved, accepted, or explicitly deferred. For `tiny` the gate stays advisory, and skipping it requires the recorded skip reason.
+   - Interactive runs invoke `mono-review handoff` report-only over the draft package. Orchestrated runs delegate the same handoff-review contract to an independent Second Voice reviewer agent per `references/orchestration.md`; that reviewer is a discovery agent with no Linear-write capability and no owner contact, and its findings return to this stage.
+6. Apply accepted review fixes to the draft package, and re-review the draft when a fix changes scope, requirements, risk, or Issue slicing. Fixes land in the draft, never in an already-written Linear artifact.
+7. Present one owner touch: the draft package summary together with the review verdict, remaining blocking findings, proposed fixes, and decisions, for package approval before durable writes.
+8. If approval is missing, rejected, or changes are requested, do not create Issue(s), do not move the Project to Delivery, revise and re-present or stop as `BLOCKED / INCOMPLETE` with current links.
+9. After package approval, create or update PRD and Tech Spec in Linear.
+10. Update the Project body with only the product brief concerns: what, why, target outcome, in scope, and out of scope. Render headings in the project config language; default Russian headings are `Что`, `Зачем`, `Образ результата`, `Что входит`, and `Что не входит`.
+11. Record approval as a Linear comment. The comment should identify the approved package, PRD/Tech Spec links or intended titles, approved Issue slice titles or ids, the review verdict with the accepted fixes and any explicit deferrals or recorded advisory-skip reason, and whether implementation may start.
+12. Create or update Linear Issue(s) from the approved package.
+13. Run or report `mono-check handoff` and `mono-check issue`.
+14. If the user explicitly approved implementation start, route to `mono-implement`. `mono-implement` owns Project-to-Delivery movement, `mono-check delivery`, the implementation-start comment, and implementation execution.
+15. If implementation start is not approved, stop after handoff and return the approved Issue link(s).
 
 Rules:
 
@@ -241,9 +246,10 @@ Rules:
 - Split Issues only when one PR is truly too large; split into vertical slices with explicit dependencies.
 - Mark every execution Issue as `AFK` or `HITL` and name dependencies or blockers.
 - If a source artifact is a local plan or review report, translate it into PRD/Spec/Issue shape. Do not paste the local artifact body into Linear unchanged.
+- The handoff review runs on the draft package before the first durable Linear write of that package. The order is the rule: synthesize the draft, review it, fix the draft, then ask the owner for approval with the verdict already in hand, and only then write. Findings are fixed in the draft, never in an artifact that is already written.
 - `mono-review` is report-only. Do not ask it to apply fixes or create artifacts.
-- Required `mono-review handoff` findings must be resolved, accepted, or explicitly deferred before creating Issues.
-- Advisory tiny-scope review may be skipped only when the reason is recorded in the Project and Issue review-gate fields.
+- Required `mono-review handoff` findings must be resolved, accepted, or explicitly deferred before the first durable write of the package, and therefore before creating Issues.
+- Advisory tiny-scope review may be skipped only when the reason is recorded in the Project and Issue review-gate fields. `standard`, `deep`, and `risky` have no such skip: for them the pre-write review is required.
 - Apply accepted review fixes in `mono-handoff`; then run `mono-check` to report readiness.
 - Follow `references/repair-machine.md` for Project-first artifact repair. Never
   downgrade an ambiguous diff, skip a class 2 effect, or keep Delivery active
