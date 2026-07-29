@@ -204,19 +204,19 @@ Workflow states:
      the ladder nudge → respawn → session rotation; alert the user only when
      the ladder is exhausted. Record every healing step and its result in
      the ledger (Heartbeat in `references/orchestration.md`).
-   - A `gate-ack` event is a delivery event, not a liveness one. If this
-     stage's report is also present, that pairing is AMBIGUOUS rather than
-     proof: reports carry no attempt number, so the report may belong to a
-     superseded worker and not to this ack. Reconcile before acting — check the
-     transport thread and the worktree for whether THIS attempt executed — and
-     never silently consume the ack or resume on it twice. Otherwise read the ack
-     and branch on its `status`: `gates-passed` applies the dispatch's
-     lifecycle moves with read-back and resumes that worker; `blocked` applies
-     no move at all and waits for the ordinary stage report that path also
-     writes, which routes to `decide-or-escalate` like any non-green report
-     (Two-Phase Dispatch Handshake in `references/orchestration.md`). A worker
-     quiet after a fresh `gates-passed` ack is waiting by contract — never
-     heal it.
+   - A `gate-ack` event is a delivery event, not a liveness one. Read the ack's
+     `status` first, never the report on its own. `blocked` applies no move at
+     all: consume the ack and route the stage report that path also writes
+     through `decide-or-escalate` like any non-green report — the two arriving
+     together is that path working, not a crash. `gates-passed` applies the
+     dispatch's lifecycle moves with read-back and resumes that worker — unless
+     this stage's report is already present, which is AMBIGUOUS rather than
+     proof, because reports carry no attempt number and that one may belong to
+     a superseded worker. Reconcile before acting — check the transport thread
+     and the worktree for whether THIS attempt executed — and never silently
+     consume the ack or resume on it twice (Two-Phase Dispatch Handshake in
+     `references/orchestration.md`). A worker quiet after a fresh
+     `gates-passed` ack is waiting by contract — never heal it.
    - Route non-green reports (`blocked`, `needs-human`, `drift-candidate`,
      `needs-decision`, `scope-drift-needs-handoff`) to `decide-or-escalate`
      instead of advancing.

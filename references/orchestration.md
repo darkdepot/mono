@@ -405,18 +405,25 @@ Order, and it is the whole protocol:
    authorizing a move against gate evidence nobody validated. A transport with
    no watcher event applies the same rule when it polls.
 
-   A completed stage report and an unconsumed ack coexist exactly in the crash
-   window above — the resume succeeded, the worker ran and reported, and the
-   orchestrator died before consuming the ack. Resolve that pairing at the
-   CONSUMER: when this stage's report is present, execution already happened,
-   so the ack is consumption recovery and nothing else — consume it, never read
-   it as a fresh signal to apply moves and resume again.
+   A stage report beside an unconsumed ack means different things depending on
+   the ack, so the consumer reads the ack's `status` first and never the report
+   on its own.
 
-   That pairing is ambiguous, not proof, and the same gap is why: a report
-   carries no attempt number, so it may belong to a superseded worker rather
-   than to this ack. Reconcile before acting — establish from the transport
-   thread and the worktree whether THIS attempt executed — and never silently
-   consume the ack or resume on it twice. The same applies to the crash window
+   A `blocked` ack beside a stage report is the ordinary non-green outcome, not
+   a crash. The blocked path writes both of them by design, before any
+   execution happened at all: consume the ack, route the report through the
+   ordinary non-green path, and reconcile nothing.
+
+   A `gates-passed` ack beside a stage report is the genuinely ambiguous one.
+   It is what the crash window above looks like — the resume succeeded, the
+   worker ran and reported, and the orchestrator died before consuming the ack
+   — and it is equally what a superseded worker leaves behind, because a report
+   carries no attempt number and may belong to an earlier attempt rather than
+   to this ack. Either reading is wrong in one direction: consuming the ack
+   strands a current dispatch that never ran, resuming again replays one that
+   did. Reconcile before acting — establish from the transport thread and the
+   worktree whether THIS attempt executed — and never silently consume the ack
+   or resume on it twice. The same reconciliation covers the crash window
    between a resume and its rename: an unconsumed ack alone never authorizes a
    second resume.
 
