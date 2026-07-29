@@ -73,7 +73,7 @@ Mode checks:
 
 - `idea`: PASS only when Project URL/id exists, Project status is `Idea`, strengthened brief exists, no premature PRD/Tech Spec/Issue exists, final output contains no implementation plan, and next step is explicitly `/office-hours` or `/brainstorming`.
 - `idea`: FAIL when no Project exists, Project is not `Idea`, the agent wrote a plan instead of creating the Project, implementation started, PRD/Tech Spec/Issue was created without explicit repair context, the session ended without Project link and did not mark `mono-idea` as `BLOCKED / INCOMPLETE`, or no next shaping skill was recommended.
-- `idea` (issue-only route): PASS when the request was correctly routed to the `mono-issue-intake` front door as unmistakable one-PR issue-only work and no Project was created by design; the missing Project is expected, not a FAIL. Ambiguous or project-shaped ideas still require a Project by the rules above.
+- `idea` (issue-only route): PASS when the request was correctly routed to the `mono-issue` front door as unmistakable one-PR issue-only work and no Project was created by design; the missing Project is expected, not a FAIL. Ambiguous or project-shaped ideas still require a Project by the rules above.
 - `discovery`: Project is in Discovery or an equivalent pre-delivery state, discovery outputs are available, no implementation has started from a raw discovery plan, and the next required durable mutation is `mono-handoff`.
 - `discovery`: PASS when PRD and Tech Spec exist but Project remains pre-delivery; FAIL when Project moved to Delivery merely because PRD or Tech Spec exists.
 - `handoff`: PASS when Project, PRD, Tech Spec, and proposed or created Issue slicing are current; Project body is a concise product brief; package approval is recorded as a Linear comment; required `mono-review handoff` ran or a tiny advisory exception is recorded; and implementation has not started from raw `/office-hours`, `/brainstorming`, or review plan. Return `BLOCKED` when the package is otherwise valid but approval is pending.
@@ -105,7 +105,7 @@ Content-shape checks:
 
 Hard FAIL examples:
 
-- `mono-idea` ended without a Linear Project link, unless it routed unmistakable one-PR issue-only work to `mono-issue-intake` (the issue-only front door creates no Project by design).
+- `mono-idea` ended without a Linear Project link, unless it routed unmistakable one-PR issue-only work to `mono-issue` (the issue-only front door creates no Project by design).
 - An agent performed deep implementation discovery and wrote an implementation plan during Idea instead of creating the Project.
 - A discovery implementation plan was approved directly without passing through `mono-handoff`.
 - PRD, Tech Spec, or Issue was created during Idea without explicit repair context.

@@ -7,7 +7,7 @@ description: Use when starting or running implementation from approved Linear Is
 
 Use this skill to own Delivery Start and implementation execution from approved Linear Issue(s), including an approved issue-only package resolved through the shared context seam.
 
-`mono-implement` starts only after either (a) `mono-handoff` produced a current Project, PRD, Tech Spec, and approved execution Issue(s), or (b) `mono-issue-intake` produced a self-contained Issue whose resolver seam is `issue-only` with fresh owner approval. It verifies implementation-start approval, moves the resolved lifecycle entity into Delivery/started state when ready, selects the implementation engine, runs implementation from the approved Issue(s), and exits into `mono-preflight`.
+`mono-implement` starts only after either (a) `mono-handoff` produced a current Project, PRD, Tech Spec, and approved execution Issue(s), or (b) `mono-issue` produced a self-contained Issue whose resolver seam is `issue-only` with fresh owner approval. It verifies implementation-start approval, moves the resolved lifecycle entity into Delivery/started state when ready, selects the implementation engine, runs implementation from the approved Issue(s), and exits into `mono-preflight`.
 
 Read first:
 
@@ -29,7 +29,7 @@ When to use:
 
 - The user says "implement", "start implementation", "build this", or equivalent after approved Linear Issue(s) exist.
 - `mono-handoff` completed Issue creation and the user explicitly approved starting now.
-- `mono-issue-intake` completed the issue-only create-then-approve transaction and the live resolver returns `package_kind=issue-only` with `approval_status=approved-fresh`.
+- `mono-issue` completed the issue-only create-then-approve transaction and the live resolver returns `package_kind=issue-only` with `approval_status=approved-fresh`.
 - A fresh implementation agent receives approved Linear Issue(s) and needs a bounded start workflow.
 
 Do not use:

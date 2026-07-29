@@ -4003,9 +4003,9 @@ function validateIssueIntakeContract() {
   // Project-creation contract).
   for (const required of [
     "Issue-only front door",
-    "`mono-issue-intake`",
+    "`mono-issue`",
     "Project creation stays mandatory",
-    "Route unmistakably one-PR, projectless issue-only work to the `mono-issue-intake` front door",
+    "Route unmistakably one-PR, projectless issue-only work to the `mono-issue` front door",
   ]) {
     assertIncludes("skills/mono-idea/SKILL.md", required, JSON.stringify(required));
   }
