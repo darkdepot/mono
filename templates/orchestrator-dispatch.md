@@ -21,10 +21,14 @@ Linear access — see Mode precedence in the AFK Contract below.
 
 - Outcome: <one sentence — the durable end-state that must be true when this
   stage is done>
-- Verification surface: <the executable commands/checks lifted verbatim from
-  the Issue's «Как проверить», one per line, each runnable as written; a
-  prose item that has no command shape is carried verbatim and marked
-  `judgment check` — it still must appear in `verification_items`>
+- Verification surface: <every «Как проверить» line of the Issue, one per
+  line, lifted verbatim from that section and kept in its order; lines with
+  a command shape are each runnable as written. A line with no command shape
+  is carried verbatim too and is verified as a judgment check — the worker
+  records that mode in the `evidence` of its `verification_items` entry,
+  never as a status value. This list is the report's `verification_items`
+  1:1; item semantics and the status enum have a single home in
+  `templates/orchestrator-report.md` and are not restated here>
 - Constraints: <what must not change or break — pinned contracts, protected
   files, statuses, and gates this stage must leave intact>
 - Blocked protocol: when stuck, write a mailbox report with status
@@ -98,7 +102,10 @@ Linear access — see Mode precedence in the AFK Contract below.
 - Never write to Linear yourself, even when Linear is available. Produce
   every stage-required Linear mutation (comments, status moves, certificates)
   in its required shape, but deliver it through `linear_mutations_pending` in
-  your report; the orchestrator applies it.
+  your report; the orchestrator applies it. A certificate travels in the
+  report's `certificate` field, and the queued comment references it with
+  `append #/certificate` rather than carrying a second copy — see
+  `templates/orchestrator-report.md`.
 - Follow the stage skill exactly, including its exit statuses and gates.
 
 ## Mailbox
