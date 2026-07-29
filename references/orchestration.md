@@ -412,6 +412,14 @@ Order, and it is the whole protocol:
    so the ack is consumption recovery and nothing else — consume it, never read
    it as a fresh signal to apply moves and resume again.
 
+   That pairing is ambiguous, not proof, and the same gap is why: a report
+   carries no attempt number, so it may belong to a superseded worker rather
+   than to this ack. Reconcile before acting — establish from the transport
+   thread and the worktree whether THIS attempt executed — and never silently
+   consume the ack or resume on it twice. The same applies to the crash window
+   between a resume and its rename: an unconsumed ack alone never authorizes a
+   second resume.
+
    The watcher does not resolve it, and deliberately so. A stage report carries
    no attempt number, so a superseded worker still alive can write one after
    its successor's log was born and after that successor's ack; no ordering

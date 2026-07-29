@@ -6305,6 +6305,9 @@ function validateTwoPhaseDispatchHandshake() {
     "renames every\n   file for that attempt in BOTH locations",
     "Resolve that pairing at the\n   CONSUMER",
     "consume it, never read\n   it as a fresh signal to apply moves and resume again",
+    "That pairing is ambiguous, not proof",
+    "never silently\n   consume the ack or resume on it twice",
+    "an unconsumed ack alone never authorizes a\n   second resume",
     "The watcher does not resolve it, and deliberately so",
     "Fence a replay\n   where the binding exists, not where only a timestamp does",
     "no remaining file for that\n   attempt is an ack",
@@ -6373,7 +6376,9 @@ function validateTwoPhaseDispatchHandshake() {
     // The watcher emits gate-ack for a blocked ack too; the monitor state must
     // branch instead of applying moves on every event.
     "Otherwise read the ack\n     and branch on its `status`",
-    "If this\n     stage's report is already present, execution has run",
+    "that pairing is AMBIGUOUS rather than\n     proof",
+    "never silently consume the ack or resume on it twice",
+    "an unconsumed ack on its own\n     never authorizes resuming twice",
     "`blocked` applies\n     no move at all",
     "renamed `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
   ]) {

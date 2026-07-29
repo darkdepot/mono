@@ -166,7 +166,11 @@ Workflow states:
      owned by the no-ack path. That order is load-bearing in both directions: an ack
      left in place keeps suppressing that worker's `stall` and `dead` events,
      while consuming it before the resumed writer is registered leaves a window
-     where the watcher calls a healthy resume dead. The rule, the ack shape,
+     where the watcher calls a healthy resume dead. Neither order closes the
+     crash window between the resume and the rename: when you cannot tell
+     whether a resume landed, reconcile against the transport thread and the
+     worktree before any second resume, because an unconsumed ack on its own
+     never authorizes resuming twice. The rule, the ack shape,
      and the blocked and no-ack paths have one home: Two-Phase Dispatch
      Handshake in `references/orchestration.md`. Applying a dispatch-moment
      move earlier needs an explicit owner mandate recorded in the ledger; it is
@@ -201,8 +205,11 @@ Workflow states:
      the ladder is exhausted. Record every healing step and its result in
      the ledger (Heartbeat in `references/orchestration.md`).
    - A `gate-ack` event is a delivery event, not a liveness one. If this
-     stage's report is already present, execution has run: consume the ack as
-     recovery and do not re-apply or re-resume anything. Otherwise read the ack
+     stage's report is also present, that pairing is AMBIGUOUS rather than
+     proof: reports carry no attempt number, so the report may belong to a
+     superseded worker and not to this ack. Reconcile before acting — check the
+     transport thread and the worktree for whether THIS attempt executed — and
+     never silently consume the ack or resume on it twice. Otherwise read the ack
      and branch on its `status`: `gates-passed` applies the dispatch's
      lifecycle moves with read-back and resumes that worker; `blocked` applies
      no move at all and waits for the ordinary stage report that path also
