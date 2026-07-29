@@ -4600,7 +4600,7 @@ function validateHeartbeatContract() {
   }
   assertIncludes(
     "references/orchestration.md",
-    "node ../.mono-agent-workflow/scripts/watch-workers.mjs --root ~/.mono-agent-workflow/orchestrator/<product>",
+    "node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>",
     "heartbeat canonical installed launch path"
   );
   for (const relativePath of ["references/install.md", "references/versioning.md"]) {

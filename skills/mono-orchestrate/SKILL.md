@@ -143,10 +143,12 @@ Workflow states:
      or repairing its canonical state files, and before an `idle` → `active` transition.
      Do not create or mutate orchestrator state when the installer owns the lock.
    - Start the heartbeat watcher before the first spawn of a wave:
-     `node ../.mono-agent-workflow/scripts/watch-workers.mjs --root ~/.mono-agent-workflow/orchestrator/<product>`
-     resolved relative to this installed skill directory, via the runtime
-     Monitor primitive (Heartbeat in
+     `node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>`
+     via the runtime Monitor primitive (Heartbeat in
      `references/orchestration.md`); no worker spawns until it is running.
+     Substitute `<installed-mono-orchestrate-dir>` with the absolute directory
+     containing this loaded `SKILL.md`; never resolve the `../` segment against
+     the product/worktree current directory.
      The upstream pack source remains `scripts/watch-workers.mjs` for
      development and fixtures.
    - One Issue per worker. Spawn through the runtime transport with

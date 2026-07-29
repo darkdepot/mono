@@ -828,8 +828,10 @@ directory's history; retired Issues' logs are outside its scope.
 
 - At wave start — before the first worker spawn — the orchestrator must
   start the watcher against the mailbox root:
-  `node ../.mono-agent-workflow/scripts/watch-workers.mjs --root ~/.mono-agent-workflow/orchestrator/<product>`,
-  resolved relative to the installed `mono-orchestrate` skill directory.
+  `node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>`.
+  Substitute `<installed-mono-orchestrate-dir>` with the absolute directory
+  containing the loaded `mono-orchestrate/SKILL.md`; never resolve the `../`
+  segment against the product/worktree current directory.
   Run it through the runtime's monitor primitive (Claude Code: the Monitor
   tool with `persistent: true`); a runtime without one falls back to a
   background process plus a periodic wakeup that reads its stdout. Record
