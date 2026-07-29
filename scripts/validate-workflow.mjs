@@ -5320,6 +5320,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-302", "blocked"],
       ["MONO-311", "worktree-fallback"],
       ["MONO-327", "ack newer than a superseded attempt's report"],
+      ["MONO-306", "unconsumed ack beside a completed stage report"],
     ]) {
       if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must emit a gate-ack event`);
@@ -5338,7 +5339,6 @@ function validateWatcherGateAckBehavior() {
       ["MONO-315", "no-gate-phase-stage"],
       ["MONO-316", "duplicate-gate-name"],
       ["MONO-320", "late-ack-from-a-superseded-attempt"],
-      ["MONO-306", "unconsumed ack beside a completed stage report"],
       ["MONO-313", "two-files-for-one-attempt"],
       ["MONO-322", "future-dated"],
       ["MONO-324", "near-future"],
@@ -6303,8 +6303,10 @@ function validateTwoPhaseDispatchHandshake() {
     "Do not rank them",
     "Consumption is per ATTEMPT, not per file",
     "renames every\n   file for that attempt in BOTH locations",
-    "A completed stage report outranks an unconsumed ack",
-    "consume it, and never read it as a fresh signal to apply\n   moves and resume again",
+    "Resolve that pairing at the\n   CONSUMER",
+    "consume it, never read\n   it as a fresh signal to apply moves and resume again",
+    "The watcher does not resolve it, and deliberately so",
+    "Fence a replay\n   where the binding exists, not where only a timestamp does",
     "no remaining file for that\n   attempt is an ack",
     // Preflight and ship dispatches carry no lifecycle move, so an ack there
     // is spurious however well-formed it looks.

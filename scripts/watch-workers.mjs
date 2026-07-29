@@ -660,7 +660,13 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   // at all. Past the ceiling the pause is a stuck handshake, not a wait.
   if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) {
     const pauseAgeMs = nowMs - gateAck.stat.mtimeMs;
-    if (pauseAgeMs >= 0 && pauseAgeMs <= args.stallSec * 1000 * GATE_PAUSE_SUPPRESSION_STALLS) {
+    // No lower bound here. Future-dating is decided once, at the read boundary,
+    // against the clock read there — and readGateAck deliberately accepts an
+    // ack written moments ago while this scan was already running. Re-testing
+    // it against the scan-start clock would make that legitimate ack look
+    // negative-aged, decline suppression, and let the same scan emit `dead`
+    // for a worker that just completed its contracted pause.
+    if (pauseAgeMs <= args.stallSec * 1000 * GATE_PAUSE_SUPPRESSION_STALLS) {
       return;
     }
   }
@@ -753,18 +759,17 @@ function scan() {
     const gateAck = isCorrelatedGateAckLog(log, registryEntry)
       ? readGateAck(reportsDir, log, registryEntry)
       : null;
-    // Precedence needs the report to be at least as NEW as the ack, because a
-    // report carries no attempt number: a superseded attempt can write one
-    // after its successor's log was born and it would correlate just as well.
-    // Recency is the binding available here, and it is enough — an older
-    // report cannot describe a run that a newer ack has not started yet. The
-    // replay this guards against is independently closed on the consumer side,
-    // where a present stage report means execution ran whatever the watcher
-    // emitted.
-    const supersededByReport =
-      report !== null && (gateAck === null || report.stat.mtimeMs >= gateAck.stat.mtimeMs);
+    // The report is emitted first so a consumer reading in order sees that
+    // execution already happened before it sees the ack. It does NOT suppress
+    // the ack: a report carries no attempt number, so a superseded worker that
+    // is still alive can write one after its successor's log was born and
+    // after that successor's ack, and no timestamp rule can tell the two
+    // apart. Suppressing on that evidence would discard the CURRENT attempt's
+    // ack and strand its dispatch. The replay this once guarded against is
+    // fenced where the binding actually exists: the orchestrator sees the
+    // stage report and consumes the ack as recovery instead of resuming again.
     checkReport(log, report, nowMs);
-    checkGateAck(log, supersededByReport ? null : gateAck, nowMs);
+    checkGateAck(log, gateAck, nowMs);
     checkLog(log, gateAck, reportsDir, registry, nowMs);
   }
   checkRegistry(registry, nowMs);

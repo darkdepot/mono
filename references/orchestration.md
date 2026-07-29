@@ -405,12 +405,21 @@ Order, and it is the whole protocol:
    authorizing a move against gate evidence nobody validated. A transport with
    no watcher event applies the same rule when it polls.
 
-   A completed stage report outranks an unconsumed ack. The two coexist exactly
-   in the crash window above — the resume succeeded, the worker ran and
-   reported, and the orchestrator died before consuming the ack. The report
-   proves execution already happened, so the ack is consumption recovery there
-   and nothing else: consume it, and never read it as a fresh signal to apply
-   moves and resume again.
+   A completed stage report and an unconsumed ack coexist exactly in the crash
+   window above — the resume succeeded, the worker ran and reported, and the
+   orchestrator died before consuming the ack. Resolve that pairing at the
+   CONSUMER: when this stage's report is present, execution already happened,
+   so the ack is consumption recovery and nothing else — consume it, never read
+   it as a fresh signal to apply moves and resume again.
+
+   The watcher does not resolve it, and deliberately so. A stage report carries
+   no attempt number, so a superseded worker still alive can write one after
+   its successor's log was born and after that successor's ack; no ordering
+   rule distinguishes the two. A watcher that suppressed the ack on that
+   evidence would discard the CURRENT attempt's gate-ack and strand its
+   dispatch — a worse failure than the duplicate the suppression was meant to
+   prevent, and one the consumer rule above already prevents. Fence a replay
+   where the binding exists, not where only a timestamp does.
 4. Lifecycle application. On `status: gates-passed` the orchestrator first
    checks the ack against the gate list it dispatched — set equality on the
    gate names, not a count, and every one `pass` — because the ack is the only
