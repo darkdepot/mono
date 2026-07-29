@@ -701,10 +701,19 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   // switch off the normal fresh-report suppression while failing the ack test
   // just below, and a completed worker holding a perfectly good report would be
   // reported dead on the strength of a leftover file.
+  // "Paused" must mean a CURRENT pause, so this uses the same predicate as the
+  // suppression branch it defers to. Belonging to the attempt is the weaker
+  // question and the wrong one here: a retained crash-window ack still belongs
+  // after the resumed worker has executed for minutes, and treating that as a
+  // pause switched off report suppression while the branch below then declined
+  // to suppress on its own — so a worker that had completed, written a valid
+  // report and exited was reported dead. One predicate, three correct
+  // outcomes: a current pause overrides reports, a prior attempt's ack does
+  // not, and a retained ack whose execution has moved on does not either.
   const pausedOnAck =
     gateAck !== null &&
     gateAck.status === "gates-passed" &&
-    ackBelongsToAttempt(gateAck.stat, log);
+    isFreshForLog(gateAck.stat, log);
   const reportStat = reportStatFor(reportsDir, log);
   if (!pausedOnAck && reportStat !== null && isFreshForLog(reportStat, log)) return;
 

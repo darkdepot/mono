@@ -4931,6 +4931,30 @@ async function validateWatcherV3Behavior() {
 // suppresses stall/dead: the gate pause of the two-phase dispatch handshake is
 // a contracted wait, while a blocked, stale, or malformed ack proves nothing
 // and must leave the liveness ladder armed.
+// The report override and the suppression branch must ask the SAME question.
+// A runtime fixture cannot pin this: the distinguishing state needs
+// birthtime <= ack.mtime < log.mtime - stall with the log already stale, and
+// birthtime cannot be moved backwards portably (macOS pulls it back on an
+// earlier utimes, Linux does not) — the same platform limit documented on the
+// MONO-333 fixture. So it is pinned structurally instead. Using the weaker
+// belonging test here let a retained crash-window ack disable report
+// suppression while the branch below declined to suppress, and a completed
+// worker with a valid report was reported dead.
+function validateGateAckSuppressionPredicate() {
+  const watcher = read("scripts/watch-workers.mjs");
+  const pausedOnAck = watcher.slice(watcher.indexOf("  const pausedOnAck ="), watcher.indexOf("  const reportStat ="));
+  if (!pausedOnAck.includes("isFreshForLog(gateAck.stat, log)")) {
+    fail(
+      "watch-workers.mjs: pausedOnAck must use isFreshForLog — the same predicate as the suppression branch it defers to — so a retained ack cannot disable report suppression without providing its own"
+    );
+  }
+  if (pausedOnAck.includes("ackBelongsToAttempt")) {
+    fail(
+      "watch-workers.mjs: pausedOnAck must not use ackBelongsToAttempt; belonging is the delivery question, not evidence of a current pause"
+    );
+  }
+}
+
 function validateWatcherGateAckBehavior() {
   const identity = {
     packVersion: "0.20.1",
@@ -7017,6 +7041,7 @@ validateHeartbeatContract();
 validateWatcherContaminationBehavior();
 await validateWatcherV3Behavior();
 validateWatcherGateAckBehavior();
+validateGateAckSuppressionPredicate();
 validateHonestLedgerContract();
 validateCompactionContract();
 validateLiveQaGateContract();
