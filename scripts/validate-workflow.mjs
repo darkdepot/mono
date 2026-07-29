@@ -5293,9 +5293,17 @@ function validateReportContractSingleHome() {
   const dispatchTemplate = read("templates/orchestrator-dispatch.md");
   // `judgment check` describes how an item was verified, never what its
   // status is; the enum has no such value and the dispatch must not mint one.
-  if (/marked\s+`judgment check`/.test(dispatchTemplate)) {
+  // Guard the shape rather than one historical wording: pinning the single
+  // phrase this slice removed (`marked `judgment check``) would let the same
+  // contract break return as `status: judgment check` or "sets status to
+  // judgment check". So the dispatch may name the term only in the sanctioned
+  // verification-mode sentence, and every other mention is a failure whatever
+  // its phrasing.
+  const judgmentMentions = (dispatchTemplate.match(/judgment check/g) ?? []).length;
+  const judgmentModeMentions = (dispatchTemplate.match(/verified as a judgment check/g) ?? []).length;
+  if (judgmentMentions !== judgmentModeMentions) {
     fail(
-      "templates/orchestrator-dispatch.md must not mark a verification item with a `judgment check` status value"
+      "templates/orchestrator-dispatch.md may name `judgment check` only as the verification mode (\"verified as a judgment check\", recorded in evidence), never as a verification-item status value"
     );
   }
   // Single home: the dispatch points at the enum instead of restating it, so
