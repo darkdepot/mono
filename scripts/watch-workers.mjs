@@ -434,7 +434,17 @@ function readGateAck(reportsDir, log, registryEntry) {
   if (candidates.length === 0) return null;
   const fresh = candidates.filter((candidate) => isFreshForLog(candidate.stat, log));
   const pool = fresh.length > 0 ? fresh : candidates;
-  return pool.reduce((best, candidate) => (candidate.stat.mtimeMs > best.stat.mtimeMs ? candidate : best));
+  const newestMs = Math.max(...pool.map((candidate) => candidate.stat.mtimeMs));
+  const newest = pool.filter((candidate) => candidate.stat.mtimeMs === newestMs);
+  // A tie is ambiguous, and ambiguity fails closed. Equal mtimes are reachable
+  // on a coarse-resolution filesystem or when a copy preserves timestamps, and
+  // the two locations are allowed to disagree — so picking either one by
+  // position would let a leftover mailbox `gates-passed` shadow the current
+  // fallback `blocked` and authorize a move on failed gates. Delivering
+  // nothing costs a stall event the orchestrator can reconcile; delivering the
+  // wrong ack costs the gate.
+  if (newest.length !== 1) return null;
+  return newest[0];
 }
 
 function hasPackIdentity(value) {
@@ -590,19 +600,16 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   // bound the watcher would go permanently silent on a parked Issue: no
   // gate-ack, no stall, no dead. Past the bound the pause itself is the
   // anomaly, and the ladder re-arms so the orchestrator hears about it.
-  // The bound is an age WINDOW, not just a ceiling. A negative age means the
-  // ack is dated in the future, and on the worker-controlled fallback path a
-  // worker sets its own mtime — `utimes` and `touch` take any date. A future
-  // date would otherwise buy suppression until that date plus the ceiling,
-  // which is exactly the unbounded silence the ceiling exists to prevent. One
-  // stall threshold of tolerance absorbs ordinary clock skew between the
-  // worker's filesystem and this process.
+  // The bound is an age WINDOW, not just a ceiling, and the window starts at
+  // zero. A negative age means the ack is dated in the future, and on the
+  // worker-controlled fallback path a worker sets its own mtime — `utimes` and
+  // `touch` take any date. Any future tolerance is simply suppression a worker
+  // can mint for itself, so there is none: the ack and this watcher share a
+  // filesystem, and the protocol says a future-dated ack buys no suppression
+  // at all. Past the ceiling the pause is a stuck handshake, not a wait.
   if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) {
     const pauseAgeMs = nowMs - gateAck.stat.mtimeMs;
-    if (
-      pauseAgeMs >= -args.stallSec * 1000 &&
-      pauseAgeMs <= args.stallSec * 1000 * GATE_PAUSE_SUPPRESSION_STALLS
-    ) {
+    if (pauseAgeMs >= 0 && pauseAgeMs <= args.stallSec * 1000 * GATE_PAUSE_SUPPRESSION_STALLS) {
       return;
     }
   }

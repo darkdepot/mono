@@ -390,7 +390,9 @@ Order, and it is the whole protocol:
    a leftover mailbox ack beside the fallback ack of the worker paused right
    now. One resolution rule settles it everywhere: evaluate both, keep the
    candidates that are fresh for the current attempt's log, and take the newest
-   of those. The `gate-ack` watcher event names the FULL path it validated, and
+   of those — and when two of them tie on that timestamp, take neither, because
+   an ambiguous ack is the one case where guessing costs the gate itself. The
+   `gate-ack` watcher event names the FULL path it validated, and
    the coverage check in step 4 is performed on that exact artifact — never on
    "the ack" resolved a second time, which is how an orchestrator ends up
    authorizing a move against gate evidence nobody validated. A transport with

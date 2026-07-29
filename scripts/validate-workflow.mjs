@@ -5170,6 +5170,56 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // Two fresh candidates tying on mtime, disagreeing on status: a leftover
+    // mailbox `gates-passed` must not shadow the current fallback `blocked`.
+    // Ambiguity fails closed — neither is selected.
+    const tieIssue = "MONO-323";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${tieIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const mailboxAck = path.join(reportsDir, `${tieIssue}-gate-ack-a1.json`);
+      const fallbackDir = path.join(fixtureRoot, "worktrees", tieIssue, ".orchestrator");
+      fs.mkdirSync(fallbackDir, { recursive: true });
+      const fallbackAck = path.join(fallbackDir, `${tieIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(mailboxAck, `${JSON.stringify(gateAck(tieIssue, "gates-passed"), null, 2)}\n`);
+      fs.writeFileSync(fallbackAck, `${JSON.stringify(gateAck(tieIssue, "blocked"), null, 2)}\n`);
+      const sameInstant = new Date(Date.now() - 5_000);
+      fs.utimesSync(mailboxAck, sameInstant, sameInstant);
+      fs.utimesSync(fallbackAck, sameInstant, sameInstant);
+      workers[tieIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", tieIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // Near-future, inside the old one-stall tolerance: a worker must not be
+    // able to mint extra suppression for itself by nudging its own mtime.
+    const nearFutureIssue = "MONO-324";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${nearFutureIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const ackPath = path.join(reportsDir, `${nearFutureIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(nearFutureIssue, "gates-passed"), null, 2)}\n`);
+      const nearFuture = new Date(Date.now() + 30_000);
+      fs.utimesSync(ackPath, nearFuture, nearFuture);
+      workers[nearFutureIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", nearFutureIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5229,6 +5279,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-315", "no-gate-phase-stage"],
       ["MONO-316", "duplicate-gate-name"],
       ["MONO-320", "late-ack-from-a-superseded-attempt"],
+      ["MONO-323", "ambiguous-tie"],
     ]) {
       if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must stay silent`);
@@ -5280,6 +5331,8 @@ function validateWatcherGateAckBehavior() {
       ["MONO-320", "late ack written by a superseded attempt"],
       ["MONO-321", "gate-ack whose pause outlived the suppression bound"],
       ["MONO-322", "future-dated gate-ack"],
+      ["MONO-323", "ambiguous tie between mailbox and fallback acks"],
+      ["MONO-324", "near-future gate-ack"],
     ]) {
       if (!stdout.includes(`EVENT:dead ${issue}`)) {
         fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
@@ -6180,8 +6233,9 @@ function validateTwoPhaseDispatchHandshake() {
     "That is an age window rather than a ceiling",
     "an\n  ack dated in the future buys no suppression at all",
     "Because the two locations share a filename they can coexist and disagree",
-    "The `gate-ack` watcher event names the FULL path it validated",
+    "`gate-ack` watcher event names the FULL path it validated",
     "never on\n   \"the ack\" resolved a second time",
+    "when two of them tie on that timestamp, take neither",
     // Preflight and ship dispatches carry no lifecycle move, so an ack there
     // is spurious however well-formed it looks.
     "is spurious and neither delivers nor suppresses",
