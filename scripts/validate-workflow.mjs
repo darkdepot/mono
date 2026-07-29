@@ -5856,14 +5856,22 @@ function validatePreWriteHandoffReviewOrder() {
   }
 
   // Fixes land in the draft, and the owner's single touch already carries the
-  // verdict: review → draft fixes → approval, all before the writes above.
+  // verdict: review → draft fixes → approval, all before the writes above. The
+  // upper bound is as load-bearing as the lower one — a fix applied after the
+  // PRD is written is a repair of a durable artifact, which is the failure this
+  // Issue exists to remove — so both steps are bounded on both sides.
+  const firstDurableWrite = durableWriteIndexes.length > 0 ? Math.min(...durableWriteIndexes) : -1;
   const draftFixStep = workflow.indexOf("Apply accepted review fixes to the draft package");
   const approvalStep = workflow.indexOf("for package approval before durable writes");
   if (draftFixStep < 0 || draftFixStep < reviewStep) {
     fail(`${handoffPath} must apply accepted review fixes to the draft after the pre-write review`);
+  } else if (firstDurableWrite >= 0 && draftFixStep > firstDurableWrite) {
+    fail(`${handoffPath} must apply accepted review fixes to the draft before the first durable Linear write`);
   }
   if (approvalStep < 0 || approvalStep < draftFixStep) {
     fail(`${handoffPath} must present the package for approval after the draft review and its fixes`);
+  } else if (firstDurableWrite >= 0 && approvalStep > firstDurableWrite) {
+    fail(`${handoffPath} must present the package for approval before the first durable Linear write`);
   }
 
   for (const required of [
