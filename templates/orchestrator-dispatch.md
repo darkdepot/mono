@@ -113,7 +113,9 @@ block only resolves it for this Issue.
   the same JSON to `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack-a<N>.json`, the
   same fallback the report uses.
 - Then stop and wait to be resumed: do not apply or queue the lifecycle move,
-  write code, or write the stage report first. The post-move delivery check
+  write code, or write a stage report — unless your ack is `blocked`, which is
+  the one case that does require the stage report named below, written after
+  the ack and before you stop. The post-move delivery check
   waits for the resume too — except on the issue-only lane, where the delivery
   check is one of the gates above and runs before you ack.
   <codex-cli: end the turn and let the process exit. claude-code-desktop or

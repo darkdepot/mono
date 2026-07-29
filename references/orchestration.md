@@ -343,9 +343,15 @@ Order, and it is the whole protocol:
    same session, worktree, dispatch, and stage continue into execution.
 3. Gate-ack, then stop. The worker writes
    `reports/<ISSUE-KEY>-gate-ack-a<N>.json` under the orchestrator root, where
-   `<N>` is the attempt number this dispatch's log carries, and stops
-   without queuing or applying the move, writing code, or producing the stage
-   report:
+   `<N>` is the attempt number this dispatch's log carries, and then stops —
+   what "stops" means depends on the ack's own status. On `gates-passed` it
+   stops without queuing or applying the move, writing code, or producing a
+   stage report. On `blocked` the gate phase is over rather than paused, so it
+   writes the stage report the Blocked path below requires — ack first, then
+   report — and stops only after both exist. Leaving a blocked ack with no
+   report would strand the Issue: the orchestrator would wait for a report that
+   never comes while the watcher, which deliberately never suppresses on a
+   blocked ack, drives the worker into liveness healing instead:
 
    ```json
    {

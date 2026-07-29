@@ -6549,6 +6549,9 @@ function validateTwoPhaseDispatchHandshake() {
     "renames every\n   file for that attempt in BOTH locations",
     "the consumer reads the ack's `status` first and never the report",
     "A `blocked` ack beside a stage report is the ordinary non-green outcome, not\n   a crash",
+    "what \"stops\" means depends on the ack's own status",
+    "ack first, then\n   report — and stops only after both exist",
+    "Leaving a blocked ack with no\n   report would strand the Issue",
     "consume the ack as\n   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`",
     "That is the third\n   consumption state",
     "without a state of its own it would be redelivered on every watcher restart",
@@ -6596,6 +6599,7 @@ function validateTwoPhaseDispatchHandshake() {
     // The stop instruction must not forbid a gate the same dispatch requires:
     // on the issue-only lane the delivery check runs BEFORE the ack.
     "except on the issue-only lane, where the delivery\n  check is one of the gates above and runs before you ack",
+    "unless your ack is `blocked`, which is\n  the one case that does require the stage report named below",
     "carrying the stage's own exit status for what you hit",
   ]) {
     assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
