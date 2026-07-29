@@ -313,10 +313,14 @@ function isFreshForLog(stat, log) {
 // orchestrator's check, not the watcher's — only the orchestrator knows which
 // gates it dispatched.
 //
-// Lifecycle: the orchestrator renames the ack to `<ISSUE-KEY>-gate-ack.applied
-// .json` when it consumes it, before resuming the worker. That rename is what
-// re-arms stall/dead for the execution phase, since the resumed worker appends
-// to the same stage log and a retained ack would keep suppressing them.
+// Lifecycle: the orchestrator consumes the ack by renaming it — to
+// `<ISSUE-KEY>-gate-ack.applied.json` once the worker is resumed AND its new
+// writer registered, or to `<ISSUE-KEY>-gate-ack.rejected.json` when the ack
+// fails its gate-list coverage check. Either rename is what re-arms stall/dead,
+// since the resumed worker appends to the same stage log and a retained ack
+// would keep suppressing them. Renaming any earlier than the registration is
+// its own defect: the gate-phase pid is already gone, so an unsuppressed window
+// would report a healthy resume as dead (references/orchestration.md, step 5).
 function isGateEntry(entry) {
   return (
     entry !== null &&
@@ -395,9 +399,17 @@ function isCorrelatedDeliveryLog(log, registryEntry) {
   return registryLogPath === log.filePath && hasPackIdentity(registryEntry);
 }
 
-function checkGateAck(log, reportsDir, registryEntry, nowMs) {
-  if (!isCorrelatedDeliveryLog(log, registryEntry)) return;
-  const gateAck = readGateAck(reportsDir, log, registryEntry);
+// The handshake exists only where a dispatch can carry a lifecycle move, and
+// that is the implement stage: preflight and ship advances carry none and have
+// no gate phase at all (references/orchestration.md). An ack sitting beside any
+// other stage's log is spurious, and must neither deliver nor suppress.
+const GATE_PHASE_STAGE = "mono-implement";
+
+function isCorrelatedGateAckLog(log, registryEntry) {
+  return log.stage === GATE_PHASE_STAGE && isCorrelatedDeliveryLog(log, registryEntry);
+}
+
+function checkGateAck(log, gateAck, nowMs) {
   if (gateAck === null || !isFreshForLog(gateAck.stat, log)) return;
 
   const version = `${gateAck.stat.mtimeMs}:${gateAck.stat.size}`;
@@ -448,7 +460,7 @@ function checkReport(log, reportsDir, registryEntry, nowMs) {
   );
 }
 
-function checkLog(log, reportsDir, registry, nowMs) {
+function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   const { firstLine, hasJsonEvent } = inspectLog(log.filePath);
   if (firstLine !== null && !hasJsonEvent) {
     // A non-empty log with no JSON events means the spawn command failed
@@ -492,16 +504,15 @@ function checkLog(log, reportsDir, registry, nowMs) {
   // resume time; a retained ack cannot be told apart from a live pause here,
   // which is why that rename is a protocol obligation and not a nicety.
   //
-  // Suppression demands the SAME registry correlation delivery does. An ack
-  // that cannot be delivered — foreign stage, foreign log, incomplete identity,
-  // non-Codex entry — must not be able to silence liveness either, or an
-  // untrustworthy registry entry would leave its worker both unreported and
+  // `gateAck` is the scan's single ack snapshot, already registry-correlated by
+  // the caller — one read shared with checkGateAck, so a consumption landing
+  // between two reads can never make one scan emit `gate-ack` and `dead` for
+  // the same worker. Suppression demands the SAME correlation delivery does: an
+  // ack that cannot be delivered — foreign stage, foreign log, incomplete
+  // identity, non-Codex entry — must not be able to silence liveness either, or
+  // an untrustworthy registry entry would leave its worker both unreported and
   // unhealable.
-  const registryEntry = registry[log.issue];
-  if (isCorrelatedDeliveryLog(log, registryEntry)) {
-    const gateAck = readGateAck(reportsDir, log, registryEntry);
-    if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) return;
-  }
+  if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) return;
 
   const pidState = writerPidState(registry[log.issue]);
   if (pidState === "dead") {
@@ -576,9 +587,16 @@ function scan() {
     // ISSUE-KEY has no registry entry belong to retired Issues and are
     // skipped silently instead of flooding EVENT:dead on every scan.
     if (!Object.prototype.hasOwnProperty.call(registry, log.issue)) continue;
-    checkGateAck(log, reportsDir, registry[log.issue], nowMs);
-    checkReport(log, reportsDir, registry[log.issue], nowMs);
-    checkLog(log, reportsDir, registry, nowMs);
+    const registryEntry = registry[log.issue];
+    // One ack snapshot per log per scan, read once and shared: the delivery
+    // check and the liveness check must never disagree about whether this
+    // worker is in its gate pause.
+    const gateAck = isCorrelatedGateAckLog(log, registryEntry)
+      ? readGateAck(reportsDir, log, registryEntry)
+      : null;
+    checkGateAck(log, gateAck, nowMs);
+    checkReport(log, reportsDir, registryEntry, nowMs);
+    checkLog(log, gateAck, reportsDir, registry, nowMs);
   }
   checkRegistry(registry, nowMs);
   checkIdle(registrySnapshot, controlState, nowMs);

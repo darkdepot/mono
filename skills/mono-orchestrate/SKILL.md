@@ -158,7 +158,9 @@ Workflow states:
      read-back, resume that same worker with the read-back as an explicit
      snapshot amendment, and consume the ack by renaming it
      `<ISSUE-KEY>-gate-ack.applied.json` in the same immediate post-resume
-     registry update. That order is load-bearing in both directions: an ack
+     registry update. An ack you reject for incomplete gate coverage is
+     consumed too — renamed `<ISSUE-KEY>-gate-ack.rejected.json` — and then
+     owned by the no-ack path. That order is load-bearing in both directions: an ack
      left in place keeps suppressing that worker's `stall` and `dead` events,
      while consuming it before the resumed writer is registered leaves a window
      where the watcher calls a healthy resume dead. The rule, the ack shape,

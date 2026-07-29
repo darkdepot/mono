@@ -375,6 +375,11 @@ Order, and it is the whole protocol:
    checks the ack against the gate list it dispatched — every gate named, and
    every one `pass` — because the ack is the only evidence those gates ran:
    a gate list the ack does not cover is a blocked ack, not a passed one.
+   Rejecting an ack has its own consumption step, because a rejected ack that
+   stays in place goes on suppressing liveness for a worker nobody is about to
+   resume: rename it to `<ISSUE-KEY>-gate-ack.rejected.json`, which re-arms the
+   ladder immediately, and then treat the worker as having produced no usable
+   ack — the no-ack path below owns it from there.
    It then applies every lifecycle move this dispatch carries and
    confirms each with read-back per Linear Write Verification. A move whose
    read-back still shows the old state is pending, never applied, and the
@@ -714,7 +719,11 @@ never report it as applied.
   lifecycle moves with read-back and resume that worker:
   never a nudge, respawn, session rotation, or owner page. The ladder applies
   only when no gate-ack arrives at all, which is the ordinary liveness case
-  above.
+  above. A `dead` that lands right after that worker's own `gate-ack` is the
+  consumption boundary rather than a death — the gate-phase process is gone and
+  the resumed one may not be registered yet — so reconcile the registry with the
+  actual writer process before any healing step, exactly as every liveness event
+  already requires.
 - Material scope drift: stop the worker and escalate through
   `scope-drift-needs-handoff`; scope is always the user's decision.
 
@@ -761,7 +770,10 @@ directory's history; retired Issues' logs are outside its scope.
   minimal shape carries no identity fields, so its correlation comes from the
   registry entry and the log it belongs to. The watcher validates the ack whole
   and fails closed: a missing or malformed `gates` array, or `gates-passed`
-  over a gate that did not pass, is treated as no ack at all.
+  over a gate that did not pass, is treated as no ack at all. It is scoped to
+  the stage that can have a gate phase — a `mono-implement` log — so an ack
+  beside a `mono-preflight` or `mono-ship` log, whose dispatches carry no
+  lifecycle move, is spurious and neither delivers nor suppresses.
   A fresh `gates-passed` gate-ack additionally suppresses `stall` and both
   `dead` branches for that worker, because the gate pause is a contracted wait
   and the exited pid is its expected state there, not death; a

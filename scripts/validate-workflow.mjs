@@ -4960,9 +4960,9 @@ function validateWatcherGateAckBehavior() {
     const addFixture = (
       issue,
       ack,
-      { registry = {}, priorAttempt = false, report = null, fallbackAck = false } = {}
+      { registry = {}, priorAttempt = false, report = null, fallbackAck = false, stage = "mono-implement" } = {}
     ) => {
-      const logPath = path.join(logsDir, `${issue}-mono-implement-a1.jsonl`);
+      const logPath = path.join(logsDir, `${issue}-${stage}-a1.jsonl`);
       fs.writeFileSync(logPath, `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`);
       // Age the log FIRST and read its birthtime after: macOS pulls a file's
       // birthtime back to an earlier mtime, so a prior-attempt ack computed
@@ -4986,14 +4986,11 @@ function validateWatcherGateAckBehavior() {
         if (priorAttempt) fs.utimesSync(ackPath, new Date(birthMs - 1_000), new Date(birthMs - 1_000));
       }
       if (report) {
-        fs.writeFileSync(
-          path.join(reportsDir, `${issue}-mono-implement.json`),
-          `${JSON.stringify(report, null, 2)}\n`
-        );
+        fs.writeFileSync(path.join(reportsDir, `${issue}-${stage}.json`), `${JSON.stringify(report, null, 2)}\n`);
       }
       workers[issue] = {
         transport: "codex-cli",
-        stage: "mono-implement",
+        stage,
         log: logPath,
         worktree,
         pid: 999_999_999,
@@ -5046,6 +5043,10 @@ function validateWatcherGateAckBehavior() {
     addFixture("MONO-314", gateAck("MONO-314", "gates-passed"), {
       registry: { stage: "mono-preflight" },
     });
+    // Registry and log can also AGREE on a stage that has no gate phase at
+    // all: preflight and ship dispatches carry no lifecycle move, so an ack
+    // there is spurious however well-formed it looks.
+    addFixture("MONO-315", gateAck("MONO-315", "gates-passed"), { stage: "mono-preflight" });
 
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
@@ -5085,6 +5086,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-310", "gate-entry-without-evidence"],
       ["MONO-312", "consumed-ack"],
       ["MONO-314", "foreign-stage-registry"],
+      ["MONO-315", "no-gate-phase-stage"],
     ]) {
       if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must stay silent`);
@@ -5114,6 +5116,7 @@ function validateWatcherGateAckBehavior() {
       // An ack the watcher would not deliver must not silence liveness either.
       ["MONO-304", "non-codex entry's ack"],
       ["MONO-314", "ack under a foreign-stage registry entry"],
+      ["MONO-315", "ack beside a stage that has no gate phase"],
     ]) {
       if (!stdout.includes(`EVENT:dead ${issue}`)) {
         fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
@@ -5956,6 +5959,11 @@ function validateTwoPhaseDispatchHandshake() {
     "`gates-passed` requires every entry to be `pass`",
     "is self-contradictory\n   and is treated as no ack at all",
     "a gate list the ack does not cover is a blocked ack, not a passed one",
+    // A rejected ack must be consumed too, or it suppresses liveness for a
+    // worker nobody is about to resume.
+    "Rejecting an ack has its own consumption step",
+    "rename it to `<ISSUE-KEY>-gate-ack.rejected.json`",
+    "the no-ack path below owns it from there",
     "consumes the ack by renaming\n   it to `<ISSUE-KEY>-gate-ack.applied.json`",
     "ack left in place would go on suppressing `stall` and `dead` for a worker",
     "re-arms the liveness ladder\n   for the execution phase",
@@ -5999,6 +6007,11 @@ function validateTwoPhaseDispatchHandshake() {
     "branch on its `status`",
     "`blocked` applies nothing and waits for the",
     "Suppression\n  demands the same registry correlation delivery does",
+    // Preflight and ship dispatches carry no lifecycle move, so an ack there
+    // is spurious however well-formed it looks.
+    "is spurious and neither delivers nor suppresses",
+    // The consumption boundary can look like a death for one scan.
+    "is the\n  consumption boundary rather than a death",
   ]) {
     assertIncludes("references/orchestration.md", required, JSON.stringify(required));
   }
@@ -6059,6 +6072,7 @@ function validateTwoPhaseDispatchHandshake() {
     // branch instead of applying moves on every event.
     "Read the ack\n     and branch on its `status`",
     "`blocked` applies\n     no move at all",
+    "renamed `<ISSUE-KEY>-gate-ack.rejected.json`",
   ]) {
     assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
   }
