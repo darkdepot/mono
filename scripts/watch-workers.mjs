@@ -557,8 +557,21 @@ function registryGateAckLog(issueKey, registryEntry) {
   return { issue: match[1], stage: match[2], attempt: match[3] ? Number(match[3]) : null, filePath, stat };
 }
 
+// Delivery asks only whether the ack BELONGS to this attempt, not whether the
+// attempt is still paused. isFreshForLog additionally requires the ack to sit
+// within one stall threshold of the log's latest event, which is right for
+// suppression but wrong for delivery: after a resume the worker's own execution
+// advances that same log, so an ack left unconsumed by the crash window would
+// stop being delivered exactly when the consumer most needs to see it — the
+// stage report would then arrive alone and the ambiguity reconciliation the
+// protocol requires would never be triggered. Suppression keeps the stricter
+// test in checkLog; only an ack predating this attempt's log is rejected here.
+function ackBelongsToAttempt(stat, log) {
+  return stat.mtimeMs >= log.stat.birthtimeMs;
+}
+
 function checkGateAck(log, gateAck, nowMs) {
-  if (gateAck === null || !isFreshForLog(gateAck.stat, log)) return;
+  if (gateAck === null || !ackBelongsToAttempt(gateAck.stat, log)) return;
 
   const version = `${gateAck.stat.mtimeMs}:${gateAck.stat.size}`;
   if (emittedGateAckVersions.get(gateAck.ackPath) === version) return;

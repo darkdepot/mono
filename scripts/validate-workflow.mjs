@@ -5401,6 +5401,35 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // The crash window survives execution: an unconsumed ack must still be
+    // DELIVERED after the resumed worker advanced the log well past it, so the
+    // consumer sees the ack/report pair and reconciles. Suppression keeps its
+    // stricter test, so liveness is unaffected.
+    const survivesExecutionIssue = "MONO-333";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${survivesExecutionIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      // Pull birthtime back first, so the ack can legitimately post-date it.
+      const born = new Date(Date.now() - 900_000);
+      fs.utimesSync(logPath, born, born);
+      const ackPath = path.join(reportsDir, `${survivesExecutionIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(survivesExecutionIssue, "gates-passed"), null, 2)}\n`);
+      const ackAt = new Date(Date.now() - 500_000);
+      fs.utimesSync(ackPath, ackAt, ackAt);
+      // Execution then advanced the same log far past the ack.
+      const advanced = new Date(Date.now() - 100_000);
+      fs.utimesSync(logPath, advanced, advanced);
+      workers[survivesExecutionIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", survivesExecutionIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5442,6 +5471,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-311", "worktree-fallback"],
       ["MONO-327", "ack newer than a superseded attempt's report"],
       ["MONO-332", "ack on the registry log while a superseded log is newer"],
+      ["MONO-333", "unconsumed ack after execution advanced the log"],
       ["MONO-306", "unconsumed ack beside a completed stage report"],
     ]) {
       if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
@@ -5519,6 +5549,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-320", "late ack written by a superseded attempt"],
       ["MONO-321", "gate-ack whose pause outlived the suppression bound"],
       ["MONO-328", "freshly touched ack whose pause outlived the bound"],
+      ["MONO-333", "delivered ack whose attempt has since executed"],
       ["MONO-330", "report masking an unconsumed ack past the gate-pause bound"],
       ["MONO-322", "future-dated gate-ack"],
       ["MONO-313", "two ack files for one attempt"],
