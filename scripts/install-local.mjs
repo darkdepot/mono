@@ -17,7 +17,7 @@ const SURFACE_REVISION = 3;
 
 // Pack-private shared directory at the skills root (a sibling of LOCKFILE_NAME).
 // It holds workflow runtime scripts the installed skills invoke at delivery time
-// — today the issue-only lane resolver the create-then-approve intake runs. It is
+// — including the issue-only resolver and orchestration heartbeat watcher. It is
 // hidden (leading dot) so it is never mistaken for an installed `mono-*` skill
 // directory by discovery or stale-cleanup, which scan for `mono-` prefixes.
 const RUNTIME_DIR = ".mono-agent-workflow";
@@ -31,7 +31,11 @@ const INSTALL_LOCK_TOKEN_PATTERN = /^[A-Za-z0-9-]{1,128}$/;
 // <skills-root>/.mono-agent-workflow/scripts/. They import only Node built-ins,
 // so there are no sibling-script dependencies; add future runtime dependencies
 // here so the whole executable pack contract is installed together.
-const RUNTIME_SCRIPTS = ["resolve-issue-context.mjs", "verify-pack-state.mjs"];
+const RUNTIME_SCRIPTS = [
+  "resolve-issue-context.mjs",
+  "verify-pack-state.mjs",
+  "watch-workers.mjs",
+];
 
 function usage() {
   console.error(
@@ -438,8 +442,8 @@ function sync(
     });
   }
 
-  // Publish the pack-private runtime scripts (the issue-only resolver + any
-  // sibling it imports) into <skills-root>/.mono-agent-workflow/scripts/, the
+  // Publish the pack-private runtime scripts into
+  // <skills-root>/.mono-agent-workflow/scripts/, the
   // canonical location the installed skills invoke at delivery time. The whole
   // .mono-agent-workflow/ directory is installer-owned and fully rewritten each
   // sync, so a removed upstream script — or any file planted anywhere under it —
@@ -507,8 +511,8 @@ function check(root, skillsRoot, commit, dirty, version) {
   }
 
   // The pack-private runtime scripts must be installed, current, and free of
-  // extras, so the create-then-approve intake finds the resolver at the
-  // canonical path in every synced root. The extra-file scan walks the WHOLE
+  // extras, so installed workflows find every executable at its canonical path
+  // in every synced root. The extra-file scan walks the WHOLE
   // .mono-agent-workflow/ root (not just scripts/), so a file planted one level
   // up — e.g. .mono-agent-workflow/evil.mjs — is flagged too. The lockfile
   // lives beside this root, not inside it, so nothing here should exist outside

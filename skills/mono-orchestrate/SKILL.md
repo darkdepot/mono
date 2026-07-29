@@ -143,9 +143,12 @@ Workflow states:
      or repairing its canonical state files, and before an `idle` → `active` transition.
      Do not create or mutate orchestrator state when the installer owns the lock.
    - Start the heartbeat watcher before the first spawn of a wave:
-     `node scripts/watch-workers.mjs --root ~/.mono-agent-workflow/orchestrator/<product>`
-     via the runtime Monitor primitive (Heartbeat in
+     `node ../.mono-agent-workflow/scripts/watch-workers.mjs --root ~/.mono-agent-workflow/orchestrator/<product>`
+     resolved relative to this installed skill directory, via the runtime
+     Monitor primitive (Heartbeat in
      `references/orchestration.md`); no worker spawns until it is running.
+     The upstream pack source remains `scripts/watch-workers.mjs` for
+     development and fixtures.
    - One Issue per worker. Spawn through the runtime transport with
      `templates/orchestrator-dispatch.md`: full context snapshot, AFK
      contract, engine block, mailbox path, authorization. Include the
@@ -288,9 +291,11 @@ Rules:
   `scope-drift-needs-handoff` routes through `mono-handoff` with the user.
 - A stuck or dead worker is respawned from Linear plus the last mailbox
   report; continue the stage, do not restart the Issue.
-- The heartbeat watcher (`scripts/watch-workers.mjs`) is started before the
-  first spawn and runs for the whole wave; running a wave without it is a
-  degradation recorded in the ledger (Heartbeat in
+- The heartbeat watcher (`../.mono-agent-workflow/scripts/watch-workers.mjs`
+  relative to this installed skill directory; upstream source
+  `scripts/watch-workers.mjs`) is started before the first spawn and runs for
+  the whole wave; running a wave without it is a degradation recorded in the
+  ledger (Heartbeat in
   `references/orchestration.md`).
 - Keep the ledger free of secrets and routine polling entries.
 - Keep user-facing output in the project config language (Russian by

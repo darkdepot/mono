@@ -815,17 +815,21 @@ never report it as applied.
 
 The Monitoring Protocol defines when to intervene; the heartbeat is the
 external pulse that notices dying workers without spending orchestrator
-turns. `scripts/watch-workers.mjs` (this repo) is a zero-dependency,
-read-only watcher over the orchestrator root: it reads `logs/`, `reports/`,
-`workers.json`, and `control.json`, writes nothing, and emits one stable line
-per watcher event to stdout —
+turns. The installed runtime is
+`../.mono-agent-workflow/scripts/watch-workers.mjs`, resolved relative to the
+installed `mono-orchestrate` skill directory; `scripts/watch-workers.mjs` is
+the upstream repository source used for pack development and fixtures. It is
+a zero-dependency, read-only watcher over the orchestrator root: it reads
+`logs/`, `reports/`, `workers.json`, and `control.json`, writes nothing, and
+emits one stable line per watcher event to stdout —
 `<ISO time> EVENT:<stall|dead|spawn-fail|report|gate-ack|idle> <ISSUE-KEY|-> <detail>`.
 The watcher observes the active registry (`workers.json`), not the
 directory's history; retired Issues' logs are outside its scope.
 
 - At wave start — before the first worker spawn — the orchestrator must
   start the watcher against the mailbox root:
-  `node scripts/watch-workers.mjs --root ~/.mono-agent-workflow/orchestrator/<product>`.
+  `node ../.mono-agent-workflow/scripts/watch-workers.mjs --root ~/.mono-agent-workflow/orchestrator/<product>`,
+  resolved relative to the installed `mono-orchestrate` skill directory.
   Run it through the runtime's monitor primitive (Claude Code: the Monitor
   tool with `persistent: true`); a runtime without one falls back to a
   background process plus a periodic wakeup that reads its stdout. Record

@@ -754,6 +754,7 @@ function validateLocalInstallBehavior() {
   const skillsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-workflow-skills-"));
   const installedResolver = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "resolve-issue-context.mjs");
   const installedPackVerifier = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "verify-pack-state.mjs");
+  const installedWatcher = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "watch-workers.mjs");
   const legacySkillDir = path.join(skillsRoot, "linear-check");
   const legacyLockPath = path.join(skillsRoot, ".linear-agent-workflow.lock.json");
   const legacyRuntimeDir = path.join(skillsRoot, ".linear-agent-workflow");
@@ -829,6 +830,20 @@ function validateLocalInstallBehavior() {
         String(installedIdentity.surfaceRevision),
       ]);
     }
+    if (!fs.existsSync(installedWatcher)) {
+      fail("Local install missing the canonical heartbeat watcher");
+    } else {
+      const watcherManifestPath = ".mono-agent-workflow/scripts/watch-workers.mjs";
+      const watcherManifest = installedIdentity.runtimeScripts?.find(
+        (entry) => entry.path === watcherManifestPath
+      );
+      const installedWatcherHash = createHash("sha256")
+        .update(fs.readFileSync(installedWatcher))
+        .digest("hex");
+      if (watcherManifest?.sha256 !== installedWatcherHash) {
+        fail("Local install heartbeat watcher hash must match the runtimeScripts manifest");
+      }
+    }
 
     if (fs.existsSync(legacySkillDir)) fail("Local install kept previous-brand linear-check");
     if (fs.existsSync(legacyLockPath)) fail("Local install kept previous-brand lockfile");
@@ -872,6 +887,39 @@ function validateLocalInstallBehavior() {
 
     runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]);
 
+    // AC3: execute the INSTALLED watcher, not the upstream source copy. A
+    // malformed synthetic worker log produces spawn-fail immediately, avoiding
+    // filesystem birthtime/ctime/mtime assumptions across macOS and Linux.
+    const watcherFixtureRoot = path.join(skillsRoot, "watcher-fixture");
+    const watcherLogsDir = path.join(watcherFixtureRoot, "logs");
+    fs.mkdirSync(watcherLogsDir, { recursive: true });
+    const watcherLogPath = path.join(watcherLogsDir, "MONO-39-mono-implement-a1.jsonl");
+    fs.writeFileSync(watcherLogPath, "synthetic non-json worker output\n");
+    fs.writeFileSync(
+      path.join(watcherFixtureRoot, "workers.json"),
+      `${JSON.stringify({
+        "MONO-39": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          pid: 999_999_999,
+          log: watcherLogPath,
+        },
+      }, null, 2)}\n`
+    );
+    fs.writeFileSync(
+      path.join(watcherFixtureRoot, "control.json"),
+      `${JSON.stringify({ state: "active" }, null, 2)}\n`
+    );
+    const installedWatcherOutput = runNode([
+      installedWatcher,
+      "--root",
+      watcherFixtureRoot,
+      "--once",
+    ]);
+    if (!installedWatcherOutput.includes("EVENT:spawn-fail MONO-39")) {
+      fail("Installed heartbeat watcher must emit an event for the synthetic registry/log fixture");
+    }
+
     for (const [field, value, expectedText] of [
       ["packVersion", "0.0.0", "Lockfile packVersion is 0.0.0"],
       ["sourceCommit", "b".repeat(40), "Lockfile sourceCommit mismatch"],
@@ -913,14 +961,13 @@ function validateLocalInstallBehavior() {
       "stale or edited"
     );
 
-    // The "missing installed runtime script" branch: a deleted resolver is
-    // flagged (mirrors the copied-asset missing-file test).
+    // AC1 negative probe: deleting the installed watcher makes --check fail.
     runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    fs.rmSync(installedResolver, { force: true });
+    fs.rmSync(installedWatcher, { force: true });
     expectCommandFailure(
-      "install-local --check missing runtime script fixture",
+      "install-local --check missing heartbeat watcher fixture",
       () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "Missing installed runtime script"
+      "Missing installed runtime script: .mono-agent-workflow/scripts/watch-workers.mjs"
     );
 
     // The "unexpected" branch: an extra file under the canonical scripts dir is
@@ -4543,12 +4590,25 @@ function validateHeartbeatContract() {
 
   for (const required of [
     "watch-workers.mjs",
+    "../.mono-agent-workflow/scripts/watch-workers.mjs",
     "Heartbeat in",
     "before the first spawn",
     "nudge → respawn → session rotation",
     "an empty thread id",
   ]) {
     assertIncludes("skills/mono-orchestrate/SKILL.md", required, `heartbeat contract: ${JSON.stringify(required)}`);
+  }
+  assertIncludes(
+    "references/orchestration.md",
+    "node ../.mono-agent-workflow/scripts/watch-workers.mjs --root ~/.mono-agent-workflow/orchestrator/<product>",
+    "heartbeat canonical installed launch path"
+  );
+  for (const relativePath of ["references/install.md", "references/versioning.md"]) {
+    assertIncludes(
+      relativePath,
+      ".mono-agent-workflow/scripts/watch-workers.mjs",
+      `${relativePath} installed watcher runtime entry`
+    );
   }
 }
 

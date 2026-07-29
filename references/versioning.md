@@ -76,7 +76,8 @@ Example shape:
   },
   "runtimeScripts": [
     { "path": ".mono-agent-workflow/scripts/resolve-issue-context.mjs", "sha256": "..." },
-    { "path": ".mono-agent-workflow/scripts/verify-pack-state.mjs", "sha256": "..." }
+    { "path": ".mono-agent-workflow/scripts/verify-pack-state.mjs", "sha256": "..." },
+    { "path": ".mono-agent-workflow/scripts/watch-workers.mjs", "sha256": "..." }
   ],
   "installedSkills": [
     {
