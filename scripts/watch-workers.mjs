@@ -4,7 +4,7 @@
 // "## Heartbeat"). Watches one orchestrator mailbox root and prints one
 // stable line per worker liveness event to stdout:
 //
-//   <ISO time> EVENT:<stall|dead|spawn-fail|report|idle> <ISSUE-KEY|-> <detail>
+//   <ISO time> EVENT:<stall|dead|spawn-fail|report|gate-ack|idle> <ISSUE-KEY|-> <detail>
 //
 // Checks per scan (log checks apply only to Issues present in workers.json,
 // the active registry; logs of retired Issues are history and are skipped
@@ -22,12 +22,16 @@
 // as the log's last event, or within one stall threshold behind it (the CLI
 // appends its final shutdown events to the log just after the worker writes
 // the report), and never older than the log file's creation time (a prior
-// attempt's report proves nothing about a retry's writer).
+// attempt's report proves nothing about a retry's writer). A fresh
+// `gates-passed` gate-ack suppresses them on the same predicate: the gate
+// pause of the two-phase dispatch handshake is a contracted wait, so the
+// worker's exited process is its expected state there, not death.
 //
-// Report events apply only to codex-cli workers with a correlated A5 identity
-// and use report mtime+size as the in-process version key. Idle follows the A5
-// retirement contract: registry entries remain active until deploy closeout
-// removes them; control active/draining never retires a remaining entry.
+// Report and gate-ack events apply only to codex-cli workers with a
+// correlated A5 identity and use file mtime+size as the in-process version
+// key. Idle follows the A5 retirement contract: registry entries remain
+// active until deploy closeout removes them; control active/draining never
+// retires a remaining entry.
 //
 // Read-only by contract: no LLM calls, no writes anywhere — it reads
 // logs/*.jsonl, reports/*.json, workers.json, and control.json, and emits to
@@ -54,7 +58,7 @@ function usage(exitCode = 2) {
   console.error("");
   console.error("Watch an orchestrator mailbox root (logs/, reports/, workers.json) and");
   console.error("print one line per worker liveness event to stdout:");
-  console.error("  <ISO time> EVENT:<stall|dead|spawn-fail|report|idle> <ISSUE-KEY|-> <detail>");
+  console.error("  <ISO time> EVENT:<stall|dead|spawn-fail|report|gate-ack|idle> <ISSUE-KEY|-> <detail>");
   console.error("");
   console.error("Options:");
   console.error("  --root <dir>        Orchestrator root, e.g. ~/.mono-agent-workflow/orchestrator/<product> (required)");
@@ -136,6 +140,7 @@ if (!fs.existsSync(args.root) || !fs.statSync(args.root).isDirectory()) {
 
 const emittedAt = new Map();
 const emittedReportVersions = new Map();
+const emittedGateAckVersions = new Map();
 const warnedOnce = new Set();
 let lastEventAtMs = null;
 
@@ -271,13 +276,48 @@ function collectLatestLogs(logsDir) {
   return latestByIssue;
 }
 
-function reportMtimeMs(reportsDir, log) {
+function reportStatFor(reportsDir, log) {
   const reportPath = path.join(reportsDir, `${log.issue}-${log.stage}.json`);
   try {
-    return fs.statSync(reportPath).mtimeMs;
+    return fs.statSync(reportPath);
   } catch {
     return null;
   }
+}
+
+// The freshness predicate every intentional-stop artefact shares. A report or
+// a gate-ack proves something about THIS log's writer only when it is at
+// least as new as the log file's creation (a prior attempt's file proves
+// nothing about a retry) and no more than one stall threshold behind the
+// log's last event (the CLI appends its shutdown tail just after the worker
+// writes the file).
+function isFreshForLog(stat, log) {
+  return (
+    stat.mtimeMs >= log.stat.birthtimeMs &&
+    stat.mtimeMs >= log.stat.mtimeMs - args.stallSec * 1000
+  );
+}
+
+// Gate-ack of the two-phase dispatch handshake (references/orchestration.md,
+// "## Two-Phase Dispatch Handshake"): the worker passed its start gates and
+// stopped, waiting for the orchestrator to apply the dispatch's lifecycle
+// moves and resume it. Its shape is deliberately minimal and carries no pack
+// identity, so it is correlated through the registry entry and the log it
+// belongs to, never through fields of its own.
+function readGateAck(reportsDir, log) {
+  const ackPath = path.join(reportsDir, `${log.issue}-gate-ack.json`);
+  let stat;
+  let ack;
+  try {
+    stat = fs.statSync(ackPath);
+    ack = JSON.parse(fs.readFileSync(ackPath, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!stat.isFile()) return null;
+  if (ack?.issue !== log.issue || ack.phase !== "gate") return null;
+  if (ack.status !== "gates-passed" && ack.status !== "blocked") return null;
+  return { ackPath, stat, status: ack.status };
 }
 
 function hasPackIdentity(value) {
@@ -291,14 +331,39 @@ function hasPackIdentity(value) {
   );
 }
 
-function checkReport(log, reportsDir, registryEntry, nowMs) {
+// Shared correlation surface for the two delivery events: only a codex-cli
+// worker whose registry entry names this exact log, this stage, and a full
+// A5 identity can produce a `report` or a `gate-ack`.
+function isCorrelatedDeliveryLog(log, registryEntry) {
   // Desktop and fallback transports deliberately have no JSONL correlation
-  // surface. Their reports remain under the orchestrator's polling contract.
-  if (registryEntry?.transport !== "codex-cli") return;
-  if (registryEntry.stage !== log.stage) return;
+  // surface. Their deliveries remain under the orchestrator's polling
+  // contract.
+  if (registryEntry?.transport !== "codex-cli") return false;
+  if (registryEntry.stage !== log.stage) return false;
   const registryLogPath =
     typeof registryEntry.log === "string" ? path.resolve(expandHome(registryEntry.log)) : null;
-  if (registryLogPath !== log.filePath || !hasPackIdentity(registryEntry)) return;
+  return registryLogPath === log.filePath && hasPackIdentity(registryEntry);
+}
+
+function checkGateAck(log, reportsDir, registryEntry, nowMs) {
+  if (!isCorrelatedDeliveryLog(log, registryEntry)) return;
+  const gateAck = readGateAck(reportsDir, log);
+  if (gateAck === null || !isFreshForLog(gateAck.stat, log)) return;
+
+  const version = `${gateAck.stat.mtimeMs}:${gateAck.stat.size}`;
+  if (emittedGateAckVersions.get(gateAck.ackPath) === version) return;
+  emittedGateAckVersions.set(gateAck.ackPath, version);
+  emitEvent(
+    "gate-ack",
+    log.issue,
+    `gate-ack ${path.basename(gateAck.ackPath)} status ${gateAck.status} is fresh and registry-correlated (version ${version})`,
+    `gate-ack:${gateAck.ackPath}:${version}`,
+    nowMs
+  );
+}
+
+function checkReport(log, reportsDir, registryEntry, nowMs) {
+  if (!isCorrelatedDeliveryLog(log, registryEntry)) return;
 
   const reportPath = path.join(reportsDir, `${log.issue}-${log.stage}.json`);
   let reportStat;
@@ -314,12 +379,7 @@ function checkReport(log, reportsDir, registryEntry, nowMs) {
   // This is intentionally the exact v2 freshness predicate. Requiring the
   // report to be as new as the log would create false negatives when Codex
   // appends shutdown-tail events after the worker writes its report.
-  if (
-    reportStat.mtimeMs < log.stat.birthtimeMs ||
-    reportStat.mtimeMs < log.stat.mtimeMs - args.stallSec * 1000
-  ) {
-    return;
-  }
+  if (!isFreshForLog(reportStat, log)) return;
 
   if (report?.issue !== log.issue || report?.stage !== log.stage || !hasPackIdentity(report)) return;
   for (const field of ["packVersion", "sourceCommit", "surfaceRevision"]) {
@@ -370,8 +430,17 @@ function checkLog(log, reportsDir, registry, nowMs) {
   // The birthtime guard keeps a prior attempt's report from masking a fresh
   // retry log: a report older than this log file's creation belongs to an
   // earlier attempt and proves nothing about this writer.
-  const reportMs = reportMtimeMs(reportsDir, log);
-  if (reportMs !== null && reportMs >= log.stat.birthtimeMs && reportMs >= log.stat.mtimeMs - args.stallSec * 1000) return;
+  const reportStat = reportStatFor(reportsDir, log);
+  if (reportStat !== null && isFreshForLog(reportStat, log)) return;
+
+  // The gate pause of the two-phase dispatch handshake is a contracted wait,
+  // not a death: a fresh `gates-passed` gate-ack means this worker stopped on
+  // purpose and is waiting for the orchestrator to apply the dispatch's
+  // lifecycle moves and resume it. A `blocked` ack suppresses nothing — that
+  // path also writes the ordinary stage report, which the check above already
+  // honours.
+  const gateAck = readGateAck(reportsDir, log);
+  if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) return;
 
   const pidState = writerPidState(registry[log.issue]);
   if (pidState === "dead") {
@@ -446,6 +515,7 @@ function scan() {
     // ISSUE-KEY has no registry entry belong to retired Issues and are
     // skipped silently instead of flooding EVENT:dead on every scan.
     if (!Object.prototype.hasOwnProperty.call(registry, log.issue)) continue;
+    checkGateAck(log, reportsDir, registry[log.issue], nowMs);
     checkReport(log, reportsDir, registry[log.issue], nowMs);
     checkLog(log, reportsDir, registry, nowMs);
   }

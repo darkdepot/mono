@@ -4523,7 +4523,7 @@ function validateHeartbeatContract() {
     "empty `thread_id`",
     "watch-workers.mjs",
     "-a1.jsonl",
-    "EVENT:<stall|dead|spawn-fail|report|idle>",
+    "EVENT:<stall|dead|spawn-fail|report|gate-ack|idle>",
     "retired Issues' logs are outside its scope",
     "`report` is emitted only for `codex-cli` workers",
     "read the correlated report and advance the stage pipeline",
@@ -4923,6 +4923,142 @@ async function validateWatcherV3Behavior() {
     }
   } finally {
     fs.rmSync(retirementRoot, { recursive: true, force: true });
+  }
+}
+
+// MONO-47 — `gate-ack` is additive to the v3 event set. It rides the same
+// correlation surface as `report`, and only a FRESH `gates-passed` ack
+// suppresses stall/dead: the gate pause of the two-phase dispatch handshake is
+// a contracted wait, while a blocked, stale, or malformed ack proves nothing
+// and must leave the liveness ladder armed.
+function validateWatcherGateAckBehavior() {
+  const identity = {
+    packVersion: "0.20.1",
+    sourceCommit: "a".repeat(40),
+    surfaceRevision: 1,
+  };
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-watcher-gate-ack-"));
+  try {
+    const logsDir = path.join(fixtureRoot, "logs");
+    const reportsDir = path.join(fixtureRoot, "reports");
+    fs.mkdirSync(logsDir);
+    fs.mkdirSync(reportsDir);
+    const workers = {};
+    // Well past 2x the 90s stall threshold, and every writer pid is gone —
+    // exactly the shape a codex-cli gate pause leaves behind.
+    const staleLog = new Date(Date.now() - 400_000);
+
+    const gateAck = (issue, status) => ({
+      issue,
+      phase: "gate",
+      gates: [{ gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" }],
+      status,
+    });
+
+    const addFixture = (issue, ack, { registry = {}, priorAttempt = false, report = null } = {}) => {
+      const logPath = path.join(logsDir, `${issue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`);
+      // Age the log FIRST and read its birthtime after: macOS pulls a file's
+      // birthtime back to an earlier mtime, so a prior-attempt ack computed
+      // from the pre-aging birthtime would land inside the freshness window.
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const birthMs = fs.statSync(logPath).birthtimeMs;
+      if (ack) {
+        const ackPath = path.join(reportsDir, `${issue}-gate-ack.json`);
+        fs.writeFileSync(ackPath, `${JSON.stringify(ack, null, 2)}\n`);
+        // A prior attempt's ack predates this log file and proves nothing
+        // about this writer.
+        if (priorAttempt) fs.utimesSync(ackPath, new Date(birthMs - 1_000), new Date(birthMs - 1_000));
+      }
+      if (report) {
+        fs.writeFileSync(
+          path.join(reportsDir, `${issue}-mono-implement.json`),
+          `${JSON.stringify(report, null, 2)}\n`
+        );
+      }
+      workers[issue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        pid: 999_999_999,
+        ...identity,
+        ...registry,
+      };
+    };
+
+    addFixture("MONO-301", gateAck("MONO-301", "gates-passed"));
+    addFixture("MONO-302", gateAck("MONO-302", "blocked"));
+    addFixture("MONO-303", gateAck("MONO-303", "gates-passed"), { priorAttempt: true });
+    addFixture("MONO-304", gateAck("MONO-304", "gates-passed"), {
+      registry: { transport: "claude-code-desktop" },
+    });
+    addFixture("MONO-305", { ...gateAck("MONO-305", "gates-passed"), phase: "execution" });
+    addFixture("MONO-306", gateAck("MONO-306", "gates-passed"), {
+      report: { issue: "MONO-306", stage: "mono-implement", status: "implemented-needs-preflight", ...identity },
+    });
+
+    fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
+    fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
+
+    const runOnce = () =>
+      spawnSync(
+        process.execPath,
+        ["scripts/watch-workers.mjs", "--root", fixtureRoot, "--stall-sec", "90", "--idle-sec", "30", "--once"],
+        { cwd: root, encoding: "utf8" }
+      );
+
+    const result = runOnce();
+    if (result.status !== 0) {
+      fail(`watcher gate-ack fixtures failed to run: ${result.stderr || `exit ${result.status}`}`);
+      return;
+    }
+    const stdout = result.stdout || "";
+
+    for (const [issue, label] of [
+      ["MONO-301", "gates-passed"],
+      ["MONO-302", "blocked"],
+      ["MONO-306", "gate-ack beside a stage report"],
+    ]) {
+      if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
+        fail(`watcher ${label} gate-ack fixture must emit a gate-ack event`);
+      }
+    }
+    for (const [issue, label] of [
+      ["MONO-303", "prior-attempt"],
+      ["MONO-304", "non-codex"],
+      ["MONO-305", "malformed-phase"],
+    ]) {
+      if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
+        fail(`watcher ${label} gate-ack fixture must stay silent`);
+      }
+    }
+
+    // A healthy gate pause must not read as death.
+    if (/EVENT:(stall|dead) MONO-301\b/.test(stdout)) {
+      fail("a fresh gates-passed gate-ack must suppress stall and dead for that worker");
+    }
+    // Everything that is not a healthy pause keeps the liveness ladder armed.
+    for (const [issue, label] of [
+      ["MONO-302", "blocked ack"],
+      ["MONO-303", "prior-attempt ack"],
+      ["MONO-305", "malformed ack"],
+    ]) {
+      if (!stdout.includes(`EVENT:dead ${issue}`)) {
+        fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
+      }
+    }
+    // v3 semantics intact: the report event still fires next to a gate-ack.
+    if (!stdout.includes("EVENT:report MONO-306")) {
+      fail("gate-ack must not suppress the v3 report event for the same worker");
+    }
+
+    // At-least-once across watcher restarts, same rule as `report`.
+    const restart = runOnce();
+    if (restart.status !== 0 || !restart.stdout.includes("EVENT:gate-ack MONO-301")) {
+      fail("watcher restart must re-emit the current gate-ack version once");
+    }
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 }
 
@@ -5495,8 +5631,11 @@ function validateOrchestrationModePrecedence() {
     "Advancing a stage while a report's mutations are still",
     "Queued mutations land only when the orchestrator applies them",
     "do not describe a queued mutation as",
-    "reports `needs-decision` for the orchestrator to sequence",
-    "lifecycle precondition is therefore sequenced by the",
+    // MONO-47 rewrote both order pins with their prose: the dispatch-moment
+    // lifecycle move is no longer sequenced before dispatch, so a pin that
+    // the pre-handshake wording could still satisfy would pin nothing.
+    "reports `needs-decision` for the orchestrator to sequence and resume",
+    "lifecycle precondition is therefore sequenced by the\n  orchestrator around the gate phase of the two-phase dispatch handshake",
     "No stage defers an executable check onto a queued mutation",
     "Interactive mode is unchanged",
   ]) {
@@ -5595,26 +5734,37 @@ function validateOrchestrationModePrecedence() {
         "mono-implement orchestration branch must resolve the context seam before queuing the lifecycle move"
       );
     }
-    // The issue-only lane must actually queue its lifecycle mutation, and
-    // only after the delivery verdict — not merely mention the move.
-    const issueOnlyQueue = branch.indexOf("On `PASS`, queue the Issue-to-started move");
+    // MONO-47: neither lane queues a lifecycle mutation any more — the
+    // orchestrator applies both dispatch-moment moves on the gate-ack. The
+    // issue-only ordering invariant survives that move: its delivery verdict
+    // is reached in the gate phase, so a `gates-passed` ack is unreachable
+    // without it.
+    const issueOnlyAck = branch.indexOf("On a `gates-passed` ack the orchestrator applies the");
     const issueOnlyGate = branch.indexOf("Issue-only: the delivery check precedes");
-    if (issueOnlyQueue < 0 || !branch.includes("in `linear_mutations_pending` before writing any code")) {
+    if (issueOnlyAck < 0 || !branch.includes("so neither moves the Issue")) {
       fail(
-        "mono-implement orchestration branch must queue the Issue-to-started move in linear_mutations_pending on a PASS verdict"
+        "mono-implement orchestration branch must state that the orchestrator applies the Issue-to-started move on the gate-ack, and that a non-PASS verdict never reaches one"
       );
-    } else if (issueOnlyGate < 0 || issueOnlyGate > issueOnlyQueue) {
+    } else if (issueOnlyGate < 0 || issueOnlyGate > issueOnlyAck) {
       fail(
-        "mono-implement orchestration branch must evaluate the issue-only delivery verdict before queuing the Issue-to-started move"
+        "mono-implement orchestration branch must evaluate the issue-only delivery verdict before the gate-ack that releases the Issue-to-started move"
+      );
+    }
+    if (branch.includes("queue the Issue-to-started move")) {
+      fail(
+        "mono-implement orchestration branch must not queue the Issue-to-started move: it is a dispatch-moment move the orchestrator applies on the gate-ack"
       );
     }
 
     for (const required of [
       "the delivery check precedes the Issue-to-started move",
       "Project-first: queue no lifecycle move in this lane",
-      "sequences the Delivery move before it dispatches this stage",
+      // MONO-47 rewrote these two with their prose: the Delivery move is no
+      // longer sequenced before dispatch, and a pre-move snapshot inside the
+      // gate phase is the normal state instead of a `needs-decision`.
+      "applies the Delivery move on your gate-ack, before it resumes this stage",
+      "hard stop, not a shrug: report `blocked` naming the move and the missing",
       "do not defer the check onto a queued",
-      "`needs-decision` report naming that move for the orchestrator to apply",
       "treat it as queued, not as done",
       "What must be true before code is",
       "is `blocked` naming",
@@ -5622,6 +5772,217 @@ function validateOrchestrationModePrecedence() {
       if (!branch.includes(required)) {
         fail(`mono-implement orchestration branch missing delivery-gate semantics: ${JSON.stringify(required)}`);
       }
+    }
+  }
+}
+
+// MONO-47 — the two-phase dispatch handshake. A dispatch-moment lifecycle
+// move is applied only after the worker's gate-ack, so the protocol's order is
+// pinned structurally and not by prose alone: gate-phase dispatch → worker
+// gate phase → gate-ack → lifecycle application with read-back → resume with
+// the snapshot amendment. The negative fixtures below prove the order check
+// rejects a reordered protocol instead of passing on any text that merely
+// contains the anchors.
+const HANDSHAKE_PROTOCOL_ANCHORS = [
+  ["gate-phase-dispatch", "1. Gate-phase dispatch."],
+  ["worker-gate-phase", "2. Worker gate phase."],
+  ["gate-ack", "3. Gate-ack, then stop."],
+  ["lifecycle-application", "4. Lifecycle application."],
+  ["resume", "5. Resume for execution."],
+];
+
+// The same order as `mono-implement` executes it: the seam closes the gate
+// phase, the pause sits between steps 4 and 5, and the lifecycle/delivery step
+// runs only after the resume.
+const HANDSHAKE_BRANCH_ANCHORS = [
+  ["context-seam", "Resolve the context seam through the Context-seam branch below"],
+  ["gate-pause", "Gate pause, between steps 4 and 5:"],
+  ["post-resume-step", "Perform no lifecycle move and no delivery check against Linear"],
+];
+
+function orderedAnchorFaults(text, anchors) {
+  const faults = [];
+  let previousIndex = -1;
+  let previousName = null;
+  for (const [name, anchor] of anchors) {
+    const index = text.indexOf(anchor);
+    if (index < 0) {
+      faults.push(`missing:${name}`);
+      continue;
+    }
+    if (previousIndex >= 0 && index < previousIndex) {
+      faults.push(`out-of-order:${name}-before-${previousName}`);
+    }
+    previousIndex = index;
+    previousName = name;
+  }
+  return faults;
+}
+
+function assertAnchorOrder(label, text, anchors, negativeFixtures) {
+  const faults = orderedAnchorFaults(text, anchors);
+  if (faults.length > 0) {
+    fail(`${label} handshake order is broken: ${faults.join(", ")}`);
+  }
+  const byName = new Map(anchors);
+  for (const [fixtureLabel, order, expectedFault] of negativeFixtures) {
+    const fixture = order.map((name) => byName.get(name)).join("\n");
+    const fixtureFaults = orderedAnchorFaults(fixture, anchors);
+    if (!fixtureFaults.includes(expectedFault)) {
+      fail(
+        `${label} handshake order check does not reject ${fixtureLabel}: expected ${JSON.stringify(expectedFault)}, got ${JSON.stringify(fixtureFaults)}`
+      );
+    }
+  }
+}
+
+function validateTwoPhaseDispatchHandshake() {
+  const orchestration = read("references/orchestration.md");
+  const sectionStart = orchestration.indexOf("## Two-Phase Dispatch Handshake");
+  const sectionEnd = orchestration.indexOf("## Worker Transports");
+  if (sectionStart < 0 || sectionEnd < 0 || sectionStart > sectionEnd) {
+    fail("references/orchestration.md must carry ## Two-Phase Dispatch Handshake before ## Worker Transports");
+    return;
+  }
+  const handshake = orchestration.slice(sectionStart, sectionEnd);
+
+  assertAnchorOrder("references/orchestration.md", handshake, HANDSHAKE_PROTOCOL_ANCHORS, [
+    [
+      "a lifecycle move applied before the gate-ack",
+      ["gate-phase-dispatch", "worker-gate-phase", "lifecycle-application", "gate-ack", "resume"],
+      "out-of-order:lifecycle-application-before-gate-ack",
+    ],
+    [
+      "a worker resumed before the moves are applied",
+      ["gate-phase-dispatch", "worker-gate-phase", "gate-ack", "resume", "lifecycle-application"],
+      "out-of-order:resume-before-lifecycle-application",
+    ],
+    [
+      "a protocol with no gate-ack step at all",
+      ["gate-phase-dispatch", "worker-gate-phase", "lifecycle-application", "resume"],
+      "missing:gate-ack",
+    ],
+  ]);
+
+  // AC1 — the rule itself, its single exception, and the closed door on
+  // deciding that exception away.
+  for (const required of [
+    "**No dispatch-moment lifecycle move is applied before the worker's gate-ack.**",
+    "The only exception is an explicit owner mandate",
+    "NOT available under «Решил сам:»",
+    "never grant it to itself",
+    "`mono-preflight` and `mono-ship` advances carry no lifecycle move",
+    // AC2 — the executable protocol: ack path, ack shape, stop, resume.
+    "`reports/<ISSUE-KEY>-gate-ack.json`",
+    '"phase": "gate"',
+    '"status": "gates-passed | blocked"',
+    "The gate-ack is not a stage report",
+    "`templates/orchestrator-report.md` is unchanged by this protocol.",
+    "confirms each with read-back",
+    "explicitly as an amendment of the dispatch snapshot",
+    "including `mono-check delivery` — is evaluated against",
+    "The pack identity gate runs again after the",
+    "Blocked path:",
+    "No-ack path:",
+    // Both transports, because the pause and the resume differ in mechanism.
+    "the worker writes the ack and its process exits",
+    "carrying the resume signal",
+    "costs one user click per gate-ack there",
+    "not a checkpoint",
+  ]) {
+    if (!handshake.includes(required)) {
+      fail(`references/orchestration.md two-phase handshake missing: ${JSON.stringify(required)}`);
+    }
+  }
+
+  // AC3 — the watcher contract: a healthy gate pause is not a liveness event.
+  for (const required of [
+    "Gate-pause carve-out",
+    "waiting by contract, not stuck",
+    "never a nudge, respawn, session rotation, or owner page",
+    "`gate-ack` rides the same correlation surface as `report`",
+    "A fresh `gates-passed` gate-ack additionally suppresses `stall`",
+    "a\n  `blocked` ack suppresses nothing",
+    "it is a\n  delivery event, never a Monitoring Protocol trigger",
+  ]) {
+    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
+  }
+
+  // Single home: the template and the skills resolve and point at the rule;
+  // none of them carries a second copy that could drift out of step with it.
+  const singleHomeRule = "No dispatch-moment lifecycle move is applied before the worker's gate-ack.";
+  for (const relativePath of [
+    "templates/orchestrator-dispatch.md",
+    "skills/mono-implement/SKILL.md",
+    "skills/mono-orchestrate/SKILL.md",
+  ]) {
+    if (read(relativePath).includes(singleHomeRule)) {
+      fail(
+        `${relativePath} must point at Two-Phase Dispatch Handshake in references/orchestration.md, not restate the rule`
+      );
+    }
+    assertIncludes(relativePath, "Two-Phase Dispatch Handshake", `${relativePath}: handshake pointer`);
+  }
+
+  for (const required of [
+    "## Gate Phase",
+    "Gate phase: not applicable — this dispatch carries no lifecycle",
+    "<ISSUE-KEY>-gate-ack.json",
+    "Write it on gate\n  completion, on any gate blocker, and before stopping for any other reason.",
+    "Then stop and wait to be resumed",
+    "On `status: blocked`, also write the ordinary stage report",
+    "amendment does not show this dispatch's move applied is a `blocked` report",
+  ]) {
+    assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
+  }
+
+  for (const required of [
+    "two-phase handshake",
+    "apply no move until the worker's gate-ack",
+    "never a «Решил сам:» decision",
+    "A `gate-ack` event is a delivery event, not a liveness one",
+    "waiting by contract — never\n     heal it",
+  ]) {
+    assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
+  }
+
+  const implementSkill = read("skills/mono-implement/SKILL.md");
+  const branchStart = implementSkill.indexOf("## Orchestration branch of `start-checkpoint`");
+  const branchEnd = implementSkill.indexOf("## Context-seam branch at Delivery Start");
+  if (branchStart < 0 || branchEnd < 0 || branchStart > branchEnd) {
+    fail("mono-implement orchestration branch must sit before the context-seam branch");
+    return;
+  }
+  const branch = implementSkill.slice(branchStart, branchEnd);
+  assertAnchorOrder("skills/mono-implement/SKILL.md", branch, HANDSHAKE_BRANCH_ANCHORS, [
+    [
+      "a gate pause placed before the context seam",
+      ["gate-pause", "context-seam", "post-resume-step"],
+      "out-of-order:gate-pause-before-context-seam",
+    ],
+    [
+      "a lifecycle step placed before the gate pause",
+      ["context-seam", "post-resume-step", "gate-pause"],
+      "out-of-order:post-resume-step-before-gate-pause",
+    ],
+    [
+      "a branch with no gate pause at all",
+      ["context-seam", "post-resume-step"],
+      "missing:gate-pause",
+    ],
+  ]);
+
+  // Fail-closed spirit of the step-5 rewrite: the pre-move snapshot is normal
+  // ONLY inside the gate phase, and a resumed worker whose amendment still
+  // shows no applied move stops hard.
+  for (const required of [
+    "A pre-move snapshot is the NORMAL state of\n   this phase and never a finding here.",
+    "Two-Phase Dispatch Handshake section of",
+    "Re-run the pack identity gate first.",
+    "A dispatch that carried no lifecycle move has\n   no amendment to read and arrives here directly.",
+  ]) {
+    if (!branch.includes(required)) {
+      fail(`mono-implement gate-phase contract missing: ${JSON.stringify(required)}`);
     }
   }
 }
@@ -5948,6 +6309,7 @@ validateAntiPatterns();
 validateHeartbeatContract();
 validateWatcherContaminationBehavior();
 await validateWatcherV3Behavior();
+validateWatcherGateAckBehavior();
 validateHonestLedgerContract();
 validateCompactionContract();
 validateLiveQaGateContract();
@@ -5955,6 +6317,7 @@ validateRealBackendContractSampling();
 validateGoalContractBinding();
 validateReportContractSingleHome();
 validateOrchestrationModePrecedence();
+validateTwoPhaseDispatchHandshake();
 validateReviewLoopHygiene();
 validateCostTelemetry();
 validateBriefIntegrity();

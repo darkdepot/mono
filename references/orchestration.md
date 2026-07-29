@@ -253,14 +253,19 @@ restating it.
   is verified from the snapshot before code starts, and a mutation whose gate
   has not passed is never queued at all. A stage that genuinely cannot
   continue until a mutation has landed cannot get that in this mode and
-  reports `needs-decision` for the orchestrator to sequence.
+  reports `needs-decision` for the orchestrator to sequence and resume —
+  except for the dispatch-moment lifecycle moves, which Two-Phase Dispatch
+  Handshake below sequences by protocol instead of by exception report.
 - A stage's own lifecycle precondition is therefore sequenced by the
-  orchestrator before dispatch, never queued from inside the stage and
-  stepped over. Dispatch `mono-implement` with the Project already in
-  Delivery, so the snapshot the worker evaluates is already the post-move
-  state. A snapshot showing an unmet lifecycle precondition is a
-  `needs-decision` report naming the move the orchestrator must apply and read
-  back first. No stage defers an executable check onto a queued mutation
+  orchestrator around the gate phase of the two-phase dispatch handshake —
+  applied after the worker's gate-ack and before that worker is resumed for
+  execution — never queued from inside the stage and stepped over. Dispatch
+  `mono-implement` with the Project not yet in Delivery and move it on the
+  gate-ack, so the state the worker executes from is the post-move state its
+  resume amendment names. Inside the gate phase a snapshot showing an unmet
+  dispatch-moment lifecycle precondition is the expected state, not a
+  finding; after resume, an amendment that still shows that move unapplied is
+  a hard stop. No stage defers an executable check onto a queued mutation
   entry: this mode has no protocol that would carry one, so a check the
   snapshot cannot answer is sequenced by the orchestrator, never left as
   descriptive text in a report.
@@ -305,6 +310,95 @@ obligations to both audiences; only where the text lives changes.
 Anything a worker cannot execute without guessing — an absolute path, a command
 literal, a hash, a confusable pair of values in play — is carried in full to
 both audiences. Facts are never compressed for either column.
+
+## Two-Phase Dispatch Handshake
+
+**No dispatch-moment lifecycle move is applied before the worker's gate-ack.**
+This section is the single home of that rule and of the protocol that carries
+it; the dispatch template, `mono-implement`, and `mono-orchestrate` point here
+instead of restating it. The only exception is an explicit owner mandate
+naming the move, recorded in `ledger.md` as a deviation with that mandate
+quoted — and it is NOT available under «Решил сам:», so the orchestrator can
+never grant it to itself.
+
+Dispatch-moment lifecycle moves are the moves a dispatch itself carries: the
+Project → Delivery move of a project's first `mono-implement` dispatch, and
+the Issue-to-started move that activates an issue-only Issue. Applicability
+follows from that: only a dispatch carrying such a move runs the handshake.
+`mono-preflight` and `mono-ship` advances carry no lifecycle move, so they are
+dispatched and resumed exactly as before, with no gate phase.
+
+Order, and it is the whole protocol:
+
+1. Gate-phase dispatch. The orchestrator emits the dispatch with the pre-move
+   snapshot — Project not yet in Delivery, or Issue not yet started — and the
+   dispatch template's Gate Phase block filled in. It applies no lifecycle
+   move yet, and the pre-move snapshot is correct, not stale.
+2. Worker gate phase. The worker runs steps 1-4 of the orchestration branch of
+   `start-checkpoint` in `skills/mono-implement/SKILL.md`: pack identity gate,
+   snapshot package context, approval plus `mono-review handoff` findings, and
+   the 5-field context seam. On the issue-only lane it also evaluates the
+   delivery check there, because that check gates the move this dispatch
+   carries. This is the stage's own opening, not a separate pre-stage: the
+   same session, worktree, dispatch, and stage continue into execution.
+3. Gate-ack, then stop. The worker writes
+   `reports/<ISSUE-KEY>-gate-ack.json` under the orchestrator root and stops
+   without queuing or applying the move, writing code, or producing the stage
+   report:
+
+   ```json
+   {
+     "issue": "<ISSUE-KEY>",
+     "phase": "gate",
+     "gates": [
+       { "gate": "<gate name>", "status": "pass | blocked", "evidence": "<one line>" }
+     ],
+     "status": "gates-passed | blocked"
+   }
+   ```
+
+   The gate-ack is not a stage report: it has its own path, its own two-value
+   `status`, and it neither uses nor extends the `verification_items` enum.
+   `templates/orchestrator-report.md` is unchanged by this protocol. Its
+   delivery follows the same sandbox rule as a report: if the mailbox write is
+   denied, write the same JSON to
+   `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack.json` (never committed) and
+   the orchestrator sweeps both locations.
+4. Lifecycle application. On `status: gates-passed` the orchestrator applies
+   every lifecycle move this dispatch carries and confirms each with read-back
+   per Linear Write Verification. A move whose read-back still shows the old
+   state is pending, never applied, and the worker is not resumed for
+   execution while it is pending.
+5. Resume for execution. The orchestrator resumes the same worker with a
+   resume signal that names each applied move together with its read-back
+   result, explicitly as an amendment of the dispatch snapshot. Every
+   post-resume check — including `mono-check delivery` — is evaluated against
+   that amended post-move state. The pack identity gate runs again after the
+   resume, unchanged: resuming is a stage resume, so the gate is mandatory.
+
+Blocked path: a gate that fails makes the ack `status: blocked`, and the
+worker then also writes the normal stage report with status `blocked` at the
+mailbox report path, so watcher report correlation is preserved exactly as it
+is today. The orchestrator applies no lifecycle move on a blocked ack and
+routes that stage report through the ordinary non-green path, unchanged.
+
+No-ack path: an ack that never arrives is not a new signal. It is the existing
+liveness ladder — `stall`/`dead`, then nudge → respawn → session rotation —
+because a worker that never acked never reached the contracted wait.
+
+Both transports, because the pause and the resume differ in mechanism only:
+
+- `codex-cli`: the worker writes the ack and its process exits, exactly as at
+  a stage boundary. The orchestrator resumes the same thread with the
+  `codex exec resume` form in Worker Transports, passing the resume signal as
+  the dispatch prompt file. No user interaction.
+- `claude-code-desktop` and `fallback`: the worker writes the ack and ends its
+  turn; the session stays open and is continued with a session message
+  carrying the resume signal. Transport price, named plainly: in
+  `claude-code-desktop` a resume message needs the user's confirmation, so the
+  handshake costs one user click per gate-ack there. That click is a transport
+  cost, not a checkpoint — it carries no decision, is never dressed up as a
+  decision brief, and never becomes a place to re-open scope.
 
 ## Worker Transports
 
@@ -583,6 +677,15 @@ never report it as applied.
   guidance not gates: implement 60m, preflight 30m, ship 90m. A ship worker
   whose turn ends before green is resumed with «continue stabilization» using
   that same working resume form.
+- Gate-pause carve-out: a worker that has written a fresh `gates-passed`
+  gate-ack and gone quiet is waiting by contract, not stuck (Two-Phase
+  Dispatch Handshake). Its exited process (`codex-cli`) or ended turn
+  (`claude-code-desktop`, `fallback`) is the expected end of the gate phase,
+  not a liveness signal. The correct response is to apply the dispatch's
+  lifecycle moves with read-back and resume that worker:
+  never a nudge, respawn, session rotation, or owner page. The ladder applies
+  only when no gate-ack arrives at all, which is the ordinary liveness case
+  above.
 - Material scope drift: stop the worker and escalate through
   `scope-drift-needs-handoff`; scope is always the user's decision.
 
@@ -594,7 +697,7 @@ turns. `scripts/watch-workers.mjs` (this repo) is a zero-dependency,
 read-only watcher over the orchestrator root: it reads `logs/`, `reports/`,
 `workers.json`, and `control.json`, writes nothing, and emits one stable line
 per watcher event to stdout —
-`<ISO time> EVENT:<stall|dead|spawn-fail|report|idle> <ISSUE-KEY|-> <detail>`.
+`<ISO time> EVENT:<stall|dead|spawn-fail|report|gate-ack|idle> <ISSUE-KEY|-> <detail>`.
 The watcher observes the active registry (`workers.json`), not the
 directory's history; retired Issues' logs are outside its scope.
 
@@ -622,6 +725,19 @@ directory's history; retired Issues' logs are outside its scope.
   The consumer deduplicates by reading the report's current state.
   Non-Codex transports keep their existing report-polling contract; the watcher never
   emits `report` for `claude-code-desktop` or `fallback` entries.
+- `gate-ack` rides the same correlation surface as `report` and the same
+  at-least-once rule: `codex-cli` entries only, registry-matched identity and
+  stage, and the same freshness predicate against the log. Its file is
+  `reports/<ISSUE-KEY>-gate-ack.json`, whose minimal shape carries no identity
+  fields, so its correlation comes from the registry entry and the log it
+  belongs to. A fresh `gates-passed` gate-ack additionally suppresses `stall`
+  and both `dead` branches for that worker, because the gate pause is a
+  contracted wait and the exited pid is its expected state there, not death; a
+  `blocked` ack suppresses nothing, since that path also writes the ordinary
+  stage report. On `gate-ack`, apply the dispatch's lifecycle moves with
+  read-back and resume the worker per Two-Phase Dispatch Handshake — it is a
+  delivery event, never a Monitoring Protocol trigger. Non-Codex transports
+  keep the polling contract here too.
 - `idle` is product-wide (its issue-key slot is `-`) and fires after the active
   registry has been empty longer than `--idle-sec` (default 300). A5 retirement
   means deploy closeout removed the Issue entry; `control.json` state `idle`

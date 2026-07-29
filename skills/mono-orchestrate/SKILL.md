@@ -150,6 +150,16 @@ Workflow states:
      `templates/orchestrator-dispatch.md`: full context snapshot, AFK
      contract, engine block, mailbox path, authorization. Include the
      no-sub-delegation rule in every dispatch prompt.
+   - A dispatch that carries a lifecycle move — a project's first
+     `mono-implement` dispatch, or an issue-only activation — runs the
+     two-phase handshake: emit the pre-move snapshot with the Gate Phase block
+     filled, apply no move until the worker's gate-ack, then apply every move
+     with read-back and resume that same worker with the read-back as an
+     explicit snapshot amendment. The rule, the ack shape, and the blocked and
+     no-ack paths have one home: Two-Phase Dispatch Handshake in
+     `references/orchestration.md`. Applying a dispatch-moment move earlier
+     needs an explicit owner mandate recorded in the ledger; it is
+     never a «Решил сам:» decision.
    - For `codex-cli` and `fallback` transports, create the worker's worktree
      before spawn per `references/orchestration.md` Worker Transports.
    - Verify every spawn per Worker Transports in
@@ -179,6 +189,11 @@ Workflow states:
      the ladder nudge → respawn → session rotation; alert the user only when
      the ladder is exhausted. Record every healing step and its result in
      the ledger (Heartbeat in `references/orchestration.md`).
+   - A `gate-ack` event is a delivery event, not a liveness one: apply the
+     dispatch's lifecycle moves with read-back and resume that worker, per
+     Two-Phase Dispatch Handshake in `references/orchestration.md`. A worker
+     quiet after a fresh `gates-passed` ack is waiting by contract — never
+     heal it.
    - Route non-green reports (`blocked`, `needs-human`, `drift-candidate`,
      `needs-decision`, `scope-drift-needs-handoff`) to `decide-or-escalate`
      instead of advancing.

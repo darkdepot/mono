@@ -86,6 +86,46 @@ Linear access — see Mode precedence in the AFK Contract below.
 - Decisions so far: <user decisions and «Решил сам:» entries relevant to this
   Issue, one line each>
 
+## Gate Phase
+
+Fill this section when this dispatch carries a lifecycle move — a project's
+first `mono-implement` dispatch, or an issue-only activation. Otherwise emit
+exactly `- Gate phase: not applicable — this dispatch carries no lifecycle
+move.` and drop the rest of the section. The protocol has one home, the
+Two-Phase Dispatch Handshake section of `references/orchestration.md`; this
+block only resolves it for this Issue.
+
+- Lifecycle moves this dispatch carries, all still unapplied: <e.g. `Project
+  «<name>» → Delivery`, or `Issue <ISSUE-KEY> → <configured started state>`.
+  The Context Snapshot above is deliberately the pre-move state; that is
+  correct, not stale, and it is never a finding>
+- Gates to pass before you stop: <one per line — for `mono-implement`, steps
+  1-4 of its orchestration branch: pack identity gate, snapshot package
+  context, approval plus `mono-review handoff` findings, and the 5-field
+  context seam; on the issue-only lane the delivery check joins them>
+- Write the gate-ack to
+  `~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-gate-ack.json`
+  in the shape `references/orchestration.md` fixes — `issue`, `phase`,
+  `gates[]`, `status` of `gates-passed` or `blocked`. Write it on gate
+  completion, on any gate blocker, and before stopping for any other reason.
+  It is not a stage report and changes nothing in
+  `templates/orchestrator-report.md`. If the sandbox denies that write, write
+  the same JSON to `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack.json`, the
+  same fallback the report uses.
+- Then stop and wait to be resumed: do not apply or queue the lifecycle move,
+  write code, run the delivery check, or write the stage report first.
+  <codex-cli: end the turn and let the process exit. claude-code-desktop or
+  fallback: end the turn and leave the session open.>
+- On `status: blocked`, also write the ordinary stage report with status
+  `blocked` at the Mailbox path below, then stop; no lifecycle move is
+  applied.
+- Your resume signal names every applied move with its read-back. Treat it as
+  an amendment of the Context Snapshot above, re-run the pack identity gate
+  exactly as at start, and evaluate every post-resume check — including
+  `mono-check delivery` — against that amended post-move state. A resume whose
+  amendment does not show this dispatch's move applied is a `blocked` report,
+  never a reason to continue.
+
 ## AFK Contract
 
 - Mode precedence: this stage runs in orchestration mode, so the Context
