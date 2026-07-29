@@ -5220,6 +5220,37 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // The unselected leftover after consumption: the fallback ack was the one
+    // renamed, and the mailbox copy stayed behind. A tombstone for the attempt
+    // must stop it becoming current on the next scan.
+    const leftoverIssue = "MONO-325";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${leftoverIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const fallbackDir = path.join(fixtureRoot, "worktrees", leftoverIssue, ".orchestrator");
+      fs.mkdirSync(fallbackDir, { recursive: true });
+      // Consumed: the selected artifact was renamed in the fallback location.
+      fs.writeFileSync(
+        path.join(fallbackDir, `${leftoverIssue}-gate-ack-a1.applied.json`),
+        `${JSON.stringify(gateAck(leftoverIssue, "gates-passed"), null, 2)}\n`
+      );
+      // Left behind, still perfectly valid and fresh.
+      fs.writeFileSync(
+        path.join(reportsDir, `${leftoverIssue}-gate-ack-a1.json`),
+        `${JSON.stringify(gateAck(leftoverIssue, "gates-passed"), null, 2)}\n`
+      );
+      workers[leftoverIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", leftoverIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5280,6 +5311,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-316", "duplicate-gate-name"],
       ["MONO-320", "late-ack-from-a-superseded-attempt"],
       ["MONO-323", "ambiguous-tie"],
+      ["MONO-325", "leftover-candidate-after-consumption"],
     ]) {
       if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must stay silent`);
@@ -5333,6 +5365,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-322", "future-dated gate-ack"],
       ["MONO-323", "ambiguous tie between mailbox and fallback acks"],
       ["MONO-324", "near-future gate-ack"],
+      ["MONO-325", "leftover ack candidate whose attempt was already consumed"],
     ]) {
       if (!stdout.includes(`EVENT:dead ${issue}`)) {
         fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
@@ -6236,6 +6269,9 @@ function validateTwoPhaseDispatchHandshake() {
     "`gate-ack` watcher event names the FULL path it validated",
     "never on\n   \"the ack\" resolved a second time",
     "when two of them tie on that timestamp, take neither",
+    "Consumption is per ATTEMPT, not per file",
+    "renames every candidate for that attempt in BOTH locations",
+    "no\n   remaining file for that attempt is an ack at all",
     // Preflight and ship dispatches carry no lifecycle move, so an ack there
     // is spurious however well-formed it looks.
     "is spurious and neither delivers nor suppresses",

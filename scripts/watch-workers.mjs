@@ -422,13 +422,26 @@ function readGateAck(reportsDir, log, registryEntry) {
   // from -a1 by contract, so this is a malformed or legacy log; failing closed
   // costs only a suppression the handshake never promised for it.
   if (!Number.isInteger(log.attempt)) return null;
-  const ackName = `${log.issue}-gate-ack-a${log.attempt}.json`;
+  const ackBase = `${log.issue}-gate-ack-a${log.attempt}`;
+  const ackName = `${ackBase}.json`;
   const worktree =
     typeof registryEntry?.worktree === "string" ? path.resolve(expandHome(registryEntry.worktree)) : null;
-  const candidates = [
-    path.join(reportsDir, ackName),
-    ...(worktree === null ? [] : [path.join(worktree, ".orchestrator", ackName)]),
-  ]
+  const ackDirs = [reportsDir, ...(worktree === null ? [] : [path.join(worktree, ".orchestrator")])];
+
+  // Consumption is per ATTEMPT, not per file. Both locations may hold a fresh
+  // ack, only one of them is ever selected, and the rename lands on that one —
+  // so without this the unselected leftover becomes current on the next scan
+  // and delivers a second gate-ack, suppresses execution-phase liveness, and,
+  // when the two disagree, drives the opposite status branch. A consumed
+  // marker in EITHER location is a tombstone for the whole attempt.
+  for (const dir of ackDirs) {
+    for (const suffix of ["applied", "rejected"]) {
+      if (fs.existsSync(path.join(dir, `${ackBase}.${suffix}.json`))) return null;
+    }
+  }
+
+  const candidates = ackDirs
+    .map((dir) => path.join(dir, ackName))
     .map((ackPath) => readGateAckAt(ackPath, log))
     .filter((candidate) => candidate !== null);
   if (candidates.length === 0) return null;

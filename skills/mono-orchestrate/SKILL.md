@@ -160,7 +160,8 @@ Workflow states:
      read-back, resume that same worker with the read-back as an explicit
      snapshot amendment, and consume the ack by renaming it
      `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in the same immediate post-resume
-     registry update. An ack you reject for incomplete gate coverage is
+     registry update — every candidate for that attempt, in the mailbox and in
+     the worktree fallback, not only the artifact the event named. An ack you reject for incomplete gate coverage is
      consumed too — renamed `<ISSUE-KEY>-gate-ack-a<N>.rejected.json` — and then
      owned by the no-ack path. That order is load-bearing in both directions: an ack
      left in place keeps suppressing that worker's `stall` and `dead` events,

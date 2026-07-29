@@ -391,7 +391,12 @@ Order, and it is the whole protocol:
    now. One resolution rule settles it everywhere: evaluate both, keep the
    candidates that are fresh for the current attempt's log, and take the newest
    of those — and when two of them tie on that timestamp, take neither, because
-   an ambiguous ack is the one case where guessing costs the gate itself. The
+   an ambiguous ack is the one case where guessing costs the gate itself.
+   Consumption is per ATTEMPT, not per file: renaming only the artifact that
+   was selected leaves the other one to become current on the next scan, so
+   consuming an ack renames every candidate for that attempt in BOTH locations.
+   A consumed marker in either location is a tombstone: while one exists, no
+   remaining file for that attempt is an ack at all. The
    `gate-ack` watcher event names the FULL path it validated, and
    the coverage check in step 4 is performed on that exact artifact — never on
    "the ack" resolved a second time, which is how an orchestrator ends up
