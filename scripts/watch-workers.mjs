@@ -432,6 +432,11 @@ function readGateAck(reportsDir, log, registryEntry) {
     typeof registryEntry?.worktree === "string" ? path.resolve(expandHome(registryEntry.worktree)) : null;
   const ackDirs = [reportsDir, ...(worktree === null ? [] : [path.join(worktree, ".orchestrator")])];
 
+  // Three consumption states, one meaning: this attempt's ack is spent.
+  // `.applied` after a resume, `.rejected` for a coverage failure, `.blocked`
+  // for a valid ack whose gates did not pass — that last one is a normal
+  // outcome and still needs a state, or it redelivers on every watcher restart.
+  //
   // Consumption is per ATTEMPT, not per file. Both locations may hold a fresh
   // ack, only one of them is ever selected, and the rename lands on that one —
   // so without this the unselected leftover becomes current on the next scan
@@ -439,7 +444,7 @@ function readGateAck(reportsDir, log, registryEntry) {
   // when the two disagree, drives the opposite status branch. A consumed
   // marker in EITHER location is a tombstone for the whole attempt.
   for (const dir of ackDirs) {
-    for (const suffix of ["applied", "rejected"]) {
+    for (const suffix of ["applied", "rejected", "blocked"]) {
       if (fs.existsSync(path.join(dir, `${ackBase}.${suffix}.json`))) return null;
     }
   }
@@ -760,17 +765,19 @@ function scan() {
     const gateAck = isCorrelatedGateAckLog(log, registryEntry)
       ? readGateAck(reportsDir, log, registryEntry)
       : null;
-    // The report is emitted first so a consumer reading in order sees that
-    // execution already happened before it sees the ack. It does NOT suppress
-    // the ack: a report carries no attempt number, so a superseded worker that
-    // is still alive can write one after its successor's log was born and
-    // after that successor's ack, and no timestamp rule can tell the two
-    // apart. Suppressing on that evidence would discard the CURRENT attempt's
-    // ack and strand its dispatch. The replay this once guarded against is
-    // fenced where the binding actually exists: the orchestrator sees the
-    // stage report and consumes the ack as recovery instead of resuming again.
-    checkReport(log, report, nowMs);
+    // The ack is emitted FIRST, because the consumer contract reads the ack's
+    // status before it reads the report and never acts on the report alone. An
+    // event-by-event consumer that saw `report` first could advance the stage
+    // pipeline before it ever learned an unconsumed ack was sitting beside it —
+    // the pairing the protocol requires it to reconcile.
+    //
+    // The ack still does not suppress the report, and the report does not
+    // suppress the ack: a report carries no attempt number, so a superseded
+    // worker still alive can write one after its successor's log was born and
+    // after that successor's ack, and no timestamp rule tells the two apart.
+    // Both events go out; the consumer branches on the ack's status.
     checkGateAck(log, gateAck, nowMs);
+    checkReport(log, report, nowMs);
     checkLog(log, gateAck, reportsDir, registry, nowMs);
   }
   checkRegistry(registry, nowMs);

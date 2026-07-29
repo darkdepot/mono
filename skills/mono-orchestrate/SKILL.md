@@ -206,7 +206,8 @@ Workflow states:
      the ledger (Heartbeat in `references/orchestration.md`).
    - A `gate-ack` event is a delivery event, not a liveness one. Read the ack's
      `status` first, never the report on its own. `blocked` applies no move at
-     all: consume the ack and route the stage report that path also writes
+     all: consume the ack as `<ISSUE-KEY>-gate-ack-a<N>.blocked.json` and route
+     the stage report that path also writes
      through `decide-or-escalate` like any non-green report — the two arriving
      together is that path working, not a crash. `gates-passed` applies the
      dispatch's lifecycle moves with read-back and resumes that worker — unless

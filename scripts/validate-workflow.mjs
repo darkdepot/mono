@@ -5304,6 +5304,32 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // A valid blocked ack is spent once consumed, and its consumption state has
+    // to be one the watcher recognises or it redelivers on every restart.
+    const blockedConsumedIssue = "MONO-329";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${blockedConsumedIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      fs.writeFileSync(
+        path.join(reportsDir, `${blockedConsumedIssue}-gate-ack-a1.blocked.json`),
+        `${JSON.stringify(gateAck(blockedConsumedIssue, "blocked"), null, 2)}\n`
+      );
+      fs.writeFileSync(
+        path.join(reportsDir, `${blockedConsumedIssue}-gate-ack-a1.json`),
+        `${JSON.stringify(gateAck(blockedConsumedIssue, "blocked"), null, 2)}\n`
+      );
+      workers[blockedConsumedIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", blockedConsumedIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5368,6 +5394,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-324", "near-future"],
       ["MONO-323", "ambiguous-tie"],
       ["MONO-325", "leftover-candidate-after-consumption"],
+      ["MONO-329", "consumed-blocked-ack"],
     ]) {
       if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must stay silent`);
@@ -6332,6 +6359,10 @@ function validateTwoPhaseDispatchHandshake() {
     "renames every\n   file for that attempt in BOTH locations",
     "the consumer reads the ack's `status` first and never the report",
     "A `blocked` ack beside a stage report is the ordinary non-green outcome, not\n   a crash",
+    "consume the ack as\n   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`",
+    "That is the third\n   consumption state",
+    "without a state of its own it would be redelivered on every watcher restart",
+    "the `gate-ack`\n  comes first, because the consumer reads the ack's status before it acts on\n  the report",
     "A `gates-passed` ack beside a stage report is the genuinely ambiguous one",
     "consuming the ack\n   strands a current dispatch that never ran, resuming again replays one that\n   did",
     "never silently consume the ack\n   or resume on it twice",
@@ -6410,6 +6441,7 @@ function validateTwoPhaseDispatchHandshake() {
     "never silently\n     consume the ack or resume on it twice",
     "an unconsumed ack on its own\n     never authorizes resuming twice",
     "`blocked` applies no move at\n     all",
+    "consume the ack as `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`",
     "renamed `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
   ]) {
     assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));

@@ -411,8 +411,12 @@ Order, and it is the whole protocol:
 
    A `blocked` ack beside a stage report is the ordinary non-green outcome, not
    a crash. The blocked path writes both of them by design, before any
-   execution happened at all: consume the ack, route the report through the
-   ordinary non-green path, and reconcile nothing.
+   execution happened at all: consume the ack as
+   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`, route the report through the
+   ordinary non-green path, and reconcile nothing. That is the third
+   consumption state, beside `.applied` after a resume and `.rejected` for a
+   coverage failure: an ack whose gates honestly did not pass is spent too, and
+   without a state of its own it would be redelivered on every watcher restart.
 
    A `gates-passed` ack beside a stage report is the genuinely ambiguous one.
    It is what the crash window above looks like — the resume succeeded, the
@@ -846,7 +850,10 @@ directory's history; retired Issues' logs are outside its scope.
   stage report. That suppression is bounded twice over. Normally the
   orchestrator consuming the ack at resume time ends it — the watcher cannot
   distinguish a retained ack from a live pause, so the rename in step 5 is what
-  re-arms the ladder. But if lifecycle application succeeds and the resume, the
+  re-arms the ladder. When both a `gate-ack` and a `report` are emitted for the
+  same worker, the `gate-ack`
+  comes first, because the consumer reads the ack's status before it acts on
+  the report. But if lifecycle application succeeds and the resume, the
   registration, or that rename then fails, nothing would consume the ack at
   all, and freshness against the log never expires by itself: so suppression
   additionally lapses after a few stall thresholds of wall-clock, and the
