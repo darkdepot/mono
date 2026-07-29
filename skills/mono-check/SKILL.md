@@ -18,9 +18,9 @@ Read now — every run of this stage loads all of these:
 
 Read when — load the file only when its condition is true for this run:
 
-- `references/execution-quality.md` — when the check has to weigh implementation or verification evidence.
+- `references/execution-quality.md` — when the checked subject includes a diff, implementation, or verification evidence.
 - `references/human-friendly-output.md` — when the verdict is rendered for a human or queued as Linear-facing text.
-- `references/artifact-rules.md` — when artifact ownership, language, or placement decides the verdict.
+- `references/artifact-rules.md` — when the checked subject includes a Linear artifact body or a Linear-facing comment.
 - `references/repair-machine.md` — when the check feeds or gates an artifact repair transaction.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.

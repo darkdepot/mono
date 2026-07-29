@@ -25,11 +25,11 @@ Read when — load the file only when its condition is true for this run:
 
 - `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`, or when the parentless ship gate routes a candidate.
 - `references/install.md` — when the shipped change is a skill-pack delivery that installs or cuts over the pack.
-- `skills/mono-preflight/SKILL.md` — when the recovered preflight certificate has to be judged rather than read.
+- `skills/mono-preflight/SKILL.md` — when the recovered preflight certificate is missing, superseded, or not `ready`.
 - `skills/mono-review/SKILL.md` — when `mono-review pre-ship` is run or its report has to be judged from this stage.
 - `skills/mono-check/SKILL.md` — when `mono-check pre-ship` is run or reported from this stage.
-- `references/artifact-rules.md` — when ownership, language, or placement of a Linear artifact or comment is in question.
-- `references/execution-quality.md` — when scope, drift, or verification evidence in the diff has to be judged.
+- `references/artifact-rules.md` — when this run must decide where a Linear record belongs or which stage owns it.
+- `references/execution-quality.md` — when the shipped change is bug or performance work, or its diff introduces architecture the Tech Spec does not yet describe.
 - `templates/ship-status-ux.md` — when running interactively and a ship status is composed for a user.
 - `templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.
 

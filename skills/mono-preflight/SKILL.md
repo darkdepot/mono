@@ -23,10 +23,10 @@ Read when — load the file only when its condition is true for this run:
 
 - `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`, or when a lane freeze, follow-up, or cancel decision is in play.
 - `skills/mono-check/SKILL.md` — when a `mono-check` verdict has to be run or reported from this stage.
-- `skills/mono-review/SKILL.md` — when a review disposition has to be judged instead of read off the package context.
-- `references/artifact-rules.md` — when ownership, language, or placement of a Linear artifact or comment is in question.
-- `references/artifact-quality.md` — when certificate recovery, marker placement, or artifact text has to be judged against the quality bar.
-- `references/lifecycle.md` — when drift routing turns on Linear lifecycle state.
+- `skills/mono-review/SKILL.md` — when the package context does not already record the disposition of a review finding.
+- `references/artifact-rules.md` — when this run must decide where a Linear record belongs or which stage owns it.
+- `references/artifact-quality.md` — when this run records the certificate in Linear or recovers an earlier certificate.
+- `references/lifecycle.md` — when this run routes back to `mono-handoff` or names a Linear lifecycle state.
 - `templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
@@ -130,7 +130,7 @@ Rules:
 - Do not call Compound `ce-code-review` for this gate. It is not an acceptable replacement for `autoreview` inside `mono-preflight`.
 - Do not auto-apply broad rewrites, release-sensitive changes, or fixes that the agent cannot defend after reading the relevant code and contracts.
 - Do not silently reject a repeated `autoreview` finding and mark `ready`. If `autoreview` does not return clean, the certificate must be `blocked` or `needs-human`.
-- The stage exit report enumerates every «Как проверить» item of the Issue, each with a `pass | deferred | not-run` status and one line of evidence, in the `verification_items` shape that `templates/orchestrator-report.md` defines. The stage cannot claim completion while an item is silently missing; `deferred`/`not-run` are valid only with a recorded reason in the evidence.
+- The stage exit report enumerates every «Как проверить» item of the Issue, each with a `pass | deferred | not-run` status and one line of evidence. Under orchestration that list is the `verification_items` array of the mailbox report, in the shape `templates/orchestrator-report.md` defines. The stage cannot claim completion while an item is silently missing; `deferred`/`not-run` are valid only with a recorded reason in the evidence.
 - Do not mark preflight `ready` when the final `autoreview` command omits explicit `--engine codex`, `--model`, or `--thinking`, selects a non-GPT-5.6 model, or does not match the final risk class in `references/autoreview-routing.md`.
 - Keep Linear-facing comments in the project config language; use Russian when no project config is present.
 - Include a checked/not-checked boundary. Local tests do not imply browser QA, production smoke, mobile QA, deploy verification, or user acceptance.

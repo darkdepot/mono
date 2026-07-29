@@ -21,8 +21,8 @@ Read now — every run of this stage loads all of these:
 
 Read when — load the file only when its condition is true for this run:
 
-- `references/artifact-rules.md` — when artifact ownership, language, or placement is part of the finding.
-- `references/execution-quality.md` — when the review covers implementation or verification evidence rather than artifact text.
+- `references/artifact-rules.md` — when the reviewed subject includes a Linear artifact body or a Linear-facing comment.
+- `references/execution-quality.md` — when the reviewed subject includes a diff, implementation, or verification evidence.
 - `references/human-friendly-output.md` — when the review outcome is rendered for a human or queued as Linear-facing text.
 - `references/repair-machine.md` — when the review classifies or feeds an artifact repair transaction.
 

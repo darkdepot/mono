@@ -5652,6 +5652,28 @@ function validateReadFirstTierContract() {
       if (!line.includes(" — ")) {
         fail(`${relativePath} has a "Read when" entry without a stated condition: ${line.trim()}`);
       }
+      // A deferral condition must be answerable from the run's inputs BEFORE the
+      // file is read. A condition phrased as an outcome of the work the file
+      // governs is self-referential: a run that does not already suspect the
+      // problem skips the file and can return a falsely clean result.
+      for (const resultDependent of [
+        "is in question",
+        "part of the finding",
+        "decides the verdict",
+        "has to be judged rather than read",
+        "against the quality bar",
+        "if it turns out",
+        "if needed",
+        "as needed",
+        "when relevant",
+        "when applicable",
+      ]) {
+        if (line.toLowerCase().includes(resultDependent)) {
+          fail(
+            `${relativePath} has a result-dependent or vague "Read when" condition (${JSON.stringify(resultDependent)}); state a precondition observable before the read: ${line.trim()}`
+          );
+        }
+      }
     }
   }
 
@@ -5715,7 +5737,7 @@ function validateReadFirstTierContract() {
   for (const relativePath of ["skills/mono-implement/SKILL.md", "skills/mono-preflight/SKILL.md"]) {
     for (const required of [
       "each with a `pass | deferred | not-run` status and one line of evidence",
-      "in the `verification_items` shape that `templates/orchestrator-report.md` defines",
+      "Under orchestration that list is the `verification_items` array of the mailbox report, in the shape `templates/orchestrator-report.md` defines.",
       "The stage cannot claim completion while an item is silently missing; `deferred`/`not-run` are valid only with a recorded reason in the evidence.",
       "`templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.",
     ]) {

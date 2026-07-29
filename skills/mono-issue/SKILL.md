@@ -22,8 +22,8 @@ Read now — every run of this stage loads all of these:
 
 Read when — load the file only when its condition is true for this run:
 
-- `references/artifact-rules.md` — when ownership, language, or placement of a Linear artifact or comment is in question.
-- `skills/mono-idea/SKILL.md` — when the request has to be routed back to discovery or the Idea boundary is in play.
+- `references/artifact-rules.md` — when this run must decide where a Linear record belongs or which stage owns it.
+- `skills/mono-idea/SKILL.md` — when this run routes the request back to discovery.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 

@@ -26,10 +26,10 @@ Read when — load the file only when its condition is true for this run:
 
 - `references/install.md` — when the deployed change is a skill-pack delivery that installs or cuts over the pack.
 - `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`, or when a lane closeout decision is in play.
-- `skills/mono-ship/SKILL.md` — when the recovered green certificate has to be judged rather than read.
+- `skills/mono-ship/SKILL.md` — when the recovered green certificate is missing, superseded, or not `green`.
 - `skills/mono-check/SKILL.md` — when `mono-check post-ship` is run or reported from this stage.
-- `references/execution-quality.md` — when live verification evidence has to be judged against the Issue oracle.
-- `references/artifact-rules.md` — when ownership, language, or placement of a Linear artifact or comment is in question.
+- `references/execution-quality.md` — when this run performs live verification against the Issue's acceptance IDs.
+- `references/artifact-rules.md` — when this run must decide where a Linear record belongs or which stage owns it.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 

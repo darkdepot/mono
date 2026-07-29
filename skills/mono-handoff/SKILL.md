@@ -18,20 +18,20 @@ Read now — every run of this stage loads all of these:
 3. `references/contracts/prd.md`
 4. `references/contracts/tech-spec.md`
 5. `references/artifact-rules.md`
-6. `references/artifact-intake.md`
-7. `references/human-friendly-output.md`
+6. `references/artifact-quality.md`
+7. `references/artifact-intake.md`
+8. `references/readiness-gates.md`
+9. `references/human-friendly-output.md`
 
 Read when — load the file only when its condition is true for this run:
 
-- `references/artifact-quality.md` — when artifact text has to be written or judged against the quality bar.
-- `references/questioning.md` — when a discovery gap or an Always-ask decision has to be put to the owner.
-- `references/readiness-gates.md` — when the risk class or a readiness gate for this package has to be decided.
-- `references/lifecycle.md` — when a Linear lifecycle move or a lifecycle boundary is in play.
+- `references/questioning.md` — when running interactively and this run puts a question or an Always-ask decision to the owner.
+- `references/lifecycle.md` — when this run creates a Linear entity or changes its lifecycle state.
 - `references/repair-machine.md` — when the run is a targeted artifact repair rather than a fresh package.
 - `skills/mono-issue/SKILL.md` — when execution Issues are created or renewed from this stage.
 - `skills/mono-review/SKILL.md` — when a `mono-review` report has to be run or judged from this stage.
 - `skills/mono-check/SKILL.md` — when a `mono-check` verdict has to be run or reported from this stage.
-- `references/execution-quality.md` — when the package has to be judged against implementation or verification evidence.
+- `references/execution-quality.md` — when the package covers bug or performance work, or introduces architecture the Tech Spec does not yet describe.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
