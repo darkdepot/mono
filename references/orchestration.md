@@ -103,7 +103,7 @@ Checkpoints — the only moments that touch the user:
    `templates/orchestrator-brief.md` with a reviewed near-production
    prototype and the few contested UX decisions.
 3. Package approval: the existing single handoff brief, bundling the
-   implementation-start option.
+   implementation-start option and the pre-write review verdict.
 4. Deploy approval per the configured `deployApproval` policy.
 5. Ad-hoc: risk acceptance and material scope drift — these never wait.
 
@@ -170,8 +170,40 @@ items; the rest the orchestrator decides, recording both positions under
 «Решил сам:».
 
 Boundaries: the Second Voice never talks to the user, never writes
-Linear, and never dispatches or steers workers; it is discovery work,
-not stage work.
+Linear, and never dispatches or steers workers; it is discovery work and
+pre-write package review, not stage work. Both roles carry the same
+boundaries: reviewing a draft package never grants it a Linear write, an
+owner conversation, or any authority over workers.
+
+### Pre-write package review
+
+The orchestrator's `mono-handoff` state has one mandatory Second Voice run
+that is not discovery: the drafted handoff package — draft Project brief,
+draft PRD, draft Tech Spec, and proposed Issue slicing — goes to an
+independent reviewer BEFORE the orchestrator writes any of it to Linear.
+Order, not preference: synthesize the draft, review it, fix the draft, then
+put it to the owner with the verdict already attached, and only then write.
+
+- The reviewer is a discovery agent under the Second Voice protocol above —
+  fresh context, cross-vendor model, no worktree, no Issue, no registry
+  entry — and it has no Linear-write capability and no owner contact.
+  Findings return to the orchestrator, which applies accepted fixes to the
+  draft package.
+- Obligation follows `references/readiness-gates.md`: required for
+  `standard`, `deep`, and `risky`, advisory for `tiny` with the skip reason
+  recorded. The orchestrator cannot decide this gate away under «Решил
+  сам:»; only findings inside it are its to accept.
+- The reviewed subject is the draft, so none of the drafted bodies — Project
+  brief, PRD, Tech Spec, Issue slicing — is written to Linear at review time.
+  The Project entity itself may already exist, and stays available to the
+  reviewer as surrounding context; what is absent is the drafted content, not
+  necessarily the container. That absence is expected and is never reported as
+  a missing artifact, per the pre-write `handoff` mode in
+  `skills/mono-review/SKILL.md`.
+- Workers never run this review. They cannot spawn agents, and a worker is
+  not independent of the package it was dispatched from.
+- The package-approval checkpoint stays a single owner touch, because the
+  verdict is already in hand when the brief is written.
 
 ## Orchestration Mode Precedence
 

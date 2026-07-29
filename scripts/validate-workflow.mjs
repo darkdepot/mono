@@ -5798,8 +5798,138 @@ function validateReadFirstTierContract() {
   }
 }
 
+// MONO-46 — pre-write handoff review. The whole value of this gate is its
+// ORDER: the drafted package is reviewed BEFORE the first durable Linear write,
+// so findings are fixed in a draft instead of in an artifact that already
+// exists. That is what these pins anchor — step positions inside the
+// execution-mode workflow, computed from what each step DOES, so rewording
+// around them cannot silently restore the old post-write order. The obligation
+// the order carries (no skip for `standard`/`deep`/`risky`, advisory with a
+// recorded reason for `tiny`) and the `mono-review` carve-out that makes a
+// pre-write review possible at all are pinned by their load-bearing sentences,
+// not by incidental phrasing.
+function validatePreWriteHandoffReviewOrder() {
+  const handoffPath = "skills/mono-handoff/SKILL.md";
+  const handoff = read(handoffPath);
+
+  const workflowStart = handoff.indexOf("Execution-mode workflow:");
+  const workflowEnd = handoff.indexOf("Rules:", workflowStart);
+  if (workflowStart < 0 || workflowEnd < 0 || workflowStart > workflowEnd) {
+    fail(`${handoffPath} must keep an execution-mode workflow section ahead of its rules`);
+    return;
+  }
+  const workflow = handoff.slice(workflowStart, workflowEnd);
+
+  const reviewStep = workflow.indexOf("pre-write handoff review on the draft package");
+  if (reviewStep < 0) {
+    fail(`${handoffPath} execution-mode workflow must run the pre-write handoff review on the draft package`);
+    return;
+  }
+
+  const durableWrites = [
+    "create or update PRD and Tech Spec in Linear",
+    "Update the Project body",
+    "Record approval as a Linear comment",
+    "Create or update Linear Issue(s) from the approved package",
+  ];
+  const durableWriteIndexes = [];
+  for (const durableWrite of durableWrites) {
+    const writeStep = workflow.indexOf(durableWrite);
+    if (writeStep < 0) {
+      fail(`${handoffPath} execution-mode workflow missing durable-write step: ${JSON.stringify(durableWrite)}`);
+      continue;
+    }
+    durableWriteIndexes.push(writeStep);
+    if (writeStep < reviewStep) {
+      fail(
+        `${handoffPath} performs a durable Linear write before the pre-write handoff review: ${JSON.stringify(durableWrite)}`
+      );
+    }
+  }
+
+  // The old order must not creep back in behind a durable write.
+  if (durableWriteIndexes.length > 0) {
+    const lastDurableWrite = Math.max(...durableWriteIndexes);
+    if (workflow.indexOf("mono-review handoff", lastDurableWrite) >= 0) {
+      fail(`${handoffPath} must not schedule the handoff review after a durable Linear write`);
+    }
+  }
+
+  // Fixes land in the draft, and the owner's single touch already carries the
+  // verdict: review → draft fixes → approval, all before the writes above. The
+  // upper bound is as load-bearing as the lower one — a fix applied after the
+  // PRD is written is a repair of a durable artifact, which is the failure this
+  // Issue exists to remove — so both steps are bounded on both sides.
+  const firstDurableWrite = durableWriteIndexes.length > 0 ? Math.min(...durableWriteIndexes) : -1;
+  const draftFixStep = workflow.indexOf("Apply accepted review fixes to the draft package");
+  const approvalStep = workflow.indexOf("for package approval before durable writes");
+  if (draftFixStep < 0 || draftFixStep < reviewStep) {
+    fail(`${handoffPath} must apply accepted review fixes to the draft after the pre-write review`);
+  } else if (firstDurableWrite >= 0 && draftFixStep > firstDurableWrite) {
+    fail(`${handoffPath} must apply accepted review fixes to the draft before the first durable Linear write`);
+  }
+  if (approvalStep < 0 || approvalStep < draftFixStep) {
+    fail(`${handoffPath} must present the package for approval after the draft review and its fixes`);
+  } else if (firstDurableWrite >= 0 && approvalStep > firstDurableWrite) {
+    fail(`${handoffPath} must present the package for approval before the first durable Linear write`);
+  }
+
+  for (const required of [
+    "The handoff review runs on the draft package before the first durable Linear write of that package",
+    "required for `standard`, `deep`, and `risky`",
+    "For `tiny` the gate stays advisory",
+    "`standard`, `deep`, and `risky` have no such skip",
+    // The condition must hold in both modes; the write→queue substitution keeps
+    // its single home and is pointed at, never restated here.
+    "Interactive runs invoke `mono-review handoff` report-only over the draft package",
+    "Orchestrated runs delegate the same handoff-review contract",
+    "Orchestration Mode Precedence",
+    // An owner-requested revision cannot be approved under the previous
+    // draft's verdict, and a skipped tiny gate has a disposition to show.
+    "returns through steps 5-6 before it is re-presented",
+    "for a `tiny` package whose advisory gate was skipped, the recorded skip reason",
+  ]) {
+    assertIncludes(handoffPath, required, JSON.stringify(required));
+  }
+  if (handoff.includes("The dispatch snapshot is the single source of Linear state in orchestration")) {
+    fail(
+      `${handoffPath} must point at Orchestration Mode Precedence in references/orchestration.md, not restate the rule`
+    );
+  }
+
+  for (const required of [
+    "Handoff-gate timing is pre-write",
+    "before the first durable Linear write of that package",
+  ]) {
+    assertIncludes("references/readiness-gates.md", required, JSON.stringify(required));
+  }
+
+  for (const required of [
+    "`handoff` has a pre-write mode",
+    "never a missing artifact and never grounds for `blocked`",
+    "In pre-write `handoff` mode the required artifacts are the draft bodies supplied as input",
+    // No escape hatch may reopen the skip the gate exists to close.
+    "no recorded exception substitutes for it",
+  ]) {
+    assertIncludes("skills/mono-review/SKILL.md", required, JSON.stringify(required));
+  }
+
+  for (const required of [
+    "### Pre-write package review",
+    "BEFORE the orchestrator writes any of it to Linear",
+    "no Linear-write capability and no owner contact",
+    "Workers never run this review",
+    "pre-write package review, not stage work",
+    // The drafted bodies are unwritten; the Project container may well exist.
+    "The Project entity itself may already exist",
+  ]) {
+    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
+  }
+}
+
 validateSkills();
 validateReadFirstTierContract();
+validatePreWriteHandoffReviewOrder();
 validateRetiredAdapterReferenceAllowlist();
 validateTemplateSections();
 validateArtifactContractParity();
