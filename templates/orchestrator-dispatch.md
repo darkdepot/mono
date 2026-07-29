@@ -113,12 +113,15 @@ block only resolves it for this Issue.
   the same JSON to `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack.json`, the
   same fallback the report uses.
 - Then stop and wait to be resumed: do not apply or queue the lifecycle move,
-  write code, run the delivery check, or write the stage report first.
+  write code, or write the stage report first. The post-move delivery check
+  waits for the resume too — except on the issue-only lane, where the delivery
+  check is one of the gates above and runs before you ack.
   <codex-cli: end the turn and let the process exit. claude-code-desktop or
   fallback: end the turn and leave the session open.>
-- On `status: blocked`, also write the ordinary stage report with status
-  `blocked` at the Mailbox path below, then stop; no lifecycle move is
-  applied.
+- On `status: blocked`, also write the ordinary stage report at the Mailbox
+  path below, carrying the stage's own exit status for what you hit —
+  `blocked` for a missing snapshot input, `needs-human` for a real adverse
+  gate verdict — then stop; no lifecycle move is applied.
 - Your resume signal names every applied move with its read-back. Treat it as
   an amendment of the Context Snapshot above, re-run the pack identity gate
   exactly as at start, and evaluate every post-resume check — including

@@ -153,13 +153,16 @@ Workflow states:
    - A dispatch that carries a lifecycle move — a project's first
      `mono-implement` dispatch, or an issue-only activation — runs the
      two-phase handshake: emit the pre-move snapshot with the Gate Phase block
-     filled, apply no move until the worker's gate-ack, then apply every move
-     with read-back and resume that same worker with the read-back as an
-     explicit snapshot amendment. The rule, the ack shape, and the blocked and
-     no-ack paths have one home: Two-Phase Dispatch Handshake in
-     `references/orchestration.md`. Applying a dispatch-moment move earlier
-     needs an explicit owner mandate recorded in the ledger; it is
-     never a «Решил сам:» decision.
+     filled, apply no move until the worker's gate-ack, check that ack against
+     the gate list you dispatched, then apply every move with read-back,
+     consume the ack by renaming it `<ISSUE-KEY>-gate-ack.applied.json`, and
+     resume that same worker with the read-back as an explicit snapshot
+     amendment. Consuming the ack before the resume is required: an ack left in
+     place keeps suppressing that worker's `stall` and `dead` events. The rule,
+     the ack shape, and the blocked and no-ack paths have one home: Two-Phase
+     Dispatch Handshake in `references/orchestration.md`. Applying a
+     dispatch-moment move earlier needs an explicit owner mandate recorded in
+     the ledger; it is never a «Решил сам:» decision.
    - For `codex-cli` and `fallback` transports, create the worker's worktree
      before spawn per `references/orchestration.md` Worker Transports.
    - Verify every spawn per Worker Transports in

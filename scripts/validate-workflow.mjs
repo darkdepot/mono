@@ -4948,14 +4948,20 @@ function validateWatcherGateAckBehavior() {
     // exactly the shape a codex-cli gate pause leaves behind.
     const staleLog = new Date(Date.now() - 400_000);
 
-    const gateAck = (issue, status) => ({
+    const gateAck = (issue, status, gates = null) => ({
       issue,
       phase: "gate",
-      gates: [{ gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" }],
+      gates: gates ?? [
+        { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+      ],
       status,
     });
 
-    const addFixture = (issue, ack, { registry = {}, priorAttempt = false, report = null } = {}) => {
+    const addFixture = (
+      issue,
+      ack,
+      { registry = {}, priorAttempt = false, report = null, fallbackAck = false } = {}
+    ) => {
       const logPath = path.join(logsDir, `${issue}-mono-implement-a1.jsonl`);
       fs.writeFileSync(logPath, `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`);
       // Age the log FIRST and read its birthtime after: macOS pulls a file's
@@ -4963,8 +4969,17 @@ function validateWatcherGateAckBehavior() {
       // from the pre-aging birthtime would land inside the freshness window.
       fs.utimesSync(logPath, staleLog, staleLog);
       const birthMs = fs.statSync(logPath).birthtimeMs;
+      // The sandbox fallback the protocol permits: same JSON, under the
+      // worker's own worktree instead of the mailbox.
+      const worktree = path.join(fixtureRoot, "worktrees", issue);
       if (ack) {
-        const ackPath = path.join(reportsDir, `${issue}-gate-ack.json`);
+        let ackPath;
+        if (fallbackAck) {
+          fs.mkdirSync(path.join(worktree, ".orchestrator"), { recursive: true });
+          ackPath = path.join(worktree, ".orchestrator", `${issue}-gate-ack.json`);
+        } else {
+          ackPath = path.join(reportsDir, `${issue}-gate-ack.json`);
+        }
         fs.writeFileSync(ackPath, `${JSON.stringify(ack, null, 2)}\n`);
         // A prior attempt's ack predates this log file and proves nothing
         // about this writer.
@@ -4980,6 +4995,7 @@ function validateWatcherGateAckBehavior() {
         transport: "codex-cli",
         stage: "mono-implement",
         log: logPath,
+        worktree,
         pid: 999_999_999,
         ...identity,
         ...registry,
@@ -4996,6 +5012,28 @@ function validateWatcherGateAckBehavior() {
     addFixture("MONO-306", gateAck("MONO-306", "gates-passed"), {
       report: { issue: "MONO-306", stage: "mono-implement", status: "implemented-needs-preflight", ...identity },
     });
+    // The ack is the only evidence the gates ran, so an ack that skips or
+    // contradicts that evidence must neither deliver nor suppress.
+    addFixture("MONO-307", { issue: "MONO-307", phase: "gate", status: "gates-passed" });
+    addFixture("MONO-308", gateAck("MONO-308", "gates-passed", []));
+    addFixture(
+      "MONO-309",
+      gateAck("MONO-309", "gates-passed", [
+        { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+        { gate: "context seam", status: "blocked", evidence: "snapshot has no seam field" },
+      ])
+    );
+    addFixture("MONO-310", gateAck("MONO-310", "gates-passed", [{ gate: "pack identity gate", status: "pass" }]));
+    // The documented sandbox fallback must be observed, or a worker that
+    // acked from its worktree reads as dead during a contracted wait.
+    addFixture("MONO-311", gateAck("MONO-311", "gates-passed"), { fallbackAck: true });
+    // A consumed ack no longer correlates: the rename at resume time is what
+    // re-arms the liveness ladder for the execution phase.
+    addFixture("MONO-312", null);
+    fs.writeFileSync(
+      path.join(reportsDir, "MONO-312-gate-ack.applied.json"),
+      `${JSON.stringify(gateAck("MONO-312", "gates-passed"), null, 2)}\n`
+    );
 
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
@@ -5018,6 +5056,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-301", "gates-passed"],
       ["MONO-302", "blocked"],
       ["MONO-306", "gate-ack beside a stage report"],
+      ["MONO-311", "worktree-fallback"],
     ]) {
       if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must emit a gate-ack event`);
@@ -5027,21 +5066,36 @@ function validateWatcherGateAckBehavior() {
       ["MONO-303", "prior-attempt"],
       ["MONO-304", "non-codex"],
       ["MONO-305", "malformed-phase"],
+      ["MONO-307", "missing-gates-array"],
+      ["MONO-308", "empty-gates-array"],
+      ["MONO-309", "gates-passed-over-a-blocked-gate"],
+      ["MONO-310", "gate-entry-without-evidence"],
+      ["MONO-312", "consumed-ack"],
     ]) {
       if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must stay silent`);
       }
     }
 
-    // A healthy gate pause must not read as death.
-    if (/EVENT:(stall|dead) MONO-301\b/.test(stdout)) {
-      fail("a fresh gates-passed gate-ack must suppress stall and dead for that worker");
+    // A healthy gate pause must not read as death, wherever the ack landed.
+    for (const [issue, label] of [
+      ["MONO-301", "mailbox"],
+      ["MONO-311", "worktree fallback"],
+    ]) {
+      if (new RegExp(`EVENT:(stall|dead) ${issue}\\b`).test(stdout)) {
+        fail(`a fresh gates-passed gate-ack in the ${label} must suppress stall and dead for that worker`);
+      }
     }
     // Everything that is not a healthy pause keeps the liveness ladder armed.
     for (const [issue, label] of [
       ["MONO-302", "blocked ack"],
       ["MONO-303", "prior-attempt ack"],
       ["MONO-305", "malformed ack"],
+      ["MONO-307", "gates-passed ack with no gates array"],
+      ["MONO-308", "gates-passed ack with an empty gates array"],
+      ["MONO-309", "gates-passed ack over a blocked gate"],
+      ["MONO-310", "gate entry with no evidence"],
+      ["MONO-312", "consumed ack"],
     ]) {
       if (!stdout.includes(`EVENT:dead ${issue}`)) {
         fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
@@ -5878,6 +5932,19 @@ function validateTwoPhaseDispatchHandshake() {
     '"status": "gates-passed | blocked"',
     "The gate-ack is not a stage report",
     "`templates/orchestrator-report.md` is unchanged by this protocol.",
+    // The ack is the only evidence the gates ran: it is complete, internally
+    // consistent, checked against the dispatched gate list, and consumed
+    // before the resume so it cannot go on suppressing liveness events.
+    "`gates-passed` requires every entry to be `pass`",
+    "is self-contradictory\n   and is treated as no ack at all",
+    "a gate list the ack does not cover is a blocked ack, not a passed one",
+    "consumes the ack by renaming it to\n   `<ISSUE-KEY>-gate-ack.applied.json`",
+    "would go on\n   suppressing `stall` and `dead` for a worker that has crashed after its\n   resume",
+    "re-arms the liveness ladder for the execution phase",
+    "Both\n   the orchestrator and the watcher read the fallback path",
+    // A blocked ack never rewrites the stage's own exit statuses.
+    "That report carries the\nstage's OWN exit status for the failure it hit",
+    "`needs-human` when a gate returned a real adverse verdict",
     "confirms each with read-back",
     "explicitly as an amendment of the dispatch snapshot",
     "including `mono-check delivery` — is evaluated against",
@@ -5932,8 +5999,22 @@ function validateTwoPhaseDispatchHandshake() {
     "Then stop and wait to be resumed",
     "On `status: blocked`, also write the ordinary stage report",
     "amendment does not show this dispatch's move applied is a `blocked` report",
+    // The stop instruction must not forbid a gate the same dispatch requires:
+    // on the issue-only lane the delivery check runs BEFORE the ack.
+    "except on the issue-only lane, where the delivery\n  check is one of the gates above and runs before you ack",
+    "carrying the stage's own exit status for what you hit",
   ]) {
     assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
+  }
+
+  // The stop instruction may never name the delivery check as a flat
+  // prohibition: an issue-only worker would then have to skip a required gate
+  // or violate the stop rule, and either way the handshake is unexecutable.
+  const dispatchTemplate = read("templates/orchestrator-dispatch.md");
+  if (dispatchTemplate.includes("write code, run the delivery check, or write the stage report")) {
+    fail(
+      "templates/orchestrator-dispatch.md must not forbid the delivery check outright in the gate-phase stop rule; the issue-only lane runs it before the ack"
+    );
   }
 
   for (const required of [
@@ -5942,6 +6023,9 @@ function validateTwoPhaseDispatchHandshake() {
     "never a «Решил сам:» decision",
     "A `gate-ack` event is a delivery event, not a liveness one",
     "waiting by contract — never\n     heal it",
+    "check that ack against\n     the gate list you dispatched",
+    "consume the ack by renaming it `<ISSUE-KEY>-gate-ack.applied.json`",
+    "an ack left in\n     place keeps suppressing that worker's `stall` and `dead` events",
   ]) {
     assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
   }

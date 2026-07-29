@@ -163,7 +163,9 @@ this branch is only how `start-checkpoint` executes under it.
      verdict. A real verdict other than `PASS` stops before code as
      `needs-human`; a snapshot that cannot supply one of those inputs
      is `blocked` naming the missing input. Neither of those outcomes reaches
-     a `gates-passed` ack, so neither moves the Issue.
+     a `gates-passed` ack, so neither moves the Issue: the ack goes out
+     `blocked` and the stage report carries whichever of those two statuses
+     you actually hit.
    What must be true before code is already true: the gate phase verified it
    from the snapshot, and the orchestrator applied and read back the lifecycle
    move before resuming you. Every other mutation this stage produces is still

@@ -304,8 +304,33 @@ function isFreshForLog(stat, log) {
 // moves and resume it. Its shape is deliberately minimal and carries no pack
 // identity, so it is correlated through the registry entry and the log it
 // belongs to, never through fields of its own.
-function readGateAck(reportsDir, log) {
-  const ackPath = path.join(reportsDir, `${log.issue}-gate-ack.json`);
+//
+// The ack is the only evidence the gates ran, and it suppresses liveness
+// events, so it is validated whole and fails closed: a non-empty `gates` array
+// of well-formed entries, and `gates-passed` only when every entry passed. An
+// ack claiming `gates-passed` over a blocked gate is self-contradictory and is
+// treated as no ack at all. Coverage of the dispatch's gate LIST is the
+// orchestrator's check, not the watcher's — only the orchestrator knows which
+// gates it dispatched.
+//
+// Lifecycle: the orchestrator renames the ack to `<ISSUE-KEY>-gate-ack.applied
+// .json` when it consumes it, before resuming the worker. That rename is what
+// re-arms stall/dead for the execution phase, since the resumed worker appends
+// to the same stage log and a retained ack would keep suppressing them.
+function isGateEntry(entry) {
+  return (
+    entry !== null &&
+    typeof entry === "object" &&
+    !Array.isArray(entry) &&
+    typeof entry.gate === "string" &&
+    entry.gate.length > 0 &&
+    (entry.status === "pass" || entry.status === "blocked") &&
+    typeof entry.evidence === "string" &&
+    entry.evidence.length > 0
+  );
+}
+
+function readGateAckAt(ackPath, log) {
   let stat;
   let ack;
   try {
@@ -317,7 +342,22 @@ function readGateAck(reportsDir, log) {
   if (!stat.isFile()) return null;
   if (ack?.issue !== log.issue || ack.phase !== "gate") return null;
   if (ack.status !== "gates-passed" && ack.status !== "blocked") return null;
+  if (!Array.isArray(ack.gates) || ack.gates.length === 0) return null;
+  if (!ack.gates.every(isGateEntry)) return null;
+  if (ack.status === "gates-passed" && !ack.gates.every((entry) => entry.status === "pass")) return null;
   return { ackPath, stat, status: ack.status };
+}
+
+// Mailbox path first, then the sandbox fallback the protocol permits under
+// the worker's own worktree. An ack the watcher cannot see reads as a dead
+// worker, which would send the healing ladder against a contracted wait.
+function readGateAck(reportsDir, log, registryEntry) {
+  const mailboxAck = readGateAckAt(path.join(reportsDir, `${log.issue}-gate-ack.json`), log);
+  if (mailboxAck !== null) return mailboxAck;
+  const worktree =
+    typeof registryEntry?.worktree === "string" ? path.resolve(expandHome(registryEntry.worktree)) : null;
+  if (worktree === null) return null;
+  return readGateAckAt(path.join(worktree, ".orchestrator", `${log.issue}-gate-ack.json`), log);
 }
 
 function hasPackIdentity(value) {
@@ -347,7 +387,7 @@ function isCorrelatedDeliveryLog(log, registryEntry) {
 
 function checkGateAck(log, reportsDir, registryEntry, nowMs) {
   if (!isCorrelatedDeliveryLog(log, registryEntry)) return;
-  const gateAck = readGateAck(reportsDir, log);
+  const gateAck = readGateAck(reportsDir, log, registryEntry);
   if (gateAck === null || !isFreshForLog(gateAck.stat, log)) return;
 
   const version = `${gateAck.stat.mtimeMs}:${gateAck.stat.size}`;
@@ -438,8 +478,10 @@ function checkLog(log, reportsDir, registry, nowMs) {
   // purpose and is waiting for the orchestrator to apply the dispatch's
   // lifecycle moves and resume it. A `blocked` ack suppresses nothing — that
   // path also writes the ordinary stage report, which the check above already
-  // honours.
-  const gateAck = readGateAck(reportsDir, log);
+  // honours. The suppression ends when the orchestrator consumes the ack at
+  // resume time; a retained ack cannot be told apart from a live pause here,
+  // which is why that rename is a protocol obligation and not a nicety.
+  const gateAck = readGateAck(reportsDir, log, registry[log.issue]);
   if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) return;
 
   const pidState = writerPidState(registry[log.issue]);
