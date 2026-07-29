@@ -591,7 +591,11 @@ function checkGateAck(log, gateAck, nowMs) {
     // would leave the consumer free to coverage-check a different artifact
     // than the one validated here — and authorize a lifecycle move on gate
     // evidence this watcher never saw.
-    `gate-ack ${gateAck.ackPath} status ${gateAck.status} is fresh and registry-correlated (version ${version})`,
+    // Not "fresh": delivery only establishes that the ack belongs to this
+    // attempt, and a retained crash-window ack is delivered long after the
+    // pause ended. Calling it fresh would tell the consumer the worker is still
+    // waiting, which is exactly the thing it must reconcile rather than assume.
+    `gate-ack ${gateAck.ackPath} status ${gateAck.status} belongs to this attempt and is registry-correlated (version ${version})`,
     `gate-ack:${gateAck.ackPath}:${version}`,
     nowMs
   );

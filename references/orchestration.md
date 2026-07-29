@@ -837,7 +837,16 @@ directory's history; retired Issues' logs are outside its scope.
   emits `report` for `claude-code-desktop` or `fallback` entries.
 - `gate-ack` rides the same correlation surface as `report` and the same
   at-least-once rule: `codex-cli` entries only, registry-matched identity and
-  stage, and the same freshness predicate against the log. Its file is
+  stage. Its freshness is deliberately NOT the report's, and the difference is
+  load-bearing in both directions. Delivery asks only that the ack BELONG to
+  this attempt — its mtime at or after the attempt log's birthtime — because a
+  resumed worker's own execution advances that same log, and an ack left
+  unconsumed by the crash window has to keep reaching the consumer precisely
+  then; a delivered ack is therefore not a claim that the worker is still
+  paused. Suppression asks the stricter question and applies the report
+  predicate too, since only a current pause may silence liveness. A polling
+  transport applies the same split: it must not discard a retained ack merely
+  for lagging the log, or it discards the crash-recovery evidence. Its file is
   `reports/<ISSUE-KEY>-gate-ack-a<N>.json` or the worktree fallback path, whose
   minimal shape carries no identity fields, so its correlation comes from the
   registry entry and the log it belongs to. The watcher validates the ack whole
