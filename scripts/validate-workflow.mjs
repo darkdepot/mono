@@ -4523,7 +4523,7 @@ function validateHeartbeatContract() {
     "empty `thread_id`",
     "watch-workers.mjs",
     "-a1.jsonl",
-    "EVENT:<stall|dead|spawn-fail|report|idle>",
+    "EVENT:<stall|dead|spawn-fail|report|gate-ack|idle>",
     "retired Issues' logs are outside its scope",
     "`report` is emitted only for `codex-cli` workers",
     "read the correlated report and advance the stage pipeline",
@@ -4923,6 +4923,775 @@ async function validateWatcherV3Behavior() {
     }
   } finally {
     fs.rmSync(retirementRoot, { recursive: true, force: true });
+  }
+}
+
+// MONO-47 — `gate-ack` is additive to the v3 event set. It rides the same
+// correlation surface as `report`, and only a FRESH `gates-passed` ack
+// suppresses stall/dead: the gate pause of the two-phase dispatch handshake is
+// a contracted wait, while a blocked, stale, or malformed ack proves nothing
+// and must leave the liveness ladder armed.
+// The report override and the suppression branch must both key on BELONGING, so
+// that any ack belonging to the attempt makes suppression bounded rather than
+// absolute (orchestrator amendment 3 on MONO-47). This replaces an earlier pin
+// that required the pause-fresh predicate here: two review rounds asked for
+// mutually inverse predicates, each correct about its own failure — requiring a
+// current pause let unbounded report suppression bury the ack/report pair
+// forever, requiring belonging with an unbounded override called a completed
+// worker dead. Bounding it satisfies both, and the post-bound event is a
+// consumption boundary, never a healing signal.
+//
+// A runtime fixture cannot pin the distinguishing state: it needs
+// birthtime <= ack.mtime < log.mtime - stall with the log already stale, and
+// birthtime cannot be moved backwards portably — macOS pulls it back on an
+// earlier utimes, Linux does not — the same limit documented on MONO-333. So it
+// is pinned structurally.
+function validateGateAckSuppressionPredicate() {
+  const watcher = read("scripts/watch-workers.mjs");
+  const override = watcher.slice(watcher.indexOf("  const pausedOnAck ="), watcher.indexOf("  const reportStat ="));
+  if (!override.includes("ackBelongsToAttempt(gateAck.stat, log)")) {
+    fail(
+      "watch-workers.mjs: pausedOnAck must key on ackBelongsToAttempt so any belonging ack bounds report suppression (amendment 3); requiring a current pause lets unbounded report suppression bury the ack/report pair"
+    );
+  }
+  if (override.includes("isFreshForLog")) {
+    fail(
+      "watch-workers.mjs: pausedOnAck must not key on isFreshForLog; a retained crash-window ack still has to bound report suppression after execution advances the log"
+    );
+  }
+  const suppression = watcher.slice(watcher.indexOf('if (gateAck !== null && gateAck.status === "gates-passed"'));
+  if (!suppression.startsWith('if (gateAck !== null && gateAck.status === "gates-passed" && ackBelongsToAttempt(gateAck.stat, log))')) {
+    fail(
+      "watch-workers.mjs: the gate-pause suppression branch must use the same belonging predicate as the override, or the two disagree and the pair is neither bounded nor suppressed"
+    );
+  }
+
+  // The post-bound event must route as reconciliation. Without this the earlier
+  // harm returns in delayed form: a completed worker respawned by the ladder.
+  for (const required of [
+    "Whenever an UNCONSUMED gate-ack exists for that attempt, any `stall` or\n  `dead` for it is a consumption boundary rather than a death",
+    "Routing\n  such an event into healing or replay is a contract error",
+    "Only an attempt with NO unconsumed ack\n  takes the ordinary healing ladder.",
+  ]) {
+    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
+  }
+}
+
+function validateWatcherGateAckBehavior() {
+  const identity = {
+    packVersion: "0.20.1",
+    sourceCommit: "a".repeat(40),
+    surfaceRevision: 1,
+  };
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-watcher-gate-ack-"));
+  try {
+    const logsDir = path.join(fixtureRoot, "logs");
+    const reportsDir = path.join(fixtureRoot, "reports");
+    fs.mkdirSync(logsDir);
+    fs.mkdirSync(reportsDir);
+    const workers = {};
+    // Well past 2x the 90s stall threshold, and every writer pid is gone —
+    // exactly the shape a codex-cli gate pause leaves behind.
+    const staleLog = new Date(Date.now() - 200_000);
+
+    const gateAck = (issue, status, gates = null) => ({
+      issue,
+      phase: "gate",
+      // A blocked ack must carry a blocked gate: the invariant runs both ways,
+      // so an all-pass `blocked` ack is a contradiction, not a default.
+      gates: gates ?? [
+        { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+        ...(status === "blocked"
+          ? [{ gate: "context seam", status: "blocked", evidence: "snapshot has no seam field" }]
+          : []),
+      ],
+      status,
+    });
+
+    const addFixture = (
+      issue,
+      ack,
+      { registry = {}, priorAttempt = false, report = null, fallbackAck = false, stage = "mono-implement" } = {}
+    ) => {
+      const logPath = path.join(logsDir, `${issue}-${stage}-a1.jsonl`);
+      fs.writeFileSync(logPath, `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`);
+      // Age the log FIRST and read its birthtime after: macOS pulls a file's
+      // birthtime back to an earlier mtime, so a prior-attempt ack computed
+      // from the pre-aging birthtime would land inside the freshness window.
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const birthMs = fs.statSync(logPath).birthtimeMs;
+      // The sandbox fallback the protocol permits: same JSON, under the
+      // worker's own worktree instead of the mailbox.
+      const worktree = path.join(fixtureRoot, "worktrees", issue);
+      if (ack) {
+        let ackPath;
+        if (fallbackAck) {
+          fs.mkdirSync(path.join(worktree, ".orchestrator"), { recursive: true });
+          ackPath = path.join(worktree, ".orchestrator", `${issue}-gate-ack-a1.json`);
+        } else {
+          ackPath = path.join(reportsDir, `${issue}-gate-ack-a1.json`);
+        }
+        fs.writeFileSync(ackPath, `${JSON.stringify(ack, null, 2)}\n`);
+        // A prior attempt's ack predates this log file and proves nothing
+        // about this writer.
+        if (priorAttempt) fs.utimesSync(ackPath, new Date(birthMs - 1_000), new Date(birthMs - 1_000));
+      }
+      if (report) {
+        fs.writeFileSync(path.join(reportsDir, `${issue}-${stage}.json`), `${JSON.stringify(report, null, 2)}\n`);
+      }
+      workers[issue] = {
+        transport: "codex-cli",
+        stage,
+        log: logPath,
+        worktree,
+        pid: 999_999_999,
+        ...identity,
+        ...registry,
+      };
+    };
+
+    addFixture("MONO-301", gateAck("MONO-301", "gates-passed"));
+    addFixture("MONO-302", gateAck("MONO-302", "blocked"));
+    addFixture("MONO-303", gateAck("MONO-303", "gates-passed"), { priorAttempt: true });
+    addFixture("MONO-304", gateAck("MONO-304", "gates-passed"), {
+      registry: { transport: "claude-code-desktop" },
+    });
+    addFixture("MONO-305", { ...gateAck("MONO-305", "gates-passed"), phase: "execution" });
+    addFixture("MONO-306", gateAck("MONO-306", "gates-passed"), {
+      report: { issue: "MONO-306", stage: "mono-implement", status: "implemented-needs-preflight", ...identity },
+    });
+    // The ack is the only evidence the gates ran, so an ack that skips or
+    // contradicts that evidence must neither deliver nor suppress.
+    addFixture("MONO-307", { issue: "MONO-307", phase: "gate", status: "gates-passed" });
+    addFixture("MONO-308", gateAck("MONO-308", "gates-passed", []));
+    addFixture(
+      "MONO-309",
+      gateAck("MONO-309", "gates-passed", [
+        { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+        { gate: "context seam", status: "blocked", evidence: "snapshot has no seam field" },
+      ])
+    );
+    addFixture("MONO-310", gateAck("MONO-310", "gates-passed", [{ gate: "pack identity gate", status: "pass" }]));
+    // Mirror of MONO-309: `blocked` over gates that all passed is consumed as a
+    // real refusal and strands a dispatch whose gates actually passed.
+    addFixture(
+      "MONO-331",
+      gateAck("MONO-331", "blocked", [
+        { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+      ])
+    );
+    // A repeated gate name could stand in for an omitted one under a coverage
+    // check that counts entries instead of comparing the set.
+    addFixture(
+      "MONO-316",
+      gateAck("MONO-316", "gates-passed", [
+        { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+        { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+      ])
+    );
+    // The documented sandbox fallback must be observed, or a worker that
+    // acked from its worktree reads as dead during a contracted wait.
+    addFixture("MONO-311", gateAck("MONO-311", "gates-passed"), { fallbackAck: true });
+    // A consumed ack no longer correlates: the rename at resume time is what
+    // re-arms the liveness ladder for the execution phase.
+    addFixture("MONO-312", null);
+    fs.writeFileSync(
+      path.join(reportsDir, "MONO-312-gate-ack-a1.applied.json"),
+      `${JSON.stringify(gateAck("MONO-312", "gates-passed"), null, 2)}\n`
+    );
+    // A prior attempt's mailbox ack must not shadow the fresh fallback ack of
+    // the worker that is paused right now.
+    addFixture("MONO-313", gateAck("MONO-313", "gates-passed"), { fallbackAck: true });
+    const shadowingAckPath = path.join(reportsDir, "MONO-313-gate-ack-a1.json");
+    fs.writeFileSync(shadowingAckPath, `${JSON.stringify(gateAck("MONO-313", "blocked"), null, 2)}\n`);
+    const shadowStale = new Date(fs.statSync(workers["MONO-313"].log).birthtimeMs - 1_000);
+    fs.utimesSync(shadowingAckPath, shadowStale, shadowStale);
+    // Suppression demands the same registry correlation delivery does: a
+    // foreign-stage entry can neither deliver its ack nor silence liveness.
+    addFixture("MONO-314", gateAck("MONO-314", "gates-passed"), {
+      registry: { stage: "mono-preflight" },
+    });
+    // Registry and log can also AGREE on a stage that has no gate phase at
+    // all: preflight and ship dispatches carry no lifecycle move, so an ack
+    // there is spurious however well-formed it looks.
+    addFixture("MONO-315", gateAck("MONO-315", "gates-passed"), { stage: "mono-preflight" });
+
+    // The fallback ack path is inside the worker's own worktree, so it is
+    // worker-controlled. Anything that is not a bounded regular file must be
+    // rejected BEFORE it is opened: the watcher is synchronous, so a FIFO would
+    // block it forever and a device would read without bound, silently ending
+    // liveness monitoring for every worker at once.
+    const hostileFallback = (issue, build) => {
+      addFixture(issue, null);
+      const ackDir = path.join(fixtureRoot, "worktrees", issue, ".orchestrator");
+      fs.mkdirSync(ackDir, { recursive: true });
+      build(path.join(ackDir, `${issue}-gate-ack-a1.json`));
+    };
+    // A symlink pointing at a perfectly valid ack is still not a regular file.
+    const realAckPath = path.join(fixtureRoot, "valid-ack.json");
+    fs.writeFileSync(realAckPath, `${JSON.stringify(gateAck("MONO-317", "gates-passed"), null, 2)}\n`);
+    hostileFallback("MONO-317", (ackPath) => fs.symlinkSync(realAckPath, ackPath));
+    // Oversized: a real ack is a handful of gate entries.
+    hostileFallback("MONO-318", (ackPath) => {
+      const padded = gateAck("MONO-318", "gates-passed");
+      padded.gates[0].evidence = "x".repeat(128 * 1024);
+      fs.writeFileSync(ackPath, JSON.stringify(padded));
+    });
+    // The one that would actually hang a synchronous reader.
+    let fifoIssue = null;
+    if (spawnSync("mkfifo", ["--version"], { encoding: "utf8" }).error === undefined) {
+      fifoIssue = "MONO-319";
+      hostileFallback(fifoIssue, (ackPath) => spawnSync("mkfifo", [ackPath]));
+      if (!fs.existsSync(path.join(fixtureRoot, "worktrees", fifoIssue, ".orchestrator", `${fifoIssue}-gate-ack-a1.json`))) {
+        fifoIssue = null;
+      }
+    }
+
+    // The failure round 8 named: a superseded attempt that is still alive
+    // writes its ack AFTER its successor's log was born, so every timestamp
+    // test accepts it. A retry carries the same gate names, so set equality
+    // downstream would not catch it either — the orchestrator would apply the
+    // moves and resume attempt 2 on gates only attempt 1 ever ran. Only the
+    // attempt number in the path can tell the two writers apart.
+    const lateAckIssue = "MONO-320";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const supersededLog = path.join(logsDir, `${lateAckIssue}-mono-implement-a1.jsonl`);
+      const currentLog = path.join(logsDir, `${lateAckIssue}-mono-implement-a2.jsonl`);
+      fs.writeFileSync(supersededLog, logLine);
+      fs.writeFileSync(currentLog, logLine);
+      const older = new Date(Date.now() - 300_000);
+      fs.utimesSync(supersededLog, older, older);
+      fs.utimesSync(currentLog, staleLog, staleLog);
+      // Written now: newer than attempt 2's log birthtime, so freshness alone
+      // would take it.
+      fs.writeFileSync(
+        path.join(reportsDir, `${lateAckIssue}-gate-ack-a1.json`),
+        `${JSON.stringify(gateAck(lateAckIssue, "gates-passed"), null, 2)}\n`
+      );
+      workers[lateAckIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: currentLog,
+        worktree: path.join(fixtureRoot, "worktrees", lateAckIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // A resume that failed after the moves landed: the ack is never consumed,
+    // and freshness against the log alone would suppress liveness forever
+    // because both its operands are fixed file timestamps. The wall-clock
+    // bound is what re-arms the ladder on a parked Issue.
+    const stalePauseIssue = "MONO-321";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${stalePauseIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      const longAgo = new Date(Date.now() - 900_000);
+      fs.utimesSync(logPath, longAgo, longAgo);
+      const ackPath = path.join(reportsDir, `${stalePauseIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(stalePauseIssue, "gates-passed"), null, 2)}\n`);
+      // Newer than the log's birthtime, so isFreshForLog still accepts it —
+      // only the wall-clock bound (4x the 90s stall threshold) rejects it.
+      const pausedAt = new Date(Date.now() - 700_000);
+      fs.utimesSync(ackPath, pausedAt, pausedAt);
+      workers[stalePauseIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", stalePauseIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // A forged future date must not buy suppression: the worker sets its own
+    // timestamps on the fallback path, and a negative age would otherwise slip
+    // under a ceiling-only bound and restore unbounded silence.
+    const futureAckIssue = "MONO-322";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${futureAckIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const ackPath = path.join(reportsDir, `${futureAckIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(futureAckIssue, "gates-passed"), null, 2)}\n`);
+      const future = new Date(Date.now() + 3_600_000);
+      fs.utimesSync(ackPath, future, future);
+      workers[futureAckIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", futureAckIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // Two fresh candidates tying on mtime, disagreeing on status: a leftover
+    // mailbox `gates-passed` must not shadow the current fallback `blocked`.
+    // Ambiguity fails closed — neither is selected.
+    const tieIssue = "MONO-323";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${tieIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const mailboxAck = path.join(reportsDir, `${tieIssue}-gate-ack-a1.json`);
+      const fallbackDir = path.join(fixtureRoot, "worktrees", tieIssue, ".orchestrator");
+      fs.mkdirSync(fallbackDir, { recursive: true });
+      const fallbackAck = path.join(fallbackDir, `${tieIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(mailboxAck, `${JSON.stringify(gateAck(tieIssue, "gates-passed"), null, 2)}\n`);
+      fs.writeFileSync(fallbackAck, `${JSON.stringify(gateAck(tieIssue, "blocked"), null, 2)}\n`);
+      const sameInstant = new Date(Date.now() - 5_000);
+      fs.utimesSync(mailboxAck, sameInstant, sameInstant);
+      fs.utimesSync(fallbackAck, sameInstant, sameInstant);
+      workers[tieIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", tieIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // Near-future, inside the old one-stall tolerance: a worker must not be
+    // able to mint extra suppression for itself by nudging its own mtime.
+    const nearFutureIssue = "MONO-324";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${nearFutureIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const ackPath = path.join(reportsDir, `${nearFutureIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(nearFutureIssue, "gates-passed"), null, 2)}\n`);
+      const nearFuture = new Date(Date.now() + 30_000);
+      fs.utimesSync(ackPath, nearFuture, nearFuture);
+      workers[nearFutureIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", nearFutureIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // The unselected leftover after consumption: the fallback ack was the one
+    // renamed, and the mailbox copy stayed behind. A tombstone for the attempt
+    // must stop it becoming current on the next scan.
+    const leftoverIssue = "MONO-325";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${leftoverIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const fallbackDir = path.join(fixtureRoot, "worktrees", leftoverIssue, ".orchestrator");
+      fs.mkdirSync(fallbackDir, { recursive: true });
+      // Consumed: the selected artifact was renamed in the fallback location.
+      fs.writeFileSync(
+        path.join(fallbackDir, `${leftoverIssue}-gate-ack-a1.applied.json`),
+        `${JSON.stringify(gateAck(leftoverIssue, "gates-passed"), null, 2)}\n`
+      );
+      // Left behind, still perfectly valid and fresh.
+      fs.writeFileSync(
+        path.join(reportsDir, `${leftoverIssue}-gate-ack-a1.json`),
+        `${JSON.stringify(gateAck(leftoverIssue, "gates-passed"), null, 2)}\n`
+      );
+      workers[leftoverIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", leftoverIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // A superseded attempt's report must not hide the successor's valid ack.
+    // Reports carry no attempt number, so an older report beside a newer ack
+    // is exactly that shape: the ack still has to be delivered.
+    const staleReportIssue = "MONO-327";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${staleReportIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      const reportPath = path.join(reportsDir, `${staleReportIssue}-mono-implement.json`);
+      fs.writeFileSync(
+        reportPath,
+        `${JSON.stringify({ issue: staleReportIssue, stage: "mono-implement", status: "implemented-needs-preflight", ...identity }, null, 2)}\n`
+      );
+      const ackPath = path.join(reportsDir, `${staleReportIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(staleReportIssue, "gates-passed"), null, 2)}\n`);
+      // Report older than the ack; both still fresh against the log.
+      const reportAt = new Date(Date.now() - 60_000);
+      fs.utimesSync(reportPath, reportAt, reportAt);
+      workers[staleReportIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", staleReportIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // A stuck worker touching its own ack must not buy another window: the
+    // deadline runs on the pause, not on the ack's mtime.
+    const renewedAckIssue = "MONO-328";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${renewedAckIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      const longQuiet = new Date(Date.now() - 900_000);
+      fs.utimesSync(logPath, longQuiet, longQuiet);
+      // Freshly touched, as a worker renewing its deadline would.
+      fs.writeFileSync(
+        path.join(reportsDir, `${renewedAckIssue}-gate-ack-a1.json`),
+        `${JSON.stringify(gateAck(renewedAckIssue, "gates-passed"), null, 2)}\n`
+      );
+      workers[renewedAckIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", renewedAckIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // A valid blocked ack is spent once consumed, and its consumption state has
+    // to be one the watcher recognises or it redelivers on every restart.
+    const blockedConsumedIssue = "MONO-329";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${blockedConsumedIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      fs.writeFileSync(
+        path.join(reportsDir, `${blockedConsumedIssue}-gate-ack-a1.blocked.json`),
+        `${JSON.stringify(gateAck(blockedConsumedIssue, "blocked"), null, 2)}\n`
+      );
+      fs.writeFileSync(
+        path.join(reportsDir, `${blockedConsumedIssue}-gate-ack-a1.json`),
+        `${JSON.stringify(gateAck(blockedConsumedIssue, "blocked"), null, 2)}\n`
+      );
+      workers[blockedConsumedIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", blockedConsumedIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // A report beside an unconsumed gates-passed ack must not silence the
+    // worker past the gate-pause bound: that pairing needs reconciliation, and
+    // reconciliation needs a liveness signal to trigger it.
+    const maskedIssue = "MONO-330";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${maskedIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      const longQuiet = new Date(Date.now() - 900_000);
+      fs.utimesSync(logPath, longQuiet, longQuiet);
+      fs.writeFileSync(
+        path.join(reportsDir, `${maskedIssue}-gate-ack-a1.json`),
+        `${JSON.stringify(gateAck(maskedIssue, "gates-passed"), null, 2)}\n`
+      );
+      fs.writeFileSync(
+        path.join(reportsDir, `${maskedIssue}-mono-implement.json`),
+        `${JSON.stringify({ issue: maskedIssue, stage: "mono-implement", status: "implemented-needs-preflight", ...identity }, null, 2)}\n`
+      );
+      workers[maskedIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", maskedIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // Greptile P1: a superseded attempt that is still appending outranks the
+    // current one in collectLatestLogs, so the current attempt's ack must be
+    // read against the log the REGISTRY names or a contracted pause reads as
+    // death.
+    const supersededNewerIssue = "MONO-332";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const supersededLog = path.join(logsDir, `${supersededNewerIssue}-mono-implement-a1.jsonl`);
+      const currentLog = path.join(logsDir, `${supersededNewerIssue}-mono-implement-a2.jsonl`);
+      fs.writeFileSync(supersededLog, logLine);
+      fs.writeFileSync(currentLog, logLine);
+      // The zombie's log is NEWER, so collectLatestLogs picks it.
+      const zombieTouch = new Date(Date.now() - 100_000);
+      const currentQuiet = new Date(Date.now() - 200_000);
+      fs.utimesSync(currentLog, currentQuiet, currentQuiet);
+      fs.utimesSync(supersededLog, zombieTouch, zombieTouch);
+      fs.writeFileSync(
+        path.join(reportsDir, `${supersededNewerIssue}-gate-ack-a2.json`),
+        `${JSON.stringify(gateAck(supersededNewerIssue, "gates-passed"), null, 2)}\n`
+      );
+      workers[supersededNewerIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: currentLog,
+        worktree: path.join(fixtureRoot, "worktrees", supersededNewerIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // The crash window survives execution: an unconsumed ack must still be
+    // DELIVERED after the resumed worker advanced the log past it, so the
+    // consumer sees the ack/report pair and reconciles.
+    //
+    // Portability matters more than realism in how this is staged. The
+    // distinction under test needs birthtime <= ack.mtime < log.mtime - stall,
+    // and a real 90s gap cannot be manufactured by backdating: macOS pulls
+    // st_birthtime back when an earlier mtime is set, Linux does not, and where
+    // btime is unsupported Node falls back to ctime — which utimes bumps to now.
+    // Backdating the log therefore made the ack predate birthtime on CI only.
+    // Advancing the log FORWARD instead is symmetric on both platforms: the ack
+    // is written after the log is created, so it always post-dates birthtime,
+    // and the log's mtime is pushed beyond it by more than the stall threshold.
+    const survivesExecutionIssue = "MONO-333";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${survivesExecutionIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      // Advance the log BEFORE writing the ack. utimes bumps ctime, and where
+      // btime is unsupported Node reports ctime as birthtime — so writing the
+      // ack last keeps ack.mtime >= birthtime under either interpretation.
+      const advanced = new Date(Date.now() + 200_000);
+      fs.utimesSync(logPath, advanced, advanced);
+      const ackPath = path.join(reportsDir, `${survivesExecutionIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(survivesExecutionIssue, "gates-passed"), null, 2)}\n`);
+      workers[survivesExecutionIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", survivesExecutionIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // Greptile: a superseded attempt that keeps writing must not hold the
+    // current attempt's gate pause open. Its log is newer and gets selected,
+    // but the pause bound is measured on the registry's attempt log, which has
+    // been quiet far past the bound — so liveness re-arms.
+    const zombieHoldsPauseIssue = "MONO-334";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const zombieLog = path.join(logsDir, `${zombieHoldsPauseIssue}-mono-implement-a1.jsonl`);
+      const pausedLog = path.join(logsDir, `${zombieHoldsPauseIssue}-mono-implement-a2.jsonl`);
+      fs.writeFileSync(pausedLog, logLine);
+      fs.writeFileSync(zombieLog, logLine);
+      const pausedQuiet = new Date(Date.now() - 900_000);
+      fs.utimesSync(pausedLog, pausedQuiet, pausedQuiet);
+      // The zombie is ACTIVELY writing — inside the stall window. That is the
+      // case that reproduces the defect: driven from the mtime-selected log the
+      // scan takes the healthy early return and the paused attempt's expired
+      // bound is never reached. Staging the zombie as merely "older than the
+      // threshold" could not reproduce it, which is what the review caught.
+      const zombieTouch = new Date(Date.now() - 30_000);
+      fs.utimesSync(zombieLog, zombieTouch, zombieTouch);
+      // Ack written after both utimes so it post-dates birthtime under either
+      // the real-btime or the ctime-fallback reading.
+      fs.writeFileSync(
+        path.join(reportsDir, `${zombieHoldsPauseIssue}-gate-ack-a2.json`),
+        `${JSON.stringify(gateAck(zombieHoldsPauseIssue, "gates-passed"), null, 2)}\n`
+      );
+      workers[zombieHoldsPauseIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: pausedLog,
+        worktree: path.join(fixtureRoot, "worktrees", zombieHoldsPauseIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    // A leftover ack from a PRIOR attempt must not switch off report
+    // suppression: the completed worker below has a valid fresh report and must
+    // not be called dead because a stale ack file is still lying around.
+    const staleAckIssue = "MONO-335";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      // Ack first and explicitly old, so it predates the log's birthtime under
+      // either the real-btime or the ctime-fallback reading.
+      const ackPath = path.join(reportsDir, `${staleAckIssue}-gate-ack-a1.json`);
+      fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(staleAckIssue, "gates-passed"), null, 2)}\n`);
+      const ackAt = new Date(Date.now() - 500_000);
+      fs.utimesSync(ackPath, ackAt, ackAt);
+      const logPath = path.join(logsDir, `${staleAckIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      // Report written last: the stage completed normally.
+      fs.writeFileSync(
+        path.join(reportsDir, `${staleAckIssue}-mono-implement.json`),
+        `${JSON.stringify({ issue: staleAckIssue, stage: "mono-implement", status: "implemented-needs-preflight", ...identity }, null, 2)}\n`
+      );
+      workers[staleAckIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", staleAckIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
+    fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
+    fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
+
+    const runOnce = () =>
+      spawnSync(
+        process.execPath,
+        ["scripts/watch-workers.mjs", "--root", fixtureRoot, "--stall-sec", "90", "--idle-sec", "30", "--once"],
+        // The timeout is the regression detector for the FIFO fixture: without
+        // the pre-read lstat guard this scan never returns at all.
+        { cwd: root, encoding: "utf8", timeout: 60_000 }
+      );
+
+    const result = runOnce();
+    if (result.signal === "SIGTERM" || result.error?.code === "ETIMEDOUT") {
+      fail(
+        "watcher scan never returned: a worker-controlled fallback ack path must be rejected by lstat before it is opened"
+      );
+      return;
+    }
+    if (result.status !== 0) {
+      fail(`watcher gate-ack fixtures failed to run: ${result.stderr || `exit ${result.status}`}`);
+      return;
+    }
+    const stdout = result.stdout || "";
+
+    // Hostile fallback shapes deliver nothing and suppress nothing.
+    for (const issue of ["MONO-317", "MONO-318", ...(fifoIssue ? [fifoIssue] : [])]) {
+      if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
+        fail(`watcher must not deliver a gate-ack from a non-regular or oversized fallback path (${issue})`);
+      }
+      if (!stdout.includes(`EVENT:dead ${issue}`)) {
+        fail(`watcher must still emit dead when the only fallback ack is not a bounded regular file (${issue})`);
+      }
+    }
+
+    for (const [issue, label] of [
+      ["MONO-301", "gates-passed"],
+      ["MONO-302", "blocked"],
+      ["MONO-311", "worktree-fallback"],
+      ["MONO-327", "ack newer than a superseded attempt's report"],
+      ["MONO-332", "ack on the registry log while a superseded log is newer"],
+      ["MONO-333", "unconsumed ack after execution advanced the log"],
+      ["MONO-306", "unconsumed ack beside a completed stage report"],
+    ]) {
+      if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
+        fail(`watcher ${label} gate-ack fixture must emit a gate-ack event`);
+      }
+    }
+    for (const [issue, label] of [
+      ["MONO-303", "prior-attempt"],
+      ["MONO-304", "non-codex"],
+      ["MONO-305", "malformed-phase"],
+      ["MONO-307", "missing-gates-array"],
+      ["MONO-308", "empty-gates-array"],
+      ["MONO-309", "gates-passed-over-a-blocked-gate"],
+      ["MONO-310", "gate-entry-without-evidence"],
+      ["MONO-312", "consumed-ack"],
+      ["MONO-314", "foreign-stage-registry"],
+      ["MONO-315", "no-gate-phase-stage"],
+      ["MONO-316", "duplicate-gate-name"],
+      ["MONO-320", "late-ack-from-a-superseded-attempt"],
+      ["MONO-313", "two-files-for-one-attempt"],
+      ["MONO-322", "future-dated"],
+      ["MONO-324", "near-future"],
+      ["MONO-323", "ambiguous-tie"],
+      ["MONO-325", "leftover-candidate-after-consumption"],
+      ["MONO-329", "consumed-blocked-ack"],
+      ["MONO-331", "blocked-ack-over-all-passing-gates"],
+    ]) {
+      if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
+        fail(`watcher ${label} gate-ack fixture must stay silent`);
+      }
+    }
+
+    // The event must identify WHICH artifact was validated: mailbox and
+    // fallback share a filename, and MONO-313 has both present and disagreeing.
+    const ackLineFor = (issue) =>
+      stdout.split("\n").find((line) => line.includes(`EVENT:gate-ack ${issue}`)) ?? "";
+    for (const [issue, expectedDir] of [
+      ["MONO-301", path.join(fixtureRoot, "reports")],
+      ["MONO-311", path.join(fixtureRoot, "worktrees", "MONO-311", ".orchestrator")],
+    ]) {
+      const line = ackLineFor(issue);
+      if (!line.includes(path.join(expectedDir, `${issue}-gate-ack-a1.json`))) {
+        fail(
+          `watcher gate-ack event for ${issue} must name the full path of the artifact it validated, got: ${JSON.stringify(line)}`
+        );
+      }
+    }
+
+    // A healthy gate pause must not read as death, wherever the ack landed.
+    for (const [issue, label] of [
+      ["MONO-335", "completed worker whose only ack is from a prior attempt"],
+      ["MONO-332", "registry log while a superseded log is newer"],
+      ["MONO-301", "mailbox"],
+      ["MONO-311", "worktree fallback"],
+    ]) {
+      if (new RegExp(`EVENT:(stall|dead) ${issue}\\b`).test(stdout)) {
+        fail(`a fresh gates-passed gate-ack in the ${label} must suppress stall and dead for that worker`);
+      }
+    }
+    // Everything that is not a healthy pause keeps the liveness ladder armed.
+    for (const [issue, label] of [
+      ["MONO-302", "blocked ack"],
+      ["MONO-303", "prior-attempt ack"],
+      ["MONO-305", "malformed ack"],
+      ["MONO-307", "gates-passed ack with no gates array"],
+      ["MONO-308", "gates-passed ack with an empty gates array"],
+      ["MONO-309", "gates-passed ack over a blocked gate"],
+      ["MONO-331", "blocked ack over gates that all passed"],
+      ["MONO-310", "gate entry with no evidence"],
+      ["MONO-312", "consumed ack"],
+      // An ack the watcher would not deliver must not silence liveness either.
+      ["MONO-304", "non-codex entry's ack"],
+      ["MONO-314", "ack under a foreign-stage registry entry"],
+      ["MONO-315", "ack beside a stage that has no gate phase"],
+      ["MONO-316", "ack repeating one gate name"],
+      ["MONO-320", "late ack written by a superseded attempt"],
+      ["MONO-321", "gate-ack whose pause outlived the suppression bound"],
+      ["MONO-328", "freshly touched ack whose pause outlived the bound"],
+      ["MONO-334", "zombie log holding open an expired gate pause"],
+      ["MONO-330", "report masking an unconsumed ack past the gate-pause bound"],
+      ["MONO-322", "future-dated gate-ack"],
+      ["MONO-313", "two ack files for one attempt"],
+      ["MONO-323", "ambiguous tie between mailbox and fallback acks"],
+      ["MONO-324", "near-future gate-ack"],
+      ["MONO-325", "leftover ack candidate whose attempt was already consumed"],
+    ]) {
+      if (!stdout.includes(`EVENT:dead ${issue}`)) {
+        fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
+      }
+    }
+    // v3 semantics intact: the report event still fires next to a gate-ack.
+    if (!stdout.includes("EVENT:report MONO-306")) {
+      fail("gate-ack must not suppress the v3 report event for the same worker");
+    }
+
+    // At-least-once across watcher restarts, same rule as `report`.
+    const restart = runOnce();
+    if (restart.status !== 0 || !restart.stdout.includes("EVENT:gate-ack MONO-301")) {
+      fail("watcher restart must re-emit the current gate-ack version once");
+    }
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 }
 
@@ -5495,8 +6264,11 @@ function validateOrchestrationModePrecedence() {
     "Advancing a stage while a report's mutations are still",
     "Queued mutations land only when the orchestrator applies them",
     "do not describe a queued mutation as",
-    "reports `needs-decision` for the orchestrator to sequence",
-    "lifecycle precondition is therefore sequenced by the",
+    // MONO-47 rewrote both order pins with their prose: the dispatch-moment
+    // lifecycle move is no longer sequenced before dispatch, so a pin that
+    // the pre-handshake wording could still satisfy would pin nothing.
+    "reports `needs-decision` for the orchestrator to sequence and resume",
+    "lifecycle precondition is therefore sequenced by the\n  orchestrator around the gate phase of the two-phase dispatch handshake",
     "No stage defers an executable check onto a queued mutation",
     "Interactive mode is unchanged",
   ]) {
@@ -5595,26 +6367,37 @@ function validateOrchestrationModePrecedence() {
         "mono-implement orchestration branch must resolve the context seam before queuing the lifecycle move"
       );
     }
-    // The issue-only lane must actually queue its lifecycle mutation, and
-    // only after the delivery verdict — not merely mention the move.
-    const issueOnlyQueue = branch.indexOf("On `PASS`, queue the Issue-to-started move");
+    // MONO-47: neither lane queues a lifecycle mutation any more — the
+    // orchestrator applies both dispatch-moment moves on the gate-ack. The
+    // issue-only ordering invariant survives that move: its delivery verdict
+    // is reached in the gate phase, so a `gates-passed` ack is unreachable
+    // without it.
+    const issueOnlyAck = branch.indexOf("On a `gates-passed` ack the orchestrator applies the");
     const issueOnlyGate = branch.indexOf("Issue-only: the delivery check precedes");
-    if (issueOnlyQueue < 0 || !branch.includes("in `linear_mutations_pending` before writing any code")) {
+    if (issueOnlyAck < 0 || !branch.includes("so neither moves the Issue")) {
       fail(
-        "mono-implement orchestration branch must queue the Issue-to-started move in linear_mutations_pending on a PASS verdict"
+        "mono-implement orchestration branch must state that the orchestrator applies the Issue-to-started move on the gate-ack, and that a non-PASS verdict never reaches one"
       );
-    } else if (issueOnlyGate < 0 || issueOnlyGate > issueOnlyQueue) {
+    } else if (issueOnlyGate < 0 || issueOnlyGate > issueOnlyAck) {
       fail(
-        "mono-implement orchestration branch must evaluate the issue-only delivery verdict before queuing the Issue-to-started move"
+        "mono-implement orchestration branch must evaluate the issue-only delivery verdict before the gate-ack that releases the Issue-to-started move"
+      );
+    }
+    if (branch.includes("queue the Issue-to-started move")) {
+      fail(
+        "mono-implement orchestration branch must not queue the Issue-to-started move: it is a dispatch-moment move the orchestrator applies on the gate-ack"
       );
     }
 
     for (const required of [
       "the delivery check precedes the Issue-to-started move",
       "Project-first: queue no lifecycle move in this lane",
-      "sequences the Delivery move before it dispatches this stage",
+      // MONO-47 rewrote these two with their prose: the Delivery move is no
+      // longer sequenced before dispatch, and a pre-move snapshot inside the
+      // gate phase is the normal state instead of a `needs-decision`.
+      "applies the Delivery move on your gate-ack, before it resumes this stage",
+      "hard stop, not a shrug: report `blocked` naming the move and the missing",
       "do not defer the check onto a queued",
-      "`needs-decision` report naming that move for the orchestrator to apply",
       "treat it as queued, not as done",
       "What must be true before code is",
       "is `blocked` naming",
@@ -5622,6 +6405,337 @@ function validateOrchestrationModePrecedence() {
       if (!branch.includes(required)) {
         fail(`mono-implement orchestration branch missing delivery-gate semantics: ${JSON.stringify(required)}`);
       }
+    }
+  }
+}
+
+// MONO-47 — the two-phase dispatch handshake. A dispatch-moment lifecycle
+// move is applied only after the worker's gate-ack, so the protocol's order is
+// pinned structurally and not by prose alone: gate-phase dispatch → worker
+// gate phase → gate-ack → lifecycle application with read-back → resume with
+// the snapshot amendment. The negative fixtures below prove the order check
+// rejects a reordered protocol instead of passing on any text that merely
+// contains the anchors.
+const HANDSHAKE_PROTOCOL_ANCHORS = [
+  ["gate-phase-dispatch", "1. Gate-phase dispatch."],
+  ["worker-gate-phase", "2. Worker gate phase."],
+  ["gate-ack", "3. Gate-ack, then stop."],
+  ["lifecycle-application", "4. Lifecycle application."],
+  ["resume", "5. Resume for execution."],
+];
+
+// The same order as `mono-implement` executes it: the seam closes the gate
+// phase, the pause sits between steps 4 and 5, and the lifecycle/delivery step
+// runs only after the resume.
+const HANDSHAKE_BRANCH_ANCHORS = [
+  ["context-seam", "Resolve the context seam through the Context-seam branch below"],
+  ["gate-pause", "Gate pause, between steps 4 and 5:"],
+  ["post-resume-step", "Perform no lifecycle move and no delivery check against Linear"],
+];
+
+function orderedAnchorFaults(text, anchors) {
+  const faults = [];
+  let previousIndex = -1;
+  let previousName = null;
+  for (const [name, anchor] of anchors) {
+    const index = text.indexOf(anchor);
+    if (index < 0) {
+      faults.push(`missing:${name}`);
+      continue;
+    }
+    if (previousIndex >= 0 && index < previousIndex) {
+      faults.push(`out-of-order:${name}-before-${previousName}`);
+    }
+    previousIndex = index;
+    previousName = name;
+  }
+  return faults;
+}
+
+function assertAnchorOrder(label, text, anchors, negativeFixtures) {
+  const faults = orderedAnchorFaults(text, anchors);
+  if (faults.length > 0) {
+    fail(`${label} handshake order is broken: ${faults.join(", ")}`);
+  }
+  const byName = new Map(anchors);
+  for (const [fixtureLabel, order, expectedFault] of negativeFixtures) {
+    const fixture = order.map((name) => byName.get(name)).join("\n");
+    const fixtureFaults = orderedAnchorFaults(fixture, anchors);
+    if (!fixtureFaults.includes(expectedFault)) {
+      fail(
+        `${label} handshake order check does not reject ${fixtureLabel}: expected ${JSON.stringify(expectedFault)}, got ${JSON.stringify(fixtureFaults)}`
+      );
+    }
+  }
+}
+
+function validateTwoPhaseDispatchHandshake() {
+  const orchestration = read("references/orchestration.md");
+  const sectionStart = orchestration.indexOf("## Two-Phase Dispatch Handshake");
+  const sectionEnd = orchestration.indexOf("## Worker Transports");
+  if (sectionStart < 0 || sectionEnd < 0 || sectionStart > sectionEnd) {
+    fail("references/orchestration.md must carry ## Two-Phase Dispatch Handshake before ## Worker Transports");
+    return;
+  }
+  const handshake = orchestration.slice(sectionStart, sectionEnd);
+
+  assertAnchorOrder("references/orchestration.md", handshake, HANDSHAKE_PROTOCOL_ANCHORS, [
+    [
+      "a lifecycle move applied before the gate-ack",
+      ["gate-phase-dispatch", "worker-gate-phase", "lifecycle-application", "gate-ack", "resume"],
+      "out-of-order:lifecycle-application-before-gate-ack",
+    ],
+    [
+      "a worker resumed before the moves are applied",
+      ["gate-phase-dispatch", "worker-gate-phase", "gate-ack", "resume", "lifecycle-application"],
+      "out-of-order:resume-before-lifecycle-application",
+    ],
+    [
+      "a protocol with no gate-ack step at all",
+      ["gate-phase-dispatch", "worker-gate-phase", "lifecycle-application", "resume"],
+      "missing:gate-ack",
+    ],
+  ]);
+
+  // AC1 — the rule itself, its single exception, and the closed door on
+  // deciding that exception away.
+  for (const required of [
+    "**No dispatch-moment lifecycle move is applied before the worker's gate-ack.**",
+    "The only exception is an explicit owner mandate",
+    "NOT available under «Решил сам:»",
+    "never grant it to itself",
+    "`mono-preflight` and `mono-ship` advances carry no lifecycle move",
+    // AC2 — the executable protocol: ack path, ack shape, stop, resume.
+    "`reports/<ISSUE-KEY>-gate-ack-a<N>.json`",
+    "The ack is numbered by attempt for the same reason the logs are",
+    "The attempt number is what binds an ack to its dispatch attempt.",
+    '"phase": "gate"',
+    '"status": "gates-passed | blocked"',
+    "The gate-ack is not a stage report",
+    "`templates/orchestrator-report.md` is unchanged by this protocol.",
+    // The ack is the only evidence the gates ran: it is complete, internally
+    // consistent, checked against the dispatched gate list, and consumed
+    // before the resume so it cannot go on suppressing liveness events.
+    "`gates-passed` requires every entry to be `pass`",
+    "The invariant runs both ways",
+    "strands a dispatch whose gates actually passed",
+    "carries each gate name exactly once",
+    "set equality on the\n   gate names, not a count",
+    "is self-contradictory\n   and is treated as no ack at all",
+    "a gate list the ack does not cover is a blocked ack, not a passed one",
+    // A rejected ack must be consumed too, or it suppresses liveness for a
+    // worker nobody is about to resume.
+    "Rejecting an ack has its own consumption step",
+    "rename it to `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
+    "the no-ack path below owns it from there",
+    "consumes the ack by renaming\n   it to `<ISSUE-KEY>-gate-ack-a<N>.applied.json`",
+    "ack left in place would go on suppressing `stall` and `dead` for a worker",
+    "re-arms the liveness ladder\n   for the execution phase",
+    // Consuming the ack too early is its own defect: the gate-phase pid is
+    // gone, so an unsuppressed window calls a healthy resume dead.
+    "Consuming it\n   any earlier is equally wrong",
+    "reports `dead` for a healthy\n   resume",
+    "in the same immediate post-resume registry update that records the new",
+    "Both\n   the orchestrator and the watcher read the fallback path",
+    // A blocked ack never rewrites the stage's own exit statuses.
+    "That report carries the\nstage's OWN exit status for the failure it hit",
+    "`needs-human` when a gate returned a real adverse verdict",
+    "confirms each with read-back",
+    "explicitly as an amendment of the dispatch snapshot",
+    "including `mono-check delivery` — is evaluated against",
+    "The pack identity gate runs again after the",
+    "Blocked path:",
+    "No-ack path:",
+    // Both transports, because the pause and the resume differ in mechanism.
+    "the worker writes the ack and its process exits",
+    "carrying the resume signal",
+    "costs one user click per gate-ack there",
+    "not a checkpoint",
+  ]) {
+    if (!handshake.includes(required)) {
+      fail(`references/orchestration.md two-phase handshake missing: ${JSON.stringify(required)}`);
+    }
+  }
+
+  // AC3 — the watcher contract: a healthy gate pause is not a liveness event.
+  for (const required of [
+    "Gate-pause carve-out",
+    "waiting by contract, not stuck",
+    "never a nudge, respawn, session rotation, or owner page",
+    "`gate-ack` rides the same correlation surface as `report`",
+    "Its freshness is deliberately NOT the report's",
+    "Delivery asks only that the ack BELONG to\n  this attempt",
+    "a delivered ack is therefore not a claim that the worker is still\n  paused",
+    "it must not discard a retained ack merely\n  for lagging the log",
+    "Delivery is at-least-once per watcher PROCESS",
+    "an ack needs the same poll\n  for the same reason, and the orchestrator does poll for both",
+    "Never treat the\n  event as the only route to an ack",
+    "A fresh `gates-passed` gate-ack additionally suppresses `stall`",
+    "a\n  `blocked` ack suppresses nothing",
+    "Either way it is a\n  delivery event, never a Monitoring Protocol trigger",
+    // The watcher emits gate-ack for both statuses, so the consumer must
+    // branch on status: a blocked ack moves nothing.
+    "branch on its `status`",
+    "`blocked` applies nothing and waits for the",
+    "Suppression\n  demands the same registry correlation delivery does",
+    "That suppression is bounded twice over",
+    "suppression\n  additionally lapses after a few stall thresholds of wall-clock",
+    "is a stuck\n  handshake, not a healthy wait",
+    "That clock runs on the PAUSE — the worker's log\n  going quiet — never on the ack's own timestamp",
+    "While an unconsumed `gates-passed` ack is\n  present that bound also governs over ordinary report suppression",
+    "a deadline the worker can refresh by touching\n  the file is no deadline at all",
+    "That is an age window rather than a ceiling",
+    "an\n  ack dated in the future buys no suppression at all",
+    "`gate-ack` watcher event names the FULL path it validated",
+    "never on\n   \"the ack\" resolved a second time",
+    "An attempt has exactly ONE ack",
+    "that is a contradiction about which gates ran, and it resolves to no\n   ack at all",
+    "Do not rank them",
+    "Consumption is per ATTEMPT, not per file",
+    "renames every\n   file for that attempt in BOTH locations",
+    "the consumer reads the ack's `status` first and never the report",
+    "A `blocked` ack beside a stage report is the ordinary non-green outcome, not\n   a crash",
+    "what \"stops\" means depends on the ack's own status",
+    "ack first, then\n   report — and stops only after both exist",
+    "Leaving a blocked ack with no\n   report would strand the Issue",
+    "consume the ack as\n   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`",
+    "That is the third\n   consumption state",
+    "without a state of its own it would be redelivered on every watcher restart",
+    "the `gate-ack`\n  comes first, because the consumer reads the ack's status before it acts on\n  the report",
+    "A `gates-passed` ack beside a stage report is the genuinely ambiguous one",
+    "consuming the ack\n   strands a current dispatch that never ran, resuming again replays one that\n   did",
+    "never silently consume the ack\n   or resume on it twice",
+    "an unconsumed ack alone never authorizes a\n   second resume",
+    "The watcher does not resolve it, and deliberately so",
+    "Fence a replay\n   where the binding exists, not where only a timestamp does",
+    "no remaining file for that\n   attempt is an ack",
+    // Preflight and ship dispatches carry no lifecycle move, so an ack there
+    // is spurious however well-formed it looks.
+    "is spurious and neither delivers nor suppresses",
+    // The consumption boundary can look like a death for one scan.
+    "Whenever an UNCONSUMED gate-ack exists for that attempt",
+  ]) {
+    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
+  }
+
+  // Single home: the template and the skills resolve and point at the rule;
+  // none of them carries a second copy that could drift out of step with it.
+  const singleHomeRule = "No dispatch-moment lifecycle move is applied before the worker's gate-ack.";
+  for (const relativePath of [
+    "templates/orchestrator-dispatch.md",
+    "skills/mono-implement/SKILL.md",
+    "skills/mono-orchestrate/SKILL.md",
+  ]) {
+    if (read(relativePath).includes(singleHomeRule)) {
+      fail(
+        `${relativePath} must point at Two-Phase Dispatch Handshake in references/orchestration.md, not restate the rule`
+      );
+    }
+    assertIncludes(relativePath, "Two-Phase Dispatch Handshake", `${relativePath}: handshake pointer`);
+  }
+
+  for (const required of [
+    "## Gate Phase",
+    "Gate phase: not applicable — this dispatch carries no lifecycle",
+    "<ISSUE-KEY>-gate-ack-a<N>.json",
+    "Write it on gate\n  completion, on any gate blocker, and before stopping for any other reason.",
+    "Then stop and wait to be resumed",
+    "On `status: blocked`, also write the ordinary stage report",
+    "amendment does not show this dispatch's move applied is a `blocked` report",
+    // The stop instruction must not forbid a gate the same dispatch requires:
+    // on the issue-only lane the delivery check runs BEFORE the ack.
+    "except on the issue-only lane, where the delivery\n  check is one of the gates above and runs before you ack",
+    "unless your ack is `blocked`, which is\n  the one case that does require the stage report named below",
+    "carrying the stage's own exit status for what you hit",
+  ]) {
+    assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
+  }
+
+  // The stop instruction may never name the delivery check as a flat
+  // prohibition: an issue-only worker would then have to skip a required gate
+  // or violate the stop rule, and either way the handshake is unexecutable.
+  const dispatchTemplate = read("templates/orchestrator-dispatch.md");
+  if (dispatchTemplate.includes("write code, run the delivery check, or write the stage report")) {
+    fail(
+      "templates/orchestrator-dispatch.md must not forbid the delivery check outright in the gate-phase stop rule; the issue-only lane runs it before the ack"
+    );
+  }
+
+  for (const required of [
+    "two-phase handshake",
+    "apply no move until the worker's `gates-passed` gate-ack",
+    "never a «Решил сам:» decision",
+    "A `gate-ack` event is a delivery event, not a liveness one",
+    "waiting by contract — never heal it",
+    "check\n     the exact ack artifact the event named",
+    "against the gate list you dispatched, by set\n     equality on the gate names, never a count",
+    "consume the ack by renaming it\n     `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in the same immediate post-resume\n     registry update",
+    "an ack\n     left in place keeps suppressing that worker's `stall` and `dead` events",
+    "while consuming it before the resumed writer is registered leaves a window",
+    // The watcher emits gate-ack for a blocked ack too; the monitor state must
+    // branch instead of applying moves on every event.
+    "Read the ack's\n     `status` first",
+    "Poll the mailbox cheaply for BOTH reports and gate-acks",
+    "The poll is what makes the handshake recoverable",
+    "Read the ack's\n     `status` first, never the report on its own",
+    "the two arriving\n     together is that path working, not a crash",
+    "which is AMBIGUOUS rather than\n     proof",
+    "never silently\n     consume the ack or resume on it twice",
+    "an unconsumed ack on its own\n     never authorizes resuming twice",
+    "`blocked` applies no move at\n     all",
+    "consume the ack as `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`",
+    "renamed `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
+  ]) {
+    assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
+  }
+
+  const implementSkill = read("skills/mono-implement/SKILL.md");
+  const branchStart = implementSkill.indexOf("## Orchestration branch of `start-checkpoint`");
+  const branchEnd = implementSkill.indexOf("## Context-seam branch at Delivery Start");
+  if (branchStart < 0 || branchEnd < 0 || branchStart > branchEnd) {
+    fail("mono-implement orchestration branch must sit before the context-seam branch");
+    return;
+  }
+  const branch = implementSkill.slice(branchStart, branchEnd);
+  assertAnchorOrder("skills/mono-implement/SKILL.md", branch, HANDSHAKE_BRANCH_ANCHORS, [
+    [
+      "a gate pause placed before the context seam",
+      ["gate-pause", "context-seam", "post-resume-step"],
+      "out-of-order:gate-pause-before-context-seam",
+    ],
+    [
+      "a lifecycle step placed before the gate pause",
+      ["context-seam", "post-resume-step", "gate-pause"],
+      "out-of-order:post-resume-step-before-gate-pause",
+    ],
+    [
+      "a branch with no gate pause at all",
+      ["context-seam", "post-resume-step"],
+      "missing:gate-pause",
+    ],
+  ]);
+
+  // Fail-closed spirit of the step-5 rewrite: the pre-move snapshot is normal
+  // ONLY inside the gate phase, and a resumed worker whose amendment still
+  // shows no applied move stops hard.
+  for (const required of [
+    "A pre-move snapshot is the NORMAL state of\n   this phase and never a finding here.",
+    "Two-Phase Dispatch Handshake section of",
+    "Re-run the pack identity gate first.",
+    "A dispatch that carried no lifecycle move has\n   no amendment to read and arrives here directly.",
+    // Round 5: the lane bullets must handle that no-move path too, or a later
+    // Issue in an already-Delivery Project is told to read an amendment that
+    // cannot exist. Fail-closed either way: the state must SHOW the move done.
+    "A dispatch that carried no\n     Delivery move has no ack and no amendment, and needs none",
+    "Either way the state you evaluate must SHOW the Project in Delivery",
+    "A dispatch that carried no activation move — a retry on an Issue\n     already in its started state — has no ack and no amendment either",
+    // The closing summary must not move the issue-only delivery gate after the
+    // ack it exists to guard.
+    "that lane's `mono-check delivery`, which gates the move this dispatch\ncarries and therefore runs before the ack, never after it",
+    "a dispatch that\n   carried none needed none",
+  ]) {
+    if (!branch.includes(required)) {
+      fail(`mono-implement gate-phase contract missing: ${JSON.stringify(required)}`);
     }
   }
 }
@@ -5948,6 +7062,8 @@ validateAntiPatterns();
 validateHeartbeatContract();
 validateWatcherContaminationBehavior();
 await validateWatcherV3Behavior();
+validateWatcherGateAckBehavior();
+validateGateAckSuppressionPredicate();
 validateHonestLedgerContract();
 validateCompactionContract();
 validateLiveQaGateContract();
@@ -5955,6 +7071,7 @@ validateRealBackendContractSampling();
 validateGoalContractBinding();
 validateReportContractSingleHome();
 validateOrchestrationModePrecedence();
+validateTwoPhaseDispatchHandshake();
 validateReviewLoopHygiene();
 validateCostTelemetry();
 validateBriefIntegrity();

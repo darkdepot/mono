@@ -253,14 +253,19 @@ restating it.
   is verified from the snapshot before code starts, and a mutation whose gate
   has not passed is never queued at all. A stage that genuinely cannot
   continue until a mutation has landed cannot get that in this mode and
-  reports `needs-decision` for the orchestrator to sequence.
+  reports `needs-decision` for the orchestrator to sequence and resume —
+  except for the dispatch-moment lifecycle moves, which Two-Phase Dispatch
+  Handshake below sequences by protocol instead of by exception report.
 - A stage's own lifecycle precondition is therefore sequenced by the
-  orchestrator before dispatch, never queued from inside the stage and
-  stepped over. Dispatch `mono-implement` with the Project already in
-  Delivery, so the snapshot the worker evaluates is already the post-move
-  state. A snapshot showing an unmet lifecycle precondition is a
-  `needs-decision` report naming the move the orchestrator must apply and read
-  back first. No stage defers an executable check onto a queued mutation
+  orchestrator around the gate phase of the two-phase dispatch handshake —
+  applied after the worker's gate-ack and before that worker is resumed for
+  execution — never queued from inside the stage and stepped over. Dispatch
+  `mono-implement` with the Project not yet in Delivery and move it on the
+  gate-ack, so the state the worker executes from is the post-move state its
+  resume amendment names. Inside the gate phase a snapshot showing an unmet
+  dispatch-moment lifecycle precondition is the expected state, not a
+  finding; after resume, an amendment that still shows that move unapplied is
+  a hard stop. No stage defers an executable check onto a queued mutation
   entry: this mode has no protocol that would carry one, so a check the
   snapshot cannot answer is sequenced by the orchestrator, never left as
   descriptive text in a report.
@@ -305,6 +310,207 @@ obligations to both audiences; only where the text lives changes.
 Anything a worker cannot execute without guessing — an absolute path, a command
 literal, a hash, a confusable pair of values in play — is carried in full to
 both audiences. Facts are never compressed for either column.
+
+## Two-Phase Dispatch Handshake
+
+**No dispatch-moment lifecycle move is applied before the worker's gate-ack.**
+This section is the single home of that rule and of the protocol that carries
+it; the dispatch template, `mono-implement`, and `mono-orchestrate` point here
+instead of restating it. The only exception is an explicit owner mandate
+naming the move, recorded in `ledger.md` as a deviation with that mandate
+quoted — and it is NOT available under «Решил сам:», so the orchestrator can
+never grant it to itself.
+
+Dispatch-moment lifecycle moves are the moves a dispatch itself carries: the
+Project → Delivery move of a project's first `mono-implement` dispatch, and
+the Issue-to-started move that activates an issue-only Issue. Applicability
+follows from that: only a dispatch carrying such a move runs the handshake.
+`mono-preflight` and `mono-ship` advances carry no lifecycle move, so they are
+dispatched and resumed exactly as before, with no gate phase.
+
+Order, and it is the whole protocol:
+
+1. Gate-phase dispatch. The orchestrator emits the dispatch with the pre-move
+   snapshot — Project not yet in Delivery, or Issue not yet started — and the
+   dispatch template's Gate Phase block filled in. It applies no lifecycle
+   move yet, and the pre-move snapshot is correct, not stale.
+2. Worker gate phase. The worker runs steps 1-4 of the orchestration branch of
+   `start-checkpoint` in `skills/mono-implement/SKILL.md`: pack identity gate,
+   snapshot package context, approval plus `mono-review handoff` findings, and
+   the 5-field context seam. On the issue-only lane it also evaluates the
+   delivery check there, because that check gates the move this dispatch
+   carries. This is the stage's own opening, not a separate pre-stage: the
+   same session, worktree, dispatch, and stage continue into execution.
+3. Gate-ack, then stop. The worker writes
+   `reports/<ISSUE-KEY>-gate-ack-a<N>.json` under the orchestrator root, where
+   `<N>` is the attempt number this dispatch's log carries, and then stops —
+   what "stops" means depends on the ack's own status. On `gates-passed` it
+   stops without queuing or applying the move, writing code, or producing a
+   stage report. On `blocked` the gate phase is over rather than paused, so it
+   writes the stage report the Blocked path below requires — ack first, then
+   report — and stops only after both exist. Leaving a blocked ack with no
+   report would strand the Issue: the orchestrator would wait for a report that
+   never comes while the watcher, which deliberately never suppresses on a
+   blocked ack, drives the worker into liveness healing instead:
+
+   ```json
+   {
+     "issue": "<ISSUE-KEY>",
+     "phase": "gate",
+     "gates": [
+       { "gate": "<gate name>", "status": "pass | blocked", "evidence": "<one line>" }
+     ],
+     "status": "gates-passed | blocked"
+   }
+   ```
+
+   `gates` is non-empty and carries each gate name exactly once, and its set of
+   names equals this dispatch's gate list exactly — a repeated name would
+   otherwise stand in for an omitted one under any coverage check that counts
+   entries instead of comparing the set.
+   `gates-passed` requires every entry to be `pass`, so an ack that claims
+   `gates-passed` while carrying a blocked, duplicated, or missing gate
+   is self-contradictory
+   and is treated as no ack at all. The invariant runs both ways: `blocked`
+   requires at least one entry that is not `pass`, because an ack claiming
+   `blocked` over gates that all passed is consumed as a real refusal and
+   strands a dispatch whose gates actually passed.
+
+   The ack is numbered by attempt for the same reason the logs are: an ack
+   belongs to the writer that produced it, and timestamps cannot tell
+   overlapping writers apart. A superseded attempt that is still alive can
+   write after its successor's log was born, and a shared path would let that
+   ack look current for the successor — the orchestrator would then apply the
+   moves and resume a worker on gates that worker never ran. A retry carries
+   the same gate names, so no set-equality check downstream would catch it
+   either. The attempt number is what binds an ack to its dispatch attempt.
+
+   The gate-ack is not a stage report: it has its own path, its own two-value
+   `status`, and it neither uses nor extends the `verification_items` enum.
+   `templates/orchestrator-report.md` is unchanged by this protocol. Its
+   delivery follows the same sandbox rule as a report: if the mailbox write is
+   denied, write the same JSON to
+   `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack-a<N>.json` (never committed). Both
+   the orchestrator and the watcher read the fallback path as well as the
+   mailbox one, because an ack the watcher cannot see reads as a dead worker
+   and would send the healing ladder against a worker that is merely waiting.
+
+   An attempt has exactly ONE ack. The two locations are two places it may
+   live, never two acks to choose between: if a file for that attempt exists in
+   both, that is a contradiction about which gates ran, and it resolves to no
+   ack at all. Do not rank them — not by freshness, not by recency, not by
+   which one parses. Every such rule hands the gate to whichever artifact
+   scores best, which is how a stale, half-written, or future-dated file comes
+   to authorize a lifecycle move. Reading nothing costs a stall event that
+   reconciles; reading the wrong one costs the gate.
+   Consumption is per ATTEMPT, not per file: consuming an ack renames every
+   file for that attempt in BOTH locations, and a consumed marker in either
+   location is a tombstone — while one exists, no remaining file for that
+   attempt is an ack. A future-dated ack is not read at all, so it is neither
+   delivered nor able to suppress. The
+   `gate-ack` watcher event names the FULL path it validated, and
+   the coverage check in step 4 is performed on that exact artifact — never on
+   "the ack" resolved a second time, which is how an orchestrator ends up
+   authorizing a move against gate evidence nobody validated. A transport with
+   no watcher event applies the same rule when it polls.
+
+   A stage report beside an unconsumed ack means different things depending on
+   the ack, so the consumer reads the ack's `status` first and never the report
+   on its own.
+
+   A `blocked` ack beside a stage report is the ordinary non-green outcome, not
+   a crash. The blocked path writes both of them by design, before any
+   execution happened at all: consume the ack as
+   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`, route the report through the
+   ordinary non-green path, and reconcile nothing. That is the third
+   consumption state, beside `.applied` after a resume and `.rejected` for a
+   coverage failure: an ack whose gates honestly did not pass is spent too, and
+   without a state of its own it would be redelivered on every watcher restart.
+
+   A `gates-passed` ack beside a stage report is the genuinely ambiguous one.
+   It is what the crash window above looks like — the resume succeeded, the
+   worker ran and reported, and the orchestrator died before consuming the ack
+   — and it is equally what a superseded worker leaves behind, because a report
+   carries no attempt number and may belong to an earlier attempt rather than
+   to this ack. Either reading is wrong in one direction: consuming the ack
+   strands a current dispatch that never ran, resuming again replays one that
+   did. Reconcile before acting — establish from the transport thread and the
+   worktree whether THIS attempt executed — and never silently consume the ack
+   or resume on it twice. The same reconciliation covers the crash window
+   between a resume and its rename: an unconsumed ack alone never authorizes a
+   second resume.
+
+   The watcher does not resolve it, and deliberately so. A stage report carries
+   no attempt number, so a superseded worker still alive can write one after
+   its successor's log was born and after that successor's ack; no ordering
+   rule distinguishes the two. A watcher that suppressed the ack on that
+   evidence would discard the CURRENT attempt's gate-ack and strand its
+   dispatch — a worse failure than the duplicate the suppression was meant to
+   prevent, and one the consumer rule above already prevents. Fence a replay
+   where the binding exists, not where only a timestamp does.
+4. Lifecycle application. On `status: gates-passed` the orchestrator first
+   checks the ack against the gate list it dispatched — set equality on the
+   gate names, not a count, and every one `pass` — because the ack is the only
+   evidence those gates ran:
+   a gate list the ack does not cover is a blocked ack, not a passed one.
+   Rejecting an ack has its own consumption step, because a rejected ack that
+   stays in place goes on suppressing liveness for a worker nobody is about to
+   resume: rename it to `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`, which re-arms
+   ladder immediately, and then treat the worker as having produced no usable
+   ack — the no-ack path below owns it from there.
+   It then applies every lifecycle move this dispatch carries and
+   confirms each with read-back per Linear Write Verification. A move whose
+   read-back still shows the old state is pending, never applied, and the
+   worker is not resumed for execution while it is pending.
+5. Resume for execution. The orchestrator resumes the same worker with a
+   resume signal that names each applied move together with its read-back
+   result, explicitly as an amendment of the dispatch snapshot. Every
+   post-resume check — including `mono-check delivery` — is evaluated against
+   that amended post-move state. The pack identity gate runs again after the
+   resume, unchanged: resuming is a stage resume, so the gate is mandatory.
+
+   Then, in the same immediate post-resume registry update that records the new
+   writer per Worker Transports, the orchestrator consumes the ack by renaming
+   it to `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in place. Both halves of that
+   order matter. Consuming it is not bookkeeping: a gate-ack suppresses
+   liveness events, and the resumed worker writes to the same stage log, so an
+   ack left in place would go on suppressing `stall` and `dead` for a worker
+   that has crashed after its resume; the rename re-arms the liveness ladder
+   for the execution phase and keeps the ack on disk as history. Consuming it
+   any earlier is equally wrong: between the rename and the resumed writer
+   being registered, the gate-phase pid is already gone and nothing suppresses
+   liveness, so a watcher scan in that window reports `dead` for a healthy
+   resume and sends the healing ladder against it. A resuming orchestrator that
+   finds an unconsumed ack beside an already-resumed worker consumes it then.
+
+Blocked path: a gate that fails makes the ack `status: blocked`, and the worker
+then also writes the normal stage report at the mailbox report path, so watcher
+report correlation is preserved exactly as it is today. That report carries the
+stage's OWN exit status for the failure it hit:
+`needs-human` when a gate returned a real adverse verdict, `blocked` when the
+snapshot cannot supply a required input. Mode precedence never rewrites a
+stage's exit statuses, so the ack's `blocked` says only "gates not passed,
+apply nothing" while the report says what happened and routes through the
+ordinary non-green path, unchanged. The orchestrator applies no lifecycle move
+on a blocked ack.
+
+No-ack path: an ack that never arrives is not a new signal. It is the existing
+liveness ladder — `stall`/`dead`, then nudge → respawn → session rotation —
+because a worker that never acked never reached the contracted wait.
+
+Both transports, because the pause and the resume differ in mechanism only:
+
+- `codex-cli`: the worker writes the ack and its process exits, exactly as at
+  a stage boundary. The orchestrator resumes the same thread with the
+  `codex exec resume` form in Worker Transports, passing the resume signal as
+  the dispatch prompt file. No user interaction.
+- `claude-code-desktop` and `fallback`: the worker writes the ack and ends its
+  turn; the session stays open and is continued with a session message
+  carrying the resume signal. Transport price, named plainly: in
+  `claude-code-desktop` a resume message needs the user's confirmation, so the
+  handshake costs one user click per gate-ack there. That click is a transport
+  cost, not a checkpoint — it carries no decision, is never dressed up as a
+  decision brief, and never becomes a place to re-open scope.
 
 ## Worker Transports
 
@@ -583,6 +789,25 @@ never report it as applied.
   guidance not gates: implement 60m, preflight 30m, ship 90m. A ship worker
   whose turn ends before green is resumed with «continue stabilization» using
   that same working resume form.
+- Gate-pause carve-out: a worker that has written a fresh `gates-passed`
+  gate-ack and gone quiet is waiting by contract, not stuck (Two-Phase
+  Dispatch Handshake). Its exited process (`codex-cli`) or ended turn
+  (`claude-code-desktop`, `fallback`) is the expected end of the gate phase,
+  not a liveness signal. The correct response is to apply the dispatch's
+  lifecycle moves with read-back and resume that worker:
+  never a nudge, respawn, session rotation, or owner page. The ladder applies
+  only when no gate-ack arrives at all, which is the ordinary liveness case
+  above. Whenever an UNCONSUMED gate-ack exists for that attempt, any `stall` or
+  `dead` for it is a consumption boundary rather than a death — however long
+  after the ack it arrives. Suppression for such an attempt is bounded, so the
+  event is the protocol asking for reconciliation of an ack/report pair it
+  refuses to bury, not evidence the worker died: the gate-phase process is gone
+  by design, the resumed one may never have been registered, and the worker may
+  in fact have completed. Reconcile the registry against the actual writer
+  process and the mailbox first, then consume or resume as that shows. Routing
+  such an event into healing or replay is a contract error — it can respawn a
+  worker whose work already landed. Only an attempt with NO unconsumed ack
+  takes the ordinary healing ladder.
 - Material scope drift: stop the worker and escalate through
   `scope-drift-needs-handoff`; scope is always the user's decision.
 
@@ -594,7 +819,7 @@ turns. `scripts/watch-workers.mjs` (this repo) is a zero-dependency,
 read-only watcher over the orchestrator root: it reads `logs/`, `reports/`,
 `workers.json`, and `control.json`, writes nothing, and emits one stable line
 per watcher event to stdout —
-`<ISO time> EVENT:<stall|dead|spawn-fail|report|idle> <ISSUE-KEY|-> <detail>`.
+`<ISO time> EVENT:<stall|dead|spawn-fail|report|gate-ack|idle> <ISSUE-KEY|-> <detail>`.
 The watcher observes the active registry (`workers.json`), not the
 directory's history; retired Issues' logs are outside its scope.
 
@@ -622,6 +847,69 @@ directory's history; retired Issues' logs are outside its scope.
   The consumer deduplicates by reading the report's current state.
   Non-Codex transports keep their existing report-polling contract; the watcher never
   emits `report` for `claude-code-desktop` or `fallback` entries.
+- `gate-ack` rides the same correlation surface as `report` and the same
+  at-least-once rule: `codex-cli` entries only, registry-matched identity and
+  stage. Its freshness is deliberately NOT the report's, and the difference is
+  load-bearing in both directions. Delivery asks only that the ack BELONG to
+  this attempt — its mtime at or after the attempt log's birthtime — because a
+  resumed worker's own execution advances that same log, and an ack left
+  unconsumed by the crash window has to keep reaching the consumer precisely
+  then; a delivered ack is therefore not a claim that the worker is still
+  paused. Suppression asks the stricter question and applies the report
+  predicate too, since only a current pause may silence liveness. A polling
+  transport applies the same split: it must not discard a retained ack merely
+  for lagging the log, or it discards the crash-recovery evidence.
+  Delivery is at-least-once per watcher PROCESS, exactly as `report` is: an
+  unchanged version is not re-emitted while that process lives, and a restarted
+  watcher emits it once more. For a report that suffices because the
+  orchestrator also polls the mailbox for reports; an ack needs the same poll
+  for the same reason, and the orchestrator does poll for both. Never treat the
+  event as the only route to an ack — a consumer that missed it while the
+  watcher stayed up would otherwise see only the later `dead`, and the ack it
+  must reconcile would sit unread. Its file is
+  `reports/<ISSUE-KEY>-gate-ack-a<N>.json` or the worktree fallback path, whose
+  minimal shape carries no identity fields, so its correlation comes from the
+  registry entry and the log it belongs to. The watcher validates the ack whole
+  and fails closed: a missing or malformed `gates` array, or `gates-passed`
+  over a gate that did not pass, is treated as no ack at all. It is scoped to
+  the stage that can have a gate phase — a `mono-implement` log — so an ack
+  beside a `mono-preflight` or `mono-ship` log, whose dispatches carry no
+  lifecycle move, is spurious and neither delivers nor suppresses.
+  A fresh `gates-passed` gate-ack additionally suppresses `stall` and both
+  `dead` branches for that worker, because the gate pause is a contracted wait
+  and the exited pid is its expected state there, not death; a
+  `blocked` ack suppresses nothing, since that path also writes the ordinary
+  stage report. That suppression is bounded twice over. Normally the
+  orchestrator consuming the ack at resume time ends it — the watcher cannot
+  distinguish a retained ack from a live pause, so the rename in step 5 is what
+  re-arms the ladder. When both a `gate-ack` and a `report` are emitted for the
+  same worker, the `gate-ack`
+  comes first, because the consumer reads the ack's status before it acts on
+  the report. But if lifecycle application succeeds and the resume, the
+  registration, or that rename then fails, nothing would consume the ack at
+  all, and freshness against the log never expires by itself: so suppression
+  additionally lapses after a few stall thresholds of wall-clock, and the
+  ladder re-arms on its own. While an unconsumed `gates-passed` ack is
+  present that bound also governs over ordinary report suppression, which is
+  unbounded by construction: otherwise a report left beside the ack — the
+  very pairing this protocol sends to reconciliation — would silence the
+  worker forever and reconciliation would never be triggered. That clock runs on the PAUSE — the worker's log
+  going quiet — never on the ack's own timestamp: the ack sits at a
+  worker-writable path, and a deadline the worker can refresh by touching
+  the file is no deadline at all. That is an age window rather than a ceiling: an
+  ack dated in the future buys no suppression at all, because the worker sets
+  its own timestamps on the fallback path and a forged date would otherwise
+  reopen the same unbounded silence. A gate pause that outlives that bound is a stuck
+  handshake, not a healthy wait, and the orchestrator is meant to hear about
+  it — reconcile the worker, then either retry the resume or consume the ack
+  and treat it as the no-ack path. Suppression
+  demands the same registry correlation delivery does: an ack the watcher would
+  not deliver cannot silence liveness either. On `gate-ack`, read the
+  correlated ack and branch on its `status` — `gates-passed` runs step 4 onward
+  of Two-Phase Dispatch Handshake, `blocked` applies nothing and waits for the
+  ordinary stage report that path also writes. Either way it is a
+  delivery event, never a Monitoring Protocol trigger. Non-Codex transports
+  keep the polling contract here too.
 - `idle` is product-wide (its issue-key slot is `-`) and fires after the active
   registry has been empty longer than `--idle-sec` (default 300). A5 retirement
   means deploy closeout removed the Issue entry; `control.json` state `idle`

@@ -29,6 +29,7 @@ Read when — load the file only when its condition is true for this run:
 - `references/artifact-quality.md` — when this run writes, queues, or repairs the body of a Linear artifact or a Linear-facing comment.
 - `references/artifact-intake.md` — when the package context carries a handoff artifact intake summary.
 - `references/questioning.md` — when running interactively and a product, UX, or business question has to be asked; an AFK worker never asks.
+- `references/orchestration.md` — when this stage runs from a dispatch, before the orchestration branch of `start-checkpoint`.
 - `templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
@@ -112,44 +113,78 @@ this branch is only how `start-checkpoint` executes under it.
    `mono-review handoff` findings are resolved, accepted, or explicitly
    deferred. A snapshot that cannot show one of these is a `blocked` report
    naming the missing field — never an assumption, never a Linear lookup.
-4. Resolve the context seam through the Context-seam branch below before any
-   lifecycle mutation is queued, keeping the gate in its existing position
-   ahead of the lifecycle move. Its inputs come from the dispatch's
+4. Resolve the context seam through the Context-seam branch below before the
+   gate-ack and before any lifecycle mutation, keeping the gate in its
+   existing position ahead of the lifecycle move. Its inputs come from the
+   dispatch's
    context-seam and issue-only snapshot fields; a snapshot that cannot supply
    a required input is `blocked`, and a `blocked` report carries no lifecycle
    mutation. The seam's own fail-closed rules, gate ordering, and exit
    statuses are unchanged in this mode.
-5. Perform no lifecycle move and no delivery check against Linear. Which
-   mutation you queue depends on the lane, and the two lanes differ. Where a
-   move is queued, treat it as queued, not as done: it lands when the
-   orchestrator applies it at the stage boundary, so Linear lifecycle state
-   lags this worktree for the rest of the stage — per the queued-mutation
-   clause of Orchestration Mode Precedence. What must be true before code is
-   already true: steps 3 and 4 verified it from the snapshot.
+
+   Gate pause, between steps 4 and 5: when this dispatch carries a lifecycle
+   move, steps 1-4 above are its gate phase and the gate phase ends here.
+   Write the gate-ack the dispatch names and stop until you are resumed. The
+   ack shape, the blocked and no-ack paths, and how each transport pauses and
+   resumes live in the Two-Phase Dispatch Handshake section of
+   `references/orchestration.md`. A pre-move snapshot is the NORMAL state of
+   this phase and never a finding here. On the issue-only lane, evaluate
+   `mono-check delivery` in issue-only mode before you ack and carry its
+   verdict into the ack, because it gates the move this dispatch carries. A
+   dispatch that carries no lifecycle move has no gate phase and continues
+   straight into step 5.
+5. Perform no lifecycle move and no delivery check against Linear. After a
+   gate phase this step runs only once you are resumed, and it reads the
+   dispatch snapshot as amended by the resume signal's read-back of the
+   applied moves — that amended post-move state, never the pre-move snapshot,
+   is what every check here evaluates. Re-run the pack identity gate first. An
+   amendment that does not show this dispatch's move applied is a
+   hard stop, not a shrug: report `blocked` naming the move and the missing
+   read-back, and write no code. A dispatch that carried no lifecycle move has
+   no amendment to read and arrives here directly. Which mutation you queue
+   depends on the lane, and the two lanes differ.
    - Project-first: queue no lifecycle move in this lane. The orchestrator
-     sequences the Delivery move before it dispatches this stage, so the
-     snapshot already shows the Project in Delivery and is the post-move
-     state the interactive order requires; re-queuing it would be a redundant
-     mutation.
+     applies the Delivery move on your gate-ack, before it resumes this stage
+     for execution, so the amended state already shows the Project in
+     Delivery and is the post-move state the interactive order requires;
+     re-queuing it would be a redundant mutation. A dispatch that carried no
+     Delivery move has no ack and no amendment, and needs none: its own
+     snapshot is already that state, which is why it carried no move — the
+     ordinary case of a later Issue in a Project that reached Delivery long
+     ago. Either way the state you evaluate must SHOW the Project in Delivery;
+     a snapshot with no move applied and no amendment naming one is the hard
+     stop above, never a state to work around.
      Take the "report" arm of "run or report": evaluate `mono-check delivery`
-     against that snapshot, record the verdict, and record in `notes` that it
-     is snapshot-based. Do not report a verdict derived from state the
-     snapshot does not show, and do not defer the check onto a queued
+     against that state, record the verdict, and record in `notes`
+     that it is snapshot-based and which of the two cases applied. Do not
+     report a verdict derived from state you cannot see,
+     and do not defer the check onto a queued
      mutation — this mode has no protocol that would carry a deferred check.
-     A snapshot that shows the Project not yet in Delivery is a
-     `needs-decision` report naming that move for the orchestrator to apply
-     and read back; do not queue the move yourself and continue past it.
    - Issue-only: the delivery check precedes the Issue-to-started move, and
      it evaluates the Issue's own inputs — review disposition, marker, label,
-     owner approval, oracle, fingerprint — which the queued move does not
-     change, so the snapshot is the correct evaluation state. Evaluate it
-     there and record the verdict. On `PASS`, queue the Issue-to-started move
-     in `linear_mutations_pending` before writing any code; that entry is
-     this lane's lifecycle mutation and the stage does not proceed without
-     it. A real verdict other than `PASS` stops before code as `needs-human`;
-     a snapshot that cannot supply one of those inputs is `blocked` naming
-     the missing input. Neither of those outcomes queues a lifecycle
-     mutation.
+     owner approval, oracle, fingerprint — which that move does not change,
+     so the gate phase is its correct evaluation state and you evaluated it
+     there. On a `gates-passed` ack the orchestrator applies the
+     Issue-to-started move before resuming you, so this lane queues no
+     lifecycle mutation either; confirm the amendment shows it and record the
+     verdict. A dispatch that carried no activation move — a retry on an Issue
+     already in its started state — has no ack and no amendment either;
+     evaluate the same Issue-owned inputs from the snapshot and require that
+     snapshot to show the Issue already started. A real verdict other than
+     `PASS` stops before code as
+     `needs-human`; a snapshot that cannot supply one of those inputs
+     is `blocked` naming the missing input. Neither of those outcomes reaches
+     a `gates-passed` ack, so neither moves the Issue: the ack goes out
+     `blocked` and the stage report carries whichever of those two statuses
+     you actually hit.
+   What must be true before code is already true: steps 3 and 4 verified it
+   from the snapshot, and any lifecycle move this dispatch carried was applied
+   and read back by the orchestrator before it resumed you — a dispatch that
+   carried none needed none. Every other mutation this stage produces is still
+   queued rather than applied — treat it as queued, not as done: it lands when
+   the orchestrator applies it at the stage boundary, so Linear lags this
+   worktree for the rest of the stage, per the queued-mutation clause of
+   Orchestration Mode Precedence.
    Record in the report `notes` which arm of "run or report" applied and on
    what state. Every queued mutation goes into `linear_mutations_pending` in
    its required shape and the orchestrator applies it with read-back.
@@ -166,9 +201,16 @@ this branch is only how `start-checkpoint` executes under it.
    question to the user.
 
 Ordering in this branch mirrors the interactive one: identity gate, snapshot
-context, approval and findings, context seam, then the lane's own delivery-check
-and lifecycle order. Queuing a mutation is how this mode performs it, so
-a gate that must precede a lifecycle change must also precede its queuing.
+context, approval and findings, context seam, and — on the issue-only lane
+only — that lane's `mono-check delivery`, which gates the move this dispatch
+carries and therefore runs before the ack, never after it. Then the gate
+pause; then, after the resume, the post-move confirmation and, on the
+Project-first lane, its delivery evaluation against the amended state.
+Queuing a mutation is how this mode
+performs a Linear write, which is why
+a gate that must precede a lifecycle change must also precede its queuing —
+and the gate-ack is how this mode places those same gates ahead of a lifecycle
+move the orchestrator applies instead.
 
 ## Context-seam branch at Delivery Start
 

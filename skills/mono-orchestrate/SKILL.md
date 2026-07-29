@@ -150,6 +150,31 @@ Workflow states:
      `templates/orchestrator-dispatch.md`: full context snapshot, AFK
      contract, engine block, mailbox path, authorization. Include the
      no-sub-delegation rule in every dispatch prompt.
+   - A dispatch that carries a lifecycle move — a project's first
+     `mono-implement` dispatch, or an issue-only activation — runs the
+     two-phase handshake: emit the pre-move snapshot with the Gate Phase block
+     filled, apply no move until the worker's `gates-passed` gate-ack, check
+     the exact ack artifact the event named — mailbox and fallback share a
+     filename and can disagree — against the gate list you dispatched, by set
+     equality on the gate names, never a count, then apply every move with
+     read-back, resume that same worker with the read-back as an explicit
+     snapshot amendment, and consume the ack by renaming it
+     `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in the same immediate post-resume
+     registry update — every candidate for that attempt, in the mailbox and in
+     the worktree fallback, not only the artifact the event named. An ack you reject for incomplete gate coverage is
+     consumed too — renamed `<ISSUE-KEY>-gate-ack-a<N>.rejected.json` — and then
+     owned by the no-ack path. That order is load-bearing in both directions: an ack
+     left in place keeps suppressing that worker's `stall` and `dead` events,
+     while consuming it before the resumed writer is registered leaves a window
+     where the watcher calls a healthy resume dead. Neither order closes the
+     crash window between the resume and the rename: when you cannot tell
+     whether a resume landed, reconcile against the transport thread and the
+     worktree before any second resume, because an unconsumed ack on its own
+     never authorizes resuming twice. The rule, the ack shape,
+     and the blocked and no-ack paths have one home: Two-Phase Dispatch
+     Handshake in `references/orchestration.md`. Applying a dispatch-moment
+     move earlier needs an explicit owner mandate recorded in the ledger; it is
+     never a «Решил сам:» decision.
    - For `codex-cli` and `fallback` transports, create the worker's worktree
      before spawn per `references/orchestration.md` Worker Transports.
    - Verify every spawn per Worker Transports in
@@ -168,7 +193,13 @@ Workflow states:
      report done.
    - Name workers `<ISSUE-KEY>: <stage>`.
 5. `monitor`
-   - Poll the mailbox cheaply; read reports; advance the same worker session
+   - Poll the mailbox cheaply for BOTH reports and gate-acks. The ack is durable
+     state, not just an event: watcher delivery is at-least-once per watcher
+     process, so a consumer that crashed or missed the event is not told again
+     while that process lives. The poll is what makes the handshake recoverable;
+     the event only accelerates it. An unconsumed ack found by polling is
+     handled exactly as a delivered one.
+   - Read reports; advance the same worker session
      to the next stage (`mono-implement` → `mono-preflight` →
      `mono-ship`). For `codex-cli` workers advance the same thread with
      `codex exec resume` and treat process exit plus report as the normal
@@ -179,6 +210,20 @@ Workflow states:
      the ladder nudge → respawn → session rotation; alert the user only when
      the ladder is exhausted. Record every healing step and its result in
      the ledger (Heartbeat in `references/orchestration.md`).
+   - A `gate-ack` event is a delivery event, not a liveness one. Read the ack's
+     `status` first, never the report on its own. `blocked` applies no move at
+     all: consume the ack as `<ISSUE-KEY>-gate-ack-a<N>.blocked.json` and route
+     the stage report that path also writes
+     through `decide-or-escalate` like any non-green report — the two arriving
+     together is that path working, not a crash. `gates-passed` applies the
+     dispatch's lifecycle moves with read-back and resumes that worker — unless
+     this stage's report is already present, which is AMBIGUOUS rather than
+     proof, because reports carry no attempt number and that one may belong to
+     a superseded worker. Reconcile before acting — check the transport thread
+     and the worktree for whether THIS attempt executed — and never silently
+     consume the ack or resume on it twice (Two-Phase Dispatch Handshake in
+     `references/orchestration.md`). A worker quiet after a fresh
+     `gates-passed` ack is waiting by contract — never heal it.
    - Route non-green reports (`blocked`, `needs-human`, `drift-candidate`,
      `needs-decision`, `scope-drift-needs-handoff`) to `decide-or-escalate`
      instead of advancing.
