@@ -342,7 +342,8 @@ Order, and it is the whole protocol:
    carries. This is the stage's own opening, not a separate pre-stage: the
    same session, worktree, dispatch, and stage continue into execution.
 3. Gate-ack, then stop. The worker writes
-   `reports/<ISSUE-KEY>-gate-ack.json` under the orchestrator root and stops
+   `reports/<ISSUE-KEY>-gate-ack-a<N>.json` under the orchestrator root, where
+   `<N>` is the attempt number this dispatch's log carries, and stops
    without queuing or applying the move, writing code, or producing the stage
    report:
 
@@ -366,12 +367,21 @@ Order, and it is the whole protocol:
    is self-contradictory
    and is treated as no ack at all.
 
+   The ack is numbered by attempt for the same reason the logs are: an ack
+   belongs to the writer that produced it, and timestamps cannot tell
+   overlapping writers apart. A superseded attempt that is still alive can
+   write after its successor's log was born, and a shared path would let that
+   ack look current for the successor — the orchestrator would then apply the
+   moves and resume a worker on gates that worker never ran. A retry carries
+   the same gate names, so no set-equality check downstream would catch it
+   either. The attempt number is what binds an ack to its dispatch attempt.
+
    The gate-ack is not a stage report: it has its own path, its own two-value
    `status`, and it neither uses nor extends the `verification_items` enum.
    `templates/orchestrator-report.md` is unchanged by this protocol. Its
    delivery follows the same sandbox rule as a report: if the mailbox write is
    denied, write the same JSON to
-   `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack.json` (never committed). Both
+   `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack-a<N>.json` (never committed). Both
    the orchestrator and the watcher read the fallback path as well as the
    mailbox one, because an ack the watcher cannot see reads as a dead worker
    and would send the healing ladder against a worker that is merely waiting.
@@ -382,7 +392,7 @@ Order, and it is the whole protocol:
    a gate list the ack does not cover is a blocked ack, not a passed one.
    Rejecting an ack has its own consumption step, because a rejected ack that
    stays in place goes on suppressing liveness for a worker nobody is about to
-   resume: rename it to `<ISSUE-KEY>-gate-ack.rejected.json`, which re-arms the
+   resume: rename it to `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`, which re-arms
    ladder immediately, and then treat the worker as having produced no usable
    ack — the no-ack path below owns it from there.
    It then applies every lifecycle move this dispatch carries and
@@ -398,7 +408,7 @@ Order, and it is the whole protocol:
 
    Then, in the same immediate post-resume registry update that records the new
    writer per Worker Transports, the orchestrator consumes the ack by renaming
-   it to `<ISSUE-KEY>-gate-ack.applied.json` in place. Both halves of that
+   it to `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in place. Both halves of that
    order matter. Consuming it is not bookkeeping: a gate-ack suppresses
    liveness events, and the resumed worker writes to the same stage log, so an
    ack left in place would go on suppressing `stall` and `dead` for a worker
@@ -771,7 +781,7 @@ directory's history; retired Issues' logs are outside its scope.
 - `gate-ack` rides the same correlation surface as `report` and the same
   at-least-once rule: `codex-cli` entries only, registry-matched identity and
   stage, and the same freshness predicate against the log. Its file is
-  `reports/<ISSUE-KEY>-gate-ack.json` or the worktree fallback path, whose
+  `reports/<ISSUE-KEY>-gate-ack-a<N>.json` or the worktree fallback path, whose
   minimal shape carries no identity fields, so its correlation comes from the
   registry entry and the log it belongs to. The watcher validates the ack whole
   and fails closed: a missing or malformed `gates` array, or `gates-passed`

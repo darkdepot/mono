@@ -399,15 +399,30 @@ function readGateAckAt(ackPath, log) {
 // worker's own worktree. An ack the watcher cannot see reads as a dead worker,
 // which would send the healing ladder against a contracted wait.
 //
+// The ack file is numbered by ATTEMPT, exactly as the attempt logs are and for
+// the same stated reason. Timestamps cannot tell overlapping writers apart: a
+// superseded attempt that is still alive can write after its successor's log
+// was born, and its ack would then look fresh for that successor. Since a retry
+// carries the same gate names, no set-equality check downstream would notice
+// either — the orchestrator would apply lifecycle moves and resume a worker on
+// gates that worker never ran, which is the one thing this protocol exists to
+// prevent. The attempt number in the path is what makes an ack belong to the
+// writer that produced it.
+//
 // Both locations are evaluated and the CURRENT candidate wins: a structurally
-// valid mailbox ack left over from a prior attempt must not shadow the fresh
+// valid mailbox ack left over from an earlier write must not shadow the fresh
 // fallback ack of the worker actually paused right now.
 function readGateAck(reportsDir, log, registryEntry) {
+  // No attempt number means no attempt identity to bind to. Logs are numbered
+  // from -a1 by contract, so this is a malformed or legacy log; failing closed
+  // costs only a suppression the handshake never promised for it.
+  if (!Number.isInteger(log.attempt)) return null;
+  const ackName = `${log.issue}-gate-ack-a${log.attempt}.json`;
   const worktree =
     typeof registryEntry?.worktree === "string" ? path.resolve(expandHome(registryEntry.worktree)) : null;
   const candidates = [
-    path.join(reportsDir, `${log.issue}-gate-ack.json`),
-    ...(worktree === null ? [] : [path.join(worktree, ".orchestrator", `${log.issue}-gate-ack.json`)]),
+    path.join(reportsDir, ackName),
+    ...(worktree === null ? [] : [path.join(worktree, ".orchestrator", ackName)]),
   ]
     .map((ackPath) => readGateAckAt(ackPath, log))
     .filter((candidate) => candidate !== null);

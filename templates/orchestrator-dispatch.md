@@ -104,13 +104,13 @@ block only resolves it for this Issue.
   context, approval plus `mono-review handoff` findings, and the 5-field
   context seam; on the issue-only lane the delivery check joins them>
 - Write the gate-ack to
-  `~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-gate-ack.json`
+  `~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-gate-ack-a<N>.json`
   in the shape `references/orchestration.md` fixes — `issue`, `phase`,
   `gates[]`, `status` of `gates-passed` or `blocked`. Write it on gate
   completion, on any gate blocker, and before stopping for any other reason.
   It is not a stage report and changes nothing in
   `templates/orchestrator-report.md`. If the sandbox denies that write, write
-  the same JSON to `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack.json`, the
+  the same JSON to `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack-a<N>.json`, the
   same fallback the report uses.
 - Then stop and wait to be resumed: do not apply or queue the lifecycle move,
   write code, or write the stage report first. The post-move delivery check

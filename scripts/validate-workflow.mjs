@@ -4976,9 +4976,9 @@ function validateWatcherGateAckBehavior() {
         let ackPath;
         if (fallbackAck) {
           fs.mkdirSync(path.join(worktree, ".orchestrator"), { recursive: true });
-          ackPath = path.join(worktree, ".orchestrator", `${issue}-gate-ack.json`);
+          ackPath = path.join(worktree, ".orchestrator", `${issue}-gate-ack-a1.json`);
         } else {
-          ackPath = path.join(reportsDir, `${issue}-gate-ack.json`);
+          ackPath = path.join(reportsDir, `${issue}-gate-ack-a1.json`);
         }
         fs.writeFileSync(ackPath, `${JSON.stringify(ack, null, 2)}\n`);
         // A prior attempt's ack predates this log file and proves nothing
@@ -5037,13 +5037,13 @@ function validateWatcherGateAckBehavior() {
     // re-arms the liveness ladder for the execution phase.
     addFixture("MONO-312", null);
     fs.writeFileSync(
-      path.join(reportsDir, "MONO-312-gate-ack.applied.json"),
+      path.join(reportsDir, "MONO-312-gate-ack-a1.applied.json"),
       `${JSON.stringify(gateAck("MONO-312", "gates-passed"), null, 2)}\n`
     );
     // A prior attempt's mailbox ack must not shadow the fresh fallback ack of
     // the worker that is paused right now.
     addFixture("MONO-313", gateAck("MONO-313", "gates-passed"), { fallbackAck: true });
-    const shadowingAckPath = path.join(reportsDir, "MONO-313-gate-ack.json");
+    const shadowingAckPath = path.join(reportsDir, "MONO-313-gate-ack-a1.json");
     fs.writeFileSync(shadowingAckPath, `${JSON.stringify(gateAck("MONO-313", "blocked"), null, 2)}\n`);
     const shadowStale = new Date(fs.statSync(workers["MONO-313"].log).birthtimeMs - 1_000);
     fs.utimesSync(shadowingAckPath, shadowStale, shadowStale);
@@ -5066,7 +5066,7 @@ function validateWatcherGateAckBehavior() {
       addFixture(issue, null);
       const ackDir = path.join(fixtureRoot, "worktrees", issue, ".orchestrator");
       fs.mkdirSync(ackDir, { recursive: true });
-      build(path.join(ackDir, `${issue}-gate-ack.json`));
+      build(path.join(ackDir, `${issue}-gate-ack-a1.json`));
     };
     // A symlink pointing at a perfectly valid ack is still not a regular file.
     const realAckPath = path.join(fixtureRoot, "valid-ack.json");
@@ -5083,9 +5083,41 @@ function validateWatcherGateAckBehavior() {
     if (spawnSync("mkfifo", ["--version"], { encoding: "utf8" }).error === undefined) {
       fifoIssue = "MONO-319";
       hostileFallback(fifoIssue, (ackPath) => spawnSync("mkfifo", [ackPath]));
-      if (!fs.existsSync(path.join(fixtureRoot, "worktrees", fifoIssue, ".orchestrator", `${fifoIssue}-gate-ack.json`))) {
+      if (!fs.existsSync(path.join(fixtureRoot, "worktrees", fifoIssue, ".orchestrator", `${fifoIssue}-gate-ack-a1.json`))) {
         fifoIssue = null;
       }
+    }
+
+    // The failure round 8 named: a superseded attempt that is still alive
+    // writes its ack AFTER its successor's log was born, so every timestamp
+    // test accepts it. A retry carries the same gate names, so set equality
+    // downstream would not catch it either — the orchestrator would apply the
+    // moves and resume attempt 2 on gates only attempt 1 ever ran. Only the
+    // attempt number in the path can tell the two writers apart.
+    const lateAckIssue = "MONO-320";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const supersededLog = path.join(logsDir, `${lateAckIssue}-mono-implement-a1.jsonl`);
+      const currentLog = path.join(logsDir, `${lateAckIssue}-mono-implement-a2.jsonl`);
+      fs.writeFileSync(supersededLog, logLine);
+      fs.writeFileSync(currentLog, logLine);
+      const older = new Date(Date.now() - 500_000);
+      fs.utimesSync(supersededLog, older, older);
+      fs.utimesSync(currentLog, staleLog, staleLog);
+      // Written now: newer than attempt 2's log birthtime, so freshness alone
+      // would take it.
+      fs.writeFileSync(
+        path.join(reportsDir, `${lateAckIssue}-gate-ack-a1.json`),
+        `${JSON.stringify(gateAck(lateAckIssue, "gates-passed"), null, 2)}\n`
+      );
+      workers[lateAckIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: currentLog,
+        worktree: path.join(fixtureRoot, "worktrees", lateAckIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
     }
 
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
@@ -5146,6 +5178,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-314", "foreign-stage-registry"],
       ["MONO-315", "no-gate-phase-stage"],
       ["MONO-316", "duplicate-gate-name"],
+      ["MONO-320", "late-ack-from-a-superseded-attempt"],
     ]) {
       if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must stay silent`);
@@ -5177,6 +5210,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-314", "ack under a foreign-stage registry entry"],
       ["MONO-315", "ack beside a stage that has no gate phase"],
       ["MONO-316", "ack repeating one gate name"],
+      ["MONO-320", "late ack written by a superseded attempt"],
     ]) {
       if (!stdout.includes(`EVENT:dead ${issue}`)) {
         fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
@@ -6008,7 +6042,9 @@ function validateTwoPhaseDispatchHandshake() {
     "never grant it to itself",
     "`mono-preflight` and `mono-ship` advances carry no lifecycle move",
     // AC2 — the executable protocol: ack path, ack shape, stop, resume.
-    "`reports/<ISSUE-KEY>-gate-ack.json`",
+    "`reports/<ISSUE-KEY>-gate-ack-a<N>.json`",
+    "The ack is numbered by attempt for the same reason the logs are",
+    "The attempt number is what binds an ack to its dispatch attempt.",
     '"phase": "gate"',
     '"status": "gates-passed | blocked"',
     "The gate-ack is not a stage report",
@@ -6024,9 +6060,9 @@ function validateTwoPhaseDispatchHandshake() {
     // A rejected ack must be consumed too, or it suppresses liveness for a
     // worker nobody is about to resume.
     "Rejecting an ack has its own consumption step",
-    "rename it to `<ISSUE-KEY>-gate-ack.rejected.json`",
+    "rename it to `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
     "the no-ack path below owns it from there",
-    "consumes the ack by renaming\n   it to `<ISSUE-KEY>-gate-ack.applied.json`",
+    "consumes the ack by renaming\n   it to `<ISSUE-KEY>-gate-ack-a<N>.applied.json`",
     "ack left in place would go on suppressing `stall` and `dead` for a worker",
     "re-arms the liveness ladder\n   for the execution phase",
     // Consuming the ack too early is its own defect: the gate-phase pid is
@@ -6097,7 +6133,7 @@ function validateTwoPhaseDispatchHandshake() {
   for (const required of [
     "## Gate Phase",
     "Gate phase: not applicable — this dispatch carries no lifecycle",
-    "<ISSUE-KEY>-gate-ack.json",
+    "<ISSUE-KEY>-gate-ack-a<N>.json",
     "Write it on gate\n  completion, on any gate blocker, and before stopping for any other reason.",
     "Then stop and wait to be resumed",
     "On `status: blocked`, also write the ordinary stage report",
@@ -6127,14 +6163,14 @@ function validateTwoPhaseDispatchHandshake() {
     "A `gate-ack` event is a delivery event, not a liveness one",
     "waiting by contract — never\n     heal it",
     "check\n     that ack against the gate list you dispatched",
-    "consume the ack by renaming it\n     `<ISSUE-KEY>-gate-ack.applied.json` in the same immediate post-resume\n     registry update",
+    "consume the ack by renaming it\n     `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in the same immediate post-resume\n     registry update",
     "an ack\n     left in place keeps suppressing that worker's `stall` and `dead` events",
     "while consuming it before the resumed writer is registered leaves a window",
     // The watcher emits gate-ack for a blocked ack too; the monitor state must
     // branch instead of applying moves on every event.
     "Read the ack\n     and branch on its `status`",
     "`blocked` applies\n     no move at all",
-    "renamed `<ISSUE-KEY>-gate-ack.rejected.json`",
+    "renamed `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
   ]) {
     assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
   }

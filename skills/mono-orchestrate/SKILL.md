@@ -158,9 +158,9 @@ Workflow states:
      names, never a count — then apply every move with
      read-back, resume that same worker with the read-back as an explicit
      snapshot amendment, and consume the ack by renaming it
-     `<ISSUE-KEY>-gate-ack.applied.json` in the same immediate post-resume
+     `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in the same immediate post-resume
      registry update. An ack you reject for incomplete gate coverage is
-     consumed too — renamed `<ISSUE-KEY>-gate-ack.rejected.json` — and then
+     consumed too — renamed `<ISSUE-KEY>-gate-ack-a<N>.rejected.json` — and then
      owned by the no-ack path. That order is load-bearing in both directions: an ack
      left in place keeps suppressing that worker's `stall` and `dead` events,
      while consuming it before the resumed writer is registered leaves a window
