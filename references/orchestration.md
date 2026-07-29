@@ -365,7 +365,10 @@ Order, and it is the whole protocol:
    `gates-passed` requires every entry to be `pass`, so an ack that claims
    `gates-passed` while carrying a blocked, duplicated, or missing gate
    is self-contradictory
-   and is treated as no ack at all.
+   and is treated as no ack at all. The invariant runs both ways: `blocked`
+   requires at least one entry that is not `pass`, because an ack claiming
+   `blocked` over gates that all passed is consumed as a real refusal and
+   strands a dispatch whose gates actually passed.
 
    The ack is numbered by attempt for the same reason the logs are: an ack
    belongs to the writer that produced it, and timestamps cannot tell

@@ -397,7 +397,13 @@ function readGateAckAt(ackPath, log) {
     // comparing the set, and this artifact authorizes lifecycle mutations.
     const gateNames = ack.gates.map((entry) => entry.gate);
     if (new Set(gateNames).size !== gateNames.length) return null;
+    // The invariant runs BOTH ways. `gates-passed` over a gate that did not
+    // pass would authorize a move on failed gates; `blocked` over gates that
+    // all passed is the mirror defect and no less costly — it is consumed as a
+    // real refusal, the lifecycle move never lands, and a dispatch whose gates
+    // actually passed is stranded. Either contradiction is no usable ack.
     if (ack.status === "gates-passed" && !ack.gates.every((entry) => entry.status === "pass")) return null;
+    if (ack.status === "blocked" && !ack.gates.some((entry) => entry.status === "blocked")) return null;
     return { ackPath, stat, status: ack.status };
   } finally {
     fs.closeSync(fd);

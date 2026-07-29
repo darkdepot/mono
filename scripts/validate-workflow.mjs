@@ -4951,8 +4951,13 @@ function validateWatcherGateAckBehavior() {
     const gateAck = (issue, status, gates = null) => ({
       issue,
       phase: "gate",
+      // A blocked ack must carry a blocked gate: the invariant runs both ways,
+      // so an all-pass `blocked` ack is a contradiction, not a default.
       gates: gates ?? [
         { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+        ...(status === "blocked"
+          ? [{ gate: "context seam", status: "blocked", evidence: "snapshot has no seam field" }]
+          : []),
       ],
       status,
     });
@@ -5021,6 +5026,14 @@ function validateWatcherGateAckBehavior() {
       ])
     );
     addFixture("MONO-310", gateAck("MONO-310", "gates-passed", [{ gate: "pack identity gate", status: "pass" }]));
+    // Mirror of MONO-309: `blocked` over gates that all passed is consumed as a
+    // real refusal and strands a dispatch whose gates actually passed.
+    addFixture(
+      "MONO-331",
+      gateAck("MONO-331", "blocked", [
+        { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" },
+      ])
+    );
     // A repeated gate name could stand in for an omitted one under a coverage
     // check that counts entries instead of comparing the set.
     addFixture(
@@ -5423,6 +5436,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-323", "ambiguous-tie"],
       ["MONO-325", "leftover-candidate-after-consumption"],
       ["MONO-329", "consumed-blocked-ack"],
+      ["MONO-331", "blocked-ack-over-all-passing-gates"],
     ]) {
       if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must stay silent`);
@@ -5462,6 +5476,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-307", "gates-passed ack with no gates array"],
       ["MONO-308", "gates-passed ack with an empty gates array"],
       ["MONO-309", "gates-passed ack over a blocked gate"],
+      ["MONO-331", "blocked ack over gates that all passed"],
       ["MONO-310", "gate entry with no evidence"],
       ["MONO-312", "consumed ack"],
       // An ack the watcher would not deliver must not silence liveness either.
@@ -6320,6 +6335,8 @@ function validateTwoPhaseDispatchHandshake() {
     // consistent, checked against the dispatched gate list, and consumed
     // before the resume so it cannot go on suppressing liveness events.
     "`gates-passed` requires every entry to be `pass`",
+    "The invariant runs both ways",
+    "strands a dispatch whose gates actually passed",
     "carries each gate name exactly once",
     "set equality on the\n   gate names, not a count",
     "is self-contradictory\n   and is treated as no ack at all",
