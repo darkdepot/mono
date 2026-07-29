@@ -5057,6 +5057,37 @@ function validateWatcherGateAckBehavior() {
     // there is spurious however well-formed it looks.
     addFixture("MONO-315", gateAck("MONO-315", "gates-passed"), { stage: "mono-preflight" });
 
+    // The fallback ack path is inside the worker's own worktree, so it is
+    // worker-controlled. Anything that is not a bounded regular file must be
+    // rejected BEFORE it is opened: the watcher is synchronous, so a FIFO would
+    // block it forever and a device would read without bound, silently ending
+    // liveness monitoring for every worker at once.
+    const hostileFallback = (issue, build) => {
+      addFixture(issue, null);
+      const ackDir = path.join(fixtureRoot, "worktrees", issue, ".orchestrator");
+      fs.mkdirSync(ackDir, { recursive: true });
+      build(path.join(ackDir, `${issue}-gate-ack.json`));
+    };
+    // A symlink pointing at a perfectly valid ack is still not a regular file.
+    const realAckPath = path.join(fixtureRoot, "valid-ack.json");
+    fs.writeFileSync(realAckPath, `${JSON.stringify(gateAck("MONO-317", "gates-passed"), null, 2)}\n`);
+    hostileFallback("MONO-317", (ackPath) => fs.symlinkSync(realAckPath, ackPath));
+    // Oversized: a real ack is a handful of gate entries.
+    hostileFallback("MONO-318", (ackPath) => {
+      const padded = gateAck("MONO-318", "gates-passed");
+      padded.gates[0].evidence = "x".repeat(128 * 1024);
+      fs.writeFileSync(ackPath, JSON.stringify(padded));
+    });
+    // The one that would actually hang a synchronous reader.
+    let fifoIssue = null;
+    if (spawnSync("mkfifo", ["--version"], { encoding: "utf8" }).error === undefined) {
+      fifoIssue = "MONO-319";
+      hostileFallback(fifoIssue, (ackPath) => spawnSync("mkfifo", [ackPath]));
+      if (!fs.existsSync(path.join(fixtureRoot, "worktrees", fifoIssue, ".orchestrator", `${fifoIssue}-gate-ack.json`))) {
+        fifoIssue = null;
+      }
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5064,15 +5095,33 @@ function validateWatcherGateAckBehavior() {
       spawnSync(
         process.execPath,
         ["scripts/watch-workers.mjs", "--root", fixtureRoot, "--stall-sec", "90", "--idle-sec", "30", "--once"],
-        { cwd: root, encoding: "utf8" }
+        // The timeout is the regression detector for the FIFO fixture: without
+        // the pre-read lstat guard this scan never returns at all.
+        { cwd: root, encoding: "utf8", timeout: 60_000 }
       );
 
     const result = runOnce();
+    if (result.signal === "SIGTERM" || result.error?.code === "ETIMEDOUT") {
+      fail(
+        "watcher scan never returned: a worker-controlled fallback ack path must be rejected by lstat before it is opened"
+      );
+      return;
+    }
     if (result.status !== 0) {
       fail(`watcher gate-ack fixtures failed to run: ${result.stderr || `exit ${result.status}`}`);
       return;
     }
     const stdout = result.stdout || "";
+
+    // Hostile fallback shapes deliver nothing and suppress nothing.
+    for (const issue of ["MONO-317", "MONO-318", ...(fifoIssue ? [fifoIssue] : [])]) {
+      if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
+        fail(`watcher must not deliver a gate-ack from a non-regular or oversized fallback path (${issue})`);
+      }
+      if (!stdout.includes(`EVENT:dead ${issue}`)) {
+        fail(`watcher must still emit dead when the only fallback ack is not a bounded regular file (${issue})`);
+      }
+    }
 
     for (const [issue, label] of [
       ["MONO-301", "gates-passed"],

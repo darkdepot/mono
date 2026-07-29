@@ -48,6 +48,9 @@ const DEFAULT_INTERVAL_SEC = 15;
 const DEFAULT_IDLE_SEC = 300;
 const LOG_READ_BYTES = 4096;
 const DETAIL_SNIPPET_LENGTH = 80;
+// A gate-ack is a handful of gate entries; anything larger is not one, and the
+// bound keeps a worker-controlled path from feeding the watcher unbounded data.
+const GATE_ACK_MAX_BYTES = 64 * 1024;
 
 // <ISSUE-KEY>-<stage>.jsonl or <ISSUE-KEY>-<stage>-a<attempt>.jsonl,
 // where <stage> itself may contain hyphens (e.g. mono-implement).
@@ -336,14 +339,26 @@ function isGateEntry(entry) {
 
 function readGateAckAt(ackPath, log) {
   let stat;
+  try {
+    // lstat, and BEFORE any read. The fallback ack path lives inside the
+    // worker's own worktree, so it is worker-controlled: a symlink, FIFO, or
+    // device left there would otherwise be opened by the read below. This
+    // watcher is synchronous and single-threaded, so a FIFO would block it
+    // forever and a device such as /dev/zero would read without bound — either
+    // one silently ends ALL liveness monitoring for every worker, which is the
+    // opposite of what an ack is for. Regular files only, and bounded.
+    stat = fs.lstatSync(ackPath);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile() || stat.size > GATE_ACK_MAX_BYTES) return null;
+
   let ack;
   try {
-    stat = fs.statSync(ackPath);
     ack = JSON.parse(fs.readFileSync(ackPath, "utf8"));
   } catch {
     return null;
   }
-  if (!stat.isFile()) return null;
   if (ack?.issue !== log.issue || ack.phase !== "gate") return null;
   if (ack.status !== "gates-passed" && ack.status !== "blocked") return null;
   if (!Array.isArray(ack.gates) || ack.gates.length === 0) return null;
