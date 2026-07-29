@@ -1,6 +1,6 @@
 ---
 name: mono-handoff
-description: Use for an existing Project or shaped discovery to create the Project-first package, or for targeted PRD or Tech Spec repair. Raw ideas route to mono-idea, unmistakable one-PR projectless work to mono-issue-intake, and pre-ship drift to mono-ship.
+description: Use for an existing Project or shaped discovery to create the Project-first package, or for targeted PRD or Tech Spec repair. Raw ideas route to mono-idea, unmistakable one-PR projectless work to mono-issue, and pre-ship drift to mono-ship.
 ---
 
 # Mono Handoff
@@ -152,7 +152,7 @@ No code changes happen during handoff.
 Repair-mode workflow:
 
 1. Apply routing precedence from `references/repair-machine.md`. Do not use repair mode for accepted pre-ship drift or an issue-only body edit; those
-   belong to `mono-ship` and `mono-issue-intake` renewal respectively.
+   belong to `mono-ship` and `mono-issue` renewal respectively.
 2. Fetch the fresh Project-first package, approvals, affected Issue snapshots,
    active worker dispatches, and latest preflight certificates.
 3. Produce the exact stable-ID before/after preview and proposed class with

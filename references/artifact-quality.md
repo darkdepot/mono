@@ -4,12 +4,14 @@ Linear artifacts must be strong enough that a zero-context implementation agent 
 
 ## Project
 
+Placement rule for this section: the Project body is a concise product brief limited to five concerns — what, why, target outcome, in scope, out of scope (`PC-005`). Status bookkeeping, active documents and Issues, and the review-gate record are carried through Linear status, metadata, resources, comments, and the handoff package, never as body sections (`PC-006`, `PC-007`, `PC-010`). Each bullet below states the same quality bar with its placement made explicit.
+
 Required quality:
 
 - States the shaped outcome and why it matters.
-- Shows lifecycle status.
-- Lists active PRD, Tech Spec, and Issue plan with Linear chips when available.
-- Records review-gate state with risk, required/advisory/skipped status, verdict, evidence or comment link, finding disposition, owner workflow, and next step.
+- Shows lifecycle status through Linear status and metadata, not as a body section.
+- Lists active PRD, Tech Spec, and Issue plan with Linear chips when available, carried in Linear relationships, metadata, resources, comments, or the handoff package rather than the body.
+- Records review-gate state with risk, required/advisory/skipped status, verdict, evidence or comment link, finding disposition, owner workflow, and next step — in Linear comments, metadata, or the handoff package rather than the body.
 - Keeps overview separate from full PRD and Tech Spec content.
 - Does not include stale PR chips, closed PRs, or raw PR URLs when chips are available.
 

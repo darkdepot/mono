@@ -1,6 +1,6 @@
 ---
 name: mono-idea
-description: Use only when the user brings a raw idea; mono-idea owns that route. Accepted pre-ship drift routes to mono-ship, unmistakable one-PR projectless work to mono-issue-intake, and existing-Project handoff or artifact repair to mono-handoff.
+description: Use only when the user brings a raw idea; mono-idea owns that route. Accepted pre-ship drift routes to mono-ship, unmistakable one-PR projectless work to mono-issue, and existing-Project handoff or artifact repair to mono-handoff.
 ---
 
 # Mono Idea
@@ -9,7 +9,7 @@ Use this skill to turn a raw idea into a strengthened Linear Project in `Idea`.
 
 `mono-idea` is the intake gate. It is not a planning skill and it never starts delivery.
 
-Issue-only front door: before treating a request as a Project idea, check its shape. When it is unmistakably one-PR, projectless, issue-only work — one independently-acceptable outcome, exactly one PR, no product-surface or scope ambiguity — the correct front door is `mono-issue-intake`. The lane is live only when `issueOnlyLane.enabled: true` and `ownerPrincipal` are configured in that consuming repo; without both, fail closed to Project-first. Intake deliberately leaves the approved Issue non-startable, and `mono-implement` later owns the delivery check plus Issue lifecycle move. Never enable the lane or infer consent on the owner's behalf. `mono-idea` itself stays at Idea and never resolves an entity or a lane; it only names the correct front door. Any ambiguity keeps the default Project-first intake below, where Project creation stays mandatory. On the issue-only route, `mono-idea` does not run the project-first `mono-check idea` gate — there is no Project to check, and `mono-check` is issue-only-aware; the intake front door owns issue-only readiness.
+Issue-only front door: before treating a request as a Project idea, check its shape. When it is unmistakably one-PR, projectless, issue-only work — one independently-acceptable outcome, exactly one PR, no product-surface or scope ambiguity — the correct front door is `mono-issue`. The lane is live only when `issueOnlyLane.enabled: true` and `ownerPrincipal` are configured in that consuming repo; without both, fail closed to Project-first. Intake deliberately leaves the approved Issue non-startable, and `mono-implement` later owns the delivery check plus Issue lifecycle move. Never enable the lane or infer consent on the owner's behalf. `mono-idea` itself stays at Idea and never resolves an entity or a lane; it only names the correct front door. Any ambiguity keeps the default Project-first intake below, where Project creation stays mandatory. On the issue-only route, `mono-idea` does not run the project-first `mono-check idea` gate — there is no Project to check, and `mono-check` is issue-only-aware; the intake front door owns issue-only readiness.
 
 Read first:
 
@@ -50,7 +50,7 @@ Good first update shape:
 
 Hard terminal contract:
 
-- Scope: this terminal contract and the Project-centric final response below govern the Project-first path. When the front-door check above routes unmistakable one-PR issue-only work to `mono-issue-intake`, `mono-idea` completes by naming that front door — no Project is created, and the absence of a Project link is expected, not an incompletion. Any ambiguity stays Project-first, where the rules below are mandatory.
+- Scope: this terminal contract and the Project-centric final response below govern the Project-first path. When the front-door check above routes unmistakable one-PR issue-only work to `mono-issue`, `mono-idea` completes by naming that front door — no Project is created, and the absence of a Project link is expected, not an incompletion. Any ambiguity stays Project-first, where the rules below are mandatory.
 - Project creation or update in Linear status `Idea` is mandatory.
 - No Linear Project link or id means `mono-idea` is not complete.
 - After the Project is created or updated, stop. Do not continue into discovery, planning, or delivery.
@@ -125,7 +125,7 @@ Forbidden during Idea:
 
 Rules:
 
-- Route unmistakably one-PR, projectless issue-only work to the `mono-issue-intake` front door only with explicit owner consent to the staged, not-yet-deliverable lane; keep Project-first intake as the working default for deliverable work, for everything else, and for any ambiguity.
+- Route unmistakably one-PR, projectless issue-only work to the `mono-issue` front door when the consuming repo has enabled the lane (`issueOnlyLane.enabled: true` plus a non-empty `ownerPrincipal`); keep Project-first intake as the working default for everything else and for any ambiguity.
 - Do not create PRD, Tech Spec, or Issue during Idea.
 - Do not start implementation.
 - Do not treat the raw idea as shaped requirements.
