@@ -153,16 +153,19 @@ Workflow states:
    - A dispatch that carries a lifecycle move — a project's first
      `mono-implement` dispatch, or an issue-only activation — runs the
      two-phase handshake: emit the pre-move snapshot with the Gate Phase block
-     filled, apply no move until the worker's gate-ack, check that ack against
-     the gate list you dispatched, then apply every move with read-back,
-     consume the ack by renaming it `<ISSUE-KEY>-gate-ack.applied.json`, and
-     resume that same worker with the read-back as an explicit snapshot
-     amendment. Consuming the ack before the resume is required: an ack left in
-     place keeps suppressing that worker's `stall` and `dead` events. The rule,
-     the ack shape, and the blocked and no-ack paths have one home: Two-Phase
-     Dispatch Handshake in `references/orchestration.md`. Applying a
-     dispatch-moment move earlier needs an explicit owner mandate recorded in
-     the ledger; it is never a «Решил сам:» decision.
+     filled, apply no move until the worker's `gates-passed` gate-ack, check
+     that ack against the gate list you dispatched, then apply every move with
+     read-back, resume that same worker with the read-back as an explicit
+     snapshot amendment, and consume the ack by renaming it
+     `<ISSUE-KEY>-gate-ack.applied.json` in the same immediate post-resume
+     registry update. That order is load-bearing in both directions: an ack
+     left in place keeps suppressing that worker's `stall` and `dead` events,
+     while consuming it before the resumed writer is registered leaves a window
+     where the watcher calls a healthy resume dead. The rule, the ack shape,
+     and the blocked and no-ack paths have one home: Two-Phase Dispatch
+     Handshake in `references/orchestration.md`. Applying a dispatch-moment
+     move earlier needs an explicit owner mandate recorded in the ledger; it is
+     never a «Решил сам:» decision.
    - For `codex-cli` and `fallback` transports, create the worker's worktree
      before spawn per `references/orchestration.md` Worker Transports.
    - Verify every spawn per Worker Transports in
@@ -192,9 +195,12 @@ Workflow states:
      the ladder nudge → respawn → session rotation; alert the user only when
      the ladder is exhausted. Record every healing step and its result in
      the ledger (Heartbeat in `references/orchestration.md`).
-   - A `gate-ack` event is a delivery event, not a liveness one: apply the
-     dispatch's lifecycle moves with read-back and resume that worker, per
-     Two-Phase Dispatch Handshake in `references/orchestration.md`. A worker
+   - A `gate-ack` event is a delivery event, not a liveness one. Read the ack
+     and branch on its `status`: `gates-passed` applies the dispatch's
+     lifecycle moves with read-back and resumes that worker; `blocked` applies
+     no move at all and waits for the ordinary stage report that path also
+     writes, which routes to `decide-or-escalate` like any non-green report
+     (Two-Phase Dispatch Handshake in `references/orchestration.md`). A worker
      quiet after a fresh `gates-passed` ack is waiting by contract — never
      heal it.
    - Route non-green reports (`blocked`, `needs-human`, `drift-candidate`,

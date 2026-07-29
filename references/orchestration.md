@@ -379,19 +379,26 @@ Order, and it is the whole protocol:
    confirms each with read-back per Linear Write Verification. A move whose
    read-back still shows the old state is pending, never applied, and the
    worker is not resumed for execution while it is pending.
-5. Resume for execution. After the moves are applied and before the resume, the
-   orchestrator consumes the ack by renaming it to
-   `<ISSUE-KEY>-gate-ack.applied.json` in place. Consuming it is not
-   bookkeeping: a gate-ack suppresses liveness events, and the resumed worker
-   writes to the same stage log, so an ack left in place would go on
-   suppressing `stall` and `dead` for a worker that has crashed after its
-   resume. The rename re-arms the liveness ladder for the execution phase and
-   keeps the ack on disk as history. Then the orchestrator resumes the same
-   worker with a resume signal that names each applied move together with its
-   read-back result, explicitly as an amendment of the dispatch snapshot. Every
+5. Resume for execution. The orchestrator resumes the same worker with a
+   resume signal that names each applied move together with its read-back
+   result, explicitly as an amendment of the dispatch snapshot. Every
    post-resume check — including `mono-check delivery` — is evaluated against
    that amended post-move state. The pack identity gate runs again after the
    resume, unchanged: resuming is a stage resume, so the gate is mandatory.
+
+   Then, in the same immediate post-resume registry update that records the new
+   writer per Worker Transports, the orchestrator consumes the ack by renaming
+   it to `<ISSUE-KEY>-gate-ack.applied.json` in place. Both halves of that
+   order matter. Consuming it is not bookkeeping: a gate-ack suppresses
+   liveness events, and the resumed worker writes to the same stage log, so an
+   ack left in place would go on suppressing `stall` and `dead` for a worker
+   that has crashed after its resume; the rename re-arms the liveness ladder
+   for the execution phase and keeps the ack on disk as history. Consuming it
+   any earlier is equally wrong: between the rename and the resumed writer
+   being registered, the gate-phase pid is already gone and nothing suppresses
+   liveness, so a watcher scan in that window reports `dead` for a healthy
+   resume and sends the healing ladder against it. A resuming orchestrator that
+   finds an unconsumed ack beside an already-resumed worker consumes it then.
 
 Blocked path: a gate that fails makes the ack `status: blocked`, and the worker
 then also writes the normal stage report at the mailbox report path, so watcher
@@ -761,9 +768,12 @@ directory's history; retired Issues' logs are outside its scope.
   `blocked` ack suppresses nothing, since that path also writes the ordinary
   stage report. That suppression is bounded by the orchestrator consuming the
   ack at resume time — the watcher cannot distinguish a retained ack from a
-  live pause, so the rename in step 5 is what re-arms the ladder. On
-  `gate-ack`, apply the dispatch's lifecycle moves with read-back and resume
-  the worker per Two-Phase Dispatch Handshake — it is a
+  live pause, so the rename in step 5 is what re-arms the ladder. Suppression
+  demands the same registry correlation delivery does: an ack the watcher would
+  not deliver cannot silence liveness either. On `gate-ack`, read the
+  correlated ack and branch on its `status` — `gates-passed` runs step 4 onward
+  of Two-Phase Dispatch Handshake, `blocked` applies nothing and waits for the
+  ordinary stage report that path also writes. Either way it is a
   delivery event, never a Monitoring Protocol trigger. Non-Codex transports
   keep the polling contract here too.
 - `idle` is product-wide (its issue-key slot is `-`) and fires after the active

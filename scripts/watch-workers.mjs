@@ -348,16 +348,26 @@ function readGateAckAt(ackPath, log) {
   return { ackPath, stat, status: ack.status };
 }
 
-// Mailbox path first, then the sandbox fallback the protocol permits under
-// the worker's own worktree. An ack the watcher cannot see reads as a dead
-// worker, which would send the healing ladder against a contracted wait.
+// The mailbox path and the sandbox fallback the protocol permits under the
+// worker's own worktree. An ack the watcher cannot see reads as a dead worker,
+// which would send the healing ladder against a contracted wait.
+//
+// Both locations are evaluated and the CURRENT candidate wins: a structurally
+// valid mailbox ack left over from a prior attempt must not shadow the fresh
+// fallback ack of the worker actually paused right now.
 function readGateAck(reportsDir, log, registryEntry) {
-  const mailboxAck = readGateAckAt(path.join(reportsDir, `${log.issue}-gate-ack.json`), log);
-  if (mailboxAck !== null) return mailboxAck;
   const worktree =
     typeof registryEntry?.worktree === "string" ? path.resolve(expandHome(registryEntry.worktree)) : null;
-  if (worktree === null) return null;
-  return readGateAckAt(path.join(worktree, ".orchestrator", `${log.issue}-gate-ack.json`), log);
+  const candidates = [
+    path.join(reportsDir, `${log.issue}-gate-ack.json`),
+    ...(worktree === null ? [] : [path.join(worktree, ".orchestrator", `${log.issue}-gate-ack.json`)]),
+  ]
+    .map((ackPath) => readGateAckAt(ackPath, log))
+    .filter((candidate) => candidate !== null);
+  if (candidates.length === 0) return null;
+  const fresh = candidates.filter((candidate) => isFreshForLog(candidate.stat, log));
+  const pool = fresh.length > 0 ? fresh : candidates;
+  return pool.reduce((best, candidate) => (candidate.stat.mtimeMs > best.stat.mtimeMs ? candidate : best));
 }
 
 function hasPackIdentity(value) {
@@ -481,8 +491,17 @@ function checkLog(log, reportsDir, registry, nowMs) {
   // honours. The suppression ends when the orchestrator consumes the ack at
   // resume time; a retained ack cannot be told apart from a live pause here,
   // which is why that rename is a protocol obligation and not a nicety.
-  const gateAck = readGateAck(reportsDir, log, registry[log.issue]);
-  if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) return;
+  //
+  // Suppression demands the SAME registry correlation delivery does. An ack
+  // that cannot be delivered — foreign stage, foreign log, incomplete identity,
+  // non-Codex entry — must not be able to silence liveness either, or an
+  // untrustworthy registry entry would leave its worker both unreported and
+  // unhealable.
+  const registryEntry = registry[log.issue];
+  if (isCorrelatedDeliveryLog(log, registryEntry)) {
+    const gateAck = readGateAck(reportsDir, log, registryEntry);
+    if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) return;
+  }
 
   const pidState = writerPidState(registry[log.issue]);
   if (pidState === "dead") {

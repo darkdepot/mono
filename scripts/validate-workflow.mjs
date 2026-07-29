@@ -5034,6 +5034,18 @@ function validateWatcherGateAckBehavior() {
       path.join(reportsDir, "MONO-312-gate-ack.applied.json"),
       `${JSON.stringify(gateAck("MONO-312", "gates-passed"), null, 2)}\n`
     );
+    // A prior attempt's mailbox ack must not shadow the fresh fallback ack of
+    // the worker that is paused right now.
+    addFixture("MONO-313", gateAck("MONO-313", "gates-passed"), { fallbackAck: true });
+    const shadowingAckPath = path.join(reportsDir, "MONO-313-gate-ack.json");
+    fs.writeFileSync(shadowingAckPath, `${JSON.stringify(gateAck("MONO-313", "blocked"), null, 2)}\n`);
+    const shadowStale = new Date(fs.statSync(workers["MONO-313"].log).birthtimeMs - 1_000);
+    fs.utimesSync(shadowingAckPath, shadowStale, shadowStale);
+    // Suppression demands the same registry correlation delivery does: a
+    // foreign-stage entry can neither deliver its ack nor silence liveness.
+    addFixture("MONO-314", gateAck("MONO-314", "gates-passed"), {
+      registry: { stage: "mono-preflight" },
+    });
 
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
@@ -5057,6 +5069,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-302", "blocked"],
       ["MONO-306", "gate-ack beside a stage report"],
       ["MONO-311", "worktree-fallback"],
+      ["MONO-313", "fresh fallback beside a stale mailbox ack"],
     ]) {
       if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must emit a gate-ack event`);
@@ -5071,6 +5084,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-309", "gates-passed-over-a-blocked-gate"],
       ["MONO-310", "gate-entry-without-evidence"],
       ["MONO-312", "consumed-ack"],
+      ["MONO-314", "foreign-stage-registry"],
     ]) {
       if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must stay silent`);
@@ -5081,6 +5095,7 @@ function validateWatcherGateAckBehavior() {
     for (const [issue, label] of [
       ["MONO-301", "mailbox"],
       ["MONO-311", "worktree fallback"],
+      ["MONO-313", "worktree fallback beside a stale mailbox ack"],
     ]) {
       if (new RegExp(`EVENT:(stall|dead) ${issue}\\b`).test(stdout)) {
         fail(`a fresh gates-passed gate-ack in the ${label} must suppress stall and dead for that worker`);
@@ -5096,6 +5111,9 @@ function validateWatcherGateAckBehavior() {
       ["MONO-309", "gates-passed ack over a blocked gate"],
       ["MONO-310", "gate entry with no evidence"],
       ["MONO-312", "consumed ack"],
+      // An ack the watcher would not deliver must not silence liveness either.
+      ["MONO-304", "non-codex entry's ack"],
+      ["MONO-314", "ack under a foreign-stage registry entry"],
     ]) {
       if (!stdout.includes(`EVENT:dead ${issue}`)) {
         fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
@@ -5938,9 +5956,14 @@ function validateTwoPhaseDispatchHandshake() {
     "`gates-passed` requires every entry to be `pass`",
     "is self-contradictory\n   and is treated as no ack at all",
     "a gate list the ack does not cover is a blocked ack, not a passed one",
-    "consumes the ack by renaming it to\n   `<ISSUE-KEY>-gate-ack.applied.json`",
-    "would go on\n   suppressing `stall` and `dead` for a worker that has crashed after its\n   resume",
-    "re-arms the liveness ladder for the execution phase",
+    "consumes the ack by renaming\n   it to `<ISSUE-KEY>-gate-ack.applied.json`",
+    "ack left in place would go on suppressing `stall` and `dead` for a worker",
+    "re-arms the liveness ladder\n   for the execution phase",
+    // Consuming the ack too early is its own defect: the gate-phase pid is
+    // gone, so an unsuppressed window calls a healthy resume dead.
+    "Consuming it\n   any earlier is equally wrong",
+    "reports `dead` for a healthy\n   resume",
+    "in the same immediate post-resume registry update that records the new",
     "Both\n   the orchestrator and the watcher read the fallback path",
     // A blocked ack never rewrites the stage's own exit statuses.
     "That report carries the\nstage's OWN exit status for the failure it hit",
@@ -5970,7 +5993,12 @@ function validateTwoPhaseDispatchHandshake() {
     "`gate-ack` rides the same correlation surface as `report`",
     "A fresh `gates-passed` gate-ack additionally suppresses `stall`",
     "a\n  `blocked` ack suppresses nothing",
-    "it is a\n  delivery event, never a Monitoring Protocol trigger",
+    "Either way it is a\n  delivery event, never a Monitoring Protocol trigger",
+    // The watcher emits gate-ack for both statuses, so the consumer must
+    // branch on status: a blocked ack moves nothing.
+    "branch on its `status`",
+    "`blocked` applies nothing and waits for the",
+    "Suppression\n  demands the same registry correlation delivery does",
   ]) {
     assertIncludes("references/orchestration.md", required, JSON.stringify(required));
   }
@@ -6019,13 +6047,18 @@ function validateTwoPhaseDispatchHandshake() {
 
   for (const required of [
     "two-phase handshake",
-    "apply no move until the worker's gate-ack",
+    "apply no move until the worker's `gates-passed` gate-ack",
     "never a «Решил сам:» decision",
     "A `gate-ack` event is a delivery event, not a liveness one",
     "waiting by contract — never\n     heal it",
-    "check that ack against\n     the gate list you dispatched",
-    "consume the ack by renaming it `<ISSUE-KEY>-gate-ack.applied.json`",
-    "an ack left in\n     place keeps suppressing that worker's `stall` and `dead` events",
+    "check\n     that ack against the gate list you dispatched",
+    "consume the ack by renaming it\n     `<ISSUE-KEY>-gate-ack.applied.json` in the same immediate post-resume\n     registry update",
+    "an ack\n     left in place keeps suppressing that worker's `stall` and `dead` events",
+    "while consuming it before the resumed writer is registered leaves a window",
+    // The watcher emits gate-ack for a blocked ack too; the monitor state must
+    // branch instead of applying moves on every event.
+    "Read the ack\n     and branch on its `status`",
+    "`blocked` applies\n     no move at all",
   ]) {
     assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
   }
