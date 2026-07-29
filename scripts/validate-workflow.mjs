@@ -5371,6 +5371,36 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // Greptile P1: a superseded attempt that is still appending outranks the
+    // current one in collectLatestLogs, so the current attempt's ack must be
+    // read against the log the REGISTRY names or a contracted pause reads as
+    // death.
+    const supersededNewerIssue = "MONO-332";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const supersededLog = path.join(logsDir, `${supersededNewerIssue}-mono-implement-a1.jsonl`);
+      const currentLog = path.join(logsDir, `${supersededNewerIssue}-mono-implement-a2.jsonl`);
+      fs.writeFileSync(supersededLog, logLine);
+      fs.writeFileSync(currentLog, logLine);
+      // The zombie's log is NEWER, so collectLatestLogs picks it.
+      const zombieTouch = new Date(Date.now() - 100_000);
+      const currentQuiet = new Date(Date.now() - 200_000);
+      fs.utimesSync(currentLog, currentQuiet, currentQuiet);
+      fs.utimesSync(supersededLog, zombieTouch, zombieTouch);
+      fs.writeFileSync(
+        path.join(reportsDir, `${supersededNewerIssue}-gate-ack-a2.json`),
+        `${JSON.stringify(gateAck(supersededNewerIssue, "gates-passed"), null, 2)}\n`
+      );
+      workers[supersededNewerIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: currentLog,
+        worktree: path.join(fixtureRoot, "worktrees", supersededNewerIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5411,6 +5441,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-302", "blocked"],
       ["MONO-311", "worktree-fallback"],
       ["MONO-327", "ack newer than a superseded attempt's report"],
+      ["MONO-332", "ack on the registry log while a superseded log is newer"],
       ["MONO-306", "unconsumed ack beside a completed stage report"],
     ]) {
       if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
@@ -5461,6 +5492,7 @@ function validateWatcherGateAckBehavior() {
 
     // A healthy gate pause must not read as death, wherever the ack landed.
     for (const [issue, label] of [
+      ["MONO-332", "registry log while a superseded log is newer"],
       ["MONO-301", "mailbox"],
       ["MONO-311", "worktree fallback"],
     ]) {

@@ -530,8 +530,31 @@ function isCorrelatedDeliveryLog(log, registryEntry) {
 // other stage's log is spurious, and must neither deliver nor suppress.
 const GATE_PHASE_STAGE = "mono-implement";
 
-function isCorrelatedGateAckLog(log, registryEntry) {
-  return log.stage === GATE_PHASE_STAGE && isCorrelatedDeliveryLog(log, registryEntry);
+// The ack belongs to the attempt the REGISTRY names, never to whichever log
+// happens to carry the newest mtime. collectLatestLogs selects by mtime, so a
+// superseded attempt that is still appending outranks the current one; its path
+// then fails correlation, the current attempt's ack is never read, and a worker
+// sitting in a contracted gate pause is reported stalled or dead. Building the
+// ack's log context from the registry entry fixes that without touching which
+// log drives the pre-existing liveness checks: it can only ever add a
+// suppression, never an event.
+function registryGateAckLog(issueKey, registryEntry) {
+  if (registryEntry?.transport !== "codex-cli") return null;
+  if (registryEntry.stage !== GATE_PHASE_STAGE) return null;
+  if (!hasPackIdentity(registryEntry)) return null;
+  const filePath =
+    typeof registryEntry.log === "string" ? path.resolve(expandHome(registryEntry.log)) : null;
+  if (filePath === null) return null;
+  const match = path.basename(filePath).match(LOG_NAME_PATTERN);
+  if (!match || match[1] !== issueKey || match[2] !== registryEntry.stage) return null;
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile()) return null;
+  return { issue: match[1], stage: match[2], attempt: match[3] ? Number(match[3]) : null, filePath, stat };
 }
 
 function checkGateAck(log, gateAck, nowMs) {
@@ -777,9 +800,8 @@ function scan() {
     // the report is read first, and while it stands the ack is consumption
     // recovery, not a signal.
     const report = correlatedReport(log, reportsDir, registryEntry);
-    const gateAck = isCorrelatedGateAckLog(log, registryEntry)
-      ? readGateAck(reportsDir, log, registryEntry)
-      : null;
+    const ackLog = registryGateAckLog(log.issue, registryEntry);
+    const gateAck = ackLog === null ? null : readGateAck(reportsDir, ackLog, registryEntry);
     // The ack is emitted FIRST, because the consumer contract reads the ack's
     // status before it reads the report and never acts on the report alone. An
     // event-by-event consumer that saw `report` first could advance the stage
@@ -791,7 +813,7 @@ function scan() {
     // worker still alive can write one after its successor's log was born and
     // after that successor's ack, and no timestamp rule tells the two apart.
     // Both events go out; the consumer branches on the ack's status.
-    checkGateAck(log, gateAck, nowMs);
+    checkGateAck(ackLog ?? log, gateAck, nowMs);
     checkReport(log, report, nowMs);
     checkLog(log, gateAck, reportsDir, registry, nowMs);
   }
