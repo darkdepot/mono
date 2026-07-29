@@ -6521,6 +6521,9 @@ function validateTwoPhaseDispatchHandshake() {
     "Delivery asks only that the ack BELONG to\n  this attempt",
     "a delivered ack is therefore not a claim that the worker is still\n  paused",
     "it must not discard a retained ack merely\n  for lagging the log",
+    "Delivery is at-least-once per watcher PROCESS",
+    "an ack needs the same poll\n  for the same reason, and the orchestrator does poll for both",
+    "Never treat the\n  event as the only route to an ack",
     "A fresh `gates-passed` gate-ack additionally suppresses `stall`",
     "a\n  `blocked` ack suppresses nothing",
     "Either way it is a\n  delivery event, never a Monitoring Protocol trigger",
@@ -6622,6 +6625,8 @@ function validateTwoPhaseDispatchHandshake() {
     // The watcher emits gate-ack for a blocked ack too; the monitor state must
     // branch instead of applying moves on every event.
     "Read the ack's\n     `status` first",
+    "Poll the mailbox cheaply for BOTH reports and gate-acks",
+    "The poll is what makes the handshake recoverable",
     "Read the ack's\n     `status` first, never the report on its own",
     "the two arriving\n     together is that path working, not a crash",
     "which is AMBIGUOUS rather than\n     proof",

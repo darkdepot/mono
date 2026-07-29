@@ -846,7 +846,15 @@ directory's history; retired Issues' logs are outside its scope.
   paused. Suppression asks the stricter question and applies the report
   predicate too, since only a current pause may silence liveness. A polling
   transport applies the same split: it must not discard a retained ack merely
-  for lagging the log, or it discards the crash-recovery evidence. Its file is
+  for lagging the log, or it discards the crash-recovery evidence.
+  Delivery is at-least-once per watcher PROCESS, exactly as `report` is: an
+  unchanged version is not re-emitted while that process lives, and a restarted
+  watcher emits it once more. For a report that suffices because the
+  orchestrator also polls the mailbox for reports; an ack needs the same poll
+  for the same reason, and the orchestrator does poll for both. Never treat the
+  event as the only route to an ack — a consumer that missed it while the
+  watcher stayed up would otherwise see only the later `dead`, and the ack it
+  must reconcile would sit unread. Its file is
   `reports/<ISSUE-KEY>-gate-ack-a<N>.json` or the worktree fallback path, whose
   minimal shape carries no identity fields, so its correlation comes from the
   registry entry and the log it belongs to. The watcher validates the ack whole

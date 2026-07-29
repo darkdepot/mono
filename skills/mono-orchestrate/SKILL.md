@@ -193,7 +193,13 @@ Workflow states:
      report done.
    - Name workers `<ISSUE-KEY>: <stage>`.
 5. `monitor`
-   - Poll the mailbox cheaply; read reports; advance the same worker session
+   - Poll the mailbox cheaply for BOTH reports and gate-acks. The ack is durable
+     state, not just an event: watcher delivery is at-least-once per watcher
+     process, so a consumer that crashed or missed the event is not told again
+     while that process lives. The poll is what makes the handshake recoverable;
+     the event only accelerates it. An unconsumed ack found by polling is
+     handled exactly as a delivered one.
+   - Read reports; advance the same worker session
      to the next stage (`mono-implement` → `mono-preflight` →
      `mono-ship`). For `codex-cli` workers advance the same thread with
      `codex exec resume` and treat process exit plus report as the normal
