@@ -5402,24 +5402,30 @@ function validateWatcherGateAckBehavior() {
     }
 
     // The crash window survives execution: an unconsumed ack must still be
-    // DELIVERED after the resumed worker advanced the log well past it, so the
-    // consumer sees the ack/report pair and reconciles. Suppression keeps its
-    // stricter test, so liveness is unaffected.
+    // DELIVERED after the resumed worker advanced the log past it, so the
+    // consumer sees the ack/report pair and reconciles.
+    //
+    // Portability matters more than realism in how this is staged. The
+    // distinction under test needs birthtime <= ack.mtime < log.mtime - stall,
+    // and a real 90s gap cannot be manufactured by backdating: macOS pulls
+    // st_birthtime back when an earlier mtime is set, Linux does not, and where
+    // btime is unsupported Node falls back to ctime — which utimes bumps to now.
+    // Backdating the log therefore made the ack predate birthtime on CI only.
+    // Advancing the log FORWARD instead is symmetric on both platforms: the ack
+    // is written after the log is created, so it always post-dates birthtime,
+    // and the log's mtime is pushed beyond it by more than the stall threshold.
     const survivesExecutionIssue = "MONO-333";
     {
       const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
       const logPath = path.join(logsDir, `${survivesExecutionIssue}-mono-implement-a1.jsonl`);
       fs.writeFileSync(logPath, logLine);
-      // Pull birthtime back first, so the ack can legitimately post-date it.
-      const born = new Date(Date.now() - 900_000);
-      fs.utimesSync(logPath, born, born);
+      // Advance the log BEFORE writing the ack. utimes bumps ctime, and where
+      // btime is unsupported Node reports ctime as birthtime — so writing the
+      // ack last keeps ack.mtime >= birthtime under either interpretation.
+      const advanced = new Date(Date.now() + 200_000);
+      fs.utimesSync(logPath, advanced, advanced);
       const ackPath = path.join(reportsDir, `${survivesExecutionIssue}-gate-ack-a1.json`);
       fs.writeFileSync(ackPath, `${JSON.stringify(gateAck(survivesExecutionIssue, "gates-passed"), null, 2)}\n`);
-      const ackAt = new Date(Date.now() - 500_000);
-      fs.utimesSync(ackPath, ackAt, ackAt);
-      // Execution then advanced the same log far past the ack.
-      const advanced = new Date(Date.now() - 100_000);
-      fs.utimesSync(logPath, advanced, advanced);
       workers[survivesExecutionIssue] = {
         transport: "codex-cli",
         stage: "mono-implement",
@@ -5549,7 +5555,6 @@ function validateWatcherGateAckBehavior() {
       ["MONO-320", "late ack written by a superseded attempt"],
       ["MONO-321", "gate-ack whose pause outlived the suppression bound"],
       ["MONO-328", "freshly touched ack whose pause outlived the bound"],
-      ["MONO-333", "delivered ack whose attempt has since executed"],
       ["MONO-330", "report masking an unconsumed ack past the gate-pause bound"],
       ["MONO-322", "future-dated gate-ack"],
       ["MONO-313", "two ack files for one attempt"],
