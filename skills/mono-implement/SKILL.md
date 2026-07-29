@@ -147,11 +147,18 @@ this branch is only how `start-checkpoint` executes under it.
      applies the Delivery move on your gate-ack, before it resumes this stage
      for execution, so the amended state already shows the Project in
      Delivery and is the post-move state the interactive order requires;
-     re-queuing it would be a redundant mutation.
+     re-queuing it would be a redundant mutation. A dispatch that carried no
+     Delivery move has no ack and no amendment, and needs none: its own
+     snapshot is already that state, which is why it carried no move — the
+     ordinary case of a later Issue in a Project that reached Delivery long
+     ago. Either way the state you evaluate must SHOW the Project in Delivery;
+     a snapshot with no move applied and no amendment naming one is the hard
+     stop above, never a state to work around.
      Take the "report" arm of "run or report": evaluate `mono-check delivery`
-     against that amended state, record the verdict, and record in `notes`
-     that it is snapshot-based. Do not report a verdict derived from state the
-     amendment does not show, and do not defer the check onto a queued
+     against that state, record the verdict, and record in `notes`
+     that it is snapshot-based and which of the two cases applied. Do not
+     report a verdict derived from state you cannot see,
+     and do not defer the check onto a queued
      mutation — this mode has no protocol that would carry a deferred check.
    - Issue-only: the delivery check precedes the Issue-to-started move, and
      it evaluates the Issue's own inputs — review disposition, marker, label,
@@ -160,15 +167,20 @@ this branch is only how `start-checkpoint` executes under it.
      there. On a `gates-passed` ack the orchestrator applies the
      Issue-to-started move before resuming you, so this lane queues no
      lifecycle mutation either; confirm the amendment shows it and record the
-     verdict. A real verdict other than `PASS` stops before code as
+     verdict. A dispatch that carried no activation move — a retry on an Issue
+     already in its started state — has no ack and no amendment either;
+     evaluate the same Issue-owned inputs from the snapshot and require that
+     snapshot to show the Issue already started. A real verdict other than
+     `PASS` stops before code as
      `needs-human`; a snapshot that cannot supply one of those inputs
      is `blocked` naming the missing input. Neither of those outcomes reaches
      a `gates-passed` ack, so neither moves the Issue: the ack goes out
      `blocked` and the stage report carries whichever of those two statuses
      you actually hit.
-   What must be true before code is already true: the gate phase verified it
-   from the snapshot, and the orchestrator applied and read back the lifecycle
-   move before resuming you. Every other mutation this stage produces is still
+   What must be true before code is already true: steps 3 and 4 verified it
+   from the snapshot, and any lifecycle move this dispatch carried was applied
+   and read back by the orchestrator before it resumed you — a dispatch that
+   carried none needed none. Every other mutation this stage produces is still
    queued rather than applied — treat it as queued, not as done: it lands when
    the orchestrator applies it at the stage boundary, so Linear lags this
    worktree for the rest of the stage, per the queued-mutation clause of

@@ -6124,6 +6124,13 @@ function validateTwoPhaseDispatchHandshake() {
     "Two-Phase Dispatch Handshake section of",
     "Re-run the pack identity gate first.",
     "A dispatch that carried no lifecycle move has\n   no amendment to read and arrives here directly.",
+    // Round 5: the lane bullets must handle that no-move path too, or a later
+    // Issue in an already-Delivery Project is told to read an amendment that
+    // cannot exist. Fail-closed either way: the state must SHOW the move done.
+    "A dispatch that carried no\n     Delivery move has no ack and no amendment, and needs none",
+    "Either way the state you evaluate must SHOW the Project in Delivery",
+    "A dispatch that carried no activation move — a retry on an Issue\n     already in its started state — has no ack and no amendment either",
+    "a dispatch that\n   carried none needed none",
   ]) {
     if (!branch.includes(required)) {
       fail(`mono-implement gate-phase contract missing: ${JSON.stringify(required)}`);
