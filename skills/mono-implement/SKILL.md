@@ -26,7 +26,7 @@ Read when — load the file only when its condition is true for this run:
 - `skills/mono-preflight/SKILL.md` — when this stage exits `implemented-needs-preflight`.
 - `skills/mono-review/SKILL.md` — when the package context does not already record the disposition of a `mono-review handoff` finding.
 - `references/artifact-rules.md` — when this run must decide where a Linear record belongs or which stage owns it.
-- `references/artifact-quality.md` — when this run writes or repairs the body of a Linear artifact.
+- `references/artifact-quality.md` — when this run writes, queues, or repairs the body of a Linear artifact or a Linear-facing comment.
 - `references/artifact-intake.md` — when the package context carries a handoff artifact intake summary.
 - `references/questioning.md` — when running interactively and a product, UX, or business question has to be asked; an AFK worker never asks.
 - `templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.

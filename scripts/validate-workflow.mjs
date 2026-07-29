@@ -2054,6 +2054,19 @@ function validateProjectConfigBehavior() {
     );
 
     config.qaAuth = "owner-session";
+    config.orchestration = { ...(config.orchestration || {}), workerAudience: "gpt-5" };
+    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    expectCommandFailure(
+      "project-config --check invalid orchestration.workerAudience fixture",
+      () => runNode(["scripts/project-config.mjs", "--repo", repo, "--check"]),
+      "workerAudience"
+    );
+
+    config.orchestration.workerAudience = "claude-5";
+    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    runNode(["scripts/project-config.mjs", "--repo", repo, "--check"]);
+    delete config.orchestration.workerAudience;
+
     config.workflows.qa = 42;
     fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
     expectCommandFailure(
@@ -5758,6 +5771,20 @@ function validateReadFirstTierContract() {
   ]) {
     assertIncludes("skills/mono-preflight/SKILL.md", required, JSON.stringify(required));
   }
+
+  // A deferred read whose condition names a Linear write must also name the
+  // queued form, or the condition silently excludes every orchestrated run.
+  for (const required of [
+    "The same substitution applies to any condition a stage skill places on a\n  read",
+    "names the queued form too",
+  ]) {
+    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
+  }
+  assertIncludes(
+    "skills/mono-preflight/SKILL.md",
+    "- `references/artifact-quality.md` — when this run records or queues the certificate for Linear, or recovers an earlier certificate.",
+    "preflight certificate-quality read covers the queued form"
+  );
 
   // Dispatch-generator audience guidance — one home in orchestration.md.
   for (const required of [

@@ -26,7 +26,7 @@ Read now — every run of this stage loads all of these:
 Read when — load the file only when its condition is true for this run:
 
 - `references/questioning.md` — when running interactively and this run puts a question or an Always-ask decision to the owner.
-- `references/lifecycle.md` — when this run creates a Linear entity or changes its lifecycle state.
+- `references/lifecycle.md` — when this run creates or queues a Linear entity, or changes or queues its lifecycle state.
 - `references/repair-machine.md` — when the run is a targeted artifact repair rather than a fresh package.
 - `skills/mono-issue/SKILL.md` — when execution Issues are created or renewed from this stage.
 - `skills/mono-review/SKILL.md` — when a `mono-review` report has to be run or judged from this stage.

@@ -22,7 +22,7 @@ Read now — every run of this stage loads all of these:
 
 Read when — load the file only when its condition is true for this run:
 
-- `references/lifecycle.md` — when this run creates a Linear entity or changes its lifecycle state.
+- `references/lifecycle.md` — when this run creates or queues a Linear entity, or changes or queues its lifecycle state.
 - `skills/mono-check/SKILL.md` — when a `mono-check` verdict has to be run or reported from this stage.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.

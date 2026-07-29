@@ -195,6 +195,13 @@ restating it.
   unapplied is a contract violation — it strands the Issue in its previous
   Linear state with the stage's comments missing. The Resume-time sweep of
   unapplied mutations is a crash-recovery backstop, never the normal path.
+- The same substitution applies to any condition a stage skill places on a
+  read, not only to the instructions themselves. A deferred "Read when" entry
+  whose condition names writing, recording, or moving something in Linear is
+  satisfied in this mode by queuing that mutation. Write such a condition so it
+  names the queued form too: a condition worded only for the interactive path
+  silently excludes every orchestrated run, which is how a worker ends up
+  composing an artifact without the contract that governs it.
 - Split precedence by kind: where a dispatch and its stage skill disagree on a
   rule, the stage skill wins; where they disagree on a fact — identity pins,
   absolute paths, snapshot content, this-Issue constraints — the dispatch

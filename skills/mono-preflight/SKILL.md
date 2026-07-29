@@ -25,8 +25,8 @@ Read when — load the file only when its condition is true for this run:
 - `skills/mono-check/SKILL.md` — when a `mono-check` verdict has to be run or reported from this stage.
 - `skills/mono-review/SKILL.md` — when the package context does not already record the disposition of a review finding.
 - `references/artifact-rules.md` — when this run must decide where a Linear record belongs or which stage owns it.
-- `references/artifact-quality.md` — when this run records the certificate in Linear or recovers an earlier certificate.
-- `references/lifecycle.md` — when this run routes back to `mono-handoff` or names a Linear lifecycle state.
+- `references/artifact-quality.md` — when this run records or queues the certificate for Linear, or recovers an earlier certificate.
+- `references/lifecycle.md` — when this run routes back to `mono-handoff`, or names or queues a Linear lifecycle state.
 - `templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
