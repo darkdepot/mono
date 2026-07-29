@@ -843,7 +843,10 @@ directory's history; retired Issues' logs are outside its scope.
   registration, or that rename then fails, nothing would consume the ack at
   all, and freshness against the log never expires by itself: so suppression
   additionally lapses after a few stall thresholds of wall-clock, and the
-  ladder re-arms on its own. That is an age window rather than a ceiling: an
+  ladder re-arms on its own. That clock runs on the PAUSE — the worker's log
+  going quiet — never on the ack's own timestamp: the ack sits at a
+  worker-writable path, and a deadline the worker can refresh by touching
+  the file is no deadline at all. That is an age window rather than a ceiling: an
   ack dated in the future buys no suppression at all, because the worker sets
   its own timestamps on the fallback path and a forged date would otherwise
   reopen the same unbounded silence. A gate pause that outlives that bound is a stuck

@@ -4946,7 +4946,7 @@ function validateWatcherGateAckBehavior() {
     const workers = {};
     // Well past 2x the 90s stall threshold, and every writer pid is gone —
     // exactly the shape a codex-cli gate pause leaves behind.
-    const staleLog = new Date(Date.now() - 400_000);
+    const staleLog = new Date(Date.now() - 200_000);
 
     const gateAck = (issue, status, gates = null) => ({
       issue,
@@ -5101,7 +5101,7 @@ function validateWatcherGateAckBehavior() {
       const currentLog = path.join(logsDir, `${lateAckIssue}-mono-implement-a2.jsonl`);
       fs.writeFileSync(supersededLog, logLine);
       fs.writeFileSync(currentLog, logLine);
-      const older = new Date(Date.now() - 500_000);
+      const older = new Date(Date.now() - 300_000);
       fs.utimesSync(supersededLog, older, older);
       fs.utimesSync(currentLog, staleLog, staleLog);
       // Written now: newer than attempt 2's log birthtime, so freshness alone
@@ -5280,6 +5280,30 @@ function validateWatcherGateAckBehavior() {
       };
     }
 
+    // A stuck worker touching its own ack must not buy another window: the
+    // deadline runs on the pause, not on the ack's mtime.
+    const renewedAckIssue = "MONO-328";
+    {
+      const logLine = `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`;
+      const logPath = path.join(logsDir, `${renewedAckIssue}-mono-implement-a1.jsonl`);
+      fs.writeFileSync(logPath, logLine);
+      const longQuiet = new Date(Date.now() - 900_000);
+      fs.utimesSync(logPath, longQuiet, longQuiet);
+      // Freshly touched, as a worker renewing its deadline would.
+      fs.writeFileSync(
+        path.join(reportsDir, `${renewedAckIssue}-gate-ack-a1.json`),
+        `${JSON.stringify(gateAck(renewedAckIssue, "gates-passed"), null, 2)}\n`
+      );
+      workers[renewedAckIssue] = {
+        transport: "codex-cli",
+        stage: "mono-implement",
+        log: logPath,
+        worktree: path.join(fixtureRoot, "worktrees", renewedAckIssue),
+        pid: 999_999_999,
+        ...identity,
+      };
+    }
+
     fs.writeFileSync(path.join(fixtureRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
     fs.writeFileSync(path.join(fixtureRoot, "control.json"), `${JSON.stringify({ state: "active" }, null, 2)}\n`);
 
@@ -5392,6 +5416,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-316", "ack repeating one gate name"],
       ["MONO-320", "late ack written by a superseded attempt"],
       ["MONO-321", "gate-ack whose pause outlived the suppression bound"],
+      ["MONO-328", "freshly touched ack whose pause outlived the bound"],
       ["MONO-322", "future-dated gate-ack"],
       ["MONO-313", "two ack files for one attempt"],
       ["MONO-323", "ambiguous tie between mailbox and fallback acks"],
@@ -6294,6 +6319,8 @@ function validateTwoPhaseDispatchHandshake() {
     "That suppression is bounded twice over",
     "suppression\n  additionally lapses after a few stall thresholds of wall-clock",
     "is a stuck\n  handshake, not a healthy wait",
+    "That clock runs on the PAUSE — the worker's log\n  going quiet — never on the ack's own timestamp",
+    "a deadline the worker can refresh by touching\n  the file is no deadline at all",
     "That is an age window rather than a ceiling",
     "an\n  ack dated in the future buys no suppression at all",
     "`gate-ack` watcher event names the FULL path it validated",

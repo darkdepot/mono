@@ -659,14 +659,15 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   // filesystem, and the protocol says a future-dated ack buys no suppression
   // at all. Past the ceiling the pause is a stuck handshake, not a wait.
   if (gateAck !== null && gateAck.status === "gates-passed" && isFreshForLog(gateAck.stat, log)) {
-    const pauseAgeMs = nowMs - gateAck.stat.mtimeMs;
-    // No lower bound here. Future-dating is decided once, at the read boundary,
-    // against the clock read there — and readGateAck deliberately accepts an
-    // ack written moments ago while this scan was already running. Re-testing
-    // it against the scan-start clock would make that legitimate ack look
-    // negative-aged, decline suppression, and let the same scan emit `dead`
-    // for a worker that just completed its contracted pause.
-    if (pauseAgeMs <= args.stallSec * 1000 * GATE_PAUSE_SUPPRESSION_STALLS) {
+    // The deadline is measured from the PAUSE — this log's silence — never from
+    // the ack's own mtime. The ack sits at a worker-writable path, so anchoring
+    // to it let a stuck or superseded worker touch the file before every
+    // deadline and hold suppression open forever; a renewable deadline is no
+    // deadline. The log's quiet age cannot be renewed that way: writing to the
+    // log is what being alive looks like, and a live log returns above long
+    // before this line. Future-dating is separately decided once, at the read
+    // boundary, against the clock read there.
+    if (ageSec <= args.stallSec * GATE_PAUSE_SUPPRESSION_STALLS) {
       return;
     }
   }
