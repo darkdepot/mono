@@ -4689,8 +4689,9 @@ function validateWatcherContaminationBehavior() {
   }
 }
 
-function validateWatcherInactiveGateSpawnBehavior() {
+async function validateWatcherInactiveGateSpawnBehavior() {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-workflow-watcher-inactive-"));
+  let incrementalWatcher = null;
   try {
     const logsDir = path.join(fixtureRoot, "logs");
     fs.mkdirSync(logsDir);
@@ -4868,7 +4869,69 @@ function validateWatcherInactiveGateSpawnBehavior() {
         fail(`completed failure or startup without thread.started must emit spawn-fail (${issue})`);
       }
     }
+
+    const incrementalLog = path.join(logsDir, "MONO-372-mono-implement-a1.jsonl");
+    const sentinelLog = path.join(logsDir, "MONO-373-mono-implement-a1.jsonl");
+    const busyEvent = `${JSON.stringify({
+      type: "turn.completed",
+      detail: "x".repeat(900),
+    })}\n`;
+    fs.writeFileSync(
+      incrementalLog,
+      `${busyEvent.repeat(400)}${JSON.stringify({
+        type: "thread.started",
+        thread_id: "incremental-thread",
+      })}\n`
+    );
+    fs.writeFileSync(sentinelLog, "");
+    const incrementalEntry = {
+      transport: "codex-cli",
+      stage: "mono-implement",
+      log: incrementalLog,
+      thread_id: null,
+      pid: null,
+      gates: ["pack-identity"],
+      spawned_at: registeredNow,
+      ...identity,
+    };
+    fs.writeFileSync(
+      path.join(fixtureRoot, "workers.json"),
+      JSON.stringify({ "MONO-372": incrementalEntry })
+    );
+    incrementalWatcher = startWatcherFixture(fixtureRoot);
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+
+    fs.writeFileSync(
+      path.join(fixtureRoot, "workers.json"),
+      JSON.stringify({
+        "MONO-372": { ...incrementalEntry, spawned_at: registeredStale },
+        "MONO-373": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: sentinelLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: registeredStale,
+          ...identity,
+        },
+      })
+    );
+    const sentinelObserved = waitForWatcherFixture(
+      () => watcherOutput(incrementalWatcher.stdoutPath).includes("EVENT:spawn-fail MONO-373"),
+      5_000
+    );
+    const incrementalOutput = watcherOutput(incrementalWatcher.stdoutPath);
+    if (!sentinelObserved) {
+      fail("incremental startup fixture did not observe the post-update sentinel scan");
+    }
+    if (/EVENT:(stall|dead|spawn-fail) MONO-372\b/.test(incrementalOutput)) {
+      fail("bounded incremental log scanning must still discover a later thread.started event");
+    }
   } finally {
+    if (incrementalWatcher !== null) {
+      await incrementalWatcher.stop();
+    }
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 }
@@ -7084,6 +7147,16 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     text: "!inspection.hasThreadStarted",
   },
   {
+    label: "watcher-log-scan-budget",
+    file: "watcher",
+    text: "const LOG_SCAN_MAX_BYTES = 256 * 1024",
+  },
+  {
+    label: "watcher-log-scan-cursor",
+    file: "watcher",
+    text: "state.offset += bytesRead",
+  },
+  {
     label: "producer-inactive-registration-clock",
     file: "orchestration",
     text: "The startup window\n  begins at that registry publication's `spawned_at`",
@@ -8030,7 +8103,7 @@ validateDocsAndExamples();
 validateAntiPatterns();
 validateHeartbeatContract();
 validateWatcherContaminationBehavior();
-validateWatcherInactiveGateSpawnBehavior();
+await validateWatcherInactiveGateSpawnBehavior();
 await validateWatcherV3Behavior();
 validateWatcherGateAckBehavior();
 validateGateAckSuppressionPredicate();

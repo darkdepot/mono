@@ -152,7 +152,9 @@ from log mtime. Until a valid `thread.started` arrives, empty or partial
 output, contamination, another JSON event, and complete non-JSON output all
 remain bounded; at timeout the watcher emits `spawn-fail`. A missing, invalid,
 or more-than-five-seconds-future timestamp emits `spawn-fail` immediately,
-never `dead`.
+never `dead`. Each watcher pass reads at most 256 KiB and resumes at its saved
+cursor, so a busy pre-start log cannot block other workers and a later
+`thread.started` remains discoverable.
 After `thread.started`, the
 orchestrator updates the same entry with live identity while preserving `log`
 and `gates`; every other live `codex-cli` entry carries verified process

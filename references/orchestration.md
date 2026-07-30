@@ -750,7 +750,10 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
   begins at that registry publication's `spawned_at`, never at a prepared log's
   mtime. A missing, invalid, or more-than-five-seconds-future `spawned_at`
   cannot define a safe window and emits `spawn-fail` immediately, never
-  `dead`.
+  `dead`. Log inspection is bounded to 256 KiB per watcher pass and resumes
+  from its prior cursor on the next pass, so an append-only pre-start stream
+  cannot monopolize monitoring and a later `thread.started` remains
+  discoverable.
 
   Immediately after verifying every non-gate spawn, resume, or session
   rotation, in the same orchestrator turn and before any other action, update

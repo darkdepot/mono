@@ -52,6 +52,11 @@ const DEFAULT_REPEAT_SEC = 300;
 const DEFAULT_INTERVAL_SEC = 15;
 const DEFAULT_IDLE_SEC = 300;
 const LOG_READ_BYTES = 4096;
+// A busy or faulty worker can append forever while startup is incomplete.
+// Bound synchronous work per watcher pass; the cursor below resumes on the
+// next pass so a later thread.started event remains discoverable.
+const LOG_SCAN_MAX_BYTES = 256 * 1024;
+const LOG_PENDING_MAX_CHARS = 64 * 1024;
 const DETAIL_SNIPPET_LENGTH = 80;
 // A gate-ack is a handful of gate entries; anything larger is not one, and the
 // bound keeps a worker-controlled path from feeding the watcher unbounded data.
@@ -162,6 +167,7 @@ if (!fs.existsSync(args.root) || !fs.statSync(args.root).isDirectory()) {
 const emittedAt = new Map();
 const emittedReportVersions = new Map();
 const emittedGateAckVersions = new Map();
+const logInspectionStates = new Map();
 const warnedOnce = new Set();
 let lastEventAtMs = null;
 
@@ -221,59 +227,89 @@ function inspectLog(filePath) {
     };
   }
   try {
+    const stat = fs.fstatSync(descriptor);
+    let state = logInspectionStates.get(filePath);
+    if (
+      state === undefined ||
+      state.dev !== stat.dev ||
+      state.ino !== stat.ino ||
+      stat.size < state.offset
+    ) {
+      state = {
+        dev: stat.dev,
+        ino: stat.ino,
+        offset: 0,
+        pending: "",
+        pendingOverflow: false,
+        firstLine: null,
+        completeLineCount: 0,
+        hasJsonEvent: false,
+        hasThreadStarted: false,
+      };
+      logInspectionStates.set(filePath, state);
+    }
+
     const buffer = Buffer.alloc(LOG_READ_BYTES);
-    let pending = "";
-    let firstLine = null;
-    let completeLineCount = 0;
-    let hasJsonEvent = false;
-    let bytesRead;
-    do {
-      bytesRead = fs.readSync(descriptor, buffer, 0, LOG_READ_BYTES, null);
-      pending += buffer.toString("utf8", 0, bytesRead);
+    let remaining = Math.min(LOG_SCAN_MAX_BYTES, Math.max(0, stat.size - state.offset));
+    while (remaining > 0 && !state.hasThreadStarted) {
+      const requested = Math.min(LOG_READ_BYTES, remaining);
+      const bytesRead = fs.readSync(descriptor, buffer, 0, requested, state.offset);
+      if (bytesRead === 0) break;
+      state.offset += bytesRead;
+      remaining -= bytesRead;
+      state.pending += buffer.toString("utf8", 0, bytesRead);
+
+      if (state.pendingOverflow) {
+        const overflowEnd = state.pending.indexOf("\n");
+        if (overflowEnd < 0) {
+          state.pending = "";
+          continue;
+        }
+        state.completeLineCount += 1;
+        state.pending = state.pending.slice(overflowEnd + 1);
+        state.pendingOverflow = false;
+      }
+
       let newlineIndex;
-      while ((newlineIndex = pending.indexOf("\n")) >= 0) {
-        const line = pending.slice(0, newlineIndex);
-        pending = pending.slice(newlineIndex + 1);
-        completeLineCount += 1;
-        if (firstLine === null) firstLine = line;
+      while ((newlineIndex = state.pending.indexOf("\n")) >= 0) {
+        const line = state.pending.slice(0, newlineIndex);
+        state.pending = state.pending.slice(newlineIndex + 1);
+        state.completeLineCount += 1;
+        if (state.firstLine === null) state.firstLine = line;
         const event = parseJsonEventLine(line);
         if (event !== null) {
-          hasJsonEvent = true;
+          state.hasJsonEvent = true;
         }
         if (isThreadStartedEvent(event)) {
-          return {
-            firstLine,
-            hasJsonEvent: true,
-            hasThreadStarted: true,
-            hasCompleteLine: true,
-            hasTrailingPartial: false,
-          };
+          state.hasThreadStarted = true;
+          break;
         }
       }
-    } while (bytesRead > 0);
 
-    if (pending.length > 0) {
-      if (firstLine === null) firstLine = pending;
-      const event = parseJsonEventLine(pending);
-      if (event !== null) {
-        hasJsonEvent = true;
-      }
-      if (isThreadStartedEvent(event)) {
-        return {
-          firstLine,
-          hasJsonEvent: true,
-          hasThreadStarted: true,
-          hasCompleteLine: completeLineCount > 0,
-          hasTrailingPartial: false,
-        };
+      if (state.pending.length > LOG_PENDING_MAX_CHARS) {
+        state.pending = "";
+        state.pendingOverflow = true;
       }
     }
+
+    if (!state.pendingOverflow && state.pending.length > 0) {
+      const event = parseJsonEventLine(state.pending);
+      if (event !== null) {
+        state.hasJsonEvent = true;
+      }
+      if (isThreadStartedEvent(event)) {
+        state.hasThreadStarted = true;
+      }
+    }
+
     return {
-      firstLine,
-      hasJsonEvent,
-      hasThreadStarted: false,
-      hasCompleteLine: completeLineCount > 0,
-      hasTrailingPartial: pending.length > 0,
+      firstLine:
+        state.firstLine ??
+        (!state.pendingOverflow && state.pending.length > 0 ? state.pending : null),
+      hasJsonEvent: state.hasJsonEvent,
+      hasThreadStarted: state.hasThreadStarted,
+      hasCompleteLine: state.completeLineCount > 0,
+      hasTrailingPartial: state.pendingOverflow || state.pending.length > 0,
     };
   } finally {
     fs.closeSync(descriptor);
@@ -984,6 +1020,12 @@ function scan() {
   const controlState = loadControlState(path.join(args.root, "control.json"));
   const latestLogs = collectLatestLogs(path.join(args.root, "logs"));
   const reportsDir = path.join(args.root, "reports");
+  const currentLogPaths = new Set(
+    [...latestLogs.values()].map((log) => log.filePath)
+  );
+  for (const filePath of logInspectionStates.keys()) {
+    if (!currentLogPaths.has(filePath)) logInspectionStates.delete(filePath);
+  }
   for (const log of latestLogs.values()) {
     // The watcher observes the active registry, not the directory's history:
     // only Issues present in workers.json are live workers. Logs whose
