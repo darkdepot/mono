@@ -333,10 +333,14 @@ Order, and it is the whole protocol:
 1. Gate-phase dispatch. The orchestrator emits the dispatch with the pre-move
    snapshot — Project not yet in Delivery, or Issue not yet started — and the
    dispatch template's Gate Phase block filled in. It applies no lifecycle
-   move yet, and the pre-move snapshot is correct, not stale. Once the spawn is
-   verified, the same registry registration that records the attempt-numbered
-   `log` writes `registryEntry.gates` as the exact gate-name list dispatched
-   for this current attempt.
+   move yet, and the pre-move snapshot is correct, not stale.
+   Before the worker process starts, atomically pre-register an inactive
+   current-attempt entry
+   with the empty attempt-numbered `log`, exact dispatched
+   `registryEntry.gates`, pack identity, `thread_id: null`, and `pid: null`.
+   Start the worker only after that durable write succeeds; after
+   `thread.started`, update the same entry with verified live identity while
+   preserving `log` and `gates`.
 2. Worker gate phase. The worker runs steps 1-4 of the orchestration branch of
    `start-checkpoint` in `skills/mono-implement/SKILL.md`: pack identity gate,
    snapshot package context, approval plus `mono-review handoff` findings, and
@@ -456,12 +460,14 @@ Order, and it is the whole protocol:
    on its own.
 
    A `blocked` ack beside a stage report is the ordinary non-green outcome, not
-   a crash. The blocked path writes both of them by design, before any
-   execution happened at all: atomically publish the private consumption
-   record with `outcome: blocked`, rename the ack as
-   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`, remove `registryEntry.gates`, route
-   the report through the ordinary non-green path, and reconcile nothing. That
-   is the third
+   a crash. A `blocked` ack alone is not yet consumable: the worker writes the
+   ack before its report, so consuming during that interval would discard the
+   only durable recovery evidence if the worker died. Preserve the ack and
+   `registryEntry.gates` while polling for the correlated ordinary stage report.
+   Only after that report exists and validates, atomically publish the private
+   consumption record with `outcome: blocked`, rename the ack as
+   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`, remove `registryEntry.gates`, and
+   route the report through the ordinary non-green path. That is the third
    consumption state, beside `.applied` after a resume and `.rejected` for a
    coverage failure: an ack whose gates honestly did not pass is spent too, and
    without a state of its own it would be redelivered on every watcher restart.
@@ -555,7 +561,7 @@ handshake.
 | `gates-passed` received, resumed writer not yet confirmed | Preserve `gates`; the durable consumer contract is still live. |
 | Consume `.applied` | Register the resumed writer while preserving `gates`, atomically publish the private consumption record with `outcome: applied`, rename every ack candidate, then remove `gates` separately. |
 | Consume `.rejected` | The attempt is TERMINAL: atomically publish the private consumption record with `outcome: rejected`, rename every ack candidate, then remove `gates`. Recovery is an immediate verified respawn of a NEW gate attempt with its own list; never same-attempt nudge after consumption. |
-| Consume `.blocked` | The terminal non-green attempt has no resume: atomically publish the private consumption record with `outcome: blocked`, rename every ack candidate, then remove `gates`. |
+| Consume `.blocked` | Only after the correlated stage report is present and valid: atomically publish the private consumption record with `outcome: blocked`, rename every ack candidate, then remove `gates` and route the report. |
 | Malformed `gates` on a gate-carrying entry | Treat it as a producer contract error and terminate the attempt; verified-respawn a NEW gate attempt with a correct list. |
 | `gates` present on `mono-preflight` or `mono-ship` | Presence is forbidden, not a selector: start a new attempt of that same stage WITHOUT `gates`. |
 | Stage advance or any other non-gate dispatch | Reconcile every unconsumed ack first, then atomically change `stage`/`log` and remove `gates` in the same registry write. |
@@ -570,8 +576,10 @@ snapshot cannot supply a required input. Mode precedence never rewrites a
 stage's exit statuses, so the ack's `blocked` says only "gates not passed,
 apply nothing" while the report says what happened and routes through the
 ordinary non-green path, unchanged. The orchestrator applies no lifecycle move
-on a blocked ack. Consume the ack as `.blocked` first, then remove
-`registryEntry.gates`; the attempt is terminal and has no resume.
+on a blocked ack. Keep the ack and `registryEntry.gates` until the correlated
+report is present and valid; only then consume the ack as `.blocked`, remove
+the field, and route the report. The attempt is terminal after consumption and
+has no resume.
 
 No-ack path: an ack that never arrives is not a new signal. It is the existing
 liveness ladder — `stall`/`dead`, then nudge → respawn → session rotation —
@@ -905,6 +913,13 @@ never report it as applied.
   consult these records, even when their stage-local attempt number is also
   `<N>`. Watcher liveness events remain unchanged; this is orchestrator
   recovery routing from trusted durable state.
+- An unconsumed valid `blocked` ack with no correlated report is a
+  missing-report recovery case, never the no-ack path. Preserve both the ack
+  and `registryEntry.gates`; use the ordinary reportless-exit recovery to
+  resume the same thread once and demand its stage report. Consume `.blocked`
+  only after that report validates. A failed recovery may advance to the
+  existing rebuild/respawn rung, but it never turns the ack into absent
+  evidence or authorizes early cleanup.
 - Stuck or dead worker: rebuild stage state from Linear plus the last mailbox
   report (the branch survives in the worktree) and respawn a worker to
   continue the stage, not restart the Issue.

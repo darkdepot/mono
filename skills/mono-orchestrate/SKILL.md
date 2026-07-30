@@ -267,6 +267,10 @@ Workflow states:
      an unconsumed ack remains, finish the rename selected by `outcome` first.
      A watcher redelivery or poll of that ack is consumption recovery, not
      authority to apply lifecycle moves again.
+   - An unconsumed valid `blocked` ack without its correlated stage report is
+     missing-report recovery, not the no-ack ladder. Preserve the ack and
+     `registryEntry.gates`; resume the same thread once to demand the report,
+     and consume `.blocked` only after the report validates.
    - Heartbeat watcher events (`stall`, `dead`, `spawn-fail`) are Monitoring
      Protocol triggers: read the worker's latest state, then heal through
      the ladder nudge → respawn → session rotation; alert the user only when
@@ -278,14 +282,20 @@ Workflow states:
      `status`; polling performs the identical validation. That validation is
      status-asymmetric: `gates-passed` requires exact set equality, while
      `blocked` accepts a non-empty subset with no foreign or duplicate names.
-     After validation,
-     read the ack's `status` first, never the report on its own. `blocked` applies no move at
-     all: atomically publish the private orchestrator
-     `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with
+     After validation, read the ack's `status` first, never the report on its own.
+     `blocked` applies no move at
+     all, and its ack arrives before its report by contract.
+     Do not publish the consumption record, rename the ack, or remove
+     `registryEntry.gates` until the correlated ordinary stage report exists
+     and validates. Preserve the ack and field while polling.
+     Only after that report validates, atomically publish the private
+     orchestrator `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with
      `outcome: blocked`, rename the ack as
-     `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`, remove `registryEntry.gates`, and route the stage report that path also writes
-     through `decide-or-escalate` like any non-green report — the two arriving
-     together is that path working, not a crash. `gates-passed` applies the
+     `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`, remove `registryEntry.gates`, and
+     route the report through `decide-or-escalate` like any non-green report —
+     the two arriving
+     together is that path working, not a crash.
+     `gates-passed` applies the
      dispatch's lifecycle moves with read-back and resumes that worker — unless
      this stage's report is already present, which is AMBIGUOUS rather than
      proof, because reports carry no attempt number and that one may belong to
