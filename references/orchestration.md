@@ -757,7 +757,11 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
   discoverable. If the startup timeout arrives before that scan is complete,
   the watcher freezes the then-observed file size and finishes inspecting that
   snapshot before emitting `spawn-fail`; later appends cannot extend the
-  decision indefinitely. An inactive entry whose attempt log is missing or
+  decision indefinitely. Recurring mode continues across intervals;
+  `--once` performs additional bounded passes in the same invocation until
+  that frozen snapshot is resolved. Timeout comparison uses elapsed
+  milliseconds and never rounds a not-yet-expired startup upward. An inactive
+  entry whose attempt log is missing or
   unreadable emits `spawn-fail` as well, so a damaged producer barrier heals
   through the same verified new-attempt path.
 

@@ -170,6 +170,7 @@ const emittedGateAckVersions = new Map();
 const logInspectionStates = new Map();
 const warnedOnce = new Set();
 let lastEventAtMs = null;
+let oneShotNeedsRescan = false;
 
 function warnOnce(message) {
   if (warnedOnce.has(message)) return;
@@ -845,18 +846,23 @@ function checkLog(log, gateAck, report, registry, nowMs) {
       );
       return;
     }
-    const startupAgeSec = Math.max(
-      0,
-      Math.round((nowMs - inactiveSpawn.spawnedAtMs) / 1000)
-    );
-    if (startupAgeSec < args.stallSec) return;
+    const startupAgeMs = Math.max(0, nowMs - inactiveSpawn.spawnedAtMs);
+    if (startupAgeMs < args.stallSec * 1000) return;
     if (!inspection.scanComplete) {
       // Freeze the timeout snapshot once. Later appends cannot postpone the
       // decision forever, while bytes already present remain eligible to
       // prove that this attempt did reach thread.started.
       freezeLogInspectionTarget(log.filePath, inspection.observedSize);
+      if (
+        args.once &&
+        inspection.observedSize !== undefined &&
+        logInspectionStates.has(log.filePath)
+      ) {
+        oneShotNeedsRescan = true;
+      }
       return;
     }
+    const startupAgeSec = Math.floor(startupAgeMs / 1000);
     emitEvent(
       "spawn-fail",
       log.issue,
@@ -1124,7 +1130,10 @@ console.error(
   `watch-workers: root=${args.root} stall-sec=${args.stallSec} repeat-sec=${args.repeatSec} interval-sec=${args.intervalSec} idle-sec=${args.idleSec}${args.once ? " once" : ""}`
 );
 
-scan();
+do {
+  oneShotNeedsRescan = false;
+  scan();
+} while (args.once && oneShotNeedsRescan);
 if (!args.once) {
   setInterval(scan, args.intervalSec * 1000);
 }

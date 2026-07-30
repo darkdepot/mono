@@ -157,7 +157,9 @@ never `dead`. Each watcher pass reads at most 256 KiB and resumes at its saved
 cursor, so a busy pre-start log cannot block other workers and a later
 `thread.started` remains discoverable. At timeout the watcher freezes the
 observed size and finishes that snapshot before `spawn-fail`; later appends do
-not extend the deadline. A missing or unreadable attempt log also emits
+not extend the deadline. `--once` completes it through additional bounded
+passes, and elapsed milliseconds are compared without rounding the startup
+window upward. A missing or unreadable attempt log also emits
 `spawn-fail`.
 After `thread.started`, the
 orchestrator updates the same entry with live identity while preserving `log`

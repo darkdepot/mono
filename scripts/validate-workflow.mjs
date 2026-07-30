@@ -4706,6 +4706,8 @@ async function validateWatcherInactiveGateSpawnBehavior() {
     const nonStartJsonLog = path.join(logsDir, "MONO-370-mono-implement-a1.jsonl");
     const contaminationOnlyLog = path.join(logsDir, "MONO-371-mono-implement-a1.jsonl");
     const missingLog = path.join(logsDir, "MONO-374-mono-implement-a1.jsonl");
+    const almostExpiredLog = path.join(logsDir, "MONO-375-mono-implement-a1.jsonl");
+    const oneShotLargeLog = path.join(logsDir, "MONO-376-mono-implement-a1.jsonl");
     fs.writeFileSync(freshLog, "");
     fs.writeFileSync(staleLog, "");
     fs.writeFileSync(otherLog, `${JSON.stringify({ type: "thread.started", thread_id: "other-thread" })}\n`);
@@ -4719,6 +4721,14 @@ async function validateWatcherInactiveGateSpawnBehavior() {
     fs.writeFileSync(expiredPartialLog, '{"type":"thread.started","thread_id":"expired');
     fs.writeFileSync(nonStartJsonLog, `${JSON.stringify({ type: "turn.completed" })}\n`);
     fs.writeFileSync(contaminationOnlyLog, "Reading additional input from stdin...\n");
+    fs.writeFileSync(almostExpiredLog, "");
+    fs.writeFileSync(
+      oneShotLargeLog,
+      `${`${JSON.stringify({ type: "turn.completed" })}\n`.repeat(12_000)}${JSON.stringify({
+        type: "thread.started",
+        thread_id: "one-shot-thread",
+      })}\n`
+    );
     const stale = new Date(Date.now() - 181_000);
     // Deliberately invert log age and registration age: startup timeout must
     // follow the durable registry publication, not a prepared log's mtime.
@@ -4729,6 +4739,7 @@ async function validateWatcherInactiveGateSpawnBehavior() {
     fs.utimesSync(nonStartJsonLog, stale, stale);
     const registeredNow = new Date().toISOString();
     const registeredStale = stale.toISOString();
+    const registeredAlmostExpired = new Date(Date.now() - 89_000).toISOString();
     const identity = {
       packVersion: "0.20.1",
       sourceCommit: "a".repeat(40),
@@ -4845,6 +4856,26 @@ async function validateWatcherInactiveGateSpawnBehavior() {
           spawned_at: registeredNow,
           ...identity,
         },
+        "MONO-375": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: almostExpiredLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: registeredAlmostExpired,
+          ...identity,
+        },
+        "MONO-376": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: oneShotLargeLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: registeredStale,
+          ...identity,
+        },
       })
     );
 
@@ -4872,6 +4903,11 @@ async function validateWatcherInactiveGateSpawnBehavior() {
     }
     if (!stdout.includes("EVENT:spawn-fail MONO-374")) {
       fail("inactive gate-spawn registration without a readable log must emit spawn-fail");
+    }
+    for (const issue of ["MONO-375", "MONO-376"]) {
+      if (new RegExp(`EVENT:(stall|dead|spawn-fail) ${issue}\\b`).test(stdout)) {
+        fail(`bounded startup must not fail before its threshold or before one-shot rescan (${issue})`);
+      }
     }
     for (const issue of ["MONO-366", "MONO-367", "MONO-371"]) {
       if (new RegExp(`EVENT:(stall|dead|spawn-fail) ${issue}\\b`).test(stdout)) {
@@ -7179,6 +7215,16 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     label: "watcher-log-scan-frozen-timeout-snapshot",
     file: "watcher",
     text: "freezeLogInspectionTarget(log.filePath, inspection.observedSize)",
+  },
+  {
+    label: "watcher-log-scan-one-shot-progress",
+    file: "watcher",
+    text: "} while (args.once && oneShotNeedsRescan)",
+  },
+  {
+    label: "watcher-startup-timeout-millisecond-boundary",
+    file: "watcher",
+    text: "if (startupAgeMs < args.stallSec * 1000) return",
   },
   {
     label: "watcher-inactive-missing-log-recovery",
