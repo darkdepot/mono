@@ -15,6 +15,8 @@
 //   (c) a non-empty log with no valid JSON events -> spawn-fail,
 //       immediately, without waiting for any age threshold; a non-JSON
 //       first line followed by valid events is contamination and warns once;
+//   (c2) an atomically pre-registered gate attempt with an empty log and null
+//       process identity stays quiet for one startup window, then spawn-fail;
 //   (d) a log that stopped growing with no writer process evidence
 //       (registry pid gone, or silent for 2x the stall threshold) -> dead.
 // Stall and dead (both branches) are suppressed when the same correlated
@@ -24,9 +26,11 @@
 // (the CLI appends its final shutdown events to the log just after the worker
 // writes the report), and never older than the log file's creation time (a
 // prior attempt's report proves nothing about a retry's writer). A fresh
-// `gates-passed` gate-ack suppresses them on the same predicate: the gate
-// pause of the two-phase dispatch handshake is a contracted wait, so the
-// worker's exited process is its expected state there, not death.
+// usable gate-ack suppresses them on the same bounded predicate: `gates-passed`
+// waits for resume, while `blocked` waits for its stage report or consumption.
+// When the current registry entry carries `gates`, the shared ack read requires
+// exact set equality for `gates-passed`; `blocked` accepts a non-empty subset
+// but still rejects foreign or duplicate names.
 //
 // Report and gate-ack events apply only to codex-cli workers with a
 // correlated A5 identity and use file mtime+size as the in-process version
@@ -48,6 +52,11 @@ const DEFAULT_REPEAT_SEC = 300;
 const DEFAULT_INTERVAL_SEC = 15;
 const DEFAULT_IDLE_SEC = 300;
 const LOG_READ_BYTES = 4096;
+// A busy or faulty worker can append forever while startup is incomplete.
+// Bound synchronous work per watcher pass; the cursor below resumes on the
+// next pass so a later thread.started event remains discoverable.
+const LOG_SCAN_MAX_BYTES = 256 * 1024;
+const LOG_PENDING_MAX_CHARS = 64 * 1024;
 const DETAIL_SNIPPET_LENGTH = 80;
 // A gate-ack is a handful of gate entries; anything larger is not one, and the
 // bound keeps a worker-controlled path from feeding the watcher unbounded data.
@@ -61,6 +70,10 @@ const GATE_PAUSE_SUPPRESSION_STALLS = 4;
 // an ack is dated in the future. Seconds-resolution filesystems exist; this is
 // not a tolerance for worker-chosen future dates.
 const FS_TIMESTAMP_SLACK_MS = 1_000;
+// The registry is orchestrator-owned, but wall clocks can step. A small,
+// explicit allowance covers publication/scan skew without letting a malformed
+// future timestamp silence liveness until that future arrives.
+const INACTIVE_SPAWN_FUTURE_SKEW_MS = 5_000;
 
 // <ISSUE-KEY>-<stage>.jsonl or <ISSUE-KEY>-<stage>-a<attempt>.jsonl,
 // where <stage> itself may contain hyphens (e.g. mono-implement).
@@ -154,8 +167,10 @@ if (!fs.existsSync(args.root) || !fs.statSync(args.root).isDirectory()) {
 const emittedAt = new Map();
 const emittedReportVersions = new Map();
 const emittedGateAckVersions = new Map();
+const logInspectionStates = new Map();
 const warnedOnce = new Set();
 let lastEventAtMs = null;
+let oneShotNeedsRescan = false;
 
 function warnOnce(message) {
   if (warnedOnce.has(message)) return;
@@ -176,15 +191,27 @@ function truncateForDetail(text) {
   return flat.length > DETAIL_SNIPPET_LENGTH ? `${flat.slice(0, DETAIL_SNIPPET_LENGTH)}...` : flat;
 }
 
-function isJsonEventLine(line) {
+function parseJsonEventLine(line) {
   const trimmed = line.trim();
-  if (!trimmed.startsWith("{")) return false;
+  if (!trimmed.startsWith("{")) return null;
   try {
     const parsed = JSON.parse(trimmed);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isJsonEventLine(line) {
+  return parseJsonEventLine(line) !== null;
+}
+
+function isThreadStartedEvent(event) {
+  return (
+    event?.type === "thread.started" &&
+    typeof event.thread_id === "string" &&
+    event.thread_id.length > 0
+  );
 }
 
 function inspectLog(filePath) {
@@ -192,33 +219,119 @@ function inspectLog(filePath) {
   try {
     descriptor = fs.openSync(filePath, "r");
   } catch {
-    return { firstLine: null, hasJsonEvent: false };
+    return {
+      firstLine: null,
+      hasJsonEvent: false,
+      hasThreadStarted: false,
+      hasCompleteLine: false,
+      hasTrailingPartial: false,
+    };
   }
   try {
-    const buffer = Buffer.alloc(LOG_READ_BYTES);
-    let pending = "";
-    let firstLine = null;
-    let bytesRead;
-    do {
-      bytesRead = fs.readSync(descriptor, buffer, 0, LOG_READ_BYTES, null);
-      pending += buffer.toString("utf8", 0, bytesRead);
-      let newlineIndex;
-      while ((newlineIndex = pending.indexOf("\n")) >= 0) {
-        const line = pending.slice(0, newlineIndex);
-        pending = pending.slice(newlineIndex + 1);
-        if (firstLine === null) firstLine = line;
-        if (isJsonEventLine(line)) return { firstLine, hasJsonEvent: true };
-      }
-    } while (bytesRead > 0);
-
-    if (pending.length > 0) {
-      if (firstLine === null) firstLine = pending;
-      if (isJsonEventLine(pending)) return { firstLine, hasJsonEvent: true };
+    const stat = fs.fstatSync(descriptor);
+    let state = logInspectionStates.get(filePath);
+    if (
+      state === undefined ||
+      state.dev !== stat.dev ||
+      state.ino !== stat.ino ||
+      stat.size < state.offset
+    ) {
+      state = {
+        dev: stat.dev,
+        ino: stat.ino,
+        offset: 0,
+        pending: "",
+        pendingOverflow: false,
+        firstLine: null,
+        completeLineCount: 0,
+        hasJsonEvent: false,
+        hasThreadStarted: false,
+        terminalTargetSize: null,
+      };
+      logInspectionStates.set(filePath, state);
     }
-    return { firstLine, hasJsonEvent: false };
+
+    const buffer = Buffer.alloc(LOG_READ_BYTES);
+    const scanTargetSize = state.terminalTargetSize ?? stat.size;
+    let remaining = Math.min(
+      LOG_SCAN_MAX_BYTES,
+      Math.max(0, scanTargetSize - state.offset)
+    );
+    while (remaining > 0 && !state.hasThreadStarted) {
+      const requested = Math.min(LOG_READ_BYTES, remaining);
+      const bytesRead = fs.readSync(descriptor, buffer, 0, requested, state.offset);
+      if (bytesRead === 0) break;
+      state.offset += bytesRead;
+      remaining -= bytesRead;
+      state.pending += buffer.toString("utf8", 0, bytesRead);
+
+      if (state.pendingOverflow) {
+        const overflowEnd = state.pending.indexOf("\n");
+        if (overflowEnd < 0) {
+          state.pending = "";
+          continue;
+        }
+        state.completeLineCount += 1;
+        state.pending = state.pending.slice(overflowEnd + 1);
+        state.pendingOverflow = false;
+      }
+
+      let newlineIndex;
+      while ((newlineIndex = state.pending.indexOf("\n")) >= 0) {
+        const line = state.pending.slice(0, newlineIndex);
+        state.pending = state.pending.slice(newlineIndex + 1);
+        state.completeLineCount += 1;
+        if (state.firstLine === null) state.firstLine = line;
+        const event = parseJsonEventLine(line);
+        if (event !== null) {
+          state.hasJsonEvent = true;
+        }
+        if (isThreadStartedEvent(event)) {
+          state.hasThreadStarted = true;
+          break;
+        }
+      }
+
+      if (state.pending.length > LOG_PENDING_MAX_CHARS) {
+        if (state.firstLine === null) {
+          state.firstLine = state.pending.slice(0, DETAIL_SNIPPET_LENGTH);
+        }
+        state.pending = "";
+        state.pendingOverflow = true;
+      }
+    }
+
+    if (!state.pendingOverflow && state.pending.length > 0) {
+      const event = parseJsonEventLine(state.pending);
+      if (event !== null) {
+        state.hasJsonEvent = true;
+      }
+      if (isThreadStartedEvent(event)) {
+        state.hasThreadStarted = true;
+      }
+    }
+
+    return {
+      firstLine:
+        state.firstLine ??
+        (!state.pendingOverflow && state.pending.length > 0 ? state.pending : null),
+      hasJsonEvent: state.hasJsonEvent,
+      hasThreadStarted: state.hasThreadStarted,
+      hasCompleteLine: state.completeLineCount > 0,
+      hasTrailingPartial: state.pendingOverflow || state.pending.length > 0,
+      observedSize: stat.size,
+      scanComplete:
+        state.hasThreadStarted || state.offset >= scanTargetSize,
+    };
   } finally {
     fs.closeSync(descriptor);
   }
+}
+
+function freezeLogInspectionTarget(filePath, observedSize) {
+  const state = logInspectionStates.get(filePath);
+  if (state === undefined || state.terminalTargetSize !== null) return;
+  state.terminalTargetSize = Math.max(state.offset, observedSize);
 }
 
 function loadRegistry(registryPath) {
@@ -309,13 +422,17 @@ function isFreshForLog(stat, log) {
 // identity, so it is correlated through the registry entry and the log it
 // belongs to, never through fields of its own.
 //
-// The ack is the only evidence the gates ran, and it suppresses liveness
-// events, so it is validated whole and fails closed: a non-empty `gates` array
-// of well-formed entries, and `gates-passed` only when every entry passed. An
-// ack claiming `gates-passed` over a blocked gate is self-contradictory and is
-// treated as no ack at all. Coverage of the dispatch's gate LIST is the
-// orchestrator's check, not the watcher's — only the orchestrator knows which
-// gates it dispatched.
+// The ack is the only evidence the gates ran, so it is validated whole and
+// fails closed: a non-empty `gates` array of well-formed entries, and
+// `gates-passed` only when every entry passed. An ack claiming `gates-passed`
+// over a blocked gate is self-contradictory and is treated as no ack at all.
+// Every usable ack suppresses liveness for the bounded gate/report handoff:
+// `gates-passed` waits for resume, while `blocked` waits for its ordinary stage
+// report or consumption. When the registry carries the dispatch's gate list,
+// the shared read boundary also requires exact set equality for `gates-passed`,
+// while `blocked` may carry a non-empty subset with no foreign names. It checks
+// this before either delivery or suppression sees the ack; an absent or
+// malformed registry list makes an existing ack unusable.
 //
 // Lifecycle: the orchestrator consumes the ack by renaming it — to
 // `<ISSUE-KEY>-gate-ack.applied.json` once the worker is resumed AND its new
@@ -396,10 +513,59 @@ function readGateAckAt(ackPath, log) {
     // actually passed is stranded. Either contradiction is no usable ack.
     if (ack.status === "gates-passed" && !ack.gates.every((entry) => entry.status === "pass")) return null;
     if (ack.status === "blocked" && !ack.gates.some((entry) => entry.status === "blocked")) return null;
-    return { ackPath, stat, status: ack.status };
+    return { ackPath, stat, status: ack.status, gateNames };
   } finally {
     fs.closeSync(fd);
   }
+}
+
+// `gates` is the durable list dispatched for this attempt. An absent or
+// malformed value fails closed whenever an ack exists: there is no form-only
+// legacy branch. Entries without an ack never reach this consumer boundary.
+//
+// Validate the complete element shape before the Set operation. That keeps a
+// partially valid array from influencing comparison and leaves the registry
+// snapshot untouched for every consumer of this scan.
+function readRegistryGates(registryEntry) {
+  if (!Object.prototype.hasOwnProperty.call(registryEntry ?? {}, "gates")) {
+    return null;
+  }
+  const gates = registryEntry.gates;
+  if (!Array.isArray(gates) || gates.length === 0) return null;
+  for (const gate of gates) {
+    if (typeof gate !== "string" || gate.length === 0) return null;
+  }
+  const gateNames = new Set(gates);
+  if (gateNames.size !== gates.length) return null;
+  return { gateNames };
+}
+
+// A gate-carrying attempt is durably registered before its process starts.
+// That narrow state is identified entirely from existing registry fields: no
+// new selector is added to workers.json. While the attempt log is still empty,
+// null process identity means startup is in progress rather than worker death.
+// A partial first JSON event, including one after a complete contamination
+// line, remains startup. Only a valid thread.started event completes startup;
+// other JSON events and non-JSON contamination remain bounded until timeout.
+function isInactiveGateRegistryEntry(registryEntry) {
+  if (registryEntry?.stage !== "mono-implement") return null;
+  if (registryEntry.thread_id !== null || registryEntry.pid !== null) return null;
+  if (readRegistryGates(registryEntry) === null) return null;
+  if (typeof registryEntry.log !== "string") return null;
+  return true;
+}
+
+function inactiveGateSpawnState(log, registryEntry, nowMs) {
+  if (!isInactiveGateRegistryEntry(registryEntry)) return null;
+  if (path.resolve(expandHome(registryEntry.log)) !== path.resolve(log.filePath)) return null;
+  const spawnedAtMs = Date.parse(registryEntry.spawned_at);
+  if (
+    !Number.isFinite(spawnedAtMs) ||
+    spawnedAtMs > nowMs + INACTIVE_SPAWN_FUTURE_SKEW_MS
+  ) {
+    return { spawnedAtMs: null, invalidTimestamp: true };
+  }
+  return { spawnedAtMs, invalidTimestamp: false };
 }
 
 // The mailbox path and the sandbox fallback the protocol permits under the
@@ -474,8 +640,17 @@ function readGateAck(reportsDir, log, registryEntry) {
     });
   if (present.length !== 1) return null;
 
+  // Do not evaluate the gate-list consumer rule for ordinary entries without
+  // an ack. Once exactly one candidate exists, validate the complete registry
+  // value before ack parsing performs any gate-name Set operation.
+  const registryGates = readRegistryGates(registryEntry);
+  if (registryGates === null) return null;
   const ack = readGateAckAt(present[0], log);
   if (ack === null) return null;
+  const hasForeignGate = !ack.gateNames.every((gateName) => registryGates.gateNames.has(gateName));
+  const incompletePassedAck =
+    ack.status === "gates-passed" && ack.gateNames.length !== registryGates.gateNames.size;
+  if (hasForeignGate || incompletePassedAck) return null;
   // Future-dated acks are rejected HERE, at the one read boundary, not only in
   // the suppression branch: a check that lives in one consumer still lets the
   // artifact be delivered and still lets it count as evidence. The worker sets
@@ -648,8 +823,57 @@ function checkReport(log, report, nowMs) {
 // MONO-47 authorises this over the dispatch's additive-only-v3 constraint;
 // without a registry context the behaviour is unchanged.
 function checkLog(log, gateAck, report, registry, nowMs) {
-  const { firstLine, hasJsonEvent } = inspectLog(log.filePath);
-  if (firstLine !== null && !hasJsonEvent) {
+  const inspection = inspectLog(log.filePath);
+  const { firstLine, hasJsonEvent } = inspection;
+  const ageSec = Math.round((nowMs - log.stat.mtimeMs) / 1000);
+  const registryEntry = registry[log.issue];
+  const inactiveSpawn = inactiveGateSpawnState(log, registryEntry, nowMs);
+
+  // The producer barrier intentionally exposes an inactive registry entry
+  // before Codex can emit thread.started. Any output without a valid
+  // thread.started remains bounded startup — empty, partial, contamination,
+  // another JSON event, or a completed non-JSON line. The same stall threshold
+  // is its spawn timeout; after it expires, report spawn-fail so the
+  // orchestrator retires the inactive entry before pre-registering a retry.
+  if (inactiveSpawn !== null && !inspection.hasThreadStarted) {
+    if (inactiveSpawn.invalidTimestamp) {
+      emitEvent(
+        "spawn-fail",
+        log.issue,
+        `inactive gate spawn has invalid or future-dated spawned_at (${log.name})`,
+        `spawn-fail:inactive-time:${log.name}`,
+        nowMs
+      );
+      return;
+    }
+    const startupAgeMs = Math.max(0, nowMs - inactiveSpawn.spawnedAtMs);
+    if (startupAgeMs < args.stallSec * 1000) return;
+    if (!inspection.scanComplete) {
+      // Freeze the timeout snapshot once. Later appends cannot postpone the
+      // decision forever, while bytes already present remain eligible to
+      // prove that this attempt did reach thread.started.
+      freezeLogInspectionTarget(log.filePath, inspection.observedSize);
+      if (
+        args.once &&
+        inspection.observedSize !== undefined &&
+        logInspectionStates.has(log.filePath)
+      ) {
+        oneShotNeedsRescan = true;
+      }
+      return;
+    }
+    const startupAgeSec = Math.floor(startupAgeMs / 1000);
+    emitEvent(
+      "spawn-fail",
+      log.issue,
+      `inactive gate spawn did not reach thread.started within ${startupAgeSec}s of registry publication (${log.name})`,
+      `spawn-fail:inactive:${log.name}`,
+      nowMs
+    );
+    return;
+  }
+
+  if (inspection.scanComplete && firstLine !== null && !hasJsonEvent) {
     // A non-empty log with no JSON events means the spawn command failed
     // before Codex started a thread; report it immediately.
     emitEvent(
@@ -667,7 +891,6 @@ function checkLog(log, gateAck, report, registry, nowMs) {
     );
   }
 
-  const ageSec = Math.round((nowMs - log.stat.mtimeMs) / 1000);
   if (ageSec < args.stallSec) return;
 
   // A worker that exited normally leaves a correlated report for this stage —
@@ -680,7 +903,7 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   // The birthtime guard keeps a prior attempt's report from masking a fresh
   // retry log: a report older than this log file's creation belongs to an
   // earlier attempt and proves nothing about this writer.
-  // An unconsumed `gates-passed` ack changes who governs suppression here.
+  // An unconsumed usable gate-ack changes who governs suppression here.
   // Report suppression is unbounded by construction — both operands of
   // isFreshForLog are fixed file timestamps — so a report sitting beside an
   // unconsumed ack would silence this worker forever, masking the gate-pause
@@ -710,19 +933,18 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   // Protocol, gate-pause carve-out.
   const pausedOnAck =
     gateAck !== null &&
-    gateAck.status === "gates-passed" &&
     ackBelongsToAttempt(gateAck.stat, log);
   const reportStat = report?.stat ?? null;
   if (!pausedOnAck && reportStat !== null && isFreshForLog(reportStat, log)) return;
 
   // The gate pause of the two-phase dispatch handshake is a contracted wait,
-  // not a death: a fresh `gates-passed` gate-ack means this worker stopped on
-  // purpose and is waiting for the orchestrator to apply the dispatch's
-  // lifecycle moves and resume it. A `blocked` ack suppresses nothing — that
-  // path also writes the ordinary stage report, which the check above already
-  // honours. The suppression ends when the orchestrator consumes the ack at
-  // resume time; a retained ack cannot be told apart from a live pause here,
-  // which is why that rename is a protocol obligation and not a nicety.
+  // not a death: a fresh `gates-passed` ack waits for lifecycle application
+  // and resume, while a valid `blocked` ack waits for its ordinary stage report
+  // or consumption. Both use this bounded handoff window, so the normal gap
+  // between blocked ack and report cannot trigger a duplicate healing attempt.
+  // Suppression ends when the orchestrator consumes the ack; a retained ack
+  // cannot be told apart from a live handoff here, which is why that rename is
+  // a protocol obligation and not a nicety.
   //
   // `gateAck` is the scan's single ack snapshot, already registry-correlated by
   // the caller — one read shared with checkGateAck, so a consumption landing
@@ -752,7 +974,7 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   // Freshness and the bound are both measured on the ATTEMPT's log, not the
   // mtime-picked one: otherwise a superseded attempt that keeps writing holds
   // suppression open long after the current attempt's pause has expired.
-  if (gateAck !== null && gateAck.status === "gates-passed" && ackBelongsToAttempt(gateAck.stat, log)) {
+  if (gateAck !== null && ackBelongsToAttempt(gateAck.stat, log)) {
     // The deadline is measured from the PAUSE — this log's silence — never from
     // the ack's own mtime. The ack sits at a worker-writable path, so anchoring
     // to it let a stuck or superseded worker touch the file before every
@@ -801,12 +1023,24 @@ function checkRegistry(registry, nowMs) {
     // through their own runtime signals.
     if (entry?.transport && entry.transport !== "codex-cli") continue;
     const logPath = entry && typeof entry.log === "string" ? path.resolve(expandHome(entry.log)) : null;
-    if (!logPath || !fs.existsSync(logPath)) {
+    let hasReadableLog = false;
+    if (logPath !== null) {
+      try {
+        hasReadableLog = fs.statSync(logPath).isFile();
+        if (hasReadableLog) fs.accessSync(logPath, fs.constants.R_OK);
+      } catch {
+        hasReadableLog = false;
+      }
+    }
+    if (!hasReadableLog) {
+      const inactiveGateEntry = isInactiveGateRegistryEntry(entry);
       emitEvent(
-        "dead",
+        inactiveGateEntry ? "spawn-fail" : "dead",
         issueKey,
-        `workers.json entry (stage ${entry?.stage ?? "unknown"}) has no live log file`,
-        `dead:registry:${issueKey}`,
+        inactiveGateEntry
+          ? `inactive gate spawn has no readable attempt log (${entry.log})`
+          : `workers.json entry (stage ${entry?.stage ?? "unknown"}) has no live log file`,
+        `${inactiveGateEntry ? "spawn-fail" : "dead"}:registry:${issueKey}`,
         nowMs
       );
     }
@@ -833,6 +1067,17 @@ function scan() {
   const controlState = loadControlState(path.join(args.root, "control.json"));
   const latestLogs = collectLatestLogs(path.join(args.root, "logs"));
   const reportsDir = path.join(args.root, "reports");
+  const currentLogPaths = new Set();
+  for (const [issueKey, entry] of Object.entries(registry)) {
+    if (typeof entry?.log === "string") {
+      currentLogPaths.add(path.resolve(expandHome(entry.log)));
+    }
+    const selectedLog = latestLogs.get(issueKey);
+    if (selectedLog !== undefined) currentLogPaths.add(selectedLog.filePath);
+  }
+  for (const filePath of logInspectionStates.keys()) {
+    if (!currentLogPaths.has(filePath)) logInspectionStates.delete(filePath);
+  }
   for (const log of latestLogs.values()) {
     // The watcher observes the active registry, not the directory's history:
     // only Issues present in workers.json are live workers. Logs whose
@@ -885,7 +1130,10 @@ console.error(
   `watch-workers: root=${args.root} stall-sec=${args.stallSec} repeat-sec=${args.repeatSec} interval-sec=${args.intervalSec} idle-sec=${args.idleSec}${args.once ? " once" : ""}`
 );
 
-scan();
+do {
+  oneShotNeedsRescan = false;
+  scan();
+} while (args.once && oneShotNeedsRescan);
 if (!args.once) {
   setInterval(scan, args.intervalSec * 1000);
 }

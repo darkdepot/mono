@@ -108,10 +108,12 @@ block only resolves it for this Issue.
   in the shape `references/orchestration.md` fixes — `issue`, `phase`,
   `gates[]`, `status` of `gates-passed` or `blocked`. Write it on gate
   completion, on any gate blocker, and before stopping for any other reason.
-  It is not a stage report and changes nothing in
-  `templates/orchestrator-report.md`. If the sandbox denies that write, write
-  the same JSON to `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack-a<N>.json`, the
-  same fallback the report uses.
+  It is not a stage report: the Worker Report shape and gate-ack shape stay
+  unchanged, while the Worker Registry in `templates/orchestrator-report.md`
+  gains the optional attempt-scoped `gates` field. If the sandbox denies that
+  write, write the same JSON to
+  `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack-a<N>.json`, the same fallback
+  the report uses.
 - Then stop and wait to be resumed: do not apply or queue the lifecycle move,
   write code, or write a stage report — unless your ack is `blocked`, which is
   the one case that does require the stage report named below, written after
@@ -143,7 +145,8 @@ block only resolves it for this Issue.
   recommendation, and stop. Report stage-terminal exits (including
   `needs-human` and `drift-candidate`) with the stage's own status verbatim.
 - One Issue only; no sub-workers; do not manage other sessions; do not touch
-  files owned by other Issues.
+  files owned by other Issues; do not touch orchestrator state (`ledger.md`,
+  `workers.json`, `control.json`, `dispatch/`, or `consumed/`).
 - Never write to Linear yourself, even when Linear is available. Produce
   every stage-required Linear mutation (comments, status moves, certificates)
   in its required shape, but deliver it through `linear_mutations_pending` in
