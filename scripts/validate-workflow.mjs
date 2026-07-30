@@ -5418,6 +5418,18 @@ function validateWatcherGateAckBehavior() {
     addFixture("MONO-348", gateAck("MONO-348", "blocked", [blockedSeamGate]), {
       registry: { gates: dispatchedGates },
     });
+    // Reports have no attempt number. A late superseded report can look fresh
+    // beside the current blocked ack, so the watcher must surface BOTH and
+    // leave attempt reconciliation to the orchestrator consumer.
+    addFixture("MONO-364", gateAck("MONO-364", "blocked", [blockedSeamGate]), {
+      registry: { gates: dispatchedGates },
+      report: {
+        issue: "MONO-364",
+        stage: "mono-implement",
+        status: "blocked",
+        ...identity,
+      },
+    });
     // (o) blocked remains fail-closed when it names a foreign gate.
     addFixture("MONO-349", gateAck("MONO-349", "blocked", [blockedReviewGate]), {
       registry: { gates: dispatchedGates },
@@ -5919,6 +5931,7 @@ function validateWatcherGateAckBehavior() {
       ["MONO-337", "registry gate names exact match in another order"],
       ["MONO-347", "current attempt despite prior-attempt tombstone"],
       ["MONO-348", "blocked ack with a non-empty registry-gate subset"],
+      ["MONO-364", "blocked ack beside a potentially superseded shared-path report"],
     ]) {
       if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must emit a gate-ack event`);
@@ -6032,7 +6045,7 @@ function validateWatcherGateAckBehavior() {
       }
     }
     // v3 semantics intact: the report event still fires next to a gate-ack.
-    if (!stdout.includes("EVENT:report MONO-306")) {
+    if (!stdout.includes("EVENT:report MONO-306") || !stdout.includes("EVENT:report MONO-364")) {
       fail("gate-ack must not suppress the v3 report event for the same worker");
     }
 
@@ -6892,6 +6905,26 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     text: "An unconsumed valid `blocked` ack with no correlated report is a\n  missing-report recovery case, never the no-ack path",
   },
   {
+    label: "consumer-blocked-attempt-reconciliation-reference",
+    file: "orchestration",
+    text: "Shape and freshness do not correlate a blocked report to an attempt",
+  },
+  {
+    label: "consumer-blocked-attempt-reconciliation-skill",
+    file: "orchestrateSkill",
+    text: "Before consuming `.blocked`, reconcile the transport thread and worktree",
+  },
+  {
+    label: "consumer-blocked-resume-report-reconciliation",
+    file: "orchestration",
+    text: "The record binds the ack outcome, not a report version",
+  },
+  {
+    label: "registry-inactive-gate-startup-shape",
+    file: "reportTemplate",
+    text: "`thread_id: null` together with `pid: null` is permitted only for the\ninactive gate-startup state",
+  },
+  {
     label: "consumption-record-shape",
     file: "orchestration",
     text: "\"attempt\": 1,\n     \"outcome\": \"applied | rejected | blocked\"",
@@ -7180,6 +7213,10 @@ function validateRegistryGateContract() {
     "consumer-blocked-report-barrier-reference",
     "consumer-blocked-report-barrier-skill",
     "consumer-blocked-reportless-recovery-reference",
+    "consumer-blocked-attempt-reconciliation-reference",
+    "consumer-blocked-attempt-reconciliation-skill",
+    "consumer-blocked-resume-report-reconciliation",
+    "registry-inactive-gate-startup-shape",
     "monitor-later-stage-reconciliation-reference",
     "monitor-later-stage-reconciliation-skill",
     "watcher-blocked-bounded-suppression",

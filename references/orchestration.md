@@ -464,6 +464,11 @@ Order, and it is the whole protocol:
    ack before its report, so consuming during that interval would discard the
    only durable recovery evidence if the worker died. Preserve the ack and
    `registryEntry.gates` while polling for the correlated ordinary stage report.
+   Shape and freshness do not correlate a blocked report to an attempt because
+   the shared report path carries no attempt number. Before consumption,
+   reconcile the transport thread and worktree exactly as for the
+   `gates-passed`-plus-report ambiguity below; if current-attempt authorship is
+   not proven, keep the ack and field and resolve the ambiguity.
    Only after that report exists and validates, atomically publish the private
    consumption record with `outcome: blocked`, rename the ack as
    `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`, remove `registryEntry.gates`, and
@@ -471,6 +476,11 @@ Order, and it is the whole protocol:
    consumption state, beside `.applied` after a resume and `.rejected` for a
    coverage failure: an ack whose gates honestly did not pass is spent too, and
    without a state of its own it would be redelivered on every watcher restart.
+   The record binds the ack outcome, not a report version. After a crash with a
+   private `outcome: blocked` record, Resume may finish the journaled ack rename
+   and registry cleanup, but it re-runs transport/worktree reconciliation before
+   routing any shared-path report; the record alone never authenticates that
+   report or authorizes routing it twice.
 
    A `gates-passed` ack beside a stage report is the genuinely ambiguous one.
    It is what the crash window above looks like — the resume succeeded, the

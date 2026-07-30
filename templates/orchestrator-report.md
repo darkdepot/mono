@@ -108,7 +108,8 @@ Status semantics:
 Path: `~/.mono-agent-workflow/orchestrator/<product>/workers.json`
 
 Orchestrator-owned runtime metadata; workers never read or write it. One
-entry per Issue, updated on spawn, stage advance, and respawn. The registry
+entry per Issue, updated on gate pre-registration, spawn, stage advance, and
+respawn. The registry
 is what lets a fresh orchestrator session rebind to surviving `codex-cli`
 threads (`codex exec resume <thread_id>`) instead of respawning them, and it
 is the durable source of the gate names dispatched for the current attempt.
@@ -141,6 +142,15 @@ and it never survives into `mono-preflight`, `mono-ship`, or another attempt.
 When an ack exists, an absent or malformed `gates` value makes the ack
 unusable and requires a verified new attempt with a correct list. With no ack,
 field absence does not change the entry's watcher liveness signals.
+
+`thread_id: null` together with `pid: null` is permitted only for the
+inactive gate-startup state: a gate-carrying `mono-implement` entry with valid
+`gates` and its empty attempt-numbered `log`, atomically registered before the
+worker process starts. The watcher keeps that state quiet for one bounded
+startup window and then emits `spawn-fail`. After `thread.started`, the
+orchestrator updates the same entry with live identity while preserving `log`
+and `gates`; every other live `codex-cli` entry carries verified process
+identity.
 
 ## Product Control
 

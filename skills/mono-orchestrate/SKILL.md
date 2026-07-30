@@ -290,7 +290,10 @@ Workflow states:
      all, and its ack arrives before its report by contract.
      Do not publish the consumption record, rename the ack, or remove
      `registryEntry.gates` until the correlated ordinary stage report exists
-     and validates. Preserve the ack and field while polling.
+     and validates. Before consuming `.blocked`, reconcile the transport thread and worktree
+     to prove the current attempt authored the shared-path report; report shape
+     and freshness alone are insufficient. Preserve the ack and field while
+     polling or resolving ambiguity.
      Only after that report validates, atomically publish the private
      orchestrator `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with
      `outcome: blocked`, rename the ack as
@@ -309,7 +312,10 @@ Workflow states:
      trusted consumption record first, then rename every ack candidate, then
      remove `gates`. A
      worker-writable tombstone or mailbox record never substitutes for that
-     private current-attempt record during Resume cleanup. A worker quiet after a fresh
+     private current-attempt record during Resume cleanup. For `outcome:
+     blocked`, that record binds only the ack outcome: after a crash, re-run
+     transport/worktree reconciliation before routing any report and never use
+     the record itself as report-version proof. A worker quiet after a fresh
      `gates-passed` ack is waiting by contract — never heal it.
    - Route non-green reports (`blocked`, `needs-human`, `drift-candidate`,
      `needs-decision`, `scope-drift-needs-handoff`) to `decide-or-escalate`
