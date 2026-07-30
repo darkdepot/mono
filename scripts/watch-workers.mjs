@@ -17,12 +17,13 @@
 //       first line followed by valid events is contamination and warns once;
 //   (d) a log that stopped growing with no writer process evidence
 //       (registry pid gone, or silent for 2x the stall threshold) -> dead.
-// Stall and dead (both branches) are suppressed when a mailbox report for
-// the same issue+stage shows the stage completed: report at least as fresh
-// as the log's last event, or within one stall threshold behind it (the CLI
-// appends its final shutdown events to the log just after the worker writes
-// the report), and never older than the log file's creation time (a prior
-// attempt's report proves nothing about a retry's writer). A fresh
+// Stall and dead (both branches) are suppressed when the same correlated
+// report snapshot used for delivery shows the stage completed: issue, stage,
+// A5 identity, registry log, and freshness all match. The report is at least
+// as fresh as the log's last event, or within one stall threshold behind it
+// (the CLI appends its final shutdown events to the log just after the worker
+// writes the report), and never older than the log file's creation time (a
+// prior attempt's report proves nothing about a retry's writer). A fresh
 // `gates-passed` gate-ack suppresses them on the same predicate: the gate
 // pause of the two-phase dispatch handshake is a contracted wait, so the
 // worker's exited process is its expected state there, not death.
@@ -286,15 +287,6 @@ function collectLatestLogs(logsDir) {
     if (!current || stat.mtimeMs > current.stat.mtimeMs) latestByIssue.set(log.issue, log);
   }
   return latestByIssue;
-}
-
-function reportStatFor(reportsDir, log) {
-  const reportPath = path.join(reportsDir, `${log.issue}-${log.stage}.json`);
-  try {
-    return fs.statSync(reportPath);
-  } catch {
-    return null;
-  }
 }
 
 // The freshness predicate every intentional-stop artefact shares. A report or
@@ -655,7 +647,7 @@ function checkReport(log, report, nowMs) {
 // was unreachable exactly when it was needed. Orchestrator amendment 2 on
 // MONO-47 authorises this over the dispatch's additive-only-v3 constraint;
 // without a registry context the behaviour is unchanged.
-function checkLog(log, gateAck, reportsDir, registry, nowMs) {
+function checkLog(log, gateAck, report, registry, nowMs) {
   const { firstLine, hasJsonEvent } = inspectLog(log.filePath);
   if (firstLine !== null && !hasJsonEvent) {
     // A non-empty log with no JSON events means the spawn command failed
@@ -678,7 +670,8 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
   const ageSec = Math.round((nowMs - log.stat.mtimeMs) / 1000);
   if (ageSec < args.stallSec) return;
 
-  // A worker that exited normally leaves a mailbox report for this stage —
+  // A worker that exited normally leaves a correlated report for this stage —
+  // the same fail-closed snapshot `scan` already uses for delivery — and it is
   // at least as fresh as the log's last event, or within one stall threshold
   // behind it (the CLI appends its final shutdown events to the log just
   // after the worker writes the report). That is the normal advance signal,
@@ -719,7 +712,7 @@ function checkLog(log, gateAck, reportsDir, registry, nowMs) {
     gateAck !== null &&
     gateAck.status === "gates-passed" &&
     ackBelongsToAttempt(gateAck.stat, log);
-  const reportStat = reportStatFor(reportsDir, log);
+  const reportStat = report?.stat ?? null;
   if (!pausedOnAck && reportStat !== null && isFreshForLog(reportStat, log)) return;
 
   // The gate pause of the two-phase dispatch handshake is a contracted wait,
@@ -882,7 +875,7 @@ function scan() {
     // Both events go out; the consumer branches on the ack's status.
     checkGateAck(attemptLog, gateAck, nowMs);
     checkReport(log, report, nowMs);
-    checkLog(attemptLog, gateAck, reportsDir, registry, nowMs);
+    checkLog(attemptLog, gateAck, report, registry, nowMs);
   }
   checkRegistry(registry, nowMs);
   checkIdle(registrySnapshot, controlState, nowMs);
