@@ -150,8 +150,9 @@ atomically registered before the worker process starts. The watcher keeps that
 state quiet for one bounded startup window measured from `spawned_at`, never
 from log mtime. An empty log or partial first JSON event, including one after
 a complete contamination line, remains in that bounded startup state; a
-complete newline-terminated non-JSON log fails immediately. A value more than
-five seconds in the future is malformed and
+complete newline-terminated non-JSON log fails immediately. Only a valid
+`thread.started` completes startup; any other JSON event remains bounded until
+`spawn-fail`. A value more than five seconds in the future is malformed and
 gets no startup suppression; after the window the watcher emits `spawn-fail`.
 After `thread.started`, the
 orchestrator updates the same entry with live identity while preserving `log`

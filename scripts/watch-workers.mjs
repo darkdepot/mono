@@ -184,15 +184,27 @@ function truncateForDetail(text) {
   return flat.length > DETAIL_SNIPPET_LENGTH ? `${flat.slice(0, DETAIL_SNIPPET_LENGTH)}...` : flat;
 }
 
-function isJsonEventLine(line) {
+function parseJsonEventLine(line) {
   const trimmed = line.trim();
-  if (!trimmed.startsWith("{")) return false;
+  if (!trimmed.startsWith("{")) return null;
   try {
     const parsed = JSON.parse(trimmed);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isJsonEventLine(line) {
+  return parseJsonEventLine(line) !== null;
+}
+
+function isThreadStartedEvent(event) {
+  return (
+    event?.type === "thread.started" &&
+    typeof event.thread_id === "string" &&
+    event.thread_id.length > 0
+  );
 }
 
 function inspectLog(filePath) {
@@ -203,6 +215,7 @@ function inspectLog(filePath) {
     return {
       firstLine: null,
       hasJsonEvent: false,
+      hasThreadStarted: false,
       hasCompleteLine: false,
       hasTrailingPartial: false,
     };
@@ -212,6 +225,7 @@ function inspectLog(filePath) {
     let pending = "";
     let firstLine = null;
     let completeLineCount = 0;
+    let hasJsonEvent = false;
     let bytesRead;
     do {
       bytesRead = fs.readSync(descriptor, buffer, 0, LOG_READ_BYTES, null);
@@ -222,10 +236,15 @@ function inspectLog(filePath) {
         pending = pending.slice(newlineIndex + 1);
         completeLineCount += 1;
         if (firstLine === null) firstLine = line;
-        if (isJsonEventLine(line)) {
+        const event = parseJsonEventLine(line);
+        if (event !== null) {
+          hasJsonEvent = true;
+        }
+        if (isThreadStartedEvent(event)) {
           return {
             firstLine,
             hasJsonEvent: true,
+            hasThreadStarted: true,
             hasCompleteLine: true,
             hasTrailingPartial: false,
           };
@@ -235,10 +254,15 @@ function inspectLog(filePath) {
 
     if (pending.length > 0) {
       if (firstLine === null) firstLine = pending;
-      if (isJsonEventLine(pending)) {
+      const event = parseJsonEventLine(pending);
+      if (event !== null) {
+        hasJsonEvent = true;
+      }
+      if (isThreadStartedEvent(event)) {
         return {
           firstLine,
           hasJsonEvent: true,
+          hasThreadStarted: true,
           hasCompleteLine: completeLineCount > 0,
           hasTrailingPartial: false,
         };
@@ -246,7 +270,8 @@ function inspectLog(filePath) {
     }
     return {
       firstLine,
-      hasJsonEvent: false,
+      hasJsonEvent,
+      hasThreadStarted: false,
       hasCompleteLine: completeLineCount > 0,
       hasTrailingPartial: pending.length > 0,
     };
@@ -466,10 +491,11 @@ function readRegistryGates(registryEntry) {
 // new selector is added to workers.json. While the attempt log is still empty,
 // null process identity means startup is in progress rather than worker death.
 // A partial first JSON event, including one after a complete contamination
-// line, remains startup; a complete newline-terminated non-JSON log is a
-// definitive spawn failure and keeps the existing immediate failure path.
+// line, remains startup. Only a valid thread.started event completes startup;
+// other JSON events remain bounded until timeout. A complete
+// newline-terminated non-JSON log is a definitive spawn failure and keeps the
+// existing immediate failure path.
 function inactiveGateSpawnStartedAtMs(log, registryEntry, inspection, nowMs) {
-  if (inspection.hasJsonEvent) return null;
   if (registryEntry?.stage !== "mono-implement") return null;
   if (registryEntry.thread_id !== null || registryEntry.pid !== null) return null;
   if (readRegistryGates(registryEntry) === null) return null;
@@ -749,7 +775,12 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   // orchestrator retires the inactive entry before pre-registering a retry.
   if (
     inactiveSpawnedAtMs !== null &&
-    (!inspection.hasCompleteLine || inspection.hasTrailingPartial)
+    !inspection.hasThreadStarted &&
+    (
+      inspection.hasJsonEvent ||
+      !inspection.hasCompleteLine ||
+      inspection.hasTrailingPartial
+    )
   ) {
     const startupAgeSec = Math.max(0, Math.round((nowMs - inactiveSpawnedAtMs) / 1000));
     if (startupAgeSec < args.stallSec) return;

@@ -4702,6 +4702,7 @@ function validateWatcherInactiveGateSpawnBehavior() {
     const contaminatedPartialLog = path.join(logsDir, "MONO-367-mono-implement-a1.jsonl");
     const completedFailureLog = path.join(logsDir, "MONO-368-mono-implement-a1.jsonl");
     const expiredPartialLog = path.join(logsDir, "MONO-369-mono-implement-a1.jsonl");
+    const nonStartJsonLog = path.join(logsDir, "MONO-370-mono-implement-a1.jsonl");
     fs.writeFileSync(freshLog, "");
     fs.writeFileSync(staleLog, "");
     fs.writeFileSync(otherLog, `${JSON.stringify({ type: "thread.started", thread_id: "other-thread" })}\n`);
@@ -4713,6 +4714,7 @@ function validateWatcherInactiveGateSpawnBehavior() {
     );
     fs.writeFileSync(completedFailureLog, "spawn command failed before JSON\n");
     fs.writeFileSync(expiredPartialLog, '{"type":"thread.started","thread_id":"expired');
+    fs.writeFileSync(nonStartJsonLog, `${JSON.stringify({ type: "turn.completed" })}\n`);
     const stale = new Date(Date.now() - 181_000);
     // Deliberately invert log age and registration age: startup timeout must
     // follow the durable registry publication, not a prepared log's mtime.
@@ -4720,6 +4722,7 @@ function validateWatcherInactiveGateSpawnBehavior() {
     fs.utimesSync(otherLog, stale, stale);
     fs.utimesSync(futureLog, stale, stale);
     fs.utimesSync(expiredPartialLog, stale, stale);
+    fs.utimesSync(nonStartJsonLog, stale, stale);
     const registeredNow = new Date().toISOString();
     const registeredStale = stale.toISOString();
     const identity = {
@@ -4808,6 +4811,16 @@ function validateWatcherInactiveGateSpawnBehavior() {
           spawned_at: registeredStale,
           ...identity,
         },
+        "MONO-370": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: nonStartJsonLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: registeredStale,
+          ...identity,
+        },
       })
     );
 
@@ -4838,9 +4851,9 @@ function validateWatcherInactiveGateSpawnBehavior() {
         fail(`incomplete first event must remain in bounded inactive startup (${issue})`);
       }
     }
-    for (const issue of ["MONO-368", "MONO-369"]) {
+    for (const issue of ["MONO-368", "MONO-369", "MONO-370"]) {
       if (!stdout.includes(`EVENT:spawn-fail ${issue}`)) {
-        fail(`completed failure or expired partial startup must emit spawn-fail (${issue})`);
+        fail(`completed failure or startup without thread.started must emit spawn-fail (${issue})`);
       }
     }
   } finally {
@@ -7054,6 +7067,11 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     text: "inspection.hasTrailingPartial",
   },
   {
+    label: "watcher-inactive-requires-thread-started",
+    file: "watcher",
+    text: "!inspection.hasThreadStarted",
+  },
+  {
     label: "producer-inactive-registration-clock",
     file: "orchestration",
     text: "The startup window\n  begins at that registry publication's `spawned_at`",
@@ -7352,6 +7370,7 @@ function validateRegistryGateContract() {
     "watcher-inactive-registration-clock",
     "watcher-inactive-future-timestamp",
     "watcher-inactive-partial-first-event",
+    "watcher-inactive-requires-thread-started",
     "producer-inactive-registration-clock",
     "monitor-later-stage-reconciliation-reference",
     "monitor-later-stage-reconciliation-skill",

@@ -166,7 +166,8 @@ Workflow states:
      retire an inactive entry when spawn fails. The watcher recognizes the
      empty-log/null-identity entry as inactive startup, keeps it quiet for one
      stall-threshold window measured from that `spawned_at`, and emits
-     `spawn-fail` if `thread.started` never arrives. A value more than five
+     `spawn-fail` if a valid `thread.started` never arrives; another JSON event
+     does not complete startup. A value more than five
      seconds in the future is malformed and gets no startup suppression.
      Preserve the list on a
      same-attempt no-ack nudge/resume and while a passed ack awaits confirmed

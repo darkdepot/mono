@@ -746,7 +746,9 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
   liveness event while the log is empty or its first JSON event is partial,
   including after a complete contamination line, for one stall-threshold
   startup window. A complete newline-terminated non-JSON log still fails
-  immediately. The startup window
+  immediately. Only a valid `thread.started` event completes inactive startup;
+  any other JSON event stays in the bounded window and becomes `spawn-fail` at
+  timeout. The startup window
   begins at that registry publication's `spawned_at`, never at a prepared log's
   mtime. A timestamp more than five seconds in the future is malformed and does
   not enter the inactive-startup suppression branch; after the window it emits
