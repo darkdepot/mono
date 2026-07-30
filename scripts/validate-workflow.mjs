@@ -4561,7 +4561,8 @@ function validateHeartbeatContract() {
     fail("Missing scripts/watch-workers.mjs");
   }
   assertIncludes("scripts/verify.mjs", "watch-workers.mjs", "node --check step for scripts/watch-workers.mjs");
-  assertIncludes("references/orchestration.md", "Immediately after verifying every spawn, resume, or session rotation, in the same orchestrator turn and before any other action, update that worker's `workers.json` entry with at least the current `pid`, `log`, `last_activity_at`, and `stage` (and the new `thread_id` on rotation). A verified gate-carrying new attempt also writes its exact `gates` list in this registration; a same-attempt resume preserves the existing list until the lifecycle table authorizes removal. A live worker paired with a stale registry PID violates the registry contract; watcher events produced from that entry are untrustworthy, and investigating any such event must begin by reconciling the registry with the actual writer process.");
+  assertIncludes("references/orchestration.md", "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log and atomically pre-register the inactive `workers.json`\n  entry with that `log`, stage, pack identity, and exact `gates` list.");
+  assertIncludes("references/orchestration.md", "Immediately after verifying every non-gate spawn, resume, or session\n  rotation, in the same orchestrator turn and before any other action, update\n  that worker's `workers.json` entry with at least the current `pid`, `log`,\n  `last_activity_at`, and `stage` (and the new `thread_id` on rotation).");
 
   for (const required of [
     "## Heartbeat",
@@ -5103,8 +5104,8 @@ function validateGateAckSuppressionPredicate() {
       "watch-workers.mjs: pausedOnAck must not key on isFreshForLog; a retained crash-window ack still has to bound report suppression after execution advances the log"
     );
   }
-  const suppression = watcher.slice(watcher.indexOf('if (gateAck !== null && gateAck.status === "gates-passed"'));
-  if (!suppression.startsWith('if (gateAck !== null && gateAck.status === "gates-passed" && ackBelongsToAttempt(gateAck.stat, log))')) {
+  const suppression = watcher.slice(watcher.indexOf("if (gateAck !== null && ackBelongsToAttempt(gateAck.stat, log))"));
+  if (!suppression.startsWith("if (gateAck !== null && ackBelongsToAttempt(gateAck.stat, log))")) {
     fail(
       "watch-workers.mjs: the gate-pause suppression branch must use the same belonging predicate as the override, or the two disagree and the pair is neither bounded nor suppressed"
     );
@@ -5907,14 +5908,15 @@ function validateWatcherGateAckBehavior() {
       ["MONO-332", "registry log while a superseded log is newer"],
       ["MONO-301", "mailbox"],
       ["MONO-311", "worktree fallback"],
+      ["MONO-302", "valid blocked ack awaiting its stage report"],
+      ["MONO-348", "valid blocked-subset ack awaiting its stage report"],
     ]) {
       if (new RegExp(`EVENT:(stall|dead) ${issue}\\b`).test(stdout)) {
-        fail(`a fresh gates-passed gate-ack in the ${label} must suppress stall and dead for that worker`);
+        fail(`a fresh usable gate-ack in the ${label} must suppress stall and dead for that worker`);
       }
     }
     // Everything that is not a healthy pause keeps the liveness ladder armed.
     for (const [issue, label] of [
-      ["MONO-302", "blocked ack"],
       ["MONO-303", "prior-attempt ack"],
       ["MONO-305", "malformed ack"],
       ["MONO-307", "gates-passed ack with no gates array"],
@@ -5946,10 +5948,6 @@ function validateWatcherGateAckBehavior() {
       ["MONO-343", "present non-array registry gates value"],
       ["MONO-344", "present registry gates array with a non-string element"],
       ["MONO-345", "present registry gates array with an empty string"],
-      // A valid blocked ack is deliverable, but delivery is intentionally not
-      // suppression: the terminal path writes its ordinary stage report and
-      // leaves the liveness ladder armed until that report is reconciled.
-      ["MONO-348", "deliverable blocked ack whose names are a valid non-empty registry subset"],
       ["MONO-349", "blocked ack with a foreign registry gate"],
       ["MONO-346", "gates-less registry entry with an ack"],
       ["MONO-352", "gates-less registry entry without an ack"],
@@ -6766,7 +6764,7 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
   {
     label: "producer-registration",
     file: "orchestrateSkill",
-    text: "On every verified gate-carrying `mono-implement` spawn, respawn, or\n     session rotation, write `registryEntry.gates`",
+    text: "Before starting every gate-carrying `mono-implement` spawn, respawn,\n     or session rotation, create its empty attempt log and atomically\n     pre-register `registryEntry.gates`",
   },
   {
     label: "producer-new-attempt",
@@ -6826,7 +6824,7 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
   {
     label: "producer-stage-advance",
     file: "orchestration",
-    text: "| Stage advance or any other non-gate dispatch | Remove `gates` explicitly, but only AFTER reconciling every unconsumed ack for the current attempt. |",
+    text: "| Stage advance or any other non-gate dispatch | Reconcile every unconsumed ack first, then atomically change `stage`/`log` and remove `gates` in the same registry write. |",
   },
   {
     label: "producer-crash-cleanup",
@@ -6918,6 +6916,31 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     label: "monitor-absent-gates-skill",
     file: "orchestrateSkill",
     text: "When an ack exists but `gates` is absent, the ack is unusable and the\n     current attempt takes the NEW-attempt recovery branch",
+  },
+  {
+    label: "producer-pre-spawn-barrier-reference",
+    file: "orchestration",
+    text: "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log and atomically pre-register the inactive `workers.json`\n  entry with that `log`, stage, pack identity, and exact `gates` list",
+  },
+  {
+    label: "producer-pre-spawn-barrier-skill",
+    file: "orchestrateSkill",
+    text: "The worker process starts only after that durable write succeeds",
+  },
+  {
+    label: "monitor-later-stage-reconciliation-reference",
+    file: "orchestration",
+    text: "A later-stage entry can never legitimately retain `gates`: stage/log\n  advance and `gates` removal are one atomic post-reconciliation registry write",
+  },
+  {
+    label: "monitor-later-stage-reconciliation-skill",
+    file: "orchestrateSkill",
+    text: "Because stage/log advance and `gates` removal are one atomic\n     post-reconciliation write, later-stage presence is never an in-progress\n     cleanup window",
+  },
+  {
+    label: "watcher-blocked-bounded-suppression",
+    file: "orchestration",
+    text: "A valid `blocked` ack gets the same bounded suppression until its stage\n  report is observed or the ack is consumed",
   },
   {
     label: "consumer-no-source-discriminator",
@@ -7056,6 +7079,11 @@ function validateRegistryGateContract() {
     "watcher-absent-gates-fail-closed",
     "watcher-no-ack-unchanged",
     "monitor-absent-gates-skill",
+    "producer-pre-spawn-barrier-reference",
+    "producer-pre-spawn-barrier-skill",
+    "monitor-later-stage-reconciliation-reference",
+    "monitor-later-stage-reconciliation-skill",
+    "watcher-blocked-bounded-suppression",
     "consumer-no-source-discriminator",
     "monitor-no-source-discriminator",
     "monitor-rejected-terminal-reference",
@@ -7186,19 +7214,19 @@ function validateTwoPhaseDispatchHandshake() {
     "Delivery is at-least-once per watcher PROCESS",
     "an ack needs the same poll\n  for the same reason, and the orchestrator does poll for both",
     "Never treat the\n  event as the only route to an ack",
-    "A fresh `gates-passed` gate-ack additionally suppresses `stall`",
-    "a\n  `blocked` ack suppresses nothing",
+    "A fresh usable gate-ack suppresses `stall` and both `dead` branches",
+    "A valid `blocked` ack gets the same bounded suppression until its stage\n  report is observed or the ack is consumed",
     "Either way it is a\n  delivery event, never a Monitoring Protocol trigger",
     // The watcher emits gate-ack for both statuses, so the consumer must
     // branch on status: a blocked ack moves nothing.
     "branch on its `status`",
     "`blocked` applies nothing and waits for the",
     "Suppression\n  demands the same registry correlation delivery does",
-    "That suppression is bounded twice over",
+    "That suppression is bounded twice\n  over",
     "suppression\n  additionally lapses after a few stall thresholds of wall-clock",
     "is a stuck\n  handshake, not a healthy wait",
     "That clock runs on the PAUSE — the worker's log\n  going quiet — never on the ack's own timestamp",
-    "While an unconsumed `gates-passed` ack is\n  present that bound also governs over ordinary report suppression",
+    "While an unconsumed usable gate-ack is\n  present that bound also governs over ordinary report suppression",
     "a deadline the worker can refresh by touching\n  the file is no deadline at all",
     "That is an age window rather than a ceiling",
     "an\n  ack dated in the future buys no suppression at all",

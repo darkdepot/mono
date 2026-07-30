@@ -155,10 +155,15 @@ Workflow states:
      `templates/orchestrator-dispatch.md`: full context snapshot, AFK
      contract, engine block, mailbox path, authorization. Include the
      no-sub-delegation rule in every dispatch prompt.
-   - On every verified gate-carrying `mono-implement` spawn, respawn, or
-     session rotation, write `registryEntry.gates` as the exact non-empty,
-     unique list of gate names dispatched for THAT attempt in the same
-     registration that records its attempt-numbered `log`. Preserve it on a
+   - Before starting every gate-carrying `mono-implement` spawn, respawn,
+     or session rotation, create its empty attempt log and atomically
+     pre-register `registryEntry.gates` as the exact non-empty, unique list of
+     gate names dispatched for THAT attempt alongside `stage`, `log`, pack
+     identity, `thread_id: null`, and `pid: null`.
+     The worker process starts only after that durable write succeeds. After
+     `thread.started`, update the
+     same entry with verified live identity while preserving `log` and `gates`;
+     retire an inactive entry when spawn fails. Preserve the list on a
      same-attempt no-ack nudge/resume and while a passed ack awaits confirmed
      resume. Never copy it to a new attempt implicitly: a verified new
      gate-carrying attempt writes its own list, while `mono-preflight`,
@@ -248,6 +253,10 @@ Workflow states:
      dispatched list. There is no source-identity discriminator or form-only
      legacy branch. With no ack, field absence leaves watcher liveness signals
      unchanged.
+     Because stage/log advance and `gates` removal are one atomic
+     post-reconciliation write, later-stage presence is never an in-progress
+     cleanup window: finish journal recovery while the entry is still
+     `mono-implement`; otherwise take the forbidden-presence branch.
    - Before the ordinary no-ack healing ladder, only when `registryEntry.stage` is `mono-implement` and its CURRENT log
      is `<ISSUE-KEY>-mono-implement-a<N>.jsonl`, a well-formed private record
      for that same `<N>` with `outcome: rejected` skips same-attempt nudge and

@@ -24,10 +24,9 @@
 // (the CLI appends its final shutdown events to the log just after the worker
 // writes the report), and never older than the log file's creation time (a
 // prior attempt's report proves nothing about a retry's writer). A fresh
-// `gates-passed` gate-ack suppresses them on the same predicate: the gate
-// pause of the two-phase dispatch handshake is a contracted wait, so the
-// worker's exited process is its expected state there, not death. When the
-// current registry entry carries `gates`, the shared ack read also requires
+// usable gate-ack suppresses them on the same bounded predicate: `gates-passed`
+// waits for resume, while `blocked` waits for its stage report or consumption.
+// When the current registry entry carries `gates`, the shared ack read requires
 // exact set equality for `gates-passed`; `blocked` accepts a non-empty subset
 // but still rejects foreign or duplicate names.
 //
@@ -316,9 +315,9 @@ function isFreshForLog(stat, log) {
 // fails closed: a non-empty `gates` array of well-formed entries, and
 // `gates-passed` only when every entry passed. An ack claiming `gates-passed`
 // over a blocked gate is self-contradictory and is treated as no ack at all.
-// Only a usable `gates-passed` ack suppresses liveness; `blocked` is delivered
-// but deliberately suppresses nothing because that terminal path writes the
-// ordinary stage report. When the registry carries the dispatch's gate list,
+// Every usable ack suppresses liveness for the bounded gate/report handoff:
+// `gates-passed` waits for resume, while `blocked` waits for its ordinary stage
+// report or consumption. When the registry carries the dispatch's gate list,
 // the shared read boundary also requires exact set equality for `gates-passed`,
 // while `blocked` may carry a non-empty subset with no foreign names. It checks
 // this before either delivery or suppression sees the ack; an absent or
@@ -717,7 +716,7 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   // The birthtime guard keeps a prior attempt's report from masking a fresh
   // retry log: a report older than this log file's creation belongs to an
   // earlier attempt and proves nothing about this writer.
-  // An unconsumed `gates-passed` ack changes who governs suppression here.
+  // An unconsumed usable gate-ack changes who governs suppression here.
   // Report suppression is unbounded by construction — both operands of
   // isFreshForLog are fixed file timestamps — so a report sitting beside an
   // unconsumed ack would silence this worker forever, masking the gate-pause
@@ -747,19 +746,18 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   // Protocol, gate-pause carve-out.
   const pausedOnAck =
     gateAck !== null &&
-    gateAck.status === "gates-passed" &&
     ackBelongsToAttempt(gateAck.stat, log);
   const reportStat = report?.stat ?? null;
   if (!pausedOnAck && reportStat !== null && isFreshForLog(reportStat, log)) return;
 
   // The gate pause of the two-phase dispatch handshake is a contracted wait,
-  // not a death: a fresh `gates-passed` gate-ack means this worker stopped on
-  // purpose and is waiting for the orchestrator to apply the dispatch's
-  // lifecycle moves and resume it. A `blocked` ack suppresses nothing — that
-  // path also writes the ordinary stage report, which the check above already
-  // honours. The suppression ends when the orchestrator consumes the ack at
-  // resume time; a retained ack cannot be told apart from a live pause here,
-  // which is why that rename is a protocol obligation and not a nicety.
+  // not a death: a fresh `gates-passed` ack waits for lifecycle application
+  // and resume, while a valid `blocked` ack waits for its ordinary stage report
+  // or consumption. Both use this bounded handoff window, so the normal gap
+  // between blocked ack and report cannot trigger a duplicate healing attempt.
+  // Suppression ends when the orchestrator consumes the ack; a retained ack
+  // cannot be told apart from a live handoff here, which is why that rename is
+  // a protocol obligation and not a nicety.
   //
   // `gateAck` is the scan's single ack snapshot, already registry-correlated by
   // the caller — one read shared with checkGateAck, so a consumption landing
@@ -789,7 +787,7 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   // Freshness and the bound are both measured on the ATTEMPT's log, not the
   // mtime-picked one: otherwise a superseded attempt that keeps writing holds
   // suppression open long after the current attempt's pause has expired.
-  if (gateAck !== null && gateAck.status === "gates-passed" && ackBelongsToAttempt(gateAck.stat, log)) {
+  if (gateAck !== null && ackBelongsToAttempt(gateAck.stat, log)) {
     // The deadline is measured from the PAUSE — this log's silence — never from
     // the ack's own mtime. The ack sits at a worker-writable path, so anchoring
     // to it let a stuck or superseded worker touch the file before every

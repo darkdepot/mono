@@ -353,8 +353,8 @@ Order, and it is the whole protocol:
    writes the stage report the Blocked path below requires — ack first, then
    report — and stops only after both exist. Leaving a blocked ack with no
    report would strand the Issue: the orchestrator would wait for a report that
-   never comes while the watcher, which deliberately never suppresses on a
-   blocked ack, drives the worker into liveness healing instead:
+   never comes while the watcher's bounded ack handoff eventually expires and
+   drives the worker into liveness healing instead:
 
    ```json
    {
@@ -558,7 +558,7 @@ handshake.
 | Consume `.blocked` | The terminal non-green attempt has no resume: atomically publish the private consumption record with `outcome: blocked`, rename every ack candidate, then remove `gates`. |
 | Malformed `gates` on a gate-carrying entry | Treat it as a producer contract error and terminate the attempt; verified-respawn a NEW gate attempt with a correct list. |
 | `gates` present on `mono-preflight` or `mono-ship` | Presence is forbidden, not a selector: start a new attempt of that same stage WITHOUT `gates`. |
-| Stage advance or any other non-gate dispatch | Remove `gates` explicitly, but only AFTER reconciling every unconsumed ack for the current attempt. |
+| Stage advance or any other non-gate dispatch | Reconcile every unconsumed ack first, then atomically change `stage`/`log` and remove `gates` in the same registry write. |
 | Crash after consumption-record publication | Resume treats the well-formed private CURRENT-attempt record as intent: finish renaming every remaining ack candidate to the suffix selected by `outcome`, then remove stale `gates`. Tombstones and mailbox files never authorize either action. |
 
 Blocked path: a gate that fails makes the ack `status: blocked`, and the worker
@@ -693,8 +693,10 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
     valid JSON events is contamination, not spawn failure; inspect the separate
     stderr log, while liveness monitoring continues from the JSON events.
   - Recording "ok" or a live thread in the worker registry or ledger with an
-    empty `thread_id` is forbidden; write the registry entry only after
-    `thread.started` is parsed.
+    empty `thread_id` is forbidden. A gate-carrying attempt has one narrow
+    pre-spawn exception: its inactive entry is published with `thread_id: null`
+    and `pid: null` before the process exists, then replaced with live identity
+    only after `thread.started` is parsed.
   - Log files are numbered from the first attempt
     (`logs/<ISSUE-KEY>-<stage>-a1.jsonl`, retries `-a2`, `-a3`, ...) so a
     retry never overwrites the failed attempt's evidence.
@@ -703,7 +705,24 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
     defaults drift between versions (the wave-1 `model_switch` precedent),
     and a silently switched model voids the dispatch contract.
 
-  Immediately after verifying every spawn, resume, or session rotation, in the same orchestrator turn and before any other action, update that worker's `workers.json` entry with at least the current `pid`, `log`, `last_activity_at`, and `stage` (and the new `thread_id` on rotation). A verified gate-carrying new attempt also writes its exact `gates` list in this registration; a same-attempt resume preserves the existing list until the lifecycle table authorizes removal. A live worker paired with a stale registry PID violates the registry contract; watcher events produced from that entry are untrustworthy, and investigating any such event must begin by reconciling the registry with the actual writer process.
+  Before a gate-carrying worker process can start, create its empty
+  attempt-numbered log and atomically pre-register the inactive `workers.json`
+  entry with that `log`, stage, pack identity, and exact `gates` list. The
+  worker process starts only after this durable write succeeds, so its ack
+  cannot overtake the producer contract. Immediately after `thread.started` is
+  parsed, replace `thread_id: null` and `pid: null` with the verified live
+  identity while preserving `log` and `gates`. A failed spawn retires that
+  inactive entry before the next attempt is pre-registered.
+
+  Immediately after verifying every non-gate spawn, resume, or session
+  rotation, in the same orchestrator turn and before any other action, update
+  that worker's `workers.json` entry with at least the current `pid`, `log`,
+  `last_activity_at`, and `stage` (and the new `thread_id` on rotation). A
+  same-attempt gate resume preserves the existing list until the lifecycle
+  table authorizes removal. A live worker paired with a stale registry PID
+  violates the registry contract; watcher events produced from that entry are
+  untrustworthy, and investigating any such event must begin by reconciling
+  the registry with the actual writer process.
 
   Parse the `thread.started` event from the log for the thread id and record
   it in the worker registry, together with the background process pid (`$!`)
@@ -872,6 +891,11 @@ never report it as applied.
   liveness handling unchanged. These branches run here before the common
   ladder; the handshake table defines the state transition but does not route
   recovery.
+  A later-stage entry can never legitimately retain `gates`: stage/log
+  advance and `gates` removal are one atomic post-reconciliation registry write.
+  Therefore first finish any journal recovery while the entry is still
+  `mono-implement`; only unexplained presence on an already later-stage entry
+  takes the forbidden-presence respawn branch.
 - Before applying the ordinary no-ack healing ladder, inspect the private
   consumption namespace only for a `mono-implement` registry entry whose CURRENT stage-qualified
   log is `<ISSUE-KEY>-mono-implement-a<N>.jsonl`. A well-formed private
@@ -993,11 +1017,12 @@ directory's history; retired Issues' logs are outside its scope.
   the stage that can have a gate phase — a `mono-implement` log — so an ack
   beside a `mono-preflight` or `mono-ship` log, whose dispatches carry no
   lifecycle move, is spurious and neither delivers nor suppresses.
-  A fresh `gates-passed` gate-ack additionally suppresses `stall` and both
-  `dead` branches for that worker, because the gate pause is a contracted wait
-  and the exited pid is its expected state there, not death; a
-  `blocked` ack suppresses nothing, since that path also writes the ordinary
-  stage report. That suppression is bounded twice over. Normally the
+  A fresh usable gate-ack suppresses `stall` and both `dead` branches for that
+  worker during a bounded handoff: `gates-passed` waits for lifecycle
+  application and resume. A valid `blocked` ack gets the same bounded suppression until its stage
+  report is observed or the ack is consumed, so the normal ack-before-report
+  interval cannot start duplicate healing. That suppression is bounded twice
+  over. Normally the
   orchestrator consuming the ack at resume time ends it — the watcher cannot
   distinguish a retained ack from a live pause, so the rename in step 5 is what
   re-arms the ladder. When both a `gate-ack` and a `report` are emitted for the
@@ -1007,7 +1032,7 @@ directory's history; retired Issues' logs are outside its scope.
   registration, or that rename then fails, nothing would consume the ack at
   all, and freshness against the log never expires by itself: so suppression
   additionally lapses after a few stall thresholds of wall-clock, and the
-  ladder re-arms on its own. While an unconsumed `gates-passed` ack is
+  ladder re-arms on its own. While an unconsumed usable gate-ack is
   present that bound also governs over ordinary report suppression, which is
   unbounded by construction: otherwise a report left beside the ack — the
   very pairing this protocol sends to reconciliation — would silence the
