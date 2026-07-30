@@ -146,7 +146,8 @@ field absence does not change the entry's watcher liveness signals.
 `thread_id: null` together with `pid: null` is permitted only for the
 inactive gate-startup state: a gate-carrying `mono-implement` entry with valid
 `gates`, its empty attempt-numbered `log`, and publication-time `spawned_at`,
-atomically registered before the worker process starts. The watcher keeps that
+atomically registered only after that log file and its `logs/` directory have
+both been fsynced and before the worker process starts. The watcher keeps that
 state quiet for one bounded startup window measured from `spawned_at`, never
 from log mtime. Until a valid `thread.started` arrives, empty or partial
 output, contamination, another JSON event, and complete non-JSON output all
@@ -156,7 +157,8 @@ never `dead`. Each watcher pass reads at most 256 KiB and resumes at its saved
 cursor, so a busy pre-start log cannot block other workers and a later
 `thread.started` remains discoverable. At timeout the watcher freezes the
 observed size and finishes that snapshot before `spawn-fail`; later appends do
-not extend the deadline.
+not extend the deadline. A missing or unreadable attempt log also emits
+`spawn-fail`.
 After `thread.started`, the
 orchestrator updates the same entry with live identity while preserving `log`
 and `gates`; every other live `codex-cli` entry carries verified process

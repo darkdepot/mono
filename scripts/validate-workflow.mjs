@@ -4561,7 +4561,7 @@ function validateHeartbeatContract() {
     fail("Missing scripts/watch-workers.mjs");
   }
   assertIncludes("scripts/verify.mjs", "watch-workers.mjs", "node --check step for scripts/watch-workers.mjs");
-  assertIncludes("references/orchestration.md", "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log and atomically pre-register the inactive `workers.json`\n  entry with that `log`, stage, pack identity, the publication-time\n  `spawned_at`, and exact `gates` list.");
+  assertIncludes("references/orchestration.md", "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log, fsync the log file and its `logs/` directory, and only\n  then atomically pre-register the inactive `workers.json` entry with that\n  `log`, stage, pack identity, the publication-time\n  `spawned_at`, and exact `gates` list.");
   assertIncludes("references/orchestration.md", "Immediately after verifying every non-gate spawn, resume, or session\n  rotation, in the same orchestrator turn and before any other action, update\n  that worker's `workers.json` entry with at least the current `pid`, `log`,\n  `last_activity_at`, and `stage` (and the new `thread_id` on rotation).");
 
   for (const required of [
@@ -4705,6 +4705,7 @@ async function validateWatcherInactiveGateSpawnBehavior() {
     const expiredPartialLog = path.join(logsDir, "MONO-369-mono-implement-a1.jsonl");
     const nonStartJsonLog = path.join(logsDir, "MONO-370-mono-implement-a1.jsonl");
     const contaminationOnlyLog = path.join(logsDir, "MONO-371-mono-implement-a1.jsonl");
+    const missingLog = path.join(logsDir, "MONO-374-mono-implement-a1.jsonl");
     fs.writeFileSync(freshLog, "");
     fs.writeFileSync(staleLog, "");
     fs.writeFileSync(otherLog, `${JSON.stringify({ type: "thread.started", thread_id: "other-thread" })}\n`);
@@ -4834,6 +4835,16 @@ async function validateWatcherInactiveGateSpawnBehavior() {
           spawned_at: registeredNow,
           ...identity,
         },
+        "MONO-374": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: missingLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: registeredNow,
+          ...identity,
+        },
       })
     );
 
@@ -4858,6 +4869,9 @@ async function validateWatcherInactiveGateSpawnBehavior() {
     }
     if (!stdout.includes("EVENT:spawn-fail MONO-365")) {
       fail("future-dated inactive registration must emit spawn-fail rather than enter ordinary dead healing");
+    }
+    if (!stdout.includes("EVENT:spawn-fail MONO-374")) {
+      fail("inactive gate-spawn registration without a readable log must emit spawn-fail");
     }
     for (const issue of ["MONO-366", "MONO-367", "MONO-371"]) {
       if (new RegExp(`EVENT:(stall|dead|spawn-fail) ${issue}\\b`).test(stdout)) {
@@ -7024,7 +7038,7 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
   {
     label: "producer-registration",
     file: "orchestrateSkill",
-    text: "Before starting every gate-carrying `mono-implement` spawn, respawn,\n     or session rotation, create its empty attempt log and atomically\n     pre-register `registryEntry.gates`",
+    text: "Before starting every gate-carrying `mono-implement` spawn, respawn,\n     or session rotation, create its empty attempt log, fsync that file and\n     its `logs/` directory, and only then atomically pre-register\n     `registryEntry.gates`",
   },
   {
     label: "producer-handshake-pre-spawn",
@@ -7167,6 +7181,21 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     text: "freezeLogInspectionTarget(log.filePath, inspection.observedSize)",
   },
   {
+    label: "watcher-inactive-missing-log-recovery",
+    file: "watcher",
+    text: "inactive gate spawn has no readable attempt log",
+  },
+  {
+    label: "watcher-inspection-state-active-registry-eviction",
+    file: "watcher",
+    text: "currentLogPaths.add(path.resolve(expandHome(entry.log)))",
+  },
+  {
+    label: "producer-inactive-log-durability",
+    file: "orchestration",
+    text: "fsync the log file and its `logs/` directory, and only\n  then atomically pre-register the inactive `workers.json` entry",
+  },
+  {
     label: "producer-inactive-registration-clock",
     file: "orchestration",
     text: "The startup window\n  begins at that registry publication's `spawned_at`",
@@ -7290,7 +7319,7 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
   {
     label: "producer-pre-spawn-barrier-reference",
     file: "orchestration",
-    text: "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log and atomically pre-register the inactive `workers.json`\n  entry with that `log`, stage, pack identity, the publication-time\n  `spawned_at`, and exact `gates` list",
+    text: "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log, fsync the log file and its `logs/` directory, and only\n  then atomically pre-register the inactive `workers.json` entry with that\n  `log`, stage, pack identity, the publication-time\n  `spawned_at`, and exact `gates` list",
   },
   {
     label: "producer-pre-spawn-barrier-skill",

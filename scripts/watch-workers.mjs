@@ -546,11 +546,16 @@ function readRegistryGates(registryEntry) {
 // A partial first JSON event, including one after a complete contamination
 // line, remains startup. Only a valid thread.started event completes startup;
 // other JSON events and non-JSON contamination remain bounded until timeout.
-function inactiveGateSpawnState(log, registryEntry, nowMs) {
+function isInactiveGateRegistryEntry(registryEntry) {
   if (registryEntry?.stage !== "mono-implement") return null;
   if (registryEntry.thread_id !== null || registryEntry.pid !== null) return null;
   if (readRegistryGates(registryEntry) === null) return null;
   if (typeof registryEntry.log !== "string") return null;
+  return true;
+}
+
+function inactiveGateSpawnState(log, registryEntry, nowMs) {
+  if (!isInactiveGateRegistryEntry(registryEntry)) return null;
   if (path.resolve(expandHome(registryEntry.log)) !== path.resolve(log.filePath)) return null;
   const spawnedAtMs = Date.parse(registryEntry.spawned_at);
   if (
@@ -1012,12 +1017,24 @@ function checkRegistry(registry, nowMs) {
     // through their own runtime signals.
     if (entry?.transport && entry.transport !== "codex-cli") continue;
     const logPath = entry && typeof entry.log === "string" ? path.resolve(expandHome(entry.log)) : null;
-    if (!logPath || !fs.existsSync(logPath)) {
+    let hasReadableLog = false;
+    if (logPath !== null) {
+      try {
+        hasReadableLog = fs.statSync(logPath).isFile();
+        if (hasReadableLog) fs.accessSync(logPath, fs.constants.R_OK);
+      } catch {
+        hasReadableLog = false;
+      }
+    }
+    if (!hasReadableLog) {
+      const inactiveGateEntry = isInactiveGateRegistryEntry(entry);
       emitEvent(
-        "dead",
+        inactiveGateEntry ? "spawn-fail" : "dead",
         issueKey,
-        `workers.json entry (stage ${entry?.stage ?? "unknown"}) has no live log file`,
-        `dead:registry:${issueKey}`,
+        inactiveGateEntry
+          ? `inactive gate spawn has no readable attempt log (${entry.log})`
+          : `workers.json entry (stage ${entry?.stage ?? "unknown"}) has no live log file`,
+        `${inactiveGateEntry ? "spawn-fail" : "dead"}:registry:${issueKey}`,
         nowMs
       );
     }
@@ -1044,9 +1061,14 @@ function scan() {
   const controlState = loadControlState(path.join(args.root, "control.json"));
   const latestLogs = collectLatestLogs(path.join(args.root, "logs"));
   const reportsDir = path.join(args.root, "reports");
-  const currentLogPaths = new Set(
-    [...latestLogs.values()].map((log) => log.filePath)
-  );
+  const currentLogPaths = new Set();
+  for (const [issueKey, entry] of Object.entries(registry)) {
+    if (typeof entry?.log === "string") {
+      currentLogPaths.add(path.resolve(expandHome(entry.log)));
+    }
+    const selectedLog = latestLogs.get(issueKey);
+    if (selectedLog !== undefined) currentLogPaths.add(selectedLog.filePath);
+  }
   for (const filePath of logInspectionStates.keys()) {
     if (!currentLogPaths.has(filePath)) logInspectionStates.delete(filePath);
   }

@@ -156,9 +156,10 @@ Workflow states:
      contract, engine block, mailbox path, authorization. Include the
      no-sub-delegation rule in every dispatch prompt.
    - Before starting every gate-carrying `mono-implement` spawn, respawn,
-     or session rotation, create its empty attempt log and atomically
-     pre-register `registryEntry.gates` as the exact non-empty, unique list of
-     gate names dispatched for THAT attempt alongside `stage`, `log`, pack
+     or session rotation, create its empty attempt log, fsync that file and
+     its `logs/` directory, and only then atomically pre-register
+     `registryEntry.gates` as the exact non-empty, unique list of gate names
+     dispatched for THAT attempt alongside `stage`, `log`, pack
      identity, publication-time `spawned_at`, `thread_id: null`, and `pid: null`.
      The worker process starts only after that durable write succeeds. After
      `thread.started`, update the
@@ -173,7 +174,8 @@ Workflow states:
      pass, preserving later `thread.started` detection without blocking other
      workers. At timeout it freezes the observed log size and finishes that
      snapshot before declaring `spawn-fail`; subsequent appends cannot prolong
-     the decision.
+     the decision. A missing or unreadable attempt log also emits
+     `spawn-fail`.
      Preserve the list on a
      same-attempt no-ack nudge/resume and while a passed ack awaits confirmed
      resume. Never copy it to a new attempt implicitly: a verified new

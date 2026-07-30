@@ -734,8 +734,9 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
     and a silently switched model voids the dispatch contract.
 
   Before a gate-carrying worker process can start, create its empty
-  attempt-numbered log and atomically pre-register the inactive `workers.json`
-  entry with that `log`, stage, pack identity, the publication-time
+  attempt-numbered log, fsync the log file and its `logs/` directory, and only
+  then atomically pre-register the inactive `workers.json` entry with that
+  `log`, stage, pack identity, the publication-time
   `spawned_at`, and exact `gates` list. The
   worker process starts only after this durable write succeeds, so its ack
   cannot overtake the producer contract. Immediately after `thread.started` is
@@ -756,7 +757,9 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
   discoverable. If the startup timeout arrives before that scan is complete,
   the watcher freezes the then-observed file size and finishes inspecting that
   snapshot before emitting `spawn-fail`; later appends cannot extend the
-  decision indefinitely.
+  decision indefinitely. An inactive entry whose attempt log is missing or
+  unreadable emits `spawn-fail` as well, so a damaged producer barrier heals
+  through the same verified new-attempt path.
 
   Immediately after verifying every non-gate spawn, resume, or session
   rotation, in the same orchestrator turn and before any other action, update
