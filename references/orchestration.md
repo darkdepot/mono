@@ -720,7 +720,10 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
   cannot overtake the producer contract. Immediately after `thread.started` is
   parsed, replace `thread_id: null` and `pid: null` with the verified live
   identity while preserving `log` and `gates`. A failed spawn retires that
-  inactive entry before the next attempt is pre-registered.
+  inactive entry before the next attempt is pre-registered. The watcher treats
+  that exact empty-log/null-identity state as inactive startup: it emits no
+  liveness event for one stall-threshold startup window, then emits
+  `spawn-fail` if `thread.started` never arrives.
 
   Immediately after verifying every non-gate spawn, resume, or session
   rotation, in the same orchestrator turn and before any other action, update

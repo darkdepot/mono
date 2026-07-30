@@ -4689,6 +4689,81 @@ function validateWatcherContaminationBehavior() {
   }
 }
 
+function validateWatcherInactiveGateSpawnBehavior() {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-workflow-watcher-inactive-"));
+  try {
+    const logsDir = path.join(fixtureRoot, "logs");
+    fs.mkdirSync(logsDir);
+    const freshLog = path.join(logsDir, "MONO-361-mono-implement-a1.jsonl");
+    const staleLog = path.join(logsDir, "MONO-362-mono-implement-a1.jsonl");
+    const otherLog = path.join(logsDir, "MONO-363-mono-implement-a1.jsonl");
+    fs.writeFileSync(freshLog, "");
+    fs.writeFileSync(staleLog, "");
+    fs.writeFileSync(otherLog, `${JSON.stringify({ type: "thread.started", thread_id: "other-thread" })}\n`);
+    const stale = new Date(Date.now() - 181_000);
+    fs.utimesSync(staleLog, stale, stale);
+    fs.utimesSync(otherLog, stale, stale);
+    const identity = {
+      packVersion: "0.20.1",
+      sourceCommit: "a".repeat(40),
+      surfaceRevision: 3,
+    };
+    fs.writeFileSync(
+      path.join(fixtureRoot, "workers.json"),
+      JSON.stringify({
+        "MONO-361": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: freshLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          ...identity,
+        },
+        "MONO-362": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: staleLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          ...identity,
+        },
+        "MONO-363": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: otherLog,
+          thread_id: "other-thread",
+          pid: 999_999_999,
+          ...identity,
+        },
+      })
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/watch-workers.mjs", "--root", fixtureRoot, "--stall-sec", "90", "--once"],
+      { cwd: root, encoding: "utf8" }
+    );
+    const stdout = result.stdout || "";
+    if (result.status !== 0) {
+      fail(`inactive gate-spawn watcher fixture failed to run: ${result.stderr || result.error?.message || `exit ${result.status}`}`);
+      return;
+    }
+    if (/EVENT:(stall|dead|spawn-fail) MONO-361\b/.test(stdout)) {
+      fail("fresh inactive gate-spawn registration must stay quiet during its bounded startup window");
+    }
+    if (!stdout.includes("EVENT:spawn-fail MONO-362")) {
+      fail("expired inactive gate-spawn registration must emit spawn-fail");
+    }
+    if (!stdout.includes("EVENT:dead MONO-363")) {
+      fail("inactive gate-spawn handling must continue processing other workers");
+    }
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+}
+
 function waitForWatcherFixture(predicate, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -7734,6 +7809,7 @@ validateDocsAndExamples();
 validateAntiPatterns();
 validateHeartbeatContract();
 validateWatcherContaminationBehavior();
+validateWatcherInactiveGateSpawnBehavior();
 await validateWatcherV3Behavior();
 validateWatcherGateAckBehavior();
 validateGateAckSuppressionPredicate();

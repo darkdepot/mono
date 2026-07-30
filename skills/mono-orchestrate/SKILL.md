@@ -163,7 +163,10 @@ Workflow states:
      The worker process starts only after that durable write succeeds. After
      `thread.started`, update the
      same entry with verified live identity while preserving `log` and `gates`;
-     retire an inactive entry when spawn fails. Preserve the list on a
+     retire an inactive entry when spawn fails. The watcher recognizes the
+     empty-log/null-identity entry as inactive startup, keeps it quiet for one
+     stall-threshold window, and emits `spawn-fail` if `thread.started` never
+     arrives. Preserve the list on a
      same-attempt no-ack nudge/resume and while a passed ack awaits confirmed
      resume. Never copy it to a new attempt implicitly: a verified new
      gate-carrying attempt writes its own list, while `mono-preflight`,

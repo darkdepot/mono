@@ -15,6 +15,8 @@
 //   (c) a non-empty log with no valid JSON events -> spawn-fail,
 //       immediately, without waiting for any age threshold; a non-JSON
 //       first line followed by valid events is contamination and warns once;
+//   (c2) an atomically pre-registered gate attempt with an empty log and null
+//       process identity stays quiet for one startup window, then spawn-fail;
 //   (d) a log that stopped growing with no writer process evidence
 //       (registry pid gone, or silent for 2x the stall threshold) -> dead.
 // Stall and dead (both branches) are suppressed when the same correlated
@@ -429,6 +431,19 @@ function readRegistryGates(registryEntry) {
   return { gateNames };
 }
 
+// A gate-carrying attempt is durably registered before its process starts.
+// That narrow state is identified entirely from existing registry fields: no
+// new selector is added to workers.json. While the attempt log is still empty,
+// null process identity means startup is in progress rather than worker death.
+function isInactiveGateSpawn(log, registryEntry, firstLine) {
+  if (firstLine !== null) return false;
+  if (registryEntry?.stage !== "mono-implement") return false;
+  if (registryEntry.thread_id !== null || registryEntry.pid !== null) return false;
+  if (readRegistryGates(registryEntry) === null) return false;
+  if (typeof registryEntry.log !== "string") return false;
+  return path.resolve(expandHome(registryEntry.log)) === path.resolve(log.filePath);
+}
+
 // The mailbox path and the sandbox fallback the protocol permits under the
 // worker's own worktree. An ack the watcher cannot see reads as a dead worker,
 // which would send the healing ladder against a contracted wait.
@@ -685,6 +700,26 @@ function checkReport(log, report, nowMs) {
 // without a registry context the behaviour is unchanged.
 function checkLog(log, gateAck, report, registry, nowMs) {
   const { firstLine, hasJsonEvent } = inspectLog(log.filePath);
+  const ageSec = Math.round((nowMs - log.stat.mtimeMs) / 1000);
+  const registryEntry = registry[log.issue];
+
+  // The producer barrier intentionally exposes an inactive registry entry
+  // before Codex can emit thread.started. Do not route that expected startup
+  // window through ordinary stall/dead healing. The same stall threshold is
+  // its bounded spawn timeout; after it expires, report spawn-fail so the
+  // orchestrator retires the inactive entry before pre-registering a retry.
+  if (isInactiveGateSpawn(log, registryEntry, firstLine)) {
+    if (ageSec < args.stallSec) return;
+    emitEvent(
+      "spawn-fail",
+      log.issue,
+      `inactive gate spawn did not reach thread.started within ${ageSec}s (${log.name})`,
+      `spawn-fail:inactive:${log.name}`,
+      nowMs
+    );
+    return;
+  }
+
   if (firstLine !== null && !hasJsonEvent) {
     // A non-empty log with no JSON events means the spawn command failed
     // before Codex started a thread; report it immediately.
@@ -703,7 +738,6 @@ function checkLog(log, gateAck, report, registry, nowMs) {
     );
   }
 
-  const ageSec = Math.round((nowMs - log.stat.mtimeMs) / 1000);
   if (ageSec < args.stallSec) return;
 
   // A worker that exited normally leaves a correlated report for this stage —
