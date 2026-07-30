@@ -437,7 +437,10 @@ Order, and it is the whole protocol:
    field. The record is atomically published before any in-place ack rename and
    before the separate write that removes `registryEntry.gates`. Publish it
    with a same-directory temporary file and atomic rename after the file is
-   durable; the final name is the journaled intent that Resume may trust. The
+   durable, then fsync the containing `consumed/` directory after the rename.
+   Publication is complete only after that directory sync; if it is unsupported
+   or fails, stop before any ack rename or registry cleanup. The final name is
+   then the journaled intent that Resume may trust. The
    example's `1` stands for the positive integer
    `<N>` from the attempt-numbered filename. Missing record fails safely:
    the ack and `gates` stay until the same outcome is retried or a verified new
@@ -725,14 +728,17 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
 
   Before a gate-carrying worker process can start, create its empty
   attempt-numbered log and atomically pre-register the inactive `workers.json`
-  entry with that `log`, stage, pack identity, and exact `gates` list. The
+  entry with that `log`, stage, pack identity, the publication-time
+  `spawned_at`, and exact `gates` list. The
   worker process starts only after this durable write succeeds, so its ack
   cannot overtake the producer contract. Immediately after `thread.started` is
   parsed, replace `thread_id: null` and `pid: null` with the verified live
   identity while preserving `log` and `gates`. A failed spawn retires that
   inactive entry before the next attempt is pre-registered. The watcher treats
   that exact empty-log/null-identity state as inactive startup: it emits no
-  liveness event for one stall-threshold startup window, then emits
+  liveness event for one stall-threshold startup window. The startup window
+  begins at that registry publication's `spawned_at`, never at a prepared log's
+  mtime; after the window it emits
   `spawn-fail` if `thread.started` never arrives.
 
   Immediately after verifying every non-gate spawn, resume, or session

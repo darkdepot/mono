@@ -159,14 +159,14 @@ Workflow states:
      or session rotation, create its empty attempt log and atomically
      pre-register `registryEntry.gates` as the exact non-empty, unique list of
      gate names dispatched for THAT attempt alongside `stage`, `log`, pack
-     identity, `thread_id: null`, and `pid: null`.
+     identity, publication-time `spawned_at`, `thread_id: null`, and `pid: null`.
      The worker process starts only after that durable write succeeds. After
      `thread.started`, update the
      same entry with verified live identity while preserving `log` and `gates`;
      retire an inactive entry when spawn fails. The watcher recognizes the
      empty-log/null-identity entry as inactive startup, keeps it quiet for one
-     stall-threshold window, and emits `spawn-fail` if `thread.started` never
-     arrives. Preserve the list on a
+     stall-threshold window measured from that `spawned_at`, and emits
+     `spawn-fail` if `thread.started` never arrives. Preserve the list on a
      same-attempt no-ack nudge/resume and while a passed ack awaits confirmed
      resume. Never copy it to a new attempt implicitly: a verified new
      gate-carrying attempt writes its own list, while `mono-preflight`,
@@ -309,8 +309,9 @@ Workflow states:
      and the worktree for whether THIS attempt executed — and never silently
      consume the ack or resume on it twice (Two-Phase Dispatch Handshake in
      `references/orchestration.md`). For every outcome, atomically publish the
-     trusted consumption record first, then rename every ack candidate, then
-     remove `gates`. A
+     trusted consumption record first — durable file, atomic rename, then
+     `fsync` of the containing `consumed/` directory — then rename every ack
+     candidate, then remove `gates`. A
      worker-writable tombstone or mailbox record never substitutes for that
      private current-attempt record during Resume cleanup. For `outcome:
      blocked`, that record binds only the ack outcome: after a crash, re-run

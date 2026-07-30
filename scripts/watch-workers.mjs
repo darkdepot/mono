@@ -435,13 +435,15 @@ function readRegistryGates(registryEntry) {
 // That narrow state is identified entirely from existing registry fields: no
 // new selector is added to workers.json. While the attempt log is still empty,
 // null process identity means startup is in progress rather than worker death.
-function isInactiveGateSpawn(log, registryEntry, firstLine) {
-  if (firstLine !== null) return false;
-  if (registryEntry?.stage !== "mono-implement") return false;
-  if (registryEntry.thread_id !== null || registryEntry.pid !== null) return false;
-  if (readRegistryGates(registryEntry) === null) return false;
-  if (typeof registryEntry.log !== "string") return false;
-  return path.resolve(expandHome(registryEntry.log)) === path.resolve(log.filePath);
+function inactiveGateSpawnStartedAtMs(log, registryEntry, firstLine) {
+  if (firstLine !== null) return null;
+  if (registryEntry?.stage !== "mono-implement") return null;
+  if (registryEntry.thread_id !== null || registryEntry.pid !== null) return null;
+  if (readRegistryGates(registryEntry) === null) return null;
+  if (typeof registryEntry.log !== "string") return null;
+  if (path.resolve(expandHome(registryEntry.log)) !== path.resolve(log.filePath)) return null;
+  const spawnedAtMs = Date.parse(registryEntry.spawned_at);
+  return Number.isFinite(spawnedAtMs) ? spawnedAtMs : null;
 }
 
 // The mailbox path and the sandbox fallback the protocol permits under the
@@ -702,18 +704,20 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   const { firstLine, hasJsonEvent } = inspectLog(log.filePath);
   const ageSec = Math.round((nowMs - log.stat.mtimeMs) / 1000);
   const registryEntry = registry[log.issue];
+  const inactiveSpawnedAtMs = inactiveGateSpawnStartedAtMs(log, registryEntry, firstLine);
 
   // The producer barrier intentionally exposes an inactive registry entry
   // before Codex can emit thread.started. Do not route that expected startup
   // window through ordinary stall/dead healing. The same stall threshold is
   // its bounded spawn timeout; after it expires, report spawn-fail so the
   // orchestrator retires the inactive entry before pre-registering a retry.
-  if (isInactiveGateSpawn(log, registryEntry, firstLine)) {
-    if (ageSec < args.stallSec) return;
+  if (inactiveSpawnedAtMs !== null) {
+    const startupAgeSec = Math.max(0, Math.round((nowMs - inactiveSpawnedAtMs) / 1000));
+    if (startupAgeSec < args.stallSec) return;
     emitEvent(
       "spawn-fail",
       log.issue,
-      `inactive gate spawn did not reach thread.started within ${ageSec}s (${log.name})`,
+      `inactive gate spawn did not reach thread.started within ${startupAgeSec}s of registry publication (${log.name})`,
       `spawn-fail:inactive:${log.name}`,
       nowMs
     );

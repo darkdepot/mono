@@ -4561,7 +4561,7 @@ function validateHeartbeatContract() {
     fail("Missing scripts/watch-workers.mjs");
   }
   assertIncludes("scripts/verify.mjs", "watch-workers.mjs", "node --check step for scripts/watch-workers.mjs");
-  assertIncludes("references/orchestration.md", "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log and atomically pre-register the inactive `workers.json`\n  entry with that `log`, stage, pack identity, and exact `gates` list.");
+  assertIncludes("references/orchestration.md", "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log and atomically pre-register the inactive `workers.json`\n  entry with that `log`, stage, pack identity, the publication-time\n  `spawned_at`, and exact `gates` list.");
   assertIncludes("references/orchestration.md", "Immediately after verifying every non-gate spawn, resume, or session\n  rotation, in the same orchestrator turn and before any other action, update\n  that worker's `workers.json` entry with at least the current `pid`, `log`,\n  `last_activity_at`, and `stage` (and the new `thread_id` on rotation).");
 
   for (const required of [
@@ -4701,8 +4701,12 @@ function validateWatcherInactiveGateSpawnBehavior() {
     fs.writeFileSync(staleLog, "");
     fs.writeFileSync(otherLog, `${JSON.stringify({ type: "thread.started", thread_id: "other-thread" })}\n`);
     const stale = new Date(Date.now() - 181_000);
-    fs.utimesSync(staleLog, stale, stale);
+    // Deliberately invert log age and registration age: startup timeout must
+    // follow the durable registry publication, not a prepared log's mtime.
+    fs.utimesSync(freshLog, stale, stale);
     fs.utimesSync(otherLog, stale, stale);
+    const registeredNow = new Date().toISOString();
+    const registeredStale = stale.toISOString();
     const identity = {
       packVersion: "0.20.1",
       sourceCommit: "a".repeat(40),
@@ -4718,6 +4722,7 @@ function validateWatcherInactiveGateSpawnBehavior() {
           thread_id: null,
           pid: null,
           gates: ["pack-identity"],
+          spawned_at: registeredNow,
           ...identity,
         },
         "MONO-362": {
@@ -4727,6 +4732,7 @@ function validateWatcherInactiveGateSpawnBehavior() {
           thread_id: null,
           pid: null,
           gates: ["pack-identity"],
+          spawned_at: registeredStale,
           ...identity,
         },
         "MONO-363": {
@@ -6940,6 +6946,21 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     text: "Publish it\n   with a same-directory temporary file and atomic rename",
   },
   {
+    label: "consumption-record-directory-durability",
+    file: "orchestration",
+    text: "fsync the containing `consumed/` directory after the rename",
+  },
+  {
+    label: "watcher-inactive-registration-clock",
+    file: "watcher",
+    text: "Date.parse(registryEntry.spawned_at)",
+  },
+  {
+    label: "producer-inactive-registration-clock",
+    file: "orchestration",
+    text: "The startup window\n  begins at that registry publication's `spawned_at`",
+  },
+  {
     label: "producer-malformed",
     file: "orchestration",
     text: "| Malformed `gates` on a gate-carrying entry | Treat it as a producer contract error and terminate the attempt; verified-respawn a NEW gate attempt with a correct list. |",
@@ -7048,7 +7069,7 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
   {
     label: "producer-pre-spawn-barrier-reference",
     file: "orchestration",
-    text: "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log and atomically pre-register the inactive `workers.json`\n  entry with that `log`, stage, pack identity, and exact `gates` list",
+    text: "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log and atomically pre-register the inactive `workers.json`\n  entry with that `log`, stage, pack identity, the publication-time\n  `spawned_at`, and exact `gates` list",
   },
   {
     label: "producer-pre-spawn-barrier-skill",
@@ -7195,6 +7216,7 @@ function validateRegistryGateContract() {
     "consumption-record-shape",
     "consumption-record-order",
     "consumption-record-atomic-publish",
+    "consumption-record-directory-durability",
     "consumer-registry-source",
     "consumer-status-asymmetry",
     "monitor-malformed-reference",
@@ -7217,6 +7239,8 @@ function validateRegistryGateContract() {
     "consumer-blocked-attempt-reconciliation-skill",
     "consumer-blocked-resume-report-reconciliation",
     "registry-inactive-gate-startup-shape",
+    "watcher-inactive-registration-clock",
+    "producer-inactive-registration-clock",
     "monitor-later-stage-reconciliation-reference",
     "monitor-later-stage-reconciliation-skill",
     "watcher-blocked-bounded-suppression",
