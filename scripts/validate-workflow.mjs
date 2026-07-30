@@ -4561,7 +4561,7 @@ function validateHeartbeatContract() {
     fail("Missing scripts/watch-workers.mjs");
   }
   assertIncludes("scripts/verify.mjs", "watch-workers.mjs", "node --check step for scripts/watch-workers.mjs");
-  assertIncludes("references/orchestration.md", "Immediately after verifying every spawn, resume, or session rotation, in the same orchestrator turn and before any other action, update that worker's `workers.json` entry with at least the current `pid`, `log`, `last_activity_at`, and `stage` (and the new `thread_id` on rotation). A live worker paired with a stale registry PID violates the registry contract; watcher events produced from that entry are untrustworthy, and investigating any such event must begin by reconciling the registry with the actual writer process.");
+  assertIncludes("references/orchestration.md", "Immediately after verifying every spawn, resume, or session rotation, in the same orchestrator turn and before any other action, update that worker's `workers.json` entry with at least the current `pid`, `log`, `last_activity_at`, and `stage` (and the new `thread_id` on rotation). A verified gate-carrying new attempt also writes its exact `gates` list in this registration; a same-attempt resume preserves the existing list until the lifecycle table authorizes removal. A live worker paired with a stale registry PID violates the registry contract; watcher events produced from that entry are untrustworthy, and investigating any such event must begin by reconciling the registry with the actual writer process.");
 
   for (const required of [
     "## Heartbeat",
@@ -5155,9 +5155,17 @@ function validateWatcherGateAckBehavior() {
     const addFixture = (
       issue,
       ack,
-      { registry = {}, priorAttempt = false, report = null, fallbackAck = false, stage = "mono-implement" } = {}
+      {
+        registry = {},
+        priorAttempt = false,
+        report = null,
+        fallbackAck = false,
+        stage = "mono-implement",
+        attempt = 1,
+        omitRegistryGates = false,
+      } = {}
     ) => {
-      const logPath = path.join(logsDir, `${issue}-${stage}-a1.jsonl`);
+      const logPath = path.join(logsDir, `${issue}-${stage}-a${attempt}.jsonl`);
       fs.writeFileSync(logPath, `${JSON.stringify({ type: "thread.started", thread_id: "fixture" })}\n`);
       // Age the log FIRST and read its birthtime after: macOS pulls a file's
       // birthtime back to an earlier mtime, so a prior-attempt ack computed
@@ -5171,9 +5179,9 @@ function validateWatcherGateAckBehavior() {
         let ackPath;
         if (fallbackAck) {
           fs.mkdirSync(path.join(worktree, ".orchestrator"), { recursive: true });
-          ackPath = path.join(worktree, ".orchestrator", `${issue}-gate-ack-a1.json`);
+          ackPath = path.join(worktree, ".orchestrator", `${issue}-gate-ack-a${attempt}.json`);
         } else {
-          ackPath = path.join(reportsDir, `${issue}-gate-ack-a1.json`);
+          ackPath = path.join(reportsDir, `${issue}-gate-ack-a${attempt}.json`);
         }
         fs.writeFileSync(ackPath, `${JSON.stringify(ack, null, 2)}\n`);
         // A prior attempt's ack predates this log file and proves nothing
@@ -5183,6 +5191,13 @@ function validateWatcherGateAckBehavior() {
       if (report) {
         fs.writeFileSync(path.join(reportsDir, `${issue}-${stage}.json`), `${JSON.stringify(report, null, 2)}\n`);
       }
+      const inferredRegistryGates = [
+        ...new Set(
+          (Array.isArray(ack?.gates) ? ack.gates : [])
+            .map((entry) => entry?.gate)
+            .filter((gate) => typeof gate === "string" && gate.length > 0)
+        ),
+      ];
       workers[issue] = {
         transport: "codex-cli",
         stage,
@@ -5190,6 +5205,11 @@ function validateWatcherGateAckBehavior() {
         worktree,
         pid: 999_999_999,
         ...identity,
+        ...(ack === null || omitRegistryGates
+          ? {}
+          : {
+              gates: inferredRegistryGates.length > 0 ? inferredRegistryGates : ["pack identity gate"],
+            }),
         ...registry,
       };
     };
@@ -5260,13 +5280,83 @@ function validateWatcherGateAckBehavior() {
     // there is spurious however well-formed it looks.
     addFixture("MONO-315", gateAck("MONO-315", "gates-passed"), { stage: "mono-preflight" });
 
+    // MONO-49 U4 — the durable dispatched-gate registry contract. The watcher
+    // must compare the ack names with `registryEntry.gates` at its shared read
+    // boundary, so the same result controls both delivery and suppression.
+    const packGate = { gate: "pack identity gate", status: "pass", evidence: "pack-state: identity verified" };
+    const seamGate = { gate: "context seam", status: "pass", evidence: "project-first package complete" };
+    const blockedSeamGate = { gate: "context seam", status: "blocked", evidence: "snapshot incomplete" };
+    const reviewGate = { gate: "approval review", status: "pass", evidence: "review ready" };
+    const blockedReviewGate = { gate: "approval review", status: "blocked", evidence: "approval missing" };
+    const dispatchedGates = ["pack identity gate", "context seam"];
+    // (a) exact match.
+    addFixture("MONO-336", gateAck("MONO-336", "gates-passed", [packGate, seamGate]), {
+      registry: { gates: dispatchedGates },
+    });
+    // (b) exact match in another order.
+    addFixture("MONO-337", gateAck("MONO-337", "gates-passed", [seamGate, packGate]), {
+      registry: { gates: dispatchedGates },
+    });
+    // (c-e) subset, extra name, and foreign name.
+    addFixture("MONO-338", gateAck("MONO-338", "gates-passed", [packGate]), {
+      registry: { gates: dispatchedGates },
+    });
+    addFixture("MONO-339", gateAck("MONO-339", "gates-passed", [packGate, seamGate]), {
+      registry: { gates: ["pack identity gate"] },
+    });
+    addFixture("MONO-340", gateAck("MONO-340", "gates-passed", [packGate, reviewGate]), {
+      registry: { gates: dispatchedGates },
+    });
+    // (f-j) malformed present registry values fail closed.
+    addFixture("MONO-341", gateAck("MONO-341", "gates-passed", [packGate]), {
+      registry: { gates: [] },
+    });
+    addFixture("MONO-342", gateAck("MONO-342", "gates-passed", [packGate]), {
+      registry: { gates: ["pack identity gate", "pack identity gate"] },
+    });
+    addFixture("MONO-343", gateAck("MONO-343", "gates-passed", [packGate]), {
+      registry: { gates: "pack identity gate" },
+    });
+    addFixture("MONO-344", gateAck("MONO-344", "gates-passed", [packGate]), {
+      registry: { gates: ["pack identity gate", 1] },
+    });
+    addFixture("MONO-345", gateAck("MONO-345", "gates-passed", [packGate]), {
+      registry: { gates: ["pack identity gate", ""] },
+    });
+    // (k) An ack beside a gates-less registry entry fails closed. There is no
+    // legacy form-only branch.
+    addFixture("MONO-346", gateAck("MONO-346", "gates-passed", [packGate]), {
+      omitRegistryGates: true,
+    });
+    // (m) a prior attempt's tombstone must not hide a valid current attempt.
+    addFixture("MONO-347", gateAck("MONO-347", "gates-passed", [seamGate, packGate]), {
+      registry: { gates: dispatchedGates },
+      attempt: 2,
+    });
+    fs.writeFileSync(
+      path.join(reportsDir, "MONO-347-gate-ack-a1.applied.json"),
+      `${JSON.stringify(gateAck("MONO-347", "gates-passed", [packGate]), null, 2)}\n`
+    );
+    // (n) a blocked ack may honestly report a non-empty subset of the gates
+    // dispatched for this attempt.
+    addFixture("MONO-348", gateAck("MONO-348", "blocked", [blockedSeamGate]), {
+      registry: { gates: dispatchedGates },
+    });
+    // (o) blocked remains fail-closed when it names a foreign gate.
+    addFixture("MONO-349", gateAck("MONO-349", "blocked", [blockedReviewGate]), {
+      registry: { gates: dispatchedGates },
+    });
+    // No ack means there is no gate contract to consume. A gates-less entry
+    // keeps the ordinary liveness behavior rather than entering a discriminator.
+    addFixture("MONO-352", null);
+
     // The fallback ack path is inside the worker's own worktree, so it is
     // worker-controlled. Anything that is not a bounded regular file must be
     // rejected BEFORE it is opened: the watcher is synchronous, so a FIFO would
     // block it forever and a device would read without bound, silently ending
     // liveness monitoring for every worker at once.
     const hostileFallback = (issue, build) => {
-      addFixture(issue, null);
+      addFixture(issue, null, { registry: { gates: ["pack identity gate"] } });
       const ackDir = path.join(fixtureRoot, "worktrees", issue, ".orchestrator");
       fs.mkdirSync(ackDir, { recursive: true });
       build(path.join(ackDir, `${issue}-gate-ack-a1.json`));
@@ -5320,6 +5410,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", lateAckIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5347,6 +5438,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", stalePauseIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5370,6 +5462,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", futureAckIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5398,6 +5491,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", tieIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5420,6 +5514,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", nearFutureIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5451,6 +5546,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", leftoverIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5480,6 +5576,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", staleReportIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5504,6 +5601,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", renewedAckIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5530,6 +5628,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", blockedConsumedIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate", "context seam"],
       };
     }
 
@@ -5558,6 +5657,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", maskedIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5588,6 +5688,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", supersededNewerIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5623,6 +5724,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", survivesExecutionIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5659,6 +5761,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", zombieHoldsPauseIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5689,6 +5792,7 @@ function validateWatcherGateAckBehavior() {
         worktree: path.join(fixtureRoot, "worktrees", staleAckIssue),
         pid: 999_999_999,
         ...identity,
+        gates: ["pack identity gate"],
       };
     }
 
@@ -5698,7 +5802,7 @@ function validateWatcherGateAckBehavior() {
     const runOnce = () =>
       spawnSync(
         process.execPath,
-        ["scripts/watch-workers.mjs", "--root", fixtureRoot, "--stall-sec", "90", "--idle-sec", "30", "--once"],
+        [path.join(root, "scripts", "watch-workers.mjs"), "--root", fixtureRoot, "--stall-sec", "90", "--idle-sec", "30", "--once"],
         // The timeout is the regression detector for the FIFO fixture: without
         // the pre-read lstat guard this scan never returns at all.
         { cwd: root, encoding: "utf8", timeout: 60_000 }
@@ -5735,6 +5839,10 @@ function validateWatcherGateAckBehavior() {
       ["MONO-332", "ack on the registry log while a superseded log is newer"],
       ["MONO-333", "unconsumed ack after execution advanced the log"],
       ["MONO-306", "unconsumed ack beside a completed stage report"],
+      ["MONO-336", "registry gate names exact match"],
+      ["MONO-337", "registry gate names exact match in another order"],
+      ["MONO-347", "current attempt despite prior-attempt tombstone"],
+      ["MONO-348", "blocked ack with a non-empty registry-gate subset"],
     ]) {
       if (!stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must emit a gate-ack event`);
@@ -5760,6 +5868,17 @@ function validateWatcherGateAckBehavior() {
       ["MONO-325", "leftover-candidate-after-consumption"],
       ["MONO-329", "consumed-blocked-ack"],
       ["MONO-331", "blocked-ack-over-all-passing-gates"],
+      ["MONO-338", "registry-gates-subset"],
+      ["MONO-339", "registry-gates-extra-name"],
+      ["MONO-340", "registry-gates-foreign-name"],
+      ["MONO-341", "registry-gates-empty-array"],
+      ["MONO-342", "registry-gates-duplicates"],
+      ["MONO-343", "registry-gates-non-array"],
+      ["MONO-344", "registry-gates-non-string-element"],
+      ["MONO-345", "registry-gates-empty-string"],
+      ["MONO-349", "blocked ack with a foreign registry gate"],
+      ["MONO-346", "gates-less registry entry with an ack"],
+      ["MONO-352", "gates-less registry entry without an ack"],
     ]) {
       if (stdout.includes(`EVENT:gate-ack ${issue}`)) {
         fail(`watcher ${label} gate-ack fixture must stay silent`);
@@ -5819,6 +5938,21 @@ function validateWatcherGateAckBehavior() {
       ["MONO-323", "ambiguous tie between mailbox and fallback acks"],
       ["MONO-324", "near-future gate-ack"],
       ["MONO-325", "leftover ack candidate whose attempt was already consumed"],
+      ["MONO-338", "ack whose names are a subset of registry gates"],
+      ["MONO-339", "ack with a gate beyond the registry gates"],
+      ["MONO-340", "ack with a foreign gate name"],
+      ["MONO-341", "present empty registry gates array"],
+      ["MONO-342", "present registry gates array with duplicates"],
+      ["MONO-343", "present non-array registry gates value"],
+      ["MONO-344", "present registry gates array with a non-string element"],
+      ["MONO-345", "present registry gates array with an empty string"],
+      // A valid blocked ack is deliverable, but delivery is intentionally not
+      // suppression: the terminal path writes its ordinary stage report and
+      // leaves the liveness ladder armed until that report is reconciled.
+      ["MONO-348", "deliverable blocked ack whose names are a valid non-empty registry subset"],
+      ["MONO-349", "blocked ack with a foreign registry gate"],
+      ["MONO-346", "gates-less registry entry with an ack"],
+      ["MONO-352", "gates-less registry entry without an ack"],
     ]) {
       if (!stdout.includes(`EVENT:dead ${issue}`)) {
         fail(`watcher must still emit dead for a worker whose only evidence is a ${label}`);
@@ -6613,6 +6747,338 @@ function assertAnchorOrder(label, text, anchors, negativeFixtures) {
   }
 }
 
+const REGISTRY_GATE_TEXT_REQUIREMENTS = [
+  {
+    label: "schema-shape",
+    file: "reportTemplate",
+    text: "`gates` is optional. When present it is a non-empty array of unique,\nnon-empty strings",
+  },
+  {
+    label: "schema-attempt-scope",
+    file: "reportTemplate",
+    text: "It is scoped to the current attempt identified by\n`log`",
+  },
+  {
+    label: "schema-absent-fail-closed",
+    file: "reportTemplate",
+    text: "When an ack exists, an absent or malformed `gates` value makes the ack\nunusable",
+  },
+  {
+    label: "producer-registration",
+    file: "orchestrateSkill",
+    text: "On every verified gate-carrying `mono-implement` spawn, respawn, or\n     session rotation, write `registryEntry.gates`",
+  },
+  {
+    label: "producer-new-attempt",
+    file: "orchestration",
+    text: "| Verified gate-carrying spawn, respawn, or session rotation | Write the exact non-empty unique gate-name list for the NEW current attempt together with its attempt-numbered `log`. |",
+  },
+  {
+    label: "producer-same-attempt",
+    file: "orchestration",
+    text: "| Same-attempt no-ack nudge or resume | Preserve `gates`; this is still the same attempt. |",
+  },
+  {
+    label: "producer-waiting-resume",
+    file: "orchestration",
+    text: "| `gates-passed` received, resumed writer not yet confirmed | Preserve `gates`; the durable consumer contract is still live. |",
+  },
+  {
+    label: "producer-applied",
+    file: "orchestration",
+    text: "| Consume `.applied` | Register the resumed writer while preserving `gates`, atomically publish the private consumption record with `outcome: applied`, rename every ack candidate, then remove `gates` separately. |",
+  },
+  {
+    label: "producer-rejected",
+    file: "orchestration",
+    text: "| Consume `.rejected` | The attempt is TERMINAL: atomically publish the private consumption record with `outcome: rejected`, rename every ack candidate, then remove `gates`. Recovery is an immediate verified respawn of a NEW gate attempt with its own list; never same-attempt nudge after consumption. |",
+  },
+  {
+    label: "producer-blocked",
+    file: "orchestration",
+    text: "| Consume `.blocked` | The terminal non-green attempt has no resume: atomically publish the private consumption record with `outcome: blocked`, rename every ack candidate, then remove `gates`. |",
+  },
+  {
+    label: "consumption-record-shape",
+    file: "orchestration",
+    text: "\"attempt\": 1,\n     \"outcome\": \"applied | rejected | blocked\"",
+  },
+  {
+    label: "consumption-record-order",
+    file: "orchestration",
+    text: "The record is atomically published before any in-place ack rename and\n   before the separate write that removes `registryEntry.gates`",
+  },
+  {
+    label: "consumption-record-atomic-publish",
+    file: "orchestration",
+    text: "Publish it\n   with a same-directory temporary file and atomic rename",
+  },
+  {
+    label: "producer-malformed",
+    file: "orchestration",
+    text: "| Malformed `gates` on a gate-carrying entry | Treat it as a producer contract error and terminate the attempt; verified-respawn a NEW gate attempt with a correct list. |",
+  },
+  {
+    label: "producer-forbidden",
+    file: "orchestration",
+    text: "| `gates` present on `mono-preflight` or `mono-ship` | Presence is forbidden, not a selector: start a new attempt of that same stage WITHOUT `gates`. |",
+  },
+  {
+    label: "producer-stage-advance",
+    file: "orchestration",
+    text: "| Stage advance or any other non-gate dispatch | Remove `gates` explicitly, but only AFTER reconciling every unconsumed ack for the current attempt. |",
+  },
+  {
+    label: "producer-crash-cleanup",
+    file: "orchestration",
+    text: "| Crash after consumption-record publication | Resume treats the well-formed private CURRENT-attempt record as intent: finish renaming every remaining ack candidate to the suffix selected by `outcome`, then remove stale `gates`. Tombstones and mailbox files never authorize either action. |",
+  },
+  {
+    label: "consumer-registry-source",
+    file: "orchestration",
+    text: "reads `registryEntry.gates` from the registry entry whose `log` identifies\n   this current attempt",
+  },
+  {
+    label: "consumer-status-asymmetry",
+    file: "orchestration",
+    text: "`gates-passed` requires exact set equality, while `blocked` accepts a\n  non-empty subset with no foreign names; duplicates are invalid in both\n  branches",
+  },
+  {
+    label: "monitor-status-asymmetry",
+    file: "orchestrateSkill",
+    text: "status-asymmetric: `gates-passed` requires exact set equality, while\n     `blocked` accepts a non-empty subset with no foreign or duplicate names",
+  },
+  {
+    label: "consumer-event-not-proof",
+    file: "orchestrateSkill",
+    text: "the event only accelerates it and is never proof of validation",
+  },
+  {
+    label: "monitor-malformed-reference",
+    file: "orchestration",
+    text: "a present\n  malformed value is a producer contract error: terminate the current attempt\n  and verified-respawn a NEW gate attempt",
+  },
+  {
+    label: "monitor-forbidden-reference",
+    file: "orchestration",
+    text: "On a `mono-preflight` or `mono-ship`\n  entry, any presence is forbidden: start a new attempt of that same stage\n  WITHOUT `gates`",
+  },
+  {
+    label: "monitor-malformed-skill",
+    file: "orchestrateSkill",
+    text: "A malformed present value\n     on a gate-carrying `mono-implement` entry is a producer contract error",
+  },
+  {
+    label: "monitor-forbidden-skill",
+    file: "orchestrateSkill",
+    text: "Any presence on a\n     `mono-preflight` or `mono-ship` entry is forbidden",
+  },
+  {
+    label: "resume-attempt-equality",
+    file: "orchestration",
+    text: "require the private orchestrator\n   consumption record\n   `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` for the SAME\n   current `<N>`",
+  },
+  {
+    // (п) The mailbox is worker-writable, so a fabricated record there cannot
+    // authorize stale-gates cleanup.
+    label: "resume-mailbox-record-no-cleanup",
+    file: "orchestration",
+    text: "A fabricated record in\n   `reports/` never authorizes cleanup",
+  },
+  {
+    // Amendment #2 remains load-bearing under the private namespace: a
+    // worker-controlled tombstone cannot authorize durable cleanup.
+    label: "resume-fallback-tombstone-no-cleanup",
+    file: "orchestration",
+    text: "Neither does a tombstone in either ack\n   location, including the worker-writable fallback",
+  },
+  {
+    // (р) Only the private current-attempt record is the positive cleanup
+    // authority; any other namespace or attempt remains fail-closed.
+    label: "resume-private-consumption-record-cleanup",
+    file: "orchestration",
+    text: "Only a well-formed record in `consumed/` whose `issue`,\n   `attempt`, and `outcome` match this Issue, current attempt, and one of\n   `applied | rejected | blocked` authorizes removal",
+  },
+  {
+    label: "dispatch-private-consumed-ban",
+    file: "dispatchTemplate",
+    text: "do not touch orchestrator state (`ledger.md`,\n  `workers.json`, `control.json`, `dispatch/`, or `consumed/`)",
+  },
+  {
+    label: "watcher-absent-gates-fail-closed",
+    file: "orchestration",
+    text: "When an ack exists, absent or malformed `registryEntry.gates`\n  makes it unusable",
+  },
+  {
+    label: "watcher-no-ack-unchanged",
+    file: "orchestration",
+    text: "Entries without an ack do not evaluate this gate-list consumer\n  rule",
+  },
+  {
+    label: "monitor-absent-gates-skill",
+    file: "orchestrateSkill",
+    text: "When an ack exists but `gates` is absent, the ack is unusable and the\n     current attempt takes the NEW-attempt recovery branch",
+  },
+  {
+    label: "consumer-no-source-discriminator",
+    file: "orchestration",
+    text: "there is no source-identity discriminator and no form-only\n  legacy branch",
+  },
+  {
+    label: "monitor-no-source-discriminator",
+    file: "orchestrateSkill",
+    text: "There is no source-identity discriminator or form-only\n     legacy branch",
+  },
+  {
+    label: "monitor-rejected-terminal-reference",
+    file: "orchestration",
+    text: "consumption namespace only for a `mono-implement` registry entry whose CURRENT stage-qualified\n  log is `<ISSUE-KEY>-mono-implement-a<N>.jsonl`. A well-formed private\n  consumption record for that same `<N>` with `outcome: rejected` is a durable\n  terminal routing signal",
+  },
+  {
+    label: "monitor-rejected-terminal-skill",
+    file: "orchestrateSkill",
+    text: "only when `registryEntry.stage` is `mono-implement` and its CURRENT log\n     is `<ISSUE-KEY>-mono-implement-a<N>.jsonl`, a well-formed private record\n     for that same `<N>` with `outcome: rejected` skips same-attempt nudge",
+  },
+  {
+    label: "resume-rejected-terminal-record",
+    file: "orchestration",
+    text: "If that current-attempt record has `outcome: rejected`, the attempt is\n   durably terminal",
+  },
+  {
+    label: "resume-gate-stage-log-scope",
+    file: "orchestration",
+    text: "Consult `consumed/` only when `registryEntry.stage` is `mono-implement`\n   and the CURRENT registry log basename is\n   `<ISSUE-KEY>-mono-implement-a<N>.jsonl`",
+  },
+  {
+    label: "resume-record-finishes-rename",
+    file: "orchestration",
+    text: "When a current-attempt private record exists but an unconsumed ack\n   candidate remains, finish every in-place rename selected by its `outcome`\n   before removing `gates`",
+  },
+  {
+    label: "consumer-record-prevents-replay",
+    file: "orchestration",
+    text: "An ack delivered or polled while that matching CURRENT-attempt record exists\n   is consumption recovery, never a new lifecycle signal",
+  },
+  {
+    label: "monitor-record-prevents-replay",
+    file: "orchestrateSkill",
+    text: "A watcher redelivery or poll of that ack is consumption recovery, not\n     authority to apply lifecycle moves again",
+  },
+  {
+    label: "heartbeat-consumption-record-first",
+    file: "orchestration",
+    text: "Every consumption\n  branch atomically publishes the trusted private\n  `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record first,\n  then renames the attempt's ack candidates, and only then removes\n  `registryEntry.gates`",
+  },
+  {
+    label: "u5-reference-boundary",
+    file: "orchestration",
+    text: "The Worker Report shape and gate-ack shape are unchanged by this protocol",
+  },
+  {
+    label: "u5-dispatch-boundary",
+    file: "dispatchTemplate",
+    text: "the Worker Report shape and gate-ack shape stay\n  unchanged, while the Worker Registry",
+  },
+];
+
+function registryGateContractFaults(surfaces) {
+  const faults = [];
+  for (const requirement of REGISTRY_GATE_TEXT_REQUIREMENTS) {
+    if (!surfaces[requirement.file].includes(requirement.text)) faults.push(requirement.label);
+  }
+
+  const watcher = surfaces.watcher;
+  const registryReadStart = watcher.indexOf("function readRegistryGates(registryEntry)");
+  const elementValidation = watcher.indexOf("for (const gate of gates)", registryReadStart);
+  const registrySet = watcher.indexOf("const gateNames = new Set(gates)", registryReadStart);
+  if (
+    registryReadStart < 0 ||
+    elementValidation < registryReadStart ||
+    registrySet < elementValidation
+  ) {
+    faults.push("watcher-full-shape-before-set");
+  }
+  for (const [label, text] of [
+    ["watcher-legacy-presence", 'Object.prototype.hasOwnProperty.call(registryEntry ?? {}, "gates")'],
+    ["watcher-absent-null", 'Object.prototype.hasOwnProperty.call(registryEntry ?? {}, "gates")) {\n    return null;'],
+    ["watcher-malformed-null", "if (registryGates === null) return null;"],
+    ["watcher-no-foreign-gates", "!ack.gateNames.every((gateName) => registryGates.gateNames.has(gateName))"],
+    [
+      "watcher-passed-set-equality",
+      'ack.status === "gates-passed" && ack.gateNames.length !== registryGates.gateNames.size',
+    ],
+  ]) {
+    if (!watcher.includes(text)) faults.push(label);
+  }
+  if (watcher.includes("INSTALLED_SOURCE_COMMIT") || watcher.includes("installedSourceCommit")) {
+    faults.push("watcher-source-commit-discriminator-removed");
+  }
+  for (const [file, forbidden] of [
+    ["orchestration", "compare `registryEntry.sourceCommit`"],
+    ["orchestration", "entry whose `sourceCommit`"],
+    ["orchestrateSkill", "compare the entry's\n     `sourceCommit`"],
+    ["reportTemplate", "`sourceCommit` selects the\nlegacy"],
+  ]) {
+    if (surfaces[file].includes(forbidden)) faults.push(`${file}-source-commit-discriminator-removed`);
+  }
+  return faults;
+}
+
+function validateRegistryGateContract() {
+  const surfaces = {
+    orchestration: read("references/orchestration.md"),
+    orchestrateSkill: read("skills/mono-orchestrate/SKILL.md"),
+    reportTemplate: read("templates/orchestrator-report.md"),
+    dispatchTemplate: read("templates/orchestrator-dispatch.md"),
+    watcher: read("scripts/watch-workers.mjs"),
+  };
+  const faults = registryGateContractFaults(surfaces);
+  if (faults.length > 0) {
+    fail(`registry gate contract is incomplete: ${faults.join(", ")}`);
+  }
+
+  // Negative structural fixtures prove the pins reject removal of each
+  // load-bearing branch instead of merely checking that related prose exists.
+  for (const label of [
+    "producer-new-attempt",
+    "consumption-record-shape",
+    "consumption-record-order",
+    "consumption-record-atomic-publish",
+    "consumer-registry-source",
+    "consumer-status-asymmetry",
+    "monitor-malformed-reference",
+    "monitor-forbidden-skill",
+    "resume-attempt-equality",
+    "resume-mailbox-record-no-cleanup",
+    "resume-fallback-tombstone-no-cleanup",
+    "resume-private-consumption-record-cleanup",
+    "dispatch-private-consumed-ban",
+    "watcher-absent-gates-fail-closed",
+    "watcher-no-ack-unchanged",
+    "monitor-absent-gates-skill",
+    "consumer-no-source-discriminator",
+    "monitor-no-source-discriminator",
+    "monitor-rejected-terminal-reference",
+    "monitor-rejected-terminal-skill",
+    "resume-rejected-terminal-record",
+    "resume-gate-stage-log-scope",
+    "resume-record-finishes-rename",
+    "consumer-record-prevents-replay",
+    "monitor-record-prevents-replay",
+    "heartbeat-consumption-record-first",
+  ]) {
+    const requirement = REGISTRY_GATE_TEXT_REQUIREMENTS.find((entry) => entry.label === label);
+    const mutated = {
+      ...surfaces,
+      [requirement.file]: surfaces[requirement.file].replace(requirement.text, ""),
+    };
+    const fixtureFaults = registryGateContractFaults(mutated);
+    if (!fixtureFaults.includes(label)) {
+      fail(`registry gate negative fixture did not reject removed ${label} rule`);
+    }
+  }
+}
+
 function validateTwoPhaseDispatchHandshake() {
   const orchestration = read("references/orchestration.md");
   const sectionStart = orchestration.indexOf("## Two-Phase Dispatch Handshake");
@@ -6656,30 +7122,36 @@ function validateTwoPhaseDispatchHandshake() {
     '"phase": "gate"',
     '"status": "gates-passed | blocked"',
     "The gate-ack is not a stage report",
-    "`templates/orchestrator-report.md` is unchanged by this protocol.",
+    "The Worker Report shape and gate-ack shape are unchanged by this protocol;",
     // The ack is the only evidence the gates ran: it is complete, internally
     // consistent, checked against the dispatched gate list, and consumed
     // before the resume so it cannot go on suppressing liveness events.
     "`gates-passed` requires every entry to be `pass`",
     "The invariant runs both ways",
     "strands a dispatch whose gates actually passed",
-    "carries each gate name exactly once",
-    "set equality on the\n   gate names, not a count",
+    "carries each reported gate name exactly once",
+    "For `gates-passed`, its set of names equals this dispatch's gate list\n   exactly",
+    "For `blocked`, it may be a non-empty subset of that list",
+    "A\n   repeated name is invalid in both branches",
+    "checks the exact\n   ack artifact against that durable list — set equality on the gate names,\n   not a count",
     "is self-contradictory\n   and is treated as no ack at all",
-    "a gate list the ack does not cover is a blocked ack, not a passed one",
+    "A non-empty subset is\n   valid only for `blocked`, which never authorizes lifecycle moves",
     // A rejected ack must be consumed too, or it suppresses liveness for a
     // worker nobody is about to resume.
     "Rejecting an ack has its own consumption step",
-    "rename it to `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
-    "the no-ack path below owns it from there",
-    "consumes the ack by renaming\n   it to `<ISSUE-KEY>-gate-ack-a<N>.applied.json`",
-    "ack left in place would go on suppressing `stall` and `dead` for a worker",
-    "re-arms the liveness ladder\n   for the execution phase",
+    "then rename it to\n   `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
+    "Rejection is\n   TERMINAL for this attempt: recovery is a verified respawn of a NEW gate\n   attempt with its own list",
+    "atomically publishes\n   the private consumption record with `outcome: applied`, then renames every\n   candidate for the attempt to `<ISSUE-KEY>-gate-ack-a<N>.applied.json`",
+    "ack left in place\n   would go on suppressing `stall` and `dead` for a worker",
+    "re-arms the liveness ladder for the execution\n   phase",
     // Consuming the ack too early is its own defect: the gate-phase pid is
     // gone, so an unsuppressed window calls a healthy resume dead.
-    "Consuming it\n   any earlier is equally wrong",
-    "reports `dead` for a healthy\n   resume",
-    "in the same immediate post-resume registry update that records the new",
+    "Starting the\n   record-and-rename sequence any earlier is equally wrong",
+    "reports `dead` for a healthy resume",
+    "private consumption record with `outcome: applied`",
+    "Only after the trusted record and every rename succeed does a separate\n   registry write remove `gates`",
+    "That tombstone is a delivery/suppression marker only; it\n   is never authority to clear durable registry state",
+    "the immediate post-resume registry update that records the new\n   writer per Worker Transports preserves `registryEntry.gates`",
     "Both\n   the orchestrator and the watcher read the fallback path",
     // A blocked ack never rewrites the stage's own exit statuses.
     "That report carries the\nstage's OWN exit status for the failure it hit",
@@ -6742,8 +7214,8 @@ function validateTwoPhaseDispatchHandshake() {
     "what \"stops\" means depends on the ack's own status",
     "ack first, then\n   report — and stops only after both exist",
     "Leaving a blocked ack with no\n   report would strand the Issue",
-    "consume the ack as\n   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`",
-    "That is the third\n   consumption state",
+    "atomically publish the private consumption\n   record with `outcome: blocked`, rename the ack as\n   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`",
+    "That\n   is the third\n   consumption state",
     "without a state of its own it would be redelivered on every watcher restart",
     "the `gate-ack`\n  comes first, because the consumer reads the ack's status before it acts on\n  the report",
     "A `gates-passed` ack beside a stage report is the genuinely ambiguous one",
@@ -6809,26 +7281,29 @@ function validateTwoPhaseDispatchHandshake() {
     "two-phase handshake",
     "apply no move until the worker's `gates-passed` gate-ack",
     "never a «Решил сам:» decision",
-    "A `gate-ack` event is a delivery event, not a liveness one",
+    "A `gate-ack` event is a delivery signal, not durable proof and not a\n     liveness event",
     "waiting by contract — never heal it",
     "check\n     the exact ack artifact the event named",
-    "against the gate list you dispatched, by set\n     equality on the gate names, never a count",
-    "consume the ack by renaming it\n     `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in the same immediate post-resume\n     registry update",
+    "against `registryEntry.gates` from the\n     current attempt's registry entry: `gates-passed` requires exact set\n     equality on the gate names, never a count; `blocked` accepts a non-empty\n     subset but no foreign or duplicate names",
+    "register the resumed writer while preserving\n     `registryEntry.gates`, atomically publish the private orchestrator\n     `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with\n     `outcome: applied`, rename every candidate for that attempt to\n     `<ISSUE-KEY>-gate-ack-a<N>.applied.json`, and only then remove `gates` in\n     a separate registry write",
     "an ack\n     left in place keeps suppressing that worker's `stall` and `dead` events",
     "while consuming it before the resumed writer is registered leaves a window",
     // The watcher emits gate-ack for a blocked ack too; the monitor state must
     // branch instead of applying moves on every event.
-    "Read the ack's\n     `status` first",
+    "validate it\n     against `registryEntry.gates` from the current attempt before reading its\n     `status`",
+    "status-asymmetric: `gates-passed` requires exact set equality, while\n     `blocked` accepts a non-empty subset with no foreign or duplicate names",
     "Poll the mailbox cheaply for BOTH reports and gate-acks",
     "The poll is what makes the handshake recoverable",
-    "Read the ack's\n     `status` first, never the report on its own",
+    "read the ack's `status` first, never the report on its own",
     "the two arriving\n     together is that path working, not a crash",
     "which is AMBIGUOUS rather than\n     proof",
     "never silently\n     consume the ack or resume on it twice",
     "an unconsumed ack on its own\n     never authorizes resuming twice",
     "`blocked` applies no move at\n     all",
-    "consume the ack as `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`",
-    "renamed `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
+    "atomically publish the private orchestrator\n     `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with\n     `outcome: blocked`, rename the ack as\n     `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`",
+    "`<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with\n     `outcome: blocked`",
+    "worker-writable tombstone or mailbox record never substitutes for that\n     private current-attempt record during Resume cleanup",
+    "atomically publish the trusted record with `outcome: rejected`, then rename\n     it `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
   ]) {
     assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
   }
@@ -7215,6 +7690,7 @@ validateRealBackendContractSampling();
 validateGoalContractBinding();
 validateReportContractSingleHome();
 validateOrchestrationModePrecedence();
+validateRegistryGateContract();
 validateTwoPhaseDispatchHandshake();
 validateReviewLoopHygiene();
 validateCostTelemetry();

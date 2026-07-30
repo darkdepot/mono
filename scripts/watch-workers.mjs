@@ -26,7 +26,10 @@
 // prior attempt's report proves nothing about a retry's writer). A fresh
 // `gates-passed` gate-ack suppresses them on the same predicate: the gate
 // pause of the two-phase dispatch handshake is a contracted wait, so the
-// worker's exited process is its expected state there, not death.
+// worker's exited process is its expected state there, not death. When the
+// current registry entry carries `gates`, the shared ack read also requires
+// exact set equality for `gates-passed`; `blocked` accepts a non-empty subset
+// but still rejects foreign or duplicate names.
 //
 // Report and gate-ack events apply only to codex-cli workers with a
 // correlated A5 identity and use file mtime+size as the in-process version
@@ -309,13 +312,17 @@ function isFreshForLog(stat, log) {
 // identity, so it is correlated through the registry entry and the log it
 // belongs to, never through fields of its own.
 //
-// The ack is the only evidence the gates ran, and it suppresses liveness
-// events, so it is validated whole and fails closed: a non-empty `gates` array
-// of well-formed entries, and `gates-passed` only when every entry passed. An
-// ack claiming `gates-passed` over a blocked gate is self-contradictory and is
-// treated as no ack at all. Coverage of the dispatch's gate LIST is the
-// orchestrator's check, not the watcher's — only the orchestrator knows which
-// gates it dispatched.
+// The ack is the only evidence the gates ran, so it is validated whole and
+// fails closed: a non-empty `gates` array of well-formed entries, and
+// `gates-passed` only when every entry passed. An ack claiming `gates-passed`
+// over a blocked gate is self-contradictory and is treated as no ack at all.
+// Only a usable `gates-passed` ack suppresses liveness; `blocked` is delivered
+// but deliberately suppresses nothing because that terminal path writes the
+// ordinary stage report. When the registry carries the dispatch's gate list,
+// the shared read boundary also requires exact set equality for `gates-passed`,
+// while `blocked` may carry a non-empty subset with no foreign names. It checks
+// this before either delivery or suppression sees the ack; an absent or
+// malformed registry list makes an existing ack unusable.
 //
 // Lifecycle: the orchestrator consumes the ack by renaming it — to
 // `<ISSUE-KEY>-gate-ack.applied.json` once the worker is resumed AND its new
@@ -396,10 +403,31 @@ function readGateAckAt(ackPath, log) {
     // actually passed is stranded. Either contradiction is no usable ack.
     if (ack.status === "gates-passed" && !ack.gates.every((entry) => entry.status === "pass")) return null;
     if (ack.status === "blocked" && !ack.gates.some((entry) => entry.status === "blocked")) return null;
-    return { ackPath, stat, status: ack.status };
+    return { ackPath, stat, status: ack.status, gateNames };
   } finally {
     fs.closeSync(fd);
   }
+}
+
+// `gates` is the durable list dispatched for this attempt. An absent or
+// malformed value fails closed whenever an ack exists: there is no form-only
+// legacy branch. Entries without an ack never reach this consumer boundary.
+//
+// Validate the complete element shape before the Set operation. That keeps a
+// partially valid array from influencing comparison and leaves the registry
+// snapshot untouched for every consumer of this scan.
+function readRegistryGates(registryEntry) {
+  if (!Object.prototype.hasOwnProperty.call(registryEntry ?? {}, "gates")) {
+    return null;
+  }
+  const gates = registryEntry.gates;
+  if (!Array.isArray(gates) || gates.length === 0) return null;
+  for (const gate of gates) {
+    if (typeof gate !== "string" || gate.length === 0) return null;
+  }
+  const gateNames = new Set(gates);
+  if (gateNames.size !== gates.length) return null;
+  return { gateNames };
 }
 
 // The mailbox path and the sandbox fallback the protocol permits under the
@@ -474,8 +502,17 @@ function readGateAck(reportsDir, log, registryEntry) {
     });
   if (present.length !== 1) return null;
 
+  // Do not evaluate the gate-list consumer rule for ordinary entries without
+  // an ack. Once exactly one candidate exists, validate the complete registry
+  // value before ack parsing performs any gate-name Set operation.
+  const registryGates = readRegistryGates(registryEntry);
+  if (registryGates === null) return null;
   const ack = readGateAckAt(present[0], log);
   if (ack === null) return null;
+  const hasForeignGate = !ack.gateNames.every((gateName) => registryGates.gateNames.has(gateName));
+  const incompletePassedAck =
+    ack.status === "gates-passed" && ack.gateNames.length !== registryGates.gateNames.size;
+  if (hasForeignGate || incompletePassedAck) return null;
   // Future-dated acks are rejected HERE, at the one read boundary, not only in
   // the suppression branch: a check that lives in one consumer still lets the
   // artifact be delivered and still lets it count as evidence. The worker sets

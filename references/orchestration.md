@@ -333,7 +333,10 @@ Order, and it is the whole protocol:
 1. Gate-phase dispatch. The orchestrator emits the dispatch with the pre-move
    snapshot — Project not yet in Delivery, or Issue not yet started — and the
    dispatch template's Gate Phase block filled in. It applies no lifecycle
-   move yet, and the pre-move snapshot is correct, not stale.
+   move yet, and the pre-move snapshot is correct, not stale. Once the spawn is
+   verified, the same registry registration that records the attempt-numbered
+   `log` writes `registryEntry.gates` as the exact gate-name list dispatched
+   for this current attempt.
 2. Worker gate phase. The worker runs steps 1-4 of the orchestration branch of
    `start-checkpoint` in `skills/mono-implement/SKILL.md`: pack identity gate,
    snapshot package context, approval plus `mono-review handoff` findings, and
@@ -364,10 +367,11 @@ Order, and it is the whole protocol:
    }
    ```
 
-   `gates` is non-empty and carries each gate name exactly once, and its set of
-   names equals this dispatch's gate list exactly — a repeated name would
-   otherwise stand in for an omitted one under any coverage check that counts
-   entries instead of comparing the set.
+   `gates` is non-empty and carries each reported gate name exactly once.
+   For `gates-passed`, its set of names equals this dispatch's gate list
+   exactly. For `blocked`, it may be a non-empty subset of that list because
+   later gates may not have run, but it must contain no foreign name. A
+   repeated name is invalid in both branches.
    `gates-passed` requires every entry to be `pass`, so an ack that claims
    `gates-passed` while carrying a blocked, duplicated, or missing gate
    is self-contradictory
@@ -387,9 +391,10 @@ Order, and it is the whole protocol:
 
    The gate-ack is not a stage report: it has its own path, its own two-value
    `status`, and it neither uses nor extends the `verification_items` enum.
-   `templates/orchestrator-report.md` is unchanged by this protocol. Its
-   delivery follows the same sandbox rule as a report: if the mailbox write is
-   denied, write the same JSON to
+   The Worker Report shape and gate-ack shape are unchanged by this protocol;
+   the Worker Registry in `templates/orchestrator-report.md` gains only the
+   optional attempt-scoped `gates` field. Ack delivery follows the same sandbox
+   rule as a report: if the mailbox write is denied, write the same JSON to
    `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack-a<N>.json` (never committed). Both
    the orchestrator and the watcher read the fallback path as well as the
    mailbox one, because an ack the watcher cannot see reads as a dead worker
@@ -406,8 +411,40 @@ Order, and it is the whole protocol:
    Consumption is per ATTEMPT, not per file: consuming an ack renames every
    file for that attempt in BOTH locations, and a consumed marker in either
    location is a tombstone — while one exists, no remaining file for that
-   attempt is an ack. A future-dated ack is not read at all, so it is neither
-   delivered nor able to suppress. The
+   attempt is an ack. That tombstone is a delivery/suppression marker only; it
+   is never authority to clear durable registry state.
+
+   Before any candidate rename, the orchestrator writes its trusted
+   consumption record in the same consumption step:
+
+   ```json
+   {
+     "issue": "<ISSUE-KEY>",
+     "attempt": 1,
+     "outcome": "applied | rejected | blocked"
+   }
+   ```
+
+   Its path is
+   `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json`. The
+   `consumed/` namespace is private orchestrator state: only the orchestrator
+   writes it, dispatches never expose it as a worker output path, and workers
+   are forbidden to touch it. It is not a new gate-ack field or Worker Registry
+   field. The record is atomically published before any in-place ack rename and
+   before the separate write that removes `registryEntry.gates`. Publish it
+   with a same-directory temporary file and atomic rename after the file is
+   durable; the final name is the journaled intent that Resume may trust. The
+   example's `1` stands for the positive integer
+   `<N>` from the attempt-numbered filename. Missing record fails safely:
+   the ack and `gates` stay until the same outcome is retried or a verified new
+   attempt overwrites the field at spawn. Once the record exists, finish every
+   candidate rename selected by its `outcome` before removing `gates`.
+   An ack delivered or polled while that matching CURRENT-attempt record exists
+   is consumption recovery, never a new lifecycle signal: do not apply moves
+   again; finish the journaled rename and registry cleanup.
+
+   A future-dated ack is not read at all, so it is neither delivered nor able
+   to suppress. The
    `gate-ack` watcher event names the FULL path it validated, and
    the coverage check in step 4 is performed on that exact artifact — never on
    "the ack" resolved a second time, which is how an orchestrator ends up
@@ -420,9 +457,11 @@ Order, and it is the whole protocol:
 
    A `blocked` ack beside a stage report is the ordinary non-green outcome, not
    a crash. The blocked path writes both of them by design, before any
-   execution happened at all: consume the ack as
-   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`, route the report through the
-   ordinary non-green path, and reconcile nothing. That is the third
+   execution happened at all: atomically publish the private consumption
+   record with `outcome: blocked`, rename the ack as
+   `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`, remove `registryEntry.gates`, route
+   the report through the ordinary non-green path, and reconcile nothing. That
+   is the third
    consumption state, beside `.applied` after a resume and `.rejected` for a
    coverage failure: an ack whose gates honestly did not pass is spent too, and
    without a state of its own it would be redelivered on every watcher restart.
@@ -449,15 +488,26 @@ Order, and it is the whole protocol:
    prevent, and one the consumer rule above already prevents. Fence a replay
    where the binding exists, not where only a timestamp does.
 4. Lifecycle application. On `status: gates-passed` the orchestrator first
-   checks the ack against the gate list it dispatched — set equality on the
-   gate names, not a count, and every one `pass` — because the ack is the only
-   evidence those gates ran:
-   a gate list the ack does not cover is a blocked ack, not a passed one.
+   reads `registryEntry.gates` from the registry entry whose `log` identifies
+   this current attempt, validates its complete shape, and checks the exact
+   ack artifact against that durable list — set equality on the gate names,
+   not a count, and every one `pass`. Process memory and the watcher event are
+   not evidence those gates ran. When an ack exists, absent or malformed
+   `registryEntry.gates` makes it unusable; there is no form-only legacy branch.
+   A foreign or duplicate ack name, or an incomplete `gates-passed` set, also
+   makes the ack unusable. The producer-contract recovery is a verified respawn
+   of a NEW gate attempt that writes its own correct list. A non-empty subset is
+   valid only for `blocked`, which never authorizes lifecycle moves. Entries
+   without an ack do not evaluate this gate-list consumer rule, so absent
+   `gates` leaves their watcher liveness signals unchanged.
    Rejecting an ack has its own consumption step, because a rejected ack that
    stays in place goes on suppressing liveness for a worker nobody is about to
-   resume: rename it to `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`, which re-arms
-   ladder immediately, and then treat the worker as having produced no usable
-   ack — the no-ack path below owns it from there.
+   resume: atomically publish the private consumption record with
+   `outcome: rejected`, then rename it to
+   `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`, which re-arms the ladder
+   immediately, and remove `registryEntry.gates`. Rejection is
+   TERMINAL for this attempt: recovery is a verified respawn of a NEW gate
+   attempt with its own list, never a same-attempt nudge after consumption.
    It then applies every lifecycle move this dispatch carries and
    confirms each with read-back per Linear Write Verification. A move whose
    read-back still shows the old state is pending, never applied, and the
@@ -469,19 +519,47 @@ Order, and it is the whole protocol:
    that amended post-move state. The pack identity gate runs again after the
    resume, unchanged: resuming is a stage resume, so the gate is mandatory.
 
-   Then, in the same immediate post-resume registry update that records the new
-   writer per Worker Transports, the orchestrator consumes the ack by renaming
-   it to `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in place. Both halves of that
-   order matter. Consuming it is not bookkeeping: a gate-ack suppresses
-   liveness events, and the resumed worker writes to the same stage log, so an
-   ack left in place would go on suppressing `stall` and `dead` for a worker
-   that has crashed after its resume; the rename re-arms the liveness ladder
-   for the execution phase and keeps the ack on disk as history. Consuming it
-   any earlier is equally wrong: between the rename and the resumed writer
-   being registered, the gate-phase pid is already gone and nothing suppresses
-   liveness, so a watcher scan in that window reports `dead` for a healthy
-   resume and sends the healing ladder against it. A resuming orchestrator that
-   finds an unconsumed ack beside an already-resumed worker consumes it then.
+   First, the immediate post-resume registry update that records the new
+   writer per Worker Transports preserves `registryEntry.gates`. After that
+   writer registration is confirmed, the orchestrator atomically publishes
+   the private consumption record with `outcome: applied`, then renames every
+   candidate for the attempt to `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in
+   place. Only after the trusted record and every rename succeed does a separate
+   registry write remove `gates`. All four parts of that order matter.
+   Consuming it is not bookkeeping: a gate-ack suppresses liveness events, and
+   the resumed worker writes to the same stage log, so an ack left in place
+   would go on suppressing `stall` and `dead` for a worker that has crashed
+   after its resume; the rename re-arms the liveness ladder for the execution
+   phase and keeps the ack on disk as history. Renaming the ack or removing
+   `gates` before the record would discard trusted recovery evidence, while a
+   missing record leaves both ack and field safely in place. Starting the
+   record-and-rename sequence any earlier is equally wrong: if the rename
+   completes before the resumed writer is registered, the gate-phase pid is
+   already gone and nothing suppresses liveness, so a watcher scan in that
+   window reports `dead` for a healthy resume and sends the healing ladder
+   against it. A resuming orchestrator that finds an unconsumed ack beside an
+   already-resumed worker consumes it then.
+
+### Registry gate-list lifecycle
+
+This table owns the producer transitions for the optional
+`registryEntry.gates` field. It defines registry state changes; the
+stage-aware recovery decision for malformed and forbidden-presence branches
+lives on both monitor surfaces under Monitoring Protocol, not inside the
+handshake.
+
+| Transition | Required registry action |
+| --- | --- |
+| Verified gate-carrying spawn, respawn, or session rotation | Write the exact non-empty unique gate-name list for the NEW current attempt together with its attempt-numbered `log`. |
+| Same-attempt no-ack nudge or resume | Preserve `gates`; this is still the same attempt. |
+| `gates-passed` received, resumed writer not yet confirmed | Preserve `gates`; the durable consumer contract is still live. |
+| Consume `.applied` | Register the resumed writer while preserving `gates`, atomically publish the private consumption record with `outcome: applied`, rename every ack candidate, then remove `gates` separately. |
+| Consume `.rejected` | The attempt is TERMINAL: atomically publish the private consumption record with `outcome: rejected`, rename every ack candidate, then remove `gates`. Recovery is an immediate verified respawn of a NEW gate attempt with its own list; never same-attempt nudge after consumption. |
+| Consume `.blocked` | The terminal non-green attempt has no resume: atomically publish the private consumption record with `outcome: blocked`, rename every ack candidate, then remove `gates`. |
+| Malformed `gates` on a gate-carrying entry | Treat it as a producer contract error and terminate the attempt; verified-respawn a NEW gate attempt with a correct list. |
+| `gates` present on `mono-preflight` or `mono-ship` | Presence is forbidden, not a selector: start a new attempt of that same stage WITHOUT `gates`. |
+| Stage advance or any other non-gate dispatch | Remove `gates` explicitly, but only AFTER reconciling every unconsumed ack for the current attempt. |
+| Crash after consumption-record publication | Resume treats the well-formed private CURRENT-attempt record as intent: finish renaming every remaining ack candidate to the suffix selected by `outcome`, then remove stale `gates`. Tombstones and mailbox files never authorize either action. |
 
 Blocked path: a gate that fails makes the ack `status: blocked`, and the worker
 then also writes the normal stage report at the mailbox report path, so watcher
@@ -492,7 +570,8 @@ snapshot cannot supply a required input. Mode precedence never rewrites a
 stage's exit statuses, so the ack's `blocked` says only "gates not passed,
 apply nothing" while the report says what happened and routes through the
 ordinary non-green path, unchanged. The orchestrator applies no lifecycle move
-on a blocked ack.
+on a blocked ack. Consume the ack as `.blocked` first, then remove
+`registryEntry.gates`; the attempt is terminal and has no resume.
 
 No-ack path: an ack that never arrives is not a new signal. It is the existing
 liveness ladder — `stall`/`dead`, then nudge → respawn → session rotation —
@@ -624,7 +703,7 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
     defaults drift between versions (the wave-1 `model_switch` precedent),
     and a silently switched model voids the dispatch contract.
 
-  Immediately after verifying every spawn, resume, or session rotation, in the same orchestrator turn and before any other action, update that worker's `workers.json` entry with at least the current `pid`, `log`, `last_activity_at`, and `stage` (and the new `thread_id` on rotation). A live worker paired with a stale registry PID violates the registry contract; watcher events produced from that entry are untrustworthy, and investigating any such event must begin by reconciling the registry with the actual writer process.
+  Immediately after verifying every spawn, resume, or session rotation, in the same orchestrator turn and before any other action, update that worker's `workers.json` entry with at least the current `pid`, `log`, `last_activity_at`, and `stage` (and the new `thread_id` on rotation). A verified gate-carrying new attempt also writes its exact `gates` list in this registration; a same-attempt resume preserves the existing list until the lifecycle table authorizes removal. A live worker paired with a stale registry PID violates the registry contract; watcher events produced from that entry are untrustworthy, and investigating any such event must begin by reconciling the registry with the actual writer process.
 
   Parse the `thread.started` event from the log for the thread id and record
   it in the worker registry, together with the background process pid (`$!`)
@@ -740,7 +819,9 @@ complete cut-over window.
   runtime metadata, one entry per Issue: `transport`, `thread_id`,
   `worktree`, `branch`, `stage`, `spawned_at`, `last_activity_at`, `log`
   and `pid`, plus the dispatch `packVersion`, `sourceCommit`, and
-  `surfaceRevision` (shape in `templates/orchestrator-report.md`). Updated on
+  `surfaceRevision`, plus optional attempt-scoped `gates` only for the current
+  gate-carrying `mono-implement` attempt (shape and validity in
+  `templates/orchestrator-report.md`). Updated on
   every verified spawn, resume, session rotation, stage advance, and respawn
   under the immediate-update rule in Worker Transports; workers never touch it.
 - Product control: `control.json` beside `workers.json`, with the exact shape in
@@ -779,6 +860,27 @@ never report it as applied.
   repeated failures with no progress, gross divergence from the assigned
   Issue, or an unsafe mutation.
 - Read the worker's latest state before any intervention or respawn.
+- Before any event enters the common healing ladder, validate
+  `registryEntry.gates` with a stage-aware branch. On a gate-carrying
+  `mono-implement` entry, a present
+  malformed value is a producer contract error: terminate the current attempt
+  and verified-respawn a NEW gate attempt with its own correct non-empty unique
+  list; never same-attempt nudge it. On a `mono-preflight` or `mono-ship`
+  entry, any presence is forbidden: start a new attempt of that same stage
+  WITHOUT `gates`. When an ack exists but `gates` is absent, take the same
+  NEW-attempt producer-contract recovery; with no ack, absence leaves ordinary
+  liveness handling unchanged. These branches run here before the common
+  ladder; the handshake table defines the state transition but does not route
+  recovery.
+- Before applying the ordinary no-ack healing ladder, inspect the private
+  consumption namespace only for a `mono-implement` registry entry whose CURRENT stage-qualified
+  log is `<ISSUE-KEY>-mono-implement-a<N>.jsonl`. A well-formed private
+  consumption record for that same `<N>` with `outcome: rejected` is a durable
+  terminal routing signal. Skip same-attempt nudge and verified-respawn a NEW
+  gate attempt with its own correct list. Preflight and ship entries never
+  consult these records, even when their stage-local attempt number is also
+  `<N>`. Watcher liveness events remain unchanged; this is orchestrator
+  recovery routing from trusted durable state.
 - Stuck or dead worker: rebuild stage state from Linear plus the last mailbox
   report (the branch survives in the worktree) and respawn a worker to
   continue the stage, not restart the Issue.
@@ -875,9 +977,19 @@ directory's history; retired Issues' logs are outside its scope.
   must reconcile would sit unread. Its file is
   `reports/<ISSUE-KEY>-gate-ack-a<N>.json` or the worktree fallback path, whose
   minimal shape carries no identity fields, so its correlation comes from the
-  registry entry and the log it belongs to. The watcher validates the ack whole
-  and fails closed: a missing or malformed `gates` array, or `gates-passed`
-  over a gate that did not pass, is treated as no ack at all. It is scoped to
+  registry entry and the log it belongs to. In the shared `readGateAck`
+  boundary, the watcher validates the complete shape of
+  `registryEntry.gates` before any set operation and then compares its names
+  with the ack. When an ack exists, absent or malformed `registryEntry.gates`
+  makes it unusable; there is no source-identity discriminator and no form-only
+  legacy branch. Entries without an ack do not evaluate this gate-list consumer
+  rule and keep their ordinary watcher liveness signaling. With a durable list,
+  `gates-passed` requires exact set equality, while `blocked` accepts a
+  non-empty subset with no foreign names; duplicates are invalid in both
+  branches. Any mismatch produces neither delivery nor suppression. The
+  watcher never mutates the registry snapshot. It also validates the ack whole
+  and fails closed: a missing or malformed ack `gates` array, or
+  `gates-passed` over a gate that did not pass, is treated as no ack at all. It is scoped to
   the stage that can have a gate phase — a `mono-implement` log — so an ack
   beside a `mono-preflight` or `mono-ship` log, whose dispatches carry no
   lifecycle move, is spurious and neither delivers nor suppresses.
@@ -911,10 +1023,18 @@ directory's history; retired Issues' logs are outside its scope.
   and treat it as the no-ack path. Suppression
   demands the same registry correlation delivery does: an ack the watcher would
   not deliver cannot silence liveness either. On `gate-ack`, read the
-  correlated ack and branch on its `status` — `gates-passed` runs step 4 onward
+  exact correlated artifact, revalidate it against `registryEntry.gates` from
+  the current attempt with the same status-asymmetric rule, and only then
+  branch on its `status` —
+  `gates-passed` runs step 4 onward
   of Two-Phase Dispatch Handshake, `blocked` applies nothing and waits for the
   ordinary stage report that path also writes. Either way it is a
-  delivery event, never a Monitoring Protocol trigger. Non-Codex transports
+  delivery event, never a Monitoring Protocol trigger. Every consumption
+  branch atomically publishes the trusted private
+  `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record first,
+  then renames the attempt's ack candidates, and only then removes
+  `registryEntry.gates`; a tombstone alone never authorizes cleanup.
+  Non-Codex transports
   keep the polling contract here too.
 - `idle` is product-wide (its issue-key slot is `-`) and fires after the active
   registry has been empty longer than `--idle-sec` (default 300). A5 retirement
@@ -1069,7 +1189,29 @@ A fresh orchestrator session rebuilds state without loss:
    for the resuming session, not a pin-enforceable check: it defines how
    much to trust the ledger, not a mechanical validation.
 5. Read `workers.json` and list live worker sessions when the runtime allows
-   it. Compare each entry's `surfaceRevision` with the currently installed
+   it. Consult `consumed/` only when `registryEntry.stage` is `mono-implement`
+   and the CURRENT registry log basename is
+   `<ISSUE-KEY>-mono-implement-a<N>.jsonl`. Before clearing any stale
+   `registryEntry.gates`, parse the CURRENT
+   attempt `<N>` from that entry's `log` and require the private orchestrator
+   consumption record
+   `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` for the SAME
+   current `<N>`. Only a well-formed record in `consumed/` whose `issue`,
+   `attempt`, and `outcome` match this Issue, current attempt, and one of
+   `applied | rejected | blocked` authorizes removal. A fabricated record in
+   `reports/` never authorizes cleanup. Neither does a tombstone in either ack
+   location, including the worker-writable fallback. A missing, malformed, or
+   other-attempt private record leaves the ack and `gates` in place; reconcile
+   the current attempt or verified-respawn a new attempt, whose spawn
+   registration rewrites the field. When a current-attempt private record exists but an unconsumed ack
+   candidate remains, finish every in-place rename selected by its `outcome`
+   before removing `gates`. This is the crash recovery for every window between
+   outcome publication, ack rename, and the separate registry deletion.
+   If that current-attempt record has `outcome: rejected`, the attempt is
+   durably terminal even after its ack was renamed and `gates` was removed.
+   Resume skips same-attempt nudge and verified-respawns a NEW gate attempt
+   with its own correct list before the ordinary no-ack ladder can run.
+   Compare each entry's `surfaceRevision` with the currently installed
    lockfile before using its thread id. When surfaceRevision differs, do not rebind
    or resume that thread; report it blocked for a fresh compatible dispatch.
    Otherwise rebind to surviving `codex-cli` workers by thread id
