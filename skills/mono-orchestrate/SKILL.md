@@ -171,7 +171,9 @@ Workflow states:
      immediately rather than entering `dead` healing. The watcher reads at
      most 256 KiB of that log per pass and resumes from its cursor on the next
      pass, preserving later `thread.started` detection without blocking other
-     workers.
+     workers. At timeout it freezes the observed log size and finishes that
+     snapshot before declaring `spawn-fail`; subsequent appends cannot prolong
+     the decision.
      Preserve the list on a
      same-attempt no-ack nudge/resume and while a passed ack awaits confirmed
      resume. Never copy it to a new attempt implicitly: a verified new

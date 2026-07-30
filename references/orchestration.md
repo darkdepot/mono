@@ -753,7 +753,10 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
   `dead`. Log inspection is bounded to 256 KiB per watcher pass and resumes
   from its prior cursor on the next pass, so an append-only pre-start stream
   cannot monopolize monitoring and a later `thread.started` remains
-  discoverable.
+  discoverable. If the startup timeout arrives before that scan is complete,
+  the watcher freezes the then-observed file size and finishes inspecting that
+  snapshot before emitting `spawn-fail`; later appends cannot extend the
+  decision indefinitely.
 
   Immediately after verifying every non-gate spawn, resume, or session
   rotation, in the same orchestrator turn and before any other action, update

@@ -245,12 +245,17 @@ function inspectLog(filePath) {
         completeLineCount: 0,
         hasJsonEvent: false,
         hasThreadStarted: false,
+        terminalTargetSize: null,
       };
       logInspectionStates.set(filePath, state);
     }
 
     const buffer = Buffer.alloc(LOG_READ_BYTES);
-    let remaining = Math.min(LOG_SCAN_MAX_BYTES, Math.max(0, stat.size - state.offset));
+    const scanTargetSize = state.terminalTargetSize ?? stat.size;
+    let remaining = Math.min(
+      LOG_SCAN_MAX_BYTES,
+      Math.max(0, scanTargetSize - state.offset)
+    );
     while (remaining > 0 && !state.hasThreadStarted) {
       const requested = Math.min(LOG_READ_BYTES, remaining);
       const bytesRead = fs.readSync(descriptor, buffer, 0, requested, state.offset);
@@ -287,6 +292,9 @@ function inspectLog(filePath) {
       }
 
       if (state.pending.length > LOG_PENDING_MAX_CHARS) {
+        if (state.firstLine === null) {
+          state.firstLine = state.pending.slice(0, DETAIL_SNIPPET_LENGTH);
+        }
         state.pending = "";
         state.pendingOverflow = true;
       }
@@ -310,10 +318,19 @@ function inspectLog(filePath) {
       hasThreadStarted: state.hasThreadStarted,
       hasCompleteLine: state.completeLineCount > 0,
       hasTrailingPartial: state.pendingOverflow || state.pending.length > 0,
+      observedSize: stat.size,
+      scanComplete:
+        state.hasThreadStarted || state.offset >= scanTargetSize,
     };
   } finally {
     fs.closeSync(descriptor);
   }
+}
+
+function freezeLogInspectionTarget(filePath, observedSize) {
+  const state = logInspectionStates.get(filePath);
+  if (state === undefined || state.terminalTargetSize !== null) return;
+  state.terminalTargetSize = Math.max(state.offset, observedSize);
 }
 
 function loadRegistry(registryPath) {
@@ -828,6 +845,13 @@ function checkLog(log, gateAck, report, registry, nowMs) {
       Math.round((nowMs - inactiveSpawn.spawnedAtMs) / 1000)
     );
     if (startupAgeSec < args.stallSec) return;
+    if (!inspection.scanComplete) {
+      // Freeze the timeout snapshot once. Later appends cannot postpone the
+      // decision forever, while bytes already present remain eligible to
+      // prove that this attempt did reach thread.started.
+      freezeLogInspectionTarget(log.filePath, inspection.observedSize);
+      return;
+    }
     emitEvent(
       "spawn-fail",
       log.issue,
@@ -838,7 +862,7 @@ function checkLog(log, gateAck, report, registry, nowMs) {
     return;
   }
 
-  if (firstLine !== null && !hasJsonEvent) {
+  if (inspection.scanComplete && firstLine !== null && !hasJsonEvent) {
     // A non-empty log with no JSON events means the spawn command failed
     // before Codex started a thread; report it immediately.
     emitEvent(

@@ -4891,7 +4891,7 @@ async function validateWatcherInactiveGateSpawnBehavior() {
       thread_id: null,
       pid: null,
       gates: ["pack-identity"],
-      spawned_at: registeredNow,
+      spawned_at: registeredStale,
       ...identity,
     };
     fs.writeFileSync(
@@ -4904,7 +4904,7 @@ async function validateWatcherInactiveGateSpawnBehavior() {
     fs.writeFileSync(
       path.join(fixtureRoot, "workers.json"),
       JSON.stringify({
-        "MONO-372": { ...incrementalEntry, spawned_at: registeredStale },
+        "MONO-372": incrementalEntry,
         "MONO-373": {
           transport: "codex-cli",
           stage: "mono-implement",
@@ -7155,6 +7155,16 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     label: "watcher-log-scan-cursor",
     file: "watcher",
     text: "state.offset += bytesRead",
+  },
+  {
+    label: "watcher-log-scan-completion-barrier",
+    file: "watcher",
+    text: "if (!inspection.scanComplete)",
+  },
+  {
+    label: "watcher-log-scan-frozen-timeout-snapshot",
+    file: "watcher",
+    text: "freezeLogInspectionTarget(log.filePath, inspection.observedSize)",
   },
   {
     label: "producer-inactive-registration-clock",

@@ -154,7 +154,9 @@ remain bounded; at timeout the watcher emits `spawn-fail`. A missing, invalid,
 or more-than-five-seconds-future timestamp emits `spawn-fail` immediately,
 never `dead`. Each watcher pass reads at most 256 KiB and resumes at its saved
 cursor, so a busy pre-start log cannot block other workers and a later
-`thread.started` remains discoverable.
+`thread.started` remains discoverable. At timeout the watcher freezes the
+observed size and finishes that snapshot before `spawn-fail`; later appends do
+not extend the deadline.
 After `thread.started`, the
 orchestrator updates the same entry with live identity while preserving `log`
 and `gates`; every other live `codex-cli` entry carries verified process
