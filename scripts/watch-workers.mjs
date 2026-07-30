@@ -65,6 +65,10 @@ const GATE_PAUSE_SUPPRESSION_STALLS = 4;
 // an ack is dated in the future. Seconds-resolution filesystems exist; this is
 // not a tolerance for worker-chosen future dates.
 const FS_TIMESTAMP_SLACK_MS = 1_000;
+// The registry is orchestrator-owned, but wall clocks can step. A small,
+// explicit allowance covers publication/scan skew without letting a malformed
+// future timestamp silence liveness until that future arrives.
+const INACTIVE_SPAWN_FUTURE_SKEW_MS = 5_000;
 
 // <ISSUE-KEY>-<stage>.jsonl or <ISSUE-KEY>-<stage>-a<attempt>.jsonl,
 // where <stage> itself may contain hyphens (e.g. mono-implement).
@@ -435,7 +439,7 @@ function readRegistryGates(registryEntry) {
 // That narrow state is identified entirely from existing registry fields: no
 // new selector is added to workers.json. While the attempt log is still empty,
 // null process identity means startup is in progress rather than worker death.
-function inactiveGateSpawnStartedAtMs(log, registryEntry, firstLine) {
+function inactiveGateSpawnStartedAtMs(log, registryEntry, firstLine, nowMs) {
   if (firstLine !== null) return null;
   if (registryEntry?.stage !== "mono-implement") return null;
   if (registryEntry.thread_id !== null || registryEntry.pid !== null) return null;
@@ -443,7 +447,9 @@ function inactiveGateSpawnStartedAtMs(log, registryEntry, firstLine) {
   if (typeof registryEntry.log !== "string") return null;
   if (path.resolve(expandHome(registryEntry.log)) !== path.resolve(log.filePath)) return null;
   const spawnedAtMs = Date.parse(registryEntry.spawned_at);
-  return Number.isFinite(spawnedAtMs) ? spawnedAtMs : null;
+  if (!Number.isFinite(spawnedAtMs)) return null;
+  if (spawnedAtMs > nowMs + INACTIVE_SPAWN_FUTURE_SKEW_MS) return null;
+  return spawnedAtMs;
 }
 
 // The mailbox path and the sandbox fallback the protocol permits under the
@@ -704,7 +710,7 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   const { firstLine, hasJsonEvent } = inspectLog(log.filePath);
   const ageSec = Math.round((nowMs - log.stat.mtimeMs) / 1000);
   const registryEntry = registry[log.issue];
-  const inactiveSpawnedAtMs = inactiveGateSpawnStartedAtMs(log, registryEntry, firstLine);
+  const inactiveSpawnedAtMs = inactiveGateSpawnStartedAtMs(log, registryEntry, firstLine, nowMs);
 
   // The producer barrier intentionally exposes an inactive registry entry
   // before Codex can emit thread.started. Do not route that expected startup

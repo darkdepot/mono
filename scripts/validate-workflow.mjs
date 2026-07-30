@@ -4697,14 +4697,17 @@ function validateWatcherInactiveGateSpawnBehavior() {
     const freshLog = path.join(logsDir, "MONO-361-mono-implement-a1.jsonl");
     const staleLog = path.join(logsDir, "MONO-362-mono-implement-a1.jsonl");
     const otherLog = path.join(logsDir, "MONO-363-mono-implement-a1.jsonl");
+    const futureLog = path.join(logsDir, "MONO-365-mono-implement-a1.jsonl");
     fs.writeFileSync(freshLog, "");
     fs.writeFileSync(staleLog, "");
     fs.writeFileSync(otherLog, `${JSON.stringify({ type: "thread.started", thread_id: "other-thread" })}\n`);
+    fs.writeFileSync(futureLog, "");
     const stale = new Date(Date.now() - 181_000);
     // Deliberately invert log age and registration age: startup timeout must
     // follow the durable registry publication, not a prepared log's mtime.
     fs.utimesSync(freshLog, stale, stale);
     fs.utimesSync(otherLog, stale, stale);
+    fs.utimesSync(futureLog, stale, stale);
     const registeredNow = new Date().toISOString();
     const registeredStale = stale.toISOString();
     const identity = {
@@ -4743,6 +4746,16 @@ function validateWatcherInactiveGateSpawnBehavior() {
           pid: 999_999_999,
           ...identity,
         },
+        "MONO-365": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: futureLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: new Date(Date.now() + 3_600_000).toISOString(),
+          ...identity,
+        },
       })
     );
 
@@ -4764,6 +4777,9 @@ function validateWatcherInactiveGateSpawnBehavior() {
     }
     if (!stdout.includes("EVENT:dead MONO-363")) {
       fail("inactive gate-spawn handling must continue processing other workers");
+    }
+    if (!stdout.includes("EVENT:dead MONO-365")) {
+      fail("future-dated inactive registration must not suppress liveness beyond the bounded skew allowance");
     }
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
@@ -6938,7 +6954,7 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
   {
     label: "consumption-record-order",
     file: "orchestration",
-    text: "The record is atomically published before any in-place ack rename and\n   before the separate write that removes `registryEntry.gates`",
+    text: "The record is\n   atomically published before any in-place ack rename and\n   before the separate write that removes `registryEntry.gates`",
   },
   {
     label: "consumption-record-atomic-publish",
@@ -6951,9 +6967,24 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     text: "fsync the containing `consumed/` directory after the rename",
   },
   {
+    label: "consumption-record-resume-directory-sync",
+    file: "orchestration",
+    text: "Resume must successfully\n   fsync `consumed/` before treating any visible final-name record as cleanup\n   authority",
+  },
+  {
+    label: "consumption-namespace-parent-sync",
+    file: "orchestration",
+    text: "fsync the orchestrator-root\n   parent directory after first creating `consumed/`",
+  },
+  {
     label: "watcher-inactive-registration-clock",
     file: "watcher",
     text: "Date.parse(registryEntry.spawned_at)",
+  },
+  {
+    label: "watcher-inactive-future-timestamp",
+    file: "watcher",
+    text: "if (spawnedAtMs > nowMs + INACTIVE_SPAWN_FUTURE_SKEW_MS) return null",
   },
   {
     label: "producer-inactive-registration-clock",
@@ -7023,7 +7054,7 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
   {
     label: "resume-attempt-equality",
     file: "orchestration",
-    text: "require the private orchestrator\n   consumption record\n   `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` for the SAME\n   current `<N>`",
+    text: "read\n   `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` for the SAME\n   current `<N>`",
   },
   {
     // (п) The mailbox is worker-writable, so a fabricated record there cannot
@@ -7217,6 +7248,8 @@ function validateRegistryGateContract() {
     "consumption-record-order",
     "consumption-record-atomic-publish",
     "consumption-record-directory-durability",
+    "consumption-record-resume-directory-sync",
+    "consumption-namespace-parent-sync",
     "consumer-registry-source",
     "consumer-status-asymmetry",
     "monitor-malformed-reference",
@@ -7240,6 +7273,7 @@ function validateRegistryGateContract() {
     "consumer-blocked-resume-report-reconciliation",
     "registry-inactive-gate-startup-shape",
     "watcher-inactive-registration-clock",
+    "watcher-inactive-future-timestamp",
     "producer-inactive-registration-clock",
     "monitor-later-stage-reconciliation-reference",
     "monitor-later-stage-reconciliation-skill",

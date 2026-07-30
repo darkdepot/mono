@@ -148,7 +148,9 @@ inactive gate-startup state: a gate-carrying `mono-implement` entry with valid
 `gates`, its empty attempt-numbered `log`, and publication-time `spawned_at`,
 atomically registered before the worker process starts. The watcher keeps that
 state quiet for one bounded startup window measured from `spawned_at`, never
-from log mtime, and then emits `spawn-fail`. After `thread.started`, the
+from log mtime. A value more than five seconds in the future is malformed and
+gets no startup suppression; after the window the watcher emits `spawn-fail`.
+After `thread.started`, the
 orchestrator updates the same entry with live identity while preserving `log`
 and `gates`; every other live `codex-cli` entry carries verified process
 identity.

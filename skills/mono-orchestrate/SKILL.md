@@ -166,7 +166,9 @@ Workflow states:
      retire an inactive entry when spawn fails. The watcher recognizes the
      empty-log/null-identity entry as inactive startup, keeps it quiet for one
      stall-threshold window measured from that `spawned_at`, and emits
-     `spawn-fail` if `thread.started` never arrives. Preserve the list on a
+     `spawn-fail` if `thread.started` never arrives. A value more than five
+     seconds in the future is malformed and gets no startup suppression.
+     Preserve the list on a
      same-attempt no-ack nudge/resume and while a passed ack awaits confirmed
      resume. Never copy it to a new attempt implicitly: a verified new
      gate-carrying attempt writes its own list, while `mono-preflight`,
@@ -310,8 +312,11 @@ Workflow states:
      consume the ack or resume on it twice (Two-Phase Dispatch Handshake in
      `references/orchestration.md`). For every outcome, atomically publish the
      trusted consumption record first — durable file, atomic rename, then
-     `fsync` of the containing `consumed/` directory — then rename every ack
-     candidate, then remove `gates`. A
+     `fsync` of the containing `consumed/` directory; when creating that
+     namespace, also `fsync` the orchestrator-root parent directory — then
+     rename every ack candidate, then remove `gates`. A visible record after a
+     failed directory sync is not authority: Resume re-syncs `consumed/`
+     successfully before trusting it. A
      worker-writable tombstone or mailbox record never substitutes for that
      private current-attempt record during Resume cleanup. For `outcome:
      blocked`, that record binds only the ack outcome: after a crash, re-run

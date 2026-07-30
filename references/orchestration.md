@@ -434,13 +434,18 @@ Order, and it is the whole protocol:
    `consumed/` namespace is private orchestrator state: only the orchestrator
    writes it, dispatches never expose it as a worker output path, and workers
    are forbidden to touch it. It is not a new gate-ack field or Worker Registry
-   field. The record is atomically published before any in-place ack rename and
+   field. When the namespace is created on demand, fsync the orchestrator-root
+   parent directory after first creating `consumed/`; no record may be
+   published until the directory entry itself is durable. The record is
+   atomically published before any in-place ack rename and
    before the separate write that removes `registryEntry.gates`. Publish it
    with a same-directory temporary file and atomic rename after the file is
    durable, then fsync the containing `consumed/` directory after the rename.
    Publication is complete only after that directory sync; if it is unsupported
-   or fails, stop before any ack rename or registry cleanup. The final name is
-   then the journaled intent that Resume may trust. The
+   or fails, stop before any ack rename or registry cleanup. A visible final
+   name after a failed sync is not yet authority. Resume must successfully
+   fsync `consumed/` before treating any visible final-name record as cleanup
+   authority; only then is it the journaled intent Resume may trust. The
    example's `1` stands for the positive integer
    `<N>` from the attempt-numbered filename. Missing record fails safely:
    the ack and `gates` stay until the same outcome is retried or a verified new
@@ -738,7 +743,8 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
   that exact empty-log/null-identity state as inactive startup: it emits no
   liveness event for one stall-threshold startup window. The startup window
   begins at that registry publication's `spawned_at`, never at a prepared log's
-  mtime; after the window it emits
+  mtime. A timestamp more than five seconds in the future is malformed and does
+  not enter the inactive-startup suppression branch; after the window it emits
   `spawn-fail` if `thread.started` never arrives.
 
   Immediately after verifying every non-gate spawn, resume, or session
@@ -1253,7 +1259,10 @@ A fresh orchestrator session rebuilds state without loss:
    `<ISSUE-KEY>-mono-implement-a<N>.jsonl`. Before clearing any stale
    `registryEntry.gates`, parse the CURRENT
    attempt `<N>` from that entry's `log` and require the private orchestrator
-   consumption record
+   consumption record. First successfully fsync the existing `consumed/`
+   directory, which completes any visible rename whose earlier directory sync
+   failed; if this sync fails, stop with the ack and registry unchanged. Then
+   read
    `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` for the SAME
    current `<N>`. Only a well-formed record in `consumed/` whose `issue`,
    `attempt`, and `outcome` match this Issue, current attempt, and one of
