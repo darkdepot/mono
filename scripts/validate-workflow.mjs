@@ -6974,7 +6974,7 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
   {
     label: "consumption-namespace-parent-sync",
     file: "orchestration",
-    text: "fsync the orchestrator-root\n   parent directory after first creating `consumed/`",
+    text: "Before publishing or trusting any record, fsync the orchestrator-root\n   directory that contains `consumed/`, even when `consumed/` already exists",
   },
   {
     label: "watcher-inactive-registration-clock",

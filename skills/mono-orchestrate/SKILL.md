@@ -312,8 +312,9 @@ Workflow states:
      consume the ack or resume on it twice (Two-Phase Dispatch Handshake in
      `references/orchestration.md`). For every outcome, atomically publish the
      trusted consumption record first — durable file, atomic rename, then
-     `fsync` of the containing `consumed/` directory; when creating that
-     namespace, also `fsync` the orchestrator-root parent directory — then
+     `fsync` of the containing `consumed/` directory; before publishing or
+     trusting any record, also `fsync` the orchestrator-root directory that
+     contains `consumed/`, whether or not the namespace already existed — then
      rename every ack candidate, then remove `gates`. A visible record after a
      failed directory sync is not authority: Resume re-syncs `consumed/`
      successfully before trusting it. A

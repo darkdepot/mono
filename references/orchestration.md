@@ -434,9 +434,11 @@ Order, and it is the whole protocol:
    `consumed/` namespace is private orchestrator state: only the orchestrator
    writes it, dispatches never expose it as a worker output path, and workers
    are forbidden to touch it. It is not a new gate-ack field or Worker Registry
-   field. When the namespace is created on demand, fsync the orchestrator-root
-   parent directory after first creating `consumed/`; no record may be
-   published until the directory entry itself is durable. The record is
+   field. Before publishing or trusting any record, fsync the orchestrator-root
+   directory that contains `consumed/`, even when `consumed/` already exists;
+   this completes a namespace creation whose earlier parent sync failed or was
+   interrupted. No record may be published until that directory entry is
+   durable. The record is
    atomically published before any in-place ack rename and
    before the separate write that removes `registryEntry.gates`. Publish it
    with a same-directory temporary file and atomic rename after the file is
@@ -1259,10 +1261,12 @@ A fresh orchestrator session rebuilds state without loss:
    `<ISSUE-KEY>-mono-implement-a<N>.jsonl`. Before clearing any stale
    `registryEntry.gates`, parse the CURRENT
    attempt `<N>` from that entry's `log` and require the private orchestrator
-   consumption record. First successfully fsync the existing `consumed/`
-   directory, which completes any visible rename whose earlier directory sync
-   failed; if this sync fails, stop with the ack and registry unchanged. Then
-   read
+   consumption record. First successfully fsync the orchestrator-root directory
+   that contains `consumed/`, even when the namespace already exists, and then
+   fsync the existing `consumed/` directory. The first sync completes any
+   interrupted namespace creation; the second completes any visible record
+   rename whose earlier directory sync failed. If either sync fails, stop with
+   the ack and registry unchanged. Then read
    `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` for the SAME
    current `<N>`. Only a well-formed record in `consumed/` whose `issue`,
    `attempt`, and `outcome` match this Issue, current attempt, and one of
