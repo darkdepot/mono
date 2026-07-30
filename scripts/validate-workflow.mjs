@@ -4901,6 +4901,90 @@ async function validateWatcherV3Behavior() {
     fs.rmSync(correlationRoot, { recursive: true, force: true });
   }
 
+  // MONO-48: liveness suppression must consume the same correlated report
+  // snapshot as report delivery. A fresh pathname alone proves nothing: wrong
+  // issue/stage, missing identity, and foreign identity must each leave the
+  // named liveness branch armed. The log is aged BEFORE the report is written
+  // so report.mtime >= log.birthtime holds with macOS btime and Node's
+  // ctime-as-birthtime fallback alike.
+  const suppressionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-watcher-report-suppression-"));
+  try {
+    const logsDir = path.join(suppressionRoot, "logs");
+    const reportsDir = path.join(suppressionRoot, "reports");
+    fs.mkdirSync(logsDir);
+    fs.mkdirSync(reportsDir);
+    const workers = {};
+    const staleLog = new Date(Date.now() - 200_000);
+
+    const addSuppressionFixture = (issue, { pid, report }) => {
+      const logPath = path.join(logsDir, `${issue}-mono-implement-a1.jsonl`);
+      const reportPath = path.join(reportsDir, `${issue}-mono-implement.json`);
+      writeLog(logPath);
+      fs.utimesSync(logPath, staleLog, staleLog);
+      writeJson(reportPath, report);
+      workers[issue] = registryFor(issue, logPath, { pid })[issue];
+    };
+
+    // Positive controls: a correlated fresh report still suppresses every
+    // non-live outcome exactly as before.
+    addSuppressionFixture("MONO-210", {
+      pid: process.pid,
+      report: reportFor("MONO-210"),
+    });
+    addSuppressionFixture("MONO-211", {
+      pid: 999_999_999,
+      report: reportFor("MONO-211"),
+    });
+    addSuppressionFixture("MONO-212", {
+      pid: null,
+      report: reportFor("MONO-212"),
+    });
+
+    // Negative controls name the exact branch that an uncorrelated report must
+    // not suppress.
+    addSuppressionFixture("MONO-213", {
+      pid: process.pid,
+      report: reportFor("MONO-999", "mono-preflight"),
+    });
+    addSuppressionFixture("MONO-214", {
+      pid: 999_999_999,
+      report: {},
+    });
+    addSuppressionFixture("MONO-215", {
+      pid: null,
+      report: reportFor("MONO-215", "mono-implement", { sourceCommit: "b".repeat(40) }),
+    });
+
+    writeJson(path.join(suppressionRoot, "workers.json"), workers);
+    writeJson(path.join(suppressionRoot, "control.json"), { state: "active" });
+
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/watch-workers.mjs", "--root", suppressionRoot, "--stall-sec", "90", "--idle-sec", "30", "--once"],
+      { cwd: root, encoding: "utf8" }
+    );
+    if (result.status !== 0) {
+      fail(`watcher report suppression fixtures failed to run: ${result.stderr || `exit ${result.status}`}`);
+    } else {
+      for (const issue of ["MONO-210", "MONO-211", "MONO-212"]) {
+        if (new RegExp(`EVENT:(stall|dead) ${issue}\\b`).test(result.stdout)) {
+          fail(`watcher correlated fresh report must suppress every liveness branch (${issue})`);
+        }
+      }
+      if (!result.stdout.includes("EVENT:stall MONO-213")) {
+        fail("watcher wrong issue/stage report must not suppress the named stall event");
+      }
+      if (!/EVENT:dead MONO-214\b.*writer pid .* is gone/.test(result.stdout)) {
+        fail("watcher report without pack identity must not suppress the named dead-writer event");
+      }
+      if (!/EVENT:dead MONO-215\b.*with no writer evidence/.test(result.stdout)) {
+        fail("watcher foreign-identity report must not suppress the named no-writer-evidence event");
+      }
+    }
+  } finally {
+    fs.rmSync(suppressionRoot, { recursive: true, force: true });
+  }
+
   // AC2 threshold/no-spam plus live codex and pid-less non-codex blockers.
   for (const [label, workers, expectIdle, idleSec] of [
     ["empty registry threshold", {}, true, "2"],
