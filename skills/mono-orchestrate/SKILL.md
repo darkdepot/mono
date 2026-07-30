@@ -239,14 +239,12 @@ Workflow states:
      unconsumed ack found by polling is handled exactly as a delivered one,
      and both paths validate it against `registryEntry.gates` from the current
      attempt rather than process memory.
-   - Read reports; advance the same worker session
-     to the next stage (`mono-implement` → `mono-preflight` →
-     `mono-ship`). For `codex-cli` workers advance the same thread with
-     `codex exec resume` and treat process exit plus report as the normal
-     advance signal (liveness ladder in `references/orchestration.md`).
    - Follow the Monitoring Protocol in `references/orchestration.md`. Do not steer an actively progressing worker.
-   - Before any heartbeat event enters the common healing ladder, perform the
-     stage-aware `registryEntry.gates` shape check. A malformed present value
+   - Before processing any report event or poll, and before any heartbeat event
+     enters the common healing ladder, perform the stage-aware
+     `registryEntry.gates` shape check. This check preempts report routing and
+     stage advancement: when a malformed or forbidden-presence branch applies,
+     do not accept that attempt's report. A malformed present value
      on a gate-carrying `mono-implement` entry is a producer contract error:
      terminate that attempt and verified-respawn a NEW gate attempt with its
      own correct list; do not same-attempt nudge it. Any presence on a
@@ -262,6 +260,11 @@ Workflow states:
      post-reconciliation write, later-stage presence is never an in-progress
      cleanup window: finish journal recovery while the entry is still
      `mono-implement`; otherwise take the forbidden-presence branch.
+   - Read reports only after that stage-aware check; advance the same worker
+     session to the next stage (`mono-implement` → `mono-preflight` →
+     `mono-ship`). For `codex-cli` workers advance the same thread with
+     `codex exec resume` and treat process exit plus report as the normal
+     advance signal (liveness ladder in `references/orchestration.md`).
    - Before the ordinary no-ack healing ladder, only when `registryEntry.stage` is `mono-implement` and its CURRENT log
      is `<ISSUE-KEY>-mono-implement-a<N>.jsonl`, a well-formed private record
      for that same `<N>` with `outcome: rejected` skips same-attempt nudge and

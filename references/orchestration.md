@@ -743,7 +743,10 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
   identity while preserving `log` and `gates`. A failed spawn retires that
   inactive entry before the next attempt is pre-registered. The watcher treats
   that exact empty-log/null-identity state as inactive startup: it emits no
-  liveness event for one stall-threshold startup window. The startup window
+  liveness event while the log is empty or its first JSON event is partial,
+  including after a complete contamination line, for one stall-threshold
+  startup window. A complete newline-terminated non-JSON log still fails
+  immediately. The startup window
   begins at that registry publication's `spawned_at`, never at a prepared log's
   mtime. A timestamp more than five seconds in the future is malformed and does
   not enter the inactive-startup suppression branch; after the window it emits
@@ -914,8 +917,11 @@ never report it as applied.
   repeated failures with no progress, gross divergence from the assigned
   Issue, or an unsafe mutation.
 - Read the worker's latest state before any intervention or respawn.
-- Before any event enters the common healing ladder, validate
-  `registryEntry.gates` with a stage-aware branch. On a gate-carrying
+- Before processing any report event or poll, and before any heartbeat enters
+  the common healing ladder, validate `registryEntry.gates` with a stage-aware
+  branch. This recovery check preempts report routing and stage advancement:
+  a report from an entry that takes a malformed or forbidden-presence branch
+  is not consumed as a successful stage result. On a gate-carrying
   `mono-implement` entry, a present
   malformed value is a producer contract error: terminate the current attempt
   and verified-respawn a NEW gate attempt with its own correct non-empty unique

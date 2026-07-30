@@ -4698,16 +4698,28 @@ function validateWatcherInactiveGateSpawnBehavior() {
     const staleLog = path.join(logsDir, "MONO-362-mono-implement-a1.jsonl");
     const otherLog = path.join(logsDir, "MONO-363-mono-implement-a1.jsonl");
     const futureLog = path.join(logsDir, "MONO-365-mono-implement-a1.jsonl");
+    const partialLog = path.join(logsDir, "MONO-366-mono-implement-a1.jsonl");
+    const contaminatedPartialLog = path.join(logsDir, "MONO-367-mono-implement-a1.jsonl");
+    const completedFailureLog = path.join(logsDir, "MONO-368-mono-implement-a1.jsonl");
+    const expiredPartialLog = path.join(logsDir, "MONO-369-mono-implement-a1.jsonl");
     fs.writeFileSync(freshLog, "");
     fs.writeFileSync(staleLog, "");
     fs.writeFileSync(otherLog, `${JSON.stringify({ type: "thread.started", thread_id: "other-thread" })}\n`);
     fs.writeFileSync(futureLog, "");
+    fs.writeFileSync(partialLog, '{"type":"thread.started","thread_id":"partial');
+    fs.writeFileSync(
+      contaminatedPartialLog,
+      'Reading additional input from stdin...\n{"type":"thread.started","thread_id":"partial'
+    );
+    fs.writeFileSync(completedFailureLog, "spawn command failed before JSON\n");
+    fs.writeFileSync(expiredPartialLog, '{"type":"thread.started","thread_id":"expired');
     const stale = new Date(Date.now() - 181_000);
     // Deliberately invert log age and registration age: startup timeout must
     // follow the durable registry publication, not a prepared log's mtime.
     fs.utimesSync(freshLog, stale, stale);
     fs.utimesSync(otherLog, stale, stale);
     fs.utimesSync(futureLog, stale, stale);
+    fs.utimesSync(expiredPartialLog, stale, stale);
     const registeredNow = new Date().toISOString();
     const registeredStale = stale.toISOString();
     const identity = {
@@ -4756,6 +4768,46 @@ function validateWatcherInactiveGateSpawnBehavior() {
           spawned_at: new Date(Date.now() + 3_600_000).toISOString(),
           ...identity,
         },
+        "MONO-366": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: partialLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: registeredNow,
+          ...identity,
+        },
+        "MONO-367": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: contaminatedPartialLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: registeredNow,
+          ...identity,
+        },
+        "MONO-368": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: completedFailureLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: registeredNow,
+          ...identity,
+        },
+        "MONO-369": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: expiredPartialLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: registeredStale,
+          ...identity,
+        },
       })
     );
 
@@ -4780,6 +4832,16 @@ function validateWatcherInactiveGateSpawnBehavior() {
     }
     if (!stdout.includes("EVENT:dead MONO-365")) {
       fail("future-dated inactive registration must not suppress liveness beyond the bounded skew allowance");
+    }
+    for (const issue of ["MONO-366", "MONO-367"]) {
+      if (new RegExp(`EVENT:(stall|dead|spawn-fail) ${issue}\\b`).test(stdout)) {
+        fail(`incomplete first event must remain in bounded inactive startup (${issue})`);
+      }
+    }
+    for (const issue of ["MONO-368", "MONO-369"]) {
+      if (!stdout.includes(`EVENT:spawn-fail ${issue}`)) {
+        fail(`completed failure or expired partial startup must emit spawn-fail (${issue})`);
+      }
     }
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
@@ -6987,6 +7049,11 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     text: "if (spawnedAtMs > nowMs + INACTIVE_SPAWN_FUTURE_SKEW_MS) return null",
   },
   {
+    label: "watcher-inactive-partial-first-event",
+    file: "watcher",
+    text: "inspection.hasTrailingPartial",
+  },
+  {
     label: "producer-inactive-registration-clock",
     file: "orchestration",
     text: "The startup window\n  begins at that registry publication's `spawned_at`",
@@ -7050,6 +7117,16 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
     label: "monitor-forbidden-skill",
     file: "orchestrateSkill",
     text: "Any presence on a\n     `mono-preflight` or `mono-ship` entry is forbidden",
+  },
+  {
+    label: "monitor-report-order-reference",
+    file: "orchestration",
+    text: "Before processing any report event or poll, and before any heartbeat",
+  },
+  {
+    label: "monitor-report-order-skill",
+    file: "orchestrateSkill",
+    text: "Before processing any report event or poll, and before any heartbeat event",
   },
   {
     label: "resume-attempt-equality",
@@ -7274,9 +7351,12 @@ function validateRegistryGateContract() {
     "registry-inactive-gate-startup-shape",
     "watcher-inactive-registration-clock",
     "watcher-inactive-future-timestamp",
+    "watcher-inactive-partial-first-event",
     "producer-inactive-registration-clock",
     "monitor-later-stage-reconciliation-reference",
     "monitor-later-stage-reconciliation-skill",
+    "monitor-report-order-reference",
+    "monitor-report-order-skill",
     "watcher-blocked-bounded-suppression",
     "consumer-no-source-discriminator",
     "monitor-no-source-discriminator",
@@ -7298,6 +7378,21 @@ function validateRegistryGateContract() {
     if (!fixtureFaults.includes(label)) {
       fail(`registry gate negative fixture did not reject removed ${label} rule`);
     }
+  }
+
+  const monitorStart = surfaces.orchestrateSkill.indexOf("5. `monitor`");
+  const stageAwareReportCheck = surfaces.orchestrateSkill.indexOf(
+    "Before processing any report event or poll, and before any heartbeat event",
+    monitorStart
+  );
+  const reportAdvance = surfaces.orchestrateSkill.indexOf("- Read reports only after", monitorStart);
+  if (
+    monitorStart < 0 ||
+    stageAwareReportCheck < monitorStart ||
+    reportAdvance < monitorStart ||
+    stageAwareReportCheck > reportAdvance
+  ) {
+    fail("mono-orchestrate stage-aware gates recovery must run before report delivery or advancement");
   }
 }
 

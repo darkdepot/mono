@@ -200,12 +200,18 @@ function inspectLog(filePath) {
   try {
     descriptor = fs.openSync(filePath, "r");
   } catch {
-    return { firstLine: null, hasJsonEvent: false };
+    return {
+      firstLine: null,
+      hasJsonEvent: false,
+      hasCompleteLine: false,
+      hasTrailingPartial: false,
+    };
   }
   try {
     const buffer = Buffer.alloc(LOG_READ_BYTES);
     let pending = "";
     let firstLine = null;
+    let completeLineCount = 0;
     let bytesRead;
     do {
       bytesRead = fs.readSync(descriptor, buffer, 0, LOG_READ_BYTES, null);
@@ -214,16 +220,36 @@ function inspectLog(filePath) {
       while ((newlineIndex = pending.indexOf("\n")) >= 0) {
         const line = pending.slice(0, newlineIndex);
         pending = pending.slice(newlineIndex + 1);
+        completeLineCount += 1;
         if (firstLine === null) firstLine = line;
-        if (isJsonEventLine(line)) return { firstLine, hasJsonEvent: true };
+        if (isJsonEventLine(line)) {
+          return {
+            firstLine,
+            hasJsonEvent: true,
+            hasCompleteLine: true,
+            hasTrailingPartial: false,
+          };
+        }
       }
     } while (bytesRead > 0);
 
     if (pending.length > 0) {
       if (firstLine === null) firstLine = pending;
-      if (isJsonEventLine(pending)) return { firstLine, hasJsonEvent: true };
+      if (isJsonEventLine(pending)) {
+        return {
+          firstLine,
+          hasJsonEvent: true,
+          hasCompleteLine: completeLineCount > 0,
+          hasTrailingPartial: false,
+        };
+      }
     }
-    return { firstLine, hasJsonEvent: false };
+    return {
+      firstLine,
+      hasJsonEvent: false,
+      hasCompleteLine: completeLineCount > 0,
+      hasTrailingPartial: pending.length > 0,
+    };
   } finally {
     fs.closeSync(descriptor);
   }
@@ -439,8 +465,11 @@ function readRegistryGates(registryEntry) {
 // That narrow state is identified entirely from existing registry fields: no
 // new selector is added to workers.json. While the attempt log is still empty,
 // null process identity means startup is in progress rather than worker death.
-function inactiveGateSpawnStartedAtMs(log, registryEntry, firstLine, nowMs) {
-  if (firstLine !== null) return null;
+// A partial first JSON event, including one after a complete contamination
+// line, remains startup; a complete newline-terminated non-JSON log is a
+// definitive spawn failure and keeps the existing immediate failure path.
+function inactiveGateSpawnStartedAtMs(log, registryEntry, inspection, nowMs) {
+  if (inspection.hasJsonEvent) return null;
   if (registryEntry?.stage !== "mono-implement") return null;
   if (registryEntry.thread_id !== null || registryEntry.pid !== null) return null;
   if (readRegistryGates(registryEntry) === null) return null;
@@ -707,17 +736,21 @@ function checkReport(log, report, nowMs) {
 // MONO-47 authorises this over the dispatch's additive-only-v3 constraint;
 // without a registry context the behaviour is unchanged.
 function checkLog(log, gateAck, report, registry, nowMs) {
-  const { firstLine, hasJsonEvent } = inspectLog(log.filePath);
+  const inspection = inspectLog(log.filePath);
+  const { firstLine, hasJsonEvent } = inspection;
   const ageSec = Math.round((nowMs - log.stat.mtimeMs) / 1000);
   const registryEntry = registry[log.issue];
-  const inactiveSpawnedAtMs = inactiveGateSpawnStartedAtMs(log, registryEntry, firstLine, nowMs);
+  const inactiveSpawnedAtMs = inactiveGateSpawnStartedAtMs(log, registryEntry, inspection, nowMs);
 
   // The producer barrier intentionally exposes an inactive registry entry
-  // before Codex can emit thread.started. Do not route that expected startup
-  // window through ordinary stall/dead healing. The same stall threshold is
-  // its bounded spawn timeout; after it expires, report spawn-fail so the
+  // before Codex can emit thread.started. Do not route an empty or partial
+  // first event through ordinary stall/dead healing. The same stall threshold
+  // is its bounded spawn timeout; after it expires, report spawn-fail so the
   // orchestrator retires the inactive entry before pre-registering a retry.
-  if (inactiveSpawnedAtMs !== null) {
+  if (
+    inactiveSpawnedAtMs !== null &&
+    (!inspection.hasCompleteLine || inspection.hasTrailingPartial)
+  ) {
     const startupAgeSec = Math.max(0, Math.round((nowMs - inactiveSpawnedAtMs) / 1000));
     if (startupAgeSec < args.stallSec) return;
     emitEvent(
