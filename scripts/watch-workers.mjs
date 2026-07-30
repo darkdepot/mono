@@ -492,19 +492,21 @@ function readRegistryGates(registryEntry) {
 // null process identity means startup is in progress rather than worker death.
 // A partial first JSON event, including one after a complete contamination
 // line, remains startup. Only a valid thread.started event completes startup;
-// other JSON events remain bounded until timeout. A complete
-// newline-terminated non-JSON log is a definitive spawn failure and keeps the
-// existing immediate failure path.
-function inactiveGateSpawnStartedAtMs(log, registryEntry, inspection, nowMs) {
+// other JSON events and non-JSON contamination remain bounded until timeout.
+function inactiveGateSpawnState(log, registryEntry, nowMs) {
   if (registryEntry?.stage !== "mono-implement") return null;
   if (registryEntry.thread_id !== null || registryEntry.pid !== null) return null;
   if (readRegistryGates(registryEntry) === null) return null;
   if (typeof registryEntry.log !== "string") return null;
   if (path.resolve(expandHome(registryEntry.log)) !== path.resolve(log.filePath)) return null;
   const spawnedAtMs = Date.parse(registryEntry.spawned_at);
-  if (!Number.isFinite(spawnedAtMs)) return null;
-  if (spawnedAtMs > nowMs + INACTIVE_SPAWN_FUTURE_SKEW_MS) return null;
-  return spawnedAtMs;
+  if (
+    !Number.isFinite(spawnedAtMs) ||
+    spawnedAtMs > nowMs + INACTIVE_SPAWN_FUTURE_SKEW_MS
+  ) {
+    return { spawnedAtMs: null, invalidTimestamp: true };
+  }
+  return { spawnedAtMs, invalidTimestamp: false };
 }
 
 // The mailbox path and the sandbox fallback the protocol permits under the
@@ -766,23 +768,29 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   const { firstLine, hasJsonEvent } = inspection;
   const ageSec = Math.round((nowMs - log.stat.mtimeMs) / 1000);
   const registryEntry = registry[log.issue];
-  const inactiveSpawnedAtMs = inactiveGateSpawnStartedAtMs(log, registryEntry, inspection, nowMs);
+  const inactiveSpawn = inactiveGateSpawnState(log, registryEntry, nowMs);
 
   // The producer barrier intentionally exposes an inactive registry entry
-  // before Codex can emit thread.started. Do not route an empty or partial
-  // first event through ordinary stall/dead healing. The same stall threshold
-  // is its bounded spawn timeout; after it expires, report spawn-fail so the
+  // before Codex can emit thread.started. Any output without a valid
+  // thread.started remains bounded startup — empty, partial, contamination,
+  // another JSON event, or a completed non-JSON line. The same stall threshold
+  // is its spawn timeout; after it expires, report spawn-fail so the
   // orchestrator retires the inactive entry before pre-registering a retry.
-  if (
-    inactiveSpawnedAtMs !== null &&
-    !inspection.hasThreadStarted &&
-    (
-      inspection.hasJsonEvent ||
-      !inspection.hasCompleteLine ||
-      inspection.hasTrailingPartial
-    )
-  ) {
-    const startupAgeSec = Math.max(0, Math.round((nowMs - inactiveSpawnedAtMs) / 1000));
+  if (inactiveSpawn !== null && !inspection.hasThreadStarted) {
+    if (inactiveSpawn.invalidTimestamp) {
+      emitEvent(
+        "spawn-fail",
+        log.issue,
+        `inactive gate spawn has invalid or future-dated spawned_at (${log.name})`,
+        `spawn-fail:inactive-time:${log.name}`,
+        nowMs
+      );
+      return;
+    }
+    const startupAgeSec = Math.max(
+      0,
+      Math.round((nowMs - inactiveSpawn.spawnedAtMs) / 1000)
+    );
     if (startupAgeSec < args.stallSec) return;
     emitEvent(
       "spawn-fail",

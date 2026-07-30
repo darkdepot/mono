@@ -743,16 +743,14 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
   identity while preserving `log` and `gates`. A failed spawn retires that
   inactive entry before the next attempt is pre-registered. The watcher treats
   that exact empty-log/null-identity state as inactive startup: it emits no
-  liveness event while the log is empty or its first JSON event is partial,
-  including after a complete contamination line, for one stall-threshold
-  startup window. A complete newline-terminated non-JSON log still fails
-  immediately. Only a valid `thread.started` event completes inactive startup;
-  any other JSON event stays in the bounded window and becomes `spawn-fail` at
-  timeout. The startup window
+  liveness event for one stall-threshold startup window until a valid
+  `thread.started` arrives. Empty or partial output, contamination, another
+  JSON event, and a complete non-JSON line all remain in that same bounded
+  state; at timeout they become `spawn-fail`. The startup window
   begins at that registry publication's `spawned_at`, never at a prepared log's
-  mtime. A timestamp more than five seconds in the future is malformed and does
-  not enter the inactive-startup suppression branch; after the window it emits
-  `spawn-fail` if `thread.started` never arrives.
+  mtime. A missing, invalid, or more-than-five-seconds-future `spawned_at`
+  cannot define a safe window and emits `spawn-fail` immediately, never
+  `dead`.
 
   Immediately after verifying every non-gate spawn, resume, or session
   rotation, in the same orchestrator turn and before any other action, update

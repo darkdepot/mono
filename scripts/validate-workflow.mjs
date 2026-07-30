@@ -4703,6 +4703,7 @@ function validateWatcherInactiveGateSpawnBehavior() {
     const completedFailureLog = path.join(logsDir, "MONO-368-mono-implement-a1.jsonl");
     const expiredPartialLog = path.join(logsDir, "MONO-369-mono-implement-a1.jsonl");
     const nonStartJsonLog = path.join(logsDir, "MONO-370-mono-implement-a1.jsonl");
+    const contaminationOnlyLog = path.join(logsDir, "MONO-371-mono-implement-a1.jsonl");
     fs.writeFileSync(freshLog, "");
     fs.writeFileSync(staleLog, "");
     fs.writeFileSync(otherLog, `${JSON.stringify({ type: "thread.started", thread_id: "other-thread" })}\n`);
@@ -4715,6 +4716,7 @@ function validateWatcherInactiveGateSpawnBehavior() {
     fs.writeFileSync(completedFailureLog, "spawn command failed before JSON\n");
     fs.writeFileSync(expiredPartialLog, '{"type":"thread.started","thread_id":"expired');
     fs.writeFileSync(nonStartJsonLog, `${JSON.stringify({ type: "turn.completed" })}\n`);
+    fs.writeFileSync(contaminationOnlyLog, "Reading additional input from stdin...\n");
     const stale = new Date(Date.now() - 181_000);
     // Deliberately invert log age and registration age: startup timeout must
     // follow the durable registry publication, not a prepared log's mtime.
@@ -4798,7 +4800,7 @@ function validateWatcherInactiveGateSpawnBehavior() {
           thread_id: null,
           pid: null,
           gates: ["pack-identity"],
-          spawned_at: registeredNow,
+          spawned_at: registeredStale,
           ...identity,
         },
         "MONO-369": {
@@ -4819,6 +4821,16 @@ function validateWatcherInactiveGateSpawnBehavior() {
           pid: null,
           gates: ["pack-identity"],
           spawned_at: registeredStale,
+          ...identity,
+        },
+        "MONO-371": {
+          transport: "codex-cli",
+          stage: "mono-implement",
+          log: contaminationOnlyLog,
+          thread_id: null,
+          pid: null,
+          gates: ["pack-identity"],
+          spawned_at: registeredNow,
           ...identity,
         },
       })
@@ -4843,12 +4855,12 @@ function validateWatcherInactiveGateSpawnBehavior() {
     if (!stdout.includes("EVENT:dead MONO-363")) {
       fail("inactive gate-spawn handling must continue processing other workers");
     }
-    if (!stdout.includes("EVENT:dead MONO-365")) {
-      fail("future-dated inactive registration must not suppress liveness beyond the bounded skew allowance");
+    if (!stdout.includes("EVENT:spawn-fail MONO-365")) {
+      fail("future-dated inactive registration must emit spawn-fail rather than enter ordinary dead healing");
     }
-    for (const issue of ["MONO-366", "MONO-367"]) {
+    for (const issue of ["MONO-366", "MONO-367", "MONO-371"]) {
       if (new RegExp(`EVENT:(stall|dead|spawn-fail) ${issue}\\b`).test(stdout)) {
-        fail(`incomplete first event must remain in bounded inactive startup (${issue})`);
+        fail(`startup without thread.started must remain bounded during its window (${issue})`);
       }
     }
     for (const issue of ["MONO-368", "MONO-369", "MONO-370"]) {
@@ -7059,12 +7071,12 @@ const REGISTRY_GATE_TEXT_REQUIREMENTS = [
   {
     label: "watcher-inactive-future-timestamp",
     file: "watcher",
-    text: "if (spawnedAtMs > nowMs + INACTIVE_SPAWN_FUTURE_SKEW_MS) return null",
+    text: "if (inactiveSpawn.invalidTimestamp)",
   },
   {
     label: "watcher-inactive-partial-first-event",
     file: "watcher",
-    text: "inspection.hasTrailingPartial",
+    text: "Any output without a valid\n  // thread.started remains bounded startup",
   },
   {
     label: "watcher-inactive-requires-thread-started",

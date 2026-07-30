@@ -164,11 +164,11 @@ Workflow states:
      `thread.started`, update the
      same entry with verified live identity while preserving `log` and `gates`;
      retire an inactive entry when spawn fails. The watcher recognizes the
-     empty-log/null-identity entry as inactive startup, keeps it quiet for one
-     stall-threshold window measured from that `spawned_at`, and emits
-     `spawn-fail` if a valid `thread.started` never arrives; another JSON event
-     does not complete startup. A value more than five
-     seconds in the future is malformed and gets no startup suppression.
+     null-identity entry as inactive startup and keeps any output quiet for one
+     stall-threshold window measured from `spawned_at` until a valid
+     `thread.started` arrives. At timeout it emits `spawn-fail`. A missing,
+     invalid, or more-than-five-seconds-future timestamp emits `spawn-fail`
+     immediately rather than entering `dead` healing.
      Preserve the list on a
      same-attempt no-ack nudge/resume and while a passed ack awaits confirmed
      resume. Never copy it to a new attempt implicitly: a verified new
