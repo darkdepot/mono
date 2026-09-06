@@ -142,7 +142,7 @@ review gate.
 
 The helper remains external and independently updateable. Model selection is
 therefore owned by this workflow: `mono-preflight` passes the explicit
-GPT-5.6 model and reasoning effort defined in
+Opus 5 model and reasoning effort defined in
 `references/autoreview-routing.md` for the final risk class. Project config
 does not duplicate this technical routing table.
 

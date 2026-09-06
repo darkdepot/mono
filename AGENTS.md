@@ -23,7 +23,7 @@ The workflow helps agents move from raw idea to shipped PR while keeping Linear 
 - `mono-handoff` = project-first package creation and artifact repair; it persists Project, PRD, Tech Spec, and Issue slicing before implementation starts and owns reviewed class 1-3 repair transactions.
 - `mono-issue` = issue-only intake and renewal through the create-then-approve transaction; issue-only body edits never route to handoff repair.
 - `mono-implement` = Delivery Start and implementation execution from approved Linear Issue(s).
-- `mono-preflight` = local branch readiness, targeted verification, mandatory `autoreview` clean gate with risk-routed GPT-5.6 model/effort, commit state, and preflight certificate.
+- `mono-preflight` = local branch readiness, targeted verification, mandatory `autoreview` clean gate with risk-routed Opus 5 model/effort, commit state, and preflight certificate.
 - `mono-ship` = accepted pre-ship drift sync, formal pre-ship review/check, PR lifecycle, repo documentation before final green, review feedback loop, and green certificate.
 - `mono-deploy` = deploy workflow delegation, verified delivery evidence, post-ship check, Linear closeout, and durable learning capture.
 - `mono-orchestrate` = product-level control plane: worker dispatch, monitoring, decision routing, single Linear writer during orchestration; never does stage work itself.
@@ -43,7 +43,7 @@ The workflow helps agents move from raw idea to shipped PR while keeping Linear 
 - Apply accepted review fixes through `mono-handoff`, explicit atomic skills, or `mono-ship`.
 - Keep `mono-handoff`, `mono-implement`, `mono-preflight`, `mono-ship`, and `mono-deploy` ownership separate; do not collapse them into a monolithic delivery skill.
 - Keep `mono-orchestrate` control-plane only: it sequences stages and routes decisions but never absorbs stage ownership or implements.
-- Keep `autoreview` routing explicit and update-safe: `mono-preflight` owns the GPT-5.6 model/effort choice by risk class and never depends on the external helper's built-in default.
+- Keep `autoreview` routing explicit and update-safe: `mono-preflight` owns the Opus 5 model/effort choice by risk class and never depends on the external helper's built-in default.
 - Do not make Project Updates a required gate.
 - `mono-deploy` publishes a project update as an informational result of closeout: a step of that stage, never a gate of any stage.
 - Record user review acceptance as a Linear comment.

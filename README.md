@@ -20,7 +20,7 @@ GitHub remains the branch, PR, review, CI, deploy, and merge-history surface. Li
 - `mono-review`: report-only artifact quality and risk review.
 - `mono-check`: report-only transition readiness checks.
 - `mono-implement`: Delivery Start and implementation execution from approved Issue(s).
-- `mono-preflight`: local branch readiness, targeted verification, mandatory risk-routed GPT-5.6 `autoreview` clean gate, and preflight certificate.
+- `mono-preflight`: local branch readiness, targeted verification, mandatory risk-routed Opus 5 `autoreview` clean gate, and preflight certificate.
 - `mono-ship`: wrapper around configured project ship, documentation, review feedback, and green certificate workflows.
 - `mono-deploy`: wrapper around configured project deploy, post-ship check, Linear closeout, and learning capture workflows.
 - `mono-orchestrate`: control-plane orchestrator session per product; drives projects and Issues through worker sessions, decides technical questions itself, escalates only product decisions (scope, design, risk); runs discovery in director mode — a Second Voice reviewer agent interrogates, the orchestrator answers, and the user gets reviewed prototypes at checkpoints; reports to the owner in product language (what the product now does, never Issue keys or stages as the subject; «Нужно от тебя:» always last).
@@ -138,7 +138,7 @@ Each installed skills root contains:
 `mono-preflight` also requires the external `autoreview` skill/helper in the agent runtime. This workflow does not vendor `autoreview`; preflight blocks when the helper is missing.
 
 `mono-preflight` does not inherit the external helper's model default. It
-selects the explicit GPT-5.6 route only from the canonical table in
+selects the explicit Opus 5 route only from the canonical table in
 `references/autoreview-routing.md`, re-selects after final risk
 reclassification, and records the route and command in the preflight
 certificate.

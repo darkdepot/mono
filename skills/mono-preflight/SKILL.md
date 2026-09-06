@@ -78,7 +78,7 @@ fields in the worker report. Never continue on a different installed pack.
    - For both lanes, preserve the existing risk-escalation rule: the higher of the approved package and final diff controls the autoreview route, and no issue-only rule weakens or replaces the canonical routing in `references/autoreview-routing.md`.
    - For an issue-only package, a final diff reclassified to `deep` or `risky` is a `drift-candidate` and triggers the deterministic Project-first fallback in `references/issue-only-lane.md`. Run the mandatory autoreview using that higher risk class, but do not emit `ready` for an out-of-envelope issue-only package.
    - Select the model and effort only from the canonical table in `references/autoreview-routing.md`; do not restate or infer a second copy of the table in this skill.
-   - Pass `--engine codex`, `--model`, and `--thinking` explicitly on every helper invocation. Never rely on external helper or environment defaults, never use GPT-5.5 as a normal route, and never silently fall back to another engine, model, or effort.
+   - Pass `--engine claude`, `--model`, and `--thinking` explicitly on every helper invocation. Never rely on external helper or environment defaults, never use an older Claude model as a normal route, and never silently fall back to another engine, model, or effort.
    - Treat helper exit 0 plus the clean result (`autoreview clean: no accepted/actionable findings reported`) as the only successful review outcome.
    - Treat nonzero helper exit with accepted/actionable findings as not clean. Verify every finding against the real code, reject only unsupported findings with evidence, and apply small fixes for accepted/actionable findings at the right ownership boundary.
    - After any review-triggered code change, re-run the relevant targeted verification and re-run `autoreview`.
@@ -107,7 +107,7 @@ Branch: <branch>; commit state: <clean/dirty/committed>
 Changed files: <count/list or summary>
 Local verification: <commands run + outcome>
 Autoreview: <clean|blocked|needs-human|unavailable>; final command: <selected-scope helper command>; clean result: <exit 0 + clean line or none>
-Autoreview route: risk=<tiny|standard|deep|risky>; source=<Linear artifact or diff inference>; critical=<none|concrete escalation signal>; model=<gpt-5.6-luna|gpt-5.6-sol>; effort=<low|medium|high|xhigh>; reclassified=<no|summary>
+Autoreview route: risk=<tiny|standard|deep|risky>; source=<Linear artifact or diff inference>; critical=<none|concrete escalation signal>; model=<claude-opus-5>; effort=<low|medium|high|xhigh>; reclassified=<no|summary>
 Autoreview loop: <iterations>; accepted findings fixed: <none/list>; residual actionable findings: <none/list, must be none for ready>
 Drift candidate: <none/summary>
 Decision needed: <none | точное решение по-русски>
@@ -131,7 +131,7 @@ Rules:
 - Do not auto-apply broad rewrites, release-sensitive changes, or fixes that the agent cannot defend after reading the relevant code and contracts.
 - Do not silently reject a repeated `autoreview` finding and mark `ready`. If `autoreview` does not return clean, the certificate must be `blocked` or `needs-human`.
 - The stage exit report enumerates every «Как проверить» item of the Issue, each with a `pass | deferred | not-run` status and one line of evidence. Under orchestration that list is the `verification_items` array of the mailbox report, in the shape `templates/orchestrator-report.md` defines. The stage cannot claim completion while an item is silently missing; `deferred`/`not-run` are valid only with a recorded reason in the evidence.
-- Do not mark preflight `ready` when the final `autoreview` command omits explicit `--engine codex`, `--model`, or `--thinking`, selects a non-GPT-5.6 model, or does not match the final risk class in `references/autoreview-routing.md`.
+- Do not mark preflight `ready` when the final `autoreview` command omits explicit `--engine claude`, `--model`, or `--thinking`, runs an `--engine` other than `claude`, selects a model other than `claude-opus-5`, or does not match the final risk class in `references/autoreview-routing.md`.
 - Keep Linear-facing comments in the project config language; use Russian when no project config is present.
 - Include a checked/not-checked boundary. Local tests do not imply browser QA, production smoke, mobile QA, deploy verification, or user acceptance.
 - Do not summarize the certificate away in Linear. A fresh `mono-ship` agent must be able to recover the full certificate from Linear comments or resources.
