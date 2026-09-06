@@ -17,6 +17,20 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   `node scripts/install-local.mjs --breaking` flow only after orchestrators are
   idle and worker registries are empty, then restart open agent sessions.
 
+### Changed
+
+- `mono-orchestrate` owner-facing statuses switch to product language: the
+  subject of every line is what the product now does for its user; Issue
+  keys, stages, wave slice codes, and mechanics are never the subject. The
+  «Статус» shape in `templates/orchestrator-brief.md` opens with a
+  «Решений от тебя:» counter, separates «Новое за <период>:» from
+  «Где мы к цели», adds «Можешь потрогать:», «Чем рискуем:»,
+  «Обещал — не сделал:», and «Следующий контакт:», renames
+  «Простои и отклонения:» to «Что пошло не так:», moves the machine
+  register into a «Техника (можно не читать):» tail, and keeps
+  «Нужно от тебя:» as the last block. `references/human-friendly-output.md`
+  gains «Product Language For The Owner» with a stage glossary.
+
 ## [0.20.1] - 2026-07-16
 
 Completes the public brand migration by renaming the canonical GitHub

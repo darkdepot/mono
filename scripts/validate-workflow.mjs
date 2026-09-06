@@ -6308,11 +6308,11 @@ function validateHonestLedgerContract() {
     assertIncludes("references/orchestration.md", required, JSON.stringify(required));
   }
 
-  for (const required of ["Простои и отклонения:", "Контекст: ~N%", "not blocking notifications"]) {
+  for (const required of ["Что пошло не так:", "Контекст: ~N%", "not blocking notifications"]) {
     assertIncludes("templates/orchestrator-brief.md", required);
   }
 
-  for (const required of ["«Простои и отклонения:»", "«Контекст: ~N%»"]) {
+  for (const required of ["«Что пошло не так:»", "«Контекст: ~N%»"]) {
     assertIncludes("skills/mono-orchestrate/SKILL.md", required, `status update contract: ${required}`);
   }
 }
@@ -8168,6 +8168,105 @@ function validatePreWriteHandoffReviewOrder() {
   }
 }
 
+function validateOwnerProductLanguage() {
+  // 2026-09-06 precedent: the owner woke up to «ZENI-391 (I3b): сертификат
+  // ship, squash-merge … closeout, реестр отставлен» and could not tell what
+  // the product now does. Owner-facing statuses speak product language; the
+  // machine register lives in a skippable «Техника» tail, and «Нужно от тебя:»
+  // is always the last block so the ask is what the owner sees when done.
+  const briefPath = "templates/orchestrator-brief.md";
+  const brief = read(briefPath);
+
+  for (const required of [
+    "## Статус (Status Update)",
+    "Решений от тебя:",
+    "Новое за <период>:",
+    "Можешь потрогать:",
+    "Где мы к цели «<цель волны>»:",
+    "В работе сейчас:",
+    "Дальше по очереди:",
+    "Что пошло не так:",
+    "Чем рискуем:",
+    "Обещал — не сделал:",
+    "Следующий контакт:",
+    "Техника (можно не читать):",
+    "Нужно от тебя:",
+    "never the subject of a line",
+    "wave slice codes",
+    "No placeholders in sent text",
+    "«работает»",
+    "Three sizes, one shape",
+    "## Итог волны (Wave Report)",
+  ]) {
+    assertIncludes(briefPath, required, JSON.stringify(required));
+  }
+
+  const statusStart = brief.indexOf("## Статус (Status Update)");
+  const fenceStart = statusStart < 0 ? -1 : brief.indexOf("```text", statusStart);
+  const fenceEnd = fenceStart < 0 ? -1 : brief.indexOf("```", fenceStart + 7);
+  if (fenceStart < 0 || fenceEnd < 0) {
+    fail(`${briefPath} status shape must be a fenced text block under «## Статус (Status Update)»`);
+  } else {
+    const shape = brief.slice(fenceStart + 7, fenceEnd).trim();
+    const firstLine = shape.split("\n")[0] || "";
+    if (!firstLine.includes("Решений от тебя:")) {
+      fail(`${briefPath} status shape must open with the «Решений от тебя:» counter, found ${JSON.stringify(firstLine)}`);
+    }
+    const blockLabels = shape
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter((line) => /^[А-ЯЁ][^\n]*:/.test(line) && !/^\d/.test(line));
+    const lastLabel = blockLabels[blockLabels.length - 1] || "";
+    if (!lastLabel.startsWith("Нужно от тебя")) {
+      fail(`${briefPath} status shape must end with «Нужно от тебя:», found ${JSON.stringify(lastLabel)}`);
+    }
+    const technicalIndex = shape.indexOf("Техника (можно не читать):");
+    const askIndex = shape.indexOf("Нужно от тебя");
+    if (technicalIndex < 0 || askIndex < 0 || technicalIndex > askIndex) {
+      fail(`${briefPath} status shape must place «Техника (можно не читать):» before «Нужно от тебя:»`);
+    }
+    if (/^- <ISSUE-KEY>/m.test(shape)) {
+      fail(`${briefPath} status shape must not open a bullet with the Issue key as its subject`);
+    }
+  }
+
+  for (const required of [
+    "## Product Language For The Owner",
+    "what the product now does for its user",
+    "never the subject of a line",
+    "Issue keys, wave slice codes",
+    "translation test",
+    "verified live after the latest deploy",
+    "No placeholders in sent text",
+    "`mono-implement` → «пишется код»",
+    "`mono-preflight` → «локальная проверка перед PR»",
+    "`mono-ship` → «PR, авто-ревью и проверки»",
+    "`mono-deploy` → «выкладка в прод»",
+    "closeout → «закрытие задачи в Linear»",
+    "squash-merge → «влито в main»",
+  ]) {
+    assertIncludes("references/human-friendly-output.md", required, JSON.stringify(required));
+  }
+
+  for (const required of [
+    "Owner-facing output is product language",
+    "the owner never has to ask for a human version",
+    "«Нужно от тебя:» is always the last block",
+    "«Следующий контакт:»",
+    "«Что пошло не так:»",
+    "Product Language For The Owner",
+  ]) {
+    assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
+  }
+
+  for (const required of ["«Что пошло не так:»"]) {
+    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
+  }
+
+  assertIncludes("templates/compact-instructions.md", "продуктовое имя", "product-language worker name");
+  assertIncludes("README.md", "product language", "README mono-orchestrate product-language statuses");
+}
+
 validateSkills();
 validateReadFirstTierContract();
 validatePreWriteHandoffReviewOrder();
@@ -8204,6 +8303,7 @@ validateTwoPhaseDispatchHandshake();
 validateReviewLoopHygiene();
 validateCostTelemetry();
 validateBriefIntegrity();
+validateOwnerProductLanguage();
 validateOpsLessons();
 
 if (failures.length > 0) {

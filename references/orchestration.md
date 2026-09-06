@@ -883,7 +883,7 @@ complete cut-over window.
     or rewriting existing lines is forbidden.
   - Any orchestrator idle or stall longer than 5 minutes — waiting on
     quota, on the user, or on its own scheduling — is a mandatory ledger
-    entry with the cause. These entries feed «Простои и отклонения:» in
+    entry with the cause. These entries feed «Что пошло не так:» in
     status updates and the final wave report.
 - Worker registry: `workers.json` beside the ledger — orchestrator-owned
   runtime metadata, one entry per Issue: `transport`, `thread_id`,

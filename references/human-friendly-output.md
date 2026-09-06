@@ -14,6 +14,51 @@ Start with the human outcome:
 
 Do not start with internal verdict labels, phase names, tool transcripts, or raw command directives.
 
+## Product Language For The Owner
+
+The owner reads a status as the product's owner, not as the workflow's
+operator. Every owner-facing status, period report, wave report, and
+decision brief passes the translation test: a reader who has never opened
+the Linear board and does not know the workflow understands every line.
+A line that needs the workflow glossary to be understood is rewritten.
+
+- The subject of a line is what the product now does for its user, or what
+  changed for that user. Issue keys, wave slice codes (I5, I-cap), internal
+  labels (R21, 8a), stage and skill names, certificate names, and git/infra
+  mechanics (SHA, squash-merge, worktree, nohup, registry) are
+  never the subject of a line. Wave slice codes and internal labels are not shown to
+  the owner at all.
+- Internal nouns are jargon too: «ядро», «охват», «журнал», «контрольная
+  сверка», «стенд», «матрица приёмки», «вольются», «прогнать». Say what the
+  user can do instead.
+- One Linear key per line, at the end, in parentheses, only when the line is
+  one Issue — a lookup handle, never a name. A group of Issues carries no key.
+- «работает» and «на проде» are said only about what was
+  verified live after the latest deploy; everything else is «выложено,
+  вживую не гонял».
+- No placeholders in sent text: a missing number is words («несколько
+  часов», «не считал»), a missing key is no key. `<ISSUE-KEY>`, `~N`, and
+  `3xx` never leave a template.
+- Numbers carry a unit and a meaning; a bare «28/40» is a cipher in digits.
+- The machine register — the per-Issue table, PRs, SHAs, build versions,
+  worker mechanics, cost, context — lives in the «Техника (можно не
+  читать):» tail of a status or in Linear machine blocks, never in the
+  headline.
+- The owner never has to ask for a human version: the product-language form
+  is the only form.
+
+Stage and mechanism glossary for owner-facing lines:
+
+- `mono-implement` → «пишется код»
+- `mono-preflight` → «локальная проверка перед PR»
+- `mono-ship` → «PR, авто-ревью и проверки»
+- `mono-deploy` → «выкладка в прод»
+- closeout → «закрытие задачи в Linear»
+- certificate → «отметка, что этап пройден»
+- squash-merge → «влито в main»
+- `verify:prod PASS` → «проверка после выкладки прошла»
+- worktree, registry, thread id, nohup/setsid → not shown; «Техника» only
+
 ## Status Glossary
 
 Translate workflow statuses before showing them to the user:
