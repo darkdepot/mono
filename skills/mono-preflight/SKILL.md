@@ -124,7 +124,7 @@ Rules:
 - Do not run or claim `mono-review pre-ship`; it remains owned by `mono-ship`.
 - Do not run or claim `mono-check pre-ship`; it remains owned by `mono-ship`.
 - If drift appears material but not yet confirmed, mark `drift-candidate` and let `mono-ship` own the formal pre-ship review/check decision.
-- The issue-only lane never promotes an Issue into a Project in place. After `ready`: freeze the independently shippable slice while its whole-body fingerprint still matches, keep expanded scope out of the current PR, and create a separate follow-up Project; otherwise cancel. Follow `references/issue-only-lane.md`.
+- The issue-only lane never promotes an Issue into a Project in place. After `ready`: freeze the independently shippable slice while its whole-body fingerprint still matches, keep expanded scope out of the current PR, and create a separate follow-up Project; otherwise cancel. Set that follow-up Project's lead to the acting user (`lead: "me"` on the Linear connector) and the assignee of every Issue created in it to the same acting user (`assignee: "me"`) at creation, and never overwrite an assignment that already exists. Follow `references/issue-only-lane.md`.
 - If drift is already clearly outside the approved package, route back to `mono-handoff` or explicit atomic artifact repair before PR.
 - Do not cap the review loop at an arbitrary round count. The `autoreview` helper is the loop authority; preflight readiness requires its clean result.
 - Do not call Compound `ce-code-review` for this gate. It is not an acceptable replacement for `autoreview` inside `mono-preflight`.

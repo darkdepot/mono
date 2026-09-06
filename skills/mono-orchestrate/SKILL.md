@@ -366,6 +366,9 @@ Workflow states:
      out of queue ahead of queued work (fix-forward); the shipped Issue
      moves to `Done` only after its own live pass is green, and the hotfix
      Issue gets its own live verification.
+     Set the assignee of that hotfix Issue to the acting user
+     (`assignee: "me"` on the Linear connector) at creation; an Issue that
+     already exists keeps the assignee it has.
    - Record ledger entries; verify Linear closeout happened per stage skill
      contracts.
    - Carry the closeout's `project-update` outcome into the next status: the
