@@ -113,7 +113,9 @@ Workflow states:
      match; never rebind a thread from another surface revision.
    - Apply queued Linear mutations from worker reports that were never
      applied.
-   - Output the rebuilt status table before taking new actions.
+   - Output the rebuilt status (the «Статус» shape from
+     `templates/orchestrator-brief.md` with its «Техника» table) before
+     taking new actions.
 2. `intake-and-discovery`
    - Run `mono-idea` per idea in this session; with several ideas, queue
      them and run discovery one project at a time (Director Discovery in
@@ -411,6 +413,12 @@ Rules:
 - Keep user-facing output in the project config language (Russian by
   default); ledger and mailbox stay English except the fixed «Решил сам:»
   term.
+- Owner-facing output is product language: statuses, period reports, wave
+  reports, and briefs name work by what the product now does for its user,
+  never by Issue key, stage, wave slice code, or mechanism as the subject
+  (Product Language For The Owner in `references/human-friendly-output.md`).
+  The machine register lives only in the «Техника (можно не читать):» tail,
+  and the owner never has to ask for a human version.
 
 Session verdicts:
 
@@ -421,19 +429,34 @@ Session verdicts:
   unrecoverable); exact blocker reported.
 - `idle`: every active Issue is deployed and closed; awaiting new work.
 
-Final response (status update) must include, per
-`templates/orchestrator-brief.md`:
+Final response (status update) follows the «Статус» shape in
+`templates/orchestrator-brief.md` and Product Language For The Owner in
+`references/human-friendly-output.md`, and carries:
 
-- Status table: each active Issue with stage and one-line state.
+- The first line: period, product, one sentence on where the product stands
+  against the wave goal, and the counter «Решений от тебя: N (в конце)» or
+  «нет».
+- «Новое за <период>:» — what the product's user can now do, each line with
+  «проверил вживую» or «выложено, вживую не гонял»; «Можешь потрогать:» when
+  there is something to touch; «Где мы к цели:» — done and remaining in
+  product words.
+- «В работе сейчас:» and «Дальше по очереди:» — the next product outcomes in
+  order, each with its human-worded stage and what it waits on.
+- «Что пошло не так:» — idle periods over 5 minutes and contract deviations,
+  stated as the result that moved, or «нет» when clean; «Чем рискуем:» and
+  «Обещал — не сделал:» only when there is an open risk or an unkept
+  promise.
 - «Решил сам:» — decisions taken since the last update, one line each with
-  the reason.
-- «Нужно от тебя:» — decision briefs, or «нет».
-- Workers: spawned/advanced/respawned since the last update.
-- Linear: mutations applied and certificates recorded.
-- «Простои и отклонения:» — idle periods over 5 minutes with cause and
-  duration, contract deviations with reason, or «нет» when clean.
-- «Контекст: ~N%» — orchestrator session context usage per the Context
-  Budget policy in `references/orchestration.md`.
+  the reason; a standing rule only when it delayed something.
+- «Проверил вживую / Не проверял» in product words, and
+  «Следующий контакт:» — when the owner hears from you next and about what.
+- «Техника (можно не читать):» — the machine register: the per-Issue status
+  table with stage and one-line state, workers spawned/advanced/respawned
+  since the last update, Linear mutations applied and certificates
+  recorded, and «Контекст: ~N%» — orchestrator session context usage per
+  the Context Budget policy in `references/orchestration.md`.
+- «Нужно от тебя:» is always the last block: decision briefs per the
+  template, or «нет».
 - Cost telemetry: the per-Issue cost tail in the status table («цена: ~N
   тыс. out-токенов, M циклов ревью», or «цена: н/д» when data is missing)
   and, in the final wave report, the «Цена волны» block — per the Cost

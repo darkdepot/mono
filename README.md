@@ -23,7 +23,7 @@ GitHub remains the branch, PR, review, CI, deploy, and merge-history surface. Li
 - `mono-preflight`: local branch readiness, targeted verification, mandatory risk-routed GPT-5.6 `autoreview` clean gate, and preflight certificate.
 - `mono-ship`: wrapper around configured project ship, documentation, review feedback, and green certificate workflows.
 - `mono-deploy`: wrapper around configured project deploy, post-ship check, Linear closeout, and learning capture workflows.
-- `mono-orchestrate`: control-plane orchestrator session per product; drives projects and Issues through worker sessions, decides technical questions itself, escalates only product decisions (scope, design, risk); runs discovery in director mode — a Second Voice reviewer agent interrogates, the orchestrator answers, and the user gets reviewed prototypes at checkpoints.
+- `mono-orchestrate`: control-plane orchestrator session per product; drives projects and Issues through worker sessions, decides technical questions itself, escalates only product decisions (scope, design, risk); runs discovery in director mode — a Second Voice reviewer agent interrogates, the orchestrator answers, and the user gets reviewed prototypes at checkpoints; reports to the owner in product language (what the product now does, never Issue keys or stages as the subject; «Нужно от тебя:» always last).
 
 The workflow includes an execution quality layer inspired by proven agent-skill
 guardrails: PRDs must cover actor, capability, and benefit; Issues must be

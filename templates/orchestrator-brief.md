@@ -6,7 +6,7 @@ project config (`languages.linear`).
 ## Бриф решения (Decision Brief)
 
 ```text
-Нужно твоё решение: <ISSUE-KEY или пакет> — <тип: scope | дизайн | риск | deploy>
+Нужно твоё решение: <о чём, простыми словами продукта> — <тип: scope | дизайн | риск | deploy> (<ISSUE-KEY или пакет>)
 
 Что решаем: <одно предложение в терминах продукта, не реализации>
 Почему сейчас: <что именно блокируется этим решением>
@@ -14,8 +14,8 @@ project config (`languages.linear`).
 Рекомендация: <вариант> — <одна строка почему>
 
 Варианты:
-1. <вариант A> — рекомендую
-2. <вариант B>
+1. <вариант A> — <что изменится для тебя и продукта> — рекомендую, <одна причина>
+2. <вариант B> — <что изменится для тебя и продукта>
 3. <свой ответ>
 ```
 
@@ -98,35 +98,144 @@ Post-approval delta shape (at the next owner touch):
 
 ## Статус (Status Update)
 
-```text
-Статус (<продукт>, <N> задач):
-- <ISSUE-KEY> — <стадия> — <одна строка состояния> — цена: ~N тыс. out-токенов, M циклов ревью
+One shape for every owner-facing status: the update after an ordinary
+turn, the period report («за ночь», «за отрезок»), and the final wave
+report. Depth scales; the shape does not. The register is product
+language per Product Language For The Owner in
+`references/human-friendly-output.md`: the subject of every line is what
+the product now does for its user, and an Issue key, a stage, a wave
+slice code, or a mechanism is never the subject of a line. The owner
+never has to ask for a human version.
 
-Решил сам: <решения с прошлого апдейта, по строке с причиной, или «ничего»>
-Нужно от тебя: <брифы по форме выше, или «нет»>
-Воркеры: <spawned/advanced/respawned, или «без изменений»>
-Linear: <применённые мутации и сертификаты, или «без изменений»>
-Простои и отклонения: <простои >5 мин с причиной и длительностью; отклонения от контракта с причиной; или «нет»>
-Контекст: ~N%
+```text
+<Период>, <продукт>. <Одна фраза: где продукт относительно цели волны>. Решений от тебя: <N> (в конце) | нет.
+
+Новое за <период>:
+- <Что пользователь продукта теперь может сделать или что для него изменилось>. <Выложено когда; «проверил вживую на проде» или «выложено, вживую не гонял»>. (<ISSUE-KEY>)
+
+Можешь потрогать: <что открыть и что сделать, чтобы увидеть новое своими руками>
+
+Где мы к цели «<цель волны>»: готово — <части, простыми словами>; осталось — <части и их состояние>.
+
+В работе сейчас:
+- <Что пользователь получит, когда это будет готово>. <Где сейчас: пишется код | локальная проверка перед PR | PR, авто-ревью и проверки | выкладка в прод>. <Когда рассчитываю выложить, или честное «срока пока нет»>. (<ISSUE-KEY>)
+
+Дальше по очереди:
+1. <Следующий продуктовый результат> — <чего ждёт, чтобы начаться>.
+2. <…>
+
+Что пошло не так:
+- <Что случилось, простыми словами; какой результат съехал и на сколько>. <Что сделал>. Или «нет».
+
+Чем рискуем:
+- <Незакрытый риск как последствие для пользователя, не как техническая оговорка>.
+
+Обещал — не сделал:
+- <Что было обещано в прошлом статусе и не случилось> — <почему и что теперь>.
+
+Решил сам:
+- <Решение этого отрезка> — <одна причина>. <Влияет ли на сроки>. Или «ничего».
+
+Проверил вживую: <что именно и как>. Не проверял: <что и с каким последствием, если там что-то поехало>.
+
+Следующий контакт: <когда и по какому поводу>. Раньше — только если понадобится твоё решение.
+
+Техника (можно не читать): <ISSUE-KEY>: <стадия>, <состояние>, цена: ~N тыс. out-токенов, M циклов ревью; <PR, SHA, версия сборки>; воркеры: <spawned/advanced/respawned или «без изменений»>; Linear: <применённые мутации и сертификаты или «без изменений»>; простои дольше 5 минут: <длительность>; Контекст: ~N%.
+
+Нужно от тебя (<N> решений):
+1. <Бриф решения по форме выше: что решаем, варианты с последствиями для тебя и продукта, рекомендация с причиной>
 ```
 
-«Простои и отклонения:» is mandatory in every status update: every
-orchestrator idle or stall longer than 5 minutes with its cause and
-duration, and every deviation from the orchestration contract with its
-reason; write «нет» when the period was clean. The final wave report
+Rules that bind every status:
+
+- Product language: the subject of every line in «Новое», «В работе
+  сейчас», and «Дальше по очереди» is what the product now does for its
+  user. Issue keys, stages, wave slice codes (I5, I-cap), internal labels
+  (R21, 8a), certificate names, and git/infra mechanics are never the
+  subject of a line; wave slice codes and internal labels are not shown to
+  the owner at all. Internal nouns («ядро», «охват», «стенд», «матрица
+  приёмки», «вольются») are jargon too — say what the user can do instead.
+- One Linear key per line, at the end, in parentheses, only when the line
+  is one Issue; render it as a link when the runtime renders links. A line
+  that covers several Issues carries no key; the project link goes to
+  «Техника».
+- «работает» and «на проде» are said only about what was verified live
+  after the latest deploy; everything else is «выложено, вживую не гонял».
+- No placeholders in sent text: `<ISSUE-KEY>`, `~N`, and `3xx` never leave
+  this template. A number you do not have is words («несколько часов»,
+  «не считал»); a key you do not have is no key.
+- Numbers carry a unit and a meaning («читается ли логотип в мелком круге
+  в списке»), never a bare «28/40».
+- A delay is stated as the result that moved («приёмка съехала с утра на
+  вечер»); hours go to «Техника».
+- «Новое за <период>:» is only what changed since the previous status.
+  The accumulated picture lives in one line under «Где мы к цели»; never
+  re-list yesterday's wins as today's.
+- «Решил сам:» carries only decisions of this period. A standing rule
+  («записи на проде только по приказу») appears only when it delayed
+  something.
+- «Чем рискуем:» and «Обещал — не сделал:» appear only when there is an
+  open risk or an unkept promise from the previous status — never as empty
+  headings.
+- «Следующий контакт:» is mandatory: when the owner will hear from you next
+  and about what.
+- «Нужно от тебя:» is always the last block, and the first line repeats the
+  count («Решений от тебя: 1 (в конце)» / «нет»). «Нужно от тебя: нет» is
+  still the last line. Each item is a Decision Brief per the shape above; a
+  standing rule or a reminder is not a decision and does not go here.
+- «Техника (можно не читать):» is the single home of the machine register
+  in chat: the per-Issue status table (`<ISSUE-KEY>: <стадия>, <состояние>,
+  цена: …`), PR numbers, SHAs, build versions, workers
+  spawned/advanced/respawned, Linear mutations and certificates, idle
+  periods over 5 minutes with duration, and «Контекст: ~N%». It sits right
+  before «Нужно от тебя:» so the owner skips it in one scroll.
+
+Three sizes, one shape:
+
+- Ordinary turn with no news: four to five lines — the first line with the
+  counter, «Новое: видимого изменения нет, идёт <что>», «Следующий
+  контакт:», one «Техника:» tail with «Решил сам», «Что пошло не так»,
+  «Контекст» and «цена» collapsed into it, and «Нужно от тебя: нет».
+- Period report («за ночь», «за отрезок»): the full shape.
+- Final wave report: the full shape plus the wave-only blocks in «Итог
+  волны» below.
+
+«Что пошло не так:» is mandatory in every status update: every
+orchestrator idle or stall longer than 5 minutes with its cause and the
+result it moved, and every deviation from the orchestration contract with
+its reason; write «нет» when the period was clean. In an ordinary-turn
+status it may sit inside the «Техника» tail. The final wave report
 carries the same section covering the whole wave. These are async-visible
 records for the owner, not blocking notifications (owner decision Q5) —
 they never interrupt or page the user.
 
 «Контекст: ~N%» reports orchestrator session context usage per the
-Context Budget policy in `references/orchestration.md`.
+Context Budget policy in `references/orchestration.md`; it lives in the
+«Техника» tail.
 
-The per-Issue cost tail «— цена: ~N тыс. out-токенов, M циклов ревью» is
+The per-Issue cost tail «цена: ~N тыс. out-токенов, M циклов ревью» is
 compact telemetry per the Cost Telemetry policy in
 `references/orchestration.md`: include it only when the data is
 available; write «цена: н/д» otherwise. Cost lines are async-visible
 records for the owner — never blocking, never a gate, never a reason to
 interrupt work.
+
+## Итог волны (Wave Report)
+
+The final wave report is the status shape above at full depth, plus the
+wave-only blocks below, placed between «Где мы к цели» and «Техника»:
+
+```text
+К чему пришли против цели «<цель волны>»: <что пользователь продукта получил в итоге; что из цели не вошло>.
+
+Не вошло и почему:
+- <Обещанная часть> — <почему не вошла; куда делась: следующая волна | снято>.
+
+Чему научились:
+- <Один урок, который меняет следующую волну> — <что делаем иначе>.
+
+Цена волны: <блок из следующего раздела>
+```
 
 ## Цена волны (Wave Cost Summary)
 
