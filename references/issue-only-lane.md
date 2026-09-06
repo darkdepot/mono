@@ -244,6 +244,23 @@ seam. It mirrors the deterministic-config-script structure of
   never vendor the script — the installer owns the copy. In this upstream
   checkout the same script is `scripts/resolve-issue-context.mjs`.
 
+## Theme project
+
+An issue-only Issue names its theme project in the `Связи` line
+`Тематический проект: <name>`, or says `Тематический проект: нет — <причина>`
+when no project's theme fits. The line exists for one reason: so a delivered
+result is visible in a project's feed, which is where the owner reads what
+shipped. `mono-deploy` publishes the closeout update on that project.
+
+It is not part of the lane's contract. It is not a marker field, it is not a
+sixth seam field, the resolver never parses it, and it is not a Project
+relation — the lane still forbids one. But it IS part of the Issue body, so
+the whole-body fingerprint covers it like every other character: adding or
+changing it in an already-approved Issue makes that approval stale, and it may
+be done only through the full create-then-approve renewal transaction. An
+Issue approved before this rule existed carries no such line; that is an
+acceptable state, not drift, and closeout records it as `n/a`.
+
 ## Deterministic Project-first fallback
 
 There is **No in-place Issue-to-Project promotion**. An Issue that entered the issue-only lane is never converted into, attached to, or reused as the execution Issue of a new Project. Scope/risk escape is a lane exit with a new Project-first package, not a container mutation.

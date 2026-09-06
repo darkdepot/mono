@@ -72,6 +72,20 @@ In live mode the last line is the Issue chip and nothing else. The
 `· влито <дата>, <время>` tail belongs only to the retrospective acceptance set
 below; never add it to a live update.
 
+## Theme project
+
+An issue-only Issue has no project of its own, so its update is published on
+the theme project named by the `Тематический проект:` line in the Issue's
+`Связи` section — the project whose theme the delivered work continues. The
+form does not change with the lane: the same shape above, the same invariants
+1-12, and the chip of that issue-only Issue as the last line.
+
+Only the ordinary form exists here. Invariant 13 does not apply, because an
+issue-only shipment never completes a project: the completion prefix is never
+written on this path. A project already in `Completed` receives its update on
+the same terms as an active one — the update records what shipped, and it
+changes no project status.
+
 ## Examples
 
 Verbatim, from the accepted set. Ordinary update (ZENI-379):

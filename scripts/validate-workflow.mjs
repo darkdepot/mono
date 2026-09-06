@@ -308,6 +308,7 @@ function validateTemplateSections() {
       "## Shape",
       "## Invariants",
       "## Live mode",
+      "## Theme project",
       "## Examples",
       "## Acceptance set",
     ],
@@ -8291,6 +8292,17 @@ function validateProjectUpdateSurface() {
     "Project update:",
     "project-update field in the deploy output template"
   );
+  // The theme-project field is what carries an issue-only shipment into a
+  // project feed: the Issue template and intake author it, and the deploy
+  // step and the update template consume it. Structural field check only.
+  for (const themeProjectSurface of [
+    "skills/mono-deploy/SKILL.md",
+    "skills/mono-issue/SKILL.md",
+    "templates/issue.md",
+    "templates/project-update.md",
+  ]) {
+    assertIncludes(themeProjectSurface, "Тематический проект:", "theme-project field");
+  }
 }
 
 validateSkills();
