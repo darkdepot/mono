@@ -35,6 +35,37 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ### Changed
 
+- Mandatory `mono-preflight` autoreview moves off the GPT-5.6 family and onto
+  Claude Opus 5, per the owner decision of 2026-09-06. All five rows of the
+  canonical table in `references/autoreview-routing.md` route to
+  `claude-opus-5` and are graded only by reasoning effort; the Invocation
+  examples, the Certificate Evidence rule, the flag rule and `ready`
+  prohibition in `skills/mono-preflight/SKILL.md`, and the certificate line in
+  `references/artifact-quality.md` all pass `--engine claude`, and the
+  certificate shape carries `model=<claude-opus-5>`. A `ready` verdict reviewed
+  on Opus 5 is no longer recorded as a deviation from the table.
+- `references/autoreview-routing.md` states the situation honestly instead of
+  keeping the retired provisional framing: while workers run on Claude the
+  review is same-model at every class, the compensations are unchanged (the
+  mandatory live QA gate before closeout and the no-test-edits rule), and
+  cross-vendor review is what happens when the worker engine is Codex. A
+  `standard` re-tier still lands as a change to the table, never as a per-run
+  override. The hidden-fallback ban now names both channels the helper offers —
+  the `--fallback-model` flag and the `AUTOREVIEW_FALLBACK_MODEL` /
+  `AUTOREVIEW_CLAUDE_FALLBACK_MODEL` environment variables. The defect-handling
+  line in `skills/mono-deploy/SKILL.md` names the standard route instead of the
+  retired model, keeping its re-tier pointer verbatim.
+- The remaining autoreview-route mentions follow the same move: `AGENTS.md`,
+  `README.md`, `references/install.md`, `references/lifecycle.md`,
+  `references/versioning.md`, and `examples/zeni-dogfood.md`.
+- `scripts/validate-workflow.mjs` moves every affected pin together with its
+  text and drops three pins that guarded editorial wording on a paragraph this
+  change abolishes: `PROVISIONAL pending live-QA validation of the`,
+  `hermes-dashboard waves`, and
+  `if live QA surfaces defects that Luna-reviewed code shipped`. The pin list
+  for `references/autoreview-routing.md` goes from 16 to 13 entries and gains
+  no new prose pin; the anti-duplication guards for the canonical table are
+  restated for the new route.
 - `mono-orchestrate` owner-facing statuses switch to product language: the
   subject of every line is what the product now does for its user; Issue
   keys, stages, wave slice codes, and mechanics are never the subject. The

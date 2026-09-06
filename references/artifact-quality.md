@@ -70,7 +70,7 @@ Required quality:
 - Summarizes changed files without copying the full diff.
 - Lists local verification commands and outcomes.
 - States the final selected-scope `autoreview` command, loop outcome, final clean result, fixes applied from accepted findings, and any residual actionable findings. `ready` requires no residual actionable findings.
-- Records the final risk source, GPT-5.6 route, reasoning effort, and any upward reclassification. The final command must pass explicit `--engine codex`, `--model`, and `--thinking` values matching `references/autoreview-routing.md`.
+- Records the final risk source, Opus 5 route, reasoning effort, and any upward reclassification. The final command must pass explicit `--engine claude`, `--model`, and `--thinking` values matching `references/autoreview-routing.md`.
 - Calls out drift candidates against Project, PRD, Tech Spec, and Issue.
 - Includes a compact checked/not-checked boundary for manual QA, browser QA, mobile QA, deploy verification, and user acceptance.
 - Names the next owner workflow: `mono-ship`, `mono-handoff`, or human decision.
