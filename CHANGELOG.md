@@ -32,6 +32,22 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   root like the other templates.
 - Closeout gains two additive fields, in the Issue comment and in
   `templates/deploy-output.md`: `Project update:` and `Project:`.
+- Issue-only shipments reach a project feed. An issue-only Issue names its
+  theme project in `Связи` as the plain-text line
+  `Тематический проект: <имя>` (or `Тематический проект: нет — <почему>`) —
+  a machine, language-independent field, never a Project relation or chip —
+  and `mono-deploy` publishes the ordinary update on that project at
+  closeout, without touching its status, including for a project already in
+  `Completed`. An unnamed, missing, or ambiguous theme project becomes a
+  spoken `n/a`/`not posted` reason instead of a silent `n/a`. The rule lives
+  in `templates/issue.md`, `skills/mono-issue/SKILL.md`,
+  `skills/mono-deploy/SKILL.md`, the new `## Theme project` section of
+  `templates/project-update.md`, `templates/deploy-output.md`,
+  `references/lifecycle.md`, `references/artifact-rules.md`, and
+  `references/issue-only-lane.md`, with a structural field check in
+  `scripts/validate-workflow.mjs`. The line is inside the whole-body
+  fingerprint, so adding it to an approved Issue needs a create-then-approve
+  renewal; an Issue approved before the rule simply closes out as `n/a`.
 
 ### Changed
 
