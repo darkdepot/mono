@@ -89,6 +89,16 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   is created with `lead: "me"` and its Issues with `assignee: "me"`. Existing
   assignments are never overwritten, and the ownership policy line in
   `references/artifact-rules.md` is unchanged.
+- The ownership policy line in `references/artifact-rules.md` now states the
+  rule in force at all six creation points — `mono-idea` sets the Project
+  lead, `mono-handoff` and `mono-issue` the Issue assignee, `mono-deploy` and
+  `mono-orchestrate` the assignee of a hotfix Issue, and the follow-up Project
+  opened after `ready` (one creation point, documented in both
+  `mono-preflight` and the issue-only lane) takes that lead plus the assignee
+  of every Issue created in it — with existing assignments never overwritten.
+  It replaces the tail that deferred the remaining points to a separate slice,
+  which the entry above has since landed. The line carries no validator pin
+  and none was added.
 
 ### Fixed
 
