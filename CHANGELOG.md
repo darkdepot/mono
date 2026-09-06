@@ -55,6 +55,31 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 - `mono-orchestrate` carries the published update's URL and the project
   completion result into the «Linear:» line of the next status; `resume` never
   sweeps projects for completion.
+- The owner status surface is reconciled end to end after the product-language
+  change: `templates/orchestrator-brief.md` drops the last «Простои и
+  отклонения» label, moves the «Цена волны» block into the
+  «Техника (можно не читать):» tail where key-led lines belong, numbers
+  «Нужно от тебя» items by board-aligned IDs (`1a-…`) instead of a running
+  count, adds the «стоит: <из-за чего>» state and the third verification state
+  «проверка после выкладки прошла», and stops folding «Решил сам:» and
+  «Что пошло не так:» into «можно не читать». `skills/mono-orchestrate/SKILL.md`
+  matches: the final response points at «Итог волны», cost telemetry sits
+  inside «Техника», and «Нужно от тебя:» stays the last block.
+- The worker registry gains an optional `product_name`
+  (`templates/orchestrator-report.md`, `references/orchestration.md`), and
+  `templates/compact-instructions.md` now points at that field instead of a
+  name that no record carried.
+- `scripts/validate-workflow.mjs` holds the status shape structurally rather
+  than by editorial pins: the key-led-bullet check now exempts only the
+  «Техника (можно не читать):» block, so the machine register may be key-led
+  while every owner-facing block — «Нужно от тебя» included — is still judged,
+  and
+  sixteen brittle prose pins (a section heading's wording, glossary arrows,
+  a duplicate of a pin `validateHonestLedgerContract` already owns) are
+  removed. The five structural checks, the section-label pins, and the eight
+  invariant-bearing prose pins stay. `AGENTS.md` records the rule — new checks
+  are structural, no new prose pins — and the caveat that an editorial pin may
+  be dropped when it guards wording rather than an invariant.
 
 ## [0.20.1] - 2026-07-16
 

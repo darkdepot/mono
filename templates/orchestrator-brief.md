@@ -111,14 +111,14 @@ never has to ask for a human version.
 <Период>, <продукт>. <Одна фраза: где продукт относительно цели волны>. Решений от тебя: <N> (в конце) | нет.
 
 Новое за <период>:
-- <Что пользователь продукта теперь может сделать или что для него изменилось>. <Выложено когда; «проверил вживую на проде» или «выложено, вживую не гонял»>. (<ISSUE-KEY>)
+- <Что пользователь продукта теперь может сделать или что для него изменилось>. <Выложено когда; «проверил вживую на проде» | «проверка после выкладки прошла» | «выложено, вживую не гонял»>. (<ISSUE-KEY>)
 
 Можешь потрогать: <что открыть и что сделать, чтобы увидеть новое своими руками>
 
 Где мы к цели «<цель волны>»: готово — <части, простыми словами>; осталось — <части и их состояние>.
 
 В работе сейчас:
-- <Что пользователь получит, когда это будет готово>. <Где сейчас: пишется код | локальная проверка перед PR | PR, авто-ревью и проверки | выкладка в прод>. <Когда рассчитываю выложить, или честное «срока пока нет»>. (<ISSUE-KEY>)
+- <Что пользователь получит, когда это будет готово>. <Где сейчас: пишется код | локальная проверка перед PR | PR, авто-ревью и проверки | выкладка в прод | стоит: <из-за чего>>. <Когда рассчитываю выложить, или честное «срока пока нет»>. (<ISSUE-KEY>)
 
 Дальше по очереди:
 1. <Следующий продуктовый результат> — <чего ждёт, чтобы начаться>.
@@ -143,7 +143,8 @@ never has to ask for a human version.
 Техника (можно не читать): <ISSUE-KEY>: <стадия>, <состояние>, цена: ~N тыс. out-токенов, M циклов ревью; <PR, SHA, версия сборки>; воркеры: <spawned/advanced/respawned или «без изменений»>; Linear: <применённые мутации и сертификаты или «без изменений»>; простои дольше 5 минут: <длительность>; Контекст: ~N%.
 
 Нужно от тебя (<N> решений):
-1. <Бриф решения по форме выше: что решаем, варианты с последствиями для тебя и продукта, рекомендация с причиной>
+1a-<ТОКЕН>. <Бриф решения по форме выше: что решаем, варианты с последствиями для тебя и продукта, рекомендация с причиной>
+2b-<ТОКЕН>. <Следующий бриф; ID берётся из своей секции борда, сквозной нумерации нет>
 ```
 
 Rules that bind every status:
@@ -160,7 +161,21 @@ Rules that bind every status:
   that covers several Issues carries no key; the project link goes to
   «Техника».
 - «работает» and «на проде» are said only about what was verified live
-  after the latest deploy; everything else is «выложено, вживую не гонял».
+  after the latest deploy. Three states, never two: «проверил вживую на
+  проде» when a human pass confirmed it after the latest deploy;
+  «проверка после выкладки прошла» when the automatic post-deploy check
+  passed and nobody looked at it live (the `verify:prod PASS` glossary line
+  in `references/human-friendly-output.md`); «выложено, вживую не гонял»
+  when neither happened.
+- A task an external constraint has stopped — waiting on the owner, on
+  access, on quota, on someone else — carries the state «стоит: <из-за
+  чего>» in «В работе сейчас:», with the blocker named in product words.
+  «Стоит» is not a stage: it says the work is not moving and why, so a
+  frozen line cannot masquerade as one still in progress.
+- «Можешь потрогать:» appears only when there is something to touch — the
+  same condition as in `skills/mono-orchestrate/SKILL.md`. With nothing
+  the owner can open yet, the line is omitted, never filled with a
+  placeholder.
 - No placeholders in sent text: `<ISSUE-KEY>`, `~N`, and `3xx` never leave
   this template. A number you do not have is words («несколько часов»,
   «не считал»); a key you do not have is no key.
@@ -187,24 +202,41 @@ Rules that bind every status:
   in chat: the per-Issue status table (`<ISSUE-KEY>: <стадия>, <состояние>,
   цена: …`), PR numbers, SHAs, build versions, workers
   spawned/advanced/respawned, Linear mutations and certificates, idle
-  periods over 5 minutes with duration, and «Контекст: ~N%». It sits right
-  before «Нужно от тебя:» so the owner skips it in one scroll.
+  periods over 5 minutes with duration, «Контекст: ~N%», and — in the final
+  wave report — the «Цена волны» block. A line whose subject is an Issue
+  key (`- <ISSUE-KEY> — …`) belongs here and nowhere else in a status; the
+  table may run over several lines. It sits right before «Нужно от тебя:»
+  so the owner skips it in one scroll.
+- Items under «Нужно от тебя:» carry the board-aligned IDs and tokens of
+  «Целостность брифа» above: the ID opens with its own board section number
+  (`1a-…`, `2b-…`), never with a running number of the status, and
+  renumbering across sections is forbidden here for the reason it is
+  forbidden in a brief — the owner's «2) B» must decode the same way on the
+  board and in the status. «Решений от тебя: N» stays a count and never
+  becomes that numbering.
 
 Three sizes, one shape:
 
-- Ordinary turn with no news: four to five lines — the first line with the
-  counter, «Новое: видимого изменения нет, идёт <что>», «Следующий
-  контакт:», one «Техника:» tail with «Решил сам», «Что пошло не так»,
-  «Контекст» and «цена» collapsed into it, and «Нужно от тебя: нет».
+- Ordinary turn with no news: five to six lines — the first line with the
+  counter, «Новое: видимого изменения нет, идёт <что>», «Решил сам:» and
+  «Что пошло не так:» as visible lines of their own, «Следующий контакт:»,
+  one «Техника:» tail with «Контекст» and «цена» collapsed into it, and
+  «Нужно от тебя: нет».
 - Period report («за ночь», «за отрезок»): the full shape.
 - Final wave report: the full shape plus the wave-only blocks in «Итог
   волны» below.
 
+«Решил сам:» and «Что пошло не так:» are never folded into «можно не
+читать», at any of the three sizes. What the orchestrator decided on its
+own and what went wrong are the two things the owner is most entitled to
+see without opening a tail; collapsing them is how the real cost of a wave
+becomes invisible.
+
 «Что пошло не так:» is mandatory in every status update: every
 orchestrator idle or stall longer than 5 minutes with its cause and the
 result it moved, and every deviation from the orchestration contract with
-its reason; write «нет» when the period was clean. In an ordinary-turn
-status it may sit inside the «Техника» tail. The final wave report
+its reason; write «нет» when the period was clean. It stays a visible line
+of its own and never moves into the «Техника» tail. The final wave report
 carries the same section covering the whole wave. These are async-visible
 records for the owner, not blocking notifications (owner decision Q5) —
 they never interrupt or page the user.
@@ -233,14 +265,20 @@ wave-only blocks below, placed between «Где мы к цели» and «Тех�
 
 Чему научились:
 - <Один урок, который меняет следующую волну> — <что делаем иначе>.
-
-Цена волны: <блок из следующего раздела>
 ```
+
+The wave cost block from «Цена волны (Wave Cost Summary)» below is not one
+of these wave-only blocks. It belongs to the machine register and sits
+inside the «Техника (можно не читать):» tail of the same report, after the
+per-Issue table — which is also the only place a per-feature line may open
+with an Issue key.
 
 ## Цена волны (Wave Cost Summary)
 
 The final wave report includes a «Цена волны» summary block — per-feature
-tokens, review cycles, and wall-clock, plus wave totals:
+tokens, review cycles, and wall-clock, plus wave totals. It lives inside
+the «Техника (можно не читать):» tail of that report, which is why its
+per-feature lines may open with an Issue key:
 
 ```text
 Цена волны:
@@ -251,5 +289,5 @@ tokens, review cycles, and wall-clock, plus wave totals:
 
 Numbers come from the per-stage ledger entries recorded at stage close
 (Cost Telemetry in `references/orchestration.md`); a feature with missing
-data gets «н/д» for the missing field instead of a guess. Like «Простои и
-отклонения:», this block is async-visible and never blocking.
+data gets «н/д» for the missing field instead of a guess. Like «Что пошло
+не так:», this block is async-visible and never blocking.
