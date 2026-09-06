@@ -219,6 +219,9 @@ Required:
 - On a live defect, file an immediate hotfix Issue out of queue and dispatch it (fix-forward); the defect Issue does not block the original Issue's `Done`.
 - Run or report `mono-check post-ship` after deploy evidence is known.
 - Move the Linear Issue to `Done` only after verified deploy or an explicit accepted delivery policy says merge is delivery for this repo.
+- Publish one project update per deployed Issue on the Project-first path, out of that Issue's closeout, in the form and language of `templates/project-update.md`.
+- Complete the project when this delivery was its last. A project is complete when every Issue attached to it has a status whose TYPE is `completed`, `canceled`, or `duplicate`; any other type — `backlog`, `unstarted`, `started`, `triage`, and anything Linear adds later — blocks completion. The rule is judged by status type, never by status name, and `mono-deploy` owns the transition.
+- Keep the completion order: write the project's `Completed` status and confirm it by read-back FIRST, then publish the final update. The final form of the update is allowed only when this closeout performed and confirmed that transition.
 - Consult prior operational learnings through `gstack-learnings-search` before delegating merge/deploy, advisory only.
 - Record durable operational learnings through `gstack-learnings-log` when they would save future time.
 
@@ -229,6 +232,8 @@ Forbidden:
 - Running repo documentation workflow; repo docs belong before ship green.
 - Running interactive `/learn prune`, `/learn export`, or `/learn stats` automatically.
 - Inventing a merge/deploy path when `Deploy workflow` is missing or `None`.
+- Blocking closeout, or changing the deploy verdict, because the project update or the project transition failed. Both are informational: the failure is recorded and visible, never a gate.
+- Completing a project that no shipment completed. A project left without open Issues by cancellation or by a hand-closed tail is the owner's to complete, and an Issue that was not deployed gets no update.
 
 ## Orchestration
 

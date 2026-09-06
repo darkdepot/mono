@@ -21,6 +21,7 @@ Read now — every run of this stage loads all of these:
 2. `references/readiness-gates.md`
 3. `references/human-friendly-output.md`
 4. `templates/deploy-output.md`
+5. `templates/project-update.md`
 
 Read when — load the file only when its condition is true for this run:
 
@@ -56,9 +57,19 @@ Workflow:
 9. `live-qa`: run the Live QA gate below on the deployed artifact. A user-facing change cannot proceed to closeout without a green live pass or an explicit recorded skip reason; a recorded reason may excuse only a sweep that did not run, never a failed one.
 10. `post-ship`: run or report `mono-check post-ship` after deploy evidence is known.
 11. `mono-closeout`: update the Linear Issue to `Done` only after verified deploy (or an explicit accepted delivery policy says merge is delivery for this repo) and, for user-facing changes, a green live pass per the Live QA gate (or the gate's explicit recorded not-run skip).
-12. `learn`: record durable operational discoveries with `gstack-learnings-log` when they would save future time.
-13. `retire`: after deploy verification and Linear closeout are complete, synchronously remove the Issue entry from `workers.json` in this orchestrator session before emitting the terminal deploy closeout. This is the retirement event; it requires no worker acknowledgement or intermediate worker status. Keep historical reports and logs, but never leave a deployed worker in the active registry. A blocked, needs-human, failed, or timed-out closeout does not retire the worker.
-14. Return the concise report in `templates/deploy-output.md`.
+12. `project-update`: publish one project update per deployed Issue and, when this shipment was the project's last, complete the project. Form and text rules live in `templates/project-update.md`; this step owns the order, the reads, and the failure semantics.
+    1. Batch order: when one closeout covers several Issues, run the sub-steps below per Issue in Issue-key order. The completion check and the `Completed` transition happen ONCE PER PROJECT the batch touches — before the LAST Issue of that project, and only after every Issue of the batch is `Done`. A batch spanning several projects completes each project its Issues close, each on its own last Issue.
+    2. Project of the Issue: an issue-only Issue, or any Issue with no project, ends this step as `n/a` with the reason. Project updates exist only on the Project-first path; an Issue closed without a deploy never reaches this step at all.
+    3. Idempotency read: read the project's existing updates. When an update already carries this Issue's chip, publication is skipped as `already posted`, but the completion check and the status transition still run. Idempotency is by EFFECT, not by step: a skipped publication never cancels sub-steps 4 and 5.
+    4. Completion rule: read the project's Issues and apply the normative rule in `references/lifecycle.md` (Deploy). Judge by Linear status TYPE, never by status name: `completed`, `canceled`, and `duplicate` do not block completion; every other type — `backlog`, `unstarted`, `started`, `triage`, and anything Linear adds later — blocks it.
+    5. Completion transition: when the rule says complete and the project is not already `Completed`, write the `Completed` status and read it back. The final form of the update is allowed ONLY when THIS closeout performed that write and confirmed it by read-back. A project already `Completed` on entry keeps the ordinary form and is not written again. An unconfirmed write keeps the ordinary form and records the failure. A replay that confirms `Completed` for the first time after this Issue's update was already published publishes no second update; the completion reaches the owner through the closeout lines and the orchestrator status instead.
+    6. Text: compose the update from `templates/project-update.md` in the SAME pass as the closeout lead «Выкатили: …», so both name one result. The final form is permitted only under the sub-step 5 condition.
+    7. Publish the update with health `On track` and read it back.
+    8. Record the two closeout lines below in the Issue comment and in the deploy report.
+    Any refusal in sub-steps 5-7 is recorded: a refused or unconfirmed publication as `Project update: not posted — <reason>`, a refused or unconfirmed transition as `Project: stays <status> — status write unconfirmed`, each with a ledger entry under orchestration and a line in the next owner status. It never changes the deploy verdict and never blocks closeout. The project is completed by shipment only: a project left with no open Issues by cancellation or by a hand-closed tail is the owner's to complete, and this step neither publishes nor moves anything for it.
+13. `learn`: record durable operational discoveries with `gstack-learnings-log` when they would save future time.
+14. `retire`: after deploy verification and Linear closeout are complete, synchronously remove the Issue entry from `workers.json` in this orchestrator session before emitting the terminal deploy closeout. This is the retirement event; it requires no worker acknowledgement or intermediate worker status. Keep historical reports and logs, but never leave a deployed worker in the active registry. A blocked, needs-human, failed, or timed-out closeout does not retire the worker.
+15. Return the concise report in `templates/deploy-output.md`.
 
 Deploy workflow config:
 
@@ -93,7 +104,7 @@ Learning capture:
 
 Deploy closeout shape:
 
-When recording this closeout as a Linear comment, open with the Russian human lead above the machine block. The first Russian sentence must state the shipped product outcome and verification environment:
+When recording this closeout as a Linear comment, open with the Russian human lead above the machine block. The first Russian sentence must state the shipped product outcome and verification environment. Post the comment once, after `project-update` has produced its two lines, so it is written complete instead of patched afterwards:
 
 ```text
 Выкатили: <что получили пользователи>; проверено на <среда>.
@@ -111,6 +122,8 @@ Deploy verification: <passed/failed/unavailable + evidence>
 Live QA: <passed/failed/skipped + evidence or recorded skip reason>
 Post-ship check: <PASS/FAIL/BLOCKED + meaning>
 Linear closeout: <Done/not done + reason>
+Project update: <posted <url> | already posted <url> | not posted — <reason> | n/a — <reason>>
+Project: <Completed | stays <status>, open <N> | stays <status> — <reason> | n/a>
 Learnings recorded: <none/list>
 Learnings consulted: <none/keys/helper unavailable>
 Checked: <states inspected>
@@ -137,6 +150,9 @@ Rules:
 - Do not close Linear as `Done` before deploy evidence exists, unless the project policy explicitly says merge is delivery and that acceptance is recorded.
 - Do not close an Issue as `Done` with a failed or skipped live pass on a user-facing change; a skip requires an explicit recorded reason in the deploy closeout.
 - Do not use Project Updates as a required gate; record closeout in Linear comments/resources and status.
+- Project Updates stay informational here: `project-update` is a STEP of this stage, never a gate of it. `mono-deploy` publishes the update as a result of closeout, and a failed update or a failed project transition is recorded, visible, and verdict-neutral.
+- Do not let the `project-update` step change a deploy verdict, block `mono-closeout`, or become a requirement of any readiness check.
+- Do not move a project to `Completed` outside this step, and do not move one whose last open Issue was cancelled or closed by hand rather than shipped.
 - Do not report deploy closeout complete until the retired Issue entry has been removed from `workers.json`; the orchestrator owns this mutation.
 - Keep Linear-facing comments in the project config language; use Russian when no project config is present.
 - Include checked/not-checked boundaries. Deploy success does not imply manual browser QA, mobile QA, or production smoke unless those actually ran.
@@ -149,5 +165,6 @@ Final response must include:
 - Verification evidence.
 - Live QA result (or the recorded skip reason).
 - Linear closeout outcome.
+- Project update outcome and project completion outcome.
 - Learnings recorded.
 - Checked and not-checked boundary.

@@ -47,6 +47,7 @@ Review policy:
 - If approval is missing, rejected, changes are requested, or the approval comment cannot be recorded, do not create execution Issues, do not move the Project to Delivery, and return `BLOCKED` or `INCOMPLETE` with current links.
 - Implementation-start approval is owned by `mono-implement`. `mono-handoff` may record that implementation may start, but `mono-implement` verifies or obtains that approval before moving the Project to Delivery.
 - Project Updates are not a required gate.
+- `mono-deploy` publishes one project update per deployed Issue as an informational result of closeout, and completes the project when that shipment was its last. Neither is a gate: a failure is recorded and visible, and the deploy verdict does not change.
 - `mono-review` is report-only. It returns findings, proposed fixes, decisions, FYI notes, verdict, risk, and next workflow.
 - `mono-check` reports drift; it does not silently fix it.
 - `mono-check` owns `PASS`, `FAIL`, and `BLOCKED`; `mono-review` must not use those as its main status.

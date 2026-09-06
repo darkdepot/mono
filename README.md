@@ -205,6 +205,7 @@ See `references/install.md` for install details and `references/versioning.md` f
 - `templates/deploy-output.md`: `mono-deploy` output template.
 - `templates/issue.md`: Linear Issue template.
 - `templates/prd.md`: Linear PRD template.
+- `templates/project-update.md`: project update form, text invariants, and acceptance set.
 - `templates/project.md`: Linear Project body template.
 - `templates/review-output.md`: `mono-review` output template.
 - `templates/ship-output.md`: `mono-ship` output template.
