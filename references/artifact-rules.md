@@ -20,6 +20,7 @@ Source-of-truth policy:
 - `/office-hours`, `/brainstorming`, `/plan-design-review`, and `/plan-eng-review` outputs are discovery inputs until `mono-handoff` persists them to Linear.
 - Local markdown plans are temporary execution scratch unless explicitly promoted into Linear by `mono-handoff`.
 - Artifact intake follows `references/artifact-intake.md`: local discovery files are scoped evidence, not broad-search source of truth.
+- Projects and Issues the agent creates are owned by the acting user: `mono-idea` sets the Project lead at creation, `mono-handoff` and `mono-issue` set the Issue assignee at creation, and existing assignments are never overwritten. The remaining creation points — hotfix Issues filed from `mono-deploy` or `mono-orchestrate`, and follow-up Projects from `mono-preflight` and the issue-only lane — follow the same rule and are aligned by a separate slice (MONO-56).
 
 Document policy:
 
