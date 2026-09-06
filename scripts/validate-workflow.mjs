@@ -8168,6 +8168,9 @@ function validatePreWriteHandoffReviewOrder() {
   }
 }
 
+const KEY_OR_STAGE_LED_BULLET =
+  /^\s*- (?:<ISSUE-KEY>|[A-Z][A-Z0-9]*-\d+\b|<стадия>|mono-(?:implement|preflight|ship|deploy)\b)/m;
+
 function validateOwnerProductLanguage() {
   // 2026-09-06 precedent: the owner woke up to «ZENI-391 (I3b): сертификат
   // ship, squash-merge … closeout, реестр отставлен» and could not tell what
@@ -8225,8 +8228,11 @@ function validateOwnerProductLanguage() {
     if (technicalIndex < 0 || askIndex < 0 || technicalIndex > askIndex) {
       fail(`${briefPath} status shape must place «Техника (можно не читать):» before «Нужно от тебя:»`);
     }
-    if (/^- <ISSUE-KEY>/m.test(shape)) {
-      fail(`${briefPath} status shape must not open a bullet with the Issue key as its subject`);
+    // Placeholder token, a real-looking key (ZENI-391), the stage placeholder,
+    // or a stage skill name at the head of a bullet all make the key or the
+    // stage the subject of the line — the exact register this shape retires.
+    if (KEY_OR_STAGE_LED_BULLET.test(shape)) {
+      fail(`${briefPath} status shape must not open a bullet with an Issue key or a stage as its subject`);
     }
   }
 
