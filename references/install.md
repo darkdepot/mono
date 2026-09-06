@@ -338,3 +338,4 @@ The project check fails when:
 - Do not let `mono-ship` merge, deploy, run post-ship checks, close Linear as shipped, or record deploy learnings; those belong to `mono-deploy`.
 - Do not keep `Land workflow`; use `workflows.deploy`.
 - Do not make Project Updates a required gate; record user review acceptance as a Linear comment.
+- Do not turn the project update `mono-deploy` publishes at closeout into a gate: it is an informational result of the deploy, and its failure never blocks closeout or changes the deploy verdict.

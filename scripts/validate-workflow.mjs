@@ -300,6 +300,13 @@ function validateTemplateSections() {
       "Deploy workflow:",
       "Learnings recorded:",
     ],
+    "templates/project-update.md": [
+      "## Shape",
+      "## Invariants",
+      "## Live mode",
+      "## Examples",
+      "## Acceptance set",
+    ],
     "templates/check-output.md": [
       "Смысл:",
       "Чего не хватает:",
@@ -8273,8 +8280,26 @@ function validateOwnerProductLanguage() {
   assertIncludes("README.md", "product language", "README mono-orchestrate product-language statuses");
 }
 
+function validateProjectUpdateSurface() {
+  const { paths } = extractReadFirstEntries(read("skills/mono-deploy/SKILL.md"));
+  if (!paths.includes("templates/project-update.md")) {
+    fail("skills/mono-deploy/SKILL.md must read templates/project-update.md as its project-update source");
+  }
+  assertIncludes(
+    "skills/mono-deploy/SKILL.md",
+    "Project update:",
+    "project-update closeout field in mono-deploy"
+  );
+  assertIncludes(
+    "templates/deploy-output.md",
+    "Project update:",
+    "project-update field in the deploy output template"
+  );
+}
+
 validateSkills();
 validateReadFirstTierContract();
+validateProjectUpdateSurface();
 validatePreWriteHandoffReviewOrder();
 validateRetiredAdapterReferenceAllowlist();
 validateTemplateSections();

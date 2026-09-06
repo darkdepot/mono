@@ -17,6 +17,22 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   `node scripts/install-local.mjs --breaking` flow only after orchestrators are
   idle and worker registries are empty, then restart open agent sessions.
 
+### Added
+
+- `mono-deploy` gains a `project-update` step between `mono-closeout` and
+  `learn`: one Linear project update per deployed Issue, in product language,
+  and — when that shipment was the project's last — the project's transition to
+  `Completed` before the final update is published. Completion is judged by
+  Issue status TYPE (`completed`, `canceled`, and `duplicate` do not block; any
+  other type does), and its normative wording lives in `references/lifecycle.md`
+  (Deploy).
+- `templates/project-update.md`: the single home of the update's form, its text
+  invariants, the live-mode rule, two verbatim examples, and the accepted
+  13-update acceptance set. The installer ships it into every skill of every
+  root like the other templates.
+- Closeout gains two additive fields, in the Issue comment and in
+  `templates/deploy-output.md`: `Project update:` and `Project:`.
+
 ### Changed
 
 - `mono-orchestrate` owner-facing statuses switch to product language: the
@@ -30,6 +46,15 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   register into a «Техника (можно не читать):» tail, and keeps
   «Нужно от тебя:» as the last block. `references/human-friendly-output.md`
   gains «Product Language For The Owner» with a stage glossary.
+- The «Project Updates are not a required gate» rule is preserved everywhere it
+  already lived and extended in `AGENTS.md`, `references/artifact-rules.md`,
+  `references/install.md`, and `skills/mono-deploy/SKILL.md`: the update is an
+  informational result of closeout, and its failure never changes a deploy
+  verdict. `mono-check post-ship` states explicitly that a missing update is
+  never a `FAIL`.
+- `mono-orchestrate` carries the published update's URL and the project
+  completion result into the «Linear:» line of the next status; `resume` never
+  sweeps projects for completion.
 
 ## [0.20.1] - 2026-07-16
 

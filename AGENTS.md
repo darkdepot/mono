@@ -45,6 +45,7 @@ The workflow helps agents move from raw idea to shipped PR while keeping Linear 
 - Keep `mono-orchestrate` control-plane only: it sequences stages and routes decisions but never absorbs stage ownership or implements.
 - Keep `autoreview` routing explicit and update-safe: `mono-preflight` owns the GPT-5.6 model/effort choice by risk class and never depends on the external helper's built-in default.
 - Do not make Project Updates a required gate.
+- `mono-deploy` publishes a project update as an informational result of closeout: a step of that stage, never a gate of any stage.
 - Record user review acceptance as a Linear comment.
 - Project repos must keep only `.agents/mono-workflow.config.json` for this workflow. Do not install, generate, or vendor `.agents/skills/mono-*`, `.claude/skills/mono-*`, workflow lockfiles, local checkers, or updater CI into project repos.
 

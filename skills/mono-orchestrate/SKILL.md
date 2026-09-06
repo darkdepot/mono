@@ -366,6 +366,11 @@ Workflow states:
      Issue gets its own live verification.
    - Record ledger entries; verify Linear closeout happened per stage skill
      contracts.
+   - Carry the closeout's `project-update` outcome into the next status: the
+     published update's URL and the project-completion result belong on the
+     «Linear:» line. Completion is a closeout effect only — `resume` never
+     sweeps projects for completion and never publishes an update that no
+     shipment produced.
    - After successful deploy closeout, remove the Issue entry from
      `workers.json`; this retirement is required before the wave can become
      `idle`.

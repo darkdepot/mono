@@ -18,6 +18,8 @@ Deploy status:
 - Live QA: <passed/failed/skipped + evidence or recorded skip reason>.
 - Post-ship check: <PASS/FAIL/BLOCKED + human meaning>.
 - Linear closeout: <Done/not done + reason>.
+- Project update: <posted <url> | already posted <url> | not posted — <reason> | n/a — <reason>>.
+- Project: <Completed | stays <status>, open <N> | stays <status> — <reason> | n/a>.
 - Learnings recorded: <none or keys>.
 - Learnings consulted: <none/keys/helper unavailable>.
 
@@ -48,6 +50,8 @@ Verification:
 Live QA:
 Post-ship check:
 Linear closeout:
+Project update:
+Project:
 Learnings recorded:
 Learnings consulted:
 Notes:
@@ -65,4 +69,5 @@ Verdict-to-human translation:
 - Для `deployed`: напиши точно, что было смержено/задеплоено и как обновился Linear.
 - Для stale certificates: «PR изменился после ревью; прогони `mono-ship` ещё раз перед деплоем.»
 - Для отсутствующего Deploy workflow: «Deploy workflow не настроен; укажи `Deploy workflow` или запусти deploy-путь репозитория вручную.»
+- Для `Project update: not posted`: скажи, что поставка выкачена, а запись в ленте проекта не появилась, и назови причину; вердикт деплоя от этого не меняется.
 - Для `timed-out`: назови, что не устаканилось — merge, deploy, верификация или Linear closeout.
