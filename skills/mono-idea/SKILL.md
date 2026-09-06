@@ -35,7 +35,7 @@ Workflow:
 4. Each question must include answer options, one recommended option, and a short reason for the recommendation.
 5. Accept custom user answers when options do not fit.
 6. Build a strengthened brief from the raw idea and answers.
-7. Apply `references/contracts/project.md` in full to create or update a Project in `Idea`.
+7. Apply `references/contracts/project.md` in full to create or update a Project in `Idea`. When creating the Project, set its lead to the acting user — the Linear account the agent writes under, `lead: "me"` on the Linear connector — so the Project is the owner's from the moment it exists. An existing Project keeps the lead it already has — this rule only ever sets lead at creation.
 8. Recommend `/office-hours` or `/brainstorming` and explain why.
 9. Record a short Russian comment on the Linear Project (not just in chat) that includes the chosen discovery route (`/office-hours` или `/brainstorming`) and a one-line reason — so the route survives the chat session and the operator can recover the recommended next step from Linear alone.
 10. Run or report `mono-check idea`.
