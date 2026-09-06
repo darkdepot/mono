@@ -90,6 +90,16 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   assignments are never overwritten, and the ownership policy line in
   `references/artifact-rules.md` is unchanged.
 
+### Fixed
+
+- The validator no longer crashes with `EISDIR` in a checkout that holds
+  nested worktrees. `git ls-files` reports a nested repository as a single
+  directory entry and `fs.existsSync` accepts it, so the retired-adapter
+  reference scan in `scripts/validate-workflow.mjs` now reads an entry only
+  when it is a regular file; directories, linked worktrees, and submodule
+  entries are skipped. Tracked files are scanned exactly as before, so a
+  retired adapter name outside the historical allowlist still fails the check.
+
 ## [0.20.1] - 2026-07-16
 
 Completes the public brand migration by renaming the canonical GitHub

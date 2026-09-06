@@ -235,6 +235,10 @@ function validateRetiredAdapterReferenceAllowlist() {
 
   for (const relativePath of files) {
     if (!exists(relativePath) || retiredAdapterReferenceAllowed(relativePath)) continue;
+    // `git ls-files` reports a nested repository — a linked worktree or a
+    // submodule — as one directory entry, and `exists` accepts it, so reading
+    // it raises EISDIR. Only a regular file carries text to scan.
+    if (!fs.statSync(path.join(root, relativePath)).isFile()) continue;
     const body = read(relativePath);
     if (retiredReference.test(body)) {
       fail(
