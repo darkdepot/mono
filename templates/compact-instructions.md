@@ -8,7 +8,7 @@ State one concrete imperative with the exact paths and IDs needed to continue.
 
 ## ЖИВЫЕ ВОРКЕРЫ
 
-For every live worker, record the Issue key, stage, thread ID, PID, and log path. Record also its продуктовое имя — the product-language name used for it in owner-facing statuses — so the resumed orchestrator keeps speaking product language instead of falling back to keys. Reconcile this list with the orchestrator root's `workers.json`; do not trust session memory alone.
+For every live worker, record the Issue key, stage, thread ID, PID, and log path. Record also its `product_name` from `workers.json` — the product-language name used for it in owner-facing statuses — so the resumed orchestrator keeps speaking product language instead of falling back to keys. Reconcile this list with the orchestrator root's `workers.json`; do not trust session memory alone.
 
 ## РЕШЕНИЯ ВЛАДЕЛЬЦА
 

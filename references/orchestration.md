@@ -889,7 +889,9 @@ complete cut-over window.
   runtime metadata, one entry per Issue: `transport`, `thread_id`,
   `worktree`, `branch`, `stage`, `spawned_at`, `last_activity_at`, `log`
   and `pid`, plus the dispatch `packVersion`, `sourceCommit`, and
-  `surfaceRevision`, plus optional attempt-scoped `gates` only for the current
+  `surfaceRevision`, plus the optional `product_name` — the product-language
+  name this Issue is called by in owner-facing statuses — and optional
+  attempt-scoped `gates` only for the current
   gate-carrying `mono-implement` attempt (shape and validity in
   `templates/orchestrator-report.md`). Updated on
   every verified spawn, resume, session rotation, stage advance, and respawn

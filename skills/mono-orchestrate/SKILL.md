@@ -230,7 +230,9 @@ Workflow states:
      in the log within 60s (else kill+retry), attempt-numbered logs from
      `-a1`, model and reasoning effort pinned in the command.
    - Record every spawn in `workers.json` (transport, thread id, worktree,
-     branch, stage, `packVersion`, `sourceCommit`, `surfaceRevision`, and the
+     branch, stage, `packVersion`, `sourceCommit`, `surfaceRevision`, the
+     optional `product_name` — this Issue's product-language name, recorded
+     whenever owner-facing statuses use one — and the
      attempt-scoped `gates` list when this is a gate-carrying attempt); update
      it on stage advance and respawn. Never record an empty thread id for a
      live worker.
@@ -436,17 +438,23 @@ Session verdicts:
 
 Final response (status update) follows the «Статус» shape in
 `templates/orchestrator-brief.md` and Product Language For The Owner in
-`references/human-friendly-output.md`, and carries:
+`references/human-friendly-output.md`; the final wave report adds that
+template's «Итог волны» blocks — what the wave came to against its goal,
+what did not make it and why, and what it taught — between «Где мы к
+цели» and «Техника». Every status carries:
 
 - The first line: period, product, one sentence on where the product stands
   against the wave goal, and the counter «Решений от тебя: N (в конце)» or
   «нет».
-- «Новое за <период>:» — what the product's user can now do, each line with
-  «проверил вживую» or «выложено, вживую не гонял»; «Можешь потрогать:» when
-  there is something to touch; «Где мы к цели:» — done and remaining in
-  product words.
+- «Новое за <период>:» — what the product's user can now do, each line in one
+  of the three states of the template: «проверил вживую на проде»,
+  «проверка после выкладки прошла», or «выложено, вживую не гонял»;
+  «Можешь потрогать:» when there is something to touch; «Где мы к цели:» —
+  done and remaining in product words.
 - «В работе сейчас:» and «Дальше по очереди:» — the next product outcomes in
-  order, each with its human-worded stage and what it waits on.
+  order, each with its human-worded stage and what it waits on; work an
+  external constraint has stopped carries «стоит: <из-за чего>» instead of a
+  stage.
 - «Что пошло не так:» — idle periods over 5 minutes and contract deviations,
   stated as the result that moved, or «нет» when clean; «Чем рискуем:» and
   «Обещал — не сделал:» only when there is an open risk or an unkept
@@ -460,10 +468,12 @@ Final response (status update) follows the «Статус» shape in
   since the last update, Linear mutations applied and certificates
   recorded, and «Контекст: ~N%» — orchestrator session context usage per
   the Context Budget policy in `references/orchestration.md`.
-- «Нужно от тебя:» is always the last block: decision briefs per the
-  template, or «нет».
-- Cost telemetry: the per-Issue cost tail in the status table («цена: ~N
+  Cost telemetry: the per-Issue cost tail in the status table («цена: ~N
   тыс. out-токенов, M циклов ревью», or «цена: н/д» when data is missing)
-  and, in the final wave report, the «Цена волны» block — per the Cost
+  lives in this tail too, and in the final wave report the «Цена волны» block
+  sits there as well — per the Cost
   Telemetry policy in `references/orchestration.md`. Cost is telemetry,
   not a gate: it never blocks, pauses, or pages.
+- «Нужно от тебя:» is always the last block: decision briefs per the
+  template, each under the board-aligned ID of its own board section
+  (`1a-…`), or «нет».

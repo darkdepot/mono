@@ -122,6 +122,7 @@ is the durable source of the gate names dispatched for the current attempt.
     "worktree": "<absolute path>",
     "branch": "<branch>",
     "stage": "<mono-implement | mono-preflight | mono-ship>",
+    "product_name": "<product-language name for owner-facing statuses, or omitted>",
     "gates": ["<dispatched gate name>"],
     "packVersion": "<installed lockfile packVersion>",
     "sourceCommit": "<installed lockfile sourceCommit>",
@@ -142,6 +143,12 @@ and it never survives into `mono-preflight`, `mono-ship`, or another attempt.
 When an ack exists, an absent or malformed `gates` value makes the ack
 unusable and requires a verified new attempt with a correct list. With no ack,
 field absence does not change the entry's watcher liveness signals.
+
+`product_name` is optional: the product-language name this Issue is called
+by in owner-facing statuses, so an orchestrator that resumed or compacted
+keeps speaking product language instead of falling back to the Issue key.
+It is descriptive metadata — it gates nothing, changes no worker contract,
+and never replaces the Issue key in machine fields.
 
 `thread_id: null` together with `pid: null` is permitted only for the
 inactive gate-startup state: a gate-carrying `mono-implement` entry with valid

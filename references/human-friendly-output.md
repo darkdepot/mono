@@ -34,8 +34,11 @@ A line that needs the workflow glossary to be understood is rewritten.
 - One Linear key per line, at the end, in parentheses, only when the line is
   one Issue — a lookup handle, never a name. A group of Issues carries no key.
 - «работает» and «на проде» are said only about what was
-  verified live after the latest deploy; everything else is «выложено,
-  вживую не гонял».
+  verified live after the latest deploy. Three states, not two:
+  «проверил вживую на проде» after a human pass;
+  «проверка после выкладки прошла» when the automatic post-deploy check
+  passed and nobody looked at it live (the `verify:prod PASS` glossary line
+  below); «выложено, вживую не гонял» when neither happened.
 - No placeholders in sent text: a missing number is words («несколько
   часов», «не считал»), a missing key is no key. `<ISSUE-KEY>`, `~N`, and
   `3xx` never leave a template.

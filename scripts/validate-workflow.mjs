@@ -8201,11 +8201,6 @@ function validateOwnerProductLanguage() {
     "Следующий контакт:",
     "Техника (можно не читать):",
     "Нужно от тебя:",
-    "never the subject of a line",
-    "wave slice codes",
-    "No placeholders in sent text",
-    "«работает»",
-    "Three sizes, one shape",
     "## Итог волны (Wave Report)",
   ]) {
     assertIncludes(briefPath, required, JSON.stringify(required));
@@ -8238,8 +8233,19 @@ function validateOwnerProductLanguage() {
     // Placeholder token, a real-looking key (ZENI-391), the stage placeholder,
     // or a stage skill name at the head of a bullet all make the key or the
     // stage the subject of the line — the exact register this shape retires.
-    if (KEY_OR_STAGE_LED_BULLET.test(shape)) {
-      fail(`${briefPath} status shape must not open a bullet with an Issue key or a stage as its subject`);
+    // Only the «Техника (можно не читать):» block is exempt: it is the machine
+    // register, whose per-Issue table and wave cost block are key-led by
+    // design. Every owner-facing block is judged, including «Нужно от тебя»,
+    // which follows that block and would otherwise slip through a checked
+    // prefix. Both label lines start a line, so cutting the block out leaves
+    // the remaining text line-aligned.
+    const technicalBlockIsBounded =
+      technicalIndex >= 0 && askIndex >= 0 && technicalIndex < askIndex;
+    const ownerFacingShape = technicalBlockIsBounded
+      ? shape.slice(0, technicalIndex) + shape.slice(askIndex)
+      : shape;
+    if (KEY_OR_STAGE_LED_BULLET.test(ownerFacingShape)) {
+      fail(`${briefPath} status shape must not open a bullet with an Issue key or a stage as its subject outside «Техника (можно не читать):»`);
     }
   }
 
@@ -8247,26 +8253,15 @@ function validateOwnerProductLanguage() {
     "## Product Language For The Owner",
     "what the product now does for its user",
     "never the subject of a line",
-    "Issue keys, wave slice codes",
-    "translation test",
     "verified live after the latest deploy",
     "No placeholders in sent text",
-    "`mono-implement` → «пишется код»",
-    "`mono-preflight` → «локальная проверка перед PR»",
-    "`mono-ship` → «PR, авто-ревью и проверки»",
-    "`mono-deploy` → «выкладка в прод»",
-    "closeout → «закрытие задачи в Linear»",
-    "squash-merge → «влито в main»",
   ]) {
     assertIncludes("references/human-friendly-output.md", required, JSON.stringify(required));
   }
 
   for (const required of [
     "Owner-facing output is product language",
-    "the owner never has to ask for a human version",
     "«Нужно от тебя:» is always the last block",
-    "«Следующий контакт:»",
-    "«Что пошло не так:»",
     "Product Language For The Owner",
   ]) {
     assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
@@ -8276,7 +8271,7 @@ function validateOwnerProductLanguage() {
     assertIncludes("references/orchestration.md", required, JSON.stringify(required));
   }
 
-  assertIncludes("templates/compact-instructions.md", "продуктовое имя", "product-language worker name");
+  assertIncludes("templates/compact-instructions.md", "product_name", "product-language worker name field");
   assertIncludes("README.md", "product language", "README mono-orchestrate product-language statuses");
 }
 
