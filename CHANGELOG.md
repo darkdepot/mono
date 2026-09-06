@@ -80,6 +80,15 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   invariant-bearing prose pins stay. `AGENTS.md` records the rule — new checks
   are structural, no new prose pins — and the caveat that an editorial pin may
   be dropped when it guards wording rather than an invariant.
+- Owner assignment now covers the remaining creation points, so no Project or
+  Issue the agent creates is left unowned: the hotfix Issue filed from the Live
+  QA gate (`skills/mono-deploy/SKILL.md`) and from orchestrated
+  deploy-and-closeout (`skills/mono-orchestrate/SKILL.md`) is created with
+  `assignee: "me"`, and the follow-up Project opened when scope grows after
+  `ready` (`skills/mono-preflight/SKILL.md`, `references/issue-only-lane.md`)
+  is created with `lead: "me"` and its Issues with `assignee: "me"`. Existing
+  assignments are never overwritten, and the ownership policy line in
+  `references/artifact-rules.md` is unchanged.
 
 ## [0.20.1] - 2026-07-16
 
