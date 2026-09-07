@@ -36,6 +36,14 @@ const RUNTIME_SCRIPTS = [
   "verify-pack-state.mjs",
   "watch-workers.mjs",
 ];
+// Upstream docs/ru/*.md published into
+// <skills-root>/.mono-agent-workflow/docs/ru/. This is the owner layer: the
+// Russian documents the owner reads and edits in Linear, whose installed copy
+// the orchestrator compares against Linear at session start. Pack-private
+// payload like the runtime scripts, but data rather than executables, so the
+// set is read from the directory instead of being listed by name.
+const OWNER_LAYER_SOURCE_DIR = "docs/ru";
+const OWNER_LAYER_SUBDIR = path.join("docs", "ru");
 
 function usage() {
   console.error(
@@ -291,6 +299,38 @@ function runtimeScriptsManifest(plan) {
   return plan.runtimeScripts.map((script) => ({ path: script.relativePath, sha256: script.sha256 }));
 }
 
+// The pack-private owner-layer documents to publish into
+// <skills-root>/.mono-agent-workflow/docs/ru/. Same entry shape as a planned
+// runtime script, so sync() and check() treat both kinds of pack payload
+// identically. A missing source directory plans nothing rather than throwing:
+// the owner layer is additive and an older checkout may not carry it.
+function plannedOwnerLayerDocs(root, skillsRoot) {
+  const sourceDir = path.join(root, OWNER_LAYER_SOURCE_DIR);
+  if (!fs.existsSync(sourceDir)) return [];
+  return fs
+    .readdirSync(sourceDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => entry.name)
+    .sort()
+    .map((name) => {
+      const sourcePath = path.join(sourceDir, name);
+      const relativePath = path.join(RUNTIME_DIR, OWNER_LAYER_SUBDIR, name);
+      return {
+        name,
+        sourcePath,
+        destPath: path.join(skillsRoot, relativePath),
+        relativePath,
+        sha256: sha256(fs.readFileSync(sourcePath)),
+      };
+    });
+}
+
+// The lockfile shape for the owner-layer documents, modelled on
+// runtimeScriptsManifest: skills-root-relative path + hash.
+function ownerLayerManifest(plan) {
+  return plan.ownerLayer.map((doc) => ({ path: doc.relativePath, sha256: doc.sha256 }));
+}
+
 function plannedInstall(root, skillsRoot, commit, dirty) {
   const skills = listSourceSkills(root);
   const files = [];
@@ -317,6 +357,7 @@ function plannedInstall(root, skillsRoot, commit, dirty) {
       templates: directoryManifest(path.join(root, "templates")),
     },
     runtimeScripts: plannedRuntimeScripts(root, skillsRoot),
+    ownerLayer: plannedOwnerLayerDocs(root, skillsRoot),
     lockPath: path.join(skillsRoot, LOCKFILE_NAME),
   };
 }
@@ -442,11 +483,12 @@ function sync(
     });
   }
 
-  // Publish the pack-private runtime scripts into
-  // <skills-root>/.mono-agent-workflow/scripts/, the
-  // canonical location the installed skills invoke at delivery time. The whole
-  // .mono-agent-workflow/ directory is installer-owned and fully rewritten each
-  // sync, so a removed upstream script — or any file planted anywhere under it —
+  // Publish the pack-private payload into
+  // <skills-root>/.mono-agent-workflow/: runtime scripts under scripts/, the
+  // canonical location the installed skills invoke at delivery time, and the
+  // owner-layer documents under docs/ru/. The whole .mono-agent-workflow/
+  // directory is installer-owned and fully rewritten each sync, so a removed
+  // upstream script or document — or any file planted anywhere under it —
   // leaves no copy behind. (The lockfile sits beside this directory, not inside
   // it, so it is untouched.)
   const packDir = path.join(skillsRoot, RUNTIME_DIR);
@@ -455,6 +497,10 @@ function sync(
   fs.mkdirSync(runtimeDir, { recursive: true });
   for (const script of plan.runtimeScripts) {
     fs.copyFileSync(script.sourcePath, script.destPath);
+  }
+  for (const doc of plan.ownerLayer) {
+    fs.mkdirSync(path.dirname(doc.destPath), { recursive: true });
+    fs.copyFileSync(doc.sourcePath, doc.destPath);
   }
 
   const manifest = {
@@ -470,6 +516,7 @@ function sync(
     skillsRoot: manifestSkillsRoot,
     assets: plan.assets,
     runtimeScripts: runtimeScriptsManifest(plan),
+    ownerLayer: ownerLayerManifest(plan),
     installedSkills: manifestSkills,
   };
   fs.writeFileSync(plan.lockPath, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -510,15 +557,20 @@ function check(root, skillsRoot, commit, dirty, version) {
     compareCopiedAssets(path.join(file.dir, "templates"), `templates for ${file.name}`, plan.assets.templates, failures);
   }
 
-  // The pack-private runtime scripts must be installed, current, and free of
-  // extras, so installed workflows find every executable at its canonical path
-  // in every synced root. The extra-file scan walks the WHOLE
-  // .mono-agent-workflow/ root (not just scripts/), so a file planted one level
-  // up — e.g. .mono-agent-workflow/evil.mjs — is flagged too. The lockfile
-  // lives beside this root, not inside it, so nothing here should exist outside
-  // the expected runtime-script set.
+  // The pack-private payload must be installed, current, and free of extras, so
+  // installed workflows find every executable at its canonical path in every
+  // synced root and the orchestrator finds the owner-layer copy it compares
+  // with Linear. The extra-file scan walks the WHOLE .mono-agent-workflow/ root
+  // (not just scripts/), so a file planted one level up — e.g.
+  // .mono-agent-workflow/evil.mjs — or beside an owner-layer document is
+  // flagged too. The allowlist is the union of the two payload kinds, and it
+  // stays fail-closed: anything under this root that neither kind planned is an
+  // error. The lockfile lives beside this root, not inside it.
   const packDir = path.join(skillsRoot, RUNTIME_DIR);
-  const expectedRuntime = new Set(plan.runtimeScripts.map((script) => script.relativePath));
+  const expectedPackFiles = new Set([
+    ...plan.runtimeScripts.map((script) => script.relativePath),
+    ...plan.ownerLayer.map((doc) => doc.relativePath),
+  ]);
   for (const script of plan.runtimeScripts) {
     if (!fs.existsSync(script.destPath)) {
       failures.push(`Missing installed runtime script: ${script.relativePath}`);
@@ -528,10 +580,19 @@ function check(root, skillsRoot, commit, dirty, version) {
       failures.push(`Installed runtime script is stale or edited: ${script.relativePath}`);
     }
   }
+  for (const doc of plan.ownerLayer) {
+    if (!fs.existsSync(doc.destPath)) {
+      failures.push(`Missing installed owner-layer document: ${doc.relativePath}`);
+      continue;
+    }
+    if (sha256(fs.readFileSync(doc.destPath)) !== doc.sha256) {
+      failures.push(`Installed owner-layer document is stale or edited: ${doc.relativePath}`);
+    }
+  }
   for (const relativePath of listFilesRecursive(packDir)) {
     const rooted = path.join(RUNTIME_DIR, relativePath);
-    if (!expectedRuntime.has(rooted)) {
-      failures.push(`Unexpected installed runtime script: ${rooted}`);
+    if (!expectedPackFiles.has(rooted)) {
+      failures.push(`Unexpected installed pack file: ${rooted}`);
     }
   }
 
@@ -557,6 +618,9 @@ function check(root, skillsRoot, commit, dirty, version) {
     }
     if (JSON.stringify(lock.runtimeScripts || []) !== JSON.stringify(runtimeScriptsManifest(plan))) {
       failures.push("Lockfile runtime script hashes mismatch");
+    }
+    if (JSON.stringify(lock.ownerLayer || []) !== JSON.stringify(ownerLayerManifest(plan))) {
+      failures.push("Lockfile owner-layer document hashes mismatch");
     }
     const lockEntries = Array.isArray(lock.installedSkills) ? lock.installedSkills : [];
     if (!Array.isArray(lock.installedSkills)) {

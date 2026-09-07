@@ -45,6 +45,7 @@ For each installed skills root the command writes:
 - `<skills-root>/mono-*/references/*`
 - `<skills-root>/mono-*/templates/*`
 - `<skills-root>/.mono-agent-workflow/scripts/*` (pack-private workflow runtime scripts)
+- `<skills-root>/.mono-agent-workflow/docs/ru/*.md` (pack-private owner-layer documents)
 - `<skills-root>/.mono-agent-workflow.lock.json`
 
 The lockfile carries the additive pack identity triplet: `packVersion` from
@@ -76,6 +77,28 @@ it does not depend on a checkout of this repository. Each script's hash is
 recorded in the lockfile
 (`runtimeScripts`), so `--check` fails when an installed runtime script is
 missing, edited, or stale.
+
+### Owner layer documents
+
+The owner layer is the Russian documentation the owner reads and edits in
+Linear: `docs/ru/karta-paka.md` maps every pack file, and the constitution
+document states the rules the owner sees and decides. Linear holds the
+authoritative copy for reading and editing; the repository holds the copy the
+validator checks; the installer publishes a third copy so an orchestrator can
+compare Linear with the installed pack without a checkout of this repository.
+
+- **Canonical path:** `<skills-root>/.mono-agent-workflow/docs/ru/<document>.md`
+- **Discovery from an installed skill:** same rule as the runtime scripts — one
+  level up from any installed `mono-*` skill directory, at
+  `../.mono-agent-workflow/docs/ru/<document>.md`.
+
+Every `docs/ru/*.md` file in the upstream checkout is published, so adding a
+document to that directory is enough to deliver it. Each document's hash is
+recorded in the lockfile under `ownerLayer`, modelled on `runtimeScripts`, so
+`--check` fails when an installed owner-layer document is missing, edited, or
+stale. The `.mono-agent-workflow/` allowlist is the union of the runtime
+scripts and the owner-layer documents and stays fail-closed: any other file
+under that directory is reported as an unexpected installed pack file.
 
 Use an explicit single skills root only for tests or runtimes outside the
 known roots:
