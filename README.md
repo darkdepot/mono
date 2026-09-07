@@ -190,6 +190,7 @@ See `references/install.md` for install details and `references/versioning.md` f
 - `examples/profile-workbench-regression.md`: regression example for handoff-first artifact quality.
 - `examples/zeni-dogfood.md`: first Zeni dogfood flow and anti-examples.
 - `docs/ru/karta-paka.md`: Russian owner-layer map of every pack file — purpose, audience, key rules, and what to change.
+- `docs/ru/konstituciya-paka.md`: Russian owner-layer constitution — the rules the owner sees and decides, each anchored to a pack heading or stable ID.
 - `references/artifact-intake.md`: scoped discovery and review artifact intake.
 - `references/artifact-quality.md`: quality bar for Project, PRD, Tech Spec, Issue, preflight, ship, deploy, and review artifacts.
 - `references/artifact-rules.md`: source-of-truth and Linear-facing artifact rules.
