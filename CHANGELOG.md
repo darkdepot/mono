@@ -19,6 +19,20 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ### Added
 
+- Owner layer, part one: `docs/ru/karta-paka.md` is the Russian map of the pack —
+  one entry per file, in working order, with purpose, audience, key rules, and
+  what to change. `scripts/validate-workflow.mjs` gains
+  `validateOwnerLayerMap()`, a structural coverage check over the inventory
+  (`skills/`, `references/` recursively, `templates/`, `scripts/*.mjs`,
+  `AGENTS.md`, `README.md`): a file with no entry, an entry with no file, a
+  duplicate heading, and a missing field each fail with the path.
+- `scripts/install-local.mjs` publishes `docs/ru/*.md` as pack-private payload
+  at `<skills-root>/.mono-agent-workflow/docs/ru/`, records their hashes in the
+  lockfile under `ownerLayer` (modelled on `runtimeScripts`), and builds the
+  `.mono-agent-workflow/` allowlist as the union of runtime scripts and
+  owner-layer documents. The extra-file scan stays fail-closed and now reports
+  `Unexpected installed pack file` for either payload kind. `references/install.md`,
+  `references/versioning.md`, and the README Documentation Map describe the layer.
 - `mono-deploy` gains a `project-update` step between `mono-closeout` and
   `learn`: one Linear project update per deployed Issue, in product language,
   and — when that shipment was the project's last — the project's transition to

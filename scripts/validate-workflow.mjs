@@ -248,6 +248,195 @@ function validateRetiredAdapterReferenceAllowlist() {
   }
 }
 
+const OWNER_LAYER_MAP_PATH = "docs/ru/karta-paka.md";
+const OWNER_LAYER_MAP_FIELDS = [
+  "Назначение:",
+  "Кто читает:",
+  "Ключевые правила:",
+  "Что менять, чтобы…:",
+];
+
+// The owner-layer coverage inventory: every regular file under skills/,
+// references/ (recursively, including contracts/), and templates/, plus
+// scripts/*.mjs, AGENTS.md, and README.md. docs/, examples/, plans/,
+// CHANGELOG.md, node_modules, and hidden entries stay out, so the map covers
+// the pack surface a reader has to understand and nothing else.
+function ownerLayerInventory() {
+  const files = [];
+  const walk = (relativeDir) => {
+    for (const entry of fs.readdirSync(path.join(root, relativeDir), { withFileTypes: true })) {
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const relativePath = `${relativeDir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(relativePath);
+      } else if (entry.isFile()) {
+        files.push(relativePath);
+      }
+    }
+  };
+  for (const dir of ["skills", "references", "templates"]) walk(dir);
+  // Same regular-file contract as walk(): a directory or symlink named
+  // `<name>.mjs` is not a pack file and must not enter the inventory.
+  for (const entry of fs.readdirSync(path.join(root, "scripts"), { withFileTypes: true })) {
+    if (entry.name.startsWith(".") || !entry.name.endsWith(".mjs") || !entry.isFile()) continue;
+    files.push(`scripts/${entry.name}`);
+  }
+  files.push("AGENTS.md", "README.md");
+  return files.sort();
+}
+
+// Entry headings and field lines are read only OUTSIDE fenced blocks, so a
+// fenced example of the entry format never counts as coverage. Any other
+// heading closes the current entry, which keeps a section heading from
+// donating its fields to the entry above it.
+function parseOwnerLayerMapEntries(text) {
+  const entries = [];
+  let fence = null;
+  let current = null;
+  for (const rawLine of text.split("\n")) {
+    const fenceMatch = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(rawLine);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      const info = fenceMatch[2];
+      if (fence === null) {
+        // An opening fence may carry an info string, except that a backtick
+        // fence's info string may not contain a backtick; such a line is
+        // ordinary content and falls through to the parsing below.
+        if (marker[0] !== "`" || !info.includes("`")) {
+          fence = marker;
+          continue;
+        }
+      } else {
+        // A CLOSING fence carries no info string. ```js inside a ``` block is
+        // content, not a close — treating it as one would end the block early
+        // and expose the example's headings as real map coverage.
+        if (marker[0] === fence[0] && marker.length >= fence.length && info.trim() === "") {
+          fence = null;
+        }
+        continue;
+      }
+    }
+    if (fence !== null) continue;
+    const heading = /^## `([^`]+)`\s*$/.exec(rawLine);
+    if (heading) {
+      current = { path: heading[1], fields: new Set() };
+      entries.push(current);
+      continue;
+    }
+    if (/^#{1,6} /.test(rawLine)) {
+      current = null;
+      continue;
+    }
+    if (!current) continue;
+    for (const field of OWNER_LAYER_MAP_FIELDS) {
+      if (rawLine.startsWith(field)) current.fields.add(field);
+    }
+  }
+  return entries;
+}
+
+// Parser fixtures: a fenced EXAMPLE of the entry format must never count as
+// coverage, and an info-string line such as ```js inside a fence must not end
+// the block. Structural in-process probes over synthetic text — they pin the
+// parser's behaviour, not any sentence of the map.
+function validateOwnerLayerMapParser() {
+  const fencedExample = [
+    "# Example map",
+    "",
+    "Версия пака: main",
+    "",
+    "```text",
+    "## `references/inside-fence.md`",
+    "",
+    "Назначение: пример записи.",
+    "```js",
+    "## `references/after-info-string.md`",
+    "```",
+    "",
+    "## `AGENTS.md`",
+    "",
+    "Назначение: правила репозитория.",
+    "Кто читает: любой, кто меняет пак.",
+    "Ключевые правила:",
+    "",
+    "- одно правило.",
+    "",
+    "Что менять, чтобы…:",
+    "",
+    "- цель → `AGENTS.md`.",
+    "",
+  ].join("\n");
+  const parsed = parseOwnerLayerMapEntries(fencedExample);
+  const parsedPaths = parsed.map((entry) => entry.path);
+  if (JSON.stringify(parsedPaths) !== JSON.stringify(["AGENTS.md"])) {
+    fail(
+      `Owner-layer map parser must ignore fenced examples, including after an info-string line, found ${JSON.stringify(parsedPaths)}`
+    );
+  } else if (parsed[0].fields.size !== OWNER_LAYER_MAP_FIELDS.length) {
+    fail("Owner-layer map parser must collect all four fields of an entry outside a fence");
+  }
+
+  const tildeFence = ["~~~text", "## `references/inside-tilde-fence.md`", "~~~", ""].join("\n");
+  if (parseOwnerLayerMapEntries(tildeFence).length !== 0) {
+    fail("Owner-layer map parser must ignore entries inside a tilde fence");
+  }
+
+  const duplicated = parseOwnerLayerMapEntries(
+    ["## `AGENTS.md`", "", "Назначение: раз.", "", "## `AGENTS.md`", "", "Назначение: два.", ""].join("\n")
+  );
+  if (duplicated.length !== 2) {
+    fail("Owner-layer map parser must report a repeated heading as a second entry so the duplicate check can see it");
+  }
+}
+
+// Structural coverage only: every inventory file has an entry, every entry
+// points at a real repository file, no heading repeats, and each entry carries
+// the four fields. Nothing here pins Russian prose — the map's wording is the
+// owner's to change in Linear.
+function validateOwnerLayerMap() {
+  if (!exists(OWNER_LAYER_MAP_PATH)) {
+    fail(`Missing owner-layer map: ${OWNER_LAYER_MAP_PATH}`);
+    return;
+  }
+  const text = read(OWNER_LAYER_MAP_PATH);
+  if (!text.split("\n").slice(0, 5).some((line) => line.startsWith("Версия пака:"))) {
+    fail(`${OWNER_LAYER_MAP_PATH} must carry a pack-version line in its first five lines`);
+  }
+
+  const seen = new Set();
+  for (const entry of parseOwnerLayerMapEntries(text)) {
+    if (seen.has(entry.path)) {
+      fail(`${OWNER_LAYER_MAP_PATH} has a duplicate map entry: ${entry.path}`);
+      continue;
+    }
+    seen.add(entry.path);
+    if (path.isAbsolute(entry.path) || entry.path.split("/").includes("..")) {
+      fail(`${OWNER_LAYER_MAP_PATH} has a map entry outside the repository: ${entry.path}`);
+      continue;
+    }
+    if (!exists(entry.path)) {
+      fail(`${OWNER_LAYER_MAP_PATH} maps a file that does not exist: ${entry.path}`);
+      continue;
+    }
+    // `exists` is true for a directory or a symlink too, while the inventory
+    // holds regular files only; hold both sides to the same contract.
+    if (!fs.lstatSync(path.join(root, entry.path)).isFile()) {
+      fail(`${OWNER_LAYER_MAP_PATH} maps a path that is not a regular file: ${entry.path}`);
+      continue;
+    }
+    for (const field of OWNER_LAYER_MAP_FIELDS) {
+      if (!entry.fields.has(field)) {
+        fail(`${OWNER_LAYER_MAP_PATH} entry ${entry.path} is missing the field ${field}`);
+      }
+    }
+  }
+  for (const relativePath of ownerLayerInventory()) {
+    if (!seen.has(relativePath)) {
+      fail(`${OWNER_LAYER_MAP_PATH} is missing a map entry for ${relativePath}`);
+    }
+  }
+}
+
 function validateTemplateSections() {
   const requiredSections = {
     "templates/prd.md": [
@@ -768,6 +957,8 @@ function validateLocalInstallBehavior() {
   const installedResolver = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "resolve-issue-context.mjs");
   const installedPackVerifier = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "verify-pack-state.mjs");
   const installedWatcher = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "watch-workers.mjs");
+  const ownerMapRelativePath = ".mono-agent-workflow/docs/ru/karta-paka.md";
+  const installedOwnerMap = path.join(skillsRoot, ...ownerMapRelativePath.split("/"));
   const legacySkillDir = path.join(skillsRoot, "linear-check");
   const legacyLockPath = path.join(skillsRoot, ".linear-agent-workflow.lock.json");
   const legacyRuntimeDir = path.join(skillsRoot, ".linear-agent-workflow");
@@ -990,7 +1181,7 @@ function validateLocalInstallBehavior() {
     expectCommandFailure(
       "install-local --check unexpected runtime script fixture",
       () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "Unexpected installed runtime script"
+      "Unexpected installed pack file"
     );
 
     // The tamper scan walks the whole .mono-agent-workflow/ root: a file planted
@@ -1000,7 +1191,57 @@ function validateLocalInstallBehavior() {
     expectCommandFailure(
       "install-local --check pack-root stray file fixture",
       () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "Unexpected installed runtime script"
+      "Unexpected installed pack file"
+    );
+
+    // AC2: the owner-layer documents are installed as pack-private payload at
+    // <skills-root>/.mono-agent-workflow/docs/ru/, their hashes are recorded in
+    // the lockfile under `ownerLayer`, and --check holds them exactly like a
+    // runtime script — missing, edited, and extra each fail.
+    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
+    const ownerLayerLock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    if (!Array.isArray(ownerLayerLock.ownerLayer) || ownerLayerLock.ownerLayer.length === 0) {
+      fail("Local install lockfile must record the owner-layer documents in ownerLayer");
+    } else if (!fs.existsSync(installedOwnerMap)) {
+      fail("Local install missing the installed owner-layer map");
+    } else {
+      const ownerMapEntry = ownerLayerLock.ownerLayer.find(
+        (entry) => entry.path === ownerMapRelativePath
+      );
+      const installedOwnerMapHash = createHash("sha256")
+        .update(fs.readFileSync(installedOwnerMap))
+        .digest("hex");
+      if (ownerMapEntry?.sha256 !== installedOwnerMapHash) {
+        fail("Local install owner-layer map hash must match the ownerLayer manifest");
+      }
+      if (fs.readFileSync(installedOwnerMap, "utf8") !== read("docs/ru/karta-paka.md")) {
+        fail("Local install owner-layer map must be copied verbatim from the upstream checkout");
+      }
+    }
+
+    fs.rmSync(installedOwnerMap, { force: true });
+    expectCommandFailure(
+      "install-local --check missing owner-layer document fixture",
+      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
+      `Missing installed owner-layer document: ${ownerMapRelativePath}`
+    );
+
+    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
+    fs.appendFileSync(installedOwnerMap, "\nBROKEN\n");
+    expectCommandFailure(
+      "install-local --check edited owner-layer document fixture",
+      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
+      "Installed owner-layer document is stale or edited"
+    );
+
+    // The allowlist stays fail-closed for the new payload directory too: an
+    // extra file beside an installed owner-layer document is still an error.
+    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
+    fs.writeFileSync(path.join(path.dirname(installedOwnerMap), "stray.md"), "# stray\n");
+    expectCommandFailure(
+      "install-local --check unexpected owner-layer document fixture",
+      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
+      "Unexpected installed pack file"
     );
 
     // schemaVersion 2 -> 3 migration: a pre-MONO-19 lockfile (v2 shape, no
@@ -8337,6 +8578,8 @@ validateReadFirstTierContract();
 validateProjectUpdateSurface();
 validatePreWriteHandoffReviewOrder();
 validateRetiredAdapterReferenceAllowlist();
+validateOwnerLayerMapParser();
+validateOwnerLayerMap();
 validateTemplateSections();
 validateArtifactContractParity();
 validateReviewCheckBoundary();
