@@ -49,6 +49,9 @@ A line that needs the workflow glossary to be understood is rewritten.
   headline.
 - The owner never has to ask for a human version: the product-language form
   is the only form.
+- A project update in Linear is not a status line: it follows
+  `templates/project-update.md`, one form for every writer, whose stop
+  dictionary is stricter than this glossary.
 
 Stage and mechanism glossary for owner-facing lines:
 

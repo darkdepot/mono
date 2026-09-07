@@ -146,6 +146,35 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   It replaces the tail that deferred the remaining points to a separate slice,
   which the entry above has since landed. The line carries no validator pin
   and none was added.
+- `templates/project-update.md` becomes the single form for every writer of a
+  Linear project update — `mono-deploy` at closeout and the orchestrator when
+  it publishes a project sweep, a completion by hand, or a retro note — and it
+  gains a second form. «Выкладка» keeps the shipped-result shape; the new
+  `## State update` section defines «Состояние» for an update with no shipment
+  behind it, with health by fact, a chip that names the blocking or next-step
+  Issue or is absent, and a ban on dates, percentages, and slice listings. The
+  invariants tighten to a title of at most 10 words and a body of one to two
+  sentences and at most 35 words, add the capability-list test and the ban on
+  service subjects («агент», «скилл», «сервер», «пак», «MCP», «валидатор»,
+  «воркер»), and gain «Один результат — один апдейт» (14) and «Стоп-словарь»
+  (15); invariant 10 now says that the stop dictionary governs HOW a result
+  shipped and never forbids naming what shipped. The issue-only path follows
+  invariants 1-12, 14, 15. Both exemplars are replaced by their rewritten live
+  versions, a «Состояние» example joins them, and the acceptance set becomes
+  the 32 updates of 2026-09-07 with a second anti-example.
+- The other writers point at that one form: `mono-orchestrate` reads the
+  template in its «Read when» ladder and writes a project update only in one of
+  its two forms — the status register and the ledger never reach a Linear
+  update, and a sweep over several shipped Issues is split into one update per
+  Issue; sub-step 6 of the `project-update` step in `skills/mono-deploy/SKILL.md`
+  names «Выкладка» as its form and leaves «Состояние» to the orchestrator; and
+  Product Language For The Owner in `references/human-friendly-output.md` links
+  to the template as the stricter rule for updates.
+- `scripts/validate-workflow.mjs` adds `## State update` to the required
+  headings of the template and one structural check that the tier-2 «Read when»
+  block of `mono-orchestrate` carries the template path; the tier-2 heading and
+  tier-rule strings move from `validateReadFirstTierContract` to module level so
+  both checks read one copy. No new prose pin was added.
 
 ### Fixed
 
