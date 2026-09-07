@@ -33,6 +33,7 @@ Read when — load the file only when its condition is true for this run:
 - `references/readiness-gates.md` — when a risk class or a stage readiness gate has to be decided for a wave.
 - `references/questioning.md` — when this run escalates a decision to the owner.
 - `templates/project-update.md` — when this run publishes or edits a Linear project update, including the update it writes for a project sweep or for a project completed by hand.
+- `docs/ru/konstituciya-paka.md`, `docs/ru/karta-paka.md` — when this run compares the owner-layer documents with the installed copies or publishes them.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
@@ -66,6 +67,11 @@ Inputs to gather:
 - Runtime transport binding per `references/orchestration.md` Worker
   Transports (config override first, then runtime detection).
 - Live worker sessions via the runtime session list when available.
+- Owner-layer documents: the Linear team documents «Карта пака» and
+  «Конституция пака» identified by `owner-layer/documents.json` under the
+  orchestrator root, and their installed copies under
+  `../.mono-agent-workflow/docs/ru/` relative to the installed
+  `mono-orchestrate` directory (Owner-layer reconciliation below).
 
 ### Local compaction wiring
 
@@ -103,6 +109,104 @@ do not vendor Mono skills, templates, hooks, or workflow runtime files into
 the product. The product repo still keeps only
 `.agents/mono-workflow.config.json` for this workflow.
 
+### Owner-layer reconciliation
+
+The owner reads and edits the pack in Russian: the Linear team documents
+«Карта пака» and «Конституция пака» are the owner layer over the English
+pack. This step is the whole path from an owner edit to work, and it runs one
+way only: it reads Linear, writes nothing back into the document, and creates
+nothing the owner has not approved. An edited article is a request, never an
+approval.
+
+Run it at the start of every orchestrator session — inside `resume`, before
+the rebuilt status — and again whenever the owner says «сверь конституцию» or
+«сверь карту».
+
+Nothing in this step gates anything. A document that cannot be identified,
+read, compared, or filed is named in the status and the session continues:
+reconciliation informs the owner and creates drafts, and it never blocks a
+dispatch, a stage, or a deploy.
+
+1. Identify the documents. Read `owner-layer/documents.json` under the
+   orchestrator root: it maps each document file name to its Linear document
+   id (`karta-paka.md` for «Карта пака», `konstituciya-paka.md` for
+   «Конституция пака»). When that file is absent, call
+   `list_documents(<teamId from the project config>)`, match those two titles
+   exactly, and write the file with the ids you found. A title with zero or
+   several matches leaves that document uncompared for this run: report it and
+   continue with the other one. Never guess an id, and never create the
+   document.
+   A mapped id that no longer resolves gets the same discovery once rather
+   than being retried blindly for ever: when `get_document(<id>)` reports the
+   document as missing — not merely unavailable, which is a transient failure
+   to report and retry next run — repeat the exact-title match, and on exactly
+   one match repair `owner-layer/documents.json` with the new id and continue
+   with it. Zero or several matches keeps the refusal above. Without this, a
+   document that was deleted and recreated would leave every later owner edit
+   unfiled while each run reported the same failure.
+2. Read both sides. `get_document(<id>)` gives the Linear side. The installed
+   side is `../.mono-agent-workflow/docs/ru/<file>` resolved against the
+   installed `mono-orchestrate` skill directory — `karta-paka.md` for the map,
+   shipped from `docs/ru/karta-paka.md`, and `konstituciya-paka.md` for the
+   constitution, shipped from `docs/ru/konstituciya-paka.md`. Never resolve
+   that path against the product repository or a worker worktree: neither
+   carries the installed copy.
+3. Normalise both sides identically before comparing: LF line endings, no
+   trailing whitespace on any line, every line beginning `Версия пака:`
+   removed, leading and trailing blank lines trimmed, exactly one closing LF.
+   Hash each normalised text with SHA-256. Equal hashes mean this document is
+   synchronised and nothing further happens for it.
+4. A difference is an owner edit waiting for work. Take the reconciliation
+   snapshot of that document:
+   - `document id` — the Linear id from step 1;
+   - `base hash` — the SHA-256 of the normalised LINEAR document as this
+     reconciliation read it. The publication step in
+     `skills/mono-deploy/SKILL.md` compares against exactly this value later,
+     which is how it tells a document the owner has not touched since from one
+     edited after the snapshot;
+   - `diff hash` — the SHA-256 of the unified diff between the normalised
+     installed copy and the normalised Linear document. It names this
+     difference, and it is what holds one difference to one draft.
+5. One filed record per difference hash. Before creating anything, look for a
+   record that already carries this document id and this diff hash in its
+   «Снимок контекста» — the draft Issue on the issue-only lane, the intake
+   Project on the Project-first one. When one exists, create nothing and change
+   nothing: the difference is already filed, and a later start with the same
+   diff hash produces no second record. Only an unfiled diff hash creates one.
+6. File it through the ordinary intake, never by hand. Which lane applies
+   decides what is created, and each lane keeps its own approval boundary:
+   - one PR, and the issue-only conditions are met → `mono-issue`. Its
+     create-then-approve transaction produces the non-startable draft Issue
+     itself, and the snapshot goes into that Issue's «Снимок контекста».
+   - anything larger → the ordinary Project-first intake, `mono-idea` and then
+     `mono-handoff`. That lane creates no execution Issue before package
+     approval and this step never asks it to: the filed record is the intake
+     Project opened for this request, the snapshot is recorded on it, and the
+     Issue the approved package later creates carries the same snapshot
+     forward into its own «Снимок контекста».
+   In both lanes the instruction is the Russian text the owner wrote: carry the
+   edited article or map entry verbatim and do not translate it. Write the
+   snapshot of step 4 as three labelled lines, so the publication step can
+   recover it from Linear alone. The local `owner-layer/<file>.snapshot.json`
+   cache under the orchestrator root only speeds up the next read; when cache
+   and Linear disagree, Linear is right.
+7. Confirm the record before treating the difference as filed. A Linear write
+   can return success and apply nothing, so read back whatever you just created
+   and require the snapshot to be present in the body you read back. Until that
+   read-back succeeds the difference is NOT filed: say so in the status and let
+   the next reconciliation file it again. A pending owner edit that disappears
+   silently is the one failure this step exists to prevent.
+8. Nothing filed here is startable. It is created without approval and is
+   activated only through the ordinary path of its lane — review, fingerprint,
+   and the owner's explicit «ок» for issue-only; package approval for
+   Project-first. Editing a document is not an approval, and this step never
+   moves an Issue into a started state.
+9. Report the outcome in the status line «Конституция и карта:
+   синхронизированы | <N> правок ждут» of `templates/orchestrator-brief.md`,
+   counting the filed differences. A document that could not be compared and a
+   difference that could not be filed are named in that line too, in product
+   language.
+
 Workflow states:
 
 1. `resume`
@@ -114,6 +218,11 @@ Workflow states:
      match; never rebind a thread from another surface revision.
    - Apply queued Linear mutations from worker reports that were never
      applied.
+   - Compare the owner-layer documents with their installed copies and file
+     each pending owner edit as one non-startable draft (Owner-layer
+     reconciliation above); do this before the status, which carries its
+     result. Run the same step whenever the owner says «сверь конституцию» or
+     «сверь карту».
    - Output the rebuilt status (the «Статус» shape from
      `templates/orchestrator-brief.md` with its «Техника» table) before
      taking new actions.
