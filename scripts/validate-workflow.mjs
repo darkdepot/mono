@@ -285,14 +285,11 @@ function ownerLayerInventory() {
   return files.sort();
 }
 
-// Entry headings and field lines are read only OUTSIDE fenced blocks, so a
-// fenced example of the entry format never counts as coverage. Any other
-// heading closes the current entry, which keeps a section heading from
-// donating its fields to the entry above it.
-function parseOwnerLayerMapEntries(text) {
-  const entries = [];
+// The one fence walk both owner-layer parsers share: headings and field lines
+// are read only OUTSIDE fenced blocks, so a fenced example of the map or the
+// constitution format never counts as real content.
+function forEachOwnerLayerLine(text, visit) {
   let fence = null;
-  let current = null;
   for (const rawLine of text.split("\n")) {
     const fenceMatch = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(rawLine);
     if (fenceMatch) {
@@ -317,21 +314,33 @@ function parseOwnerLayerMapEntries(text) {
       }
     }
     if (fence !== null) continue;
+    visit(rawLine);
+  }
+}
+
+// Entry headings and field lines are read only OUTSIDE fenced blocks, so a
+// fenced example of the entry format never counts as coverage. Any other
+// heading closes the current entry, which keeps a section heading from
+// donating its fields to the entry above it.
+function parseOwnerLayerMapEntries(text) {
+  const entries = [];
+  let current = null;
+  forEachOwnerLayerLine(text, (rawLine) => {
     const heading = /^## `([^`]+)`\s*$/.exec(rawLine);
     if (heading) {
       current = { path: heading[1], fields: new Set() };
       entries.push(current);
-      continue;
+      return;
     }
     if (/^#{1,6} /.test(rawLine)) {
       current = null;
-      continue;
+      return;
     }
-    if (!current) continue;
+    if (!current) return;
     for (const field of OWNER_LAYER_MAP_FIELDS) {
       if (rawLine.startsWith(field)) current.fields.add(field);
     }
-  }
+  });
   return entries;
 }
 
@@ -434,6 +443,281 @@ function validateOwnerLayerMap() {
     if (!seen.has(relativePath)) {
       fail(`${OWNER_LAYER_MAP_PATH} is missing a map entry for ${relativePath}`);
     }
+  }
+}
+
+const OWNER_LAYER_CONSTITUTION_PATH = "docs/ru/konstituciya-paka.md";
+const OWNER_LAYER_CONSTITUTION_ANCHOR_FIELD = "Опора:";
+const OWNER_LAYER_CONSTITUTION_PROPOSAL = "Статус: предложение";
+// Every field an article may carry. The list exists to close the `Опора:` list
+// when the next field starts, so a bullet under `Где живёт:` is prose and never
+// an anchor. `Цитата:` is parsed for that boundary only and never validated.
+// The three fields every article carries, proposal or not. `Опора:` is not
+// here because the proposal marker exempts an article from it, and `Цитата:`
+// is optional by design.
+const OWNER_LAYER_CONSTITUTION_REQUIRED_FIELDS = ["Правило:", "Почему:", "Где живёт:"];
+const OWNER_LAYER_CONSTITUTION_FIELDS = [
+  "Правило:",
+  "Почему:",
+  "Где живёт:",
+  "Цитата:",
+  "Статус:",
+  OWNER_LAYER_CONSTITUTION_ANCHOR_FIELD,
+];
+
+// Articles are `## К-NN.` headings read outside fenced blocks; any other
+// heading closes the current article, so a section heading cannot donate its
+// fields to the article above it. Anchor entries are collected only while the
+// `Опора:` field is open.
+function parseOwnerLayerConstitutionArticles(text) {
+  const articles = [];
+  const malformed = [];
+  let current = null;
+  let inAnchors = false;
+  forEachOwnerLayerLine(text, (rawLine) => {
+    const heading = /^## (К-\d+)\./.exec(rawLine);
+    if (heading) {
+      current = { number: heading[1], anchors: [], fields: new Set(), proposal: false };
+      articles.push(current);
+      inAnchors = false;
+      return;
+    }
+    if (/^#{1,6} /.test(rawLine)) {
+      // A heading that means to be an article but does not match the form —
+      // a Latin `K`, a missing dot — would otherwise drop out of the walk in
+      // silence, taking its anchors with it. Collect it so the check can say so.
+      const nearMiss = /^#{1,6} +([KК][-–—][^\s]*)/.exec(rawLine);
+      if (nearMiss) malformed.push(nearMiss[1]);
+      current = null;
+      inAnchors = false;
+      return;
+    }
+    if (!current) return;
+    if (rawLine.startsWith(OWNER_LAYER_CONSTITUTION_ANCHOR_FIELD)) {
+      current.fields.add(OWNER_LAYER_CONSTITUTION_ANCHOR_FIELD);
+      inAnchors = true;
+      return;
+    }
+    if (rawLine.trim() === OWNER_LAYER_CONSTITUTION_PROPOSAL) {
+      current.proposal = true;
+      inAnchors = false;
+      return;
+    }
+    const field = OWNER_LAYER_CONSTITUTION_FIELDS.find((name) => rawLine.startsWith(name));
+    if (field) {
+      current.fields.add(field);
+      inAnchors = false;
+      return;
+    }
+    if (!inAnchors) return;
+    const anchor = /^-\s+`([^`]+)`\s+·\s+(\S.*?)\s*$/.exec(rawLine);
+    if (anchor) current.anchors.push({ path: anchor[1], target: anchor[2] });
+  });
+  return { articles, malformed };
+}
+
+// What an anchor may point at inside one pack file: the text of an H1-H4
+// heading (compared after the `#` markers), the ID of an `## <ID>` heading such
+// as a contract clause, and the numbers of the invariants listed under
+// `## Invariants`. Nothing here reads a sentence: a verbatim English phrase is
+// never validated, which is what keeps the constitution from becoming a second
+// layer of prose pins.
+const ownerLayerAnchorTargetCache = new Map();
+
+function ownerLayerAnchorTargets(relativePath) {
+  const cached = ownerLayerAnchorTargetCache.get(relativePath);
+  if (cached) return cached;
+  const headings = new Set();
+  const idHeadings = [];
+  const invariants = new Set();
+  let inInvariants = false;
+  forEachOwnerLayerLine(read(relativePath), (rawLine) => {
+    const heading = /^(#{1,4}) +(.*?) *$/.exec(rawLine);
+    if (heading) {
+      headings.add(heading[2]);
+      if (heading[1] === "##") idHeadings.push(heading[2]);
+      inInvariants = heading[1] === "##" && heading[2] === "Invariants";
+      return;
+    }
+    if (/^#{1,6} /.test(rawLine)) {
+      inInvariants = false;
+      return;
+    }
+    if (!inInvariants) return;
+    const invariant = /^ *(\d+)\./.exec(rawLine);
+    if (invariant) invariants.add(invariant[1]);
+  });
+  const targets = { headings, idHeadings, invariants };
+  ownerLayerAnchorTargetCache.set(relativePath, targets);
+  return targets;
+}
+
+function resolveOwnerLayerAnchor(relativePath, target) {
+  const targets = ownerLayerAnchorTargets(relativePath);
+  const quoted = /^«(.+)»$/.exec(target);
+  if (quoted) return targets.headings.has(quoted[1]);
+  const invariant = /^(?:инвариант +)?(\d+)$/.exec(target);
+  if (invariant) return targets.invariants.has(invariant[1]);
+  // An ID anchors the heading that opens with it, so `PC-013` still resolves
+  // against `## PC-013 — Idea state` without pinning the title after the dash.
+  return targets.idHeadings.some((text) => text === target || text.startsWith(`${target} `));
+}
+
+// Structural anchor coverage only: article numbers are unique, every article
+// without `Статус: предложение` carries at least one anchor, no anchor repeats
+// inside one article, and every anchor names a pack file from the S1 inventory
+// plus a heading or stable ID that exists in it. Nothing here pins the Russian
+// prose — the wording of an article is the owner's to change in Linear.
+function validateOwnerLayerConstitution() {
+  if (!exists(OWNER_LAYER_CONSTITUTION_PATH)) {
+    fail(`Missing owner-layer constitution: ${OWNER_LAYER_CONSTITUTION_PATH}`);
+    return;
+  }
+  const text = read(OWNER_LAYER_CONSTITUTION_PATH);
+  if (!text.split("\n").slice(0, 5).some((line) => line.startsWith("Версия пака:"))) {
+    fail(`${OWNER_LAYER_CONSTITUTION_PATH} must carry a pack-version line in its first five lines`);
+  }
+
+  const { articles, malformed } = parseOwnerLayerConstitutionArticles(text);
+  for (const heading of malformed) {
+    fail(
+      `${OWNER_LAYER_CONSTITUTION_PATH} has a heading that looks like an article but does not match \`## К-NN.\`: ${heading}`
+    );
+  }
+
+  const inventory = new Set(ownerLayerInventory());
+  const seen = new Set();
+  for (const article of articles) {
+    if (seen.has(article.number)) {
+      fail(`${OWNER_LAYER_CONSTITUTION_PATH} has a duplicate article: ${article.number}`);
+      continue;
+    }
+    seen.add(article.number);
+    for (const requiredField of OWNER_LAYER_CONSTITUTION_REQUIRED_FIELDS) {
+      if (!article.fields.has(requiredField)) {
+        fail(
+          `${OWNER_LAYER_CONSTITUTION_PATH} article ${article.number} is missing the field ${requiredField}`
+        );
+      }
+    }
+    if (article.anchors.length === 0) {
+      if (!article.proposal) {
+        fail(
+          `${OWNER_LAYER_CONSTITUTION_PATH} article ${article.number} has no ${OWNER_LAYER_CONSTITUTION_ANCHOR_FIELD} entry and is not marked «${OWNER_LAYER_CONSTITUTION_PROPOSAL}»`
+        );
+      }
+      continue;
+    }
+    const anchorsSeen = new Set();
+    for (const anchor of article.anchors) {
+      const label = `\`${anchor.path}\` · ${anchor.target}`;
+      if (anchorsSeen.has(label)) {
+        fail(`${OWNER_LAYER_CONSTITUTION_PATH} article ${article.number} repeats the anchor ${label}`);
+        continue;
+      }
+      anchorsSeen.add(label);
+      if (!inventory.has(anchor.path)) {
+        fail(
+          `${OWNER_LAYER_CONSTITUTION_PATH} article ${article.number} anchors ${label}: ${anchor.path} is not a pack file in the owner-layer inventory`
+        );
+        continue;
+      }
+      if (!resolveOwnerLayerAnchor(anchor.path, anchor.target)) {
+        fail(
+          `${OWNER_LAYER_CONSTITUTION_PATH} article ${article.number} anchors ${label}: no such heading or stable ID in ${anchor.path}`
+        );
+      }
+    }
+  }
+}
+
+// Parser fixtures: a fenced EXAMPLE of the article format must never count as
+// an article, `Статус: предложение` must be seen, and a bullet list under a
+// field other than `Опора:` must never be read as an anchor. Structural
+// in-process probes over synthetic text — they pin the parser's behaviour, not
+// any sentence of the constitution.
+function validateOwnerLayerConstitutionParser() {
+  const fenced = [
+    "# Example",
+    "",
+    "Версия пака: main",
+    "",
+    "```text",
+    "## К-99. Внутри забора",
+    "",
+    "Опора:",
+    "",
+    "- `AGENTS.md` · «Language»",
+    "```",
+    "",
+    "## I. Раздел",
+    "",
+    "## К-01. Настоящая статья",
+    "",
+    "Правило: одно предложение.",
+    "",
+    "Опора:",
+    "",
+    "- `AGENTS.md` · «Language»",
+    "",
+    "## К-02. Предложение",
+    "",
+    "Правило: одно предложение.",
+    "",
+    "Статус: предложение",
+    "",
+  ].join("\n");
+  const parsed = parseOwnerLayerConstitutionArticles(fenced).articles;
+  const parsedNumbers = parsed.map((article) => article.number);
+  if (JSON.stringify(parsedNumbers) !== JSON.stringify(["К-01", "К-02"])) {
+    fail(
+      `Owner-layer constitution parser must ignore fenced examples, found ${JSON.stringify(parsedNumbers)}`
+    );
+  } else if (parsed[0].anchors.length !== 1 || parsed[0].anchors[0].path !== "AGENTS.md") {
+    fail("Owner-layer constitution parser must collect the Опора entry of an article outside a fence");
+  } else if (parsed[1].proposal !== true || parsed[1].anchors.length !== 0) {
+    fail(
+      "Owner-layer constitution parser must mark «Статус: предложение» and leave that article without anchors"
+    );
+  }
+
+  const otherField = parseOwnerLayerConstitutionArticles(
+    ["## К-03. Только Где живёт", "", "Где живёт:", "", "- `AGENTS.md` · «Language»", ""].join("\n")
+  ).articles;
+  if (otherField.length !== 1 || otherField[0].anchors.length !== 0) {
+    fail("Owner-layer constitution parser must count anchor entries only under Опора:");
+  }
+
+  const duplicated = parseOwnerLayerConstitutionArticles(
+    ["## К-07. Раз", "", "Статус: предложение", "", "## К-07. Два", "", "Статус: предложение", ""].join("\n")
+  ).articles;
+  if (duplicated.length !== 2) {
+    fail(
+      "Owner-layer constitution parser must report a repeated article number as a second article so the duplicate check can see it"
+    );
+  }
+
+  // Field collection: an article's own fields are recorded so the required-field
+  // check can see a dropped one, and a heading that means to be an article but
+  // misses the form is reported instead of silently vanishing from the walk.
+  const fields = parseOwnerLayerConstitutionArticles(
+    ["## К-04. Все поля", "", "Правило: одно предложение.", "", "Почему: одна причина.", "", "Где живёт: `AGENTS.md`.", ""].join("\n")
+  ).articles;
+  if (
+    !fields[0].fields.has("Правило:") ||
+    !fields[0].fields.has("Почему:") ||
+    !fields[0].fields.has("Где живёт:")
+  ) {
+    fail("Owner-layer constitution parser must record the fields an article carries");
+  }
+
+  const nearMiss = parseOwnerLayerConstitutionArticles(
+    ["## K-05. Латинская K", "", "Правило: одно предложение.", "", "## К-06 без точки", "", "Правило: одно предложение.", ""].join("\n")
+  );
+  if (nearMiss.articles.length !== 0 || nearMiss.malformed.length !== 2) {
+    fail(
+      `Owner-layer constitution parser must report a heading that looks like an article but does not match the form, found ${JSON.stringify(nearMiss.malformed)}`
+    );
   }
 }
 
@@ -8580,6 +8864,8 @@ validatePreWriteHandoffReviewOrder();
 validateRetiredAdapterReferenceAllowlist();
 validateOwnerLayerMapParser();
 validateOwnerLayerMap();
+validateOwnerLayerConstitutionParser();
+validateOwnerLayerConstitution();
 validateTemplateSections();
 validateArtifactContractParity();
 validateReviewCheckBoundary();

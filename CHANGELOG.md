@@ -19,6 +19,27 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ### Added
 
+- Owner layer, part two: `docs/ru/konstituciya-paka.md` is the Russian
+  constitution of the pack — 34 articles in nine sections covering the rules the
+  owner sees and decides: status language, project-update form, ownership,
+  approvals and mandates, the issue-only lane, models and review, deploy and
+  closeout, honesty and boundaries, and changing the pack itself. Each article
+  carries `Правило:`, `Почему:`, `Где живёт:` and an `Опора:` list; the two
+  articles whose rule does not yet exist in the pack carry
+  `Статус: предложение` instead of an anchor.
+- `scripts/validate-workflow.mjs` gains `validateOwnerLayerConstitution()` and
+  its parser fixtures, reusing the coverage inventory and the fence walk of the
+  map check. An anchor is a pack path plus either a heading text (matched among
+  H1-H4 after the `#` markers) or a stable ID (`## PC-013`-style, or a numbered
+  invariant of `templates/project-update.md`); a verbatim sentence is never
+  validated. A duplicate `К-NN`, a repeated anchor inside one article, a path
+  outside the inventory, a heading or ID that no longer exists, a missing
+  `Опора:` on an article without `Статус: предложение`, a missing `Правило:`,
+  `Почему:` or `Где живёт:` field, and a heading that means to be an article but
+  does not match `## К-NN.` each fail with the article number, the file, and the
+  anchor. The catalogue's composition is deliberately NOT pinned: which articles
+  exist is the owner's product decision, and a check that fixed the list would
+  turn the owner's own edit red.
 - Owner layer, part one: `docs/ru/karta-paka.md` is the Russian map of the pack —
   one entry per file, in working order, with purpose, audience, key rules, and
   what to change. `scripts/validate-workflow.mjs` gains
