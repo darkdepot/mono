@@ -8967,6 +8967,61 @@ function validateOwnerLayerMarkerCanonicalization() {
   }
 }
 
+// MONO-67 — step 5's own live run found a record already filed with both
+// values in its «Снимок контекста», yet a literal reading still missed it:
+// Linear's issue search does not find a 64-character hex hash in a body,
+// while it finds a dash-separated UUID precisely, so a search keyed on the
+// diff hash returns nothing and step 5 wrongly concludes the difference is
+// unfiled. Step 5 must instead search by the document id and confirm a
+// candidate only by reading its body, and must say explicitly that an
+// empty or irrelevant search result is never proof of absence. Pre-ship
+// review on this Issue's own PR (Greptile) added a third clause: a search
+// that errors, times out, or returns a partial/unreadable result is not
+// the same thing as a completed search that read its candidates and found
+// none, so it must not license creation either — closing the same failure
+// mode this Issue exists to fix, one layer earlier (a broken search
+// masquerading as a confirmed-empty one). All three clauses are checked
+// structurally inside step 5's own bounded slice, same shape as
+// validateOwnerLayerMarkerCanonicalization above: a fixed token, never a
+// whole-sentence prose pin, and the file's hard-wrapped prose means a
+// token can straddle a line break, so includesCollapsed is required here
+// too.
+const OWNER_LAYER_DOCUMENT_ID_LOOKUP_TOKEN =
+  "Search by the document id instead of the diff hash: Linear's issue search does not find a 64-character hex hash in a body, while it finds a dash-separated UUID precisely — a property of the search, not of our data. Confirm a candidate only by READING its body and requiring both the same document id and the same diff hash in its «Снимок контекста»; result rank is never confirmation, only the read body is.";
+const OWNER_LAYER_EMPTY_RESULT_NOT_PROOF_TOKEN =
+  "An empty or irrelevant search result is NOT proof that no record exists, and nothing may be created until the document-id search has been run and its candidates read.";
+const OWNER_LAYER_INCOMPLETE_SEARCH_NOT_EMPTY_TOKEN =
+  "A search that errors, times out, or returns a partial or unreadable result is not an empty result either: only a search that completed and whose candidates were fully read may be treated as returning none that confirms.";
+
+function validateOwnerLayerRecordLookupByDocumentId() {
+  const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
+  const step5Slice = boundedSlice(
+    orchestrateSurface,
+    read(orchestrateSurface),
+    "5. One filed record per difference hash.",
+    "\n6. File it through the ordinary intake",
+    "owner-layer reconciliation step 5 (one filed record per difference hash)"
+  );
+  if (!step5Slice) {
+    return;
+  }
+  if (!includesCollapsed(step5Slice, OWNER_LAYER_DOCUMENT_ID_LOOKUP_TOKEN)) {
+    fail(
+      `${orchestrateSurface} step 5 (One filed record per difference hash) must search by the document id, never the diff hash, and confirm a candidate only by reading its body - result rank is never confirmation`
+    );
+  }
+  if (!includesCollapsed(step5Slice, OWNER_LAYER_EMPTY_RESULT_NOT_PROOF_TOKEN)) {
+    fail(
+      `${orchestrateSurface} step 5 (One filed record per difference hash) must state that an empty or irrelevant search result is not proof that no record exists`
+    );
+  }
+  if (!includesCollapsed(step5Slice, OWNER_LAYER_INCOMPLETE_SEARCH_NOT_EMPTY_TOKEN)) {
+    fail(
+      `${orchestrateSurface} step 5 (One filed record per difference hash) must state that an errored, timed-out, or partially-read search is not an empty result either`
+    );
+  }
+}
+
 // MONO-65 review follow-up — the marker rule is written per-line and has no
 // awareness of Markdown code fences, so a marker-only edit hidden inside a
 // fenced block would normalise away identically on both sides: reconciliation
@@ -9047,6 +9102,7 @@ validateReadFirstTierContract();
 validateProjectUpdateSurface();
 validateOwnerLayerProcedureSurface();
 validateOwnerLayerMarkerCanonicalization();
+validateOwnerLayerRecordLookupByDocumentId();
 validateOwnerLayerDocumentsFenceFree();
 validatePreWriteHandoffReviewOrder();
 validateRetiredAdapterReferenceAllowlist();

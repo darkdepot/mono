@@ -273,6 +273,28 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   `validateOwnerLayerMarkerCanonicalization()`: the marker-canonicalisation
   clause must appear in a bounded slice of all three sites, or the check
   fails. Structural only — no new prose pin.
+- Owner-layer reconciliation no longer files a duplicate draft for an owner
+  edit that is already on record. Step 5 said to look for a record carrying
+  the document id and diff hash without saying how, and a literal search on
+  the 64-character diff hash finds nothing: Linear's issue search does not
+  match a hex hash inside a body, while it matches a dash-separated UUID
+  precisely — a property of the search, not of our data. Measured against a
+  real filed record, that search returned ten unrelated Issues and missed it
+  entirely, so every run concluded "not filed" and created another draft.
+  Step 5 now names the lookup: search by the document id, then confirm a
+  candidate only by reading its body and requiring both the same document id
+  and the same diff hash together in its «Снимок контекста» — result rank is
+  never confirmation, only the read body is — and states explicitly that an
+  empty or irrelevant search result is not proof no record exists, so nothing
+  may be created before that search has run and its candidates have been
+  read. Pre-ship review on this Issue's own PR added a third clause: a
+  search that errors, times out, or returns a partial/unreadable result is
+  not the same thing as a completed search that read its candidates and
+  found none, so it must not license creation either.
+  `scripts/validate-workflow.mjs` gains
+  `validateOwnerLayerRecordLookupByDocumentId()`: all three clauses must
+  appear inside step 5's own bounded slice, or the check fails. Structural
+  only — no new prose pin.
 
 ## [0.20.1] - 2026-07-16
 
