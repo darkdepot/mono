@@ -181,11 +181,23 @@ dispatch, a stage, or a deploy.
      installed copy and the normalised Linear document. It names this
      difference, and it is what holds one difference to one draft.
 5. One filed record per difference hash. Before creating anything, look for a
-   record that already carries this document id and this diff hash in its
-   «Снимок контекста» — the draft Issue on the issue-only lane, the intake
-   Project on the Project-first one. When one exists, create nothing and change
-   nothing: the difference is already filed, and a later start with the same
-   diff hash produces no second record. Only an unfiled diff hash creates one.
+   record that might already carry this diff hash — the draft Issue on the
+   issue-only lane, the intake Project on the Project-first one. Search by
+   the document id instead of the diff hash: Linear's issue search does not
+   find a 64-character hex hash in a body, while it finds a dash-separated
+   UUID precisely — a property of the search, not of our data. Confirm a
+   candidate only by READING its body and requiring both the same document id
+   and the same diff hash in its «Снимок контекста»; result rank is never
+   confirmation, only the read body is. An empty or irrelevant search result
+   is NOT proof that no record exists, and nothing may be created until the
+   document-id search has been run and its candidates read. A search that
+   errors, times out, or returns a partial or unreadable result is not an
+   empty result either: only a search that completed and whose candidates
+   were fully read may be treated as returning none that confirms. When a
+   candidate confirms this way, create nothing and change nothing: the
+   difference is already filed, and a later start with the same diff hash
+   produces no second record. Create a new record only when the document-id
+   search and its candidate reads above find none that confirms.
 6. File it through the ordinary intake, never by hand. Which lane applies
    decides what is created, and each lane keeps its own approval boundary:
    - one PR, and the issue-only conditions are met → `mono-issue`. Its
