@@ -252,6 +252,27 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   when it is a regular file; directories, linked worktrees, and submodule
   entries are skipped. Tracked files are scanned exactly as before, so a
   retired adapter name outside the historical allowlist still fails the check.
+- Owner-layer normalisation no longer reports a synchronised document as
+  changed. Linear's document service rewrites every unordered-list marker to
+  `* ` on every write — a property of the service, not of our files — so a
+  document published intact always produced a fresh-read hash that disagreed
+  with the installed copy's hash, which meant `mono-deploy`'s mandatory
+  read-back reported `not published — write not confirmed by read-back` for
+  writes that had landed perfectly, and `mono-orchestrate`'s reconciliation
+  filed the owner a draft Issue for edits they never made. The normalisation
+  rule gains one more step, identically worded in `mono-orchestrate`'s
+  reconciliation (step 3) and in both `mono-deploy` owner-layer publish
+  sub-steps (3, the pre-publication snapshot, and 6, the mandatory
+  read-back): a line whose first non-whitespace characters are an
+  unordered-list marker (`- `, `* ` or `+ `) is rewritten to the canonical
+  marker `- `, preserving indentation, before hashing. The base hash is now
+  stated explicitly to come from a fresh `get_document` read, never from the
+  text a step believes it sent or is about to send, in both the place it is
+  defined (`mono-orchestrate` step 4) and the place `mono-deploy` recovers it
+  for comparison. `scripts/validate-workflow.mjs` gains
+  `validateOwnerLayerMarkerCanonicalization()`: the marker-canonicalisation
+  clause must appear in a bounded slice of all three sites, or the check
+  fails. Structural only — no new prose pin.
 
 ## [0.20.1] - 2026-07-16
 

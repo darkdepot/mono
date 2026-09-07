@@ -8894,6 +8894,107 @@ function validateOwnerLayerProcedureSurface() {
   assertFieldInFencedBlock("templates/deploy-output.md", "Mono deploy verdict:", "Owner layer:");
 }
 
+// MONO-65 — Linear's document service rewrites every unordered-list marker
+// to `* ` on every write, so a normalised-hash comparison that does not
+// canonicalise the marker reports a difference on a document nobody has
+// touched. The marker-canonicalisation clause must appear, worded
+// identically, everywhere the owner-layer normalisation rule is written
+// out: the reconciliation step in `mono-orchestrate` and both the
+// pre-publication snapshot and the mandatory read-back in `mono-deploy`.
+// Structural only: assert the same token inside a bounded slice at each
+// site, never a whole-sentence prose pin.
+const OWNER_LAYER_MARKER_TOKEN =
+  "unordered-list marker (`- `, `* ` or `+ `) rewritten to the canonical marker `- ` while preserving the line's leading indentation";
+
+function boundedSlice(relativePath, text, startMarker, endMarker, label) {
+  const start = text.indexOf(startMarker);
+  const end = start >= 0 ? text.indexOf(endMarker, start + startMarker.length) : -1;
+  if (start < 0 || end <= start) {
+    fail(`${relativePath} must carry a ${label} section bounded by its own markers`);
+    return null;
+  }
+  return text.slice(start, end);
+}
+
+// `mono-orchestrate/SKILL.md` hard-wraps prose across lines, so the token can
+// straddle a line break exactly where markdown reflows it; collapse runs of
+// whitespace (including newlines) to a single space before matching so the
+// check tracks content, never a particular wrap column.
+function includesCollapsed(haystack, needle) {
+  return haystack.replace(/\s+/g, " ").includes(needle);
+}
+
+function validateOwnerLayerMarkerCanonicalization() {
+  const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
+  const orchestrateSlice = boundedSlice(
+    orchestrateSurface,
+    read(orchestrateSurface),
+    "### Owner-layer reconciliation",
+    "\nWorkflow states:",
+    "owner-layer reconciliation"
+  );
+  if (orchestrateSlice && !includesCollapsed(orchestrateSlice, OWNER_LAYER_MARKER_TOKEN)) {
+    fail(
+      `${orchestrateSurface} owner-layer reconciliation step must canonicalise the unordered-list marker before hashing`
+    );
+  }
+
+  const deploySurface = "skills/mono-deploy/SKILL.md";
+  const deployText = read(deploySurface);
+  const rereadSlice = boundedSlice(
+    deploySurface,
+    deployText,
+    "3. Re-read.",
+    "4. Refuse on a newer owner edit.",
+    "owner-layer publish pre-publication snapshot (sub-step 3)"
+  );
+  if (rereadSlice && !includesCollapsed(rereadSlice, OWNER_LAYER_MARKER_TOKEN)) {
+    fail(
+      `${deploySurface} owner-layer publish sub-step 3 (Re-read) must canonicalise the unordered-list marker before hashing`
+    );
+  }
+  const readbackSlice = boundedSlice(
+    deploySurface,
+    deployText,
+    "6. Read back",
+    "7. Record every outcome.",
+    "owner-layer publish mandatory read-back (sub-step 6)"
+  );
+  if (readbackSlice && !includesCollapsed(readbackSlice, OWNER_LAYER_MARKER_TOKEN)) {
+    fail(
+      `${deploySurface} owner-layer publish sub-step 6 (Read back) must canonicalise the unordered-list marker before hashing`
+    );
+  }
+}
+
+// MONO-65 review follow-up — the marker rule is written per-line and has no
+// awareness of Markdown code fences, so a marker-only edit hidden inside a
+// fenced block would normalise away identically on both sides: reconciliation
+// would miss it, and publication could then overwrite the owner's edit. We
+// have not measured what Linear's document service does to a marker inside a
+// fence, so the fix is not to teach the rule to skip fenced lines (that could
+// just as easily turn a narrow blind spot into a permanent false difference
+// on every run, the very bug this Issue fixes). Instead the two owner-layer
+// documents are constrained: neither may contain a code fence at all. Both
+// contain zero fences today, so this passes now and turns red the moment one
+// is added - which is exactly when the rule's fence behaviour would need to
+// be measured before being trusted. Structural only: a fenced line either
+// exists in the file or it does not.
+const OWNER_LAYER_FENCE_FREE_PATHS = [OWNER_LAYER_MAP_PATH, OWNER_LAYER_CONSTITUTION_PATH];
+const CODE_FENCE_LINE_PATTERN = /^ {0,3}(`{3,}|~{3,})/;
+
+function validateOwnerLayerDocumentsFenceFree() {
+  for (const docPath of OWNER_LAYER_FENCE_FREE_PATHS) {
+    const lines = read(docPath).split("\n");
+    const fenceLineIndex = lines.findIndex((line) => CODE_FENCE_LINE_PATTERN.test(line));
+    if (fenceLineIndex >= 0) {
+      fail(
+        `${docPath} line ${fenceLineIndex + 1}: owner-layer documents must carry no code fence - the marker-canonicalisation rule's behaviour inside a fence has not been measured against Linear's document service`
+      );
+    }
+  }
+}
+
 function validateProjectUpdateSurface() {
   const { paths } = extractReadFirstEntries(read("skills/mono-deploy/SKILL.md"));
   if (!paths.includes("templates/project-update.md")) {
@@ -8945,6 +9046,8 @@ validateSkills();
 validateReadFirstTierContract();
 validateProjectUpdateSurface();
 validateOwnerLayerProcedureSurface();
+validateOwnerLayerMarkerCanonicalization();
+validateOwnerLayerDocumentsFenceFree();
 validatePreWriteHandoffReviewOrder();
 validateRetiredAdapterReferenceAllowlist();
 validateOwnerLayerMapParser();
