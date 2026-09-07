@@ -309,6 +309,7 @@ function validateTemplateSections() {
       "## Invariants",
       "## Live mode",
       "## Theme project",
+      "## State update",
       "## Examples",
       "## Acceptance set",
     ],
@@ -7876,6 +7877,13 @@ function validateTwoPhaseDispatchHandshake() {
   }
 }
 
+// The tier-2 heading and the tier rule are module-level because two checks
+// read the same block: the ladder contract below, and validateProjectUpdateSurface,
+// which slices the tier-2 block of one skill. One copy, two readers.
+const READ_WHEN_TIER_HEADING = "Read when — load the file only when its condition is true for this run:";
+const READ_WHEN_TIER_RULE =
+  'Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.';
+
 // MONO-45 — two-tier read-first ladders. Tier-1 ("Read now") is the eager
 // closure every run of a stage loads; tier-2 ("Read when") is deferred behind a
 // stated condition and is deliberately outside the validated set, because
@@ -7885,18 +7893,15 @@ function validateTwoPhaseDispatchHandshake() {
 // still forces its consumers to keep contract paths in tier-1.
 function validateReadFirstTierContract() {
   const tierNowHeading = "Read now — every run of this stage loads all of these:";
-  const tierWhenHeading = "Read when — load the file only when its condition is true for this run:";
-  const tierRule =
-    'Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.';
 
   for (const skill of listSkillNames()) {
     const relativePath = `skills/${skill}/SKILL.md`;
     if (!exists(relativePath)) continue;
     const text = read(relativePath);
-    for (const required of [tierNowHeading, tierWhenHeading, tierRule]) {
+    for (const required of [tierNowHeading, READ_WHEN_TIER_HEADING, READ_WHEN_TIER_RULE]) {
       assertIncludes(relativePath, required, JSON.stringify(required));
     }
-    if (text.indexOf(tierNowHeading) > text.indexOf(tierWhenHeading)) {
+    if (text.indexOf(tierNowHeading) > text.indexOf(READ_WHEN_TIER_HEADING)) {
       fail(`${relativePath} must state the "Read now" tier before the "Read when" tier`);
     }
 
@@ -7904,7 +7909,10 @@ function validateReadFirstTierContract() {
     if (paths[0] !== "AGENTS.md") {
       fail(`${relativePath} must keep AGENTS.md as the first "Read now" entry`);
     }
-    const tierTwoBlock = text.slice(text.indexOf(tierWhenHeading) + tierWhenHeading.length, text.indexOf(tierRule));
+    const tierTwoBlock = text.slice(
+      text.indexOf(READ_WHEN_TIER_HEADING) + READ_WHEN_TIER_HEADING.length,
+      text.indexOf(READ_WHEN_TIER_RULE)
+    );
     for (const line of tierTwoBlock.split("\n")) {
       if (/^\d+\.\s/.test(line.trim())) {
         fail(`${relativePath} has a numbered "Read when" entry, which the tier-1 parser would validate: ${line.trim()}`);
@@ -7951,11 +7959,11 @@ function validateReadFirstTierContract() {
     "1. `AGENTS.md`",
     "2. `references/lifecycle.md`",
     "",
-    tierWhenHeading,
+    READ_WHEN_TIER_HEADING,
     "",
     "- `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`.",
     "",
-    tierRule,
+    READ_WHEN_TIER_RULE,
     "",
   ].join("\n");
   const tieredPaths = extractReadFirstEntries(tieredFixture).paths;
@@ -8292,6 +8300,25 @@ function validateProjectUpdateSurface() {
     "Project update:",
     "project-update field in the deploy output template"
   );
+  // The orchestrator publishes project updates too, so the template must sit in
+  // its deferred read ladder. extractReadFirstEntries parses tier-1 entries
+  // only, so this is a substring check on the tier-2 slice between the
+  // "Read when" heading and the tier rule.
+  const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
+  const orchestrateText = read(orchestrateSurface);
+  const tierTwoStart = orchestrateText.indexOf(READ_WHEN_TIER_HEADING);
+  const tierTwoEnd = orchestrateText.indexOf(READ_WHEN_TIER_RULE);
+  if (tierTwoStart < 0 || tierTwoEnd <= tierTwoStart) {
+    fail(`${orchestrateSurface} must carry a "Read when" tier block holding the project-update contract`);
+  } else if (
+    !orchestrateText
+      .slice(tierTwoStart + READ_WHEN_TIER_HEADING.length, tierTwoEnd)
+      .includes("templates/project-update.md")
+  ) {
+    fail(
+      `${orchestrateSurface} must read templates/project-update.md in its "Read when" tier: the orchestrator writes project updates too`
+    );
+  }
   // The theme-project field is what carries an issue-only shipment into a
   // project feed: the Issue template and intake author it, and the deploy
   // step and the update template consume it. Structural field check only.

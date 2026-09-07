@@ -32,6 +32,7 @@ Read when — load the file only when its condition is true for this run:
 - `references/lifecycle.md` — when a Linear lifecycle move is sequenced or a queued lifecycle mutation is applied.
 - `references/readiness-gates.md` — when a risk class or a stage readiness gate has to be decided for a wave.
 - `references/questioning.md` — when this run escalates a decision to the owner.
+- `templates/project-update.md` — when this run publishes or edits a Linear project update, including the update it writes for a project sweep or for a project completed by hand.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
@@ -429,6 +430,13 @@ Rules:
   (Product Language For The Owner in `references/human-friendly-output.md`).
   The machine register lives only in the «Техника (можно не читать):» tail,
   and the owner never has to ask for a human version.
+- Every project update in Linear — a sweep over the Delivery projects, a
+  completion by hand, a retro note, an edit of someone else's update — is
+  written only in the form of `templates/project-update.md` («Выкладка» or
+  «Состояние»). The status register and the ledger — «Техника», Issue keys,
+  wave slice codes, SHAs, build numbers, review rounds — never reach a Linear
+  update. One update is one project and one result: a sweep over several
+  shipped Issues is split into one update per Issue.
 
 Session verdicts:
 
