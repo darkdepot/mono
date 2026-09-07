@@ -153,17 +153,30 @@ dispatch, a stage, or a deploy.
    carries the installed copy.
 3. Normalise both sides identically before comparing: LF line endings, no
    trailing whitespace on any line, every line beginning `Версия пака:`
-   removed, leading and trailing blank lines trimmed, exactly one closing LF.
-   Hash each normalised text with SHA-256. Equal hashes mean this document is
-   synchronised and nothing further happens for it.
+   removed, a line whose first non-whitespace characters are an
+   unordered-list marker (`- `, `* ` or `+ `) rewritten to the canonical
+   marker `- ` while preserving the line's leading indentation, leading and
+   trailing blank lines trimmed, exactly one closing LF. The marker step
+   exists because Linear's document service rewrites every unordered-list
+   marker to `* ` on every write — a property of the service, not of our
+   files — so without it a document the owner has never touched would still
+   show a difference on every run. This step applies to every line,
+   including a line inside a fenced code block, so a marker-only edit
+   hidden inside a fence is invisible to this comparison; the two
+   owner-layer documents must therefore carry no fenced code block, and if
+   one is ever added, Linear's marker-rewrite behaviour inside it must be
+   measured before this rule can be trusted there. Hash each normalised
+   text with SHA-256. Equal hashes mean this document is synchronised and
+   nothing further happens for it.
 4. A difference is an owner edit waiting for work. Take the reconciliation
    snapshot of that document:
    - `document id` — the Linear id from step 1;
    - `base hash` — the SHA-256 of the normalised LINEAR document as this
-     reconciliation read it. The publication step in
-     `skills/mono-deploy/SKILL.md` compares against exactly this value later,
-     which is how it tells a document the owner has not touched since from one
-     edited after the snapshot;
+     reconciliation read it just now: always a fresh `get_document(<id>)`
+     read, never the text a step believes it sent or is about to send. The
+     publication step in `skills/mono-deploy/SKILL.md` compares against
+     exactly this value later, which is how it tells a document the owner
+     has not touched since from one edited after the snapshot;
    - `diff hash` — the SHA-256 of the unified diff between the normalised
      installed copy and the normalised Linear document. It names this
      difference, and it is what holds one difference to one draft.
