@@ -184,6 +184,27 @@ For Zeni, the configured flow can set implementation to Compound `ce-work`, then
 
 See `references/install.md` for install details and `references/versioning.md` for the local skill pack and project config contract.
 
+## Owner Layer
+
+The pack is English because models read it. The owner layer is the Russian
+documentation the owner reads and edits instead: `docs/ru/karta-paka.md` says
+what every pack file is for and what to change, and
+`docs/ru/konstituciya-paka.md` states the rules the owner sees and decides,
+each anchored to a pack heading or stable ID.
+
+The Linear team documents «Карта пака» and «Конституция пака» are the copy the
+owner reads and edits. This repository holds the copy the validator checks, and
+`scripts/install-local.mjs` publishes a third copy into
+`<skills-root>/.mono-agent-workflow/docs/ru/` with its hash in the lockfile.
+
+An owner edit becomes work through the ordinary path: the orchestrator compares
+the Linear documents with the installed copies at every session start and on
+«сверь конституцию/карту», files each difference as one non-startable draft
+Issue, and that draft is approved like any other before the pack changes. After
+the deploy, `mono-deploy` writes the merged copy back into Linear only when the
+owner has not edited the document since — otherwise the owner's text stays and
+the closeout says so. See `references/install.md` for paths and hashes.
+
 ## Documentation Map
 
 - `CHANGELOG.md`: released workflow behavior changes.

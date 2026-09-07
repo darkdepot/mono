@@ -19,6 +19,38 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ### Added
 
+- Owner layer, part three — the procedure around the two documents.
+  `mono-orchestrate` gains an Owner-layer reconciliation step that runs at every
+  session start and on the owner's «сверь конституцию/карту»: it reads «Карта
+  пака» and «Конституция пака» from Linear by the ids in
+  `owner-layer/documents.json`, compares each with its installed copy under
+  `../.mono-agent-workflow/docs/ru/` by normalised hash (LF, no trailing
+  whitespace, `Версия пака:` lines removed, trimmed, one closing LF), and turns
+  a difference into exactly ONE non-startable draft Issue per difference hash,
+  carrying the snapshot (document id, base hash, diff hash) in the Issue body
+  and confirmed by reading the created Issue back. The draft is activated only
+  through the ordinary create-then-approve path: editing a document is a
+  request, never an approval. The status line «Конституция и карта:
+  синхронизированы | <N> правок ждут» is added to
+  `templates/orchestrator-brief.md`.
+- `mono-deploy` gains an `owner-layer publish` step after `project-update`: when
+  the deployed PR changed `docs/ru/*`, it re-reads the Linear document, compares
+  its normalised hash with the snapshot's base hash, and writes the merged copy
+  with its `Версия пака:` line only when the two agree — then confirms the write
+  by reading the document back, because the update response truncates `content`
+  and a Linear write can report success while applying nothing. The outcomes are
+  `Owner layer: published <document> @ <sha>`,
+  `not published — concurrent owner edit`, `not published — no snapshot`,
+  `not published — <reason>` for a connector failure (including a write no
+  read-back confirms), and `n/a — deploy did not change docs/ru`. Every outcome
+  is verdict-neutral: the deploy verdict never changes and closeout is never
+  blocked. The `Owner layer:` field joins the deploy closeout block and
+  `templates/deploy-output.md`.
+- `scripts/validate-workflow.mjs` gains `validateOwnerLayerProcedureSurface()`:
+  both document paths must appear in the `mono-orchestrate` "Read when" tier and
+  in the step itself, and `Owner layer:` must appear in `mono-deploy` and in the
+  deploy output template. Structural only — no new prose pins.
+  `references/install.md` and the README describe how the owner layer is edited.
 - Owner layer, part two: `docs/ru/konstituciya-paka.md` is the Russian
   constitution of the pack — 34 articles in nine sections covering the rules the
   owner sees and decides: status language, project-update form, ownership,

@@ -8810,6 +8810,90 @@ function validateOwnerProductLanguage() {
   assertIncludes("README.md", "product language", "README mono-orchestrate product-language statuses");
 }
 
+// Fenced blocks of a Markdown surface, in order, without their fence lines.
+// The owner-layer field checks below need them because a durable machine block
+// is the only occurrence of a field that downstream recovery depends on.
+function fencedBlocks(text) {
+  const blocks = [];
+  let current = null;
+  for (const line of text.split("\n")) {
+    if (/^\s{0,3}```/.test(line)) {
+      if (current === null) current = [];
+      else {
+        blocks.push(current.join("\n"));
+        current = null;
+      }
+      continue;
+    }
+    if (current !== null) current.push(line);
+  }
+  return blocks;
+}
+
+// Assert a field inside the fenced block a marker identifies, never anywhere in
+// the file: a surface that also EXPLAINS the field in prose would keep a
+// whole-file check green after the machine-block line itself was deleted, which
+// is the one deletion that breaks recovery by a later stage.
+function assertFieldInFencedBlock(relativePath, marker, field) {
+  const blocks = fencedBlocks(read(relativePath)).filter((block) => block.includes(marker));
+  if (blocks.length === 0) {
+    fail(`${relativePath} must keep a fenced block containing ${JSON.stringify(marker)}`);
+    return;
+  }
+  for (const block of blocks) {
+    const hasField = block
+      .split("\n")
+      .some((line) => line.trim().replace(/^-\s*/, "").startsWith(field));
+    if (!hasField) {
+      fail(
+        `${relativePath} block ${JSON.stringify(marker)} must carry the ${JSON.stringify(field)} field`
+      );
+    }
+  }
+}
+
+function validateOwnerLayerProcedureSurface() {
+  // MONO-64 — the owner-layer PROCEDURE, checked structurally only. The
+  // reconciliation step must declare both documents as a deferred read AND name
+  // them in the step itself, and the publication step must carry its closeout
+  // field into the deploy template. Nothing here pins a sentence: how the two
+  // steps are worded stays editable, the surfaces they live on do not.
+  const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
+  const orchestrateText = read(orchestrateSurface);
+  const tierTwoStart = orchestrateText.indexOf(READ_WHEN_TIER_HEADING);
+  const tierTwoEnd = orchestrateText.indexOf(READ_WHEN_TIER_RULE);
+  if (tierTwoStart < 0 || tierTwoEnd <= tierTwoStart) {
+    fail(`${orchestrateSurface} must carry a "Read when" tier block holding the owner-layer documents`);
+  } else {
+    const tierTwoSlice = orchestrateText.slice(
+      tierTwoStart + READ_WHEN_TIER_HEADING.length,
+      tierTwoEnd
+    );
+    // The body after the tier rule is where the reconciliation step lives; a
+    // path declared in the ladder but never used by a step is a dangling read.
+    const stepBody = orchestrateText.slice(tierTwoEnd + READ_WHEN_TIER_RULE.length);
+    for (const documentPath of [OWNER_LAYER_MAP_PATH, OWNER_LAYER_CONSTITUTION_PATH]) {
+      if (!tierTwoSlice.includes(documentPath)) {
+        fail(
+          `${orchestrateSurface} must read ${documentPath} in its "Read when" tier: the orchestrator compares it with the installed copy`
+        );
+      }
+      if (!stepBody.includes(documentPath)) {
+        fail(
+          `${orchestrateSurface} must name ${documentPath} in its owner-layer reconciliation step, not only in the "Read when" tier`
+        );
+      }
+    }
+  }
+
+  // The publication outcome has to survive in the blocks a later stage and the
+  // owner actually read back: the deploy closeout comment and both blocks of the
+  // deploy output template.
+  assertFieldInFencedBlock("skills/mono-deploy/SKILL.md", "mono-deploy closeout", "Owner layer:");
+  assertFieldInFencedBlock("templates/deploy-output.md", "Deploy status:", "Owner layer:");
+  assertFieldInFencedBlock("templates/deploy-output.md", "Mono deploy verdict:", "Owner layer:");
+}
+
 function validateProjectUpdateSurface() {
   const { paths } = extractReadFirstEntries(read("skills/mono-deploy/SKILL.md"));
   if (!paths.includes("templates/project-update.md")) {
@@ -8860,6 +8944,7 @@ function validateProjectUpdateSurface() {
 validateSkills();
 validateReadFirstTierContract();
 validateProjectUpdateSurface();
+validateOwnerLayerProcedureSurface();
 validatePreWriteHandoffReviewOrder();
 validateRetiredAdapterReferenceAllowlist();
 validateOwnerLayerMapParser();

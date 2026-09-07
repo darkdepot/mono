@@ -71,9 +71,19 @@ Workflow:
     7. Publish the update with health `On track` and read it back.
     8. Record the two closeout lines below in the Issue comment and in the deploy report.
     Any refusal in sub-steps 5-7 is recorded: a refused or unconfirmed publication as `Project update: not posted — <reason>`, a refused or unconfirmed transition as `Project: stays <status> — status write unconfirmed`, each with a ledger entry under orchestration and a line in the next owner status. An `n/a` outcome on the issue-only path is recorded the same way: the same ledger entry under orchestration and a line in the next owner status, in the product's own language («выложено, в ленте проектов не отражено: тематического проекта нет»). It never changes the deploy verdict and never blocks closeout. The project is completed by shipment only: a project left with no open Issues by cancellation or by a hand-closed tail is the owner's to complete, and this step neither publishes nor moves anything for it. An issue-only shipment completes no project either — the theme-project path writes no project status at all, whatever the state of that project.
-13. `learn`: record durable operational discoveries with `gstack-learnings-log` when they would save future time.
-14. `retire`: after deploy verification and Linear closeout are complete, synchronously remove the Issue entry from `workers.json` in this orchestrator session before emitting the terminal deploy closeout. This is the retirement event; it requires no worker acknowledgement or intermediate worker status. Keep historical reports and logs, but never leave a deployed worker in the active registry. A blocked, needs-human, failed, or timed-out closeout does not retire the worker.
-15. Return the concise report in `templates/deploy-output.md`.
+13. `owner-layer publish`: when the deployed PR changed `docs/ru/*`, carry the merged copy into the Linear document the owner reads — and never over an edit the owner made after the snapshot. This step owns the reads, the refusals, and the closeout line; the reconciliation that produced the snapshot lives in `skills/mono-orchestrate/SKILL.md`.
+    1. Condition. Read the merged diff of the deployed PR. When it changed no file under `docs/ru/`, this step ends as `Owner layer: n/a — deploy did not change docs/ru` and reads and writes nothing. Otherwise run the sub-steps below once per changed document.
+    2. Snapshot. Recover the base hash from Linear: the «Снимок контекста» of the draft Issue this deploy shipped, or — for the first publication of a document no owner edit has touched — the base hashes of the stub documents recorded in the project comment of the connector spike. Both are Linear-side records; a local `owner-layer/<file>.snapshot.json` is a cache and never the source. With no snapshot in Linear, do not write: that document's outcome is `not published — no snapshot`. A missing base hash is never reconstructed by guessing.
+    3. Re-read. Read the document with `get_document(<id>)` and normalise it exactly as the reconciliation step does — LF line endings, no trailing whitespace, every `Версия пака:` line removed, leading and trailing blank lines trimmed, one closing LF — then SHA-256 the result. Keep the `updatedAt` and `updatedBy` this read returned beside that hash: the connector has no version or etag field (spike S0), so those two values plus the content hash are the whole concurrency signal available to this step.
+    4. Refuse on a newer owner edit. When that hash differs from the snapshot's base hash, the owner edited the document after the snapshot: write nothing, keep the owner's text as it stands, and that document's outcome is `not published — concurrent owner edit`.
+    5. Publish when the hashes are equal. Send the merged repository copy of the document, carrying its `Версия пака: <merged SHA>` line, through `save_document(<id>, <content>)`. That read and this write are adjacent by rule: the comparison in sub-step 4 is the write's precondition, and nothing else — another document, a retry, any other Linear call — happens between them. When anything did intervene, repeat sub-steps 3 and 4 before writing, and record the `updatedAt`/`updatedBy` of the read the write was based on in the deploy report.
+       This narrows the window; it cannot close it. An owner edit that lands inside the round-trip between that last read and the write is invisible to this connector, which offers no revision or hash precondition to write under — and the read-back then confirms the content this step itself sent, so it cannot detect that loss either. Do not claim it as detected: the recorded `updatedAt`/`updatedBy` is what makes such a case traceable afterwards in the document's own history, and shrinking the window to one round-trip is the whole mitigation this contract allows.
+    6. Read back — mandatory, never optional. The update response truncates `content`, and a Linear write can report success while applying nothing, so the response is not evidence of anything. Read the document again with `get_document(<id>)`, normalise it by the same rule, and compare that hash with the NORMALISED hash of the content you sent — both sides normalised, so the `Версия пака:` line that normalisation strips cannot make an identical write look unconfirmed. Equal: that document's outcome is `published @ <merged SHA>`. Different, or the read itself fails: `not published — write not confirmed by read-back`. Every other connector failure takes the same shape, `not published — <reason>`, naming what failed.
+    7. Record every outcome. `Owner layer:` carries ONE entry per document the PR changed, `<file>: <outcome>`, joined with `; ` in path order — a deploy that touched both documents therefore records both, and no publication or refusal can fall out of the closeout because the field held only one of them. The field takes its `n/a` form only when sub-step 1 ended the step. The same line goes into the closeout machine block below, into the deploy report, and — in product words — into the next owner status.
+    Every outcome of this step is verdict-neutral: publication is a result of closeout, never a gate of it. A refusal never changes the deploy verdict, never blocks `mono-closeout`, and never becomes a requirement of a readiness check. Refusing to overwrite is the correct outcome and not something to retry around: the owner's own edit becomes work through the ordinary reconciliation at the next orchestrator start.
+14. `learn`: record durable operational discoveries with `gstack-learnings-log` when they would save future time.
+15. `retire`: after deploy verification and Linear closeout are complete, synchronously remove the Issue entry from `workers.json` in this orchestrator session before emitting the terminal deploy closeout. This is the retirement event; it requires no worker acknowledgement or intermediate worker status. Keep historical reports and logs, but never leave a deployed worker in the active registry. A blocked, needs-human, failed, or timed-out closeout does not retire the worker.
+16. Return the concise report in `templates/deploy-output.md`.
 
 Deploy workflow config:
 
@@ -108,7 +118,7 @@ Learning capture:
 
 Deploy closeout shape:
 
-When recording this closeout as a Linear comment, open with the Russian human lead above the machine block. The first Russian sentence must state the shipped product outcome and verification environment. Post the comment once, after `project-update` has produced its two lines, so it is written complete instead of patched afterwards:
+When recording this closeout as a Linear comment, open with the Russian human lead above the machine block. The first Russian sentence must state the shipped product outcome and verification environment. Post the comment once, after `project-update` and `owner-layer publish` have produced their lines, so it is written complete instead of patched afterwards:
 
 ```text
 Выкатили: <что получили пользователи>; проверено на <среда>.
@@ -128,6 +138,7 @@ Post-ship check: <PASS/FAIL/BLOCKED + meaning>
 Linear closeout: <Done/not done + reason>
 Project update: <posted <url> | already posted <url> | not posted — <reason> | n/a — <reason>>
 Project: <Completed | stays <status>, open <N> | stays <status> — <reason> | n/a — <reason>>
+Owner layer: <n/a — <reason> | <file>: <published @ <sha> | not published — <reason>>[; <file>: …]>
 Learnings recorded: <none/list>
 Learnings consulted: <none/keys/helper unavailable>
 Checked: <states inspected>
@@ -156,6 +167,7 @@ Rules:
 - Do not use Project Updates as a required gate; record closeout in Linear comments/resources and status.
 - Project Updates stay informational here: `project-update` is a STEP of this stage, never a gate of it. `mono-deploy` publishes the update as a result of closeout, and a failed update or a failed project transition is recorded, visible, and verdict-neutral.
 - Do not let the `project-update` step change a deploy verdict, block `mono-closeout`, or become a requirement of any readiness check.
+- Keep `owner-layer publish` verdict-neutral in the same way: it publishes as a result of closeout, and refusing to overwrite a document the owner edited after the snapshot is a recorded outcome, never a failed deploy and never a reason to retry the write.
 - Do not move a project to `Completed` outside this step, and do not move one whose last open Issue was cancelled or closed by hand rather than shipped.
 - Do not report deploy closeout complete until the retired Issue entry has been removed from `workers.json`; the orchestrator owns this mutation.
 - Keep Linear-facing comments in the project config language; use Russian when no project config is present.
@@ -170,5 +182,6 @@ Final response must include:
 - Live QA result (or the recorded skip reason).
 - Linear closeout outcome.
 - Project update outcome and project completion outcome.
+- Owner-layer publication outcome, including the reason when nothing was published.
 - Learnings recorded.
 - Checked and not-checked boundary.

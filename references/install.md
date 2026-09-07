@@ -100,6 +100,18 @@ stale. The `.mono-agent-workflow/` allowlist is the union of the runtime
 scripts and the owner-layer documents and stays fail-closed: any other file
 under that directory is reported as an unexpected installed pack file.
 
+How the owner layer is edited: in Linear, never in the repository copy and
+never in the installed one. At the start of every orchestrator session, and on
+the owner's «сверь конституцию/карту», `mono-orchestrate` compares each Linear
+document with the installed copy by normalised hash and turns a difference into
+ONE non-startable draft Issue per difference, carrying the reconciliation
+snapshot (document id, base hash, diff hash). That draft goes through the
+ordinary approval path before any worker touches the pack, so an edited article
+is a request and never an approval. After the deploy that ships the change,
+`mono-deploy` re-reads the document, writes the merged copy back only when the
+owner has not edited it since the snapshot, and confirms the write by reading
+the document again — the owner's own text is never overwritten.
+
 Use an explicit single skills root only for tests or runtimes outside the
 known roots:
 
