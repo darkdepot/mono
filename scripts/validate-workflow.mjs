@@ -9012,6 +9012,52 @@ function validateOwnerLayerRecordLookupByDocumentId() {
   }
 }
 
+// MONO-71 — two reconciliation edge cases are part of the owner-layer
+// contract: step 3 must name the service rewrite that makes bare Linear Issue
+// keys unsafe, and step 5 must make a found record authoritative regardless of
+// lifecycle state. Keep these checks structural by matching bounded invariant
+// tokens inside each numbered step rather than pinning either sentence wholesale.
+const OWNER_LAYER_BARE_ISSUE_KEY_REWRITE_TOKEN =
+  "becoming link markup on write";
+const OWNER_LAYER_BARE_ISSUE_KEY_RULE_TOKEN =
+  "owner-layer documents must carry no bare Linear issue key";
+const OWNER_LAYER_FOUND_RECORD_STATE_TOKEN =
+  "found record confirms the difference regardless of its lifecycle state";
+
+function validateOwnerLayerReconciliationEdgeCases() {
+  const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
+  const orchestrateText = read(orchestrateSurface);
+  const step3Slice = boundedSlice(
+    orchestrateSurface,
+    orchestrateText,
+    "3. Normalise both sides identically before comparing:",
+    "\n4. A difference is an owner edit waiting for work.",
+    "owner-layer reconciliation step 3 (normalisation)"
+  );
+  const step3Tokens = [
+    OWNER_LAYER_BARE_ISSUE_KEY_REWRITE_TOKEN,
+    OWNER_LAYER_BARE_ISSUE_KEY_RULE_TOKEN,
+  ];
+  if (step3Slice && step3Tokens.some((token) => !includesCollapsed(step3Slice, token))) {
+    fail(
+      `${orchestrateSurface} step 3 (Normalise both sides identically before comparing) must explain the bare Linear issue-key rewrite and forbid bare issue keys in owner-layer documents`
+    );
+  }
+
+  const step5Slice = boundedSlice(
+    orchestrateSurface,
+    orchestrateText,
+    "5. One filed record per difference hash.",
+    "\n6. File it through the ordinary intake",
+    "owner-layer reconciliation step 5 (one filed record per difference hash)"
+  );
+  if (step5Slice && !includesCollapsed(step5Slice, OWNER_LAYER_FOUND_RECORD_STATE_TOKEN)) {
+    fail(
+      `${orchestrateSurface} step 5 (One filed record per difference hash) must state that a found record confirms the difference regardless of its lifecycle state`
+    );
+  }
+}
+
 // MONO-65 review follow-up — the marker rule is written per-line and has no
 // awareness of Markdown code fences, so a marker-only edit hidden inside a
 // fenced block would normalise away identically on both sides: reconciliation
@@ -9035,6 +9081,27 @@ function validateOwnerLayerDocumentsFenceFree() {
     if (fenceLineIndex >= 0) {
       fail(
         `${docPath} line ${fenceLineIndex + 1}: owner-layer documents must carry no code fence - the marker-canonicalisation rule's behaviour inside a fence has not been measured against Linear's document service`
+      );
+    }
+  }
+}
+
+// MONO-71 — Linear rewrites a bare Issue key from this workspace into link
+// markup when a document is written. The comparison deliberately does not
+// canonicalise issue links, so keep the two owner-layer documents free of the
+// only key shape the service rewrites here. Contract and artifact ids such as
+// PC-005, IS-004, and К-22 remain valid because they do not match this pattern.
+const OWNER_LAYER_BARE_ISSUE_KEY_PATTERN = /\bMONO-[0-9]+\b/;
+
+function validateOwnerLayerDocumentsBareIssueKeyFree() {
+  for (const docPath of [OWNER_LAYER_MAP_PATH, OWNER_LAYER_CONSTITUTION_PATH]) {
+    const lines = read(docPath).split("\n");
+    const bareKeyLineIndex = lines.findIndex((line) =>
+      OWNER_LAYER_BARE_ISSUE_KEY_PATTERN.test(line)
+    );
+    if (bareKeyLineIndex >= 0) {
+      fail(
+        `${docPath} line ${bareKeyLineIndex + 1}: owner-layer documents must carry no bare Linear issue key - measure the document service rewrite before extending the normalisation rule`
       );
     }
   }
@@ -9526,6 +9593,8 @@ validateProjectUpdateSurface();
 validateOwnerLayerProcedureSurface();
 validateOwnerLayerMarkerCanonicalization();
 validateOwnerLayerRecordLookupByDocumentId();
+validateOwnerLayerReconciliationEdgeCases();
+validateOwnerLayerDocumentsBareIssueKeyFree();
 validateOwnerLayerDocumentsFenceFree();
 validatePreWriteHandoffReviewOrder();
 validateRetiredAdapterReferenceAllowlist();
