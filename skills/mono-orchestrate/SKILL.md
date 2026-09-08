@@ -165,9 +165,13 @@ dispatch, a stage, or a deploy.
    hidden inside a fence is invisible to this comparison; the two
    owner-layer documents must therefore carry no fenced code block, and if
    one is ever added, Linear's marker-rewrite behaviour inside it must be
-   measured before this rule can be trusted there. Hash each normalised
-   text with SHA-256. Equal hashes mean this document is synchronised and
-   nothing further happens for it.
+   measured before this rule can be trusted there. The third observed service
+   rewrite is a bare Linear issue key (for example `MONO-57`) becoming link
+   markup on write; this rule does not canonicalise issue links, so owner-layer
+   documents must carry no bare Linear issue key, and if one appears, measure
+   the service's behaviour before trusting the rule there. Hash each
+   normalised text with SHA-256. Equal hashes mean this document is
+   synchronised and nothing further happens for it.
 4. A difference is an owner edit waiting for work. Take the reconciliation
    snapshot of that document:
    - `document id` — the Linear id from step 1;
@@ -196,8 +200,16 @@ dispatch, a stage, or a deploy.
    were fully read may be treated as returning none that confirms. When a
    candidate confirms this way, create nothing and change nothing: the
    difference is already filed, and a later start with the same diff hash
-   produces no second record. Create a new record only when the document-id
-   search and its candidate reads above find none that confirms.
+   produces no second record. A found record confirms the difference
+   regardless of its lifecycle state: canceled means the difference was
+   considered and rejected, closed means it was already carried over, and
+   neither is filed again; if the owner returns to a rejected difference,
+   they edit the document again and a record is filed only for a DIFFERENT
+   normalised difference with a new diff hash, while the previous diff hash
+   remains confirmed regardless of the later edit because the hash is
+   computed from the normalised difference, not from the fact of editing.
+   Create a new record only when the document-id search and its candidate
+   reads above find none that confirms.
 6. File it through the ordinary intake, never by hand. Which lane applies
    decides what is created, and each lane keeps its own approval boundary:
    - one PR, and the issue-only conditions are met → `mono-issue`. Its

@@ -6,6 +6,15 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+### Owner-layer reconciliation (MONO-71)
+
+- Clarify that a filed owner-layer difference stays confirmed when its record
+  is canceled or closed, and document Linear's bare issue-key rewrite without
+  changing reconciliation comparison behavior.
+- Reject bare `MONO-<number>` Issue keys in both owner-layer documents while
+  continuing to allow contract and artifact identifiers such as `PC-005`,
+  `IS-004`, and `К-22`; structurally protect both new rule clauses.
+
 ### Repository hygiene (MONO-70)
 
 - Ignore `.claude/` and `.worktrees/` so local agent workspaces do not mark
