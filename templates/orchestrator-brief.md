@@ -118,6 +118,7 @@ never has to ask for a human version.
 Где мы к цели «<цель волны>»: готово — <части, простыми словами>; осталось — <части и их состояние>.
 
 Конституция и карта: синхронизированы | <N> правок ждут.
+Модель оркестратора: по политике | не по политике | не удалось проверить.
 
 В работе сейчас:
 - <Что пользователь получит, когда это будет готово>. <Где сейчас: пишется код | локальная проверка перед PR | PR, авто-ревью и проверки | выкладка в прод | стоит: <из-за чего>>. <Когда рассчитываю выложить, или честное «срока пока нет»>. (<ISSUE-KEY>)
@@ -174,6 +175,9 @@ Rules that bind every status:
   чего>» in «В работе сейчас:», with the blocker named in product words.
   «Стоит» is not a stage: it says the work is not moving and why, so a
   frozen line cannot masquerade as one still in progress.
+- «Модель оркестратора:» uses the three-outcome self-check in
+  `references/model-policy.md`; missing authoritative environment data means
+  «не удалось проверить». Do not infer a match from the prompt.
 - «Конституция и карта:» is one line: «синхронизированы» when both owner-layer
   documents match their installed copies, or «<N> правок ждут» with the number
   of owner edits already filed as non-startable drafts by the reconciliation
