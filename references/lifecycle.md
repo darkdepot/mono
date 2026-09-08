@@ -162,7 +162,7 @@ Required:
 - Branch/worktree state inspected.
 - Local diff compared against Project, PRD, Tech Spec, and Issue.
 - Targeted tests/checks run or explicitly reported as not run.
-- Installed `autoreview` helper run until it reports clean with the explicit risk-matched Opus 5 model and effort from `references/autoreview-routing.md`, or preflight exits `blocked`/`needs-human`.
+- Installed `autoreview` helper run until it reports clean with the model resolved from [role:autoreview](model-policy.md#roles) and risk-matched effort from `references/autoreview-routing.md`, or preflight exits `blocked`/`needs-human`.
 - Commit state reported, with commits created only when safe and configured.
 - Preflight certificate emitted with status `ready`, `blocked`, `drift-candidate`, or `needs-human`.
 

@@ -4713,16 +4713,9 @@ function validateDocsAndExamples() {
     ],
     "references/readiness-gates.md": ["`tiny`:", "`standard`:", "`deep`:", "`risky`:", "references/autoreview-routing.md", "Tiny Output Profile"],
     "references/autoreview-routing.md": [
-      "`tiny` | `claude-opus-5` | `low`",
-      "`standard` | `claude-opus-5` | `medium`",
-      "`deep` | `claude-opus-5` | `high`",
-      "`risky` | `claude-opus-5` | `high`",
-      "`risky` with critical escalation | `claude-opus-5` | `xhigh`",
       "Never rely on the external `autoreview` helper's built-in model default",
       "Do not silently fall back",
       "at least as capable as the code's producer",
-      "`standard` re-tiers to `claude-opus-5` / `high`",
-      "`claude-opus-5` (same-model review)",
       "no-test-edits rule",
       "cross-vendor review whenever the worker",
       "Cross-vendor review is deliberately not a code-review requirement",
@@ -4917,7 +4910,6 @@ function validateAntiPatterns() {
     "Changed files: <count/list or summary>",
     "Local verification: <commands run + outcome>",
     "Autoreview: <clean|blocked|needs-human|unavailable>; final command: <selected-scope helper command>; clean result: <exit 0 + clean line or none>",
-    "Autoreview route: risk=<tiny|standard|deep|risky>; source=<Linear artifact or diff inference>; critical=<none|concrete escalation signal>; model=<claude-opus-5>; effort=<low|medium|high|xhigh>; reclassified=<no|summary>",
     "Autoreview loop: <iterations>; accepted findings fixed: <none/list>; residual actionable findings: <none/list, must be none for ready>",
     "Drift candidate: <none/summary>",
     "Not checked: <manual QA/browser/mobile/deploy/etc.>",
@@ -4947,8 +4939,6 @@ function validateAntiPatterns() {
   }
   const forbiddenRoutingCopies = [
     "`tiny` ->",
-    "claude-opus-5/low for `tiny`",
-    "maps `tiny`/`standard` to explicit Opus 5 efforts",
   ];
   for (const relativePath of ["skills/mono-preflight/SKILL.md", "README.md", "CHANGELOG.md", "examples/zeni-dogfood.md"]) {
     const body = read(relativePath);
@@ -9095,6 +9085,439 @@ function validateProjectUpdateSurface() {
   ]) {
     assertIncludes(themeProjectSurface, "Тематический проект:", "theme-project field");
   }
+}
+
+// MONO-69: model cells are data, never fixture expectations. Role bindings,
+// command fields, route keys and effort values are structural contracts.
+const MODEL_POLICY_PATH = "references/model-policy.md";
+const MODEL_ROLES = [
+  "orchestrator", "second-voice", "second-voice-alt", "worker-default",
+  "worker-complex", "worker-claude", "autoreview",
+];
+const MODEL_ENUM_ALLOWLIST = new Set([
+  "claude-code-desktop", "claude-5", "gpt-worker", "gpt-5",
+]);
+const MODEL_EFFORTS = ["low", "medium", "high", "xhigh"];
+const REVIEW_ROUTES = new Map([
+  ["tiny", "low"], ["standard", "medium"], ["deep", "high"],
+  ["risky", "high"], ["risky with critical escalation", "xhigh"],
+]);
+const NORMATIVE_MODEL_SECTIONS = [
+  ["references/lifecycle.md", "Preflight"],
+  ["references/versioning.md", "Project Config Contract"],
+  ["references/artifact-quality.md", "Preflight Certificate"],
+  ["references/install.md", "Project Policy"],
+];
+
+function executableModelIds(text) {
+  // Deliberately independent of table contents: old and fabricated ids count.
+  return [...text.matchAll(/\b(?:claude|gpt)-[a-z0-9]+(?:[.-][a-z0-9]+)*\b/gi)]
+    .map((match) => match[0])
+    .filter((token) => /\d/.test(token) && !MODEL_ENUM_ALLOWLIST.has(token));
+}
+
+function isModelId(value) {
+  const ids = executableModelIds(value);
+  return ids.length === 1 && ids[0] === value;
+}
+
+function modelSection(text, title) {
+  const lines = text.split("\n");
+  let start = -1;
+  let level = 0;
+  let fence = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\s*```/.test(lines[i])) { fence = !fence; continue; }
+    if (fence) continue;
+    const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(lines[i]);
+    if (!heading) continue;
+    if (start >= 0 && heading[1].length <= level) return lines.slice(start, i).join("\n");
+    if (heading[2] === title) { start = i + 1; level = heading[1].length; }
+  }
+  return start < 0 ? "" : lines.slice(start).join("\n");
+}
+
+function modelTable(section, columns) {
+  const rows = [];
+  forEachOwnerLayerLine(section, (line) => {
+    if (line.trim().startsWith("|")) {
+      rows.push(line.trim().slice(1, -1).split("|").map((cell) => cell.trim()));
+    }
+  });
+  const header = rows.shift();
+  const separator = rows.shift();
+  if (!header || header.join("|").toLowerCase() !== columns.join("|") ||
+      !separator || separator.length !== columns.length || !separator.every((cell) => /^:?-+:?$/.test(cell))) {
+    throw new Error(`invalid table header; expected ${columns.join(" | ")}`);
+  }
+  if (rows.some((row) => row.length !== columns.length || row.some((cell) => !cell))) {
+    throw new Error("invalid or empty table cell");
+  }
+  return rows;
+}
+
+function policyRoles(text) {
+  const rows = modelTable(modelSection(text, "Roles"), ["role", "model id", "reasoning effort", "applies to", "decided by"]);
+  const roles = new Map();
+  for (const [roleCell, modelCell, effortCell, appliesTo, decidedBy] of rows) {
+    const role = roleCell.replaceAll("`", "");
+    const model = modelCell.replaceAll("`", "");
+    const effort = effortCell.replaceAll("`", "");
+    if (roles.has(role)) throw new Error(`duplicate role ${role}`);
+    if (!MODEL_ROLES.includes(role)) throw new Error(`unknown role ${role}`);
+    if (!isModelId(model)) throw new Error(`invalid model id for ${role}`);
+    if (role === "orchestrator" ? effort !== "n/a" : role === "autoreview"
+      ? effort !== "[Canonical Routes](autoreview-routing.md#canonical-routes)"
+      : !MODEL_EFFORTS.includes(effort)) throw new Error(`invalid effort source for ${role}`);
+    roles.set(role, { model, effort, appliesTo, decidedBy });
+  }
+  if (roles.size !== MODEL_ROLES.length) throw new Error("policy must define all seven roles");
+  return roles;
+}
+
+function modelRoleReferences(text) {
+  return [...text.matchAll(/\[role:([a-z][a-z0-9-]*)\]\(([^)]+)\)/g)]
+    .map((match) => ({ role: match[1], target: match[2] }));
+}
+
+function modelActiveFiles(base) {
+  const files = [];
+  function walk(relative) {
+    for (const entry of fs.readdirSync(path.join(base, relative), { withFileTypes: true })) {
+      const child = path.posix.join(relative, entry.name);
+      if (entry.isDirectory()) walk(child);
+      else if (entry.isFile()) files.push(child);
+    }
+  }
+  for (const directory of ["skills", "references", "templates", "scripts", "docs/ru"]) walk(directory);
+  return files;
+}
+
+function modelCommand(section, executable) {
+  const commands = [...section.matchAll(/```bash\s*\n([\s\S]*?)```/g)]
+    .map((match) => match[1].trim())
+    .filter((command) => command.startsWith(executable));
+  if (commands.length !== 1) throw new Error(`expected one ${executable} command template`);
+  return commands[0];
+}
+
+function modelRecordErrors(record) {
+  // Fixture validation only: never reads or mutates a live worker registry.
+  const intended = record.model_policy;
+  const launch = record.model_launch;
+  if (intended === undefined && launch === undefined) return []; // Legacy: do not backfill.
+  const errors = [];
+  if (!intended || !MODEL_ROLES.filter((role) => role.startsWith("worker-")).includes(intended.role) ||
+      !isModelId(intended.model || "") || !MODEL_EFFORTS.includes(intended.effort)) errors.push("invalid policy intent");
+  if (!launch || launch.case !== record.transport || !["codex-cli", "fallback", "claude-code-desktop"].includes(launch.case)) {
+    return [...errors, "invalid transport case"];
+  }
+  if (launch.actual_model !== null || typeof launch.evidence !== "string" || !launch.evidence.trim()) errors.push("invalid unknown/evidence boundary");
+  if (launch.case === "codex-cli") {
+    if (launch.model_parameter !== intended?.model || launch.effort_parameter !== intended?.effort || launch.effort_source !== "explicit") errors.push("codex launch pins differ from recorded intent");
+  } else if (launch.case === "fallback") {
+    if (typeof launch.model_parameter !== "string" || !launch.model_parameter.trim() || launch.effort_parameter !== null || launch.effort_source !== "runtime-default") errors.push("fallback must record alias and uncontrolled effort");
+  } else if (launch.model_parameter !== null || launch.effort_parameter !== null || launch.effort_source !== "unknown") {
+    errors.push("desktop parameters must stay unknown");
+  }
+  return errors;
+}
+
+function renderModelRegistryExample(sample, intended, transport) {
+  // Instantiate the documented shape for fixtures, preserving literal values
+  // so a contradictory template parameter is checked rather than overwritten.
+  const codex = transport === "codex-cli";
+  const fallback = transport === "fallback";
+  const values = new Map([
+    ["<codex-cli | claude-code-desktop | fallback>", transport],
+    ["<codex-cli | fallback | claude-code-desktop>", transport],
+    ["<selected worker role>", intended.role],
+    ["<resolved policy model id>", intended.model],
+    ["<resolved policy effort>", intended.effort],
+    ["<exact id or runtime alias actually set, or null>", codex ? intended.model : fallback ? "runtime-alias" : null],
+    ["<effort actually set, or null>", codex ? intended.effort : null],
+    ["<explicit | runtime-default | unknown>", codex ? "explicit" : fallback ? "runtime-default" : "unknown"],
+    ["<requested command parameters | runtime alias assumption | manually selected, actual model unverified>",
+      codex ? "requested command parameters" : fallback ? "runtime alias assumption" : "manually selected, actual model unverified"],
+  ]);
+  return JSON.parse(JSON.stringify(sample), (_key, value) => {
+    return typeof value === "string" && values.has(value) ? values.get(value) : value;
+  });
+}
+
+function checkModelPolicy(base) {
+  const errors = [];
+  const body = (file) => fs.readFileSync(path.join(base, file), "utf8");
+  let roles;
+  try { roles = policyRoles(body(MODEL_POLICY_PATH)); }
+  catch (error) { return [`${MODEL_POLICY_PATH}: ${error.message}`]; }
+  for (const section of ["Reviewer and producer", "Audience profile", "Application boundary", "Orchestrator self-check", "Launch evidence"]) {
+    if (!modelSection(body(MODEL_POLICY_PATH), section).trim()) errors.push(`${MODEL_POLICY_PATH}: missing policy section ${section}`);
+  }
+  function binding(file, section, expected) {
+    const refs = modelRoleReferences(section);
+    const found = new Set(refs.map((ref) => ref.role));
+    if (found.size !== expected.length || expected.some((role) => !found.has(role))) {
+      errors.push(`${file}: role binding must be ${expected.join(", ")}; found ${[...found].join(", ") || "none"}`);
+    }
+  }
+  for (const file of [...modelActiveFiles(base), "AGENTS.md", "README.md"]) {
+    const text = body(file);
+    if (file !== MODEL_POLICY_PATH) {
+      for (const id of executableModelIds(text)) errors.push(`${file}: executable model id outside policy: ${id}`);
+    }
+    for (const ref of modelRoleReferences(text)) {
+      if (!roles.has(ref.role)) errors.push(`${file}: unknown role ${ref.role}`);
+      if (!/(?:^|\/)model-policy\.md#roles$/.test(ref.target)) errors.push(`${file}: invalid policy role target ${ref.target}`);
+    }
+    const markers = [...text.matchAll(/\[role:([a-z][a-z0-9-]*)\]/g)];
+    if (markers.length !== modelRoleReferences(text).length) errors.push(`${file}: policy role reference must be a link`);
+    for (const [, role] of markers) {
+      if (!roles.has(role)) errors.push(`${file}: unknown role ${role}`);
+    }
+    // A route outside the canonical table is another authority, including
+    // tables appended after that section or copied into another consumer.
+    const routeRows = (source) => [...source.matchAll(/^\s*\|\s*`?(?:tiny|standard|deep|risky)\b[^\n]*$/gm)].map((match) => match[0]);
+    const allowedRows = file === "references/autoreview-routing.md" ? routeRows(modelSection(text, "Canonical Routes")) : [];
+    if (routeRows(text).length !== allowedRows.length) errors.push(`${file}: route rows outside Canonical Routes`);
+  }
+  for (const [file, section] of NORMATIVE_MODEL_SECTIONS) binding(file, modelSection(body(file), section), ["autoreview"]);
+  const preflightFile = "skills/mono-preflight/SKILL.md";
+  const preflight = body(preflightFile);
+  const workflow = preflight.split(/^Workflow:\s*$/m)[1] || "";
+  const reviewStep = /^5\.[^\n]*\n([\s\S]*?)(?=^6\.)/m.exec(workflow)?.[1] || "";
+  binding(preflightFile, reviewStep, ["autoreview"]);
+  binding("skills/mono-orchestrate/SKILL.md", body("skills/mono-orchestrate/SKILL.md"), ["orchestrator"]);
+  const certificate = preflight.split("Autoreview route:")[1]?.split("\n")[0] || "";
+  for (const field of ["risk", "source", "critical", "model", "effort", "reclassified"]) {
+    if (!new RegExp(`(?:^|;)\\s*${field}=<[^>]+>`).test(certificate)) errors.push(`${preflightFile}: certificate routing field missing: ${field}`);
+  }
+  if (!certificate.includes("model=<resolved model id>")) errors.push(`${preflightFile}: certificate must record resolved model id`);
+  const orchestrationFile = "references/orchestration.md";
+  const orchestration = body(orchestrationFile);
+  const secondVoice = modelSection(orchestration, "Second Voice");
+  const codexVoice = modelSection(secondVoice, "Claude orchestrator");
+  const claudeVoice = modelSection(secondVoice, "GPT orchestrator");
+  binding(orchestrationFile + " Second Voice/Claude", codexVoice, ["second-voice"]);
+  binding(orchestrationFile + " Second Voice/GPT", claudeVoice, ["second-voice-alt"]);
+  const workers = modelSection(orchestration, "Worker model selection");
+  binding(orchestrationFile + " spawn", workers, ["worker-default", "worker-complex"]);
+  binding(orchestrationFile + " Claude transport", modelSection(orchestration, "Claude worker transports"), ["worker-claude"]);
+  for (const [section, executable, model, effort] of [
+    [codexVoice, "codex exec", "second-voice-model", "second-voice-effort"],
+    [claudeVoice, "claude -p", "second-voice-alt-model", "second-voice-alt-effort"],
+    [workers, "codex exec", "worker-model", "worker-effort"],
+  ]) {
+    try {
+      const command = modelCommand(section, executable);
+      const modelFlag = executable === "claude -p" ? `--model <${model}>` : `-c 'model="<${model}>"'`;
+      const effortFlag = executable === "claude -p" ? `--effort <${effort}>` : `-c 'model_reasoning_effort="<${effort}>"'`;
+      if (!command.includes(modelFlag) || !command.includes(effortFlag)) errors.push(`${orchestrationFile}: command must consume row model AND effort (${model})`);
+    } catch (error) { errors.push(`${orchestrationFile}: ${error.message}`); }
+  }
+  // Worker and Second Voice efforts cannot be copied into their consumers.
+  for (const file of [orchestrationFile, "skills/mono-orchestrate/SKILL.md", "templates/orchestrator-brief.md", "templates/orchestrator-report.md"]) {
+    const literalEffort = /(?:model_reasoning_effort\s*=\s*["']?|--effort\s+|(?:at|both sides at)\s+)(?:low|medium|high|xhigh)\b/i;
+    if (literalEffort.test(body(file))) errors.push(`${file}: worker/Second Voice effort literal outside policy`);
+  }
+  const routingFile = "references/autoreview-routing.md";
+  const routing = body(routingFile);
+  // These replace the former name-bearing recalibration and same-model pins:
+  // check bounded code tokens/relations, not a prescribed English sentence.
+  const recalibrationTokens = [...modelSection(routing, "Effort recalibration").matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+  if (!["standard", "medium", "high"].every((token) => recalibrationTokens.includes(token))) errors.push(`${routingFile}: missing standard effort recalibration operands`);
+  const sameModel = modelSection(routing, "Same-model review");
+  if (!/`<worker-model>\s*=\s*<autoreview-model>`/.test(sameModel)) errors.push(`${routingFile}: missing resolved model equality condition`);
+  try {
+    const rows = modelTable(modelSection(routing, "Canonical Routes"), ["risk class", "role", "reasoning effort", "intended use"]);
+    const routes = new Map();
+    const classes = new Set();
+    for (const [riskCell, roleCell, effortCell] of rows) {
+      const key = riskCell.replaceAll("`", "");
+      if (routes.has(key)) errors.push(`${routingFile}: duplicate route ${key}`);
+      routes.set(key, effortCell.replaceAll("`", ""));
+      classes.add(key.split(" ")[0]);
+      binding(routingFile + ` route ${key}`, roleCell, ["autoreview"]);
+    }
+    if (rows.length !== 5 || classes.size !== 4 || routes.size !== 5 ||
+        [...REVIEW_ROUTES].some(([key, effort]) => routes.get(key) !== effort) ||
+        [...routes.keys()].some((key) => !REVIEW_ROUTES.has(key))) errors.push(`${routingFile}: route set must be exactly four classes, five unique routes and unchanged class efforts`);
+    for (const command of [...modelSection(routing, "Invocation").matchAll(/^<autoreview-helper>.*$/gm)].map((match) => match[0])) {
+      if (!command.includes("--engine claude --model <autoreview-model> --thinking ")) errors.push(`${routingFile}: invocation must use explicit role model and route effort`);
+    }
+    if (!modelSection(routing, "Invocation").includes("--thinking <effort>")) errors.push(`${routingFile}: missing generic invocation`);
+  } catch (error) { errors.push(`${routingFile}: ${error.message}`); }
+  const registryFile = "templates/orchestrator-report.md";
+  try {
+    const section = modelSection(body(registryFile), "Worker Registry");
+    const block = /```json\s*\n([\s\S]*?)```/.exec(section)?.[1];
+    const sample = JSON.parse(block.replace("<repeat the dispatch pin, integer>", "1"))["<ISSUE-KEY>"];
+    for (const [field, keys] of [["model_policy", ["role", "model", "effort"]], ["model_launch", ["case", "model_parameter", "effort_parameter", "effort_source", "actual_model", "evidence"]]]) {
+      if (!sample[field] || keys.some((key) => !Object.hasOwn(sample[field], key))) errors.push(`${registryFile}: missing ${field} provenance fields`);
+    }
+    if (sample.model_launch?.actual_model !== null) errors.push(`${registryFile}: actual served model must be unknown`);
+    for (const transport of ["codex-cli", "fallback", "claude-code-desktop"]) {
+      const role = transport === "codex-cli" ? "worker-default" : "worker-claude";
+      const intended = { role, model: roles.get(role).model, effort: roles.get(role).effort };
+      const record = renderModelRegistryExample(sample, intended, transport);
+      for (const error of modelRecordErrors(record)) errors.push(`${registryFile}: ${transport} template provenance: ${error}`);
+    }
+  } catch (error) { errors.push(`${registryFile}: invalid registry model shape: ${error.message}`); }
+  for (const file of ["skills/mono-orchestrate/SKILL.md", "templates/orchestrator-brief.md"]) {
+    const text = body(file).replace(/\s+/g, " ");
+    const status = /Модель оркестратора: ([^\n]*?не удалось проверить)/.exec(text)?.[1] || "";
+    if (status !== "по политике | не по политике | не удалось проверить") errors.push(`${file}: missing three-outcome orchestrator status field`);
+  }
+  return errors;
+}
+
+function validateModelPolicyFixtures() {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-model-policy-"));
+  try {
+    for (const name of ["skills", "references", "templates", "scripts", "docs/ru", "AGENTS.md", "README.md"]) {
+      fs.cpSync(path.join(root, name), path.join(scratch, name), { recursive: true });
+    }
+    const script = path.join(scratch, "scripts/validate-workflow.mjs");
+    const check = () => runNode([script, "--model-policy-only"], { cwd: scratch });
+    const file = (name) => path.join(scratch, name);
+    const originalPolicy = fs.readFileSync(file(MODEL_POLICY_PATH), "utf8");
+    const originals = new Map();
+    function change(name, transform) {
+      const before = fs.readFileSync(file(name), "utf8");
+      const after = transform(before);
+      if (typeof after !== "string" || after === before) throw new Error(`Fixture did not change ${name}`);
+      if (!originals.has(name)) originals.set(name, before);
+      fs.writeFileSync(file(name), after);
+      if (fs.readFileSync(file(name), "utf8") !== after) throw new Error(`Fixture write failed: ${name}`);
+    }
+    function restore() {
+      for (const [name, text] of originals) {
+        fs.writeFileSync(file(name), text);
+        if (fs.readFileSync(file(name), "utf8") !== text) throw new Error(`Fixture restore failed: ${name}`);
+      }
+      originals.clear();
+    }
+    function rowKey(line) {
+      return line.trimStart().startsWith("|") ? line.split("|")[1].trim().replaceAll("`", "") : null;
+    }
+    function row(text, key, transform) {
+      return text.split("\n").map((line) => rowKey(line) === key ? transform(line) : line).join("\n");
+    }
+    function cell(text, role, index, value) {
+      return row(text, role, (line) => {
+        const cells = line.split("|");
+        cells[index + 1] = ` \`${value}\` `;
+        return cells.join("|");
+      });
+    }
+    // Build ids, not a second inventory of current or historic model names.
+    const fabricated = (family, variant) => [family, "987", `fixture${variant}`].join("-");
+    const roles = policyRoles(originalPolicy);
+    const marker = (role) => `[role:${role}]`;
+    const link = (role) => `[role:${role}](references/model-policy.md#roles)`;
+    check();
+    change(MODEL_POLICY_PATH, (text) => cell(text, "worker-default", 1, fabricated("gpt", "a")));
+    check();
+    console.log("PASS model-policy AE1: changed cell, unchanged fixtures");
+    restore(); check();
+    function negative(label, mutate, expected) {
+      const previousFailures = failures.length;
+      try {
+        mutate();
+        if (originals.size === 0) throw new Error(`${label}: fixture made no edits`);
+        expectCommandFailure(label, check, expected);
+      } finally {
+        restore();
+        check();
+      }
+      if (failures.length === previousFailures) console.log(`PASS model-policy ${label}: red (${expected}), restored green`);
+    }
+    negative("AE2 stale literal", () => {
+      change(MODEL_POLICY_PATH, (text) => cell(text, "worker-default", 1, fabricated("gpt", "b")));
+      change("skills/mono-preflight/SKILL.md", (text) => text + `\n${roles.get("worker-default").model}\n`);
+    }, "skills/mono-preflight/SKILL.md: executable model id outside policy");
+    negative("AE3 wrong existing role", () => change("skills/mono-preflight/SKILL.md", (text) => text.replace(marker("autoreview"), marker("worker-default"))), "role binding must be autoreview");
+    negative("AE4 duplicate role", () => change(MODEL_POLICY_PATH, (text) => row(text, "worker-default", (line) => `${line}\n${line}`)), "duplicate role worker-default");
+    negative("AE4 unknown role", () => change("README.md", (text) => text + `\n${link("unknown-reviewer")}\n`), "unknown role unknown-reviewer");
+    negative("AE4 changed class effort", () => change("references/autoreview-routing.md", (text) => cell(text, "standard", 2, "high")), "route set must be exactly");
+    negative("AE4 sixth route", () => change("references/autoreview-routing.md", (text) => row(text, "tiny", (line) => line + "\n" + line.replace("`tiny`", "`standard` with extra escalation"))), "route set must be exactly");
+    negative("AE4 duplicate route", () => change("references/autoreview-routing.md", (text) => row(text, "tiny", (line) => `${line}\n${line}`)), "duplicate route tiny");
+    negative("review equality condition", () => change("references/autoreview-routing.md", (text) => text.replace(/<worker-model>\s*=\s*<autoreview-model>/, "<worker-model> != <autoreview-model>")), "missing resolved model equality condition");
+    negative("standard recalibration", () => change("references/autoreview-routing.md", (text) => text.replace(/(###\s+Effort recalibration[\s\S]*?)`high`/, "$1`low`")), "missing standard effort recalibration operands");
+    for (const [name] of NORMATIVE_MODEL_SECTIONS) {
+      negative(`normative reference ${name}`, () => change(name, (text) => text.replace(/\[role:autoreview\]\([^)]+\)/g, "reviewer")), `${name}: role binding must be autoreview`);
+    }
+    for (const name of ["docs/ru/karta-paka.md", "references/execution-quality.md", "templates/orchestrator-brief.md", "scripts/verify.mjs"]) {
+      negative(`active detector ${name}`, () => change(name, (text) => text + `\n${fabricated("claude", "stale")}\n`), `${name}: executable model id outside policy`);
+    }
+    change("README.md", (text) => text + `\n${[...MODEL_ENUM_ALLOWLIST].join(" ")}\n`);
+    check(); restore(); check();
+    console.log("PASS model-policy enum allowlist");
+    negative("spawn effort source", () => change("references/orchestration.md", (text) => text.replaceAll('<worker-effort>', roles.get("worker-default").effort)), "command must consume row model AND effort");
+    negative("AE4 route outside canonical section", () => change("references/autoreview-routing.md", (text) => {
+      const tiny = text.split("\n").find((line) => rowKey(line) === "tiny");
+      if (!tiny) throw new Error("Fixture route tiny not found");
+      return `${text}\n${tiny}\n`;
+    }), "route rows outside Canonical Routes");
+    negative("Second Voice wrong branch", () => change("references/orchestration.md", (text) => text.replace(marker("second-voice"), marker("second-voice-alt"))), "Second Voice/Claude: role binding must be second-voice");
+    negative("registry provenance fields", () => change("templates/orchestrator-report.md", (text) => text.replace(/"effort_parameter"\s*:/, '"lost_effort_parameter":')), "missing model_launch provenance fields");
+    negative("registry template model mismatch", () => change("templates/orchestrator-report.md", (text) => text.replace(/("model_parameter"\s*:)\s*"[^"]*"/, '$1 "runtime-alias"')), "codex-cli template provenance: codex launch pins differ");
+    negative("registry template uncontrolled effort", () => change("templates/orchestrator-report.md", (text) => text.replace(/("effort_source"\s*:)\s*"[^"]*"/, '$1 "explicit"')), "fallback template provenance: fallback must record alias and uncontrolled effort");
+    negative("registry template desktop parameter", () => change("templates/orchestrator-report.md", (text) => text.replace(/("effort_parameter"\s*:)\s*"[^"]*"/, '$1 "<resolved policy effort>"')), "claude-code-desktop template provenance: desktop parameters must stay unknown");
+
+    const nextVoiceModel = fabricated("gpt", "voice");
+    const nextReviewModel = fabricated("claude", "review");
+    const nextEffort = MODEL_EFFORTS.find((effort) => effort !== roles.get("second-voice").effort);
+    change(MODEL_POLICY_PATH, (text) => cell(cell(cell(text, "second-voice", 1, nextVoiceModel), "second-voice", 2, nextEffort), "autoreview", 1, nextReviewModel));
+    check();
+    const changedRoles = policyRoles(fs.readFileSync(file(MODEL_POLICY_PATH), "utf8"));
+    const orchestration = fs.readFileSync(file("references/orchestration.md"), "utf8");
+    const voiceTemplate = modelCommand(modelSection(orchestration, "Claude orchestrator"), "codex exec");
+    const voiceCommand = voiceTemplate.replaceAll("<second-voice-model>", changedRoles.get("second-voice").model)
+      .replaceAll("<second-voice-effort>", changedRoles.get("second-voice").effort);
+    const routing = fs.readFileSync(file("references/autoreview-routing.md"), "utf8");
+    const reviewTemplate = modelCommand(modelSection(routing, "Invocation").split("Examples:")[0], "<autoreview-helper>");
+    const route = modelTable(modelSection(routing, "Canonical Routes"), ["risk class", "role", "reasoning effort", "intended use"]).find((row) => row[0] === "`risky`");
+    const reviewCommand = reviewTemplate.replaceAll("<autoreview-model>", changedRoles.get("autoreview").model)
+      .replaceAll("<effort>", route[2].replaceAll("`", ""));
+    if (!voiceCommand.includes(`model="${nextVoiceModel}"`) || !voiceCommand.includes(`model_reasoning_effort="${nextEffort}"`) ||
+        !reviewCommand.includes(`--model ${nextReviewModel} --thinking ${REVIEW_ROUTES.get("risky")}`)) fail("AE5 commands must consume changed model and effort cells");
+    console.log(`PASS model-policy AE5 Second Voice: ${voiceCommand}`);
+    console.log(`PASS model-policy AE5 autoreview: ${reviewCommand}`);
+    restore(); check();
+
+    const legacy = { transport: "codex-cli" };
+    const before = JSON.stringify(legacy);
+    if (modelRecordErrors(legacy).length || JSON.stringify(legacy) !== before) fail("AE8 legacy entries must remain unchanged");
+    const intended = { role: "worker-default", model: roles.get("worker-default").model, effort: roles.get("worker-default").effort };
+    const launch = { case: "codex-cli", model_parameter: intended.model, effort_parameter: intended.effort, effort_source: "explicit", actual_model: null, evidence: "requested command parameters" };
+    const current = { transport: "codex-cli", model_policy: intended, model_launch: launch };
+    const serialized = JSON.stringify(current);
+    change(MODEL_POLICY_PATH, (text) => cell(text, "worker-default", 1, fabricated("gpt", "newlaunch")));
+    const newIntended = { ...intended, model: policyRoles(fs.readFileSync(file(MODEL_POLICY_PATH), "utf8")).get("worker-default").model };
+    const newRecord = { ...current, model_policy: newIntended, model_launch: { ...launch, model_parameter: newIntended.model } };
+    if (modelRecordErrors(current).length || modelRecordErrors(newRecord).length || JSON.stringify(current) !== serialized || newRecord.model_policy.model === current.model_policy.model) fail("AE8 new launch/retained pins boundary");
+    for (const transport of ["fallback", "claude-code-desktop"]) {
+      const record = { transport, model_policy: { role: "worker-claude", model: roles.get("worker-claude").model, effort: roles.get("worker-claude").effort }, model_launch: { case: transport, model_parameter: transport === "fallback" ? "runtime-alias" : null, effort_parameter: null, effort_source: transport === "fallback" ? "runtime-default" : "unknown", actual_model: null, evidence: "transport assumption; served model unverified" } };
+      if (modelRecordErrors(record).length) fail(`AE8 ${transport} valid provenance rejected`);
+      record.model_launch.effort_parameter = intended.effort;
+      if (!modelRecordErrors(record).length) fail(`AE8 ${transport} must reject intended effort as applied`);
+    }
+    restore(); check();
+    console.log("PASS model-policy AE8: provenance cases, retained pins and legacy no-backfill");
+  } catch (error) {
+    fail(`Model policy fixtures failed: ${error.message}\n${error.stdout || ""}\n${error.stderr || ""}`);
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+failures.push(...checkModelPolicy(root));
+if (!process.argv.includes("--model-policy-only") && failures.length === 0) validateModelPolicyFixtures();
+if (process.argv.includes("--model-policy-only") || process.argv.includes("--model-policy-fixtures")) {
+  if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
+  console.log("Model policy validation passed.");
+  process.exit(0);
 }
 
 validateSkills();

@@ -131,25 +131,42 @@ orchestrator's reasoning. It plays interviewer for idea shaping
 product director.
 
 Model selection is mandatory and cross-vendor: the Second Voice runs on
-a different model family from the orchestrator. A fresh context on the
-*same* model is not a second voice — it inherits the same training,
-biases, and blind spots and collapses into self-review (an Opus
-orchestrator interrogating an Opus reviewer learns nothing new). Pick the
-strongest available cross-vendor model, both sides at high reasoning;
-never block discovery on a missing one.
+a different model family from the orchestrator. A fresh context on the same
+model is not a second voice. Resolve the model AND reasoning effort from the
+selected policy row; never copy an effort literal into this consumer.
 
-- Orchestrator on a Claude model (Fable, Opus, Sonnet, …) → Second Voice
-  = `gpt-5.6-sol` at `model_reasoning_effort="high"`, a fresh `codex
-  exec` thread continued with `codex exec resume`. The thread is a
-  reviewer, not a worker: no worktree, no Issue, no registry entry. Note
-  the live thread id and round count in the discovery notes so a resumed
-  orchestrator rebinds or deliberately restarts the dialogue — and ends
-  orphaned reviewer processes — instead of silently losing it.
-- Orchestrator on GPT-5.6 (`sol`, `terra`, `luna`) → Second Voice =
-  Claude Opus (latest) at high reasoning, spawned via the Claude
-  transport — the Agent tool's `opus` model in Claude Code, or `claude -p
-  --model opus` from a Codex runtime — and continued via session messages
-  to the same agent.
+#### Claude orchestrator
+
+Orchestrator on Claude → [role:second-voice](model-policy.md#roles).
+Use the exact model id and effort from that row in a fresh Codex thread:
+
+```bash
+codex exec --json -c 'model="<second-voice-model>"' -c 'model_reasoning_effort="<second-voice-effort>"' "$(cat <review-prompt-file>)" < /dev/null
+```
+
+Replace both placeholders from the selected row before launch. Continue
+with `codex exec resume`, preserving the requested launch pins. This is a
+reviewer, not a worker: no worktree, Issue or registry entry. Record its
+thread id, resolved role, requested model and effort, and round count in
+discovery notes. On resume rebind or deliberately restart the dialogue and
+end orphaned reviewer processes.
+
+#### GPT orchestrator
+
+Orchestrator on GPT → [role:second-voice-alt](model-policy.md#roles).
+Use its exact model id and row effort through the Claude CLI, never an
+alias or a floating latest selector:
+
+```bash
+claude -p --model <second-voice-alt-model> --effort <second-voice-alt-effort> "$(cat <review-prompt-file>)" < /dev/null
+```
+
+Replace both placeholders from this row before launch and continue the same
+review session with its launch pins. This role is independent of the
+Claude worker row; changing a worker never selects the alternative reviewer.
+
+#### Unavailable route
+
 - Fallback, only when the cross-vendor model is unreachable (no Codex
   auth, or no Claude access): run the lens review in-session (product,
   engineering, and design lenses) and record the substitution and its
@@ -691,6 +708,18 @@ Sandbox grants follow a stage ladder: `mono-implement` uses `workspace-write` wi
 
 Escalating to a fully disabled sandbox is not normal operation; record it in `ledger.md` as a deviation with the reason.
 
+### Worker model selection
+
+For a new Codex worker, select [role:worker-default](model-policy.md#roles).
+The orchestrator may select [role:worker-complex](model-policy.md#roles) per
+dispatch by judgment, recording the reason under «Решил сам:». There is no
+automatic risk-class-to-worker mapping. Read model AND effort from the selected
+row into `<worker-model>` and `<worker-effort>` in the spawn command below.
+Before launch substitute these placeholders, and record the role, policy
+values, parameters actually set and transport case in the generated dispatch
+and registry per `templates/orchestrator-report.md`. On resume preserve the
+recorded launch pins; do not resolve new policy values for an existing thread.
+
 - `codex-cli`: the orchestrator — in any runtime with shell access — creates
   and steers headless Codex worker threads; this subsumes the older `codex`
   binding. Spawn as a background process, one per Issue:
@@ -700,8 +729,8 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
     --cd <worktree> \
     --sandbox workspace-write \
     --add-dir ~/.mono-agent-workflow/orchestrator/<product> \
-    -c 'model="<pinned model>"' \
-    -c 'model_reasoning_effort="high"' \
+    -c 'model="<worker-model>"' \
+    -c 'model_reasoning_effort="<worker-effort>"' \
     "$(cat <dispatch-prompt-file>)" < /dev/null \
     > ~/.mono-agent-workflow/orchestrator/<product>/logs/<ISSUE-KEY>-<stage>-a1.jsonl \
     2> ~/.mono-agent-workflow/orchestrator/<product>/logs/<ISSUE-KEY>-<stage>-a1.stderr.log &
@@ -799,12 +828,28 @@ Escalating to a fully disabled sandbox is not normal operation; record it in `le
   need network). The dispatch prompt names the installed stage-skill body
   (`~/.codex/skills/<stage-skill>/SKILL.md`) because Codex workers load
   skills by reading files, not through a skill tool.
+
+### Claude worker transports
+
+Both Claude worker transports select [role:worker-claude](model-policy.md#roles).
+They share policy intent, but their launch guarantees differ. Record the case
+in every generated dispatch and registry entry, with unknown values kept
+separate from the policy target:
+
 - `claude-code-desktop`: spawn via task chip with a self-contained dispatch
   prompt (one user click; the platform provides the worktree). Continue or
   steer via session message with user confirmation. Workers stay visible as
-  normal sessions the user can open.
+  normal sessions the user can open. The owner selects the model manually in
+  the interface: record "manually selected, actual model unverified". Model
+  and effort launch parameters remain unknown unless actually observed; never
+  fill them with policy intent.
 - `fallback` (CLI/headless): named long-lived background subagents inside the
-  orchestrator session; same contract and reporting.
+  orchestrator session; same contract and reporting. Set the Agent tool
+  `model` parameter through the runtime alias for the selected row; record
+  that alias and the assumption about its mapping. Effort is not controllable:
+  record runtime default, not the policy effort as applied. If the runtime
+  cannot represent that model, report the unavailable route rather than
+  silently select another row.
 
 Worktree provisioning: for `codex-cli` and `fallback` the orchestrator
 creates the worker's worktree before spawn

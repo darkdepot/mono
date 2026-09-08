@@ -6,6 +6,25 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+### Model policy (MONO-69, 0.21.0)
+
+- Add `references/model-policy.md` as the sole model and role-effort source
+  for seven roles. Preflight, both Second Voice branches and worker launches
+  resolve roles; risk classes, class efforts and critical escalation remain
+  unchanged. The owner-approved reviewer/producer pairing remains an owner
+  decision, and worker selection is never inferred from risk class.
+- Validate role bindings, model-id syntax across the active surface, and the
+  complete set of review routes structurally instead of pinning model names.
+  Scratch-tree fixtures cover changed cells, stale ids, wrong/unknown/duplicate
+  roles, altered/extra/duplicate routes, command generation and launch provenance.
+- Record policy intent separately from parameters actually set for each of
+  the three transports. Existing threads keep their launch pins; legacy
+  records are not backfilled. Orchestrator status distinguishes a verified
+  match, a mismatch and unavailable evidence.
+- Update the Russian map and article К-22 to refer to roles. This is a minor
+  release for new checks and backward-compatible workflow additions; the
+  installed surface revision and existing identity gate do not change.
+
 ### Breaking
 
 - The installed surface narrows from 14 to 11 skills: `mono-project`,

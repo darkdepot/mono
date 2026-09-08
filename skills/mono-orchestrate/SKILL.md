@@ -232,6 +232,13 @@ dispatch, a stage, or a deploy.
    difference that could not be filed are named in that line too, in product
    language.
 
+At session start, resolve [role:orchestrator](references/model-policy.md#roles)
+and perform the self-check from `references/model-policy.md` using authoritative
+launch-environment data. Beside «Конституция и карта» report
+«Модель оркестратора: по политике | не по политике | не удалось проверить».
+Absent authoritative data means «не удалось проверить»; prompt self-identification
+never proves a match and this status does not switch the running session.
+
 Workflow states:
 
 1. `resume`
@@ -358,6 +365,13 @@ Workflow states:
      Handshake in `references/orchestration.md`. Applying a dispatch-moment
      move earlier needs an explicit owner mandate recorded in the ledger; it is
      never a «Решил сам:» decision.
+   - Resolve worker roles and both policy values per Worker model selection
+     in `references/orchestration.md`. Select `worker-complex` only by judgment
+     for this dispatch, with the reason recorded under «Решил сам:»; never
+     derive it automatically from risk class. Record the selected role, policy
+     intent, actual launch parameters and transport case in the dispatch and
+     registry per `templates/orchestrator-report.md`. Do not backfill legacy
+     records; preserve existing launch pins on resume.
    - For `codex-cli` and `fallback` transports, create the worker's worktree
      before spawn per `references/orchestration.md` Worker Transports.
    - Verify every spawn per Worker Transports in
