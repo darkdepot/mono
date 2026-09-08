@@ -6,6 +6,11 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+### Repository hygiene (MONO-70)
+
+- Ignore `.claude/` and `.worktrees/` so local agent workspaces do not mark
+  clean skill-pack installations as dirty.
+
 ### Model policy (MONO-69, 0.21.0)
 
 - Add `references/model-policy.md` as the sole model and role-effort source
