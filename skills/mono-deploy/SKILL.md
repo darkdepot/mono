@@ -81,9 +81,10 @@ Workflow:
     6. Read back — mandatory, never optional. The update response truncates `content`, and a Linear write can report success while applying nothing, so the response is not evidence of anything. Read the document again with `get_document(<id>)`, normalise it by the same rule as sub-step 3 above — LF line endings, no trailing whitespace, every `Версия пака:` line removed, a line whose first non-whitespace characters are an unordered-list marker (`- `, `* ` or `+ `) rewritten to the canonical marker `- ` while preserving the line's leading indentation, leading and trailing blank lines trimmed, one closing LF; the marker step exists because Linear's document service rewrites every unordered-list marker to `* ` on every write — a property of the service, not of our files. This step applies to every line, including a line inside a fenced code block, so a marker-only edit hidden inside a fence is invisible to this comparison; the two owner-layer documents must therefore carry no fenced code block, and if one is ever added, Linear's marker-rewrite behaviour inside it must be measured before this rule can be trusted there. Compare that hash with the NORMALISED hash of the content you sent — both sides normalised, so neither the `Версия пака:` line nor the marker rewrite that normalisation strips or rewrites can make an identical write look unconfirmed. Equal: that document's outcome is `published @ <merged SHA>`. Different, or the read itself fails: `not published — write not confirmed by read-back`. Every other connector failure takes the same shape, `not published — <reason>`, naming what failed.
     7. Record every outcome. `Owner layer:` carries ONE entry per document the PR changed, `<file>: <outcome>`, joined with `; ` in path order — a deploy that touched both documents therefore records both, and no publication or refusal can fall out of the closeout because the field held only one of them. The field takes its `n/a` form only when sub-step 1 ended the step. The same line goes into the closeout machine block below, into the deploy report, and — in product words — into the next owner status.
     Every outcome of this step is verdict-neutral: publication is a result of closeout, never a gate of it. A refusal never changes the deploy verdict, never blocks `mono-closeout`, and never becomes a requirement of a readiness check. Refusing to overwrite is the correct outcome and not something to retry around: the owner's own edit becomes work through the ordinary reconciliation at the next orchestrator start.
-14. `learn`: record durable operational discoveries with `gstack-learnings-log` when they would save future time.
-15. `retire`: after deploy verification and Linear closeout are complete, synchronously remove the Issue entry from `workers.json` in this orchestrator session before emitting the terminal deploy closeout. This is the retirement event; it requires no worker acknowledgement or intermediate worker status. Keep historical reports and logs, but never leave a deployed worker in the active registry. A blocked, needs-human, failed, or timed-out closeout does not retire the worker.
-16. Return the concise report in `templates/deploy-output.md`.
+14. `cost`: run the installer-published `../.mono-agent-workflow/scripts/wave-cost.mjs <ISSUE-KEY>` from this installed skill directory after the closeout evidence above is available. Copy its final Russian line verbatim into the `Cost:` field of the Issue closeout and deploy report. If the script or a component cannot be measured, record `unavailable: <reason>` for that value and continue: cost is telemetry, never a gate, and collection must never block or delay closeout.
+15. `learn`: record durable operational discoveries with `gstack-learnings-log` when they would save future time.
+16. `retire`: after deploy verification and Linear closeout are complete, synchronously remove the Issue entry from `workers.json` in this orchestrator session before emitting the terminal deploy closeout. This is the retirement event; it requires no worker acknowledgement or intermediate worker status. Keep historical reports and logs, but never leave a deployed worker in the active registry. A blocked, needs-human, failed, or timed-out closeout does not retire the worker.
+17. Return the concise report in `templates/deploy-output.md`.
 
 Deploy workflow config:
 
@@ -139,6 +140,7 @@ Linear closeout: <Done/not done + reason>
 Project update: <posted <url> | already posted <url> | not posted — <reason> | n/a — <reason>>
 Project: <Completed | stays <status>, open <N> | stays <status> — <reason> | n/a — <reason>>
 Owner layer: <n/a — <reason> | <file>: <published @ <sha> | not published — <reason>>[; <file>: …]>
+Cost: <exact Russian line from wave-cost.mjs | unavailable: <reason>>
 Learnings recorded: <none/list>
 Learnings consulted: <none/keys/helper unavailable>
 Checked: <states inspected>
@@ -168,6 +170,7 @@ Rules:
 - Project Updates stay informational here: `project-update` is a STEP of this stage, never a gate of it. `mono-deploy` publishes the update as a result of closeout, and a failed update or a failed project transition is recorded, visible, and verdict-neutral.
 - Do not let the `project-update` step change a deploy verdict, block `mono-closeout`, or become a requirement of any readiness check.
 - Keep `owner-layer publish` verdict-neutral in the same way: it publishes as a result of closeout, and refusing to overwrite a document the owner edited after the snapshot is a recorded outcome, never a failed deploy and never a reason to retry the write.
+- Keep cost collection verdict-neutral: its exact Russian line is recorded when available, and `unavailable: <reason>` is recorded otherwise; neither outcome blocks or delays closeout.
 - Do not move a project to `Completed` outside this step, and do not move one whose last open Issue was cancelled or closed by hand rather than shipped.
 - Do not report deploy closeout complete until the retired Issue entry has been removed from `workers.json`; the orchestrator owns this mutation.
 - Keep Linear-facing comments in the project config language; use Russian when no project config is present.
@@ -183,5 +186,6 @@ Final response must include:
 - Linear closeout outcome.
 - Project update outcome and project completion outcome.
 - Owner-layer publication outcome, including the reason when nothing was published.
+- Cost, using the exact Russian line emitted by the installed wave-cost script or `unavailable: <reason>`.
 - Learnings recorded.
 - Checked and not-checked boundary.

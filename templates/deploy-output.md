@@ -21,6 +21,7 @@ Deploy status:
 - Project update: <posted <url> | already posted <url> | not posted — <reason> | n/a — <reason>>.
 - Project: <Completed | stays <status>, open <N> | stays <status> — <reason> | n/a — <reason>>.
 - Owner layer: <n/a — <reason> | <file>: <published @ <sha> | not published — <reason>>[; <file>: …]>.
+- Cost: <the exact Russian line from `scripts/wave-cost.mjs <ISSUE-KEY>` | unavailable: <reason>>.
 - Learnings recorded: <none or keys>.
 - Learnings consulted: <none/keys/helper unavailable>.
 
@@ -54,6 +55,7 @@ Linear closeout:
 Project update:
 Project:
 Owner layer:
+Cost:
 Learnings recorded:
 Learnings consulted:
 Notes:

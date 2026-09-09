@@ -143,7 +143,8 @@ never has to ask for a human version.
 
 Следующий контакт: <когда и по какому поводу>. Раньше — только если понадобится твоё решение.
 
-Техника (можно не читать): <ISSUE-KEY>: <стадия>, <состояние>, цена: ~N тыс. out-токенов, M циклов ревью; <PR, SHA, версия сборки>; воркеры: <spawned/advanced/respawned или «без изменений»>; Linear: <применённые мутации и сертификаты или «без изменений»>; простои дольше 5 минут: <длительность>; Контекст: ~N%.
+Техника (можно не читать): <ISSUE-KEY>: <стадия>, <состояние>; <PR, SHA, версия сборки>; воркеры: <spawned/advanced/respawned или «без изменений»>; Linear: <применённые мутации и сертификаты или «без изменений»>; простои дольше 5 минут: <длительность>; Контекст: ~N%.
+Цена волны: <точная русская строка из `scripts/wave-cost.mjs <ISSUE-KEY>` | unavailable: <причина>>
 
 Нужно от тебя (<N> решений):
 1a-<ТОКЕН>. <Бриф решения по форме выше: что решаем, варианты с последствиями для тебя и продукта, рекомендация с причиной>
@@ -232,7 +233,7 @@ Three sizes, one shape:
 - Ordinary turn with no news: five to six lines — the first line with the
   counter, «Новое: видимого изменения нет, идёт <что>», «Решил сам:» and
   «Что пошло не так:» as visible lines of their own, «Следующий контакт:»,
-  one «Техника:» tail with «Контекст» and «цена» collapsed into it, and
+  one «Техника:» tail with «Контекст» and «Цена волны» collapsed into it, and
   «Нужно от тебя: нет».
 - Period report («за ночь», «за отрезок»): the full shape.
 - Final wave report: the full shape plus the wave-only blocks in «Итог
@@ -257,12 +258,12 @@ they never interrupt or page the user.
 Context Budget policy in `references/orchestration.md`; it lives in the
 «Техника» tail.
 
-The per-Issue cost tail «цена: ~N тыс. out-токенов, M циклов ревью» is
-compact telemetry per the Cost Telemetry policy in
-`references/orchestration.md`: include it only when the data is
-available; write «цена: н/д» otherwise. Cost lines are async-visible
-records for the owner — never blocking, never a gate, never a reason to
-interrupt work.
+The «Цена волны:» line carries the exact Russian line emitted by the
+installed `scripts/wave-cost.mjs <ISSUE-KEY>`. When collection fails, use
+`unavailable: <reason>` instead of a guess. It is compact telemetry per the
+Cost Telemetry policy in `references/orchestration.md`: async-visible for
+the owner, never blocking, never a gate, and never a reason to interrupt
+work.
 
 ## Итог волны (Wave Report)
 
@@ -294,9 +295,9 @@ per-feature lines may open with an Issue key:
 
 ```text
 Цена волны:
-- <ISSUE-KEY> — ~N тыс. out-токенов (in ~N тыс., cached ~N%), M циклов ревью, wall-clock <часы:минуты>
+- <точная русская строка `scripts/wave-cost.mjs <ISSUE-KEY>`>
 - …
-Итого: ~N тыс. out-токенов, M циклов ревью, wall-clock <часы:минуты>
+Итого: <сумма измеримых непересекающихся учётов; unavailable: <причина> для недоступной составляющей>
 ```
 
 Numbers come from the per-stage ledger entries recorded at stage close

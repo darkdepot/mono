@@ -34,6 +34,7 @@ const INSTALL_LOCK_TOKEN_PATTERN = /^[A-Za-z0-9-]{1,128}$/;
 const RUNTIME_SCRIPTS = [
   "resolve-issue-context.mjs",
   "verify-pack-state.mjs",
+  "wave-cost.mjs",
   "watch-workers.mjs",
 ];
 // Upstream docs/ru/*.md published into

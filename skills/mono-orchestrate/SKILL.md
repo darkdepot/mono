@@ -639,12 +639,14 @@ what did not make it and why, and what it taught — between «Где мы к
   since the last update, Linear mutations applied and certificates
   recorded, and «Контекст: ~N%» — orchestrator session context usage per
   the Context Budget policy in `references/orchestration.md`.
-  Cost telemetry: the per-Issue cost tail in the status table («цена: ~N
-  тыс. out-токенов, M циклов ревью», or «цена: н/д» when data is missing)
-  lives in this tail too, and in the final wave report the «Цена волны» block
-  sits there as well — per the Cost
-  Telemetry policy in `references/orchestration.md`. Cost is telemetry,
-  not a gate: it never blocks, pauses, or pages.
+  Cost telemetry lives in this tail too. Before emitting a status, run the
+  installer-published `../.mono-agent-workflow/scripts/wave-cost.mjs
+  <ISSUE-KEY>` from this installed skill directory for each Issue with logs,
+  and copy its final Russian line verbatim after the `Цена волны:` label. If
+  collection fails, write `unavailable: <reason>` instead of estimating. The
+  final wave report carries the same lines in its «Цена волны» block, per the
+  Cost Telemetry policy in `references/orchestration.md`. Cost is telemetry,
+  not a gate: it never blocks, pauses, delays a stage, or pages.
 - «Нужно от тебя:» is always the last block: decision briefs per the
   template, each under the board-aligned ID of its own board section
   (`1a-…`), or «нет».
