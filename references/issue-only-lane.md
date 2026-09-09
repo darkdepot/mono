@@ -263,6 +263,8 @@ acceptable state, not drift, and closeout records it as `n/a`.
 
 ## Deterministic Project-first fallback
 
+Promotion mode: forbidden
+
 There is **No in-place Issue-to-Project promotion**. An Issue that entered the issue-only lane is never converted into, attached to, or reused as the execution Issue of a new Project. Scope/risk escape is a lane exit with a new Project-first package, not a container mutation.
 
 Fallback triggers include a seam that no longer resolves issue-only, stale or absent approval at Delivery Start, a second outcome or PR, unresolved product/UX/architecture/operations judgment, and a preflight diff whose higher risk classification is `deep` or `risky`. Marker-integrity failures remain hard failures with their stable resolver error; they are not silently downgraded.
@@ -271,6 +273,8 @@ The five-field seam stays the only lane authority, but callers retain the truste
 
 ### Pre-code exit
 
+Exit disposition: park-and-restart-project-first
+
 Before any implementation code exists:
 
 1. Park the original Issue in a non-startable state and record why the issue-only envelope was left.
@@ -278,6 +282,10 @@ Before any implementation code exists:
 3. Restart through `mono-idea` → discovery/handoff as a new Project-first package with new approval. Do not add a Project, PRD, Tech Spec, or Project relationship to the parked Issue. The other allowed outcome is cancellation.
 
 ### Post-`ready` exit
+
+Frozen slice disposition: ship-unchanged-or-cancel
+
+Expansion destination: separate-follow-up-project
 
 After a `mono-preflight` certificate already says `ready`, freeze the independently shippable Issue slice and its current PR scope. A frozen approval remains valid only while the whole-body fingerprint matches: do not edit the Issue body, acceptance IDs, marker fingerprint, or frozen implementation scope. Ship and deploy only that frozen slice as-is, and put every expanded outcome into a separate follow-up Project with its own PRD, Tech Spec, Issue, review, and approval. Set that follow-up Project's lead to the acting user (`lead: "me"` on the Linear connector) and the assignee of every Issue created in it to the same acting user (`assignee: "me"`) at creation, and never overwrite an assignment that already exists. If the current slice cannot remain independently shippable or its fingerprint no longer matches, cancel it instead; do not repair it by promotion.
 

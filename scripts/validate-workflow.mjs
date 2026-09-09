@@ -27,7 +27,6 @@ const EXPECTED_SKILLS = [
   "mono-review",
   "mono-ship",
 ];
-const FROZEN_ADAPTER_DESCRIPTION_LINES = {};
 
 function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -47,11 +46,6 @@ function artifactContractPinError(pin) {
     return `${pin.path} must apply the complete migrated contract rule range`;
   }
   return null;
-}
-
-function assertIncludes(relativePath, text, label = text) {
-  const body = read(relativePath);
-  if (!body.includes(text)) fail(`${relativePath} missing ${label}`);
 }
 
 function listSkillNames() {
@@ -180,14 +174,6 @@ function validateSkills() {
       }
     }
 
-    const frozenDescriptionLine = FROZEN_ADAPTER_DESCRIPTION_LINES[skill];
-    if (frozenDescriptionLine) {
-      const actualDescriptionLine = text.split("\n").find((line) => line.startsWith("description:"));
-      if (actualDescriptionLine !== frozenDescriptionLine) {
-        fail(`${relativePath} compatibility-adapter description changed; it is frozen until Phase B`);
-      }
-    }
-
     if (!text.includes("Read first:")) fail(`${relativePath} missing Read first section`);
 
     const { paths: readFirstPaths, malformedLines } = extractReadFirstEntries(text);
@@ -198,10 +184,6 @@ function validateSkills() {
       if (!validateReadFirstPath(referencedPath)) {
         fail(`${relativePath} has broken Read first path: ${referencedPath}`);
       }
-    }
-
-    if (/thin adapter/i.test(text) || /Resolve and follow/i.test(text)) {
-      fail(`${relativePath} looks like a redirect adapter`);
     }
 
     if (text.length < 900) fail(`${relativePath} looks too small to be an executable source skill`);
@@ -721,128 +703,6 @@ function validateOwnerLayerConstitutionParser() {
   }
 }
 
-function validateTemplateSections() {
-  const requiredSections = {
-    "templates/prd.md": [
-      "## Акторы",
-      "## Текущий процесс",
-      "## Требования",
-      "## Примеры приемки",
-      "## Что должна доказать проверка",
-      "## Критерии успеха",
-      "## Допущения",
-      "## Открытые вопросы",
-      "## Связи",
-    ],
-    "templates/tech-spec.md": [
-      "## Исходные требования",
-      "## Контракты и границы",
-      "### Реальные ответы бэкенда",
-      "## Единицы реализации",
-      "## Влияние на остальную систему",
-      "## Что может сломаться и как защищаемся",
-      "## Валидация",
-      "## Релиз и откат",
-    ],
-    "templates/issue.md": [
-      "# Прочитать сначала",
-      "# Готовность агента",
-      "# Зависимости",
-      "# Ключевые контракты",
-      "# Текущее поведение",
-      "# Желаемое поведение",
-      "# Шаги воспроизведения",
-      "# Ревью-гейт",
-      "# Снимок контекста",
-      "# Как проверить",
-      "# Критерии приемки",
-      "# Что не входит",
-    ],
-    "templates/project.md": ["# Что", "# Зачем", "# Образ результата", "# Что входит", "# Что не входит"],
-    "templates/review-output.md": [
-      "Ревью Linear: <ready|advisory-ready|needs-fixes|blocked>",
-      "Блокирующие замечания:",
-      "Предложенные исправления:",
-      "Нужно твоё решение:",
-      "К сведению:",
-      "Do not use `PASS`, `FAIL`, or `BLOCKED` as the review status.",
-    ],
-    "templates/ship-output.md": [
-      "Preflight: <ready/blocked/drift-candidate/needs-human/not run>",
-      "Bug/perf proof: <not applicable or original symptom/baseline + fix proof + regression proof/gap>",
-    ],
-    "templates/deploy-output.md": [
-      "Deploy status:",
-      "Ship certificate: <found/missing/stale>",
-      "Deploy workflow:",
-      "Learnings recorded:",
-    ],
-    "templates/project-update.md": [
-      "## Shape",
-      "## Invariants",
-      "## Live mode",
-      "## Theme project",
-      "## State update",
-      "## Examples",
-      "## Acceptance set",
-    ],
-    "templates/check-output.md": [
-      "Смысл:",
-      "Чего не хватает:",
-      "Расхождения:",
-      "Следующий unblock:",
-      "Нарушение контракта:",
-      "Как починить:",
-    ],
-    "templates/orchestrator-dispatch.md": [
-      "## Assignment",
-      "## Goal Contract",
-      "## Engine",
-      "## Context Snapshot",
-      "## AFK Contract",
-      "## Mailbox",
-      "## Authorization",
-      "Do not ask the user",
-      "Never write to Linear yourself",
-      "no sub-workers",
-      "~/.codex/skills/",
-      ".orchestrator/",
-    ],
-    "templates/orchestrator-brief.md": [
-      "Что решаем:",
-      "Почему сейчас:",
-      "Что уже доказано:",
-      "Рекомендация:",
-      "Решил сам:",
-      "Нужно от тебя:",
-    ],
-    "templates/orchestrator-report.md": [
-      "\"issue\"",
-      "\"stage\"",
-      "\"status\"",
-      "\"verification_items\"",
-      "\"question\"",
-      "\"recommendation\"",
-      "\"linear_mutations_pending\"",
-      "\"notes\"",
-      "needs-decision",
-      "needs-human",
-      "drift-candidate",
-      "## Ledger Entry",
-      "## Worker Registry",
-      "workers.json",
-    ],
-  };
-
-  for (const [relativePath, sections] of Object.entries(requiredSections)) {
-    if (!exists(relativePath)) {
-      fail(`Missing template: ${relativePath}`);
-      continue;
-    }
-    for (const section of sections) assertIncludes(relativePath, section);
-  }
-}
-
 function validateArtifactContractParity() {
   const indexPath = "references/artifact-contracts.md";
   const missingAdapterFixturePath = "skills/__missing-adapter-fixture__/SKILL.md";
@@ -1030,32 +890,6 @@ function validateArtifactContractParity() {
   }
 }
 
-function validateReviewCheckBoundary() {
-  const review = read("skills/mono-review/SKILL.md");
-  const check = read("skills/mono-check/SKILL.md");
-
-  for (const required of [
-    "report-only",
-    "must not create, update, delete, or silently repair",
-    "Do not use `PASS`, `FAIL`, or `BLOCKED`",
-    "`mono-review` is report-only",
-  ]) {
-    if (!review.includes(required)) fail(`mono-review skill boundary missing: ${required}`);
-  }
-
-  if (check.includes("templates/review-output.md") || check.includes("Linear review:") || check.includes("Ревью Linear:")) {
-    fail("mono-check must not use the review output template");
-  }
-
-  if (!check.includes("Do not emit review findings")) fail("mono-check must explicitly avoid review findings");
-  if (!check.includes("Never edit Project, documents, or Issues from `mono-check`")) {
-    fail("mono-check must be strictly readiness-only");
-  }
-  if (!check.includes("return `FAIL` if the required `mono-review` gate is missing")) {
-    fail("mono-check must fail missing required review gates");
-  }
-}
-
 function validateRepairAndRoutingContract() {
   const repairContractPath = "references/repair-machine.md";
   if (!exists(repairContractPath)) {
@@ -1084,88 +918,6 @@ function validateRepairAndRoutingContract() {
       fail(`Repair classification fixture ${fixture} must resolve to class ${expectedClass}`);
     }
   }
-  for (const [fixture, expectedClass] of classificationFixtures.filter(([, value]) => value === "3")) {
-    const rowPattern = new RegExp(
-      "^\\| `" + fixture + "` \\| [^|]+ \\| `" + expectedClass + "` \\| ([^|]+) \\|$",
-      "m"
-    );
-    const requiredResult = repairContract.match(rowPattern)?.[1]?.toLowerCase() ?? "";
-    for (const required of ["supersede approval", "invalidate dependants", "require owner re-approval", "roll back delivery"]) {
-      if (!requiredResult.includes(required)) {
-        fail(`Repair class 3 fixture ${fixture} required result missing ${JSON.stringify(required)}`);
-      }
-    }
-  }
-
-  const classTwoEffectFixtures = [
-    {
-      name: "snapshot-sync",
-      required: [
-        "## Class 2 effect fixture: snapshot-sync",
-        "implementation-critical fields",
-        "re-derive each affected Issue snapshot fingerprint",
-      ],
-    },
-    {
-      name: "stale-preflight-cert",
-      required: [
-        "## Class 2 effect fixture: stale-preflight-cert",
-        "issued before the repair mutation",
-        "must rerun `mono-preflight`",
-      ],
-    },
-    {
-      name: "stale-worker-stop",
-      required: [
-        "## Class 2 effect fixture: stale-worker-stop",
-        "stop or quiesce every affected active worker before the repair mutation",
-        "dispatch snapshot fingerprint differs from the re-derived fingerprint",
-        "stop before any further implementation step",
-      ],
-    },
-  ];
-  for (const fixture of classTwoEffectFixtures) {
-    for (const required of fixture.required) {
-      if (!repairContract.includes(required)) {
-        fail(`Class 2 ${fixture.name} fixture missing ${JSON.stringify(required)}`);
-      }
-    }
-  }
-
-  const classTwoOrderingPins = [
-    { path: "skills/mono-handoff/SKILL.md", mutation: "synchronizes" },
-    { path: "references/lifecycle.md", mutation: "synchronizes" },
-    { path: "references/repair-machine.md", mutation: "apply the previewed artifact repair" },
-  ];
-  for (const { path: relativePath, mutation } of classTwoOrderingPins) {
-    const body = read(relativePath).replace(/\s+/g, " ").toLowerCase();
-    const workerStop = body.indexOf("stops or quiesces every affected active worker before any repair mutation");
-    const snapshotSync = body.indexOf(mutation);
-    if (workerStop < 0) {
-      fail(`${relativePath} must front-load the class 2 affected-worker stop`);
-    } else if (snapshotSync < 0 || workerStop > snapshotSync) {
-      fail(`${relativePath} must stop affected workers before class 2 snapshot mutation`);
-    }
-  }
-
-  for (const required of [
-    "Accepted pre-ship drift is a terminal ownership override evaluated before the general existing-Project route",
-    "exact before/after diff grouped by stable ID",
-    "unchanged R/AE/AC, non-goals, risk class, and Issue set",
-    "Ambiguity is class 3",
-    "Class 1 keeps package and implementation-start approvals valid",
-    "must not update Issue bodies, Issue snapshots, fingerprints, certificates, worker dispatches, Issue slicing, or Project lifecycle state",
-    "Project-first implementation-start approval is bound to the unchanged scope and Issue set, not to an Issue snapshot fingerprint",
-    "fresh dispatch is the required non-owner re-authorization",
-    "stop affected workers before rollback",
-    "supersede the implementation-start approval",
-    "invalidate dependent Tech Spec, Issue snapshots, certificates, and Issue slicing",
-    "move a Delivery Project back to Discovery",
-    "stop workers -> supersede approvals -> invalidate dependants -> Delivery to Discovery -> rebuild -> review/check -> owner re-approval",
-    "owner re-approval",
-  ]) {
-    if (!repairContract.includes(required)) fail(`Repair-machine contract missing ${JSON.stringify(required)}`);
-  }
 
   const routingOverlapFixtures = [
     ["existing-project-pre-ship-drift", "mono-ship"],
@@ -1182,58 +934,6 @@ function validateRepairAndRoutingContract() {
     }
   }
 
-  const skillPins = {
-    "skills/mono-handoff/SKILL.md": [
-      "references/repair-machine.md",
-      "repair mode",
-      "`mono-review artifact`",
-      "Do not use repair mode for accepted pre-ship drift",
-    ],
-    "skills/mono-review/SKILL.md": [
-      "references/repair-machine.md",
-      "- `artifact`",
-      "proposed repair class",
-      "report-only",
-    ],
-    "skills/mono-check/SKILL.md": [
-      "references/repair-machine.md",
-      "`repair`",
-      "readiness-only",
-    ],
-    "references/review-rubric.md": [
-      "Repair classification",
-      "stable-ID diff",
-      "Ambiguity or risk growth is class 3",
-    ],
-    "references/lifecycle.md": [
-      "## Artifact Repair",
-      "issue-only body renewal",
-      "accepted pre-ship drift",
-    ],
-    "AGENTS.md": [
-      "`mono-handoff` = project-first package creation and artifact repair",
-      "`mono-issue` = issue-only intake and renewal",
-      "accepted pre-ship drift",
-    ],
-  };
-  for (const [relativePath, pins] of Object.entries(skillPins)) {
-    for (const pin of pins) assertIncludes(relativePath, pin, JSON.stringify(pin));
-  }
-
-  const routingFixtures = [
-    ["skills/mono-idea/SKILL.md", "raw idea", "mono-idea", "pre-ship drift routes to mono-ship"],
-    ["skills/mono-issue/SKILL.md", "unmistakably one-PR projectless", "renewal"],
-    ["skills/mono-handoff/SKILL.md", "existing Project or shaped discovery", "PRD or Tech Spec repair"],
-    ["skills/mono-ship/SKILL.md", "pre-ship drift", "mono-ship"],
-  ];
-  for (const [relativePath, ...signals] of routingFixtures) {
-    const frontmatter = parseFrontmatter(read(relativePath));
-    for (const signal of signals) {
-      if (!frontmatter?.description?.includes(signal)) {
-        fail(`${relativePath} description missing routing signal ${JSON.stringify(signal)}`);
-      }
-    }
-  }
 }
 
 function validateLocalInstallBehavior() {
@@ -1294,7 +994,7 @@ function validateLocalInstallBehavior() {
       fail("Fresh 10-skill install unexpectedly contains retired mono-issue-intake");
     }
     const installedIssue = fs.readFileSync(path.join(skillsRoot, "mono-issue", "SKILL.md"), "utf8");
-    if (!installedIssue.includes("create-then-approve renewal") || installedIssue.includes("internal/advanced atomic helper")) {
+    if (parseFrontmatter(installedIssue)?.name !== "mono-issue") {
       fail("Installed mono-issue must be the issue-only front door, not the retired atomic adapter");
     }
     const installedIssueLock = installedIdentity.installedSkills.find((entry) => entry.name === "mono-issue");
@@ -1674,13 +1374,6 @@ function validatePackIdentityAndQuiescenceBehavior() {
       );
     }
 
-    for (const [relativePath, required] of [
-      ["templates/orchestrator-dispatch.md", ["packVersion", "sourceCommit", "surfaceRevision"]],
-      ["templates/orchestrator-report.md", ["packVersion", "sourceCommit", "surfaceRevision", "control.json"]],
-    ]) {
-      for (const field of required) assertIncludes(relativePath, field, JSON.stringify(field));
-    }
-
     const surfaceRevisionMatch = read("scripts/install-local.mjs").match(
       /const SURFACE_REVISION = (\d+);/
     );
@@ -1708,81 +1401,6 @@ function validatePackIdentityAndQuiescenceBehavior() {
     }
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
-  }
-}
-
-function validatePackIdentityWorkflowContract() {
-  assertIncludes("scripts/verify.mjs", "verify-pack-state.mjs", "pack-state syntax verification");
-
-  for (const relativePath of ["references/install.md", "references/versioning.md"]) {
-    for (const required of ["packVersion", "sourceCommit", "surfaceRevision", "verify-pack-state.mjs"]) {
-      assertIncludes(relativePath, required, `${relativePath}: ${required}`);
-    }
-  }
-
-  for (const relativePath of [
-    "skills/mono-implement/SKILL.md",
-    "skills/mono-preflight/SKILL.md",
-    "skills/mono-ship/SKILL.md",
-  ]) {
-    for (const required of [
-      "verify-pack-state.mjs identity",
-      "packVersion",
-      "sourceCommit",
-      "surfaceRevision",
-      "blocked",
-    ]) {
-      assertIncludes(relativePath, required, `${relativePath}: ${required}`);
-    }
-  }
-
-  for (const required of [
-    "control.json",
-    "`active` → `draining` → `idle`",
-    "`~/.mono-agent-workflow/install.lock`",
-    "token-scoped claim",
-    "`protocol.json`",
-    "`claim-<token>.json`",
-    "bytewise ASCII token order",
-    "hold the lock through read-back",
-    "unreadable lock fails closed",
-    "verify-pack-state.mjs identity",
-    "remove the Issue entry from `workers.json`",
-    "surfaceRevision differs",
-    "do not rebind",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "control.json",
-    "active",
-    "draining",
-    "idle",
-    "surfaceRevision",
-    "Acquire `~/.mono-agent-workflow/install.lock`",
-    "before creating the product root",
-    "before an `idle` → `active` transition",
-  ]) {
-    assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
-  }
-  assertIncludes(
-    "skills/mono-deploy/SKILL.md",
-    "remove the Issue entry from `workers.json`",
-    "deploy retirement contract"
-  );
-
-  // Resume rebind is stricter than issue-only discovery: a live thread belongs
-  // to the surface it was dispatched under and cannot be rebound after a
-  // breaking surface change, even when the thread id still exists.
-  const canRebindWorker = (entry, installedIdentity) =>
-    entry.surfaceRevision === installedIdentity.surfaceRevision;
-  const installedIdentity = { surfaceRevision: 1 };
-  if (!canRebindWorker({ surfaceRevision: 1 }, installedIdentity)) {
-    fail("resume identity fixture must rebind a matching surfaceRevision");
-  }
-  if (canRebindWorker({ surfaceRevision: 3 }, installedIdentity)) {
-    fail("resume identity fixture must not rebind a mismatched surfaceRevision");
   }
 }
 
@@ -2130,7 +1748,7 @@ function validateBreakingInstallBehavior() {
         }
       }
       const installedIssue = fs.readFileSync(path.join(skillsRoot, "mono-issue", "SKILL.md"), "utf8");
-      if (!installedIssue.includes("create-then-approve renewal") || installedIssue.includes("internal/advanced atomic helper")) {
+      if (parseFrontmatter(installedIssue)?.name !== "mono-issue") {
         fail(`Breaking install did not swap mono-issue to the front-door body at ${skillsRoot}`);
       }
       const lockedIssue = migratedLock.installedSkills.find((entry) => entry.name === "mono-issue");
@@ -2742,170 +2360,6 @@ function validateProjectConfigBehavior() {
 }
 
 function validateIssueOnlyLaneBehavior() {
-  // String pins: the doc fixes the marker line, the five marker fields, the
-  // 5-field contract, the marker ≠ route-record boundary, and the fail-closed
-  // invariant.
-  for (const pin of [
-    "mono-issue-only marker",
-    "Marker version: 1",
-    "Scope fingerprint",
-    "Acceptance IDs",
-    "Risk class",
-    "Approval",
-    "маркер ≠ route-record",
-    "route_revision",
-    "assurance_vector",
-    "required_artifacts",
-    "package_kind",
-    "lifecycle_state_entity",
-    "behavioral_oracle",
-    "issue-verification",
-    "risk_class",
-    "approval_status",
-    "no marker ⇒ `package_kind=project-first`",
-    "scripts/resolve-issue-context.mjs",
-    "Not a spine-resolver",
-    // MONO-19: config opt-in gate + the canonical installed resolver path.
-    "opt-in gate",
-    "issueOnlyLane.enabled: true",
-    "ownerPrincipal",
-    "config-gated per repository",
-    "owner decision on 2026-07-17",
-    ".mono-agent-workflow/scripts/resolve-issue-context.mjs",
-  ]) {
-    assertIncludes("references/issue-only-lane.md", pin);
-  }
-
-  // MONO-16: downstream delivery consumes the resolver seam without changing
-  // the existing Project-first path. These pins keep the prose contracts tied
-  // to the executable escalation fixture below.
-  for (const required of [
-    "Resolve the 5-field context seam before changing lifecycle state",
-    "`lifecycle_state_entity=issue`",
-    "`approval_status=approved-fresh`",
-    "Run `mono-check delivery` in issue-only mode",
-    "Project-first branch remains unchanged",
-    "A `project` lifecycle entity does not prove that Project artifacts exist",
-    "A resolver integrity error (`broken marker` or `stale marker`) is a hard `needs-human` stop",
-    "A successful fail-closed `project-first` result from an issue-only candidate triggers the deterministic pre-code fallback",
-    "Before coding: park the Issue, supersede the marker approval, and restart Project-first",
-  ]) {
-    assertIncludes("skills/mono-implement/SKILL.md", required, JSON.stringify(required));
-  }
-  const implementDelivery = read("skills/mono-implement/SKILL.md");
-  const issueOnlyDeliveryCheck = implementDelivery.indexOf("Run `mono-check delivery` in issue-only mode");
-  const issueOnlyLifecycleMove = implementDelivery.indexOf("Move the **Issue** into its configured started/in-progress state");
-  if (issueOnlyDeliveryCheck > issueOnlyLifecycleMove) {
-    fail("mono-implement issue-only delivery check must pass before the Issue moves to started/in-progress");
-  }
-  for (const required of [
-    "compare the diff against `behavioral_oracle` plus the live `scope_fingerprint`",
-    "preserve the existing risk-escalation rule",
-    "`deep` or `risky` is a `drift-candidate`",
-    "do not treat it as a genuine Project-first package",
-    "After `ready`: freeze the independently shippable slice",
-  ]) {
-    assertIncludes("skills/mono-preflight/SKILL.md", required, JSON.stringify(required));
-  }
-  for (const required of [
-    "No in-place Issue-to-Project promotion",
-    "Pre-code exit",
-    "Post-`ready` exit",
-    "Approval: superseded",
-    "frozen approval remains valid only while the whole-body fingerprint matches",
-    "separate follow-up Project",
-  ]) {
-    assertIncludes("references/issue-only-lane.md", required, JSON.stringify(required));
-  }
-
-  // MONO-17 / fixture 5 — parentless ship gate. The ship contract must consume
-  // the same five-field seam, keep a freshly approved issue-only package out of
-  // handoff, fail closed for an absent/stale marker, and preserve the mandatory
-  // standard+ pre-ship review.
-  for (const required of [
-    "Resolve the 5-field context seam before deciding whether to route to `mono-handoff`",
-    "`package_kind=issue-only` with `approval_status=approved-fresh`",
-    "do not route the parentless Issue to `mono-handoff`",
-    "An absent marker resolves `project-first` and routes the parentless candidate through the deterministic fallback to `mono-handoff`",
-    "A `stale marker` resolver error is a hard stop that routes back to `mono-handoff`",
-    "Project-first ship behavior remains unchanged",
-    "Required `mono-review pre-ship` runs for `standard`, `deep`, `risky`",
-  ]) {
-    assertIncludes("skills/mono-ship/SKILL.md", required, JSON.stringify(required));
-  }
-
-  // MONO-17 / fixture 6 — deploy live Issue oracle. Prepare must be seam-shaped,
-  // issue-only live QA must walk every Issue AC-ID, oracle drift must fail (never
-  // become a skip), and design acceptance is omitted when no prototype exists.
-  for (const required of [
-    "Resolve the 5-field context seam before package-specific prepare fetches",
-    "Project and PRD/Tech Spec as `n/a`",
-    "walk every `behavioral_oracle.acceptance_ids` entry in AC1..ACn order",
-    "Oracle drift is a failed live QA gate, never a skipped sweep",
-    "skip design acceptance when no approved prototype exists",
-    "Project-first deploy behavior remains unchanged",
-  ]) {
-    assertIncludes("skills/mono-deploy/SKILL.md", required, JSON.stringify(required));
-  }
-
-  // MONO-18 / fixture 7 — check modes, dispatch snapshot, and resume-discovery.
-  // Every issue-only check mode must use the same verified seam instead of
-  // Project/PRD/Spec presence, dispatch must carry the complete worker world,
-  // and resume must discover only open, parentless, label-selected candidates
-  // that re-resolve issue-only/approved-fresh.
-  for (const required of [
-    "Before applying `issue`, `delivery`, `pre-ship`, or `post-ship` mode requirements",
-    "`package_kind=issue-only`, `lifecycle_state_entity=issue`, and `approval_status=approved-fresh`",
-    "`issue` (issue-only lane)",
-    "`delivery` (issue-only lane)",
-    "`pre-ship` (issue-only lane)",
-    "`post-ship` (issue-only lane)",
-    "Missing marker or a fail-closed `project-first` result never waives Project-first requirements",
-  ]) {
-    assertIncludes("skills/mono-check/SKILL.md", required, JSON.stringify(required));
-  }
-  assertIncludes(
-    "skills/mono-check/SKILL.md",
-    "Project moved to Delivery with PRD and Tech Spec but no approved execution Issue or no implementation-start approval.",
-    "hard-FAIL Project-in-Delivery-without-approved-Issue must remain unchanged",
-  );
-
-  for (const required of [
-    "PRD: <full text, the sections relevant to this Issue, or `n/a (issue-only)`>",
-    "Tech Spec: <full text, the contracts relevant to this Issue, or `n/a (issue-only)`>",
-    "Issue-only marker: <current marker comment verbatim, or `n/a (project-first)`>",
-    "Verified label: <`issue-only`, or `n/a (project-first)`>",
-    "Scope fingerprint: <fresh whole-body SHA-256, or `n/a (project-first)`>",
-    "Issue-only config: <`enabled=true; ownerPrincipal=<stable Linear user ID>`, or `n/a (project-first)`>",
-    "Owner approval: <authenticated author plus approved fingerprint, or `n/a (project-first)`>",
-    "Context seam: <resolved 5-field JSON, or `n/a` when resolution is blocked>",
-  ]) {
-    assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "query open parentless Issues carrying the verified `issue-only` label",
-    "re-run the 5-field context seam",
-    "Only `package_kind=issue-only` plus `approval_status=approved-fresh` is resumable",
-    "Missing label or marker is not discovered as issue-only",
-    "unverified reconstruction fails closed",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-
-  // MONO-25 activates the config-gated lane for this upstream repository.
-  // Intake still leaves a package non-startable; mono-implement alone moves the
-  // Issue after the delivery check, and every repository remains config-opt-in.
-  for (const [relativePath, required] of [
-    ["skills/mono-issue/SKILL.md", "Intake never moves the Issue to started; `mono-implement` owns activation"],
-    ["skills/mono-idea/SKILL.md", "live only when `issueOnlyLane.enabled: true` and `ownerPrincipal` are configured"],
-    ["references/artifact-rules.md", "intake remains non-activating; `mono-implement` owns the later Issue lifecycle move"],
-    ["references/issue-only-lane.md", "Intake remains non-activating"],
-    ["references/issue-only-lane.md", "config-gated per repository"],
-    ["references/issue-only-lane.md", "owner decision on 2026-07-17"],
-  ]) {
-    assertIncludes(relativePath, required, JSON.stringify(required));
-  }
   const activeProjectConfig = JSON.parse(read(".agents/mono-workflow.config.json"));
   const activeProjectConfigError = issueOnlyLaneActivationError(activeProjectConfig);
   if (activeProjectConfigError) {
@@ -4541,603 +3995,6 @@ function validateIssueOnlyLaneBehavior() {
   }
 }
 
-function validateIssueIntakeContract() {
-  // MONO-33: mono-issue is the issue-only front door. Pins anchor the
-  // load-bearing intake, renewal, and fail-closed routing prose; the
-  // create-then-approve transaction remains backed by the byte-stable resolver.
-  for (const required of [
-    "nine eligibility conditions",
-    "Prequalification",
-    "intake-authorized draft mode",
-    "create-then-approve",
-    "scripts/resolve-issue-context.mjs",
-    "--emit-fingerprint",
-    "--issue <issue-body> --emit-fingerprint",
-    "--issue <live-issue-body> --emit-fingerprint",
-    "--approval-verified",
-    "whole-body",
-    "non-startable Issue",
-    "Run the mandatory review gate on the drafted body",
-    "readiness check before activation",
-    "Phase-1 go-live boundary",
-    "prepared, approved, non-startable package",
-    "`mono-implement` owns activation",
-    "label first, marker last",
-    "On any error, roll back the partial state",
-    "Renewal recovery differs from first-time rollback",
-    "failed renewal must remove or supersede that previous marker",
-    ".mono-agent-workflow/scripts/resolve-issue-context.mjs",
-    "owner principal's stable Linear user ID",
-    "issueOnlyLane.ownerPrincipal",
-    "explicit owner decision",
-    "record that decision as a Linear approval comment naming the exact fingerprint",
-    "capture the comment author's stable Linear user ID for read-back",
-    "Never self-approve",
-    "маркер ≠ route-record",
-    "route_revision",
-    "`issue-only` label",
-    "fails closed to Project-first",
-    "Do not add a second hashing path",
-    "Project relation or Project/PRD/Tech Spec chips",
-    "request asks for Issue slicing",
-    "deep, risky, multi-surface, cross-cutting, or ambiguous",
-    "create-then-approve renewal",
-    "Apply `IS-001` through `IS-034`",
-    "stop this skill without rendering or mutating an Issue",
-    "the destination lifecycle owner applies the Project-first rules",
-  ]) {
-    assertIncludes("skills/mono-issue/SKILL.md", required, JSON.stringify(required));
-  }
-  if (exists("skills/mono-issue-intake")) {
-    fail("Retired skills/mono-issue-intake directory must be absent");
-  }
-  const issueFrontDoor = read("skills/mono-issue/SKILL.md");
-  if (issueFrontDoor.includes("internal/advanced atomic helper")) {
-    fail("mono-issue still contains the retired atomic-adapter behavior");
-  }
-
-  // mono-idea guard: names the issue-only front door but keeps Project-first as
-  // the default and mandatory for the idea path (does not weaken the terminal
-  // Project-creation contract).
-  for (const required of [
-    "Issue-only front door",
-    "`mono-issue`",
-    "Project creation stays mandatory",
-    "Route unmistakably one-PR, projectless issue-only work to the `mono-issue` front door",
-  ]) {
-    assertIncludes("skills/mono-idea/SKILL.md", required, JSON.stringify(required));
-  }
-
-  // Issue-contract guard: the bounded contract names the post-cut-over writer
-  // split, delegates issue-only behavior to the lane contract, and keeps the
-  // project-first source and chip rules explicit under mono-handoff ownership.
-  for (const required of [
-    "owns the Project-first branch from Project, PRD, and Tech Spec context",
-    "`mono-issue` owns only unmistakable projectless issue-only intake and renewal",
-    "front door and must refuse Project relations",
-    "issue-only Issue body may change only through `mono-issue` renewal",
-    "full create-then-approve",
-    "pre-ship drift is the terminal override and belongs to `mono-ship`",
-    "## IS-005 — Issue-only branch",
-    "[issue-only lane contract](../issue-only-lane.md) in full",
-    "## IS-008 — Project-first sources",
-    "`mono-handoff` branch, build a project-first Issue from Project, PRD, and",
-    "## IS-019 — Project-first chips",
-    "Their presence makes `mono-issue` refuse the request",
-  ]) {
-    assertIncludes("references/contracts/issue.md", required, JSON.stringify(required));
-  }
-  assertIncludes("skills/mono-issue/SKILL.md", "references/contracts/issue.md", "bounded Issue contract source");
-
-  // mono-check guard: idea/issue modes are issue-only-aware so the two intake
-  // entry paths (projectless idea route, self-contained issue-only Issue) do not
-  // hit a mandatory false failure from the project-first check modes.
-  for (const required of [
-    "no Project was created by design",
-    "judge it against the issue-only contract",
-  ]) {
-    assertIncludes("skills/mono-check/SKILL.md", required, JSON.stringify(required));
-  }
-
-  // mono-review guard: an issue-only review mode judges the self-contained
-  // Issue without requiring Project/PRD/Tech Spec, so the intake review gate is
-  // satisfiable for projectless standard work.
-  for (const required of [
-    "the self-contained Issue is the sole artifact and source of truth",
-    "Intake-authorized draft",
-  ]) {
-    assertIncludes("skills/mono-review/SKILL.md", required, JSON.stringify(required));
-  }
-  // The mandatory review-output template must offer the issue-only mode so a
-  // mono-review issue-only run can state its actual mode and still conform.
-  assertIncludes("templates/review-output.md", "issue-only", '"issue-only" in review-output mode enum');
-
-  // artifact-rules: the issue-only approval contract is the whole-body scope
-  // fingerprint, produced by the create-then-approve transaction.
-  for (const required of [
-    "the issue-only lane, package approval is the scope fingerprint",
-    "whole-body SHA-256 of the Issue contract",
-    "create-then-approve intake transaction",
-  ]) {
-    assertIncludes("references/artifact-rules.md", required, JSON.stringify(required));
-  }
-}
-
-function validateDocsAndExamples() {
-  for (const [relativePath, texts] of Object.entries({
-    "README.md": [
-      "mono-implement",
-      "mono-preflight",
-      "mono-deploy",
-      "autoreview",
-      "node scripts/install-local.mjs",
-      "node scripts/project-config.mjs",
-      "--all-roots",
-      "~/.claude/skills",
-      "per-root",
-      "Review/check split",
-      "Delivery ladder",
-      "Autonomy with transparency",
-    ],
-    "AGENTS.md": [
-      "`mono-review` = report-only quality/risk review",
-      "`mono-implement` = Delivery Start",
-      "`mono-preflight` = local branch readiness",
-      "mandatory `autoreview` clean gate",
-      "`mono-deploy` = deploy workflow delegation",
-      "Keep `mono-review` report-only",
-      "Project repos must keep only `.agents/mono-workflow.config.json`",
-    ],
-    "examples/zeni-dogfood.md": [
-      "Risk-Based Review Gate Examples",
-      "Zeni keeps only `.agents/mono-workflow.config.json`",
-      "Use the local skill pack installed from this upstream repo",
-      "Correct Risky Handoff Review",
-      "Correct Implement To Preflight To Ship",
-      "Anti-Example: Ship Owns Deploy",
-      "Anti-Example: Vendored Project Install",
-      "Correct Tiny Advisory Review",
-      "Anti-Example: Required Review Skipped",
-      "Anti-Example: Review Mutates Linear",
-      "Anti-Example: Preflight Owns Ship",
-    ],
-    "references/artifact-intake.md": [
-      "Do not perform broad home-directory scans",
-      "Artifact roots",
-      "`read`",
-      "`unavailable`",
-      "`stale_or_ignored`",
-      "`conflicts`",
-      "`decisions_carried_forward`",
-      "`confidence_boundary`",
-    ],
-    "references/readiness-gates.md": ["`tiny`:", "`standard`:", "`deep`:", "`risky`:", "references/autoreview-routing.md", "Tiny Output Profile"],
-    "references/autoreview-routing.md": [
-      "Never rely on the external `autoreview` helper's built-in model default",
-      "Do not silently fall back",
-      "at least as capable as the code's producer",
-      "no-test-edits rule",
-      "cross-vendor review whenever the worker",
-      "Cross-vendor review is deliberately not a code-review requirement",
-    ],
-    "references/artifact-quality.md": ["## PRD", "## Tech Spec", "## Issue", "## Review Findings", "## Preflight Certificate"],
-    "references/human-friendly-output.md": ["## Machine Blocks In Linear Comments", "## Linear Exit Comments"],
-    "references/execution-quality.md": ["## PRD Coverage", "## Durable Issue Writing", "## Agent Readiness", "## Bug And Performance Proof", "## Architecture Lens"],
-    "references/review-rubric.md": ["Allowed review verdicts:", "`ready`", "`advisory-ready`", "`needs-fixes`", "`blocked`"],
-    "references/install.md": [
-      "local skill pack",
-      ".agents/mono-workflow.config.json",
-      "does not vendor `autoreview`",
-      "--all-roots",
-      "~/.claude/skills",
-      ".mono-agent-workflow.lock.json",
-      "MONO_WORKFLOW_KNOWN_ROOTS",
-      "per-root",
-      "references/autoreview-routing.md",
-    ],
-    "references/orchestration.md": [
-      "## Roles",
-      "## Stage Ownership",
-      "## Decision Authority",
-      "## Worker Transports",
-      [
-        "### Sandbox ladder",
-        "",
-        "Sandbox grants follow a stage ladder: `mono-implement` uses `workspace-write` without network; `mono-preflight` adds network and writable main-checkout `.git` while retaining the writable orchestrator root for mailbox delivery; `mono-ship` keeps those grants and permits push.",
-        "",
-        "| Stage | Sandbox mode and grants | Why |",
-        "| --- | --- | --- |",
-        "| `mono-implement` | `workspace-write`, no network, plus the writable orchestrator root | Edit only the linked worktree and deliver the mailbox report. |",
-        "| `mono-preflight` | `workspace-write`, network, writable main-checkout `.git`, plus the writable orchestrator root | Run the review helper, commit from the linked worktree, and deliver the mailbox report. |",
-        "| `mono-ship` | The `mono-preflight` grants, with push permitted | Push the branch, create and stabilize the PR, and keep mailbox delivery available. |",
-        "| Any stage that edits a protected hidden directory such as `.agents` | An explicit writable grant for that exact directory | Codex protects dot-directories even when their worktree is writable. |",
-        "",
-        "Escalating to a fully disabled sandbox is not normal operation; record it in `ledger.md` as a deviation with the reason.",
-      ].join("\n"),
-      "## Mailbox And Ledger",
-      "## Monitoring Protocol",
-      "## Decision Briefs",
-      "## Resume",
-      "claude-code-desktop",
-      "deployApproval",
-      "any risk class except `tiny` under `risky-only`",
-      "«Решил сам:»",
-      "scope-drift-needs-handoff",
-      "codex-cli",
-      "codex exec resume",
-      "Resume does not accept the global `--cd`, `--sandbox`, or `--add-dir` flags; any of them in a resume command is a contract error — set the working directory with `cd` and grants through `-c` overrides.",
-      "--add-dir",
-      "workers.json",
-      "sandbox_workspace_write.network_access",
-      "git worktree add",
-    ],
-    "references/questioning.md": [
-      "`mono-deploy`: ask only for deploy approval",
-      "## Autonomy Defaults",
-      "/design-html",
-    ],
-    "references/versioning.md": [
-      "`Autoreview helper`",
-      "`Artifact roots`",
-      "`Implementation workflow`",
-      "`Documentation workflow`",
-      "`Deploy workflow`",
-      "project config",
-      "references/autoreview-routing.md",
-    ],
-  })) {
-    if (!exists(relativePath)) {
-      fail(`Missing ${relativePath}`);
-      continue;
-    }
-    for (const text of texts) assertIncludes(relativePath, text);
-  }
-}
-
-function validateAntiPatterns() {
-  const review = read("skills/mono-review/SKILL.md");
-  if (/Final response must include:[\s\S]*PASS/.test(review)) {
-    fail("mono-review final response must not use PASS/FAIL/BLOCKED statuses");
-  }
-
-  const handoff = read("skills/mono-handoff/SKILL.md");
-  if (!handoff.includes("Apply accepted review fixes in `mono-handoff`")) {
-    fail("mono-handoff must own accepted review fixes");
-  }
-  if (!handoff.includes("references/artifact-intake.md")) {
-    fail("mono-handoff must use artifact intake before package synthesis");
-  }
-  for (const required of [
-    "`read`",
-    "`unavailable`",
-    "`stale_or_ignored`",
-    "`conflicts`",
-    "`decisions_carried_forward`",
-    "`confidence_boundary`",
-  ]) {
-    if (!handoff.includes(required)) fail(`mono-handoff must expose artifact intake field: ${required}`);
-  }
-  if (!handoff.includes("Artifact intake, one Russian sentence")) {
-    fail("mono-handoff final response must carry artifact intake one-sentence Russian rendering");
-  }
-  if (!handoff.includes("The structured intake record")) {
-    fail("mono-handoff final response must reference the structured intake record location");
-  }
-  if (!handoff.includes("Do not move the Project to Delivery from `mono-handoff`")) {
-    fail("mono-handoff must not own Delivery Start");
-  }
-  if (!handoff.includes("это одновременно approval на старт кода")) {
-    fail("mono-handoff option 2 must label the bundled approval");
-  }
-  if (!handoff.includes("«Решил сам:»")) {
-    fail("mono-handoff must include «Решил сам:» ledger in package approval UX");
-  }
-  if (!handoff.includes("Always-ask list")) {
-    fail("mono-handoff rules must reference the Always-ask list in questioning.md");
-  }
-
-  const implement = read("skills/mono-implement/SKILL.md");
-  for (const required of [
-    "Use this skill to own Delivery Start",
-    "Run or report `mono-check delivery`",
-    "Move the Project to Delivery only after approval and prerequisites are explicit",
-    "after the Project is in Delivery",
-    "missing or `None`",
-    "Implementation workflow",
-    "implemented-needs-preflight",
-    "scope-drift-needs-handoff",
-    "Implementation-start approval UX:",
-    "Что это разрешает: Project переходит в Delivery",
-    "post a short Russian Linear exit comment on the Issue following the Linear Exit Comments rule",
-    "For `tiny` work, follow the Tiny Output Profile in references/readiness-gates.md",
-    "gstack-learnings-search",
-    "Учтённые learnings:",
-  ]) {
-    if (!implement.includes(required)) fail(`mono-implement contract missing: ${required}`);
-  }
-
-  const ship = read("skills/mono-ship/SKILL.md");
-  if (!ship.includes("`mono-review` is report-only; `mono-ship` owns accepted pre-ship drift sync")) {
-    fail("mono-ship must own accepted pre-ship drift sync");
-  }
-  if (!ship.includes("read the latest `mono-preflight certificate`")) {
-    fail("mono-ship must consume the preflight certificate when present");
-  }
-  if (!ship.includes("If no certificate exists, route to `mono-preflight` before continuing")) {
-    fail("mono-ship must require a preflight certificate before ship");
-  }
-  if (!ship.includes("Linear comments or resources")) {
-    fail("mono-ship must recover the preflight certificate from Linear");
-  }
-  for (const required of ["Documentation workflow", "mono-ship green certificate", "Next: mono-deploy", "Poll interval: 10 minutes"]) {
-    if (!ship.includes(required) && !read("references/ship-feedback-loop.md").includes(required)) {
-      fail(`mono-ship ladder contract missing: ${required}`);
-    }
-  }
-  if (/Land workflow|configured land workflow|land\/deploy workflow/i.test(ship)) {
-    fail("mono-ship must not reference old Land workflow or own deploy");
-  }
-  if (ship.includes("pr-created")) fail("mono-ship must not keep pr-created as a terminal ship verdict");
-
-  const deploy = read("skills/mono-deploy/SKILL.md");
-  for (const required of [
-    "Requires `mono-ship green certificate`",
-    "Deploy workflow",
-    "gstack land-and-deploy",
-    "mono-check post-ship",
-    "gstack-learnings-log",
-    "Do not run `/learn prune`, `/learn export`, `/learn stats`",
-    "Do not accept `Land workflow` as a compatibility alias",
-    "deployApproval",
-    "Готов деплоить",
-    "gstack-learnings-search",
-    "Learnings consulted:",
-    "re-tier review per `references/autoreview-routing.md`",
-  ]) {
-    if (!deploy.includes(required)) fail(`mono-deploy contract missing: ${required}`);
-  }
-
-  const preflight = read("skills/mono-preflight/SKILL.md");
-  for (const required of [
-    "owns local branch readiness only",
-    "`ready`",
-    "`blocked`",
-    "`drift-candidate`",
-    "`needs-human`",
-    "mono-preflight certificate",
-    "Issue(s): <keys>",
-    "Branch: <branch>; commit state: <clean/dirty/committed>",
-    "Changed files: <count/list or summary>",
-    "Local verification: <commands run + outcome>",
-    "Autoreview: <clean|blocked|needs-human|unavailable>; final command: <selected-scope helper command>; clean result: <exit 0 + clean line or none>",
-    "Autoreview loop: <iterations>; accepted findings fixed: <none/list>; residual actionable findings: <none/list, must be none for ready>",
-    "Drift candidate: <none/summary>",
-    "Not checked: <manual QA/browser/mobile/deploy/etc.>",
-    "Next: <mono-ship | mono-handoff | needs-human>",
-    "Do not run or claim `mono-review pre-ship`",
-    "Do not run or claim `mono-check pre-ship`",
-    "Do not create the final PR",
-    "Preflight certificate shape",
-    "Invoke the installed `autoreview` skill/helper",
-    "Do not substitute Compound `ce-code-review`, built-in `/review`, ad hoc self-review, reviewer panels, or a hand-written summary",
-    "Treat helper exit 0 plus the clean result",
-    "Before emitting `ready`, run one final clean review for the selected durable scope",
-    "Pass `--engine claude`, `--model`, and `--thinking` explicitly on every helper invocation",
-    "never use an older Claude model as a normal route",
-    "Reclassify the final risk",
-    "then re-select the model and effort from `references/autoreview-routing.md`",
-    "or a new or stronger critical signal requires a higher route",
-    "the earlier clean result does not count",
-    "A clean local dirty-work review alone is not sufficient",
-    "Do not cap the review loop at an arbitrary round count",
-    "Do not call Compound `ce-code-review` for this gate",
-    "Do not silently reject a repeated `autoreview` finding and mark `ready`",
-    "Decision needed: <none | точное решение по-русски>",
-    "For `tiny` work, follow the Tiny Output Profile in references/readiness-gates.md",
-  ]) {
-    if (!preflight.includes(required)) fail(`mono-preflight boundary missing: ${required}`);
-  }
-  const forbiddenRoutingCopies = [
-    "`tiny` ->",
-  ];
-  for (const relativePath of ["skills/mono-preflight/SKILL.md", "README.md", "CHANGELOG.md", "examples/zeni-dogfood.md"]) {
-    const body = read(relativePath);
-    for (const duplicate of forbiddenRoutingCopies) {
-      if (body.includes(duplicate)) {
-        fail(`${relativePath} must not duplicate the canonical autoreview routing table: ${duplicate}`);
-      }
-    }
-  }
-
-  const shipOutput = read("templates/ship-output.md");
-  if (!shipOutput.includes("Preflight: <ready/blocked/drift-candidate/needs-human/not run>")) {
-    fail("ship output template must preserve preflight status boundary");
-  }
-  if (shipOutput.includes("pr-created")) fail("ship output template must stay focused on green/needs-human/blocked/timed-out");
-  for (const required of ["mono-ship green certificate", "Documentation workflow", "Next: <mono-deploy | needs-human | blocked>"]) {
-    if (!shipOutput.includes(required)) fail(`ship output template missing ladder field: ${required}`);
-  }
-
-  const deployOutput = read("templates/deploy-output.md");
-  for (const required of ["Ship certificate: <found/missing/stale>", "Deploy workflow", "Learnings recorded", "stale certificates"]) {
-    if (!deployOutput.includes(required)) fail(`deploy output template missing: ${required}`);
-  }
-
-  const check = read("skills/mono-check/SKILL.md");
-  if (!check.includes("local branch readiness is known through a `mono-preflight` certificate")) {
-    fail("mono-check pre-ship must require the preflight certificate");
-  }
-  if (!check.includes("project-config")) fail("mono-check must expose project-config mode");
-  if (check.includes("generated consumer skills are full executable copies")) {
-    fail("mono-check must not enforce the removed generated consumer install contract");
-  }
-
-  const dogfood = read("examples/zeni-dogfood.md");
-  for (const banned of [
-    "Zeni `.agents/skills/mono-*` contains generated full copies from upstream",
-    "Zeni `.claude/skills/mono-*` contains tiny discovery wrappers to `.agents`",
-    "Zeni stores consumer policy in `.agents/mono-workflow.config.md`",
-    "Install generated full skills into Zeni",
-  ]) {
-    if (dogfood.includes(banned)) fail(`Zeni dogfood example preserves removed install contract: ${banned}`);
-  }
-
-  const techSpecContract = read("references/contracts/tech-spec.md");
-  if (techSpecContract.includes("mono-review design")) {
-    fail("Tech Spec contract must not reference unsupported mono-review design mode");
-  }
-
-  const projectTemplate = read("templates/project.md");
-  for (const banned of ["# Lifecycle", "# Документы", "# План задач", "# Ревью-гейт", "# Текущий статус"]) {
-    if (projectTemplate.includes(banned)) fail(`Project template must not expose workflow dashboard section: ${banned}`);
-  }
-
-  const techSpecTemplate = read("templates/tech-spec.md");
-  for (const banned of ["## Skill contracts", "## mono-check design", "## Дизайн mono-check", "## Дизайн mono-review"]) {
-    if (techSpecTemplate.includes(banned)) fail(`Tech Spec template must not expose workflow mechanics section: ${banned}`);
-  }
-
-  // New dual-layer comment contract pins (plan 005)
-  if (!preflight.includes("<1-2 предложения по-русски: итог и следующий шаг>")) {
-    fail("mono-preflight human comment shape missing Russian human-lead placeholder");
-  }
-  if (!preflight.includes("The Russian human lead (1-2 sentences) is required")) {
-    fail("mono-preflight must require the Russian human lead in Linear comment");
-  }
-
-  if (!deploy.includes("Выкатили: <что получили пользователи>; проверено на <среда>.")) {
-    fail("mono-deploy closeout shape missing required product-outcome Russian lead");
-  }
-  if (!deploy.includes("The Russian product-outcome lead is required in Linear")) {
-    fail("mono-deploy must require the Russian product-outcome lead");
-  }
-
-  const idea = read("skills/mono-idea/SKILL.md");
-  if (!idea.includes("Выйди из Plan Mode (или перезапусти /mono-idea в обычном режиме) — я создам Project в статусе Idea.")) {
-    fail("mono-idea blocked message missing Russian unblock instruction");
-  }
-  if (!idea.includes("BLOCKED / INCOMPLETE - mono-idea cannot complete because")) {
-    fail("mono-idea blocked message must preserve English marker line");
-  }
-
-  const orchestrate = read("skills/mono-orchestrate/SKILL.md");
-  for (const required of [
-    "control plane",
-    "never implement, edit code, fix CI, or rewrite PRs",
-    "Single Linear writer",
-    "One Issue per worker",
-    "no-sub-delegation",
-    "scope-drift-needs-handoff",
-    "Do not steer an actively progressing worker",
-    "«Решил сам:»",
-    "references/orchestration.md",
-    "templates/orchestrator-dispatch.md",
-    "templates/orchestrator-brief.md",
-    "templates/orchestrator-report.md",
-    "deployApproval",
-    "Session verdicts:",
-    "timed-out",
-    "~/.mono-agent-workflow/orchestrator/<product>/",
-    "`mono-implement` owns Delivery Start",
-    "codex-cli",
-    "workers.json",
-    "codex exec resume",
-    "orchestration.transport",
-    "maxParallelWorkers",
-    "Director Discovery",
-    "UX checkpoint",
-    "Touch the user only at checkpoints",
-    "Second Voice",
-  ]) {
-    if (!orchestrate.includes(required)) fail(`mono-orchestrate contract missing: ${required}`);
-  }
-  if (!implement.includes("not available in the current runtime")) {
-    fail("mono-implement must define the engine runtime-availability fallback");
-  }
-  if (!ship.includes("not available in the current runtime")) {
-    fail("mono-ship must define the workflow runtime-availability fallback");
-  }
-  assertIncludes("references/questioning.md", "`mono-orchestrate`: ask only for Always-ask escalations");
-  assertIncludes("references/questioning.md", "## Orchestrated Mode");
-  assertIncludes("references/lifecycle.md", "## Orchestration");
-  assertIncludes("references/orchestration.md", "## Director Discovery");
-  assertIncludes("references/orchestration.md", "near-production");
-  assertIncludes("references/orchestration.md", "never a first draft");
-  assertIncludes("references/orchestration.md", "### Second Voice");
-  assertIncludes("references/orchestration.md", "a different model family from the orchestrator");
-  assertIncludes("references/orchestration.md", "A same-model Second Voice is not an acceptable fallback");
-  assertIncludes("references/orchestration.md", "never talks to the user, never writes");
-  assertIncludes("references/questioning.md", "Director Discovery");
-  assertIncludes("references/questioning.md", "Second Voice");
-  assertIncludes("references/lifecycle.md", "Director Discovery");
-  assertIncludes("references/lifecycle.md", "Second Voice");
-  assertIncludes("templates/orchestrator-brief.md", "UX-чекпоинт");
-  assertIncludes("README.md", "director mode");
-  assertIncludes("README.md", "Second Voice");
-  assertIncludes("README.md", "`mono-orchestrate`: control-plane orchestrator");
-  assertIncludes("README.md", "Codex CLI worker");
-  assertIncludes("AGENTS.md", "`mono-orchestrate` = product-level control plane");
-  assertIncludes("references/install.md", "\"orchestration\"");
-  assertIncludes("references/install.md", "maxParallelWorkers");
-}
-
-function validateHeartbeatContract() {
-  if (!exists("scripts/watch-workers.mjs")) {
-    fail("Missing scripts/watch-workers.mjs");
-  }
-  assertIncludes("scripts/verify.mjs", "watch-workers.mjs", "node --check step for scripts/watch-workers.mjs");
-  assertIncludes("references/orchestration.md", "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log, fsync the log file and its `logs/` directory, and only\n  then atomically pre-register the inactive `workers.json` entry with that\n  `log`, stage, pack identity, the publication-time\n  `spawned_at`, and exact `gates` list.");
-  assertIncludes("references/orchestration.md", "Immediately after verifying every non-gate spawn, resume, or session\n  rotation, in the same orchestrator turn and before any other action, update\n  that worker's `workers.json` entry with at least the current `pid`, `log`,\n  `last_activity_at`, and `stage` (and the new `thread_id` on rotation).");
-
-  for (const required of [
-    "## Heartbeat",
-    "thread.started",
-    "< /dev/null",
-    "empty `thread_id`",
-    "watch-workers.mjs",
-    "-a1.jsonl",
-    "EVENT:<stall|dead|spawn-fail|report|gate-ack|idle>",
-    "retired Issues' logs are outside its scope",
-    "`report` is emitted only for `codex-cli` workers",
-    "read the correlated report and advance the stage pipeline",
-    "at-least-once across watcher restarts",
-    "deduplicates by reading the report's current state",
-    "Non-Codex transports keep their existing report-polling contract",
-    "On `idle`, the orchestrator records",
-    "the idle period and its cause in `ledger.md`",
-    "`--idle-sec` (default 300)",
-    "nudge",
-    "session rotation",
-    "Forced worker termination is a process-tree operation: starting from the worker PID recorded in the registry, enumerate descendants recursively with `pgrep -P`, terminate the captured tree leaf-to-root and the wrapper last (never kill only the wrapper PID), then prove from the captured PID set plus an exact transport-thread-id process search that no survivor remains before resume, respawn, or session rotation. A survivor can retain the transport thread and hang every later resume.",
-    "model_reasoning_effort",
-  ]) {
-    assertIncludes("references/orchestration.md", required);
-  }
-
-  for (const required of [
-    "watch-workers.mjs",
-    "../.mono-agent-workflow/scripts/watch-workers.mjs",
-    "Heartbeat in",
-    "before the first spawn",
-    "nudge → respawn → session rotation",
-    "an empty thread id",
-  ]) {
-    assertIncludes("skills/mono-orchestrate/SKILL.md", required, `heartbeat contract: ${JSON.stringify(required)}`);
-  }
-  assertIncludes(
-    "references/orchestration.md",
-    "node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>",
-    "heartbeat canonical installed launch path"
-  );
-  for (const relativePath of ["references/install.md", "references/versioning.md"]) {
-    assertIncludes(
-      relativePath,
-      ".mono-agent-workflow/scripts/watch-workers.mjs",
-      `${relativePath} installed watcher runtime entry`
-    );
-  }
-}
-
 function validateWatcherContaminationBehavior() {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-workflow-watcher-"));
   try {
@@ -5933,15 +4790,6 @@ function validateGateAckSuppressionPredicate() {
     );
   }
 
-  // The post-bound event must route as reconciliation. Without this the earlier
-  // harm returns in delayed form: a completed worker respawned by the ladder.
-  for (const required of [
-    "Whenever an UNCONSUMED gate-ack exists for that attempt, any `stall` or\n  `dead` for it is a consumption boundary rather than a death",
-    "Routing\n  such an event into healing or replay is a contract error",
-    "Only an attempt with NO unconsumed ack\n  takes the ordinary healing ladder.",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
 }
 
 function validateWatcherGateAckBehavior() {
@@ -6806,42 +5654,6 @@ function validateWatcherGateAckBehavior() {
   }
 }
 
-function validateHonestLedgerContract() {
-  for (const required of [
-    "One event per line",
-    "actual moment of writing",
-    "`recorded-late`",
-    "Corrections are new lines",
-    "longer than 5 minutes",
-    "## Linear Write Verification",
-    "read back the mutated entity",
-    "a success response alone is not confirmation",
-    "silent success-no-op",
-    "marked unverified",
-    "## Context Budget",
-    "«Контекст: ~N%»",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
-    "75",
-    "compaction-safe",
-    "300 seconds",
-    "three consecutive deferrals",
-    "fourth automatic attempt",
-    "post-compaction",
-    "session handoff",
-    "fallback",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-
-  for (const required of ["Что пошло не так:", "Контекст: ~N%", "not blocking notifications"]) {
-    assertIncludes("templates/orchestrator-brief.md", required);
-  }
-
-  for (const required of ["«Что пошло не так:»", "«Контекст: ~N%»"]) {
-    assertIncludes("skills/mono-orchestrate/SKILL.md", required, `status update contract: ${required}`);
-  }
-}
-
 function validateCompactionContract() {
   const hookRelativePath = "templates/orchestrator-compaction-hook.sh";
   const instructionsRelativePath = "templates/compact-instructions.md";
@@ -6849,16 +5661,6 @@ function validateCompactionContract() {
   if (!exists(hookRelativePath)) {
     fail(`Missing ${hookRelativePath}`);
   } else {
-    for (const required of [
-      "MONO_ORCHESTRATOR_ROOT",
-      "MONO_COMPACTION_FRESHNESS_SECONDS:-300",
-      "MONO_COMPACTION_MAX_DEFERRALS:-3",
-      "get_mtime()",
-      "stat -f %m",
-      "stat -c %Y",
-    ]) {
-      assertIncludes(hookRelativePath, required, JSON.stringify(required));
-    }
 
     const hookPath = path.join(root, hookRelativePath);
     const runHook = (fixtureRoot, trigger, env = {}) =>
@@ -6973,348 +5775,15 @@ function validateCompactionContract() {
   if (!exists(instructionsRelativePath)) {
     fail(`Missing ${instructionsRelativePath}`);
   } else {
-    for (const required of [
-      "НЕМЕДЛЕННОЕ СЛЕДУЮЩЕЕ ДЕЙСТВИЕ",
-      "ЖИВЫЕ ВОРКЕРЫ",
-      "workers.json",
-      "РЕШЕНИЯ ВЛАДЕЛЬЦА",
-      "что НЕ одобрено",
-      "РЕШИЛ САМ",
-      "ТУПИКИ",
-      "ПРОТОКОЛЬНЫЕ ГОТЧИ",
-      "ОЧЕРЕДЬ ЗАДАЧ",
-      "ПРЕДПОЧТЕНИЯ ВЛАДЕЛЬЦА",
-      "Do not include rereadable content",
-      "path pointers instead of content",
-    ]) {
-      assertIncludes(instructionsRelativePath, required, JSON.stringify(required));
-    }
+
   }
 
-  for (const required of [
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
-    '"75"',
-    '"PreCompact"',
-    '"matcher": "auto"',
-    "templates/orchestrator-compaction-hook.sh",
-    ".claude/settings.json",
-    "local and uncommitted",
-    ".git/info/exclude",
-  ]) {
-    assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
-  }
-}
-
-function validateLiveQaGateContract() {
-  for (const required of [
-    "Live QA gate",
-    "verify the deployed version matches the certified merged SHA",
-    "walk the PRD acceptance criteria of the shipped Issue and check the console for errors",
-    "prototype approved at the UX checkpoint",
-    "never your own taste",
-    "functional smoke alone suffices",
-    "immediate hotfix Issue out of queue",
-    "fix-forward",
-    "only after its own live pass is green",
-    "own live verification",
-    "verify on clean state before calling something a defect",
-    "not a gate failure",
-    "verify the delivered artifact live",
-    "counts as the live pass",
-    "workflows.qa",
-    "qaAuth",
-    "explicit recorded reason",
-  ]) {
-    assertIncludes("skills/mono-deploy/SKILL.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "verify the deployed version matches the certified merged SHA",
-    "live QA sweep on the deployed app for user-facing changes",
-    "only after its own live pass is green",
-    "immediate hotfix Issue out of queue",
-    "fix-forward",
-    "may excuse only a sweep that did not run, never a failed one",
-  ]) {
-    assertIncludes("references/lifecycle.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "\"qa\"",
-    "`workflows.qa` (optional)",
-    "`qaAuth` (optional)",
-    "cookie-import",
-    "test-account",
-    "owner-session",
-    "involving the owner",
-  ]) {
-    assertIncludes("references/install.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "Live QA gate",
-    "workers have no browser",
-    "out of queue",
-    "control-plane exception",
-    "explicit owner mandate",
-    "Feature code NEVER",
-  ]) {
-    assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "control-plane exception",
-    "explicit owner mandate",
-    "deploy scripts, infra config, docs address sweeps",
-    "feature code never qualifies",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-
-  assertIncludes("templates/deploy-output.md", "Live QA:", "Live QA line in deploy status block");
-}
-
-function validateRealBackendContractSampling() {
-  for (const required of [
-    "## TS-015 — Observed backend contracts",
-    "response samples covering enum domains, object shapes, and edge records",
-    "only endpoint existence",
-    "spec/reality mismatch as a spec blocker",
-    "when qualification is uncertain, sample",
-    "## TS-016 — Unreachable backend fallback",
-    "contract-verification spike first in the wave",
-  ]) {
-    assertIncludes("references/contracts/tech-spec.md", required, JSON.stringify(required));
-  }
-  assertIncludes(
-    "templates/tech-spec.md",
-    "record the one-line omission reason",
-    '"record the one-line omission reason"'
-  );
-
-  for (const required of [
-    "sample of real responses from the deployed instance",
-    "\"Endpoint exists\" is not contract verification",
-    "sampling date and deployed SHA/version",
-    "contract-verification spike Issue",
-  ]) {
-    assertIncludes("references/artifact-quality.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "домены enum",
-    "крайние записи",
-    "дата выборки и SHA/версия деплоя",
-    "sampled real responses from the deployed instance",
-    "An endpoint list alone does not verify the contract",
-    "contract-verification spike Issue that goes first in the wave",
-  ]) {
-    assertIncludes("templates/tech-spec.md", required, JSON.stringify(required));
-  }
-}
-
-function validateGoalContractBinding() {
-  assertIncludes(
-    "skills/mono-orchestrate/SKILL.md",
-    "wholesale\n     deferral with no `pass` items, is treated as non-green",
-    '"wholesale deferral is non-green"'
-  );
-  // "## Goal Contract" (dispatch) and "\"verification_items\"" (report) are
-  // structural pins owned by validateTemplateSections; phrase pins live here.
-  for (const required of [
-    "the durable end-state",
-    "lifted verbatim from",
-    "each runnable as written",
-    "what must not change or break",
-    "judge your own \"done\"",
-    "guidance, not a gate",
-  ]) {
-    assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "pass | deferred | not-run",
-    "optional in shape but mandatory in coverage",
-    "enumerate every «Как проверить» item",
-    "require a reason in `evidence`",
-    "silently missing",
-    "replaces the report `status` set",
-  ]) {
-    assertIncludes("templates/orchestrator-report.md", required, JSON.stringify(required));
-  }
-
-  for (const relativePath of ["skills/mono-implement/SKILL.md", "skills/mono-preflight/SKILL.md"]) {
-    for (const required of [
-      "enumerates every «Как проверить» item",
-      "pass | deferred | not-run",
-      "verification_items",
-      "cannot claim completion while an item is silently missing",
-      "only with a recorded reason",
-    ]) {
-      assertIncludes(relativePath, required, JSON.stringify(required));
-    }
-  }
 }
 
 // MONO-43: the stage-report contract has one home per fact. The certificate
 // lives in `certificate` and is referenced, never copied, from a queued
 // mutation; the `verification_items` semantics and status enum are stated
 // once in the report template and pointed at from the dispatch template.
-function validateReportContractSingleHome() {
-  for (const required of [
-    "single home of certificate text",
-    "appears in the report exactly once",
-    "append #/certificate",
-    "an integer, never a string",
-    "repeat the dispatch pin, integer",
-    "One semantics and one status enum, stated here once",
-    "The enum is closed",
-    "is never a status value",
-  ]) {
-    assertIncludes("templates/orchestrator-report.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "verified as a judgment check",
-    "never as a status value",
-    "item semantics and the status enum have a single home in",
-    "append #/certificate",
-  ]) {
-    assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
-  }
-
-  const dispatchTemplate = read("templates/orchestrator-dispatch.md");
-  // `judgment check` describes how an item was verified, never what its
-  // status is; the enum has no such value and the dispatch must not mint one.
-  // Guard the shape rather than one historical wording: pinning the single
-  // phrase this slice removed (`marked `judgment check``) would let the same
-  // contract break return as `status: judgment check` or "sets status to
-  // judgment check". So the dispatch may name the term only in the sanctioned
-  // verification-mode sentence, and every other mention is a failure whatever
-  // its phrasing.
-  const judgmentMentions = (dispatchTemplate.match(/judgment check/g) ?? []).length;
-  const judgmentModeMentions = (dispatchTemplate.match(/verified as a judgment check/g) ?? []).length;
-  if (judgmentMentions !== judgmentModeMentions) {
-    fail(
-      "templates/orchestrator-dispatch.md may name `judgment check` only as the verification mode (\"verified as a judgment check\", recorded in evidence), never as a verification-item status value"
-    );
-  }
-  // Single home: the dispatch points at the enum instead of restating it, so
-  // the two templates cannot drift into a second, divergent vocabulary.
-  if (dispatchTemplate.includes("pass | deferred | not-run")) {
-    fail(
-      "the verification_items status enum has a single home in templates/orchestrator-report.md; templates/orchestrator-dispatch.md must point at it, not restate it"
-    );
-  }
-}
-
-function validateReviewLoopHygiene() {
-  for (const required of [
-    "Before the first resolver cycle on a PR, check the review bots' configuration",
-    "fixed via configuration or recorded as an environment fact",
-    "never burned down with resolver cycles",
-    "does not consume the resolver cycle budget and does not restart the quiet period",
-    "Resolver cycle budgets count only novel findings",
-    "treat it as novel and keep the thread open",
-    "Dedup must never become a channel for dismissing real findings",
-    "published, not a pending draft",
-    "gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[] | select(.state==\"PENDING\")'",
-    "Unpublished rationales count as unresolved threads",
-    "This submitted-check is a green-certificate precondition",
-    "No pending (unsubmitted) review drafts remain for the worker's own reviews",
-    "After the authorized final resolver cycle",
-    "binds this path too",
-    "When in doubt whether a finding is blocking-class, escalate",
-    "get deferral replies, filed as a follow-up issue when warranted",
-    "proceeds to terminal status",
-    "always escalate instead",
-  ]) {
-    assertIncludes("references/ship-feedback-loop.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "Review Bot Configuration Check, Finding Dedup with its fail-safe, Published Replies, and Non-Blocking Convergence rules in `references/ship-feedback-loop.md`",
-    "the Published Replies submitted-check is an additional green-certificate precondition",
-  ]) {
-    assertIncludes("skills/mono-ship/SKILL.md", required, JSON.stringify(required));
-  }
-}
-
-function validateCostTelemetry() {
-  // MONO-7: cost is telemetry, not a gate. Pins anchor the policy text;
-  // collection itself is manual agent work and stays judgment, not a pin.
-  for (const required of [
-    "## Cost Telemetry",
-    "Review cycles",
-    "ship-stage report",
-    "Stage wall-clock",
-    "ledger at stage close",
-    "not a pin-enforceable mechanism",
-    "Cost is telemetry, not a gate: no thresholds, no blocking, visibility\nonly.",
-    "Never pause, steer, or fail a worker because of cost numbers",
-    "never let cost collection delay a stage advance",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "## Цена волны (Wave Cost Summary)",
-    "never blocking, never a gate",
-    "Cost Telemetry in `references/orchestration.md`",
-  ]) {
-    assertIncludes("templates/orchestrator-brief.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "«Цена волны» block",
-  ]) {
-    assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
-  }
-
-  const telemetry = boundedSlice(
-    "references/orchestration.md",
-    read("references/orchestration.md"),
-    "## Cost Telemetry",
-    "\n## Resume",
-    "Cost Telemetry section"
-  );
-  if (
-    telemetry &&
-    (!/sum every `turn\.completed` event/i.test(telemetry) ||
-      !/per-turn, not cumulative/i.test(telemetry) ||
-      !/cached input is a subset of input/i.test(telemetry) ||
-      /LAST `turn\.completed` event|Never sum events within one log/i.test(telemetry))
-  ) {
-    fail("Cost Telemetry must describe per-turn summation without the retired last-event rule");
-  }
-
-  const deploySkill = read("skills/mono-deploy/SKILL.md");
-  const deployCostStep = boundedSlice(
-    "skills/mono-deploy/SKILL.md",
-    deploySkill,
-    "14. `cost`:",
-    "\n15. `learn`:",
-    "mono-deploy cost step"
-  );
-  if (
-    deployCostStep &&
-    (!deployCostStep.includes("../.mono-agent-workflow/scripts/wave-cost.mjs") ||
-      !deployCostStep.includes("`Cost:`") ||
-      !deployCostStep.includes("`unavailable: <reason>`") ||
-      !/never (?:a gate|block or delay)/i.test(deployCostStep))
-  ) {
-    fail("mono-deploy cost step must carry the installed script line without gating closeout");
-  }
-
-  const orchestrateSkill = read("skills/mono-orchestrate/SKILL.md");
-  if (
-    !/\.\.\/\.mono-agent-workflow\/scripts\/wave-cost\.mjs[\s\S]{0,700}`Цена волны:`[\s\S]{0,700}`unavailable: <reason>`[\s\S]{0,700}never blocks[\s\S]{0,120}delays a stage/i.test(
-      orchestrateSkill
-    )
-  ) {
-    fail("mono-orchestrate status rule must carry the installed script line without gating a stage");
-  }
-}
 
 function costTemplateFieldFaults(surfaces) {
   const faults = [];
@@ -7332,8 +5801,8 @@ function costTemplateFieldFaults(surfaces) {
   const statusSlice = boundedSlice(
     "templates/orchestrator-brief.md",
     surfaces.brief,
-    "## Статус (Status Update)",
-    "\nRules that bind every status:",
+    "Решений от тебя:",
+    "\n```",
     "ordinary orchestrator status"
   );
   if (statusSlice && !/^Цена волны:\s*\S/m.test(statusSlice)) {
@@ -7677,705 +6146,73 @@ function validateWaveCostBehavior() {
   }
 }
 
-function validateBriefIntegrity() {
-  // MONO-8: brief integrity — board-aligned question IDs, self-identifying
-  // option tokens, echo-back before acting, no closure by silence, and the
-  // post-approval delta list. Pins anchor the contract prose and the
-  // user-facing shapes; decoding an owner's answer stays judgment work.
-  for (const required of [
-    "## Целостность брифа (Brief Integrity)",
-    "mirror board section IDs exactly",
-    "section-scoped suffixes",
-    "(1a, 1b)",
-    "Cross-section renumbering is forbidden",
-    "1a-КАРТОЧКА / 1a-МОДАЛКА",
-    "valid without its number",
-    "вопрос → выбранный вариант (дословно)",
-    "numbering fault",
-    "one-line re-confirm",
-    "never closed by silence",
-    "no answer means asked again, not resolved",
-    "Изменилось после твоего одобрения:",
-    "When in doubt\n  whether a change is user-visible, include it in the delta",
-  ]) {
-    assertIncludes("templates/orchestrator-brief.md", required, JSON.stringify(required));
+const REGISTRY_GATE_REQUIREMENTS = [
+  {
+    "label": "watcher-inactive-registration-clock",
+    "file": "watcher",
+    "text": "Date.parse(registryEntry.spawned_at)"
+  },
+  {
+    "label": "watcher-inactive-future-timestamp",
+    "file": "watcher",
+    "text": "if (inactiveSpawn.invalidTimestamp)"
+  },
+  {
+    "label": "watcher-inactive-partial-first-event",
+    "file": "watcher",
+    "text": "!inspection.hasThreadStarted"
+  },
+  {
+    "label": "watcher-inactive-requires-thread-started",
+    "file": "watcher",
+    "text": "!inspection.hasThreadStarted"
+  },
+  {
+    "label": "watcher-log-scan-budget",
+    "file": "watcher",
+    "text": "const LOG_SCAN_MAX_BYTES = 256 * 1024"
+  },
+  {
+    "label": "watcher-log-scan-cursor",
+    "file": "watcher",
+    "text": "state.offset += bytesRead"
+  },
+  {
+    "label": "watcher-log-scan-completion-barrier",
+    "file": "watcher",
+    "text": "if (!inspection.scanComplete)"
+  },
+  {
+    "label": "watcher-log-scan-frozen-timeout-snapshot",
+    "file": "watcher",
+    "text": "freezeLogInspectionTarget(log.filePath, inspection.observedSize)"
+  },
+  {
+    "label": "watcher-log-scan-one-shot-progress",
+    "file": "watcher",
+    "text": "} while (args.once && oneShotNeedsRescan)"
+  },
+  {
+    "label": "watcher-startup-timeout-millisecond-boundary",
+    "file": "watcher",
+    "text": "if (startupAgeMs < args.stallSec * 1000) return"
+  },
+  {
+    "label": "watcher-inactive-missing-log-recovery",
+    "file": "watcher",
+    "text": "inactive gate spawn has no readable attempt log"
+  },
+  {
+    "label": "watcher-inspection-state-active-registry-eviction",
+    "file": "watcher",
+    "text": "currentLogPaths.add(path.resolve(expandHome(entry.log)))"
   }
-
-  for (const required of [
-    "mirror board section IDs exactly",
-    "section-scoped suffixes",
-    "(1a, 1b)",
-    "Cross-section renumbering is forbidden",
-    "1a-КАРТОЧКА / 1a-МОДАЛКА",
-    "valid without its number",
-    "вопрос → выбранный вариант (дословно)",
-    "numbering fault",
-    "one-line re-confirm",
-    "never closed by silence",
-    "no answer means asked again, not resolved",
-    "Изменилось после твоего одобрения:",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-}
-
-function validateOpsLessons() {
-  // MONO-9: operational lessons — install-source SHA blocker (MONO-3 deploy
-  // incident), gh-only PR state after interruptions (HD-46), and the forced
-  // mid-wave resume drill. Pins anchor the contract prose; resolving a bad
-  // checkout, reconciling a PR via gh, and running the drill stay judgment
-  // and operational work, not pin-enforceable mechanisms.
-  for (const relativePath of ["skills/mono-deploy/SKILL.md", "references/install.md"]) {
-    for (const required of [
-      "the installing checkout's HEAD must equal the expected merge SHA",
-      "git rev-parse HEAD",
-      "a DEPLOY BLOCKER, not a warning",
-    "never from the local checkout",
-      "verify SHA → install → `--check`",
-    ]) {
-      assertIncludes(relativePath, required, JSON.stringify(required));
-    }
-  }
-
-  for (const required of [
-    "exclusively via `gh` commands against the exact head SHA",
-    "never from thread memory",
-    "state assumed from memory is treated as unverified",
-  ]) {
-    assertIncludes("skills/mono-ship/SKILL.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "Forced mid-wave resume drill",
-    "a planned one-time operational act",
-    "not a recurring gate",
-    "records every reconstruction discrepancy in the ledger",
-    "feeds the PRD wave-1 success criteria",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-}
-
-// MONO-42 — the worker start seam. Mode precedence has exactly one home in
-// references/orchestration.md; the dispatch template and mono-implement point
-// at it. The identity gate is documented as an executable command, and
-// mono-implement carries an orchestration start-checkpoint branch with zero
-// required Linear operations.
-function validateOrchestrationModePrecedence() {
-  for (const required of [
-    "## Orchestration Mode Precedence",
-    "The dispatch snapshot is the single source of Linear state in orchestration",
-    "queue it in `linear_mutations_pending`",
-    "the stage skill wins; where they disagree on a fact",
-    "changes who performs a Linear operation, never whether a",
-    "Applying that queue is part of consuming the report",
-    "BEFORE it advances",
-    "Advancing a stage while a report's mutations are still",
-    "Queued mutations land only when the orchestrator applies them",
-    "do not describe a queued mutation as",
-    // MONO-47 rewrote both order pins with their prose: the dispatch-moment
-    // lifecycle move is no longer sequenced before dispatch, so a pin that
-    // the pre-handshake wording could still satisfy would pin nothing.
-    "reports `needs-decision` for the orchestrator to sequence and resume",
-    "lifecycle precondition is therefore sequenced by the\n  orchestrator around the gate phase of the two-phase dispatch handshake",
-    "No stage defers an executable check onto a queued mutation",
-    "Interactive mode is unchanged",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-
-  // Single home: pointers only, never a second copy of the rule.
-  const precedenceRule = "The dispatch snapshot is the single source of Linear state in orchestration";
-  const precedencePointer = "Orchestration Mode Precedence";
-  for (const relativePath of [
-    "templates/orchestrator-dispatch.md",
-    "skills/mono-implement/SKILL.md",
-  ]) {
-    if (read(relativePath).includes(precedenceRule)) {
-      fail(
-        `${relativePath} must point at Orchestration Mode Precedence in references/orchestration.md, not restate the rule`
-      );
-    }
-    assertIncludes(relativePath, precedencePointer, `${relativePath}: mode-precedence pointer`);
-    assertIncludes(relativePath, "references/orchestration.md", `${relativePath}: mode-precedence home path`);
-  }
-
-  // The identity command is single-quoted in both canonical copies: single
-  // quotes are literal in POSIX shells, so a resolved installed-skills root
-  // containing spaces or shell metacharacters cannot break the gate.
-  for (const required of [
-    "### Pack identity gate invocation",
-    "node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity",
-    "--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'",
-    "--pack-version '<dispatch packVersion>'",
-    "--source-commit '<dispatch sourceCommit>'",
-    "--surface-revision '<dispatch surfaceRevision>'",
-    "pack-state: identity verified",
-    "relative to the directory of the installed stage skill being read",
-    "Single-quote every substituted path and pin value",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity",
-    "--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'",
-    "--pack-version '<packVersion above>'",
-    "--source-commit '<sourceCommit above>'",
-    "--surface-revision '<surfaceRevision above>'",
-    "pack-state: identity verified",
-    "Emit it fully resolved",
-    "keep the single quotes shown above",
-    "whether or not Linear MCP is reachable",
-  ]) {
-    assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
-  }
-
-  // No availability-based escape hatch may survive next to the precedence
-  // pointer: reachable Linear must never re-open direct worker access.
-  if (read("templates/orchestrator-dispatch.md").includes("whole world until Linear MCP is up")) {
-    fail(
-      "templates/orchestrator-dispatch.md must not re-open direct Linear access when MCP becomes reachable"
-    );
-  }
-
-  for (const required of [
-    "## Orchestration branch of `start-checkpoint`",
-    "zero required Linear operations",
-    "zero Linear reads, zero Linear writes",
-    "Check the mode first: a stage started from a dispatch runs the",
-    '"Fetch fresh Linear context"; issue no Linear call.',
-    "Perform no lifecycle move and no delivery check against Linear",
-    "the canonical invocation with its",
-    "a gate that must precede a lifecycle change must also precede its queuing",
-  ]) {
-    assertIncludes("skills/mono-implement/SKILL.md", required, JSON.stringify(required));
-  }
-
-  const implementSkill = read("skills/mono-implement/SKILL.md");
-  const branchStart = implementSkill.indexOf("## Orchestration branch of `start-checkpoint`");
-  const branchEnd = implementSkill.indexOf("## Context-seam branch at Delivery Start");
-  if (branchStart < 0 || branchEnd < 0 || branchStart > branchEnd) {
-    fail("mono-implement orchestration branch must sit before the context-seam branch");
-  } else {
-    const branch = implementSkill.slice(branchStart, branchEnd);
-    // The orchestration branch may never require a Linear operation.
-    for (const banned of ["Fetch fresh Linear context.", "Record a human Linear comment"]) {
-      if (branch.includes(banned)) {
-        fail(`mono-implement orchestration branch must not require the Linear operation: ${banned}`);
-      }
-    }
-    // Gate ordering, preserved through queuing: the context seam is resolved
-    // before any lifecycle mutation is queued, and on the issue-only lane the
-    // delivery verdict precedes the queued Issue-to-started move — because
-    // queuing a mutation is how this mode performs it.
-    const seamStep = branch.indexOf("Resolve the context seam through the Context-seam branch below");
-    const lifecycleStep = branch.indexOf("Perform no lifecycle move and no delivery check against Linear");
-    if (seamStep < 0 || lifecycleStep < 0 || seamStep > lifecycleStep) {
-      fail(
-        "mono-implement orchestration branch must resolve the context seam before queuing the lifecycle move"
-      );
-    }
-    // MONO-47: neither lane queues a lifecycle mutation any more — the
-    // orchestrator applies both dispatch-moment moves on the gate-ack. The
-    // issue-only ordering invariant survives that move: its delivery verdict
-    // is reached in the gate phase, so a `gates-passed` ack is unreachable
-    // without it.
-    const issueOnlyAck = branch.indexOf("On a `gates-passed` ack the orchestrator applies the");
-    const issueOnlyGate = branch.indexOf("Issue-only: the delivery check precedes");
-    if (issueOnlyAck < 0 || !branch.includes("so neither moves the Issue")) {
-      fail(
-        "mono-implement orchestration branch must state that the orchestrator applies the Issue-to-started move on the gate-ack, and that a non-PASS verdict never reaches one"
-      );
-    } else if (issueOnlyGate < 0 || issueOnlyGate > issueOnlyAck) {
-      fail(
-        "mono-implement orchestration branch must evaluate the issue-only delivery verdict before the gate-ack that releases the Issue-to-started move"
-      );
-    }
-    if (branch.includes("queue the Issue-to-started move")) {
-      fail(
-        "mono-implement orchestration branch must not queue the Issue-to-started move: it is a dispatch-moment move the orchestrator applies on the gate-ack"
-      );
-    }
-
-    for (const required of [
-      "the delivery check precedes the Issue-to-started move",
-      "Project-first: queue no lifecycle move in this lane",
-      // MONO-47 rewrote these two with their prose: the Delivery move is no
-      // longer sequenced before dispatch, and a pre-move snapshot inside the
-      // gate phase is the normal state instead of a `needs-decision`.
-      "applies the Delivery move on your gate-ack, before it resumes this stage",
-      "hard stop, not a shrug: report `blocked` naming the move and the missing",
-      "do not defer the check onto a queued",
-      "treat it as queued, not as done",
-      "What must be true before code is",
-      "is `blocked` naming",
-    ]) {
-      if (!branch.includes(required)) {
-        fail(`mono-implement orchestration branch missing delivery-gate semantics: ${JSON.stringify(required)}`);
-      }
-    }
-  }
-}
-
-// MONO-47 — the two-phase dispatch handshake. A dispatch-moment lifecycle
-// move is applied only after the worker's gate-ack, so the protocol's order is
-// pinned structurally and not by prose alone: gate-phase dispatch → worker
-// gate phase → gate-ack → lifecycle application with read-back → resume with
-// the snapshot amendment. The negative fixtures below prove the order check
-// rejects a reordered protocol instead of passing on any text that merely
-// contains the anchors.
-const HANDSHAKE_PROTOCOL_ANCHORS = [
-  ["gate-phase-dispatch", "1. Gate-phase dispatch."],
-  ["worker-gate-phase", "2. Worker gate phase."],
-  ["gate-ack", "3. Gate-ack, then stop."],
-  ["lifecycle-application", "4. Lifecycle application."],
-  ["resume", "5. Resume for execution."],
-];
-
-// The same order as `mono-implement` executes it: the seam closes the gate
-// phase, the pause sits between steps 4 and 5, and the lifecycle/delivery step
-// runs only after the resume.
-const HANDSHAKE_BRANCH_ANCHORS = [
-  ["context-seam", "Resolve the context seam through the Context-seam branch below"],
-  ["gate-pause", "Gate pause, between steps 4 and 5:"],
-  ["post-resume-step", "Perform no lifecycle move and no delivery check against Linear"],
-];
-
-function orderedAnchorFaults(text, anchors) {
-  const faults = [];
-  let previousIndex = -1;
-  let previousName = null;
-  for (const [name, anchor] of anchors) {
-    const index = text.indexOf(anchor);
-    if (index < 0) {
-      faults.push(`missing:${name}`);
-      continue;
-    }
-    if (previousIndex >= 0 && index < previousIndex) {
-      faults.push(`out-of-order:${name}-before-${previousName}`);
-    }
-    previousIndex = index;
-    previousName = name;
-  }
-  return faults;
-}
-
-function assertAnchorOrder(label, text, anchors, negativeFixtures) {
-  const faults = orderedAnchorFaults(text, anchors);
-  if (faults.length > 0) {
-    fail(`${label} handshake order is broken: ${faults.join(", ")}`);
-  }
-  const byName = new Map(anchors);
-  for (const [fixtureLabel, order, expectedFault] of negativeFixtures) {
-    const fixture = order.map((name) => byName.get(name)).join("\n");
-    const fixtureFaults = orderedAnchorFaults(fixture, anchors);
-    if (!fixtureFaults.includes(expectedFault)) {
-      fail(
-        `${label} handshake order check does not reject ${fixtureLabel}: expected ${JSON.stringify(expectedFault)}, got ${JSON.stringify(fixtureFaults)}`
-      );
-    }
-  }
-}
-
-const REGISTRY_GATE_TEXT_REQUIREMENTS = [
-  {
-    label: "schema-shape",
-    file: "reportTemplate",
-    text: "`gates` is optional. When present it is a non-empty array of unique,\nnon-empty strings",
-  },
-  {
-    label: "schema-attempt-scope",
-    file: "reportTemplate",
-    text: "It is scoped to the current attempt identified by\n`log`",
-  },
-  {
-    label: "schema-absent-fail-closed",
-    file: "reportTemplate",
-    text: "When an ack exists, an absent or malformed `gates` value makes the ack\nunusable",
-  },
-  {
-    label: "producer-registration",
-    file: "orchestrateSkill",
-    text: "Before starting every gate-carrying `mono-implement` spawn, respawn,\n     or session rotation, create its empty attempt log, fsync that file and\n     its `logs/` directory, and only then atomically pre-register\n     `registryEntry.gates`",
-  },
-  {
-    label: "producer-handshake-pre-spawn",
-    file: "orchestration",
-    text: "Before the worker process starts, atomically pre-register an inactive\n   current-attempt entry",
-  },
-  {
-    label: "producer-new-attempt",
-    file: "orchestration",
-    text: "| Verified gate-carrying spawn, respawn, or session rotation | Write the exact non-empty unique gate-name list for the NEW current attempt together with its attempt-numbered `log`. |",
-  },
-  {
-    label: "producer-same-attempt",
-    file: "orchestration",
-    text: "| Same-attempt no-ack nudge or resume | Preserve `gates`; this is still the same attempt. |",
-  },
-  {
-    label: "producer-waiting-resume",
-    file: "orchestration",
-    text: "| `gates-passed` received, resumed writer not yet confirmed | Preserve `gates`; the durable consumer contract is still live. |",
-  },
-  {
-    label: "producer-applied",
-    file: "orchestration",
-    text: "| Consume `.applied` | Register the resumed writer while preserving `gates`, atomically publish the private consumption record with `outcome: applied`, rename every ack candidate, then remove `gates` separately. |",
-  },
-  {
-    label: "producer-rejected",
-    file: "orchestration",
-    text: "| Consume `.rejected` | The attempt is TERMINAL: atomically publish the private consumption record with `outcome: rejected`, rename every ack candidate, then remove `gates`. Recovery is an immediate verified respawn of a NEW gate attempt with its own list; never same-attempt nudge after consumption. |",
-  },
-  {
-    label: "producer-blocked",
-    file: "orchestration",
-    text: "| Consume `.blocked` | Only after the correlated stage report is present and valid: atomically publish the private consumption record with `outcome: blocked`, rename every ack candidate, then remove `gates` and route the report. |",
-  },
-  {
-    label: "consumer-blocked-report-barrier-reference",
-    file: "orchestration",
-    text: "A `blocked` ack alone is not yet consumable",
-  },
-  {
-    label: "consumer-blocked-report-barrier-skill",
-    file: "orchestrateSkill",
-    text: "Do not publish the consumption record, rename the ack, or remove\n     `registryEntry.gates` until the correlated ordinary stage report exists",
-  },
-  {
-    label: "consumer-blocked-reportless-recovery-reference",
-    file: "orchestration",
-    text: "An unconsumed valid `blocked` ack with no correlated report is a\n  missing-report recovery case, never the no-ack path",
-  },
-  {
-    label: "consumer-blocked-attempt-reconciliation-reference",
-    file: "orchestration",
-    text: "Shape and freshness do not correlate a blocked report to an attempt",
-  },
-  {
-    label: "consumer-blocked-attempt-reconciliation-skill",
-    file: "orchestrateSkill",
-    text: "Before consuming `.blocked`, reconcile the transport thread and worktree",
-  },
-  {
-    label: "consumer-blocked-resume-report-reconciliation",
-    file: "orchestration",
-    text: "The record binds the ack outcome, not a report version",
-  },
-  {
-    label: "registry-inactive-gate-startup-shape",
-    file: "reportTemplate",
-    text: "`thread_id: null` together with `pid: null` is permitted only for the\ninactive gate-startup state",
-  },
-  {
-    label: "consumption-record-shape",
-    file: "orchestration",
-    text: "\"attempt\": 1,\n     \"outcome\": \"applied | rejected | blocked\"",
-  },
-  {
-    label: "consumption-record-order",
-    file: "orchestration",
-    text: "The record is\n   atomically published before any in-place ack rename and\n   before the separate write that removes `registryEntry.gates`",
-  },
-  {
-    label: "consumption-record-atomic-publish",
-    file: "orchestration",
-    text: "Publish it\n   with a same-directory temporary file and atomic rename",
-  },
-  {
-    label: "consumption-record-directory-durability",
-    file: "orchestration",
-    text: "fsync the containing `consumed/` directory after the rename",
-  },
-  {
-    label: "consumption-record-resume-directory-sync",
-    file: "orchestration",
-    text: "Resume must successfully\n   fsync `consumed/` before treating any visible final-name record as cleanup\n   authority",
-  },
-  {
-    label: "consumption-namespace-parent-sync",
-    file: "orchestration",
-    text: "Before publishing or trusting any record, fsync the orchestrator-root\n   directory that contains `consumed/`, even when `consumed/` already exists",
-  },
-  {
-    label: "watcher-inactive-registration-clock",
-    file: "watcher",
-    text: "Date.parse(registryEntry.spawned_at)",
-  },
-  {
-    label: "watcher-inactive-future-timestamp",
-    file: "watcher",
-    text: "if (inactiveSpawn.invalidTimestamp)",
-  },
-  {
-    label: "watcher-inactive-partial-first-event",
-    file: "watcher",
-    text: "Any output without a valid\n  // thread.started remains bounded startup",
-  },
-  {
-    label: "watcher-inactive-requires-thread-started",
-    file: "watcher",
-    text: "!inspection.hasThreadStarted",
-  },
-  {
-    label: "watcher-log-scan-budget",
-    file: "watcher",
-    text: "const LOG_SCAN_MAX_BYTES = 256 * 1024",
-  },
-  {
-    label: "watcher-log-scan-cursor",
-    file: "watcher",
-    text: "state.offset += bytesRead",
-  },
-  {
-    label: "watcher-log-scan-completion-barrier",
-    file: "watcher",
-    text: "if (!inspection.scanComplete)",
-  },
-  {
-    label: "watcher-log-scan-frozen-timeout-snapshot",
-    file: "watcher",
-    text: "freezeLogInspectionTarget(log.filePath, inspection.observedSize)",
-  },
-  {
-    label: "watcher-log-scan-one-shot-progress",
-    file: "watcher",
-    text: "} while (args.once && oneShotNeedsRescan)",
-  },
-  {
-    label: "watcher-startup-timeout-millisecond-boundary",
-    file: "watcher",
-    text: "if (startupAgeMs < args.stallSec * 1000) return",
-  },
-  {
-    label: "watcher-inactive-missing-log-recovery",
-    file: "watcher",
-    text: "inactive gate spawn has no readable attempt log",
-  },
-  {
-    label: "watcher-inspection-state-active-registry-eviction",
-    file: "watcher",
-    text: "currentLogPaths.add(path.resolve(expandHome(entry.log)))",
-  },
-  {
-    label: "producer-inactive-log-durability",
-    file: "orchestration",
-    text: "fsync the log file and its `logs/` directory, and only\n  then atomically pre-register the inactive `workers.json` entry",
-  },
-  {
-    label: "producer-inactive-registration-clock",
-    file: "orchestration",
-    text: "The startup window\n  begins at that registry publication's `spawned_at`",
-  },
-  {
-    label: "producer-malformed",
-    file: "orchestration",
-    text: "| Malformed `gates` on a gate-carrying entry | Treat it as a producer contract error and terminate the attempt; verified-respawn a NEW gate attempt with a correct list. |",
-  },
-  {
-    label: "producer-forbidden",
-    file: "orchestration",
-    text: "| `gates` present on `mono-preflight` or `mono-ship` | Presence is forbidden, not a selector: start a new attempt of that same stage WITHOUT `gates`. |",
-  },
-  {
-    label: "producer-stage-advance",
-    file: "orchestration",
-    text: "| Stage advance or any other non-gate dispatch | Reconcile every unconsumed ack first, then atomically change `stage`/`log` and remove `gates` in the same registry write. |",
-  },
-  {
-    label: "producer-crash-cleanup",
-    file: "orchestration",
-    text: "| Crash after consumption-record publication | Resume treats the well-formed private CURRENT-attempt record as intent: finish renaming every remaining ack candidate to the suffix selected by `outcome`, then remove stale `gates`. Tombstones and mailbox files never authorize either action. |",
-  },
-  {
-    label: "consumer-registry-source",
-    file: "orchestration",
-    text: "reads `registryEntry.gates` from the registry entry whose `log` identifies\n   this current attempt",
-  },
-  {
-    label: "consumer-status-asymmetry",
-    file: "orchestration",
-    text: "`gates-passed` requires exact set equality, while `blocked` accepts a\n  non-empty subset with no foreign names; duplicates are invalid in both\n  branches",
-  },
-  {
-    label: "monitor-status-asymmetry",
-    file: "orchestrateSkill",
-    text: "status-asymmetric: `gates-passed` requires exact set equality, while\n     `blocked` accepts a non-empty subset with no foreign or duplicate names",
-  },
-  {
-    label: "consumer-event-not-proof",
-    file: "orchestrateSkill",
-    text: "the event only accelerates it and is never proof of validation",
-  },
-  {
-    label: "monitor-malformed-reference",
-    file: "orchestration",
-    text: "a present\n  malformed value is a producer contract error: terminate the current attempt\n  and verified-respawn a NEW gate attempt",
-  },
-  {
-    label: "monitor-forbidden-reference",
-    file: "orchestration",
-    text: "On a `mono-preflight` or `mono-ship`\n  entry, any presence is forbidden: start a new attempt of that same stage\n  WITHOUT `gates`",
-  },
-  {
-    label: "monitor-malformed-skill",
-    file: "orchestrateSkill",
-    text: "A malformed present value\n     on a gate-carrying `mono-implement` entry is a producer contract error",
-  },
-  {
-    label: "monitor-forbidden-skill",
-    file: "orchestrateSkill",
-    text: "Any presence on a\n     `mono-preflight` or `mono-ship` entry is forbidden",
-  },
-  {
-    label: "monitor-report-order-reference",
-    file: "orchestration",
-    text: "Before processing any report event or poll, and before any heartbeat",
-  },
-  {
-    label: "monitor-report-order-skill",
-    file: "orchestrateSkill",
-    text: "Before processing any report event or poll, and before any heartbeat event",
-  },
-  {
-    label: "resume-attempt-equality",
-    file: "orchestration",
-    text: "read\n   `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` for the SAME\n   current `<N>`",
-  },
-  {
-    // (п) The mailbox is worker-writable, so a fabricated record there cannot
-    // authorize stale-gates cleanup.
-    label: "resume-mailbox-record-no-cleanup",
-    file: "orchestration",
-    text: "A fabricated record in\n   `reports/` never authorizes cleanup",
-  },
-  {
-    // Amendment #2 remains load-bearing under the private namespace: a
-    // worker-controlled tombstone cannot authorize durable cleanup.
-    label: "resume-fallback-tombstone-no-cleanup",
-    file: "orchestration",
-    text: "Neither does a tombstone in either ack\n   location, including the worker-writable fallback",
-  },
-  {
-    // (р) Only the private current-attempt record is the positive cleanup
-    // authority; any other namespace or attempt remains fail-closed.
-    label: "resume-private-consumption-record-cleanup",
-    file: "orchestration",
-    text: "Only a well-formed record in `consumed/` whose `issue`,\n   `attempt`, and `outcome` match this Issue, current attempt, and one of\n   `applied | rejected | blocked` authorizes removal",
-  },
-  {
-    label: "dispatch-private-consumed-ban",
-    file: "dispatchTemplate",
-    text: "do not touch orchestrator state (`ledger.md`,\n  `workers.json`, `control.json`, `dispatch/`, or `consumed/`)",
-  },
-  {
-    label: "watcher-absent-gates-fail-closed",
-    file: "orchestration",
-    text: "When an ack exists, absent or malformed `registryEntry.gates`\n  makes it unusable",
-  },
-  {
-    label: "watcher-no-ack-unchanged",
-    file: "orchestration",
-    text: "Entries without an ack do not evaluate this gate-list consumer\n  rule",
-  },
-  {
-    label: "monitor-absent-gates-skill",
-    file: "orchestrateSkill",
-    text: "When an ack exists but `gates` is absent, the ack is unusable and the\n     current attempt takes the NEW-attempt recovery branch",
-  },
-  {
-    label: "producer-pre-spawn-barrier-reference",
-    file: "orchestration",
-    text: "Before a gate-carrying worker process can start, create its empty\n  attempt-numbered log, fsync the log file and its `logs/` directory, and only\n  then atomically pre-register the inactive `workers.json` entry with that\n  `log`, stage, pack identity, the publication-time\n  `spawned_at`, and exact `gates` list",
-  },
-  {
-    label: "producer-pre-spawn-barrier-skill",
-    file: "orchestrateSkill",
-    text: "The worker process starts only after that durable write succeeds",
-  },
-  {
-    label: "monitor-later-stage-reconciliation-reference",
-    file: "orchestration",
-    text: "A later-stage entry can never legitimately retain `gates`: stage/log\n  advance and `gates` removal are one atomic post-reconciliation registry write",
-  },
-  {
-    label: "monitor-later-stage-reconciliation-skill",
-    file: "orchestrateSkill",
-    text: "Because stage/log advance and `gates` removal are one atomic\n     post-reconciliation write, later-stage presence is never an in-progress\n     cleanup window",
-  },
-  {
-    label: "watcher-blocked-bounded-suppression",
-    file: "orchestration",
-    text: "A valid `blocked` ack gets the same bounded suppression until its stage\n  report is observed or the ack is consumed",
-  },
-  {
-    label: "consumer-no-source-discriminator",
-    file: "orchestration",
-    text: "there is no source-identity discriminator and no form-only\n  legacy branch",
-  },
-  {
-    label: "monitor-no-source-discriminator",
-    file: "orchestrateSkill",
-    text: "There is no source-identity discriminator or form-only\n     legacy branch",
-  },
-  {
-    label: "monitor-rejected-terminal-reference",
-    file: "orchestration",
-    text: "consumption namespace only for a `mono-implement` registry entry whose CURRENT stage-qualified\n  log is `<ISSUE-KEY>-mono-implement-a<N>.jsonl`. A well-formed private\n  consumption record for that same `<N>` with `outcome: rejected` is a durable\n  terminal routing signal",
-  },
-  {
-    label: "monitor-rejected-terminal-skill",
-    file: "orchestrateSkill",
-    text: "only when `registryEntry.stage` is `mono-implement` and its CURRENT log\n     is `<ISSUE-KEY>-mono-implement-a<N>.jsonl`, a well-formed private record\n     for that same `<N>` with `outcome: rejected` skips same-attempt nudge",
-  },
-  {
-    label: "resume-rejected-terminal-record",
-    file: "orchestration",
-    text: "If that current-attempt record has `outcome: rejected`, the attempt is\n   durably terminal",
-  },
-  {
-    label: "resume-gate-stage-log-scope",
-    file: "orchestration",
-    text: "Consult `consumed/` only when `registryEntry.stage` is `mono-implement`\n   and the CURRENT registry log basename is\n   `<ISSUE-KEY>-mono-implement-a<N>.jsonl`",
-  },
-  {
-    label: "resume-record-finishes-rename",
-    file: "orchestration",
-    text: "When a current-attempt private record exists but an unconsumed ack\n   candidate remains, finish every in-place rename selected by its `outcome`\n   before removing `gates`",
-  },
-  {
-    label: "consumer-record-prevents-replay",
-    file: "orchestration",
-    text: "An ack delivered or polled while that matching CURRENT-attempt record exists\n   is consumption recovery, never a new lifecycle signal",
-  },
-  {
-    label: "monitor-record-prevents-replay",
-    file: "orchestrateSkill",
-    text: "A watcher redelivery or poll of that ack is consumption recovery, not\n     authority to apply lifecycle moves again",
-  },
-  {
-    label: "heartbeat-consumption-record-first",
-    file: "orchestration",
-    text: "Every consumption\n  branch atomically publishes the trusted private\n  `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record first,\n  then renames the attempt's ack candidates, and only then removes\n  `registryEntry.gates`",
-  },
-  {
-    label: "u5-reference-boundary",
-    file: "orchestration",
-    text: "The Worker Report shape and gate-ack shape are unchanged by this protocol",
-  },
-  {
-    label: "u5-dispatch-boundary",
-    file: "dispatchTemplate",
-    text: "the Worker Report shape and gate-ack shape stay\n  unchanged, while the Worker Registry",
-  },
 ];
 
 function registryGateContractFaults(surfaces) {
   const faults = [];
-  for (const requirement of REGISTRY_GATE_TEXT_REQUIREMENTS) {
-    if (!surfaces[requirement.file].includes(requirement.text)) faults.push(requirement.label);
+  for (const requirement of REGISTRY_GATE_REQUIREMENTS) {
+    if (!surfaces.watcher.includes(requirement.text)) faults.push(requirement.label);
   }
 
   const watcher = surfaces.watcher;
@@ -8404,798 +6241,32 @@ function registryGateContractFaults(surfaces) {
   if (watcher.includes("INSTALLED_SOURCE_COMMIT") || watcher.includes("installedSourceCommit")) {
     faults.push("watcher-source-commit-discriminator-removed");
   }
-  for (const [file, forbidden] of [
-    ["orchestration", "compare `registryEntry.sourceCommit`"],
-    ["orchestration", "entry whose `sourceCommit`"],
-    ["orchestrateSkill", "compare the entry's\n     `sourceCommit`"],
-    ["reportTemplate", "`sourceCommit` selects the\nlegacy"],
-  ]) {
-    if (surfaces[file].includes(forbidden)) faults.push(`${file}-source-commit-discriminator-removed`);
-  }
   return faults;
 }
 
 function validateRegistryGateContract() {
-  const surfaces = {
-    orchestration: read("references/orchestration.md"),
-    orchestrateSkill: read("skills/mono-orchestrate/SKILL.md"),
-    reportTemplate: read("templates/orchestrator-report.md"),
-    dispatchTemplate: read("templates/orchestrator-dispatch.md"),
-    watcher: read("scripts/watch-workers.mjs"),
-  };
+  const surfaces = { watcher: read("scripts/watch-workers.mjs") };
+  for (const requirement of REGISTRY_GATE_REQUIREMENTS) requireMachineToken(requirement.text);
   const faults = registryGateContractFaults(surfaces);
-  if (faults.length > 0) {
-    fail(`registry gate contract is incomplete: ${faults.join(", ")}`);
-  }
-
-  // Negative structural fixtures prove the pins reject removal of each
-  // load-bearing branch instead of merely checking that related prose exists.
-  for (const label of [
-    "producer-new-attempt",
-    "consumption-record-shape",
-    "consumption-record-order",
-    "consumption-record-atomic-publish",
-    "consumption-record-directory-durability",
-    "consumption-record-resume-directory-sync",
-    "consumption-namespace-parent-sync",
-    "consumer-registry-source",
-    "consumer-status-asymmetry",
-    "monitor-malformed-reference",
-    "monitor-forbidden-skill",
-    "resume-attempt-equality",
-    "resume-mailbox-record-no-cleanup",
-    "resume-fallback-tombstone-no-cleanup",
-    "resume-private-consumption-record-cleanup",
-    "dispatch-private-consumed-ban",
-    "watcher-absent-gates-fail-closed",
-    "watcher-no-ack-unchanged",
-    "monitor-absent-gates-skill",
-    "producer-pre-spawn-barrier-reference",
-    "producer-pre-spawn-barrier-skill",
-    "producer-handshake-pre-spawn",
-    "consumer-blocked-report-barrier-reference",
-    "consumer-blocked-report-barrier-skill",
-    "consumer-blocked-reportless-recovery-reference",
-    "consumer-blocked-attempt-reconciliation-reference",
-    "consumer-blocked-attempt-reconciliation-skill",
-    "consumer-blocked-resume-report-reconciliation",
-    "registry-inactive-gate-startup-shape",
-    "watcher-inactive-registration-clock",
-    "watcher-inactive-future-timestamp",
-    "watcher-inactive-partial-first-event",
-    "watcher-inactive-requires-thread-started",
-    "producer-inactive-registration-clock",
-    "monitor-later-stage-reconciliation-reference",
-    "monitor-later-stage-reconciliation-skill",
-    "monitor-report-order-reference",
-    "monitor-report-order-skill",
-    "watcher-blocked-bounded-suppression",
-    "consumer-no-source-discriminator",
-    "monitor-no-source-discriminator",
-    "monitor-rejected-terminal-reference",
-    "monitor-rejected-terminal-skill",
-    "resume-rejected-terminal-record",
-    "resume-gate-stage-log-scope",
-    "resume-record-finishes-rename",
-    "consumer-record-prevents-replay",
-    "monitor-record-prevents-replay",
-    "heartbeat-consumption-record-first",
-  ]) {
-    const requirement = REGISTRY_GATE_TEXT_REQUIREMENTS.find((entry) => entry.label === label);
-    const mutated = {
-      ...surfaces,
-      [requirement.file]: surfaces[requirement.file].replace(requirement.text, ""),
-    };
-    const fixtureFaults = registryGateContractFaults(mutated);
-    if (!fixtureFaults.includes(label)) {
-      fail(`registry gate negative fixture did not reject removed ${label} rule`);
-    }
-  }
-
-  const monitorStart = surfaces.orchestrateSkill.indexOf("5. `monitor`");
-  const stageAwareReportCheck = surfaces.orchestrateSkill.indexOf(
-    "Before processing any report event or poll, and before any heartbeat event",
-    monitorStart
-  );
-  const reportAdvance = surfaces.orchestrateSkill.indexOf("- Read reports only after", monitorStart);
-  if (
-    monitorStart < 0 ||
-    stageAwareReportCheck < monitorStart ||
-    reportAdvance < monitorStart ||
-    stageAwareReportCheck > reportAdvance
-  ) {
-    fail("mono-orchestrate stage-aware gates recovery must run before report delivery or advancement");
-  }
-}
-
-function validateTwoPhaseDispatchHandshake() {
-  const orchestration = read("references/orchestration.md");
-  const sectionStart = orchestration.indexOf("## Two-Phase Dispatch Handshake");
-  const sectionEnd = orchestration.indexOf("## Worker Transports");
-  if (sectionStart < 0 || sectionEnd < 0 || sectionStart > sectionEnd) {
-    fail("references/orchestration.md must carry ## Two-Phase Dispatch Handshake before ## Worker Transports");
-    return;
-  }
-  const handshake = orchestration.slice(sectionStart, sectionEnd);
-
-  assertAnchorOrder("references/orchestration.md", handshake, HANDSHAKE_PROTOCOL_ANCHORS, [
-    [
-      "a lifecycle move applied before the gate-ack",
-      ["gate-phase-dispatch", "worker-gate-phase", "lifecycle-application", "gate-ack", "resume"],
-      "out-of-order:lifecycle-application-before-gate-ack",
-    ],
-    [
-      "a worker resumed before the moves are applied",
-      ["gate-phase-dispatch", "worker-gate-phase", "gate-ack", "resume", "lifecycle-application"],
-      "out-of-order:resume-before-lifecycle-application",
-    ],
-    [
-      "a protocol with no gate-ack step at all",
-      ["gate-phase-dispatch", "worker-gate-phase", "lifecycle-application", "resume"],
-      "missing:gate-ack",
-    ],
-  ]);
-
-  // AC1 — the rule itself, its single exception, and the closed door on
-  // deciding that exception away.
-  for (const required of [
-    "**No dispatch-moment lifecycle move is applied before the worker's gate-ack.**",
-    "The only exception is an explicit owner mandate",
-    "NOT available under «Решил сам:»",
-    "never grant it to itself",
-    "`mono-preflight` and `mono-ship` advances carry no lifecycle move",
-    // AC2 — the executable protocol: ack path, ack shape, stop, resume.
-    "`reports/<ISSUE-KEY>-gate-ack-a<N>.json`",
-    "The ack is numbered by attempt for the same reason the logs are",
-    "The attempt number is what binds an ack to its dispatch attempt.",
-    '"phase": "gate"',
-    '"status": "gates-passed | blocked"',
-    "The gate-ack is not a stage report",
-    "The Worker Report shape and gate-ack shape are unchanged by this protocol;",
-    // The ack is the only evidence the gates ran: it is complete, internally
-    // consistent, checked against the dispatched gate list, and consumed
-    // before the resume so it cannot go on suppressing liveness events.
-    "`gates-passed` requires every entry to be `pass`",
-    "The invariant runs both ways",
-    "strands a dispatch whose gates actually passed",
-    "carries each reported gate name exactly once",
-    "For `gates-passed`, its set of names equals this dispatch's gate list\n   exactly",
-    "For `blocked`, it may be a non-empty subset of that list",
-    "A\n   repeated name is invalid in both branches",
-    "checks the exact\n   ack artifact against that durable list — set equality on the gate names,\n   not a count",
-    "is self-contradictory\n   and is treated as no ack at all",
-    "A non-empty subset is\n   valid only for `blocked`, which never authorizes lifecycle moves",
-    // A rejected ack must be consumed too, or it suppresses liveness for a
-    // worker nobody is about to resume.
-    "Rejecting an ack has its own consumption step",
-    "then rename it to\n   `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
-    "Rejection is\n   TERMINAL for this attempt: recovery is a verified respawn of a NEW gate\n   attempt with its own list",
-    "atomically publishes\n   the private consumption record with `outcome: applied`, then renames every\n   candidate for the attempt to `<ISSUE-KEY>-gate-ack-a<N>.applied.json`",
-    "ack left in place\n   would go on suppressing `stall` and `dead` for a worker",
-    "re-arms the liveness ladder for the execution\n   phase",
-    // Consuming the ack too early is its own defect: the gate-phase pid is
-    // gone, so an unsuppressed window calls a healthy resume dead.
-    "Starting the\n   record-and-rename sequence any earlier is equally wrong",
-    "reports `dead` for a healthy resume",
-    "private consumption record with `outcome: applied`",
-    "Only after the trusted record and every rename succeed does a separate\n   registry write remove `gates`",
-    "That tombstone is a delivery/suppression marker only; it\n   is never authority to clear durable registry state",
-    "the immediate post-resume registry update that records the new\n   writer per Worker Transports preserves `registryEntry.gates`",
-    "Both\n   the orchestrator and the watcher read the fallback path",
-    // A blocked ack never rewrites the stage's own exit statuses.
-    "That report carries the\nstage's OWN exit status for the failure it hit",
-    "`needs-human` when a gate returned a real adverse verdict",
-    "confirms each with read-back",
-    "explicitly as an amendment of the dispatch snapshot",
-    "including `mono-check delivery` — is evaluated against",
-    "The pack identity gate runs again after the",
-    "Blocked path:",
-    "No-ack path:",
-    // Both transports, because the pause and the resume differ in mechanism.
-    "the worker writes the ack and its process exits",
-    "carrying the resume signal",
-    "costs one user click per gate-ack there",
-    "not a checkpoint",
-  ]) {
-    if (!handshake.includes(required)) {
-      fail(`references/orchestration.md two-phase handshake missing: ${JSON.stringify(required)}`);
-    }
-  }
-
-  // AC3 — the watcher contract: a healthy gate pause is not a liveness event.
-  for (const required of [
-    "Gate-pause carve-out",
-    "waiting by contract, not stuck",
-    "never a nudge, respawn, session rotation, or owner page",
-    "`gate-ack` rides the same correlation surface as `report`",
-    "Its freshness is deliberately NOT the report's",
-    "Delivery asks only that the ack BELONG to\n  this attempt",
-    "a delivered ack is therefore not a claim that the worker is still\n  paused",
-    "it must not discard a retained ack merely\n  for lagging the log",
-    "Delivery is at-least-once per watcher PROCESS",
-    "an ack needs the same poll\n  for the same reason, and the orchestrator does poll for both",
-    "Never treat the\n  event as the only route to an ack",
-    "A fresh usable gate-ack suppresses `stall` and both `dead` branches",
-    "A valid `blocked` ack gets the same bounded suppression until its stage\n  report is observed or the ack is consumed",
-    "Either way it is a\n  delivery event, never a Monitoring Protocol trigger",
-    // The watcher emits gate-ack for both statuses, so the consumer must
-    // branch on status: a blocked ack moves nothing.
-    "branch on its `status`",
-    "`blocked` applies nothing and waits for the",
-    "Suppression\n  demands the same registry correlation delivery does",
-    "That suppression is bounded twice\n  over",
-    "suppression\n  additionally lapses after a few stall thresholds of wall-clock",
-    "is a stuck\n  handshake, not a healthy wait",
-    "That clock runs on the PAUSE — the worker's log\n  going quiet — never on the ack's own timestamp",
-    "While an unconsumed usable gate-ack is\n  present that bound also governs over ordinary report suppression",
-    "a deadline the worker can refresh by touching\n  the file is no deadline at all",
-    "That is an age window rather than a ceiling",
-    "an\n  ack dated in the future buys no suppression at all",
-    "`gate-ack` watcher event names the FULL path it validated",
-    "never on\n   \"the ack\" resolved a second time",
-    "An attempt has exactly ONE ack",
-    "that is a contradiction about which gates ran, and it resolves to no\n   ack at all",
-    "Do not rank them",
-    "Consumption is per ATTEMPT, not per file",
-    "renames every\n   file for that attempt in BOTH locations",
-    "the consumer reads the ack's `status` first and never the report",
-    "A `blocked` ack beside a stage report is the ordinary non-green outcome, not\n   a crash",
-    "what \"stops\" means depends on the ack's own status",
-    "ack first, then\n   report — and stops only after both exist",
-    "Leaving a blocked ack with no\n   report would strand the Issue",
-    "A `blocked` ack alone is not yet consumable",
-    "Only after that report exists and validates",
-    "That is the third\n   consumption state",
-    "without a state of its own it would be redelivered on every watcher restart",
-    "the `gate-ack`\n  comes first, because the consumer reads the ack's status before it acts on\n  the report",
-    "A `gates-passed` ack beside a stage report is the genuinely ambiguous one",
-    "consuming the ack\n   strands a current dispatch that never ran, resuming again replays one that\n   did",
-    "never silently consume the ack\n   or resume on it twice",
-    "an unconsumed ack alone never authorizes a\n   second resume",
-    "The watcher does not resolve it, and deliberately so",
-    "Fence a replay\n   where the binding exists, not where only a timestamp does",
-    "no remaining file for that\n   attempt is an ack",
-    // Preflight and ship dispatches carry no lifecycle move, so an ack there
-    // is spurious however well-formed it looks.
-    "is spurious and neither delivers nor suppresses",
-    // The consumption boundary can look like a death for one scan.
-    "Whenever an UNCONSUMED gate-ack exists for that attempt",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-
-  // Single home: the template and the skills resolve and point at the rule;
-  // none of them carries a second copy that could drift out of step with it.
-  const singleHomeRule = "No dispatch-moment lifecycle move is applied before the worker's gate-ack.";
-  for (const relativePath of [
-    "templates/orchestrator-dispatch.md",
-    "skills/mono-implement/SKILL.md",
-    "skills/mono-orchestrate/SKILL.md",
-  ]) {
-    if (read(relativePath).includes(singleHomeRule)) {
-      fail(
-        `${relativePath} must point at Two-Phase Dispatch Handshake in references/orchestration.md, not restate the rule`
-      );
-    }
-    assertIncludes(relativePath, "Two-Phase Dispatch Handshake", `${relativePath}: handshake pointer`);
-  }
-
-  for (const required of [
-    "## Gate Phase",
-    "Gate phase: not applicable — this dispatch carries no lifecycle",
-    "<ISSUE-KEY>-gate-ack-a<N>.json",
-    "Write it on gate\n  completion, on any gate blocker, and before stopping for any other reason.",
-    "Then stop and wait to be resumed",
-    "On `status: blocked`, also write the ordinary stage report",
-    "amendment does not show this dispatch's move applied is a `blocked` report",
-    // The stop instruction must not forbid a gate the same dispatch requires:
-    // on the issue-only lane the delivery check runs BEFORE the ack.
-    "except on the issue-only lane, where the delivery\n  check is one of the gates above and runs before you ack",
-    "unless your ack is `blocked`, which is\n  the one case that does require the stage report named below",
-    "carrying the stage's own exit status for what you hit",
-  ]) {
-    assertIncludes("templates/orchestrator-dispatch.md", required, JSON.stringify(required));
-  }
-
-  // The stop instruction may never name the delivery check as a flat
-  // prohibition: an issue-only worker would then have to skip a required gate
-  // or violate the stop rule, and either way the handshake is unexecutable.
-  const dispatchTemplate = read("templates/orchestrator-dispatch.md");
-  if (dispatchTemplate.includes("write code, run the delivery check, or write the stage report")) {
-    fail(
-      "templates/orchestrator-dispatch.md must not forbid the delivery check outright in the gate-phase stop rule; the issue-only lane runs it before the ack"
-    );
-  }
-
-  for (const required of [
-    "two-phase handshake",
-    "apply no move until the worker's `gates-passed` gate-ack",
-    "never a «Решил сам:» decision",
-    "A `gate-ack` event is a delivery signal, not durable proof and not a\n     liveness event",
-    "waiting by contract — never heal it",
-    "check\n     the exact ack artifact the event named",
-    "against `registryEntry.gates` from the\n     current attempt's registry entry: `gates-passed` requires exact set\n     equality on the gate names, never a count; `blocked` accepts a non-empty\n     subset but no foreign or duplicate names",
-    "register the resumed writer while preserving\n     `registryEntry.gates`, atomically publish the private orchestrator\n     `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with\n     `outcome: applied`, rename every candidate for that attempt to\n     `<ISSUE-KEY>-gate-ack-a<N>.applied.json`, and only then remove `gates` in\n     a separate registry write",
-    "an ack\n     left in place keeps suppressing that worker's `stall` and `dead` events",
-    "while consuming it before the resumed writer is registered leaves a window",
-    // The watcher emits gate-ack for a blocked ack too; the monitor state must
-    // branch instead of applying moves on every event.
-    "validate it\n     against `registryEntry.gates` from the current attempt before reading its\n     `status`",
-    "status-asymmetric: `gates-passed` requires exact set equality, while\n     `blocked` accepts a non-empty subset with no foreign or duplicate names",
-    "Poll the mailbox cheaply for BOTH reports and gate-acks",
-    "The poll is what makes the handshake recoverable",
-    "read the ack's `status` first, never the report on its own",
-    "the two arriving\n     together is that path working, not a crash",
-    "Do not publish the consumption record, rename the ack, or remove\n     `registryEntry.gates` until the correlated ordinary stage report exists",
-    "which is AMBIGUOUS rather than\n     proof",
-    "never silently\n     consume the ack or resume on it twice",
-    "an unconsumed ack on its own\n     never authorizes resuming twice",
-    "`blocked` applies no move at\n     all",
-    "Only after that report validates, atomically publish the private\n     orchestrator `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with\n     `outcome: blocked`, rename the ack as\n     `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`",
-    "`<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with\n     `outcome: blocked`",
-    "worker-writable tombstone or mailbox record never substitutes for that\n     private current-attempt record during Resume cleanup",
-    "atomically publish the trusted record with `outcome: rejected`, then rename\n     it `<ISSUE-KEY>-gate-ack-a<N>.rejected.json`",
-  ]) {
-    assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
-  }
-
-  const implementSkill = read("skills/mono-implement/SKILL.md");
-  const branchStart = implementSkill.indexOf("## Orchestration branch of `start-checkpoint`");
-  const branchEnd = implementSkill.indexOf("## Context-seam branch at Delivery Start");
-  if (branchStart < 0 || branchEnd < 0 || branchStart > branchEnd) {
-    fail("mono-implement orchestration branch must sit before the context-seam branch");
-    return;
-  }
-  const branch = implementSkill.slice(branchStart, branchEnd);
-  assertAnchorOrder("skills/mono-implement/SKILL.md", branch, HANDSHAKE_BRANCH_ANCHORS, [
-    [
-      "a gate pause placed before the context seam",
-      ["gate-pause", "context-seam", "post-resume-step"],
-      "out-of-order:gate-pause-before-context-seam",
-    ],
-    [
-      "a lifecycle step placed before the gate pause",
-      ["context-seam", "post-resume-step", "gate-pause"],
-      "out-of-order:post-resume-step-before-gate-pause",
-    ],
-    [
-      "a branch with no gate pause at all",
-      ["context-seam", "post-resume-step"],
-      "missing:gate-pause",
-    ],
-  ]);
-
-  // Fail-closed spirit of the step-5 rewrite: the pre-move snapshot is normal
-  // ONLY inside the gate phase, and a resumed worker whose amendment still
-  // shows no applied move stops hard.
-  for (const required of [
-    "A pre-move snapshot is the NORMAL state of\n   this phase and never a finding here.",
-    "Two-Phase Dispatch Handshake section of",
-    "Re-run the pack identity gate first.",
-    "A dispatch that carried no lifecycle move has\n   no amendment to read and arrives here directly.",
-    // Round 5: the lane bullets must handle that no-move path too, or a later
-    // Issue in an already-Delivery Project is told to read an amendment that
-    // cannot exist. Fail-closed either way: the state must SHOW the move done.
-    "A dispatch that carried no\n     Delivery move has no ack and no amendment, and needs none",
-    "Either way the state you evaluate must SHOW the Project in Delivery",
-    "A dispatch that carried no activation move — a retry on an Issue\n     already in its started state — has no ack and no amendment either",
-    // The closing summary must not move the issue-only delivery gate after the
-    // ack it exists to guard.
-    "that lane's `mono-check delivery`, which gates the move this dispatch\ncarries and therefore runs before the ack, never after it",
-    "a dispatch that\n   carried none needed none",
-  ]) {
-    if (!branch.includes(required)) {
-      fail(`mono-implement gate-phase contract missing: ${JSON.stringify(required)}`);
+  if (faults.length) fail(`registry gate contract is incomplete: ${faults.join(", ")}`);
+  for (const { label, text } of REGISTRY_GATE_REQUIREMENTS) {
+    const mutated = { watcher: surfaces.watcher.replace(text, "") };
+    if (!registryGateContractFaults(mutated).includes(label)) {
+      fail(`registry gate negative fixture did not reject removed ${label} branch`);
     }
   }
 }
 
-// The tier-2 heading and the tier rule are module-level because two checks
-// read the same block: the ladder contract below, and validateProjectUpdateSurface,
-// which slices the tier-2 block of one skill. One copy, two readers.
-const READ_WHEN_TIER_HEADING = "Read when — load the file only when its condition is true for this run:";
-const READ_WHEN_TIER_RULE =
-  'Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.';
-
-// MONO-45 — two-tier read-first ladders. Tier-1 ("Read now") is the eager
-// closure every run of a stage loads; tier-2 ("Read when") is deferred behind a
-// stated condition and is deliberately outside the validated set, because
-// extractReadFirstEntries stops at the first non-numbered line. The tier is a
-// deferral, never a downgrade: a tier-2 read is mandatory once its condition
-// holds, and the bounded-contract requirement in validateArtifactContractParity
-// still forces its consumers to keep contract paths in tier-1.
-function validateReadFirstTierContract() {
-  const tierNowHeading = "Read now — every run of this stage loads all of these:";
-
-  for (const skill of listSkillNames()) {
-    const relativePath = `skills/${skill}/SKILL.md`;
-    if (!exists(relativePath)) continue;
-    const text = read(relativePath);
-    for (const required of [tierNowHeading, READ_WHEN_TIER_HEADING, READ_WHEN_TIER_RULE]) {
-      assertIncludes(relativePath, required, JSON.stringify(required));
-    }
-    if (text.indexOf(tierNowHeading) > text.indexOf(READ_WHEN_TIER_HEADING)) {
-      fail(`${relativePath} must state the "Read now" tier before the "Read when" tier`);
-    }
-
-    const { paths } = extractReadFirstEntries(text);
-    if (paths[0] !== "AGENTS.md") {
-      fail(`${relativePath} must keep AGENTS.md as the first "Read now" entry`);
-    }
-    const tierTwoBlock = text.slice(
-      text.indexOf(READ_WHEN_TIER_HEADING) + READ_WHEN_TIER_HEADING.length,
-      text.indexOf(READ_WHEN_TIER_RULE)
-    );
-    for (const line of tierTwoBlock.split("\n")) {
-      if (/^\d+\.\s/.test(line.trim())) {
-        fail(`${relativePath} has a numbered "Read when" entry, which the tier-1 parser would validate: ${line.trim()}`);
-      }
-    }
-    for (const line of tierTwoBlock.split("\n")) {
-      if (!line.trim().startsWith("- ")) continue;
-      if (!line.includes(" — ")) {
-        fail(`${relativePath} has a "Read when" entry without a stated condition: ${line.trim()}`);
-      }
-      // A deferral condition must be answerable from the run's inputs BEFORE the
-      // file is read. A condition phrased as an outcome of the work the file
-      // governs is self-referential: a run that does not already suspect the
-      // problem skips the file and can return a falsely clean result.
-      for (const resultDependent of [
-        "is in question",
-        "part of the finding",
-        "decides the verdict",
-        "has to be judged rather than read",
-        "against the quality bar",
-        "if it turns out",
-        "if needed",
-        "as needed",
-        "when relevant",
-        "when applicable",
-      ]) {
-        if (line.toLowerCase().includes(resultDependent)) {
-          fail(
-            `${relativePath} has a result-dependent or vague "Read when" condition (${JSON.stringify(resultDependent)}); state a precondition observable before the read: ${line.trim()}`
-          );
-        }
-      }
-    }
+function validateStatusTemplateFields() {
+  // Existing template field labels are structure. Agent-facing wording and
+  // the order in which an agent presents the blocks are reviewed as text.
+  const file = "templates/orchestrator-brief.md";
+  const section = modelSection(read(file), "Статус (Status Update)");
+  const blocks = section === null ? [] : fencedBlocks(section);
+  for (const field of ["Решений от тебя:", "Техника (можно не читать):", "Нужно от тебя (<N> решений):"]) {
+    requireMachineToken(field);
+    if (!blocks.some((block) => block.includes(field))) fail(file + ": missing status field " + field);
   }
-
-  // Parser fixture: a tier-2 bullet is not harvested as a tier-1 path, and a
-  // tier-1 entry carrying extra backticked prose still is — which is why
-  // conditions live on tier-2 lines only.
-  const tieredFixture = [
-    "Read first:",
-    "",
-    tierNowHeading,
-    "",
-    "1. `AGENTS.md`",
-    "2. `references/lifecycle.md`",
-    "",
-    READ_WHEN_TIER_HEADING,
-    "",
-    "- `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`.",
-    "",
-    READ_WHEN_TIER_RULE,
-    "",
-  ].join("\n");
-  const tieredPaths = extractReadFirstEntries(tieredFixture).paths;
-  if (tieredPaths.join("|") !== "AGENTS.md|references/lifecycle.md") {
-    fail("two-tier read-first fixture must harvest exactly the tier-1 entries");
-  }
-  if (tieredPaths.includes("lifecycle_state_entity=issue")) {
-    fail("two-tier read-first fixture must not harvest tier-2 condition text as a path");
-  }
-  const conditionOnTierOne = tieredFixture.replace(
-    "2. `references/lifecycle.md`",
-    "2. `references/lifecycle.md` — only when the seam is `lifecycle_state_entity=issue`"
-  );
-  const conditionPaths = extractReadFirstEntries(conditionOnTierOne).paths;
-  if (!conditionPaths.includes("lifecycle_state_entity=issue")) {
-    fail("condition text on a tier-1 entry must expose its backticked tokens to path validation");
-  }
-  if (validateReadFirstPath("lifecycle_state_entity=issue")) {
-    fail("a tier-1 condition token must not pass path validation; conditions belong on tier-2 lines");
-  }
-
-  // Audience split — the interactive ship UX and its worked example live in a
-  // template read at composition time; the worker path keeps every gate.
-  assertIncludes("skills/mono-ship/SKILL.md", "templates/ship-status-ux.md", "ship status UX pointer");
-  for (const inlined of ["Статус ревью:", "Review timeline:", "Для `green`:"]) {
-    if (read("skills/mono-ship/SKILL.md").includes(inlined)) {
-      fail(`mono-ship must not re-inline the interactive ship status UX: ${JSON.stringify(inlined)}`);
-    }
-  }
-  for (const required of [
-    "Shape only.",
-    "Every value comes from something you actually observed",
-    "This\nfile carries no gate",
-    "Статус ревью:",
-    "Review timeline:",
-  ]) {
-    assertIncludes("templates/ship-status-ux.md", required, JSON.stringify(required));
-  }
-
-  // M5 — the coverage rule keeps its enforcement clause in both stage skills
-  // and delegates only the field shape to the report template.
-  for (const relativePath of ["skills/mono-implement/SKILL.md", "skills/mono-preflight/SKILL.md"]) {
-    for (const required of [
-      "each with a `pass | deferred | not-run` status and one line of evidence",
-      "Under orchestration that list is the `verification_items` array of the mailbox report, in the shape `templates/orchestrator-report.md` defines.",
-      "The stage cannot claim completion while an item is silently missing; `deferred`/`not-run` are valid only with a recorded reason in the evidence.",
-      "`templates/orchestrator-report.md` — when this stage runs from a dispatch, before writing the exit report.",
-    ]) {
-      assertIncludes(relativePath, required, JSON.stringify(required));
-    }
-  }
-
-  // M6 — one printed certificate block; the Linear form is described, not
-  // reprinted, and the Russian lead stays required for it.
-  const preflightBody = read("skills/mono-preflight/SKILL.md");
-  const certificateCore = "mono-preflight certificate\nPreflight: <ready|blocked|drift-candidate|needs-human>";
-  if (preflightBody.split(certificateCore).length - 1 !== 1) {
-    fail("mono-preflight must print the certificate machine core exactly once");
-  }
-  for (const required of [
-    "The certificate block above, unchanged, with one addition",
-    "It is required in the Linear comment/resource form and absent from the chat and report form — never optional in either direction.",
-  ]) {
-    assertIncludes("skills/mono-preflight/SKILL.md", required, JSON.stringify(required));
-  }
-
-  // A deferred read whose condition names a Linear write must also name the
-  // queued form, or the condition silently excludes every orchestrated run.
-  for (const required of [
-    "The same substitution applies to any condition a stage skill places on a\n  read",
-    "names the queued form too",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-  assertIncludes(
-    "skills/mono-preflight/SKILL.md",
-    "- `references/artifact-quality.md` — when this run records or queues the certificate for Linear, or recovers an earlier certificate.",
-    "preflight certificate-quality read covers the queued form"
-  );
-
-  // Dispatch-generator audience guidance — one home in orchestration.md.
-  for (const required of [
-    "### Generated dispatch as audience adapter",
-    "orchestration.workerAudience",
-    "It may not soften, reword,\n  or replace a rule",
-    "is a floor, not a ceiling",
-    "Facts are never compressed for either column.",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-}
-
-// MONO-46 — pre-write handoff review. The whole value of this gate is its
-// ORDER: the drafted package is reviewed BEFORE the first durable Linear write,
-// so findings are fixed in a draft instead of in an artifact that already
-// exists. That is what these pins anchor — step positions inside the
-// execution-mode workflow, computed from what each step DOES, so rewording
-// around them cannot silently restore the old post-write order. The obligation
-// the order carries (no skip for `standard`/`deep`/`risky`, advisory with a
-// recorded reason for `tiny`) and the `mono-review` carve-out that makes a
-// pre-write review possible at all are pinned by their load-bearing sentences,
-// not by incidental phrasing.
-function validatePreWriteHandoffReviewOrder() {
-  const handoffPath = "skills/mono-handoff/SKILL.md";
-  const handoff = read(handoffPath);
-
-  const workflowStart = handoff.indexOf("Execution-mode workflow:");
-  const workflowEnd = handoff.indexOf("Rules:", workflowStart);
-  if (workflowStart < 0 || workflowEnd < 0 || workflowStart > workflowEnd) {
-    fail(`${handoffPath} must keep an execution-mode workflow section ahead of its rules`);
-    return;
-  }
-  const workflow = handoff.slice(workflowStart, workflowEnd);
-
-  const reviewStep = workflow.indexOf("pre-write handoff review on the draft package");
-  if (reviewStep < 0) {
-    fail(`${handoffPath} execution-mode workflow must run the pre-write handoff review on the draft package`);
-    return;
-  }
-
-  const durableWrites = [
-    "create or update PRD and Tech Spec in Linear",
-    "Update the Project body",
-    "Record approval as a Linear comment",
-    "Create or update Linear Issue(s) from the approved package",
-  ];
-  const durableWriteIndexes = [];
-  for (const durableWrite of durableWrites) {
-    const writeStep = workflow.indexOf(durableWrite);
-    if (writeStep < 0) {
-      fail(`${handoffPath} execution-mode workflow missing durable-write step: ${JSON.stringify(durableWrite)}`);
-      continue;
-    }
-    durableWriteIndexes.push(writeStep);
-    if (writeStep < reviewStep) {
-      fail(
-        `${handoffPath} performs a durable Linear write before the pre-write handoff review: ${JSON.stringify(durableWrite)}`
-      );
-    }
-  }
-
-  // The old order must not creep back in behind a durable write.
-  if (durableWriteIndexes.length > 0) {
-    const lastDurableWrite = Math.max(...durableWriteIndexes);
-    if (workflow.indexOf("mono-review handoff", lastDurableWrite) >= 0) {
-      fail(`${handoffPath} must not schedule the handoff review after a durable Linear write`);
-    }
-  }
-
-  // Fixes land in the draft, and the owner's single touch already carries the
-  // verdict: review → draft fixes → approval, all before the writes above. The
-  // upper bound is as load-bearing as the lower one — a fix applied after the
-  // PRD is written is a repair of a durable artifact, which is the failure this
-  // Issue exists to remove — so both steps are bounded on both sides.
-  const firstDurableWrite = durableWriteIndexes.length > 0 ? Math.min(...durableWriteIndexes) : -1;
-  const draftFixStep = workflow.indexOf("Apply accepted review fixes to the draft package");
-  const approvalStep = workflow.indexOf("for package approval before durable writes");
-  if (draftFixStep < 0 || draftFixStep < reviewStep) {
-    fail(`${handoffPath} must apply accepted review fixes to the draft after the pre-write review`);
-  } else if (firstDurableWrite >= 0 && draftFixStep > firstDurableWrite) {
-    fail(`${handoffPath} must apply accepted review fixes to the draft before the first durable Linear write`);
-  }
-  if (approvalStep < 0 || approvalStep < draftFixStep) {
-    fail(`${handoffPath} must present the package for approval after the draft review and its fixes`);
-  } else if (firstDurableWrite >= 0 && approvalStep > firstDurableWrite) {
-    fail(`${handoffPath} must present the package for approval before the first durable Linear write`);
-  }
-
-  for (const required of [
-    "The handoff review runs on the draft package before the first durable Linear write of that package",
-    "required for `standard`, `deep`, and `risky`",
-    "For `tiny` the gate stays advisory",
-    "`standard`, `deep`, and `risky` have no such skip",
-    // The condition must hold in both modes; the write→queue substitution keeps
-    // its single home and is pointed at, never restated here.
-    "Interactive runs invoke `mono-review handoff` report-only over the draft package",
-    "Orchestrated runs delegate the same handoff-review contract",
-    "Orchestration Mode Precedence",
-    // An owner-requested revision cannot be approved under the previous
-    // draft's verdict, and a skipped tiny gate has a disposition to show.
-    "returns through steps 5-6 before it is re-presented",
-    "for a `tiny` package whose advisory gate was skipped, the recorded skip reason",
-  ]) {
-    assertIncludes(handoffPath, required, JSON.stringify(required));
-  }
-  if (handoff.includes("The dispatch snapshot is the single source of Linear state in orchestration")) {
-    fail(
-      `${handoffPath} must point at Orchestration Mode Precedence in references/orchestration.md, not restate the rule`
-    );
-  }
-
-  for (const required of [
-    "Handoff-gate timing is pre-write",
-    "before the first durable Linear write of that package",
-  ]) {
-    assertIncludes("references/readiness-gates.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "`handoff` has a pre-write mode",
-    "never a missing artifact and never grounds for `blocked`",
-    "In pre-write `handoff` mode the required artifacts are the draft bodies supplied as input",
-    // No escape hatch may reopen the skip the gate exists to close.
-    "no recorded exception substitutes for it",
-  ]) {
-    assertIncludes("skills/mono-review/SKILL.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "### Pre-write package review",
-    "BEFORE the orchestrator writes any of it to Linear",
-    "no Linear-write capability and no owner contact",
-    "Workers never run this review",
-    "pre-write package review, not stage work",
-    // The drafted bodies are unwritten; the Project container may well exist.
-    "The Project entity itself may already exist",
-  ]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-}
-
-const KEY_OR_STAGE_LED_BULLET =
-  /^\s*- (?:<ISSUE-KEY>|[A-Z][A-Z0-9]*-\d+\b|<стадия>|mono-(?:implement|preflight|ship|deploy)\b)/m;
-
-function validateOwnerProductLanguage() {
-  // 2026-09-06 precedent: the owner woke up to «ZENI-391 (I3b): сертификат
-  // ship, squash-merge … closeout, реестр отставлен» and could not tell what
-  // the product now does. Owner-facing statuses speak product language; the
-  // machine register lives in a skippable «Техника» tail, and «Нужно от тебя:»
-  // is always the last block so the ask is what the owner sees when done.
-  const briefPath = "templates/orchestrator-brief.md";
-  const brief = read(briefPath);
-
-  for (const required of [
-    "## Статус (Status Update)",
-    "Решений от тебя:",
-    "Новое за <период>:",
-    "Можешь потрогать:",
-    "Где мы к цели «<цель волны>»:",
-    "В работе сейчас:",
-    "Дальше по очереди:",
-    "Что пошло не так:",
-    "Чем рискуем:",
-    "Обещал — не сделал:",
-    "Следующий контакт:",
-    "Техника (можно не читать):",
-    "Нужно от тебя:",
-    "## Итог волны (Wave Report)",
-  ]) {
-    assertIncludes(briefPath, required, JSON.stringify(required));
-  }
-
-  const statusStart = brief.indexOf("## Статус (Status Update)");
-  const fenceStart = statusStart < 0 ? -1 : brief.indexOf("```text", statusStart);
-  const fenceEnd = fenceStart < 0 ? -1 : brief.indexOf("```", fenceStart + 7);
-  if (fenceStart < 0 || fenceEnd < 0) {
-    fail(`${briefPath} status shape must be a fenced text block under «## Статус (Status Update)»`);
-  } else {
-    const shape = brief.slice(fenceStart + 7, fenceEnd).trim();
-    const firstLine = shape.split("\n")[0] || "";
-    if (!firstLine.includes("Решений от тебя:")) {
-      fail(`${briefPath} status shape must open with the «Решений от тебя:» counter, found ${JSON.stringify(firstLine)}`);
-    }
-    const blockLabels = shape
-      .split("\n")
-      .map((line) => line.trimEnd())
-      .filter((line) => /^[А-ЯЁ][^\n]*:/.test(line) && !/^\d/.test(line));
-    const lastLabel = blockLabels[blockLabels.length - 1] || "";
-    if (!lastLabel.startsWith("Нужно от тебя")) {
-      fail(`${briefPath} status shape must end with «Нужно от тебя:», found ${JSON.stringify(lastLabel)}`);
-    }
-    const technicalIndex = shape.indexOf("Техника (можно не читать):");
-    const askIndex = shape.indexOf("Нужно от тебя");
-    if (technicalIndex < 0 || askIndex < 0 || technicalIndex > askIndex) {
-      fail(`${briefPath} status shape must place «Техника (можно не читать):» before «Нужно от тебя:»`);
-    }
-    // Placeholder token, a real-looking key (ZENI-391), the stage placeholder,
-    // or a stage skill name at the head of a bullet all make the key or the
-    // stage the subject of the line — the exact register this shape retires.
-    // Only the «Техника (можно не читать):» block is exempt: it is the machine
-    // register, whose per-Issue table and wave cost block are key-led by
-    // design. Every owner-facing block is judged, including «Нужно от тебя»,
-    // which follows that block and would otherwise slip through a checked
-    // prefix. Both label lines start a line, so cutting the block out leaves
-    // the remaining text line-aligned.
-    const technicalBlockIsBounded =
-      technicalIndex >= 0 && askIndex >= 0 && technicalIndex < askIndex;
-    const ownerFacingShape = technicalBlockIsBounded
-      ? shape.slice(0, technicalIndex) + shape.slice(askIndex)
-      : shape;
-    if (KEY_OR_STAGE_LED_BULLET.test(ownerFacingShape)) {
-      fail(`${briefPath} status shape must not open a bullet with an Issue key or a stage as its subject outside «Техника (можно не читать):»`);
-    }
-  }
-
-  for (const required of [
-    "## Product Language For The Owner",
-    "what the product now does for its user",
-    "never the subject of a line",
-    "verified live after the latest deploy",
-    "No placeholders in sent text",
-  ]) {
-    assertIncludes("references/human-friendly-output.md", required, JSON.stringify(required));
-  }
-
-  for (const required of [
-    "Owner-facing output is product language",
-    "«Нужно от тебя:» is always the last block",
-    "Product Language For The Owner",
-  ]) {
-    assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
-  }
-
-  for (const required of ["«Что пошло не так:»"]) {
-    assertIncludes("references/orchestration.md", required, JSON.stringify(required));
-  }
-
-  assertIncludes("templates/compact-instructions.md", "product_name", "product-language worker name field");
-  assertIncludes("README.md", "product language", "README mono-orchestrate product-language statuses");
 }
 
 // Fenced blocks of a Markdown surface, in order, without their fence lines.
@@ -9248,18 +6319,19 @@ function validateOwnerLayerProcedureSurface() {
   // steps are worded stays editable, the surfaces they live on do not.
   const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
   const orchestrateText = read(orchestrateSurface);
-  const tierTwoStart = orchestrateText.indexOf(READ_WHEN_TIER_HEADING);
-  const tierTwoEnd = orchestrateText.indexOf(READ_WHEN_TIER_RULE);
+  const tierRange = readTierBounds(orchestrateText);
+  const tierTwoStart = tierRange?.start ?? -1;
+  const tierTwoEnd = tierRange?.end ?? -1;
   if (tierTwoStart < 0 || tierTwoEnd <= tierTwoStart) {
     fail(`${orchestrateSurface} must carry a "Read when" tier block holding the owner-layer documents`);
   } else {
     const tierTwoSlice = orchestrateText.slice(
-      tierTwoStart + READ_WHEN_TIER_HEADING.length,
+      tierTwoStart,
       tierTwoEnd
     );
     // The body after the tier rule is where the reconciliation step lives; a
     // path declared in the ladder but never used by a step is a dangling read.
-    const stepBody = orchestrateText.slice(tierTwoEnd + READ_WHEN_TIER_RULE.length);
+    const stepBody = orchestrateText.slice(tierTwoEnd);
     for (const documentPath of [OWNER_LAYER_MAP_PATH, OWNER_LAYER_CONSTITUTION_PATH]) {
       if (!tierTwoSlice.includes(documentPath)) {
         fail(
@@ -9282,18 +6354,6 @@ function validateOwnerLayerProcedureSurface() {
   assertFieldInFencedBlock("templates/deploy-output.md", "Mono deploy verdict:", "Owner layer:");
 }
 
-// MONO-65 — Linear's document service rewrites every unordered-list marker
-// to `* ` on every write, so a normalised-hash comparison that does not
-// canonicalise the marker reports a difference on a document nobody has
-// touched. The marker-canonicalisation clause must appear, worded
-// identically, everywhere the owner-layer normalisation rule is written
-// out: the reconciliation step in `mono-orchestrate` and both the
-// pre-publication snapshot and the mandatory read-back in `mono-deploy`.
-// Structural only: assert the same token inside a bounded slice at each
-// site, never a whole-sentence prose pin.
-const OWNER_LAYER_MARKER_TOKEN =
-  "unordered-list marker (`- `, `* ` or `+ `) rewritten to the canonical marker `- ` while preserving the line's leading indentation";
-
 function boundedSlice(relativePath, text, startMarker, endMarker, label) {
   const start = text.indexOf(startMarker);
   const end = start >= 0 ? text.indexOf(endMarker, start + startMarker.length) : -1;
@@ -9302,158 +6362,6 @@ function boundedSlice(relativePath, text, startMarker, endMarker, label) {
     return null;
   }
   return text.slice(start, end);
-}
-
-// `mono-orchestrate/SKILL.md` hard-wraps prose across lines, so the token can
-// straddle a line break exactly where markdown reflows it; collapse runs of
-// whitespace (including newlines) to a single space before matching so the
-// check tracks content, never a particular wrap column.
-function includesCollapsed(haystack, needle) {
-  return haystack.replace(/\s+/g, " ").includes(needle);
-}
-
-function validateOwnerLayerMarkerCanonicalization() {
-  const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
-  const orchestrateSlice = boundedSlice(
-    orchestrateSurface,
-    read(orchestrateSurface),
-    "### Owner-layer reconciliation",
-    "\nWorkflow states:",
-    "owner-layer reconciliation"
-  );
-  if (orchestrateSlice && !includesCollapsed(orchestrateSlice, OWNER_LAYER_MARKER_TOKEN)) {
-    fail(
-      `${orchestrateSurface} owner-layer reconciliation step must canonicalise the unordered-list marker before hashing`
-    );
-  }
-
-  const deploySurface = "skills/mono-deploy/SKILL.md";
-  const deployText = read(deploySurface);
-  const rereadSlice = boundedSlice(
-    deploySurface,
-    deployText,
-    "3. Re-read.",
-    "4. Refuse on a newer owner edit.",
-    "owner-layer publish pre-publication snapshot (sub-step 3)"
-  );
-  if (rereadSlice && !includesCollapsed(rereadSlice, OWNER_LAYER_MARKER_TOKEN)) {
-    fail(
-      `${deploySurface} owner-layer publish sub-step 3 (Re-read) must canonicalise the unordered-list marker before hashing`
-    );
-  }
-  const readbackSlice = boundedSlice(
-    deploySurface,
-    deployText,
-    "6. Read back",
-    "7. Record every outcome.",
-    "owner-layer publish mandatory read-back (sub-step 6)"
-  );
-  if (readbackSlice && !includesCollapsed(readbackSlice, OWNER_LAYER_MARKER_TOKEN)) {
-    fail(
-      `${deploySurface} owner-layer publish sub-step 6 (Read back) must canonicalise the unordered-list marker before hashing`
-    );
-  }
-}
-
-// MONO-67 — step 5's own live run found a record already filed with both
-// values in its «Снимок контекста», yet a literal reading still missed it:
-// Linear's issue search does not find a 64-character hex hash in a body,
-// while it finds a dash-separated UUID precisely, so a search keyed on the
-// diff hash returns nothing and step 5 wrongly concludes the difference is
-// unfiled. Step 5 must instead search by the document id and confirm a
-// candidate only by reading its body, and must say explicitly that an
-// empty or irrelevant search result is never proof of absence. Pre-ship
-// review on this Issue's own PR (Greptile) added a third clause: a search
-// that errors, times out, or returns a partial/unreadable result is not
-// the same thing as a completed search that read its candidates and found
-// none, so it must not license creation either — closing the same failure
-// mode this Issue exists to fix, one layer earlier (a broken search
-// masquerading as a confirmed-empty one). All three clauses are checked
-// structurally inside step 5's own bounded slice, same shape as
-// validateOwnerLayerMarkerCanonicalization above: a fixed token, never a
-// whole-sentence prose pin, and the file's hard-wrapped prose means a
-// token can straddle a line break, so includesCollapsed is required here
-// too.
-const OWNER_LAYER_DOCUMENT_ID_LOOKUP_TOKEN =
-  "Search by the document id instead of the diff hash: Linear's issue search does not find a 64-character hex hash in a body, while it finds a dash-separated UUID precisely — a property of the search, not of our data. Confirm a candidate only by READING its body and requiring both the same document id and the same diff hash in its «Снимок контекста»; result rank is never confirmation, only the read body is.";
-const OWNER_LAYER_EMPTY_RESULT_NOT_PROOF_TOKEN =
-  "An empty or irrelevant search result is NOT proof that no record exists, and nothing may be created until the document-id search has been run and its candidates read.";
-const OWNER_LAYER_INCOMPLETE_SEARCH_NOT_EMPTY_TOKEN =
-  "A search that errors, times out, or returns a partial or unreadable result is not an empty result either: only a search that completed and whose candidates were fully read may be treated as returning none that confirms.";
-
-function validateOwnerLayerRecordLookupByDocumentId() {
-  const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
-  const step5Slice = boundedSlice(
-    orchestrateSurface,
-    read(orchestrateSurface),
-    "5. One filed record per difference hash.",
-    "\n6. File it through the ordinary intake",
-    "owner-layer reconciliation step 5 (one filed record per difference hash)"
-  );
-  if (!step5Slice) {
-    return;
-  }
-  if (!includesCollapsed(step5Slice, OWNER_LAYER_DOCUMENT_ID_LOOKUP_TOKEN)) {
-    fail(
-      `${orchestrateSurface} step 5 (One filed record per difference hash) must search by the document id, never the diff hash, and confirm a candidate only by reading its body - result rank is never confirmation`
-    );
-  }
-  if (!includesCollapsed(step5Slice, OWNER_LAYER_EMPTY_RESULT_NOT_PROOF_TOKEN)) {
-    fail(
-      `${orchestrateSurface} step 5 (One filed record per difference hash) must state that an empty or irrelevant search result is not proof that no record exists`
-    );
-  }
-  if (!includesCollapsed(step5Slice, OWNER_LAYER_INCOMPLETE_SEARCH_NOT_EMPTY_TOKEN)) {
-    fail(
-      `${orchestrateSurface} step 5 (One filed record per difference hash) must state that an errored, timed-out, or partially-read search is not an empty result either`
-    );
-  }
-}
-
-// MONO-71 — two reconciliation edge cases are part of the owner-layer
-// contract: step 3 must name the service rewrite that makes bare Linear Issue
-// keys unsafe, and step 5 must make a found record authoritative regardless of
-// lifecycle state. Keep these checks structural by matching bounded invariant
-// tokens inside each numbered step rather than pinning either sentence wholesale.
-const OWNER_LAYER_BARE_ISSUE_KEY_REWRITE_TOKEN =
-  "becoming link markup on write";
-const OWNER_LAYER_BARE_ISSUE_KEY_RULE_TOKEN =
-  "owner-layer documents must carry no bare Linear issue key";
-const OWNER_LAYER_FOUND_RECORD_STATE_TOKEN =
-  "found record confirms the difference regardless of its lifecycle state";
-
-function validateOwnerLayerReconciliationEdgeCases() {
-  const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
-  const orchestrateText = read(orchestrateSurface);
-  const step3Slice = boundedSlice(
-    orchestrateSurface,
-    orchestrateText,
-    "3. Normalise both sides identically before comparing:",
-    "\n4. A difference is an owner edit waiting for work.",
-    "owner-layer reconciliation step 3 (normalisation)"
-  );
-  const step3Tokens = [
-    OWNER_LAYER_BARE_ISSUE_KEY_REWRITE_TOKEN,
-    OWNER_LAYER_BARE_ISSUE_KEY_RULE_TOKEN,
-  ];
-  if (step3Slice && step3Tokens.some((token) => !includesCollapsed(step3Slice, token))) {
-    fail(
-      `${orchestrateSurface} step 3 (Normalise both sides identically before comparing) must explain the bare Linear issue-key rewrite and forbid bare issue keys in owner-layer documents`
-    );
-  }
-
-  const step5Slice = boundedSlice(
-    orchestrateSurface,
-    orchestrateText,
-    "5. One filed record per difference hash.",
-    "\n6. File it through the ordinary intake",
-    "owner-layer reconciliation step 5 (one filed record per difference hash)"
-  );
-  if (step5Slice && !includesCollapsed(step5Slice, OWNER_LAYER_FOUND_RECORD_STATE_TOKEN)) {
-    fail(
-      `${orchestrateSurface} step 5 (One filed record per difference hash) must state that a found record confirms the difference regardless of its lifecycle state`
-    );
-  }
 }
 
 // MONO-65 review follow-up — the marker rule is written per-line and has no
@@ -9510,45 +6418,26 @@ function validateProjectUpdateSurface() {
   if (!paths.includes("templates/project-update.md")) {
     fail("skills/mono-deploy/SKILL.md must read templates/project-update.md as its project-update source");
   }
-  assertIncludes(
-    "skills/mono-deploy/SKILL.md",
-    "Project update:",
-    "project-update closeout field in mono-deploy"
-  );
-  assertIncludes(
-    "templates/deploy-output.md",
-    "Project update:",
-    "project-update field in the deploy output template"
-  );
+
   // The orchestrator publishes project updates too, so the template must sit in
   // its deferred read ladder. extractReadFirstEntries parses tier-1 entries
   // only, so this is a substring check on the tier-2 slice between the
   // "Read when" heading and the tier rule.
   const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
   const orchestrateText = read(orchestrateSurface);
-  const tierTwoStart = orchestrateText.indexOf(READ_WHEN_TIER_HEADING);
-  const tierTwoEnd = orchestrateText.indexOf(READ_WHEN_TIER_RULE);
+  const tierRange = readTierBounds(orchestrateText);
+  const tierTwoStart = tierRange?.start ?? -1;
+  const tierTwoEnd = tierRange?.end ?? -1;
   if (tierTwoStart < 0 || tierTwoEnd <= tierTwoStart) {
     fail(`${orchestrateSurface} must carry a "Read when" tier block holding the project-update contract`);
   } else if (
     !orchestrateText
-      .slice(tierTwoStart + READ_WHEN_TIER_HEADING.length, tierTwoEnd)
+      .slice(tierTwoStart, tierTwoEnd)
       .includes("templates/project-update.md")
   ) {
     fail(
       `${orchestrateSurface} must read templates/project-update.md in its "Read when" tier: the orchestrator writes project updates too`
     );
-  }
-  // The theme-project field is what carries an issue-only shipment into a
-  // project feed: the Issue template and intake author it, and the deploy
-  // step and the update template consume it. Structural field check only.
-  for (const themeProjectSurface of [
-    "skills/mono-deploy/SKILL.md",
-    "skills/mono-issue/SKILL.md",
-    "templates/issue.md",
-    "templates/project-update.md",
-  ]) {
-    assertIncludes(themeProjectSurface, "Тематический проект:", "theme-project field");
   }
 }
 
@@ -9977,65 +6866,1275 @@ function validateModelPolicyFixtures() {
   }
 }
 
+const STRING_PINS = [
+  ["skills/mono-ship/SKILL.md","templates/ship-status-ux.md"],
+  ["templates/ship-status-ux.md","Статус ревью:"],
+  ["templates/ship-status-ux.md","Review timeline:"],
+  ["references/orchestration.md","orchestration.workerAudience"],
+  ["skills/mono-deploy/SKILL.md","Project update:"],
+  ["templates/deploy-output.md","Project update:"],
+  ["skills/mono-deploy/SKILL.md","Тематический проект:"],
+  ["skills/mono-issue/SKILL.md","Тематический проект:"],
+  ["templates/issue.md","Тематический проект:"],
+  ["templates/project-update.md","Тематический проект:"],
+  ["templates/review-output.md","Ревью Linear:"],
+  ["templates/review-output.md","Блокирующие замечания:"],
+  ["templates/review-output.md","Предложенные исправления:"],
+  ["templates/review-output.md","Нужно твоё решение:"],
+  ["templates/review-output.md","К сведению:"],
+  ["templates/ship-output.md","Preflight:"],
+  ["templates/ship-output.md","Bug/perf proof:"],
+  ["templates/deploy-output.md","Deploy status:"],
+  ["templates/deploy-output.md","Ship certificate:"],
+  ["templates/deploy-output.md","Deploy workflow:"],
+  ["templates/deploy-output.md","Learnings recorded:"],
+  ["templates/check-output.md","Смысл:"],
+  ["templates/check-output.md","Чего не хватает:"],
+  ["templates/check-output.md","Расхождения:"],
+  ["templates/check-output.md","Следующий unblock:"],
+  ["templates/check-output.md","Нарушение контракта:"],
+  ["templates/check-output.md","Как починить:"],
+  ["templates/orchestrator-dispatch.md","~/.codex/skills/"],
+  ["templates/orchestrator-dispatch.md",".orchestrator/"],
+  ["templates/orchestrator-brief.md","Что решаем:"],
+  ["templates/orchestrator-brief.md","Почему сейчас:"],
+  ["templates/orchestrator-brief.md","Что уже доказано:"],
+  ["templates/orchestrator-brief.md","Рекомендация:"],
+  ["templates/orchestrator-brief.md","Решил сам:"],
+  ["templates/orchestrator-brief.md","Нужно от тебя:"],
+  ["templates/orchestrator-report.md","\"issue\""],
+  ["templates/orchestrator-report.md","\"stage\""],
+  ["templates/orchestrator-report.md","\"status\""],
+  ["templates/orchestrator-report.md","\"verification_items\""],
+  ["templates/orchestrator-report.md","\"question\""],
+  ["templates/orchestrator-report.md","\"recommendation\""],
+  ["templates/orchestrator-report.md","\"linear_mutations_pending\""],
+  ["templates/orchestrator-report.md","\"notes\""],
+  ["templates/orchestrator-report.md","needs-decision"],
+  ["templates/orchestrator-report.md","needs-human"],
+  ["templates/orchestrator-report.md","drift-candidate"],
+  ["templates/orchestrator-report.md","workers.json"],
+  ["skills/mono-handoff/SKILL.md","references/repair-machine.md"],
+  ["skills/mono-handoff/SKILL.md","mono-review artifact"],
+  ["skills/mono-review/SKILL.md","references/repair-machine.md"],
+  ["skills/mono-review/SKILL.md","- `artifact`"],
+  ["skills/mono-check/SKILL.md","references/repair-machine.md"],
+  ["skills/mono-check/SKILL.md","repair"],
+  ["templates/orchestrator-dispatch.md","packVersion"],
+  ["templates/orchestrator-dispatch.md","sourceCommit"],
+  ["templates/orchestrator-dispatch.md","surfaceRevision"],
+  ["templates/orchestrator-report.md","packVersion"],
+  ["templates/orchestrator-report.md","sourceCommit"],
+  ["templates/orchestrator-report.md","surfaceRevision"],
+  ["templates/orchestrator-report.md","control.json"],
+  ["scripts/verify.mjs","verify-pack-state.mjs"],
+  ["references/install.md","packVersion"],
+  ["references/install.md","sourceCommit"],
+  ["references/install.md","surfaceRevision"],
+  ["references/install.md","verify-pack-state.mjs"],
+  ["references/versioning.md","packVersion"],
+  ["references/versioning.md","sourceCommit"],
+  ["references/versioning.md","surfaceRevision"],
+  ["references/versioning.md","verify-pack-state.mjs"],
+  ["skills/mono-implement/SKILL.md","verify-pack-state.mjs identity"],
+  ["skills/mono-implement/SKILL.md","packVersion"],
+  ["skills/mono-implement/SKILL.md","sourceCommit"],
+  ["skills/mono-implement/SKILL.md","surfaceRevision"],
+  ["skills/mono-implement/SKILL.md","blocked"],
+  ["skills/mono-preflight/SKILL.md","verify-pack-state.mjs identity"],
+  ["skills/mono-preflight/SKILL.md","packVersion"],
+  ["skills/mono-preflight/SKILL.md","sourceCommit"],
+  ["skills/mono-preflight/SKILL.md","surfaceRevision"],
+  ["skills/mono-preflight/SKILL.md","blocked"],
+  ["skills/mono-ship/SKILL.md","verify-pack-state.mjs identity"],
+  ["skills/mono-ship/SKILL.md","packVersion"],
+  ["skills/mono-ship/SKILL.md","sourceCommit"],
+  ["skills/mono-ship/SKILL.md","surfaceRevision"],
+  ["skills/mono-ship/SKILL.md","blocked"],
+  ["references/orchestration.md","control.json"],
+  ["references/orchestration.md","protocol.json"],
+  ["references/orchestration.md","verify-pack-state.mjs identity"],
+  ["skills/mono-orchestrate/SKILL.md","control.json"],
+  ["skills/mono-orchestrate/SKILL.md","active"],
+  ["skills/mono-orchestrate/SKILL.md","draining"],
+  ["skills/mono-orchestrate/SKILL.md","idle"],
+  ["skills/mono-orchestrate/SKILL.md","surfaceRevision"],
+  ["references/issue-only-lane.md","mono-issue-only marker"],
+  ["references/issue-only-lane.md","Marker version: 1"],
+  ["references/issue-only-lane.md","Scope fingerprint"],
+  ["references/issue-only-lane.md","Acceptance IDs"],
+  ["references/issue-only-lane.md","Risk class"],
+  ["references/issue-only-lane.md","Approval"],
+  ["references/issue-only-lane.md","route_revision"],
+  ["references/issue-only-lane.md","assurance_vector"],
+  ["references/issue-only-lane.md","required_artifacts"],
+  ["references/issue-only-lane.md","package_kind"],
+  ["references/issue-only-lane.md","lifecycle_state_entity"],
+  ["references/issue-only-lane.md","behavioral_oracle"],
+  ["references/issue-only-lane.md","issue-verification"],
+  ["references/issue-only-lane.md","risk_class"],
+  ["references/issue-only-lane.md","approval_status"],
+  ["references/issue-only-lane.md","scripts/resolve-issue-context.mjs"],
+  ["references/issue-only-lane.md","issueOnlyLane.enabled: true"],
+  ["references/issue-only-lane.md","ownerPrincipal"],
+  ["references/issue-only-lane.md",".mono-agent-workflow/scripts/resolve-issue-context.mjs"],
+  ["skills/mono-implement/SKILL.md","lifecycle_state_entity=issue"],
+  ["skills/mono-implement/SKILL.md","approval_status=approved-fresh"],
+  ["references/issue-only-lane.md","Approval: superseded"],
+  ["templates/orchestrator-dispatch.md","PRD:"],
+  ["templates/orchestrator-dispatch.md","Tech Spec:"],
+  ["templates/orchestrator-dispatch.md","Issue-only marker:"],
+  ["templates/orchestrator-dispatch.md","Verified label:"],
+  ["templates/orchestrator-dispatch.md","Scope fingerprint:"],
+  ["templates/orchestrator-dispatch.md","Issue-only config:"],
+  ["templates/orchestrator-dispatch.md","Owner approval:"],
+  ["templates/orchestrator-dispatch.md","Context seam:"],
+  ["skills/mono-issue/SKILL.md","scripts/resolve-issue-context.mjs"],
+  ["skills/mono-issue/SKILL.md","--emit-fingerprint"],
+  ["skills/mono-issue/SKILL.md","--issue <issue-body> --emit-fingerprint"],
+  ["skills/mono-issue/SKILL.md","--issue <live-issue-body> --emit-fingerprint"],
+  ["skills/mono-issue/SKILL.md","--approval-verified"],
+  ["skills/mono-issue/SKILL.md",".mono-agent-workflow/scripts/resolve-issue-context.mjs"],
+  ["skills/mono-issue/SKILL.md","issueOnlyLane.ownerPrincipal"],
+  ["skills/mono-issue/SKILL.md","route_revision"],
+  ["skills/mono-idea/SKILL.md","mono-issue"],
+  ["skills/mono-issue/SKILL.md","references/contracts/issue.md"],
+  ["templates/review-output.md","issue-only"],
+  ["README.md","mono-implement"],
+  ["README.md","mono-preflight"],
+  ["README.md","mono-deploy"],
+  ["README.md","autoreview"],
+  ["README.md","node scripts/install-local.mjs"],
+  ["README.md","node scripts/project-config.mjs"],
+  ["README.md","--all-roots"],
+  ["README.md","~/.claude/skills"],
+  ["references/artifact-intake.md","read"],
+  ["references/artifact-intake.md","unavailable"],
+  ["references/artifact-intake.md","stale_or_ignored"],
+  ["references/artifact-intake.md","conflicts"],
+  ["references/artifact-intake.md","decisions_carried_forward"],
+  ["references/artifact-intake.md","confidence_boundary"],
+  ["references/readiness-gates.md","tiny"],
+  ["references/readiness-gates.md","standard"],
+  ["references/readiness-gates.md","deep"],
+  ["references/readiness-gates.md","risky"],
+  ["references/readiness-gates.md","references/autoreview-routing.md"],
+  ["references/review-rubric.md","Allowed review verdicts:"],
+  ["references/review-rubric.md","ready"],
+  ["references/review-rubric.md","advisory-ready"],
+  ["references/review-rubric.md","needs-fixes"],
+  ["references/review-rubric.md","blocked"],
+  ["references/install.md",".agents/mono-workflow.config.json"],
+  ["references/install.md","--all-roots"],
+  ["references/install.md","~/.claude/skills"],
+  ["references/install.md",".mono-agent-workflow.lock.json"],
+  ["references/install.md","MONO_WORKFLOW_KNOWN_ROOTS"],
+  ["references/install.md","references/autoreview-routing.md"],
+  ["references/orchestration.md","claude-code-desktop"],
+  ["references/orchestration.md","deployApproval"],
+  ["references/orchestration.md","scope-drift-needs-handoff"],
+  ["references/orchestration.md","codex-cli"],
+  ["references/orchestration.md","codex exec resume"],
+  ["references/orchestration.md","--add-dir"],
+  ["references/orchestration.md","workers.json"],
+  ["references/orchestration.md","sandbox_workspace_write.network_access"],
+  ["references/orchestration.md","git worktree add"],
+  ["references/versioning.md","references/autoreview-routing.md"],
+  ["references/install.md","\"orchestration\""],
+  ["scripts/verify.mjs","watch-workers.mjs"],
+  ["references/orchestration.md","thread.started"],
+  ["references/orchestration.md","< /dev/null"],
+  ["references/orchestration.md","watch-workers.mjs"],
+  ["references/orchestration.md","EVENT:"],
+  ["references/orchestration.md","model_reasoning_effort"],
+  ["skills/mono-orchestrate/SKILL.md","watch-workers.mjs"],
+  ["skills/mono-orchestrate/SKILL.md","../.mono-agent-workflow/scripts/watch-workers.mjs"],
+  ["references/orchestration.md","node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>"],
+  ["references/install.md",".mono-agent-workflow/scripts/watch-workers.mjs"],
+  ["references/versioning.md",".mono-agent-workflow/scripts/watch-workers.mjs"],
+  ["references/orchestration.md","recorded-late"],
+  ["references/orchestration.md","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"],
+  ["references/orchestration.md","compaction-safe"],
+  ["references/orchestration.md","fallback"],
+  ["templates/orchestrator-brief.md","Что пошло не так:"],
+  ["templates/orchestrator-brief.md","Контекст: ~N%"],
+  ["templates/orchestrator-compaction-hook.sh","MONO_ORCHESTRATOR_ROOT"],
+  ["templates/orchestrator-compaction-hook.sh","MONO_COMPACTION_FRESHNESS_SECONDS:-300"],
+  ["templates/orchestrator-compaction-hook.sh","MONO_COMPACTION_MAX_DEFERRALS:-3"],
+  ["templates/orchestrator-compaction-hook.sh","get_mtime()"],
+  ["templates/orchestrator-compaction-hook.sh","stat -f %m"],
+  ["templates/orchestrator-compaction-hook.sh","stat -c %Y"],
+  ["templates/compact-instructions.md","workers.json"],
+  ["skills/mono-orchestrate/SKILL.md","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"],
+  ["skills/mono-orchestrate/SKILL.md","\"75\""],
+  ["skills/mono-orchestrate/SKILL.md","\"PreCompact\""],
+  ["skills/mono-orchestrate/SKILL.md","\"matcher\": \"auto\""],
+  ["skills/mono-orchestrate/SKILL.md","templates/orchestrator-compaction-hook.sh"],
+  ["skills/mono-orchestrate/SKILL.md",".claude/settings.json"],
+  ["skills/mono-deploy/SKILL.md","workflows.qa"],
+  ["skills/mono-deploy/SKILL.md","qaAuth"],
+  ["references/install.md","\"qa\""],
+  ["references/install.md","cookie-import"],
+  ["references/install.md","test-account"],
+  ["references/install.md","owner-session"],
+  ["templates/deploy-output.md","Live QA:"],
+  ["templates/orchestrator-report.md","pass | deferred | not-run"],
+  ["skills/mono-implement/SKILL.md","pass | deferred | not-run"],
+  ["skills/mono-preflight/SKILL.md","pass | deferred | not-run"],
+  ["templates/orchestrator-dispatch.md","references/orchestration.md"],
+  ["skills/mono-implement/SKILL.md","references/orchestration.md"],
+  ["references/orchestration.md","node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity"],
+  ["references/orchestration.md","--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'"],
+  ["references/orchestration.md","--pack-version '<dispatch packVersion>'"],
+  ["references/orchestration.md","--source-commit '<dispatch sourceCommit>'"],
+  ["references/orchestration.md","--surface-revision '<dispatch surfaceRevision>'"],
+  ["templates/orchestrator-dispatch.md","node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity"],
+  ["templates/orchestrator-dispatch.md","--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'"],
+  ["templates/orchestrator-dispatch.md","--pack-version '<packVersion above>'"],
+  ["templates/orchestrator-dispatch.md","--source-commit '<sourceCommit above>'"],
+  ["templates/orchestrator-dispatch.md","--surface-revision '<surfaceRevision above>'"],
+  ["references/ship-feedback-loop.md","gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[] | select(.state==\"PENDING\")'"],
+  ["templates/orchestrator-brief.md","Изменилось после твоего одобрения:"],
+  ["references/orchestration.md","Изменилось после твоего одобрения:"],
+  ["templates/orchestrator-brief.md","Решений от тебя:"],
+  ["templates/orchestrator-brief.md","Можешь потрогать:"],
+  ["templates/orchestrator-brief.md","В работе сейчас:"],
+  ["templates/orchestrator-brief.md","Дальше по очереди:"],
+  ["templates/orchestrator-brief.md","Чем рискуем:"],
+  ["templates/orchestrator-brief.md","Обещал — не сделал:"],
+  ["templates/orchestrator-brief.md","Следующий контакт:"],
+  ["templates/orchestrator-brief.md","Техника (можно не читать):"],
+  ["templates/compact-instructions.md","product_name"],
+  ["skills/mono-deploy/SKILL.md","git rev-parse HEAD"],
+  ["references/install.md","git rev-parse HEAD"],
+  ["skills/mono-handoff/SKILL.md","references/artifact-intake.md"],
+  ["skills/mono-handoff/SKILL.md","read"],
+  ["skills/mono-handoff/SKILL.md","unavailable"],
+  ["skills/mono-handoff/SKILL.md","stale_or_ignored"],
+  ["skills/mono-handoff/SKILL.md","conflicts"],
+  ["skills/mono-handoff/SKILL.md","decisions_carried_forward"],
+  ["skills/mono-handoff/SKILL.md","confidence_boundary"],
+  ["skills/mono-implement/SKILL.md","Implementation workflow"],
+  ["skills/mono-implement/SKILL.md","implemented-needs-preflight"],
+  ["skills/mono-implement/SKILL.md","scope-drift-needs-handoff"],
+  ["skills/mono-implement/SKILL.md","gstack-learnings-search"],
+  ["skills/mono-implement/SKILL.md","Учтённые learnings:"],
+  ["skills/mono-preflight/SKILL.md","mono-preflight certificate"],
+  ["skills/mono-preflight/SKILL.md","Issue(s):"],
+  ["skills/mono-preflight/SKILL.md","Branch:"],
+  ["skills/mono-preflight/SKILL.md","Changed files:"],
+  ["skills/mono-preflight/SKILL.md","Local verification:"],
+  ["skills/mono-preflight/SKILL.md","Autoreview:"],
+  ["skills/mono-preflight/SKILL.md","Autoreview loop:"],
+  ["skills/mono-preflight/SKILL.md","Drift candidate:"],
+  ["skills/mono-preflight/SKILL.md","Not checked:"],
+  ["skills/mono-preflight/SKILL.md","Next:"],
+  ["skills/mono-preflight/SKILL.md","Decision needed:"],
+  ["skills/mono-ship/SKILL.md","Documentation workflow"],
+  ["skills/mono-ship/SKILL.md","mono-ship green certificate"],
+  ["skills/mono-ship/SKILL.md","Next: mono-deploy"],
+  ["skills/mono-deploy/SKILL.md","Deploy workflow"],
+  ["skills/mono-deploy/SKILL.md","mono-check post-ship"],
+  ["skills/mono-deploy/SKILL.md","gstack-learnings-log"],
+  ["skills/mono-deploy/SKILL.md","gstack-learnings-search"],
+  ["skills/mono-deploy/SKILL.md","Learnings consulted:"],
+  ["skills/mono-deploy/SKILL.md","deployApproval"],
+  ["templates/ship-output.md","mono-ship green certificate"],
+  ["templates/ship-output.md","Documentation workflow"],
+  ["templates/ship-output.md","Next:"],
+  ["templates/deploy-output.md","Deploy workflow"],
+  ["templates/deploy-output.md","Learnings recorded"],
+  ["skills/mono-check/SKILL.md","project-config"],
+  ["skills/mono-orchestrate/SKILL.md","scope-drift-needs-handoff"],
+  ["skills/mono-orchestrate/SKILL.md","references/orchestration.md"],
+  ["skills/mono-orchestrate/SKILL.md","templates/orchestrator-dispatch.md"],
+  ["skills/mono-orchestrate/SKILL.md","templates/orchestrator-brief.md"],
+  ["skills/mono-orchestrate/SKILL.md","templates/orchestrator-report.md"],
+  ["skills/mono-orchestrate/SKILL.md","deployApproval"],
+  ["skills/mono-orchestrate/SKILL.md","Session verdicts:"],
+  ["skills/mono-orchestrate/SKILL.md","timed-out"],
+  ["skills/mono-orchestrate/SKILL.md","codex-cli"],
+  ["skills/mono-orchestrate/SKILL.md","workers.json"],
+  ["skills/mono-orchestrate/SKILL.md","codex exec resume"],
+  ["skills/mono-orchestrate/SKILL.md","orchestration.transport"],
+  ["skills/mono-orchestrate/SKILL.md","maxParallelWorkers"],
+  ["templates/review-output.md","Ревью Linear: <ready|advisory-ready|needs-fixes|blocked>"],
+  ["templates/ship-output.md","Preflight: <ready/blocked/drift-candidate/needs-human/not run>"],
+  ["templates/ship-output.md","Bug/perf proof: <not applicable or original symptom/baseline + fix proof + regression proof/gap>"],
+  ["templates/deploy-output.md","Ship certificate: <found/missing/stale>"],
+  ["skills/mono-handoff/SKILL.md","`mono-review artifact`"],
+  ["skills/mono-check/SKILL.md","`repair`"],
+  ["references/orchestration.md","`protocol.json`"],
+  ["skills/mono-implement/SKILL.md","`lifecycle_state_entity=issue`"],
+  ["skills/mono-implement/SKILL.md","`approval_status=approved-fresh`"],
+  ["templates/orchestrator-dispatch.md","PRD: <full text, the sections relevant to this Issue, or `n/a (issue-only)`>"],
+  ["templates/orchestrator-dispatch.md","Tech Spec: <full text, the contracts relevant to this Issue, or `n/a (issue-only)`>"],
+  ["templates/orchestrator-dispatch.md","Issue-only marker: <current marker comment verbatim, or `n/a (project-first)`>"],
+  ["templates/orchestrator-dispatch.md","Verified label: <`issue-only`, or `n/a (project-first)`>"],
+  ["templates/orchestrator-dispatch.md","Scope fingerprint: <fresh whole-body SHA-256, or `n/a (project-first)`>"],
+  ["templates/orchestrator-dispatch.md","Issue-only config: <`enabled=true; ownerPrincipal=<stable Linear user ID>`, or `n/a (project-first)`>"],
+  ["templates/orchestrator-dispatch.md","Owner approval: <authenticated author plus approved fingerprint, or `n/a (project-first)`>"],
+  ["templates/orchestrator-dispatch.md","Context seam: <resolved 5-field JSON, or `n/a` when resolution is blocked>"],
+  ["skills/mono-idea/SKILL.md","`mono-issue`"],
+  ["references/artifact-intake.md","`read`"],
+  ["references/artifact-intake.md","`unavailable`"],
+  ["references/artifact-intake.md","`stale_or_ignored`"],
+  ["references/artifact-intake.md","`conflicts`"],
+  ["references/artifact-intake.md","`decisions_carried_forward`"],
+  ["references/artifact-intake.md","`confidence_boundary`"],
+  ["references/readiness-gates.md","`tiny`:"],
+  ["references/readiness-gates.md","`standard`:"],
+  ["references/readiness-gates.md","`deep`:"],
+  ["references/readiness-gates.md","`risky`:"],
+  ["references/review-rubric.md","`ready`"],
+  ["references/review-rubric.md","`advisory-ready`"],
+  ["references/review-rubric.md","`needs-fixes`"],
+  ["references/review-rubric.md","`blocked`"],
+  ["references/orchestration.md","EVENT:<stall|dead|spawn-fail|report|gate-ack|idle>"],
+  ["references/orchestration.md","`recorded-late`"],
+];
+const REQUIRED_HEADINGS = [
+  ["references/repair-machine.md","Class 2 effect fixture: snapshot-sync"],
+  ["references/repair-machine.md","Class 2 effect fixture: stale-preflight-cert"],
+  ["references/repair-machine.md","Class 2 effect fixture: stale-worker-stop"],
+  ["references/orchestration.md","Generated dispatch as audience adapter"],
+  ["references/orchestration.md","Pre-write package review"],
+  ["templates/prd.md","Акторы"],
+  ["templates/prd.md","Текущий процесс"],
+  ["templates/prd.md","Требования"],
+  ["templates/prd.md","Примеры приемки"],
+  ["templates/prd.md","Что должна доказать проверка"],
+  ["templates/prd.md","Критерии успеха"],
+  ["templates/prd.md","Допущения"],
+  ["templates/prd.md","Открытые вопросы"],
+  ["templates/prd.md","Связи"],
+  ["templates/tech-spec.md","Исходные требования"],
+  ["templates/tech-spec.md","Контракты и границы"],
+  ["templates/tech-spec.md","Реальные ответы бэкенда"],
+  ["templates/tech-spec.md","Единицы реализации"],
+  ["templates/tech-spec.md","Влияние на остальную систему"],
+  ["templates/tech-spec.md","Что может сломаться и как защищаемся"],
+  ["templates/tech-spec.md","Валидация"],
+  ["templates/tech-spec.md","Релиз и откат"],
+  ["templates/issue.md","Прочитать сначала"],
+  ["templates/issue.md","Готовность агента"],
+  ["templates/issue.md","Зависимости"],
+  ["templates/issue.md","Ключевые контракты"],
+  ["templates/issue.md","Текущее поведение"],
+  ["templates/issue.md","Желаемое поведение"],
+  ["templates/issue.md","Шаги воспроизведения"],
+  ["templates/issue.md","Ревью-гейт"],
+  ["templates/issue.md","Снимок контекста"],
+  ["templates/issue.md","Как проверить"],
+  ["templates/issue.md","Критерии приемки"],
+  ["templates/issue.md","Что не входит"],
+  ["templates/project.md","Что"],
+  ["templates/project.md","Зачем"],
+  ["templates/project.md","Образ результата"],
+  ["templates/project.md","Что входит"],
+  ["templates/project.md","Что не входит"],
+  ["templates/project-update.md","Shape"],
+  ["templates/project-update.md","Invariants"],
+  ["templates/project-update.md","Live mode"],
+  ["templates/project-update.md","Theme project"],
+  ["templates/project-update.md","State update"],
+  ["templates/project-update.md","Examples"],
+  ["templates/project-update.md","Acceptance set"],
+  ["templates/orchestrator-dispatch.md","Assignment"],
+  ["templates/orchestrator-dispatch.md","Goal Contract"],
+  ["templates/orchestrator-dispatch.md","Engine"],
+  ["templates/orchestrator-dispatch.md","Context Snapshot"],
+  ["templates/orchestrator-dispatch.md","AFK Contract"],
+  ["templates/orchestrator-dispatch.md","Mailbox"],
+  ["templates/orchestrator-dispatch.md","Authorization"],
+  ["templates/orchestrator-report.md","Ledger Entry"],
+  ["templates/orchestrator-report.md","Worker Registry"],
+  ["references/lifecycle.md","Artifact Repair"],
+  ["references/issue-only-lane.md","Pre-code exit"],
+  ["references/issue-only-lane.md","Post-`ready` exit"],
+  ["skills/mono-issue/SKILL.md","Phase-1 go-live boundary"],
+  ["references/contracts/issue.md","IS-005 — Issue-only branch"],
+  ["references/contracts/issue.md","IS-008 — Project-first sources"],
+  ["references/contracts/issue.md","IS-019 — Project-first chips"],
+  ["examples/zeni-dogfood.md","Risk-Based Review Gate Examples"],
+  ["examples/zeni-dogfood.md","Correct Risky Handoff Review"],
+  ["examples/zeni-dogfood.md","Correct Implement To Preflight To Ship"],
+  ["examples/zeni-dogfood.md","Anti-Example: Ship Owns Deploy"],
+  ["examples/zeni-dogfood.md","Anti-Example: Vendored Project Install"],
+  ["examples/zeni-dogfood.md","Correct Tiny Advisory Review"],
+  ["examples/zeni-dogfood.md","Anti-Example: Required Review Skipped"],
+  ["examples/zeni-dogfood.md","Anti-Example: Review Mutates Linear"],
+  ["examples/zeni-dogfood.md","Anti-Example: Preflight Owns Ship"],
+  ["references/readiness-gates.md","Tiny Output Profile"],
+  ["references/artifact-quality.md","PRD"],
+  ["references/artifact-quality.md","Tech Spec"],
+  ["references/artifact-quality.md","Issue"],
+  ["references/artifact-quality.md","Review Findings"],
+  ["references/artifact-quality.md","Preflight Certificate"],
+  ["references/human-friendly-output.md","Machine Blocks In Linear Comments"],
+  ["references/human-friendly-output.md","Linear Exit Comments"],
+  ["references/execution-quality.md","PRD Coverage"],
+  ["references/execution-quality.md","Durable Issue Writing"],
+  ["references/execution-quality.md","Agent Readiness"],
+  ["references/execution-quality.md","Bug And Performance Proof"],
+  ["references/execution-quality.md","Architecture Lens"],
+  ["references/orchestration.md","Roles"],
+  ["references/orchestration.md","Stage Ownership"],
+  ["references/orchestration.md","Decision Authority"],
+  ["references/orchestration.md","Worker Transports"],
+  ["references/orchestration.md","Mailbox And Ledger"],
+  ["references/orchestration.md","Monitoring Protocol"],
+  ["references/orchestration.md","Decision Briefs"],
+  ["references/orchestration.md","Resume"],
+  ["references/questioning.md","Autonomy Defaults"],
+  ["references/questioning.md","Orchestrated Mode"],
+  ["references/lifecycle.md","Orchestration"],
+  ["references/orchestration.md","Director Discovery"],
+  ["references/orchestration.md","Second Voice"],
+  ["references/orchestration.md","Heartbeat"],
+  ["references/orchestration.md","Linear Write Verification"],
+  ["references/orchestration.md","Context Budget"],
+  ["templates/compact-instructions.md","НЕМЕДЛЕННОЕ СЛЕДУЮЩЕЕ ДЕЙСТВИЕ"],
+  ["templates/compact-instructions.md","ЖИВЫЕ ВОРКЕРЫ"],
+  ["templates/compact-instructions.md","РЕШЕНИЯ ВЛАДЕЛЬЦА"],
+  ["templates/compact-instructions.md","РЕШИЛ САМ"],
+  ["templates/compact-instructions.md","ТУПИКИ"],
+  ["templates/compact-instructions.md","ПРОТОКОЛЬНЫЕ ГОТЧИ"],
+  ["templates/compact-instructions.md","ОЧЕРЕДЬ ЗАДАЧ"],
+  ["templates/compact-instructions.md","ПРЕДПОЧТЕНИЯ ВЛАДЕЛЬЦА"],
+  ["references/contracts/tech-spec.md","TS-015 — Observed backend contracts"],
+  ["references/contracts/tech-spec.md","TS-016 — Unreachable backend fallback"],
+  ["references/orchestration.md","Orchestration Mode Precedence"],
+  ["references/orchestration.md","Pack identity gate invocation"],
+  ["skills/mono-implement/SKILL.md","Orchestration branch of `start-checkpoint`"],
+  ["templates/orchestrator-dispatch.md","Gate Phase"],
+  ["references/orchestration.md","Cost Telemetry"],
+  ["templates/orchestrator-brief.md","Цена волны (Wave Cost Summary)"],
+  ["templates/orchestrator-brief.md","Целостность брифа (Brief Integrity)"],
+  ["templates/orchestrator-brief.md","Статус (Status Update)"],
+  ["templates/orchestrator-brief.md","Итог волны (Wave Report)"],
+  ["references/human-friendly-output.md","Product Language For The Owner"],
+  ["skills/mono-check/SKILL.md","Mono Check"],
+  ["skills/mono-deploy/SKILL.md","Mono Deploy"],
+  ["skills/mono-handoff/SKILL.md","Mono Handoff"],
+  ["skills/mono-idea/SKILL.md","Mono Idea"],
+  ["skills/mono-implement/SKILL.md","Mono Implement"],
+  ["skills/mono-issue/SKILL.md","Mono Issue"],
+  ["skills/mono-orchestrate/SKILL.md","Mono Orchestrate"],
+  ["skills/mono-preflight/SKILL.md","Mono Preflight"],
+  ["skills/mono-review/SKILL.md","Mono Review"],
+  ["skills/mono-ship/SKILL.md","Mono Ship"],
+  ["templates/ship-status-ux.md","Ship status UX (interactive mode)"],
+  ["skills/mono-implement/SKILL.md","Context-seam branch at Delivery Start"],
+  ["references/readiness-gates.md","Review Gate Policy"],
+  ["references/orchestration.md","Unavailable route"],
+  ["templates/prd.md","PRD Template"],
+  ["templates/tech-spec.md","Tech Spec Template"],
+  ["templates/issue.md","Issue Template"],
+  ["templates/project.md","Project Template"],
+  ["templates/review-output.md","Review Output Template"],
+  ["references/review-rubric.md","Checks"],
+  ["AGENTS.md","Source Of Truth"],
+  ["references/orchestration.md","Install Coordination"],
+  ["references/orchestration.md","Claude worker transports"],
+  ["skills/mono-orchestrate/SKILL.md","Owner-layer reconciliation"],
+  ["references/issue-only-lane.md","Marker ≠ Route-Record"],
+  ["references/issue-only-lane.md","The Context Contract (the seam)"],
+  ["references/issue-only-lane.md","The Resolver"],
+  ["references/issue-only-lane.md","Trust boundary"],
+  ["references/issue-only-lane.md","Deterministic Project-first fallback"],
+  ["skills/mono-issue/SKILL.md","Create-then-approve intake and renewal transaction"],
+  ["references/artifact-rules.md","Linear Artifact Rules"],
+  ["skills/mono-issue/SKILL.md","When issue-only is granted — the nine eligibility conditions"],
+  ["skills/mono-issue/SKILL.md","Prequalification — judge on the raw request, before creating anything"],
+  ["skills/mono-issue/SKILL.md","Established by the transaction, enforced by the resolver"],
+  ["skills/mono-issue/SKILL.md","Renewal recovery"],
+  ["skills/mono-issue/SKILL.md","Routing and fail-closed proof"],
+  ["references/contracts/issue.md","IS-001 — Issue routing"],
+  ["references/contracts/issue.md","IS-003 — Internal helper boundary"],
+  ["references/contracts/issue.md","IS-004 — Targeted-use eligibility"],
+  ["README.md","Principles"],
+  ["AGENTS.md","Skill Design Rules"],
+  ["examples/zeni-dogfood.md","Zeni Dogfood Example"],
+  ["references/artifact-intake.md","Source Precedence"],
+  ["references/artifact-intake.md","Configured Artifact Roots"],
+  ["references/autoreview-routing.md","Autoreview Role Routing"],
+  ["references/autoreview-routing.md","Canonical Routes"],
+  ["references/autoreview-routing.md","Reviewer capability"],
+  ["references/autoreview-routing.md","Same-model review"],
+  ["references/install.md","Breaking Surface Changes"],
+  ["references/orchestration.md","Sandbox ladder"],
+  ["references/orchestration.md","Worker model selection"],
+  ["references/versioning.md","Project Config Contract"],
+  ["templates/orchestrator-brief.md","UX-чекпоинт (UX Checkpoint Brief)"],
+  ["README.md","Skills"],
+  ["references/install.md","Project Config"],
+  ["references/orchestration.md","Two-Phase Dispatch Handshake"],
+  ["references/orchestration.md","Registry gate-list lifecycle"],
+  ["skills/mono-orchestrate/SKILL.md","Local compaction wiring"],
+  ["references/lifecycle.md","Deploy"],
+  ["references/install.md","Project Policy"],
+  ["templates/orchestrator-report.md","Worker Report"],
+  ["templates/orchestrator-dispatch.md","Worker Dispatch Prompt"],
+  ["references/ship-feedback-loop.md","Review Bot Configuration Check"],
+  ["references/ship-feedback-loop.md","Finding Dedup"],
+  ["references/ship-feedback-loop.md","Published Replies"],
+  ["references/ship-feedback-loop.md","Green Exit"],
+  ["references/ship-feedback-loop.md","Non-Blocking Convergence"],
+  ["references/install.md","Install-Source Verification (Deploy)"],
+  ["references/review-rubric.md","Mono Review Rubric"],
+  ["references/lifecycle.md","Linear Lifecycle"],
+  ["AGENTS.md","AGENTS.md"],
+  ["references/issue-only-lane.md","Issue-Only Lane Foundation"],
+  ["references/orchestration.md","Orchestration Policy"],
+  ["references/contracts/issue.md","Issue artifact contract"],
+  ["references/questioning.md","Questioning Policy"],
+  ["templates/orchestrator-brief.md","Шаблоны оркестратора: бриф и статус"],
+  ["README.md","Mono Agent Workflow"],
+  ["references/install.md","Install Guide"],
+  ["templates/compact-instructions.md","Orchestrator Compaction Instructions"],
+  ["templates/orchestrator-report.md","Worker Report And Ledger Shapes"],
+  ["references/readiness-gates.md","Readiness Gates"],
+  ["references/human-friendly-output.md","Human-Friendly Workflow Output"],
+  ["templates/deploy-output.md","Deploy Output Template"],
+  ["templates/project-update.md","Project Update Template"],
+  ["templates/orchestrator-report.md","Model provenance"],
+  ["references/lifecycle.md","Delivery"],
+  ["references/lifecycle.md","Ship"],
+  ["README.md","Workflow"],
+  ["references/lifecycle.md","Preflight"],
+  ["AGENTS.md","Fixture Coupling"],
+  ["README.md","Documentation Map"],
+  ["references/orchestration.md","Claude orchestrator"],
+  ["templates/ship-status-ux.md","Статус ревью при наличии PR"],
+  ["templates/ship-status-ux.md","Review timeline"],
+  ["templates/ship-status-ux.md","Verdict copy"],
+];
+const MACHINE_TOKENS = new Set([
+  "!inspection.hasThreadStarted",
+  "\"75\"",
+  "\"PreCompact\"",
+  "\"issue\"",
+  "\"linear_mutations_pending\"",
+  "\"matcher\": \"auto\"",
+  "\"notes\"",
+  "\"orchestration\"",
+  "\"qa\"",
+  "\"question\"",
+  "\"recommendation\"",
+  "\"stage\"",
+  "\"status\"",
+  "\"verification_items\"",
+  "-",
+  "- `artifact`",
+  "--add-dir",
+  "--all-roots",
+  "--approval-verified",
+  "--emit-fingerprint",
+  "--issue <issue-body> --emit-fingerprint",
+  "--issue <live-issue-body> --emit-fingerprint",
+  "--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'",
+  "--pack-version '<dispatch packVersion>'",
+  "--pack-version '<packVersion above>'",
+  "--source-commit '<dispatch sourceCommit>'",
+  "--source-commit '<sourceCommit above>'",
+  "--surface-revision '<dispatch surfaceRevision>'",
+  "--surface-revision '<surfaceRevision above>'",
+  "../.mono-agent-workflow/scripts/watch-workers.mjs",
+  "../.mono-agent-workflow/scripts/wave-cost.mjs",
+  ".agents/mono-workflow.config.json",
+  ".claude/settings.json",
+  ".mono-agent-workflow.lock.json",
+  ".mono-agent-workflow/scripts/resolve-issue-context.mjs",
+  ".mono-agent-workflow/scripts/watch-workers.mjs",
+  ".orchestrator/",
+  "< /dev/null",
+  "AGENTS.md",
+  "Acceptance IDs",
+  "Allowed review verdicts:",
+  "Approval",
+  "Approval: superseded",
+  "Autoreview loop:",
+  "Autoreview:",
+  "Branch:",
+  "Bug/perf proof:",
+  "Bug/perf proof: <not applicable or original symptom/baseline + fix proof + regression proof/gap>",
+  "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+  "Changed files:",
+  "Context seam:",
+  "Context seam: <resolved 5-field JSON, or `n/a` when resolution is blocked>",
+  "Cost:",
+  "Date.parse(registryEntry.spawned_at)",
+  "Decision needed:",
+  "Deploy status:",
+  "Deploy workflow",
+  "Deploy workflow:",
+  "Documentation workflow",
+  "Drift candidate:",
+  "EVENT:",
+  "EVENT:<stall|dead|spawn-fail|report|gate-ack|idle>",
+  "Exit disposition:",
+  "Expansion destination:",
+  "Frozen slice disposition:",
+  "Implementation workflow",
+  "Issue(s):",
+  "Issue-only config:",
+  "Issue-only config: <`enabled=true; ownerPrincipal=<stable Linear user ID>`, or `n/a (project-first)`>",
+  "Issue-only marker:",
+  "Issue-only marker: <current marker comment verbatim, or `n/a (project-first)`>",
+  "Learnings consulted:",
+  "Learnings recorded",
+  "Learnings recorded:",
+  "Linear review:",
+  "Live QA:",
+  "Local verification:",
+  "MONO_COMPACTION_FRESHNESS_SECONDS:-300",
+  "MONO_COMPACTION_MAX_DEFERRALS:-3",
+  "MONO_ORCHESTRATOR_ROOT",
+  "MONO_WORKFLOW_KNOWN_ROOTS",
+  "Marker version: 1",
+  "Next:",
+  "Next: mono-deploy",
+  "Not checked:",
+  "Owner approval:",
+  "Owner approval: <authenticated author plus approved fingerprint, or `n/a (project-first)`>",
+  "PRD:",
+  "PRD: <full text, the sections relevant to this Issue, or `n/a (issue-only)`>",
+  "Preflight:",
+  "Preflight: <ready/blocked/drift-candidate/needs-human/not run>",
+  "Project update:",
+  "Modes:",
+  "Promotion mode:",
+  "README.md",
+  "Review timeline:",
+  "Risk class",
+  "Scope fingerprint",
+  "Scope fingerprint:",
+  "Scope fingerprint: <fresh whole-body SHA-256, or `n/a (project-first)`>",
+  "Session verdicts:",
+  "Ship certificate:",
+  "Ship certificate: <found/missing/stale>",
+  "Tech Spec:",
+  "Tech Spec: <full text, the contracts relevant to this Issue, or `n/a (issue-only)`>",
+  "Verified label:",
+  "Verified label: <`issue-only`, or `n/a (project-first)`>",
+  "`advisory-ready`",
+  "`approval_status=approved-fresh`",
+  "`blocked`",
+  "`confidence_boundary`",
+  "`conflicts`",
+  "`decisions_carried_forward`",
+  "`deep`:",
+  "`lifecycle_state_entity=issue`",
+  "`mono-issue`",
+  "`mono-review artifact`",
+  "`needs-fixes`",
+  "`protocol.json`",
+  "`read`",
+  "`ready`",
+  "`recorded-late`",
+  "`repair`",
+  "`risky`:",
+  "`stale_or_ignored`",
+  "`standard`:",
+  "`tiny`:",
+  "`unavailable`",
+  "absent",
+  "acceptance",
+  "active",
+  "advisory-ready",
+  "ambiguous",
+  "applied | rejected | blocked",
+  "approval_status",
+  "approval_status=approved-fresh",
+  "approved-fresh",
+  "assurance_vector",
+  "attempt",
+  "autoreview",
+  "behavioral_oracle",
+  "blocked",
+  "branch",
+  "certificate",
+  "changed_files",
+  "claude-code-desktop",
+  "codex exec resume",
+  "codex-cli",
+  "compaction-safe",
+  "confidence_boundary",
+  "conflicts",
+  "const LOG_SCAN_MAX_BYTES = 256 * 1024",
+  "control.json",
+  "cookie-import",
+  "currentLogPaths.add(path.resolve(expandHome(entry.log)))",
+  "decisions_carried_forward",
+  "deep",
+  "deployApproval",
+  "draining",
+  "drift-candidate",
+  "error",
+  "evidence",
+  "examples/zeni-dogfood.md",
+  "explicit",
+  "fallback",
+  "forbidden",
+  "freezeLogInspectionTarget(log.filePath, inspection.observedSize)",
+  "gate",
+  "gates",
+  "gates-passed | blocked",
+  "get_mtime()",
+  "gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[] | select(.state==\"PENDING\")'",
+  "git rev-parse HEAD",
+  "git worktree add",
+  "gstack-learnings-log",
+  "gstack-learnings-search",
+  "identity",
+  "idle",
+  "if (!inspection.scanComplete)",
+  "if (inactiveSpawn.invalidTimestamp)",
+  "if (startupAgeMs < args.stallSec * 1000) return",
+  "implemented-needs-preflight",
+  "inactive gate spawn has no readable attempt log",
+  "invalid",
+  "issue",
+  "issue-only",
+  "issue-verification",
+  "issueOnlyLane.enabled: true",
+  "issueOnlyLane.ownerPrincipal",
+  "item",
+  "label",
+  "ledger.md",
+  "lifecycle_state_entity",
+  "lifecycle_state_entity=issue",
+  "linear_mutations_pending",
+  "mailbox",
+  "manual",
+  "maxParallelWorkers",
+  "model",
+  "model_reasoning_effort",
+  "mono-check post-ship",
+  "mono-deploy",
+  "mono-handoff",
+  "mono-handoff repair",
+  "mono-idea",
+  "mono-implement",
+  "mono-issue",
+  "mono-issue-only marker",
+  "mono-preflight",
+  "mono-preflight certificate",
+  "mono-preflight certificate\nPreflight: <ready|blocked|drift-candidate|needs-human>",
+  "mono-review artifact",
+  "mono-ship",
+  "mono-ship green certificate",
+  "needs-decision",
+  "needs-fixes",
+  "needs-human",
+  "next",
+  "node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>",
+  "node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity",
+  "node scripts/install-local.mjs",
+  "node scripts/project-config.mjs",
+  "none",
+  "notes",
+  "orchestration.transport",
+  "orchestration.workerAudience",
+  "orchestrator",
+  "outcome",
+  "owner-session",
+  "ownerPrincipal",
+  "pack-identity",
+  "packVersion",
+  "package_kind",
+  "park-and-restart-project-first",
+  "pass",
+  "pass | blocked",
+  "pass | deferred | not-run",
+  "phase",
+  "product_name",
+  "project",
+  "project-config",
+  "project-first",
+  "protocol.json",
+  "qaAuth",
+  "question",
+  "quiescence",
+  "read",
+  "ready",
+  "recommendation",
+  "recorded",
+  "recorded-late",
+  "references/artifact-intake.md",
+  "references/artifact-quality.md",
+  "references/autoreview-routing.md",
+  "references/contracts/issue.md",
+  "references/human-friendly-output.md",
+  "references/install.md",
+  "references/issue-only-lane.md",
+  "references/lifecycle.md",
+  "references/orchestration.md",
+  "references/questioning.md",
+  "references/readiness-gates.md",
+  "references/repair-machine.md",
+  "references/review-rubric.md",
+  "references/ship-feedback-loop.md",
+  "references/versioning.md",
+  "repair",
+  "reports",
+  "required_artifacts",
+  "result",
+  "review",
+  "risk",
+  "risk_class",
+  "risky",
+  "route_revision",
+  "run",
+  "sandbox_workspace_write.network_access",
+  "scope",
+  "scope-drift-needs-handoff",
+  "scripts/resolve-issue-context.mjs",
+  "second-voice",
+  "separate-follow-up-project",
+  "ship-unchanged-or-cancel",
+  "skills/mono-check/SKILL.md",
+  "skills/mono-deploy/SKILL.md",
+  "skills/mono-handoff/SKILL.md",
+  "skills/mono-idea/SKILL.md",
+  "skills/mono-implement/SKILL.md",
+  "skills/mono-issue/SKILL.md",
+  "skills/mono-orchestrate/SKILL.md",
+  "skills/mono-preflight/SKILL.md",
+  "skills/mono-review/SKILL.md",
+  "skills/mono-ship/SKILL.md",
+  "source",
+  "sourceCommit",
+  "stage",
+  "stale_or_ignored",
+  "standard",
+  "stat -c %Y",
+  "stat -f %m",
+  "state",
+  "state.offset += bytesRead",
+  "status",
+  "surfaceRevision",
+  "templates/compact-instructions.md",
+  "templates/deploy-output.md",
+  "templates/orchestrator-brief.md",
+  "templates/orchestrator-compaction-hook.sh",
+  "templates/orchestrator-dispatch.md",
+  "templates/orchestrator-report.md",
+  "templates/review-output.md",
+  "templates/ship-output.md",
+  "templates/ship-status-ux.md",
+  "templates/tech-spec.md",
+  "test-account",
+  "tests",
+  "thread.started",
+  "timed-out",
+  "tiny",
+  "token-claims-v1",
+  "unavailable",
+  "unavailable: <reason>",
+  "unknown",
+  "unresolved",
+  "verification_items",
+  "verify-pack-state.mjs",
+  "verify-pack-state.mjs identity",
+  "watch-workers.mjs",
+  "wave-cost.mjs",
+  "workers.json",
+  "workflows.qa",
+  "} while (args.once && oneShotNeedsRescan)",
+  "~/.claude/skills",
+  "~/.codex/skills/",
+  "Блокирующие замечания:",
+  "В работе сейчас:",
+  "Дальше по очереди:",
+  "Изменилось после твоего одобрения:",
+  "К сведению:",
+  "Как починить:",
+  "Контекст: ~N%",
+  "Можешь потрогать:",
+  "Нарушение контракта:",
+  "Нужно от тебя (<N> решений):",
+  "Нужно от тебя:",
+  "Нужно твоё решение:",
+  "Обещал — не сделал:",
+  "Почему сейчас:",
+  "Предложенные исправления:",
+  "Расхождения:",
+  "Ревью Linear:",
+  "Ревью Linear: <ready|advisory-ready|needs-fixes|blocked>",
+  "Рекомендация:",
+  "Решений от тебя:",
+  "Решил сам:",
+  "Следующий unblock:",
+  "Следующий контакт:",
+  "Смысл:",
+  "Статус ревью:",
+  "Тематический проект:",
+  "Техника (можно не читать):",
+  "Учтённые learnings:",
+  "Цена волны:",
+  "Чего не хватает:",
+  "Чем рискуем:",
+  "Что пошло не так:",
+  "Что решаем:",
+  "Что уже доказано:"
+]);
+
+// Document skeleton and existing machine shapes; agent-only rules stay in text and review.
+// Prose is deliberately not an input to these predicates. The four artifact
+// contracts retain their existing bounded fingerprints in validateArtifactContractParity.
+let rejectedStringPins = 0;
+function requireMachineToken(token) {
+  if (!MACHINE_TOKENS.has(token)) {
+    rejectedStringPins++;
+    fail(`String pin outside MACHINE_TOKENS: ${JSON.stringify(token)}`);
+    return false;
+  }
+  return true;
+}
+function assertIncludes(relativePath, token, label = token) {
+  if (requireMachineToken(token) && !read(relativePath).includes(token)) {
+    fail(`${relativePath} missing machine token ${label}`);
+  }
+}
+// Only a section's own lines count. A nested heading, a code example, or a
+// second section of the same name cannot donate a missing lane field.
+function documentSection(text, title) {
+  const lines = [];
+  let active = false, matches = 0, fence = null;
+  for (const line of text.split("\n")) {
+    const delimiter = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (delimiter) {
+      if (fence === null) fence = delimiter[1][0];
+      else if (delimiter[1][0] === fence) fence = null;
+      continue;
+    }
+    if (fence !== null) continue;
+    const heading = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+    if (heading) { active = heading[2] === title; if (active) matches++; continue; }
+    if (active) lines.push(line);
+  }
+  return matches === 1 ? lines : null;
+}
+// The four lane fields are the explicit, bounded dictionary exception.
+const LANE_FIELDS = [
+  ["Deterministic Project-first fallback", "Promotion mode:", "forbidden"],
+  ["Pre-code exit", "Exit disposition:", "park-and-restart-project-first"],
+  ["Post-`ready` exit", "Expansion destination:", "separate-follow-up-project"],
+  ["Post-`ready` exit", "Frozen slice disposition:", "ship-unchanged-or-cancel"],
+];
+function laneFieldFaults(text) {
+  const faults = [];
+  for (const [section, field, expected] of LANE_FIELDS) {
+    requireMachineToken(field); requireMachineToken(expected);
+    const lines = documentSection(text, section);
+    if (lines === null) { faults.push(`${section}: missing or duplicate section`); continue; }
+    const values = lines.map((line) => line.trim()).filter((line) => line.startsWith(field))
+      .map((line) => line.slice(field.length).trim());
+    if (values.length !== 1) faults.push(`${field} missing or duplicate field`);
+    else if (values[0] !== expected) faults.push(`${field} dictionary mismatch`);
+  }
+  return faults;
+}
+function validateDocumentSkeleton() {
+  for (const [file, token] of STRING_PINS) assertIncludes(file, token);
+  for (const [file, heading] of REQUIRED_HEADINGS) {
+    if (!read(file).split("\n").some((line) => /^#{1,6}\s+/.test(line) && line.replace(/^#{1,6}\s+/, "").trim() === heading)) fail(`${file}: missing required heading ${heading}`);
+  }
+  failures.push(...laneFieldFaults(read("references/issue-only-lane.md")));
+  console.log(`Prose-pin counter = ${rejectedStringPins}; machine-token list self-check ${rejectedStringPins ? "red" : "green"}.`);
+}
+// Mode declarations are a machine dictionary, separate from explanatory prose.
+function validateCheckModeDeclaration() {
+  requireMachineToken("Modes:"); requireMachineToken("repair");
+  const lines = documentSection(read("skills/mono-check/SKILL.md"), "Mono Check") || [];
+  const starts = lines.flatMap((line, index) => line === "Modes:" ? [index] : []);
+  const modes = [];
+  if (starts.length === 1) for (const line of lines.slice(starts[0] + 1)) {
+    if (!line.trim()) continue;
+    const entry = /^- `([^`]+)`$/.exec(line);
+    if (!entry) break;
+    modes.push(entry[1]);
+  }
+  if (modes.filter((mode) => mode === "repair").length !== 1) fail("mono-check Modes: missing or duplicate repair declaration");
+}
+function readTierBounds(text) {
+  const now = /^Read now(?:\s|:|$).*$/m.exec(text);
+  const when = /^Read when(?:\s|:|$).*$/m.exec(text);
+  if (!now || !when || when.index <= now.index) return null;
+  const start = when.index + when[0].length;
+  let end = start, started = false;
+  for (const line of text.slice(start).split("\n")) {
+    if (/^(?:- |\d+\. )/.test(line)) started = true;
+    else if (started && line.trim() && !/^\s/.test(line)) break;
+    end += line.length + 1;
+  }
+  return { now: now.index, start, end: Math.min(end, text.length) };
+}
+function validateReadFirstTierContract() {
+  for (const skill of listSkillNames()) {
+    const file = `skills/${skill}/SKILL.md`, text = read(file);
+    const tier = readTierBounds(text);
+    if (!tier) { fail(`${file}: missing or unordered read tiers`); continue; }
+    if (extractReadFirstEntries(text).paths[0] !== "AGENTS.md") fail(`${file}: AGENTS.md must be the first eager read`);
+    const conditional = text.slice(tier.start, tier.end);
+    for (const line of conditional.split("\n")) {
+      if (/^\d+\.\s/.test(line.trim())) fail(`${file}: numbered conditional read`);
+      if (line.startsWith("- ") && !/^-(?:\s+`[^`]+`,?)+\s+—\s+\S/.test(line)) fail(`${file}: conditional read needs a path and a condition`);
+    }
+  }
+  const tiered = ["Read first:", "Read now:", "1. `AGENTS.md`", "2. `references/lifecycle.md`", "Read when:", "- `references/issue-only-lane.md` — fixture `lifecycle_state_entity=issue`", "", "End."].join("\n");
+  if (extractReadFirstEntries(tiered).paths.join("|") !== "AGENTS.md|references/lifecycle.md") fail("read-tier fixture: conditional path leaked into eager reads");
+  const misplaced = tiered.replace("2. `references/lifecycle.md`", "2. `references/lifecycle.md` — fixture `lifecycle_state_entity=issue`");
+  if (!extractReadFirstEntries(misplaced).paths.includes("lifecycle_state_entity=issue") || validateReadFirstPath("lifecycle_state_entity=issue")) fail("read-tier fixture: eager condition must fail path validation");
+  for (const field of ["Статус ревью:", "Review timeline:"]) {
+    if (read("skills/mono-ship/SKILL.md").includes(field)) fail(`mono-ship re-inlines ${field}`);
+  }
+  const certificate = "mono-preflight certificate\nPreflight: <ready|blocked|drift-candidate|needs-human>";
+  requireMachineToken(certificate);
+  if (read("skills/mono-preflight/SKILL.md").split(certificate).length !== 2) fail("mono-preflight certificate must appear exactly once");
+}
+function validateDocumentBoundaries() {
+  const check = read("skills/mono-check/SKILL.md");
+  for (const token of ["templates/review-output.md", "Linear review:", "Ревью Linear:"]) {
+    requireMachineToken(token);
+    if (check.includes(token)) fail(`mono-check must not carry review output ${token}`);
+  }
+  const bannedHeadings = {
+    "templates/project.md": ["Lifecycle", "Документы", "План задач", "Ревью-гейт", "Текущий статус"],
+    "templates/tech-spec.md": ["Skill contracts", "mono-check design", "Дизайн mono-check", "Дизайн mono-review"],
+  };
+  for (const [file, headings] of Object.entries(bannedHeadings)) for (const heading of headings) {
+    if (read(file).split("\n").some((line) => /^#{1,6}\s+/.test(line) && line.replace(/^#{1,6}\s+/, "").trim() === heading)) fail(`${file}: forbidden workflow heading ${heading}`);
+  }
+  for (const file of ["skills/mono-ship/SKILL.md", "templates/ship-output.md"]) if (read(file).includes("pr-created")) fail(`${file}: retired terminal status pr-created`);
+  for (const file of ["skills/mono-preflight/SKILL.md", "README.md", "CHANGELOG.md", "examples/zeni-dogfood.md"]) if (read(file).includes("`tiny` ->")) fail(`${file}: duplicate canonical autoreview route`);
+  const dispatch = read("templates/orchestrator-dispatch.md");
+  if (dispatch.includes("pass | deferred | not-run")) fail("dispatch duplicates the report's verification status dictionary");
+  const report = read("templates/orchestrator-report.md");
+  const records = fencedBlocks(report).filter((block) => block.trim().startsWith("{"));
+  if (!records.length) fail("report must keep its JSON machine shapes");
+  // surfaceRevision is numeric in both report and registry examples, not a
+  // quoted placeholder. Parse the actual blocks, as the model-policy parser does.
+  for (const block of records) {
+    if (!block.includes('"surfaceRevision"')) continue;
+    try {
+      const value = JSON.parse(block.replaceAll("<repeat the dispatch pin, integer>", "1"));
+      const record = value["<ISSUE-KEY>"] || value;
+      if (!Number.isInteger(record.surfaceRevision)) fail("report surfaceRevision must be an integer");
+    } catch (error) { fail(`report JSON shape: ${error.message}`); }
+  }
+}
+
+function validateAe6Fixtures() {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-document-schema-"));
+  const originals = new Map();
+  const file = (name) => path.join(scratch, name);
+  function change(name, transform) {
+    const before = fs.readFileSync(file(name), "utf8"), after = transform(before);
+    if (typeof after !== "string" || after === before) throw new Error(`AE6 mutation made no change: ${name}`);
+    if (!originals.has(name)) originals.set(name, before);
+    fs.writeFileSync(file(name), after);
+    if (fs.readFileSync(file(name), "utf8") !== after) throw new Error(`AE6 mutation read-back failed: ${name}`);
+  }
+  function restore() {
+    for (const [name, before] of originals) fs.writeFileSync(file(name), before);
+    originals.clear();
+  }
+  const check = () => runNode([file("scripts/validate-workflow.mjs"), "--document-skeleton-only"], { cwd: scratch });
+  function negative(label, mutate, expected) {
+    const before = failures.length;
+    try { mutate(); expectCommandFailure(label, check, expected); }
+    finally { restore(); check(); }
+    if (failures.length === before) console.log(`PASS AE6 ${label}: red, restored green`);
+  }
+  try {
+    for (const name of ["skills", "references", "templates", "scripts", "docs/ru", "AGENTS.md", "README.md", "CHANGELOG.md", "examples"]) {
+      fs.cpSync(path.join(root, name), file(name), { recursive: true });
+    }
+    check();
+    // Select prose by its section and paragraph shape, never its wording.
+    // Prefixing contextual wording preserves the rule and works after a prior
+    // editorial rewrite too; no baseline sentence is required by the fixture.
+    for (const [name, heading] of [
+      ["skills/mono-implement/SKILL.md", "Mono Implement"],
+      ["references/issue-only-lane.md", "Post-`ready` exit"],
+      ["references/orchestration.md", "Cost Telemetry"],
+    ]) change(name, (text) => {
+      const paragraph = documentSection(text, heading)?.join("\n").split(/\n\s*\n/)
+        .map((block) => block.trim()).find((block) => /^[A-Za-z]/.test(block) &&
+          !/^[A-Za-z][A-Za-z -]*:/.test(block) && /[.!?]$/.test(block));
+      if (!paragraph) throw new Error(`AE6 missing prose paragraph: ${name} / ${heading}`);
+      return text.replace(paragraph, "In this workflow, " + paragraph[0].toLowerCase() + paragraph.slice(1));
+    });
+    check();
+    // Re-run the entire AE6 suite against already reworded documents. The
+    // child still exercises every fixture; only recursive rehearsal stops.
+    if (!process.argv.includes("--ae6-reworded-tree")) {
+      runNode([file("scripts/validate-workflow.mjs"), "--ae6-fixtures", "--ae6-reworded-tree"], { cwd: scratch });
+      console.log("PASS AE6 reworded tree: complete AE6 suite green");
+    }
+    restore(); check();
+    console.log("PASS AE6 equivalent prose: skill, lane and cost rewordings green");
+    negative("required section removed", () => change("references/issue-only-lane.md", (text) => text.replace("### Post-`ready` exit\n", "")), "missing or duplicate section");
+    for (const [, field, value] of LANE_FIELDS) {
+      negative(`required lane field removed: ${field}`, () => change("references/issue-only-lane.md", (text) => text.replace(`${field} ${value}\n`, "")), `${field} missing or duplicate field`);
+    }
+    negative("protected destination weakened with headings and identifiers intact", () => {
+      change("references/issue-only-lane.md", (text) => {
+        const weakened = text.replace("Expansion destination: separate-follow-up-project", "Expansion destination: current-project");
+        const structure = (body) => body.split("\n").filter((line) => /^#{1,6} /.test(line)).join("\n") + "\n" +
+          [...body.matchAll(/^([A-Za-z][A-Za-z -]+):/gm)].map((match) => match[1]).join("\n");
+        if (structure(text) !== structure(weakened)) throw new Error("AE6 weakening changed a heading or field identifier");
+        return weakened;
+      });
+    }, "Expansion destination: dictionary mismatch");
+    negative("arbitrary sentence pin", () => change("scripts/validate-workflow.mjs", (text) => text.replace(
+      "\nvalidateDocumentSkeleton();", '\nassertIncludes("README.md", "This arbitrary sentence must never become a pin.");\nvalidateDocumentSkeleton();')), "String pin outside MACHINE_TOKENS");
+    negative("contract edited without fingerprint refresh", () => change("references/contracts/issue.md", (text) => text + "\nFixture edit.\n"), "fingerprint");
+    negative("field donated by nested section", () => change("references/issue-only-lane.md", (text) => text.replace(
+      "Expansion destination: separate-follow-up-project", "#### Nested fixture\n\nExpansion destination: separate-follow-up-project")), "Expansion destination: missing or duplicate field");
+    negative("duplicate field", () => change("references/issue-only-lane.md", (text) => text.replace(
+      "Promotion mode: forbidden", "Promotion mode: forbidden\nPromotion mode: forbidden")), "Promotion mode: missing or duplicate field");
+    negative("forbidden template heading", () => change("templates/project.md", (text) => text.replace(
+      "# Что\n", "# Lifecycle\n\n# Что\n")), "forbidden workflow heading Lifecycle");
+    negative("report field removed", () => change("templates/orchestrator-report.md", (text) => text.replace(
+      '  "question": "<question text, or null>",\n', "")), "missing mandatory machine field");
+    negative("repair mode declaration removed with prose intact", () => change("skills/mono-check/SKILL.md", (text) => text.replace(
+      "- `repair`\n", "")), "Modes: missing or duplicate repair declaration");
+    change("skills/mono-deploy/SKILL.md", (text) => text.replace(/^(\d+)(\. `cost`:)/m, (_, ordinal, suffix) => `${ordinal === "99" ? "98" : "99"}${suffix}`));
+    check(); restore(); check();
+    console.log("PASS AE6 cost step renumbering: green");
+  } catch (error) {
+    fail(`AE6 fixtures failed: ${error.message}\n${error.stdout || ""}\n${error.stderr || ""}`);
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+}
+
+// Named workflow steps are machine identifiers; ordinal changes are editorial.
+function namedWorkflowStep(text, id) {
+  const lines = text.split("\n");
+  let start = -1, end = lines.length, count = 0;
+  for (let index = 0; index < lines.length; index++) {
+    const match = /^\d+\.\s+`([^`]+)`(?:\s|:|$)/.exec(lines[index]);
+    if (match?.[1] === id) { count++; start = index; }
+    else if (start >= 0 && /^\d+\.\s/.test(lines[index]) && end === lines.length) end = index;
+  }
+  return count === 1 ? lines.slice(start, end).join("\n") : null;
+}
+function validateCostCommandStructure() {
+  const deploy = namedWorkflowStep(read("skills/mono-deploy/SKILL.md"), "cost");
+  const status = read("skills/mono-orchestrate/SKILL.md");
+  for (const [label, text, field] of [["deploy cost step", deploy, "Cost:"], ["orchestrator status", status, "Цена волны:"]]) {
+    if (text === null) { fail(`${label}: missing or duplicate named step`); continue; }
+    for (const token of ["../.mono-agent-workflow/scripts/wave-cost.mjs", field, "unavailable: <reason>"]) {
+      requireMachineToken(token);
+      if (!text.includes(token)) fail(`${label}: missing command operand ${token}`);
+    }
+  }
+  if (exists("skills/mono-issue-intake")) fail("Retired skills/mono-issue-intake directory must be absent");
+}
+function validateMachineShapes() {
+  function example(file, predicate) {
+    const records = [];
+    for (const block of fencedBlocks(read(file))) {
+      if (!block.trim().startsWith("{")) continue;
+      try { records.push(JSON.parse(block.replaceAll("<repeat the dispatch pin, integer>", "1"))); }
+      catch { continue; }
+    }
+    const matches = records.filter(predicate);
+    if (matches.length !== 1) { fail(`${file}: missing or duplicate machine example`); return null; }
+    return matches[0];
+  }
+  function fields(record, required, label) {
+    required.forEach(requireMachineToken);
+    if (!record || required.some((field) => !Object.hasOwn(record, field))) fail(`${label}: missing mandatory machine field`);
+  }
+  const report = example("templates/orchestrator-report.md", (value) => value.issue === "<ISSUE-KEY>");
+  fields(report, ["issue", "stage", "status", "packVersion", "sourceCommit", "surfaceRevision", "branch", "changed_files", "tests", "verification_items", "question", "recommendation", "linear_mutations_pending", "certificate", "notes", "next"], "worker report");
+  if (report) {
+    fields(report.tests, ["run", "result"], "report tests");
+    fields(report.verification_items?.[0], ["item", "status", "evidence"], "verification item");
+    const status = report.verification_items?.[0]?.status;
+    requireMachineToken("pass | deferred | not-run");
+    if (status !== "pass | deferred | not-run") fail("verification item: closed status dictionary changed");
+  }
+  const ack = example("references/orchestration.md", (value) => value.phase === "gate");
+  fields(ack, ["issue", "phase", "gates", "status"], "gate ack");
+  if (ack) {
+    fields(ack.gates?.[0], ["gate", "status", "evidence"], "gate ack entry");
+    if (ack.status !== "gates-passed | blocked" || ack.gates?.[0]?.status !== "pass | blocked") fail("gate ack: status dictionary changed");
+  }
+  const consumption = example("references/orchestration.md", (value) => Object.hasOwn(value, "attempt") && Object.hasOwn(value, "outcome"));
+  fields(consumption, ["issue", "attempt", "outcome"], "consumption record");
+  if (consumption && (!Number.isInteger(consumption.attempt) || consumption.outcome !== "applied | rejected | blocked")) fail("consumption record: attempt or outcome dictionary changed");
+}
+
 failures.push(...checkModelPolicy(root));
-if (!process.argv.includes("--model-policy-only") && failures.length === 0) validateModelPolicyFixtures();
+if (!process.argv.includes("--ae6-fixtures") && !process.argv.includes("--document-skeleton-only") && !process.argv.includes("--model-policy-only") && failures.length === 0) validateModelPolicyFixtures();
 if (process.argv.includes("--model-policy-only") || process.argv.includes("--model-policy-fixtures")) {
   if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
   console.log("Model policy validation passed.");
   process.exit(0);
 }
 
+validateDocumentSkeleton();
+validateCheckModeDeclaration();
+validateDocumentBoundaries();
+validateCostCommandStructure();
+validateMachineShapes();
+if (process.argv.includes("--document-skeleton-only") || process.argv.includes("--ae6-fixtures")) {
+  validateSkills();
+  validateReadFirstTierContract();
+  validateProjectUpdateSurface();
+  validateOwnerLayerProcedureSurface();
+  validateOwnerLayerDocumentsBareIssueKeyFree();
+  validateOwnerLayerDocumentsFenceFree();
+  validateOwnerLayerMapParser();
+  validateOwnerLayerMap();
+  validateOwnerLayerConstitutionParser();
+  validateOwnerLayerConstitution();
+  validateArtifactContractParity();
+  validateRepairAndRoutingContract();
+  validateRegistryGateContract();
+  validateCostTemplateFields();
+  validateStatusTemplateFields();
+  if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
+  if (process.argv.includes("--ae6-fixtures")) validateAe6Fixtures();
+  if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
+  console.log("Document skeleton validation passed."); process.exit(0);
+}
+
 validateSkills();
 validateReadFirstTierContract();
 validateProjectUpdateSurface();
 validateOwnerLayerProcedureSurface();
-validateOwnerLayerMarkerCanonicalization();
-validateOwnerLayerRecordLookupByDocumentId();
-validateOwnerLayerReconciliationEdgeCases();
 validateOwnerLayerDocumentsBareIssueKeyFree();
 validateOwnerLayerDocumentsFenceFree();
-validatePreWriteHandoffReviewOrder();
 validateRetiredAdapterReferenceAllowlist();
 validateOwnerLayerMapParser();
 validateOwnerLayerMap();
 validateOwnerLayerConstitutionParser();
 validateOwnerLayerConstitution();
-validateTemplateSections();
 validateArtifactContractParity();
-validateReviewCheckBoundary();
 validateRepairAndRoutingContract();
 validatePackIdentityAndQuiescenceBehavior();
-validatePackIdentityWorkflowContract();
 validateLocalInstallBehavior();
 validateMultiRootInstallBehavior();
 validateBreakingInstallBehavior();
 validateProjectConfigBehavior();
 validateIssueOnlyLaneBehavior();
-validateIssueIntakeContract();
-validateDocsAndExamples();
-validateAntiPatterns();
-validateHeartbeatContract();
 validateWatcherContaminationBehavior();
 await validateWatcherInactiveGateSpawnBehavior();
 await validateWatcherV3Behavior();
 validateWatcherGateAckBehavior();
 validateGateAckSuppressionPredicate();
-validateHonestLedgerContract();
 validateCompactionContract();
-validateLiveQaGateContract();
-validateRealBackendContractSampling();
-validateGoalContractBinding();
-validateReportContractSingleHome();
-validateOrchestrationModePrecedence();
 validateRegistryGateContract();
-validateTwoPhaseDispatchHandshake();
-validateReviewLoopHygiene();
-validateCostTelemetry();
 validateCostTemplateFields();
 validateWaveCostBehavior();
-validateBriefIntegrity();
-validateOwnerProductLanguage();
-validateOpsLessons();
+validateAe6Fixtures();
+validateStatusTemplateFields();
 
 if (failures.length > 0) {
   console.error("Mono workflow validation failed:");

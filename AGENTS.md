@@ -61,8 +61,8 @@ This includes `git diff --check` and all artifact and workflow checks.
 
 ## Fixture Coupling
 
-- `scripts/validate-workflow.mjs` is coupled to the prose of this repo: it string-pins hundreds of individual sentences and phrases from `AGENTS.md`, `README.md`, `skills/*/SKILL.md`, `references/`, and `templates/`, and it fingerprints each `references/contracts/` file whole-file with SHA-256.
-- Pinned text changes only together with its fixture. Edit the sentence and update the matching pin in `scripts/validate-workflow.mjs` as one change; edit a bounded contract and refresh its fingerprint in the same change.
-- Pins are whole-file `assertIncludes` checks, so several sentences can jointly satisfy one pin. When a rename or rewording touches more than one pinned site in a file, apply all of those sites and the pin update together — a partial edit can leave the check green on text that is already wrong.
-- New checks are structural: assert that a file, a section, an ordering, or a field is present, not that a sentence reads a particular way. Do not add a new prose pin on a sentence — an editorial rewording then fails CI without any invariant having moved.
-- When `node scripts/verify.mjs` fails after a documentation edit, the pin is the signal, not the obstacle. Update the pin to match the intended new text; never delete, loosen, or route around a pinned invariant to silence the check. A pin may be dropped outright only when it guards an editorial wording rather than an invariant, or when a structural check now covers that invariant — and the PR says which of the two applied.
+- `scripts/validate-workflow.mjs` checks files, sections, fields, identifiers, ordering, and script behavior on scratch copies. Prose can be reworded freely.
+- String pins may contain only machine tokens explicitly listed in `MACHINE_TOKENS`: markers, field labels, dictionary keys and values, placeholders, commands, and paths. The validator rejects an out-of-list pin. A regex over a sentence is a prose pin too.
+- The four files in `references/contracts/` and their SHA-256 fingerprints form the bounded contract core. Their existing consumer checks remain required. Change a contract and its fingerprint only as an explicit contract change.
+- Rules that only agents execute are held by the text and by review. Never pin them or add a second machine encoding of those rules inside the documents. The validator checks their document skeleton only.
+- Classify a pin before removing it: remove editorial wording; list machine tokens; cover script behavior with a named fixture; retain only the skeleton for agent rules. Record the classification and replacement in the PR. Never loosen an invariant just to make verification pass.
