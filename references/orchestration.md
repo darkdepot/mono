@@ -1270,12 +1270,13 @@ Model-tiering policy has no data without this telemetry.
 
 Per-Issue collection, performed by the orchestrator:
 
-- Worker tokens: read the LAST `turn.completed` event of each attempt log
-  of the stage (`logs/<ISSUE-KEY>-<stage>-a<attempt>.jsonl`); each is
-  cumulative for its own thread — record input, cached, and output as
-  reported there, and sum ACROSS attempts (a respawn or rotation starts a
-  fresh thread whose spend must not vanish). Never sum events within one
-  log.
+- Worker tokens: sum every `turn.completed` event in every attempt log of
+  every stage (`logs/<ISSUE-KEY>-<stage>-a<attempt>.jsonl`). Each event is
+  per-turn, not cumulative — the observed input sequence 516,590 → 433,845
+  → 5,072,542 in one thread is the motivating evidence. Keep input, cached
+  input, and output separate; cached input is a subset of input and must not
+  be added to it again. Include respawned, parked, and failed attempts, and
+  deduplicate attempt files by their canonical path.
 - Review cycles: the count of review submissions handled during the ship
   stage, taken from the ship-stage report and PR review history.
 - Stage wall-clock: derived from the ledger's write-time entries for stage

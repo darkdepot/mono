@@ -7245,8 +7245,6 @@ function validateCostTelemetry() {
   // collection itself is manual agent work and stays judgment, not a pin.
   for (const required of [
     "## Cost Telemetry",
-    "LAST `turn.completed` event",
-    "sum ACROSS attempts",
     "Review cycles",
     "ship-stage report",
     "Stage wall-clock",
@@ -7260,10 +7258,7 @@ function validateCostTelemetry() {
   }
 
   for (const required of [
-    "цена: ~N тыс. out-токенов, M циклов ревью",
-    "«цена: н/д»",
     "## Цена волны (Wave Cost Summary)",
-    "Цена волны:",
     "never blocking, never a gate",
     "Cost Telemetry in `references/orchestration.md`",
   ]) {
@@ -7271,11 +7266,414 @@ function validateCostTelemetry() {
   }
 
   for (const required of [
-    "Cost telemetry: the per-Issue cost tail in the status table",
     "«Цена волны» block",
-    "Cost is telemetry,\n  not a gate: it never blocks, pauses, or pages.",
   ]) {
     assertIncludes("skills/mono-orchestrate/SKILL.md", required, JSON.stringify(required));
+  }
+
+  const telemetry = boundedSlice(
+    "references/orchestration.md",
+    read("references/orchestration.md"),
+    "## Cost Telemetry",
+    "\n## Resume",
+    "Cost Telemetry section"
+  );
+  if (
+    telemetry &&
+    (!/sum every `turn\.completed` event/i.test(telemetry) ||
+      !/per-turn, not cumulative/i.test(telemetry) ||
+      !/cached input is a subset of input/i.test(telemetry) ||
+      /LAST `turn\.completed` event|Never sum events within one log/i.test(telemetry))
+  ) {
+    fail("Cost Telemetry must describe per-turn summation without the retired last-event rule");
+  }
+
+  const deploySkill = read("skills/mono-deploy/SKILL.md");
+  const deployCostStep = boundedSlice(
+    "skills/mono-deploy/SKILL.md",
+    deploySkill,
+    "14. `cost`:",
+    "\n15. `learn`:",
+    "mono-deploy cost step"
+  );
+  if (
+    deployCostStep &&
+    (!deployCostStep.includes("../.mono-agent-workflow/scripts/wave-cost.mjs") ||
+      !deployCostStep.includes("`Cost:`") ||
+      !deployCostStep.includes("`unavailable: <reason>`") ||
+      !/never (?:a gate|block or delay)/i.test(deployCostStep))
+  ) {
+    fail("mono-deploy cost step must carry the installed script line without gating closeout");
+  }
+
+  const orchestrateSkill = read("skills/mono-orchestrate/SKILL.md");
+  if (
+    !/\.\.\/\.mono-agent-workflow\/scripts\/wave-cost\.mjs[\s\S]{0,700}`Цена волны:`[\s\S]{0,700}`unavailable: <reason>`[\s\S]{0,700}never blocks[\s\S]{0,120}delays a stage/i.test(
+      orchestrateSkill
+    )
+  ) {
+    fail("mono-orchestrate status rule must carry the installed script line without gating a stage");
+  }
+}
+
+function costTemplateFieldFaults(surfaces) {
+  const faults = [];
+  const deploySlice = boundedSlice(
+    "templates/deploy-output.md",
+    surfaces.deploy,
+    "Deploy status:",
+    "\nПроверено:",
+    "default deploy-status block"
+  );
+  if (deploySlice && !/^\s*- Cost:\s*\S/m.test(deploySlice)) {
+    faults.push("deploy-cost-field");
+  }
+
+  const statusSlice = boundedSlice(
+    "templates/orchestrator-brief.md",
+    surfaces.brief,
+    "## Статус (Status Update)",
+    "\nRules that bind every status:",
+    "ordinary orchestrator status"
+  );
+  if (statusSlice && !/^Цена волны:\s*\S/m.test(statusSlice)) {
+    faults.push("status-wave-cost-field");
+  }
+  return faults;
+}
+
+function validateCostTemplateFields() {
+  const surfaces = {
+    deploy: read("templates/deploy-output.md"),
+    brief: read("templates/orchestrator-brief.md"),
+  };
+  const faults = costTemplateFieldFaults(surfaces);
+  if (faults.length > 0) {
+    fail(`cost template fields are incomplete: ${faults.join(", ")}`);
+  }
+
+  const negativeFixtures = [
+    ["deploy-cost-field", { ...surfaces, deploy: surfaces.deploy.replace(/^\s*- Cost:.*$/m, "") }],
+    ["status-wave-cost-field", { ...surfaces, brief: surfaces.brief.replace(/^Цена волны:.*$/m, "") }],
+  ];
+  for (const [expectedFault, fixture] of negativeFixtures) {
+    if (!costTemplateFieldFaults(fixture).includes(expectedFault)) {
+      fail(`cost template negative fixture must reject removal of ${expectedFault}`);
+    }
+  }
+}
+
+function parseWaveCostOutput(output) {
+  const marker = "\nЦена волны ";
+  const markerIndex = output.lastIndexOf(marker);
+  if (markerIndex < 0) throw new Error("missing Russian one-line output");
+  return {
+    json: JSON.parse(output.slice(0, markerIndex)),
+    line: output.slice(markerIndex + 1).trim(),
+  };
+}
+
+function validateWaveCostBehavior() {
+  const scriptPath = path.join(root, "scripts", "wave-cost.mjs");
+  if (!fs.existsSync(scriptPath)) {
+    fail("Missing runtime script: scripts/wave-cost.mjs");
+    return;
+  }
+
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-wave-cost-"));
+  try {
+    const logsDir = path.join(fixtureRoot, "logs");
+    const reportsDir = path.join(fixtureRoot, "reports");
+    const consumedDir = path.join(fixtureRoot, "consumed");
+    const installedSkillsRoot = path.join(fixtureRoot, ".claude", "skills");
+    const installedSkill = path.join(installedSkillsRoot, "mono-implement", "SKILL.md");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.mkdirSync(reportsDir, { recursive: true });
+    fs.mkdirSync(consumedDir, { recursive: true });
+    fs.mkdirSync(path.dirname(installedSkill), { recursive: true });
+    fs.writeFileSync(installedSkill, "# Installed fixture\n1234567890\n");
+    fs.writeFileSync(path.join(fixtureRoot, "workers.json"), "{}\n");
+    fs.writeFileSync(
+      path.join(fixtureRoot, "ledger.md"),
+      "## 2026-09-09\n- 10:00 (09.09) MONO-999 DISPATCHED: mono-implement, fixture\n"
+    );
+
+    const event = (value) => `${JSON.stringify(value)}\n`;
+    fs.writeFileSync(
+      path.join(logsDir, "MONO-999-mono-implement-a1.jsonl"),
+      event({ type: "thread.started", thread_id: "fixture-1", metadata_path: installedSkill }) +
+        event({
+          type: "item.completed",
+          item: { type: "command_execution", command: `/bin/zsh -lc 'cat ${installedSkill}'` },
+        }) +
+        event({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 100,
+            cached_input_tokens: 40,
+            cache_write_input_tokens: 0,
+            output_tokens: 10,
+            reasoning_output_tokens: 3,
+          },
+        }) +
+        event({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 250,
+            cached_input_tokens: 200,
+            cache_write_input_tokens: 0,
+            output_tokens: 20,
+            reasoning_output_tokens: 5,
+          },
+        })
+    );
+    fs.writeFileSync(
+      path.join(logsDir, "MONO-999-mono-implement-a2.jsonl"),
+      event({ type: "thread.started", thread_id: "fixture-2" }) +
+        event({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 50,
+            cached_input_tokens: 0,
+            cache_write_input_tokens: 0,
+            output_tokens: 5,
+            reasoning_output_tokens: 1,
+          },
+        })
+    );
+
+    const checkoutOutput = parseWaveCostOutput(
+      runNode(["scripts/wave-cost.mjs", "MONO-999", "--root", fixtureRoot])
+    );
+    const result = checkoutOutput.json;
+    if (
+      result.worker.turns !== 3 ||
+      result.worker.attempt_count !== 2 ||
+      result.worker.usage.input_tokens !== 400 ||
+      result.worker.usage.cached_input_tokens !== 240 ||
+      result.worker.usage.output_tokens !== 35 ||
+      result.worker.usage.non_overlapping_total_tokens !== 435
+    ) {
+      fail("wave-cost multi-turn fixture must sum every turn of every attempt without adding cached input twice");
+    }
+    if (
+      result.accounting_comparison.old_last_event_rule.input_tokens !== 300 ||
+      result.accounting_comparison.corrected_all_turns.input_tokens !== 400 ||
+      result.accounting_comparison.input_delta_tokens !== 100
+    ) {
+      fail("wave-cost output must explain the divergence from the retired last-event accounting rule");
+    }
+    if (
+      !String(result.intervals.dispatch_to_green_pr).startsWith("unavailable: ") ||
+      !String(result.intervals.dispatch_to_merge).startsWith("unavailable: ") ||
+      !String(result.autoreview.usage).startsWith("unavailable: ") ||
+      !String(result.orchestrator.usage).startsWith("unavailable: ") ||
+      result.phase_usage_note !== "по фазам недоступно"
+    ) {
+      fail("wave-cost missing-phase fixture must name every unavailable component and the phase-usage limit");
+    }
+    if (
+      result.pack_reading.files.length !== 1 ||
+      result.pack_reading.files[0].read_commands !== 1 ||
+      result.pack_reading.total_bytes !== fs.statSync(installedSkill).size ||
+      result.pack_reading.approx_tokens !== Math.ceil(fs.statSync(installedSkill).size / 4)
+    ) {
+      fail("wave-cost pack-reading fixture must count each actually read installed pack file once");
+    }
+    if (
+      !checkoutOutput.line.startsWith("Цена волны MONO-999:") ||
+      checkoutOutput.line.includes("unavailable:") ||
+      checkoutOutput.line.includes("{") ||
+      !checkoutOutput.line.includes("авто-ревью н/д (помощник не сообщает учёт)") ||
+      !checkoutOutput.line.includes("оркестратор н/д (транскрипт не передан)")
+    ) {
+      fail("wave-cost must emit a compact Russian summary without raw unavailable values or JSON");
+    }
+
+    fs.appendFileSync(
+      path.join(logsDir, "MONO-999-mono-implement-a1.jsonl"),
+      event({
+        type: "item.completed",
+        item: {
+          type: "command_execution",
+          command: "autoreview --mode branch",
+          aggregated_output:
+            "autoreview target: branch\nreview passes: 1\nautoreview usage: input=10 cached=2 output=2\n",
+        },
+      })
+    );
+    fs.writeFileSync(
+      path.join(consumedDir, "MONO-999-mono-ship.json"),
+      `${JSON.stringify({
+        issue: "MONO-999",
+        stage: "mono-ship",
+        review_rounds: { novel_resolver_rounds: 2, unresolved_threads: 0 },
+      })}\n`
+    );
+    const wrongIssueReport = path.join(reportsDir, "MONO-999-mono-ship-a9.json");
+    fs.writeFileSync(
+      wrongIssueReport,
+      `${JSON.stringify({
+        issue: "MONO-9999",
+        stage: "mono-ship",
+        review_rounds: 99,
+        green_at: "2026-09-09T10:45:00Z",
+      })}\n`
+    );
+    const futureReportTime = new Date(Date.now() + 60_000);
+    fs.utimesSync(wrongIssueReport, futureReportTime, futureReportTime);
+    fs.writeFileSync(
+      path.join(fixtureRoot, "workers.json"),
+      `${JSON.stringify({ "MONO-999": { model: "fixture-model", effort: "medium" } })}\n`
+    );
+    fs.writeFileSync(
+      path.join(fixtureRoot, "ledger.md"),
+      [
+        "## 2026-09-09",
+        "- 10:00 (09.09) MONO-999 DISPATCHED: legacy record",
+        "- 10:05 (09.09) MONO-999 SHIP GREEN: first record",
+        "- 10:06 (09.09) MONO-999 MERGED: first record",
+        "- 2026-09-09T09:55:00Z MONO-999 clock correction: thread.started ≈ 2026-09-09T09:55:00Z; DISPATCHED",
+        "- 10:15 (09.09) MONO-999 SHIP GREEN: corrected record",
+        "- 10:20 (09.09) MONO-999 MERGED: corrected record",
+        "- 10:30 (09.09) MONO-9999 MERGED: another Issue",
+        "- 10:40 (09.09) MONO-1000 MERGED: example output names MONO-999",
+        "",
+      ].join("\n")
+    );
+    const transcript = path.join(fixtureRoot, "orchestrator.jsonl");
+    fs.writeFileSync(
+      transcript,
+      event({
+        type: "item.completed",
+        item: { type: "agent_message", text: `MONO-999 uses model ${"GPT-" + "5"}` },
+      }) +
+        event({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 20,
+            cached_input_tokens: 5,
+            cache_write_input_tokens: 0,
+            output_tokens: 3,
+            reasoning_output_tokens: 1,
+          },
+        }) +
+        event({ type: "item.completed", item: { type: "agent_message", text: "MONO-9999" } }) +
+        event({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 1_000,
+            cached_input_tokens: 0,
+            cache_write_input_tokens: 0,
+            output_tokens: 100,
+            reasoning_output_tokens: 10,
+          },
+        })
+    );
+
+    const measuredOutput = parseWaveCostOutput(
+      runNode([
+        "scripts/wave-cost.mjs",
+        "MONO-999",
+        "--root",
+        fixtureRoot,
+        "--orchestrator-transcript",
+        transcript,
+      ])
+    );
+    if (
+      measuredOutput.json.review_rounds !== 2 ||
+      measuredOutput.json.measurable_total.input_tokens !== 430 ||
+      measuredOutput.json.measurable_total.cached_input_tokens !== 247 ||
+      measuredOutput.json.measurable_total.output_tokens !== 40 ||
+      measuredOutput.json.intervals.dispatch_to_green_pr.seconds !== 1200 ||
+      measuredOutput.json.intervals.dispatch_to_merge.seconds !== 1500
+    ) {
+      fail("wave-cost measured fixture must normalize review rounds and prefer corrected interval endpoints");
+    }
+    if (
+      measuredOutput.line.length > 320 ||
+      measuredOutput.line.includes("{") ||
+      measuredOutput.line.includes("unavailable:")
+    ) {
+      fail("wave-cost fully measured Russian summary must be one compact sentence of at most 320 characters");
+    }
+
+    fs.appendFileSync(
+      transcript,
+      event({
+        type: "item.completed",
+        item: { type: "agent_message", text: "Compare MONO-999 with MONO-1000" },
+      }) +
+        event({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 500,
+            cached_input_tokens: 100,
+            cache_write_input_tokens: 0,
+            output_tokens: 50,
+            reasoning_output_tokens: 10,
+          },
+        })
+    );
+    const ambiguousOutput = parseWaveCostOutput(
+      runNode([
+        "scripts/wave-cost.mjs",
+        "MONO-999",
+        "--root",
+        fixtureRoot,
+        "--orchestrator-transcript",
+        transcript,
+      ])
+    );
+    if (
+      !String(ambiguousOutput.json.orchestrator.usage).startsWith(
+        "unavailable: orchestrator transcript has a multi-Issue turn"
+      ) ||
+      !ambiguousOutput.line.includes("оркестратор н/д (ход затрагивает несколько задач)")
+    ) {
+      fail("wave-cost must not attribute one multi-Issue orchestrator turn to every mentioned Issue");
+    }
+
+    const installedScript = path.join(
+      installedSkillsRoot,
+      ".mono-agent-workflow",
+      "scripts",
+      "wave-cost.mjs"
+    );
+    fs.mkdirSync(path.dirname(installedScript), { recursive: true });
+    fs.copyFileSync(scriptPath, installedScript);
+    const installedOutput = execFileSync(
+      process.execPath,
+      [installedScript, "MONO-999", "--root", fixtureRoot],
+      { cwd: fixtureRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+    );
+    const installedResult = parseWaveCostOutput(installedOutput);
+    if (installedResult.json.worker.usage.input_tokens !== 400) {
+      fail("installed-layout wave-cost fixture must run without a pack checkout");
+    }
+
+    fs.appendFileSync(
+      path.join(logsDir, "MONO-999-mono-implement-a2.jsonl"),
+      event({
+        type: "turn.completed",
+        usage: { input_tokens: 5, output_tokens: 1 },
+      })
+    );
+    const partialOutput = parseWaveCostOutput(
+      runNode(["scripts/wave-cost.mjs", "MONO-999", "--root", fixtureRoot])
+    );
+    if (
+      partialOutput.json.worker.complete !== false ||
+      !String(partialOutput.json.worker.usage_status).startsWith("unavailable: ") ||
+      !String(partialOutput.json.measurable_total_status).startsWith("unavailable: ") ||
+      partialOutput.line.includes("токенов измеримо") ||
+      !partialOutput.line.includes("исполнитель н/д (неполные данные в логах)")
+    ) {
+      fail("wave-cost must not publish a partial worker total as fully measurable");
+    }
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 }
 
@@ -9633,6 +10031,8 @@ validateRegistryGateContract();
 validateTwoPhaseDispatchHandshake();
 validateReviewLoopHygiene();
 validateCostTelemetry();
+validateCostTemplateFields();
+validateWaveCostBehavior();
 validateBriefIntegrity();
 validateOwnerProductLanguage();
 validateOpsLessons();

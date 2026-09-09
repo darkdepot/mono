@@ -6,6 +6,17 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+### Wave cost telemetry (MONO-72)
+
+- Add the dependency-free installed `wave-cost.mjs` runtime script. It sums
+  every per-turn usage event across all stages and attempts without counting
+  cached input twice, reports all other measurable per-PR components and
+  explicit unavailable reasons, records actual pack reads, and emits JSON plus
+  one Russian status line.
+- Carry that exact line in deploy closeout and orchestrator status, with
+  structural template checks and synthetic multi-turn, missing-data, and
+  installed-root fixtures. Cost remains telemetry and never a delivery gate.
+
 ### Owner-layer reconciliation (MONO-71)
 
 - Clarify that a filed owner-layer difference stays confirmed when its record
