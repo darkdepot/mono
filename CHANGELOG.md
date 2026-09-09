@@ -6,6 +6,10 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+### Changed
+
+- MONO-73: remove prose pins from workflow validation. Keep explicit machine-token pins, document skeleton checks, script behavior fixtures, and the four unchanged contract fingerprints. Agent-only rules remain in the text and review; AE6 scratch-copy fixtures cover rewording, missing structure, weakened lane fields, unlisted pins, and contract edits.
+
 ### Wave cost telemetry (MONO-72)
 
 - Add the dependency-free installed `wave-cost.mjs` runtime script. It sums
