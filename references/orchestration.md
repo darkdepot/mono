@@ -224,70 +224,12 @@ put it to the owner with the verdict already attached, and only then write.
 
 ## Orchestration Mode Precedence
 
-Orchestration mode is any stage a worker runs from a dispatch built on
-`templates/orchestrator-dispatch.md`. This section is the single home of the
-rule; the dispatch template and the stage skills point here instead of
-restating it.
-
-- The dispatch snapshot is the single source of Linear state in orchestration
-  mode. Wherever a stage skill tells the worker to fetch, re-read, or
-  re-resolve fresh Linear state, in this mode that instruction means "use the
-  dispatch snapshot".
-- Wherever a stage skill tells the worker to move, comment on, update, or
-  otherwise mutate Linear, in this mode that instruction means "produce the
-  mutation in its required shape and queue it in `linear_mutations_pending`".
-  The orchestrator stays the single Linear writer and applies it with
-  read-back. Applying that queue is part of consuming the report, not a later
-  chore: on every stage-terminal report the orchestrator applies each queued
-  mutation and verifies it per Linear Write Verification BEFORE it advances
-  the stage pipeline. Advancing a stage while a report's mutations are still
-  unapplied is a contract violation — it strands the Issue in its previous
-  Linear state with the stage's comments missing. The Resume-time sweep of
-  unapplied mutations is a crash-recovery backstop, never the normal path.
-- The same substitution applies to any condition a stage skill places on a
-  read, not only to the instructions themselves. A deferred "Read when" entry
-  whose condition names writing, recording, or moving something in Linear is
-  satisfied in this mode by queuing that mutation. Write such a condition so it
-  names the queued form too: a condition worded only for the interactive path
-  silently excludes every orchestrated run, which is how a worker ends up
-  composing an artifact without the contract that governs it.
-- Split precedence by kind: where a dispatch and its stage skill disagree on a
-  rule, the stage skill wins; where they disagree on a fact — identity pins,
-  absolute paths, snapshot content, this-Issue constraints — the dispatch
-  wins.
-- Mode precedence changes who performs a Linear operation, never whether a
-  gate runs. Every gate, gate ordering, exit status, and fail-closed rule of
-  the stage skill applies unchanged. A snapshot that cannot satisfy a gate is
-  a `blocked` report naming the missing input, never a skipped gate, an
-  inference, or a question to the user.
-- Queued mutations land only when the orchestrator applies them, and it reads
-  the queue from a report — so a mutation queued during a stage lands at the
-  stage boundary, and Linear lifecycle state lags the worktree for the length
-  of that stage. State this lag plainly; do not describe a queued mutation as
-  applied, and do not derive a verdict from state the mutation has not
-  reached yet. The lag is a property of single-writer orchestration, not a
-  licence to skip anything: every precondition a gate places on starting code
-  is verified from the snapshot before code starts, and a mutation whose gate
-  has not passed is never queued at all. A stage that genuinely cannot
-  continue until a mutation has landed cannot get that in this mode and
-  reports `needs-decision` for the orchestrator to sequence and resume —
-  except for the dispatch-moment lifecycle moves, which Two-Phase Dispatch
-  Handshake below sequences by protocol instead of by exception report.
-- A stage's own lifecycle precondition is therefore sequenced by the
-  orchestrator around the gate phase of the two-phase dispatch handshake —
-  applied after the worker's gate-ack and before that worker is resumed for
-  execution — never queued from inside the stage and stepped over. Dispatch
-  `mono-implement` with the Project not yet in Delivery and move it on the
-  gate-ack, so the state the worker executes from is the post-move state its
-  resume amendment names. Inside the gate phase a snapshot showing an unmet
-  dispatch-moment lifecycle precondition is the expected state, not a
-  finding; after resume, an amendment that still shows that move unapplied is
-  a hard stop. No stage defers an executable check onto a queued mutation
-  entry: this mode has no protocol that would carry one, so a check the
-  snapshot cannot answer is sequenced by the orchestrator, never left as
-  descriptive text in a report.
-- Interactive mode is unchanged: a stage run without a dispatch reads and
-  writes Linear directly exactly as its stage skill says.
+Apply the Orchestration Mode Precedence section of `references/worker-contract.md`.
+Consume every stage-terminal report by applying each permitted queued mutation
+with read-back before advancing the pipeline. The resume sweep is crash recovery,
+never the normal application path. Dispatch lifecycle moves use the handshake
+below: gates precede application and the worker resumes only on verified state.
+Never defer a check onto a queued mutation or describe pending state as applied.
 
 ### Generated dispatch as audience adapter
 
@@ -316,13 +258,6 @@ much redundancy the generator emits:
 | Stage-terminal status semantics (`blocked` vs `needs-human` vs `needs-decision` vs drift) | restated as an explicit decision list | named only where this Issue makes one likely |
 | Worked output shapes (comment, certificate, report skeletons) | inlined in the dispatch | referenced by path, composed at write time |
 | Per-step ordering the skill already fixes | re-enumerated | omitted |
-
-The reason the two columns differ is a measured difference in failure mode. A
-strongly rule-following worker fails by omission, which restatement fixes. A
-strongly synthesizing worker fails by anchoring on the nearest worked example
-and producing something well-shaped and partly invented, which restatement does
-not fix and inlined examples make worse. Every row above still carries the same
-obligations to both audiences; only where the text lives changes.
 
 Anything a worker cannot execute without guessing — an absolute path, a command
 literal, a hash, a confusable pair of values in play — is carried in full to
@@ -400,15 +335,6 @@ Order, and it is the whole protocol:
    requires at least one entry that is not `pass`, because an ack claiming
    `blocked` over gates that all passed is consumed as a real refusal and
    strands a dispatch whose gates actually passed.
-
-   The ack is numbered by attempt for the same reason the logs are: an ack
-   belongs to the writer that produced it, and timestamps cannot tell
-   overlapping writers apart. A superseded attempt that is still alive can
-   write after its successor's log was born, and a shared path would let that
-   ack look current for the successor — the orchestrator would then apply the
-   moves and resume a worker on gates that worker never ran. A retry carries
-   the same gate names, so no set-equality check downstream would catch it
-   either. The attempt number is what binds an ack to its dispatch attempt.
 
    The gate-ack is not a stage report: it has its own path, its own two-value
    `status`, and it neither uses nor extends the `verification_items` enum.
@@ -654,46 +580,10 @@ is a `blocked` report and the stage does not continue.
 
 ### Pack identity gate invocation
 
-This is the single home of the gate's executable shape. The dispatch template
-and the stage skills point here; nothing else restates the path, the
-subcommand, or the flags.
-
-```bash
-node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \
-  --lock '<installed-skills-root>/.mono-agent-workflow.lock.json' \
-  --pack-version '<dispatch packVersion>' \
-  --source-commit '<dispatch sourceCommit>' \
-  --surface-revision '<dispatch surfaceRevision>'
-```
-
-Single-quote every substituted path and pin value, as shown. Single quotes are
-literal in POSIX shells, so a root containing spaces, `$`, or backticks still
-reaches the helper unchanged; a value containing a single quote is escaped by
-the generator as `'\''`. Substituting a path unquoted, or inside double
-quotes, leaves it subject to word splitting and command substitution — which
-turns a mechanical gate into a spurious `blocked` or into shell-evaluated
-text.
-
-- Path base: the `../.mono-agent-workflow/…` form used inside stage skills is
-  relative to the directory of the installed stage skill being read, never to
-  the worker's worktree. `<installed-skills-root>` is that skill directory's
-  parent — `~/.codex/skills` for a `codex-cli` worker, `~/.claude/skills` for
-  a Claude worker.
-- Subcommand `identity` is required; without it the helper exits 1 on usage.
-- All four flags are required: `--lock`, `--pack-version`, `--source-commit`,
-  `--surface-revision`.
-- Lockfile: `.mono-agent-workflow.lock.json` sits beside the installed skill
-  directories, so its path is
-  `<installed-skills-root>/.mono-agent-workflow.lock.json`.
-- Success is exit 0 together with `pack-state: identity verified`. Any other
-  exit, output, or mismatch is a `blocked` report before stage work.
-- The dispatch carries this command fully resolved — absolute paths, the three
-  pins substituted — so the worker runs it as written from its worktree and
-  never reconstructs a path or a flag.
-- The pins identify the installed execution protocol. A same-named
-  `SURFACE_REVISION` constant inside the target checkout is repo code that may
-  be under the Issue's scope; changing it neither satisfies nor mutates this
-  gate, and the report repeats the dispatch pins, not the repo constant.
+Use the executable shape, quoting, path base, success criterion and pin rules
+in `references/worker-contract.md` (Pack identity gate invocation). Resolve the
+command with absolute installed paths and dispatch pins before launch; emit it
+in full for both audiences. Never substitute a checkout's `SURFACE_REVISION`.
 
 ### Sandbox ladder
 
@@ -1261,12 +1151,6 @@ of a 1M-token window with no signal to the owner.
   safe state. It is not the default response to a context threshold.
 
 ## Cost Telemetry
-
-Per-feature cost is a first-class operational metric, same as context
-usage. Wave-1 precedent: a full production wave ran with zero cost
-visibility — one Issue consumed 49M input tokens (97% cached), one PR
-accumulated 59 review submissions, and none of it appeared in any report.
-Model-tiering policy has no data without this telemetry.
 
 Per-Issue collection, performed by the orchestrator:
 

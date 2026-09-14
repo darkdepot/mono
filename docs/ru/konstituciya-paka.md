@@ -389,7 +389,7 @@
 
 Опора:
 
-- `references/orchestration.md` · «Orchestration Mode Precedence»
+- `references/worker-contract.md` · «Orchestration Mode Precedence»
 - `references/questioning.md` · «Orchestrated Mode»
 
 ## IX. Пак и его изменение

@@ -35,6 +35,7 @@ const RUNTIME_SCRIPTS = [
   "resolve-issue-context.mjs",
   "verify-pack-state.mjs",
   "wave-cost.mjs",
+  "read-budget.mjs",
   "watch-workers.mjs",
 ];
 // Upstream docs/ru/*.md published into

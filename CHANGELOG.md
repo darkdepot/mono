@@ -8,6 +8,34 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ### Changed
 
+- MONO-74: split the delivery-worker contract from orchestrator transport,
+  registry, watcher and resume policy. Shorten delivery/deploy instructions,
+  centralize worker report and certificate references, and move explanatory
+  rationale outside delivery reading. Preserve audience-adapted dispatch,
+  stage ownership, gates, report fields and the protected contract core.
+- Install dependency-free `read-budget.mjs` beside `wave-cost.mjs`. Validate
+  one recursive, deduplicated union of the three delivery skills and all
+  mandatory, conditional and inline pack reads. Print composition, bytes and
+  approximate tokens (bytes/4); negative fixtures cover oversized additions.
+- Record the approved pre-rewrite baseline: 334,371 bytes / 28 files. At implementation handoff, the
+  source corpus was 98,834 bytes / 21 files (~24,708.5 tokens); the
+  installed corpus was 99,882 bytes (~24,970.5 tokens), including generated
+  skill headers. Set the validator ceiling to the measured installed 99,882
+  bytes. The 60,000-byte target was not reached: protected issue-only/model
+  policy and PRD/Tech Spec contracts consume 36,943 bytes; the remaining
+  worker protocol, stage gates/certificates, feedback and output obligations
+  require a later delivery-contract change for further substantial reduction.
+  Keep map coverage and the constitution's moved authority link current.
+- Preflight review restores the canonical Russian owner glossary, jargon
+  exclusions and live-verification phrases, and gives ship verdict copy one
+  explicit template home; restore implement's conditional questioning-policy
+  read for interactive questions and explicit Project-first Delivery Start steps.
+  Preserve ship formal review/check for drift-candidate certificates.
+  After removing duplicate prose, the final source
+  corpus is 98,816 bytes; installed 99,846 bytes clean (99,864 with dirty
+  markers); the
+  accepted 99,882-byte ceiling and all gates remain unchanged.
+
 - MONO-73: remove prose pins from workflow validation. Keep explicit machine-token pins, document skeleton checks, script behavior fixtures, and the four unchanged contract fingerprints. Agent-only rules remain in the text and review; AE6 scratch-copy fixtures cover rewording, missing structure, weakened lane fields, unlisted pins, and contract edits.
 
 ### Wave cost telemetry (MONO-72)

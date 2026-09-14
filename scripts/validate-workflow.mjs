@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { measureReadBudget, readingPaths, READ_BUDGET_MAX_BYTES, DELIVERY_SKILLS } from "./read-budget.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const validationStateRoot = fs.mkdtempSync(
@@ -38,6 +39,110 @@ function exists(relativePath) {
 
 function fail(message) {
   failures.push(message);
+}
+
+
+function validateReadBudget() {
+  try {
+    const budget = measureReadBudget(root);
+    for (const entry of budget.files) console.log(`read-budget ${entry.bytes} bytes ${entry.path}`);
+    console.log(`Read budget: ${budget.bytes} bytes / ~${budget.approximate_tokens} tokens; ceiling ${READ_BUDGET_MAX_BYTES} bytes`);
+    if (!budget.within_ceiling) fail("Delivery reading corpus exceeds the byte ceiling");
+    if (budget.files.some((entry) => entry.path.startsWith("references/rationale/"))) fail("Rationale entered delivery reading corpus");
+  } catch (error) { fail(`Read budget: ${error.message}`); }
+  for (const skill of [...DELIVERY_SKILLS, "mono-deploy"]) {
+    if (/orchestration\.md/.test(read(`skills/${skill}/SKILL.md`))) fail(`${skill}: phase names orchestrator reference`);
+  }
+}
+
+function validateReadBudgetFixtures() {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-read-budget-"));
+  const write = (name, content) => {
+    const target = path.join(scratch, name);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content);
+  };
+  const base = "Read first:\n\nRead now:\n1. `AGENTS.md`\n2. `references/shared.md`\n\nRead when:\n- `references/shared.md` — any condition.\n";
+  const fixture = (name, action) => {
+    try { action(); console.log(`PASS read-budget fixture: ${name}`); }
+    catch (error) { fail(`read-budget fixture ${name}: ${error.message}`); }
+  };
+  const require = (truth, message) => { if (!truth) throw new Error(message); };
+  try {
+    write("AGENTS.md", "# fixture\n");
+    write("references/shared.md", "Read `references/nested.md`.\n");
+    write("references/nested.md", "Read `references/shared.md`.\n");
+    for (const skill of DELIVERY_SKILLS) write(`skills/${skill}/SKILL.md`, base);
+    fixture("recursive union, shared once and cycles", () => {
+      const budget = measureReadBudget(scratch);
+      require(budget.files.length === 6, "union must have exactly six files");
+      const sum = budget.files.reduce((value, entry) => value + fs.statSync(path.join(scratch, entry.path)).size, 0);
+      require(sum === budget.bytes && budget.approximate_tokens === sum / 4, "byte/token accounting differs");
+      require(budget.within_ceiling, "small corpus must pass");
+    });
+    write("references/large.md", "x".repeat(READ_BUDGET_MAX_BYTES));
+    for (const [label, text] of [
+      ["mandatory", base.replace("Read when:", "3. `references/large.md`\n\nRead when:")],
+      ["conditional", base + "- `references/large.md` — even if never true.\n"],
+      ["inline", base + "\nBefore proceeding, read\n[large](../../references/large.md).\n"],
+      ["plain-path", base + "\nFollow references/large.md.\n"],
+      ["inline-tier", base + "\nRead when: `references/large.md` — condition.\n"],
+    ]) fixture(`${label} addition is red with composition`, () => {
+      write("skills/mono-ship/SKILL.md", text);
+      const result = spawnSync(process.execPath, [path.join(root, "scripts/read-budget.mjs"), "--root", scratch, "--json"], { encoding: "utf8" });
+      require(result.status === 1, `expected red, got ${result.status}: ${result.stderr}`);
+      const budget = JSON.parse(result.stdout);
+      require(!budget.within_ceiling && budget.files.some((entry) => entry.path === "references/large.md"), "red output omitted composition");
+      write("skills/mono-ship/SKILL.md", base);
+    });
+    fixture("nested conditional addition is red", () => {
+      write("references/nested.md", "Read when:\n- `references/large.md` — conditional.\n");
+      require(!measureReadBudget(scratch).within_ceiling, "nested condition omitted");
+      write("references/nested.md", "Read `references/shared.md`.\n");
+    });
+    fixture("relative aliases count a shared file once", () => {
+      write("references/nested.md", "Read `references/./shared.md`.\n");
+      require(measureReadBudget(scratch).files.length === 6, "alias counted twice");
+      write("references/nested.md", "Read `references/shared.md`.\n");
+    });
+    fixture("bare filename in a reading list is counted", () => {
+      write("skills/mono-ship/large.md", "x".repeat(READ_BUDGET_MAX_BYTES));
+      write("skills/mono-ship/SKILL.md", base + "- `large.md` — conditional.\n");
+      require(!measureReadBudget(scratch).within_ceiling, "bare list entry omitted");
+      write("skills/mono-ship/SKILL.md", base);
+    });
+    fixture("missing reading input fails closed", () => {
+      write("references/nested.md", "Read `references/missing.md`.\n");
+      let error;
+      try { measureReadBudget(scratch); } catch (caught) { error = caught; }
+      require(error?.message.includes("missing reading input"), "missing input silently omitted");
+      write("references/nested.md", "Read `references/shared.md`.\n");
+    });
+    fixture("role links, relative paths and code examples", () => {
+      const paths = readingPaths("Resolve [role:autoreview](model-policy.md#roles).\n\n```md\nRead `references/example.md`.\n```\n");
+      require(paths.join() === "model-policy.md", "role or fenced-example parsing differs");
+    });
+    fixture("installed layout without repository dependency", () => {
+      const sourceBudget = measureReadBudget(scratch);
+      for (const skill of DELIVERY_SKILLS) {
+        write(`${skill}/SKILL.md`, base);
+        write(`${skill}/AGENTS.md`, "# fixture\n");
+        write(`${skill}/references/shared.md`, "Read `references/nested.md`.\n");
+        write(`${skill}/references/nested.md`, "Read `references/shared.md`.\n");
+      }
+      fs.renameSync(path.join(scratch, "skills"), path.join(scratch, "source-skills"));
+      write(".mono-agent-workflow/scripts/read-budget.mjs", read("scripts/read-budget.mjs"));
+      const result = spawnSync(process.execPath, [path.join(scratch, ".mono-agent-workflow/scripts/read-budget.mjs"), "--json"], { cwd: os.tmpdir(), encoding: "utf8" });
+      require(result.status === 0, result.stderr);
+      require(JSON.parse(result.stdout).bytes === sourceBudget.bytes, "installed union differs");
+    });
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+}
+
+if (process.argv.includes("--read-budget-fixtures")) {
+  validateReadBudgetFixtures();
+  if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
+  process.exit(0);
 }
 
 function artifactContractPinError(pin) {
@@ -967,6 +1072,11 @@ function validateLocalInstallBehavior() {
 
     runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
 
+    const installedReadBudget = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "read-budget.mjs");
+    const installedBudget = JSON.parse(runNode([installedReadBudget, "--json"]));
+    if (!installedBudget.within_ceiling) fail("Installed delivery corpus exceeds the byte ceiling");
+    console.log(`PASS installed read-budget: ${installedBudget.bytes} bytes, ${installedBudget.files.length} files`);
+
     const lockPath = path.join(skillsRoot, ".mono-agent-workflow.lock.json");
     const installedIdentity = JSON.parse(fs.readFileSync(lockPath, "utf8"));
     const expectedCommit = execFileSync("git", ["rev-parse", "HEAD"], {
@@ -1385,7 +1495,7 @@ function validatePackIdentityAndQuiescenceBehavior() {
       // dispatch pin are deliberately different numbers, and only the dispatch
       // pin belongs in a report or a registry entry. The placeholder is
       // unquoted because the emitted value must be an integer, never a string.
-      const reportTemplate = read("templates/orchestrator-report.md");
+      const reportTemplate = read("templates/orchestrator-report.md") + read("references/worker-contract.md");
       if (/"surfaceRevision":\s*\d/.test(reportTemplate)) {
         fail(
           `orchestrator report template must not pin a concrete surfaceRevision (code constant is ${surfaceRevisionMatch[1]}); its examples repeat the dispatch pin`
@@ -6868,7 +6978,7 @@ function validateModelPolicyFixtures() {
 
 const STRING_PINS = [
   ["skills/mono-ship/SKILL.md","templates/ship-status-ux.md"],
-  ["templates/ship-status-ux.md","Статус ревью:"],
+  ["templates/ship-output.md","Статус ревью:"],
   ["templates/ship-status-ux.md","Review timeline:"],
   ["references/orchestration.md","orchestration.workerAudience"],
   ["skills/mono-deploy/SKILL.md","Project update:"],
@@ -6902,17 +7012,17 @@ const STRING_PINS = [
   ["templates/orchestrator-brief.md","Рекомендация:"],
   ["templates/orchestrator-brief.md","Решил сам:"],
   ["templates/orchestrator-brief.md","Нужно от тебя:"],
-  ["templates/orchestrator-report.md","\"issue\""],
-  ["templates/orchestrator-report.md","\"stage\""],
-  ["templates/orchestrator-report.md","\"status\""],
-  ["templates/orchestrator-report.md","\"verification_items\""],
-  ["templates/orchestrator-report.md","\"question\""],
-  ["templates/orchestrator-report.md","\"recommendation\""],
-  ["templates/orchestrator-report.md","\"linear_mutations_pending\""],
-  ["templates/orchestrator-report.md","\"notes\""],
-  ["templates/orchestrator-report.md","needs-decision"],
-  ["templates/orchestrator-report.md","needs-human"],
-  ["templates/orchestrator-report.md","drift-candidate"],
+  ["references/worker-contract.md","\"issue\""],
+  ["references/worker-contract.md","\"stage\""],
+  ["references/worker-contract.md","\"status\""],
+  ["references/worker-contract.md","\"verification_items\""],
+  ["references/worker-contract.md","\"question\""],
+  ["references/worker-contract.md","\"recommendation\""],
+  ["references/worker-contract.md","\"linear_mutations_pending\""],
+  ["references/worker-contract.md","\"notes\""],
+  ["references/worker-contract.md","needs-decision"],
+  ["references/worker-contract.md","needs-human"],
+  ["references/worker-contract.md","drift-candidate"],
   ["templates/orchestrator-report.md","workers.json"],
   ["skills/mono-handoff/SKILL.md","references/repair-machine.md"],
   ["skills/mono-handoff/SKILL.md","mono-review artifact"],
@@ -6979,7 +7089,7 @@ const STRING_PINS = [
   ["references/issue-only-lane.md","ownerPrincipal"],
   ["references/issue-only-lane.md",".mono-agent-workflow/scripts/resolve-issue-context.mjs"],
   ["skills/mono-implement/SKILL.md","lifecycle_state_entity=issue"],
-  ["skills/mono-implement/SKILL.md","approval_status=approved-fresh"],
+  ["references/worker-contract.md","approval_status=approved-fresh"],
   ["references/issue-only-lane.md","Approval: superseded"],
   ["templates/orchestrator-dispatch.md","PRD:"],
   ["templates/orchestrator-dispatch.md","Tech Spec:"],
@@ -7078,16 +7188,14 @@ const STRING_PINS = [
   ["references/install.md","test-account"],
   ["references/install.md","owner-session"],
   ["templates/deploy-output.md","Live QA:"],
-  ["templates/orchestrator-report.md","pass | deferred | not-run"],
-  ["skills/mono-implement/SKILL.md","pass | deferred | not-run"],
-  ["skills/mono-preflight/SKILL.md","pass | deferred | not-run"],
+  ["references/worker-contract.md","pass | deferred | not-run"],
   ["templates/orchestrator-dispatch.md","references/orchestration.md"],
-  ["skills/mono-implement/SKILL.md","references/orchestration.md"],
-  ["references/orchestration.md","node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity"],
-  ["references/orchestration.md","--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'"],
-  ["references/orchestration.md","--pack-version '<dispatch packVersion>'"],
-  ["references/orchestration.md","--source-commit '<dispatch sourceCommit>'"],
-  ["references/orchestration.md","--surface-revision '<dispatch surfaceRevision>'"],
+  ["skills/mono-implement/SKILL.md","references/worker-contract.md"],
+  ["references/worker-contract.md","node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity"],
+  ["references/worker-contract.md","--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'"],
+  ["references/worker-contract.md","--pack-version '<dispatch packVersion>'"],
+  ["references/worker-contract.md","--source-commit '<dispatch sourceCommit>'"],
+  ["references/worker-contract.md","--surface-revision '<dispatch surfaceRevision>'"],
   ["templates/orchestrator-dispatch.md","node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity"],
   ["templates/orchestrator-dispatch.md","--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'"],
   ["templates/orchestrator-dispatch.md","--pack-version '<packVersion above>'"],
@@ -7166,7 +7274,7 @@ const STRING_PINS = [
   ["skills/mono-check/SKILL.md","`repair`"],
   ["references/orchestration.md","`protocol.json`"],
   ["skills/mono-implement/SKILL.md","`lifecycle_state_entity=issue`"],
-  ["skills/mono-implement/SKILL.md","`approval_status=approved-fresh`"],
+  ["references/worker-contract.md","`approval_status=approved-fresh`"],
   ["templates/orchestrator-dispatch.md","PRD: <full text, the sections relevant to this Issue, or `n/a (issue-only)`>"],
   ["templates/orchestrator-dispatch.md","Tech Spec: <full text, the contracts relevant to this Issue, or `n/a (issue-only)`>"],
   ["templates/orchestrator-dispatch.md","Issue-only marker: <current marker comment verbatim, or `n/a (project-first)`>"],
@@ -7374,7 +7482,7 @@ const REQUIRED_HEADINGS = [
   ["skills/mono-orchestrate/SKILL.md","Local compaction wiring"],
   ["references/lifecycle.md","Deploy"],
   ["references/install.md","Project Policy"],
-  ["templates/orchestrator-report.md","Worker Report"],
+  ["references/worker-contract.md","Worker Report"],
   ["templates/orchestrator-dispatch.md","Worker Dispatch Prompt"],
   ["references/ship-feedback-loop.md","Review Bot Configuration Check"],
   ["references/ship-feedback-loop.md","Finding Dedup"],
@@ -7671,6 +7779,7 @@ const MACHINE_TOKENS = new Set([
   "references/issue-only-lane.md",
   "references/lifecycle.md",
   "references/orchestration.md",
+  "references/worker-contract.md",
   "references/questioning.md",
   "references/readiness-gates.md",
   "references/repair-machine.md",
@@ -7912,7 +8021,7 @@ function validateDocumentBoundaries() {
   for (const file of ["skills/mono-preflight/SKILL.md", "README.md", "CHANGELOG.md", "examples/zeni-dogfood.md"]) if (read(file).includes("`tiny` ->")) fail(`${file}: duplicate canonical autoreview route`);
   const dispatch = read("templates/orchestrator-dispatch.md");
   if (dispatch.includes("pass | deferred | not-run")) fail("dispatch duplicates the report's verification status dictionary");
-  const report = read("templates/orchestrator-report.md");
+  const report = read("templates/orchestrator-report.md") + read("references/worker-contract.md");
   const records = fencedBlocks(report).filter((block) => block.trim().startsWith("{"));
   if (!records.length) fail("report must keep its JSON machine shapes");
   // surfaceRevision is numeric in both report and registry examples, not a
@@ -7999,7 +8108,7 @@ function validateAe6Fixtures() {
       "Promotion mode: forbidden", "Promotion mode: forbidden\nPromotion mode: forbidden")), "Promotion mode: missing or duplicate field");
     negative("forbidden template heading", () => change("templates/project.md", (text) => text.replace(
       "# Что\n", "# Lifecycle\n\n# Что\n")), "forbidden workflow heading Lifecycle");
-    negative("report field removed", () => change("templates/orchestrator-report.md", (text) => text.replace(
+    negative("report field removed", () => change("references/worker-contract.md", (text) => text.replace(
       '  "question": "<question text, or null>",\n', "")), "missing mandatory machine field");
     negative("repair mode declaration removed with prose intact", () => change("skills/mono-check/SKILL.md", (text) => text.replace(
       "- `repair`\n", "")), "Modes: missing or duplicate repair declaration");
@@ -8050,7 +8159,7 @@ function validateMachineShapes() {
     required.forEach(requireMachineToken);
     if (!record || required.some((field) => !Object.hasOwn(record, field))) fail(`${label}: missing mandatory machine field`);
   }
-  const report = example("templates/orchestrator-report.md", (value) => value.issue === "<ISSUE-KEY>");
+  const report = example("references/worker-contract.md", (value) => value.issue === "<ISSUE-KEY>" && Object.hasOwn(value, "stage"));
   fields(report, ["issue", "stage", "status", "packVersion", "sourceCommit", "surfaceRevision", "branch", "changed_files", "tests", "verification_items", "question", "recommendation", "linear_mutations_pending", "certificate", "notes", "next"], "worker report");
   if (report) {
     fields(report.tests, ["run", "result"], "report tests");
@@ -8070,6 +8179,7 @@ function validateMachineShapes() {
   if (consumption && (!Number.isInteger(consumption.attempt) || consumption.outcome !== "applied | rejected | blocked")) fail("consumption record: attempt or outcome dictionary changed");
 }
 
+if (!process.argv.includes("--ae6-fixtures") && !process.argv.includes("--document-skeleton-only") && !process.argv.includes("--model-policy-only") && !process.argv.includes("--model-policy-fixtures")) { validateReadBudget(); validateReadBudgetFixtures(); }
 failures.push(...checkModelPolicy(root));
 if (!process.argv.includes("--ae6-fixtures") && !process.argv.includes("--document-skeleton-only") && !process.argv.includes("--model-policy-only") && failures.length === 0) validateModelPolicyFixtures();
 if (process.argv.includes("--model-policy-only") || process.argv.includes("--model-policy-fixtures")) {

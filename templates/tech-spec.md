@@ -40,19 +40,4 @@ Default sections:
 
 Rules:
 
-- Tech Spec defines HOW for the approved PRD. It must not redefine WHAT.
-- Use PRD requirement IDs when available. Important design choices should say which `R` or `AE` IDs they support, or explicitly mark themselves as cross-cutting technical support. On the first mention of an ID per section, add the Russian slug in parentheses: `R2 (частичное сохранение)` — the bare ID remains the canonical machine key; the slug aids human review.
-- Use stable implementation unit IDs (`U1`, `U2`, ...). Do not renumber existing unit IDs after splits or reordering.
-- Each implementation unit should include goal, requirements covered, dependencies, files or surfaces, approach, test scenarios, and verification.
-- The `Влияние на остальную систему` section should cover affected interfaces, error propagation, state lifecycle risks, and unchanged invariants when relevant.
-- Capture architecture, contracts, boundaries, validation, rollout, rollback, and failure modes.
-- `Реальные ответы бэкенда` is required when the feature integrates with an existing API or backend: sampled real responses from the deployed instance covering enum value domains, object shapes, and edge records, plus the sampling date and deployed SHA/version. An endpoint list alone does not verify the contract. If the deployed instance was unreachable, say so and reference the contract-verification spike Issue that goes first in the wave. Omit the subsection only when the feature integrates with no existing API or backend at all, and record the one-line omission reason in the subsection's place; when unsure, sample.
-- For deep or risky work, identify the stable interface or seam that callers and tests should exercise. Avoid shallow pass-through modules and hypothetical seams with only one real adapter.
-- Keep plan-time and implementation-time unknowns separate. If something depends on touching real code or seeing test failures, mark it as deferred implementation detail instead of pretending it is settled.
-- Directional pseudo-code or diagrams are allowed when they clarify shape. Do not include copy-paste implementation code or shell choreography.
-- Avoid transcript summaries and historical repair language.
-- Keep concrete enough for a zero-context implementation agent.
-- Keep workflow mechanics internal. Do not add visible sections such as
-  `Skill contracts`, `mono-check design`, lifecycle status, readiness checks,
-  or instructions about when to create Issues/PRs.
-- Before finalizing, ask: does every HOW decision trace back to the PRD, and did we introduce any product behavior that belongs in PRD instead?
+Apply `references/contracts/tech-spec.md`; preserve native literals. Trace HOW to R/AE or cross-cutting support; first ID per section adds Russian slug, bare key unchanged. Preserve U IDs after splits/reordering. Units: goal/coverage/dependencies/surfaces/approach/tests/verification. No-API/backend subsection omission requires reason; when unsure sample. Cover affected interfaces/errors/state risks/unchanged invariants. Code/test-dependent unknowns stay deferred. Directional diagrams/pseudocode only, no copy-paste code/shell choreography. Check HOW trace and no invented WHAT.
