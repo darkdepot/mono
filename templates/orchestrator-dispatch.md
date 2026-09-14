@@ -1,10 +1,11 @@
 # Worker Dispatch Prompt
 
-Template for spawning one worker session per Issue from `mono-orchestrate`.
-Fill every placeholder. The worker must be able to start immediately with no
-Linear access: the snapshot below is its whole world for the whole stage,
-whether or not Linear MCP is reachable. Reachability never re-opens direct
-Linear access — see Mode precedence in the AFK Contract below.
+Generator instructions: fill every placeholder and emit one Issue/stage dispatch.
+Use Generated dispatch as audience adapter in `references/orchestration.md`:
+select configured `orchestration.workerAudience` (default `gpt-worker`), preserve
+its redundancy matrix and reading floor. Repeat rules only where that profile
+requires them; never soften/replace them. Both audiences get exact facts,
+protected paths/hashes, verification lines and the resolved identity command.
 
 ## Assignment
 
@@ -19,57 +20,38 @@ Linear access — see Mode precedence in the AFK Contract below.
 
 ## Goal Contract
 
-- Outcome: <one sentence — the durable end-state that must be true when this
-  stage is done>
-- Verification surface: <every «Как проверить» line of the Issue, one per
-  line, lifted verbatim from that section and kept in its order; lines with
-  a command shape are each runnable as written. A line with no command shape
-  is carried verbatim too and is verified as a judgment check — the worker
-  records that mode in the `evidence` of its `verification_items` entry,
-  never as a status value. This list is the report's `verification_items`
-  1:1; item semantics and the status enum have a single home in
-  `templates/orchestrator-report.md` and are not restated here>
-- Constraints: <what must not change or break — pinned contracts, protected
-  files, statuses, and gates this stage must leave intact>
-- Blocked protocol: when stuck, write a mailbox report with status
-  `needs-decision`, include your own recommendation, and stop. You never
-  judge your own "done": a failing or skipped verification item is reported,
-  not waved through.
-- Stage budget: <stage time guidance from the Monitoring Protocol —
-  guidance, not a gate>
+- Outcome: <durable end state>
+- Verification surface: <every Issue «Как проверить» line verbatim, in order;
+  runnable commands or judgment checks; maps 1:1 to `verification_items` under
+  `references/worker-contract.md`>
+- Constraints: <exact protected surfaces/hashes, contracts, statuses, gates>
+- Blocked protocol: follow the stage and worker contract; report failed/skipped
+  verification, never wave it through.
+- Stage budget: <monitoring guidance, not a gate>
 
 ## Engine
 
 - Transport: <codex-cli | claude-code-desktop | fallback>
-- Your worktree is pre-created by the orchestrator; work only inside it.
-- Stage skill body: read `~/.codex/skills/<stage-skill>/SKILL.md` fully before
-  starting and follow it exactly; its `references/` and `templates/` live
-  beside it. (For claude-code-desktop or fallback workers: invoke the
-  installed `<stage-skill>` skill instead.)
-- Project config: `.agents/mono-workflow.config.json` at the repo root.
-- Pack identity gate — run exactly this command before starting the stage and
-  again after every resume, and require exit 0 with
-  `pack-state: identity verified`:
+- Stage skill body: <absolute installed stage SKILL.md path; read fully before
+  work for codex-cli; invoke installed skill for other transports>
+- Project config: `.agents/mono-workflow.config.json`
+- Pack identity gate: <fully resolved `verify-pack-state.mjs identity` command
+  from Pack identity gate invocation in `references/worker-contract.md`, all
+  four flags, absolute installed paths and dispatch pins; single-quote values,
+  escape embedded quotes as `'\''`; require exit 0 and
+  `pack-state: identity verified`. Do not substitute checkout SURFACE_REVISION>
+- Sandbox: <exact stage grants from worker contract, including mailbox root>
+- Report delivery: <absolute mailbox path and worktree fallback>
 
-  ```bash
-  node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \
-    --lock '<installed-skills-root>/.mono-agent-workflow.lock.json' \
-    --pack-version '<packVersion above>' \
-    --source-commit '<sourceCommit above>' \
-    --surface-revision '<surfaceRevision above>'
-  ```
+The codex-cli installed root is `~/.codex/skills/`. Emit this command with every placeholder resolved; it is invocation data, not a second gate definition:
 
-  Emit it fully resolved — absolute paths and the three pins substituted —
-  and keep the single quotes shown above, escaping any embedded single quote
-  as `'\''`, so it runs as written from the worktree with no guessing. Any
-  `packVersion`, `sourceCommit`, or `surfaceRevision` mismatch, or any
-  non-zero exit, is a hard `blocked` exit; do not continue on the locally
-  installed pack. Path base, flags, lockfile, and quoting rules live in the
-  Pack identity gate invocation section of `references/orchestration.md`.
-- Report delivery: write to the mailbox path below. If the sandbox denies
-  that write, write the same JSON to
-  `<worktree>/.orchestrator/<ISSUE-KEY>-<stage>.json` instead; never commit
-  `.orchestrator/`.
+```bash
+node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \
+  --lock '<installed-skills-root>/.mono-agent-workflow.lock.json' \
+  --pack-version '<packVersion above>' \
+  --source-commit '<sourceCommit above>' \
+  --surface-revision '<surfaceRevision above>'
+```
 
 ## Context Snapshot
 
@@ -88,85 +70,37 @@ Linear access — see Mode precedence in the AFK Contract below.
 
 ## Gate Phase
 
-Fill this section when this dispatch carries a lifecycle move — a project's
-first `mono-implement` dispatch, or an issue-only activation. Otherwise emit
-exactly `- Gate phase: not applicable — this dispatch carries no lifecycle
-move.` and drop the rest of the section. The protocol has one home, the
-Two-Phase Dispatch Handshake section of `references/orchestration.md`; this
-block only resolves it for this Issue.
+For a dispatch with no lifecycle move emit only:
+`- Gate phase: not applicable — this dispatch carries no lifecycle move.`
+Otherwise resolve these facts; execute Two-Phase Dispatch Handshake in the
+worker contract without redefining it:
 
-- Lifecycle moves this dispatch carries, all still unapplied: <e.g. `Project
-  «<name>» → Delivery`, or `Issue <ISSUE-KEY> → <configured started state>`.
-  The Context Snapshot above is deliberately the pre-move state; that is
-  correct, not stale, and it is never a finding>
-- Gates to pass before you stop: <one per line — for `mono-implement`, steps
-  1-4 of its orchestration branch: pack identity gate, snapshot package
-  context, approval plus `mono-review handoff` findings, and the 5-field
-  context seam; on the issue-only lane the delivery check joins them>
-- Write the gate-ack to
-  `~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-gate-ack-a<N>.json`
-  in the shape `references/orchestration.md` fixes — `issue`, `phase`,
-  `gates[]`, `status` of `gates-passed` or `blocked`. Write it on gate
-  completion, on any gate blocker, and before stopping for any other reason.
-  It is not a stage report: the Worker Report shape and gate-ack shape stay
-  unchanged, while the Worker Registry in `templates/orchestrator-report.md`
-  gains the optional attempt-scoped `gates` field. If the sandbox denies that
-  write, write the same JSON to
-  `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack-a<N>.json`, the same fallback
-  the report uses.
-- Then stop and wait to be resumed: do not apply or queue the lifecycle move,
-  write code, or write a stage report — unless your ack is `blocked`, which is
-  the one case that does require the stage report named below, written after
-  the ack and before you stop. The post-move delivery check
-  waits for the resume too — except on the issue-only lane, where the delivery
-  check is one of the gates above and runs before you ack.
-  <codex-cli: end the turn and let the process exit. claude-code-desktop or
-  fallback: end the turn and leave the session open.>
-- On `status: blocked`, also write the ordinary stage report at the Mailbox
-  path below, carrying the stage's own exit status for what you hit —
-  `blocked` for a missing snapshot input, `needs-human` for a real adverse
-  gate verdict — then stop; no lifecycle move is applied.
-- Your resume signal names every applied move with its read-back. Treat it as
-  an amendment of the Context Snapshot above, re-run the pack identity gate
-  exactly as at start, and evaluate every post-resume check — including
-  `mono-check delivery` — against that amended post-move state. A resume whose
-  amendment does not show this dispatch's move applied is a `blocked` report,
-  never a reason to continue.
+- Lifecycle moves: <every move, still unapplied; snapshot deliberately pre-move>
+- Gates: <exact gate names from implement steps 1–4; issue-only adds delivery>
+- Gate-ack: <absolute reports/<ISSUE-KEY>-gate-ack-a<N>.json and fallback path>
+- Pause/resume: <transport-specific stop; resumed amendment with every applied
+  move/read-back, then identity again; blocked ack precedes terminal report>
 
 ## AFK Contract
 
-- Mode precedence: this stage runs in orchestration mode, so the Context
-  Snapshot above is your entire Linear world. Apply the
-  Orchestration Mode Precedence section of `references/orchestration.md` to
-  every stage-skill instruction that reads or writes Linear; the rule is
-  stated there, once, and is not repeated here.
-- Do not ask the user. For a mid-stage question that blocks progress: write a
-  mailbox report with status `needs-decision`, include your own
-  recommendation, and stop. Report stage-terminal exits (including
-  `needs-human` and `drift-candidate`) with the stage's own status verbatim.
-- One Issue only; no sub-workers; do not manage other sessions; do not touch
-  files owned by other Issues; do not touch orchestrator state (`ledger.md`,
-  `workers.json`, `control.json`, `dispatch/`, or `consumed/`).
-- Never write to Linear yourself, even when Linear is available. Produce
-  every stage-required Linear mutation (comments, status moves, certificates)
-  in its required shape, but deliver it through `linear_mutations_pending` in
-  your report; the orchestrator applies it. A certificate travels in the
-  report's `certificate` field, and the queued comment references it with
-  `append #/certificate` rather than carrying a second copy — see
-  `templates/orchestrator-report.md`.
-- Follow the stage skill exactly, including its exit statuses and gates.
+Apply `references/worker-contract.md`: snapshot-only Linear access, single
+writer, one Issue, no sub-workers/session management, no user questions,
+report-before-stop, unchanged gates/statuses and stage-owned branch. Generate
+profile-required redundancy from that source verbatim; do not invent a second
+AFK contract. Every pending Linear comment/status/certificate uses the required
+report shape; certificate text occurs once with `append #/certificate` in its
+queued comment.
 
 ## Mailbox
 
-- Write the exit report to
-  `~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-<stage>.json`
-  following `templates/orchestrator-report.md`.
-- Write the report on stage completion, on any blocker, and before stopping
-  for any other reason.
+- Exit report: <absolute orchestrator reports/<ISSUE-KEY>-<stage>.json>
+- Fallback on denied write: <absolute worktree/.orchestrator/<ISSUE-KEY>-<stage>.json>
+- Shape: Worker Report in `references/worker-contract.md`.
+- Write on completion/blocker/other stop, except a passed gate-pause ack.
+- Never commit `.orchestrator/` or touch orchestrator-owned state.
 
 ## Authorization
 
-- Allowed: <stage-appropriate scope, e.g. local code changes and verification;
-  push and PR creation only for the ship stage>
-- Not allowed: any direct Linear writes, merge, deploy, Issue closeout — the
-  orchestrator owns those.
+- Allowed: <exact stage-appropriate scope; push/PR only for ship>
+- Not allowed: direct Linear writes, merge/deploy/Issue closeout, other Issues
+  or orchestrator state. Stage rules win on rules; dispatch wins on facts.
