@@ -1,0 +1,1 @@
+Temporary GitHub contract observation for MONO-75. Close without merging.
