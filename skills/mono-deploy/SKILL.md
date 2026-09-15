@@ -56,11 +56,10 @@ Record approval as `Деплой одобрен: <кем/когда>; PR #<n>, h
 8. `post-ship`: run/report `mono-check post-ship` after evidence exists.
 9. `mono-closeout`: set Issue Done only after verified deploy (or recorded policy accepting merge as delivery), plus green live QA for user-facing changes or explicit permitted not-run reason. Failed live QA is never excused as skipped.
 10. `project-update`: execute the update procedure below.
-11. `owner-layer publish`: execute the publication procedure below.
-12. `cost`: run installed `../.mono-agent-workflow/scripts/wave-cost.mjs <ISSUE-KEY>` from this skill directory after closeout evidence. Copy exact final Russian line into closeout/report `Cost:`. Unmeasurable script/component = `unavailable: <reason>`; telemetry never blocks/delays closeout.
-13. `learn`: record new durable operational discoveries via `gstack-learnings-log`.
-14. `retire`: after verified delivery and Linear closeout, synchronously remove Issue from `workers.json` in this orchestrator session before terminal closeout. No worker ack/intermediate status; keep reports/logs. Never retire blocked/needs-human/failed/timed-out work or leave a deployed worker active.
-15. Return `templates/deploy-output.md`.
+11. `cost`: run installed `../.mono-agent-workflow/scripts/wave-cost.mjs <ISSUE-KEY>` from this skill directory after closeout evidence. Copy exact final Russian line into closeout/report `Cost:`. Unmeasurable script/component = `unavailable: <reason>`; telemetry never blocks/delays closeout.
+12. `learn`: record new durable operational discoveries via `gstack-learnings-log`.
+13. `retire`: after verified delivery and Linear closeout, synchronously remove Issue from `workers.json` in this orchestrator session before terminal closeout. No worker ack/intermediate status; keep reports/logs. Never retire blocked/needs-human/failed/timed-out work or leave a deployed worker active.
+14. Return `templates/deploy-output.md`.
 
 Project-update procedure:
 
@@ -71,16 +70,6 @@ Project-update procedure:
 - If complete and not already Completed, write/read back Completed. Use final update form only when this closeout performed and confirmed that transition. Already-Completed/unconfirmed writes use ordinary form, no redundant status write. If replay confirms completion after update already exists, publish no second update; report completion through closeout/owner status.
 - Compose `templates/project-update.md` «Выкладка» (never orchestrator «Состояние») in the same pass as «Выкатили: …» lead, naming one result; use final prefix only under confirmed-transition condition. This is the single update form for all writers, with its stricter stop dictionary.
 - Publish `On track`, read back, record Project update/Project lines in Issue closeout and deploy report. Refused/unconfirmed publication = `not posted — <reason>`; refused/unconfirmed transition = `stays <status> — status write unconfirmed`. Record each failure or theme n/a in ledger under orchestration and next owner status in product language. Never change deploy verdict/block closeout; no update/status move for a non-deploy hand-closed tail.
-
-Owner-layer publication procedure:
-
-- Read merged PR diff. No `docs/ru/` change → `Owner layer: n/a — deploy did not change docs/ru`, no document reads/writes. Otherwise handle every changed document.
-- Recover base hash from shipped Issue's Linear «Снимок контекста», or first-publication untouched stub hashes from connector-spike Project comment. Local `owner-layer/<file>.snapshot.json` is cache only. Hash must derive from actual fresh `get_document` content under normalization below, never sent/intended payload. No Linear snapshot → `not published — no snapshot`; never guess.
-- Read `get_document(<id>)`, retaining updatedAt/updatedBy with normalized SHA-256. Normalization: LF; strip trailing whitespace; remove every `Версия пака:` line; canonicalize each line's first non-whitespace unordered marker (`- `, `* `, `+ `) to `- `, preserving indentation; trim boundary blank lines; one final LF. Apply to all lines, including fences. Owner docs must contain no fenced code block until actual connector marker rewriting inside it is measured.
-- Hash different from base → no write, preserve owner text, `not published — concurrent owner edit`.
-- Equal hash → immediately `save_document(<id>, <content>)` with merged copy and `Версия пака: <merged SHA>`. No other document/retry/Linear call between comparison and write; if anything intervened, repeat read/compare. Record read's updatedAt/updatedBy. Do not claim detection of edits inside that read/write round-trip: connector lacks conditional version/hash writes; read-back cannot detect overwritten concurrent content.
-- Always re-read `get_document`; update response is not confirmation. Normalize read-back and sent content by the same rule and compare hashes. Equal → `published @ <merged SHA>`; mismatch/read failure → `not published — write not confirmed by read-back`; other connector failure → `not published — <reason>`.
-- Record one `<file>: <outcome>` per changed document, joined `; ` in path order in `Owner layer:` across closeout/report and product-language next status. Use n/a only for no-doc-change case. Every outcome is verdict-neutral: never block closeout/readiness or retry around refusal; never overwrite owner edits. Those enter ordinary reconciliation at next orchestrator start.
 
 Deploy workflow config:
 
@@ -105,7 +94,7 @@ Consult before recording; write only new durable deploy/queue/branch-cleanup/rev
 
 Deploy closeout shape:
 
-When recording this closeout as a Linear comment, open with the Russian human lead above the machine block. The first Russian sentence must state the shipped product outcome and verification environment. Post the comment once, after `project-update` and `owner-layer publish` have produced their lines, so it is written complete instead of patched afterwards:
+When recording this closeout as a Linear comment, open with the Russian human lead above the machine block. The first Russian sentence must state the shipped product outcome and verification environment. Post the comment once, after `project-update` and `cost` have produced their lines, so it is written complete instead of patched afterwards:
 
 ```text
 Выкатили: <что получили пользователи>; проверено на <среда>.
@@ -125,7 +114,6 @@ Post-ship check: <PASS/FAIL/BLOCKED + meaning>
 Linear closeout: <Done/not done + reason>
 Project update: <posted <url> | already posted <url> | not posted — <reason> | n/a — <reason>>
 Project: <Completed | stays <status>, open <N> | stays <status> — <reason> | n/a — <reason>>
-Owner layer: <n/a — <reason> | <file>: <published @ <sha> | not published — <reason>>[; <file>: …]>
 Cost: <exact Russian line from wave-cost.mjs | unavailable: <reason>>
 Learnings recorded: <none/list>
 Learnings consulted: <none/keys/helper unavailable>
@@ -144,6 +132,6 @@ Verdicts:
 
 For `tiny` work, follow the Tiny Output Profile in references/readiness-gates.md.
 
-Keep Linear comments in configured language, Russian by default. Include full checked/not-checked boundaries; deploy success never implies unrun browser/mobile/prod checks. Updates, owner publication and cost stay verdict-neutral. Do not report complete closeout before registry retirement.
+Keep Linear comments in configured language, Russian by default. Include full checked/not-checked boundaries; deploy success never implies unrun browser/mobile/prod checks. Updates and cost stay verdict-neutral. Do not report complete closeout before registry retirement.
 
-Final response includes verdict, PR/reviewed head/merged SHA, workflow/target, verification/live QA or skip, Linear closeout, Project update/completion, per-document owner publication or reasons, exact cost line/unavailable reason, learnings and boundary.
+Final response includes verdict, PR/reviewed head/merged SHA, workflow/target, verification/live QA or skip, Linear closeout, Project update/completion, exact cost line/unavailable reason, learnings and boundary.

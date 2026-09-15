@@ -117,7 +117,6 @@ never has to ask for a human version.
 
 Где мы к цели «<цель волны>»: готово — <части, простыми словами>; осталось — <части и их состояние>.
 
-Конституция и карта: синхронизированы | <N> правок ждут.
 Модель оркестратора: по политике | не по политике | не удалось проверить.
 
 В работе сейчас:
@@ -179,12 +178,6 @@ Rules that bind every status:
 - «Модель оркестратора:» uses the three-outcome self-check in
   `references/model-policy.md`; missing authoritative environment data means
   «не удалось проверить». Do not infer a match from the prompt.
-- «Конституция и карта:» is one line: «синхронизированы» when both owner-layer
-  documents match their installed copies, or «<N> правок ждут» with the number
-  of owner edits already filed as non-startable drafts by the reconciliation
-  step of `skills/mono-orchestrate/SKILL.md`. A document that could not be
-  compared, or an edit that could not be filed, is named in that same line: a
-  pending owner edit is never dropped silently.
 - «Можешь потрогать:» appears only when there is something to touch — the
   same condition as in `skills/mono-orchestrate/SKILL.md`. With nothing
   the owner can open yet, the line is omitted, never filled with a

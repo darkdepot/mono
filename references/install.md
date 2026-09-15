@@ -45,7 +45,7 @@ For each installed skills root the command writes:
 - `<skills-root>/mono-*/references/*`
 - `<skills-root>/mono-*/templates/*`
 - `<skills-root>/.mono-agent-workflow/scripts/*` (pack-private workflow runtime scripts)
-- `<skills-root>/.mono-agent-workflow/docs/ru/*.md` (pack-private owner-layer documents)
+- `<skills-root>/.mono-agent-workflow/README.md` (complete pack description)
 - `<skills-root>/.mono-agent-workflow.lock.json`
 
 The lockfile carries the additive pack identity triplet: `packVersion` from
@@ -78,39 +78,13 @@ recorded in the lockfile
 (`runtimeScripts`), so `--check` fails when an installed runtime script is
 missing, edited, or stale.
 
-### Owner layer documents
+### Pack Description
 
-The owner layer is the Russian documentation the owner reads and edits in
-Linear: `docs/ru/karta-paka.md` maps every pack file, and the constitution
-document states the rules the owner sees and decides. Linear holds the
-authoritative copy for reading and editing; the repository holds the copy the
-validator checks; the installer publishes a third copy so an orchestrator can
-compare Linear with the installed pack without a checkout of this repository.
-
-- **Canonical path:** `<skills-root>/.mono-agent-workflow/docs/ru/<document>.md`
-- **Discovery from an installed skill:** same rule as the runtime scripts — one
-  level up from any installed `mono-*` skill directory, at
-  `../.mono-agent-workflow/docs/ru/<document>.md`.
-
-Every `docs/ru/*.md` file in the upstream checkout is published, so adding a
-document to that directory is enough to deliver it. Each document's hash is
-recorded in the lockfile under `ownerLayer`, modelled on `runtimeScripts`, so
-`--check` fails when an installed owner-layer document is missing, edited, or
-stale. The `.mono-agent-workflow/` allowlist is the union of the runtime
-scripts and the owner-layer documents and stays fail-closed: any other file
-under that directory is reported as an unexpected installed pack file.
-
-How the owner layer is edited: in Linear, never in the repository copy and
-never in the installed one. At the start of every orchestrator session, and on
-the owner's «сверь конституцию/карту», `mono-orchestrate` compares each Linear
-document with the installed copy by normalised hash and turns a difference into
-ONE non-startable draft Issue per difference, carrying the reconciliation
-snapshot (document id, base hash, diff hash). That draft goes through the
-ordinary approval path before any worker touches the pack, so an edited article
-is a request and never an approval. After the deploy that ships the change,
-`mono-deploy` re-reads the document, writes the merged copy back only when the
-owner has not edited it since the snapshot, and confirms the write by reading
-the document again — the owner's own text is never overwritten.
+The repository README describes the pack and links each owner rule to its file
+and section. Install it verbatim at `<skills-root>/.mono-agent-workflow/README.md`;
+`assets.readme` pins its hash and `--check` rejects a missing or edited copy.
+The private directory allows only the README and runtime scripts; extra files
+fail verification. Sync replaces that directory, removing retired payloads.
 
 Use an explicit single skills root only for tests or runtimes outside the
 known roots:

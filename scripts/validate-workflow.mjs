@@ -336,47 +336,7 @@ function validateRetiredAdapterReferenceAllowlist() {
   }
 }
 
-const OWNER_LAYER_MAP_PATH = "docs/ru/karta-paka.md";
-const OWNER_LAYER_MAP_FIELDS = [
-  "Назначение:",
-  "Кто читает:",
-  "Ключевые правила:",
-  "Что менять, чтобы…:",
-];
-
-// The owner-layer coverage inventory: every regular file under skills/,
-// references/ (recursively, including contracts/), and templates/, plus
-// scripts/*.mjs, AGENTS.md, and README.md. docs/, examples/, plans/,
-// CHANGELOG.md, node_modules, and hidden entries stay out, so the map covers
-// the pack surface a reader has to understand and nothing else.
-function ownerLayerInventory() {
-  const files = [];
-  const walk = (relativeDir) => {
-    for (const entry of fs.readdirSync(path.join(root, relativeDir), { withFileTypes: true })) {
-      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-      const relativePath = `${relativeDir}/${entry.name}`;
-      if (entry.isDirectory()) {
-        walk(relativePath);
-      } else if (entry.isFile()) {
-        files.push(relativePath);
-      }
-    }
-  };
-  for (const dir of ["skills", "references", "templates"]) walk(dir);
-  // Same regular-file contract as walk(): a directory or symlink named
-  // `<name>.mjs` is not a pack file and must not enter the inventory.
-  for (const entry of fs.readdirSync(path.join(root, "scripts"), { withFileTypes: true })) {
-    if (entry.name.startsWith(".") || !entry.name.endsWith(".mjs") || !entry.isFile()) continue;
-    files.push(`scripts/${entry.name}`);
-  }
-  files.push("AGENTS.md", "README.md");
-  return files.sort();
-}
-
-// The one fence walk both owner-layer parsers share: headings and field lines
-// are read only OUTSIDE fenced blocks, so a fenced example of the map or the
-// constitution format never counts as real content.
-function forEachOwnerLayerLine(text, visit) {
+function forEachMarkdownLine(text, visit) {
   let fence = null;
   for (const rawLine of text.split("\n")) {
     const fenceMatch = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(rawLine);
@@ -406,407 +366,66 @@ function forEachOwnerLayerLine(text, visit) {
   }
 }
 
-// Entry headings and field lines are read only OUTSIDE fenced blocks, so a
-// fenced example of the entry format never counts as coverage. Any other
-// heading closes the current entry, which keeps a section heading from
-// donating its fields to the entry above it.
-function parseOwnerLayerMapEntries(text) {
-  const entries = [];
-  let current = null;
-  forEachOwnerLayerLine(text, (rawLine) => {
-    const heading = /^## `([^`]+)`\s*$/.exec(rawLine);
-    if (heading) {
-      current = { path: heading[1], fields: new Set() };
-      entries.push(current);
-      return;
-    }
-    if (/^#{1,6} /.test(rawLine)) {
-      current = null;
-      return;
-    }
-    if (!current) return;
-    for (const field of OWNER_LAYER_MAP_FIELDS) {
-      if (rawLine.startsWith(field)) current.fields.add(field);
-    }
+// README validation is document structure and link addressability, never rule semantics.
+const README_SECTIONS = ["Workflow", "Gates", "Roles and Decisions", "Cost", "Install Locally", "Project Config", "Owner Rules", "Skills", "Documentation Map", "Principles", "Validation"];
+
+function markdownHeadings(text) {
+  const headings = [];
+  const slugs = new Set();
+  forEachMarkdownLine(text.replace(/<!--[\s\S]*?-->/g, ""), (line) => {
+    const match = /^(#{1,6}) +(.+?)\s*#*\s*$/.exec(line);
+    if (!match) return;
+    const title = match[2];
+    const base = title.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\- ]/gu, "").replace(/ /g, "-");
+    let slug = base, suffix = 0;
+    while (slugs.has(slug)) slug = `${base}-${++suffix}`;
+    slugs.add(slug);
+    headings.push({ level: match[1].length, title, slug });
   });
-  return entries;
+  return headings;
 }
 
-// Parser fixtures: a fenced EXAMPLE of the entry format must never count as
-// coverage, and an info-string line such as ```js inside a fence must not end
-// the block. Structural in-process probes over synthetic text — they pin the
-// parser's behaviour, not any sentence of the map.
-function validateOwnerLayerMapParser() {
-  const fencedExample = [
-    "# Example map",
-    "",
-    "Версия пака: main",
-    "",
-    "```text",
-    "## `references/inside-fence.md`",
-    "",
-    "Назначение: пример записи.",
-    "```js",
-    "## `references/after-info-string.md`",
-    "```",
-    "",
-    "## `AGENTS.md`",
-    "",
-    "Назначение: правила репозитория.",
-    "Кто читает: любой, кто меняет пак.",
-    "Ключевые правила:",
-    "",
-    "- одно правило.",
-    "",
-    "Что менять, чтобы…:",
-    "",
-    "- цель → `AGENTS.md`.",
-    "",
-  ].join("\n");
-  const parsed = parseOwnerLayerMapEntries(fencedExample);
-  const parsedPaths = parsed.map((entry) => entry.path);
-  if (JSON.stringify(parsedPaths) !== JSON.stringify(["AGENTS.md"])) {
-    fail(
-      `Owner-layer map parser must ignore fenced examples, including after an info-string line, found ${JSON.stringify(parsedPaths)}`
-    );
-  } else if (parsed[0].fields.size !== OWNER_LAYER_MAP_FIELDS.length) {
-    fail("Owner-layer map parser must collect all four fields of an entry outside a fence");
+function validateReadme() {
+  const text = read("README.md");
+  const headings = markdownHeadings(text);
+  for (const title of README_SECTIONS) {
+    requireMachineToken(title);
+    if (headings.filter((h) => h.level === 2 && h.title === title).length !== 1) {
+      fail(`README.md: missing or duplicate required section ${title}`);
+    }
   }
-
-  const tildeFence = ["~~~text", "## `references/inside-tilde-fence.md`", "~~~", ""].join("\n");
-  if (parseOwnerLayerMapEntries(tildeFence).length !== 0) {
-    fail("Owner-layer map parser must ignore entries inside a tilde fence");
-  }
-
-  const duplicated = parseOwnerLayerMapEntries(
-    ["## `AGENTS.md`", "", "Назначение: раз.", "", "## `AGENTS.md`", "", "Назначение: два.", ""].join("\n")
-  );
-  if (duplicated.length !== 2) {
-    fail("Owner-layer map parser must report a repeated heading as a second entry so the duplicate check can see it");
-  }
-}
-
-// Structural coverage only: every inventory file has an entry, every entry
-// points at a real repository file, no heading repeats, and each entry carries
-// the four fields. Nothing here pins Russian prose — the map's wording is the
-// owner's to change in Linear.
-function validateOwnerLayerMap() {
-  if (!exists(OWNER_LAYER_MAP_PATH)) {
-    fail(`Missing owner-layer map: ${OWNER_LAYER_MAP_PATH}`);
-    return;
-  }
-  const text = read(OWNER_LAYER_MAP_PATH);
-  if (!text.split("\n").slice(0, 5).some((line) => line.startsWith("Версия пака:"))) {
-    fail(`${OWNER_LAYER_MAP_PATH} must carry a pack-version line in its first five lines`);
-  }
-
+  const lines = documentSection(text.replace(/<!--[\s\S]*?-->/g, ""), "Owner Rules") || [];
   const seen = new Set();
-  for (const entry of parseOwnerLayerMapEntries(text)) {
-    if (seen.has(entry.path)) {
-      fail(`${OWNER_LAYER_MAP_PATH} has a duplicate map entry: ${entry.path}`);
-      continue;
-    }
-    seen.add(entry.path);
-    if (path.isAbsolute(entry.path) || entry.path.split("/").includes("..")) {
-      fail(`${OWNER_LAYER_MAP_PATH} has a map entry outside the repository: ${entry.path}`);
-      continue;
-    }
-    if (!exists(entry.path)) {
-      fail(`${OWNER_LAYER_MAP_PATH} maps a file that does not exist: ${entry.path}`);
-      continue;
-    }
-    // `exists` is true for a directory or a symlink too, while the inventory
-    // holds regular files only; hold both sides to the same contract.
-    if (!fs.lstatSync(path.join(root, entry.path)).isFile()) {
-      fail(`${OWNER_LAYER_MAP_PATH} maps a path that is not a regular file: ${entry.path}`);
-      continue;
-    }
-    for (const field of OWNER_LAYER_MAP_FIELDS) {
-      if (!entry.fields.has(field)) {
-        fail(`${OWNER_LAYER_MAP_PATH} entry ${entry.path} is missing the field ${field}`);
-      }
+  const targets = new Map();
+  for (const line of lines) {
+    if (!line.startsWith("- ")) continue;
+    const entry = /^- \*\*(K-\d{2})\.\*\*\s+(.+)$/.exec(line);
+    if (!entry) { fail(`README.md: malformed rule entry ${line.slice(0, 40)}`); continue; }
+    const [, id, body] = entry;
+    if (seen.has(id)) fail(`README.md: duplicate rule ${id}`);
+    seen.add(id);
+    const links = [...body.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)];
+    if (links.length === 0) fail(`README.md ${id}: missing rule link`);
+    for (const [, href] of links) {
+      try {
+        const parts = href.split("#");
+        if (parts.length !== 2) throw new Error("link needs a file and section");
+        const file = decodeURIComponent(parts[0]), anchor = decodeURIComponent(parts[1]);
+        if (!file || !anchor || path.isAbsolute(file) || file.includes("\\") || file.split("/").includes("..") || !file.endsWith(".md")) throw new Error("link must name a repository Markdown file and section");
+        const absolute = path.join(root, file);
+        if (!fs.lstatSync(absolute).isFile() || !fs.realpathSync(absolute).startsWith(fs.realpathSync(root) + path.sep)) throw new Error("target must be a regular repository file");
+        if (!targets.has(file)) targets.set(file, new Set(markdownHeadings(read(file)).map((h) => h.slug)));
+        if (!targets.get(file).has(anchor)) throw new Error("no such section");
+      } catch (error) { fail(`README.md ${id}: ${href}: ${error.message}`); }
     }
   }
-  for (const relativePath of ownerLayerInventory()) {
-    if (!seen.has(relativePath)) {
-      fail(`${OWNER_LAYER_MAP_PATH} is missing a map entry for ${relativePath}`);
-    }
+  for (let n = 1; n <= 34; n++) {
+    const id = `K-${String(n).padStart(2, "0")}`;
+    if (!seen.has(id)) fail(`README.md: missing rule ${id}`);
+    seen.delete(id);
   }
-}
-
-const OWNER_LAYER_CONSTITUTION_PATH = "docs/ru/konstituciya-paka.md";
-const OWNER_LAYER_CONSTITUTION_ANCHOR_FIELD = "Опора:";
-const OWNER_LAYER_CONSTITUTION_PROPOSAL = "Статус: предложение";
-// Every field an article may carry. The list exists to close the `Опора:` list
-// when the next field starts, so a bullet under `Где живёт:` is prose and never
-// an anchor. `Цитата:` is parsed for that boundary only and never validated.
-// The three fields every article carries, proposal or not. `Опора:` is not
-// here because the proposal marker exempts an article from it, and `Цитата:`
-// is optional by design.
-const OWNER_LAYER_CONSTITUTION_REQUIRED_FIELDS = ["Правило:", "Почему:", "Где живёт:"];
-const OWNER_LAYER_CONSTITUTION_FIELDS = [
-  "Правило:",
-  "Почему:",
-  "Где живёт:",
-  "Цитата:",
-  "Статус:",
-  OWNER_LAYER_CONSTITUTION_ANCHOR_FIELD,
-];
-
-// Articles are `## К-NN.` headings read outside fenced blocks; any other
-// heading closes the current article, so a section heading cannot donate its
-// fields to the article above it. Anchor entries are collected only while the
-// `Опора:` field is open.
-function parseOwnerLayerConstitutionArticles(text) {
-  const articles = [];
-  const malformed = [];
-  let current = null;
-  let inAnchors = false;
-  forEachOwnerLayerLine(text, (rawLine) => {
-    const heading = /^## (К-\d+)\./.exec(rawLine);
-    if (heading) {
-      current = { number: heading[1], anchors: [], fields: new Set(), proposal: false };
-      articles.push(current);
-      inAnchors = false;
-      return;
-    }
-    if (/^#{1,6} /.test(rawLine)) {
-      // A heading that means to be an article but does not match the form —
-      // a Latin `K`, a missing dot — would otherwise drop out of the walk in
-      // silence, taking its anchors with it. Collect it so the check can say so.
-      const nearMiss = /^#{1,6} +([KК][-–—][^\s]*)/.exec(rawLine);
-      if (nearMiss) malformed.push(nearMiss[1]);
-      current = null;
-      inAnchors = false;
-      return;
-    }
-    if (!current) return;
-    if (rawLine.startsWith(OWNER_LAYER_CONSTITUTION_ANCHOR_FIELD)) {
-      current.fields.add(OWNER_LAYER_CONSTITUTION_ANCHOR_FIELD);
-      inAnchors = true;
-      return;
-    }
-    if (rawLine.trim() === OWNER_LAYER_CONSTITUTION_PROPOSAL) {
-      current.proposal = true;
-      inAnchors = false;
-      return;
-    }
-    const field = OWNER_LAYER_CONSTITUTION_FIELDS.find((name) => rawLine.startsWith(name));
-    if (field) {
-      current.fields.add(field);
-      inAnchors = false;
-      return;
-    }
-    if (!inAnchors) return;
-    const anchor = /^-\s+`([^`]+)`\s+·\s+(\S.*?)\s*$/.exec(rawLine);
-    if (anchor) current.anchors.push({ path: anchor[1], target: anchor[2] });
-  });
-  return { articles, malformed };
-}
-
-// What an anchor may point at inside one pack file: the text of an H1-H4
-// heading (compared after the `#` markers), the ID of an `## <ID>` heading such
-// as a contract clause, and the numbers of the invariants listed under
-// `## Invariants`. Nothing here reads a sentence: a verbatim English phrase is
-// never validated, which is what keeps the constitution from becoming a second
-// layer of prose pins.
-const ownerLayerAnchorTargetCache = new Map();
-
-function ownerLayerAnchorTargets(relativePath) {
-  const cached = ownerLayerAnchorTargetCache.get(relativePath);
-  if (cached) return cached;
-  const headings = new Set();
-  const idHeadings = [];
-  const invariants = new Set();
-  let inInvariants = false;
-  forEachOwnerLayerLine(read(relativePath), (rawLine) => {
-    const heading = /^(#{1,4}) +(.*?) *$/.exec(rawLine);
-    if (heading) {
-      headings.add(heading[2]);
-      if (heading[1] === "##") idHeadings.push(heading[2]);
-      inInvariants = heading[1] === "##" && heading[2] === "Invariants";
-      return;
-    }
-    if (/^#{1,6} /.test(rawLine)) {
-      inInvariants = false;
-      return;
-    }
-    if (!inInvariants) return;
-    const invariant = /^ *(\d+)\./.exec(rawLine);
-    if (invariant) invariants.add(invariant[1]);
-  });
-  const targets = { headings, idHeadings, invariants };
-  ownerLayerAnchorTargetCache.set(relativePath, targets);
-  return targets;
-}
-
-function resolveOwnerLayerAnchor(relativePath, target) {
-  const targets = ownerLayerAnchorTargets(relativePath);
-  const quoted = /^«(.+)»$/.exec(target);
-  if (quoted) return targets.headings.has(quoted[1]);
-  const invariant = /^(?:инвариант +)?(\d+)$/.exec(target);
-  if (invariant) return targets.invariants.has(invariant[1]);
-  // An ID anchors the heading that opens with it, so `PC-013` still resolves
-  // against `## PC-013 — Idea state` without pinning the title after the dash.
-  return targets.idHeadings.some((text) => text === target || text.startsWith(`${target} `));
-}
-
-// Structural anchor coverage only: article numbers are unique, every article
-// without `Статус: предложение` carries at least one anchor, no anchor repeats
-// inside one article, and every anchor names a pack file from the S1 inventory
-// plus a heading or stable ID that exists in it. Nothing here pins the Russian
-// prose — the wording of an article is the owner's to change in Linear.
-function validateOwnerLayerConstitution() {
-  if (!exists(OWNER_LAYER_CONSTITUTION_PATH)) {
-    fail(`Missing owner-layer constitution: ${OWNER_LAYER_CONSTITUTION_PATH}`);
-    return;
-  }
-  const text = read(OWNER_LAYER_CONSTITUTION_PATH);
-  if (!text.split("\n").slice(0, 5).some((line) => line.startsWith("Версия пака:"))) {
-    fail(`${OWNER_LAYER_CONSTITUTION_PATH} must carry a pack-version line in its first five lines`);
-  }
-
-  const { articles, malformed } = parseOwnerLayerConstitutionArticles(text);
-  for (const heading of malformed) {
-    fail(
-      `${OWNER_LAYER_CONSTITUTION_PATH} has a heading that looks like an article but does not match \`## К-NN.\`: ${heading}`
-    );
-  }
-
-  const inventory = new Set(ownerLayerInventory());
-  const seen = new Set();
-  for (const article of articles) {
-    if (seen.has(article.number)) {
-      fail(`${OWNER_LAYER_CONSTITUTION_PATH} has a duplicate article: ${article.number}`);
-      continue;
-    }
-    seen.add(article.number);
-    for (const requiredField of OWNER_LAYER_CONSTITUTION_REQUIRED_FIELDS) {
-      if (!article.fields.has(requiredField)) {
-        fail(
-          `${OWNER_LAYER_CONSTITUTION_PATH} article ${article.number} is missing the field ${requiredField}`
-        );
-      }
-    }
-    if (article.anchors.length === 0) {
-      if (!article.proposal) {
-        fail(
-          `${OWNER_LAYER_CONSTITUTION_PATH} article ${article.number} has no ${OWNER_LAYER_CONSTITUTION_ANCHOR_FIELD} entry and is not marked «${OWNER_LAYER_CONSTITUTION_PROPOSAL}»`
-        );
-      }
-      continue;
-    }
-    const anchorsSeen = new Set();
-    for (const anchor of article.anchors) {
-      const label = `\`${anchor.path}\` · ${anchor.target}`;
-      if (anchorsSeen.has(label)) {
-        fail(`${OWNER_LAYER_CONSTITUTION_PATH} article ${article.number} repeats the anchor ${label}`);
-        continue;
-      }
-      anchorsSeen.add(label);
-      if (!inventory.has(anchor.path)) {
-        fail(
-          `${OWNER_LAYER_CONSTITUTION_PATH} article ${article.number} anchors ${label}: ${anchor.path} is not a pack file in the owner-layer inventory`
-        );
-        continue;
-      }
-      if (!resolveOwnerLayerAnchor(anchor.path, anchor.target)) {
-        fail(
-          `${OWNER_LAYER_CONSTITUTION_PATH} article ${article.number} anchors ${label}: no such heading or stable ID in ${anchor.path}`
-        );
-      }
-    }
-  }
-}
-
-// Parser fixtures: a fenced EXAMPLE of the article format must never count as
-// an article, `Статус: предложение` must be seen, and a bullet list under a
-// field other than `Опора:` must never be read as an anchor. Structural
-// in-process probes over synthetic text — they pin the parser's behaviour, not
-// any sentence of the constitution.
-function validateOwnerLayerConstitutionParser() {
-  const fenced = [
-    "# Example",
-    "",
-    "Версия пака: main",
-    "",
-    "```text",
-    "## К-99. Внутри забора",
-    "",
-    "Опора:",
-    "",
-    "- `AGENTS.md` · «Language»",
-    "```",
-    "",
-    "## I. Раздел",
-    "",
-    "## К-01. Настоящая статья",
-    "",
-    "Правило: одно предложение.",
-    "",
-    "Опора:",
-    "",
-    "- `AGENTS.md` · «Language»",
-    "",
-    "## К-02. Предложение",
-    "",
-    "Правило: одно предложение.",
-    "",
-    "Статус: предложение",
-    "",
-  ].join("\n");
-  const parsed = parseOwnerLayerConstitutionArticles(fenced).articles;
-  const parsedNumbers = parsed.map((article) => article.number);
-  if (JSON.stringify(parsedNumbers) !== JSON.stringify(["К-01", "К-02"])) {
-    fail(
-      `Owner-layer constitution parser must ignore fenced examples, found ${JSON.stringify(parsedNumbers)}`
-    );
-  } else if (parsed[0].anchors.length !== 1 || parsed[0].anchors[0].path !== "AGENTS.md") {
-    fail("Owner-layer constitution parser must collect the Опора entry of an article outside a fence");
-  } else if (parsed[1].proposal !== true || parsed[1].anchors.length !== 0) {
-    fail(
-      "Owner-layer constitution parser must mark «Статус: предложение» and leave that article without anchors"
-    );
-  }
-
-  const otherField = parseOwnerLayerConstitutionArticles(
-    ["## К-03. Только Где живёт", "", "Где живёт:", "", "- `AGENTS.md` · «Language»", ""].join("\n")
-  ).articles;
-  if (otherField.length !== 1 || otherField[0].anchors.length !== 0) {
-    fail("Owner-layer constitution parser must count anchor entries only under Опора:");
-  }
-
-  const duplicated = parseOwnerLayerConstitutionArticles(
-    ["## К-07. Раз", "", "Статус: предложение", "", "## К-07. Два", "", "Статус: предложение", ""].join("\n")
-  ).articles;
-  if (duplicated.length !== 2) {
-    fail(
-      "Owner-layer constitution parser must report a repeated article number as a second article so the duplicate check can see it"
-    );
-  }
-
-  // Field collection: an article's own fields are recorded so the required-field
-  // check can see a dropped one, and a heading that means to be an article but
-  // misses the form is reported instead of silently vanishing from the walk.
-  const fields = parseOwnerLayerConstitutionArticles(
-    ["## К-04. Все поля", "", "Правило: одно предложение.", "", "Почему: одна причина.", "", "Где живёт: `AGENTS.md`.", ""].join("\n")
-  ).articles;
-  if (
-    !fields[0].fields.has("Правило:") ||
-    !fields[0].fields.has("Почему:") ||
-    !fields[0].fields.has("Где живёт:")
-  ) {
-    fail("Owner-layer constitution parser must record the fields an article carries");
-  }
-
-  const nearMiss = parseOwnerLayerConstitutionArticles(
-    ["## K-05. Латинская K", "", "Правило: одно предложение.", "", "## К-06 без точки", "", "Правило: одно предложение.", ""].join("\n")
-  );
-  if (nearMiss.articles.length !== 0 || nearMiss.malformed.length !== 2) {
-    fail(
-      `Owner-layer constitution parser must report a heading that looks like an article but does not match the form, found ${JSON.stringify(nearMiss.malformed)}`
-    );
-  }
+  for (const id of seen) fail(`README.md: unexpected rule ${id}`);
 }
 
 function validateArtifactContractParity() {
@@ -1047,8 +666,8 @@ function validateLocalInstallBehavior() {
   const installedResolver = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "resolve-issue-context.mjs");
   const installedPackVerifier = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "verify-pack-state.mjs");
   const installedWatcher = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "watch-workers.mjs");
-  const ownerMapRelativePath = ".mono-agent-workflow/docs/ru/karta-paka.md";
-  const installedOwnerMap = path.join(skillsRoot, ...ownerMapRelativePath.split("/"));
+  const readmeRelativePath = ".mono-agent-workflow/README.md";
+  const installedReadme = path.join(skillsRoot, readmeRelativePath);
   const legacySkillDir = path.join(skillsRoot, "linear-check");
   const legacyLockPath = path.join(skillsRoot, ".linear-agent-workflow.lock.json");
   const legacyRuntimeDir = path.join(skillsRoot, ".linear-agent-workflow");
@@ -1289,55 +908,20 @@ function validateLocalInstallBehavior() {
       "Unexpected installed pack file"
     );
 
-    // AC2: the owner-layer documents are installed as pack-private payload at
-    // <skills-root>/.mono-agent-workflow/docs/ru/, their hashes are recorded in
-    // the lockfile under `ownerLayer`, and --check holds them exactly like a
-    // runtime script — missing, edited, and extra each fail.
     runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    const ownerLayerLock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-    if (!Array.isArray(ownerLayerLock.ownerLayer) || ownerLayerLock.ownerLayer.length === 0) {
-      fail("Local install lockfile must record the owner-layer documents in ownerLayer");
-    } else if (!fs.existsSync(installedOwnerMap)) {
-      fail("Local install missing the installed owner-layer map");
-    } else {
-      const ownerMapEntry = ownerLayerLock.ownerLayer.find(
-        (entry) => entry.path === ownerMapRelativePath
-      );
-      const installedOwnerMapHash = createHash("sha256")
-        .update(fs.readFileSync(installedOwnerMap))
-        .digest("hex");
-      if (ownerMapEntry?.sha256 !== installedOwnerMapHash) {
-        fail("Local install owner-layer map hash must match the ownerLayer manifest");
-      }
-      if (fs.readFileSync(installedOwnerMap, "utf8") !== read("docs/ru/karta-paka.md")) {
-        fail("Local install owner-layer map must be copied verbatim from the upstream checkout");
-      }
-    }
-
-    fs.rmSync(installedOwnerMap, { force: true });
-    expectCommandFailure(
-      "install-local --check missing owner-layer document fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      `Missing installed owner-layer document: ${ownerMapRelativePath}`
-    );
-
+    const documentationLock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    if (Object.hasOwn(documentationLock, "ownerLayer")) fail("Install lock must omit ownerLayer");
+    if (fs.existsSync(path.join(skillsRoot, ".mono-agent-workflow/docs/ru"))) fail("Install must omit docs/ru");
+    if (fs.readFileSync(installedReadme, "utf8") !== read("README.md")) fail("Installed README must match source");
+    if (documentationLock.assets.readme !== createHash("sha256").update(read("README.md")).digest("hex")) fail("README hash mismatch");
+    fs.rmSync(installedReadme);
+    expectCommandFailure("missing installed README", () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]), "Missing installed README");
     runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    fs.appendFileSync(installedOwnerMap, "\nBROKEN\n");
-    expectCommandFailure(
-      "install-local --check edited owner-layer document fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "Installed owner-layer document is stale or edited"
-    );
-
-    // The allowlist stays fail-closed for the new payload directory too: an
-    // extra file beside an installed owner-layer document is still an error.
+    fs.appendFileSync(installedReadme, "\nBROKEN\n");
+    expectCommandFailure("edited installed README", () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]), "Installed README is stale or edited");
     runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    fs.writeFileSync(path.join(path.dirname(installedOwnerMap), "stray.md"), "# stray\n");
-    expectCommandFailure(
-      "install-local --check unexpected owner-layer document fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "Unexpected installed pack file"
-    );
+    fs.writeFileSync(path.join(path.dirname(installedReadme), "stray.md"), "# stray\n");
+    expectCommandFailure("unexpected documentation file", () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]), "Unexpected installed pack file");
 
     // schemaVersion 2 -> 3 migration: a pre-MONO-19 lockfile (v2 shape, no
     // runtimeScripts) fails --check loudly, and a re-sync upgrades it to a clean
@@ -6381,8 +5965,7 @@ function validateStatusTemplateFields() {
 }
 
 // Fenced blocks of a Markdown surface, in order, without their fence lines.
-// The owner-layer field checks below need them because a durable machine block
-// is the only occurrence of a field that downstream recovery depends on.
+// Recovery depends on fields inside the durable machine block.
 function fencedBlocks(text) {
   const blocks = [];
   let current = null;
@@ -6400,71 +5983,6 @@ function fencedBlocks(text) {
   return blocks;
 }
 
-// Assert a field inside the fenced block a marker identifies, never anywhere in
-// the file: a surface that also EXPLAINS the field in prose would keep a
-// whole-file check green after the machine-block line itself was deleted, which
-// is the one deletion that breaks recovery by a later stage.
-function assertFieldInFencedBlock(relativePath, marker, field) {
-  const blocks = fencedBlocks(read(relativePath)).filter((block) => block.includes(marker));
-  if (blocks.length === 0) {
-    fail(`${relativePath} must keep a fenced block containing ${JSON.stringify(marker)}`);
-    return;
-  }
-  for (const block of blocks) {
-    const hasField = block
-      .split("\n")
-      .some((line) => line.trim().replace(/^-\s*/, "").startsWith(field));
-    if (!hasField) {
-      fail(
-        `${relativePath} block ${JSON.stringify(marker)} must carry the ${JSON.stringify(field)} field`
-      );
-    }
-  }
-}
-
-function validateOwnerLayerProcedureSurface() {
-  // MONO-64 — the owner-layer PROCEDURE, checked structurally only. The
-  // reconciliation step must declare both documents as a deferred read AND name
-  // them in the step itself, and the publication step must carry its closeout
-  // field into the deploy template. Nothing here pins a sentence: how the two
-  // steps are worded stays editable, the surfaces they live on do not.
-  const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
-  const orchestrateText = read(orchestrateSurface);
-  const tierRange = readTierBounds(orchestrateText);
-  const tierTwoStart = tierRange?.start ?? -1;
-  const tierTwoEnd = tierRange?.end ?? -1;
-  if (tierTwoStart < 0 || tierTwoEnd <= tierTwoStart) {
-    fail(`${orchestrateSurface} must carry a "Read when" tier block holding the owner-layer documents`);
-  } else {
-    const tierTwoSlice = orchestrateText.slice(
-      tierTwoStart,
-      tierTwoEnd
-    );
-    // The body after the tier rule is where the reconciliation step lives; a
-    // path declared in the ladder but never used by a step is a dangling read.
-    const stepBody = orchestrateText.slice(tierTwoEnd);
-    for (const documentPath of [OWNER_LAYER_MAP_PATH, OWNER_LAYER_CONSTITUTION_PATH]) {
-      if (!tierTwoSlice.includes(documentPath)) {
-        fail(
-          `${orchestrateSurface} must read ${documentPath} in its "Read when" tier: the orchestrator compares it with the installed copy`
-        );
-      }
-      if (!stepBody.includes(documentPath)) {
-        fail(
-          `${orchestrateSurface} must name ${documentPath} in its owner-layer reconciliation step, not only in the "Read when" tier`
-        );
-      }
-    }
-  }
-
-  // The publication outcome has to survive in the blocks a later stage and the
-  // owner actually read back: the deploy closeout comment and both blocks of the
-  // deploy output template.
-  assertFieldInFencedBlock("skills/mono-deploy/SKILL.md", "mono-deploy closeout", "Owner layer:");
-  assertFieldInFencedBlock("templates/deploy-output.md", "Deploy status:", "Owner layer:");
-  assertFieldInFencedBlock("templates/deploy-output.md", "Mono deploy verdict:", "Owner layer:");
-}
-
 function boundedSlice(relativePath, text, startMarker, endMarker, label) {
   const start = text.indexOf(startMarker);
   const end = start >= 0 ? text.indexOf(endMarker, start + startMarker.length) : -1;
@@ -6473,55 +5991,6 @@ function boundedSlice(relativePath, text, startMarker, endMarker, label) {
     return null;
   }
   return text.slice(start, end);
-}
-
-// MONO-65 review follow-up — the marker rule is written per-line and has no
-// awareness of Markdown code fences, so a marker-only edit hidden inside a
-// fenced block would normalise away identically on both sides: reconciliation
-// would miss it, and publication could then overwrite the owner's edit. We
-// have not measured what Linear's document service does to a marker inside a
-// fence, so the fix is not to teach the rule to skip fenced lines (that could
-// just as easily turn a narrow blind spot into a permanent false difference
-// on every run, the very bug this Issue fixes). Instead the two owner-layer
-// documents are constrained: neither may contain a code fence at all. Both
-// contain zero fences today, so this passes now and turns red the moment one
-// is added - which is exactly when the rule's fence behaviour would need to
-// be measured before being trusted. Structural only: a fenced line either
-// exists in the file or it does not.
-const OWNER_LAYER_FENCE_FREE_PATHS = [OWNER_LAYER_MAP_PATH, OWNER_LAYER_CONSTITUTION_PATH];
-const CODE_FENCE_LINE_PATTERN = /^ {0,3}(`{3,}|~{3,})/;
-
-function validateOwnerLayerDocumentsFenceFree() {
-  for (const docPath of OWNER_LAYER_FENCE_FREE_PATHS) {
-    const lines = read(docPath).split("\n");
-    const fenceLineIndex = lines.findIndex((line) => CODE_FENCE_LINE_PATTERN.test(line));
-    if (fenceLineIndex >= 0) {
-      fail(
-        `${docPath} line ${fenceLineIndex + 1}: owner-layer documents must carry no code fence - the marker-canonicalisation rule's behaviour inside a fence has not been measured against Linear's document service`
-      );
-    }
-  }
-}
-
-// MONO-71 — Linear rewrites a bare Issue key from this workspace into link
-// markup when a document is written. The comparison deliberately does not
-// canonicalise issue links, so keep the two owner-layer documents free of the
-// only key shape the service rewrites here. Contract and artifact ids such as
-// PC-005, IS-004, and К-22 remain valid because they do not match this pattern.
-const OWNER_LAYER_BARE_ISSUE_KEY_PATTERN = /\bMONO-[0-9]+\b/;
-
-function validateOwnerLayerDocumentsBareIssueKeyFree() {
-  for (const docPath of [OWNER_LAYER_MAP_PATH, OWNER_LAYER_CONSTITUTION_PATH]) {
-    const lines = read(docPath).split("\n");
-    const bareKeyLineIndex = lines.findIndex((line) =>
-      OWNER_LAYER_BARE_ISSUE_KEY_PATTERN.test(line)
-    );
-    if (bareKeyLineIndex >= 0) {
-      fail(
-        `${docPath} line ${bareKeyLineIndex + 1}: owner-layer documents must carry no bare Linear issue key - measure the document service rewrite before extending the normalisation rule`
-      );
-    }
-  }
 }
 
 function validateProjectUpdateSurface() {
@@ -6604,7 +6073,7 @@ function modelSection(text, title) {
 
 function modelTable(section, columns) {
   const rows = [];
-  forEachOwnerLayerLine(section, (line) => {
+  forEachMarkdownLine(section, (line) => {
     if (line.trim().startsWith("|")) {
       rows.push(line.trim().slice(1, -1).split("|").map((cell) => cell.trim()));
     }
@@ -6654,7 +6123,8 @@ function modelActiveFiles(base) {
       else if (entry.isFile()) files.push(child);
     }
   }
-  for (const directory of ["skills", "references", "templates", "scripts", "docs/ru"]) walk(directory);
+  for (const directory of ["skills", "references", "templates", "scripts"]) walk(directory);
+  files.push("README.md");
   return files;
 }
 
@@ -6726,7 +6196,7 @@ function checkModelPolicy(base) {
       errors.push(`${file}: role binding must be ${expected.join(", ")}; found ${[...found].join(", ") || "none"}`);
     }
   }
-  for (const file of [...modelActiveFiles(base), "AGENTS.md", "README.md"]) {
+  for (const file of [...modelActiveFiles(base), "AGENTS.md"]) {
     const text = body(file);
     if (file !== MODEL_POLICY_PATH) {
       for (const id of executableModelIds(text)) errors.push(`${file}: executable model id outside policy: ${id}`);
@@ -6837,7 +6307,7 @@ function checkModelPolicy(base) {
 function validateModelPolicyFixtures() {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-model-policy-"));
   try {
-    for (const name of ["skills", "references", "templates", "scripts", "docs/ru", "AGENTS.md", "README.md"]) {
+    for (const name of ["skills", "references", "templates", "scripts", "AGENTS.md", "README.md"]) {
       fs.cpSync(path.join(root, name), path.join(scratch, name), { recursive: true });
     }
     const script = path.join(scratch, "scripts/validate-workflow.mjs");
@@ -6910,7 +6380,7 @@ function validateModelPolicyFixtures() {
     for (const [name] of NORMATIVE_MODEL_SECTIONS) {
       negative(`normative reference ${name}`, () => change(name, (text) => text.replace(/\[role:autoreview\]\([^)]+\)/g, "reviewer")), `${name}: role binding must be autoreview`);
     }
-    for (const name of ["docs/ru/karta-paka.md", "references/execution-quality.md", "templates/orchestrator-brief.md", "scripts/verify.mjs"]) {
+    for (const name of ["README.md", "references/execution-quality.md", "templates/orchestrator-brief.md", "scripts/verify.mjs"]) {
       negative(`active detector ${name}`, () => change(name, (text) => text + `\n${fabricated("claude", "stale")}\n`), `${name}: executable model id outside policy`);
     }
     change("README.md", (text) => text + `\n${[...MODEL_ENUM_ALLOWLIST].join(" ")}\n`);
@@ -7429,7 +6899,6 @@ const REQUIRED_HEADINGS = [
   ["AGENTS.md","Source Of Truth"],
   ["references/orchestration.md","Install Coordination"],
   ["references/orchestration.md","Claude worker transports"],
-  ["skills/mono-orchestrate/SKILL.md","Owner-layer reconciliation"],
   ["references/issue-only-lane.md","Marker ≠ Route-Record"],
   ["references/issue-only-lane.md","The Context Contract (the seam)"],
   ["references/issue-only-lane.md","The Resolver"],
@@ -7503,6 +6972,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  ...README_SECTIONS,
   "!inspection.hasThreadStarted",
   "\"75\"",
   "\"PreCompact\"",
@@ -8043,7 +7513,7 @@ function validateAe6Fixtures() {
     if (failures.length === before) console.log(`PASS AE6 ${label}: red, restored green`);
   }
   try {
-    for (const name of ["skills", "references", "templates", "scripts", "docs/ru", "AGENTS.md", "README.md", "CHANGELOG.md", "examples"]) {
+    for (const name of ["skills", "references", "templates", "scripts", "AGENTS.md", "README.md", "CHANGELOG.md", "examples"]) {
       fs.cpSync(path.join(root, name), file(name), { recursive: true });
     }
     check();
@@ -8070,6 +7540,15 @@ function validateAe6Fixtures() {
     }
     restore(); check();
     console.log("PASS AE6 equivalent prose: skill, lane and cost rewordings green");
+    negative("README rule target renamed", () => change("AGENTS.md", (text) => text.replace("## Change Discipline\n", "## Renamed fixture\n")), "README.md K-31:");
+    negative("README required section removed", () => change("README.md", (text) => text.replace("## Gates\n", "")), "README.md: missing or duplicate required section Gates");
+    negative("README target file missing", () => change("README.md", (text) => text.replace("AGENTS.md#change-discipline", "missing.md#change-discipline").replaceAll("AGENTS.md#change-discipline", "missing.md#change-discipline")), "README.md K-31:");
+    negative("README rule removed", () => change("README.md", (text) => text.replace(/^- \*\*K-31\.[^\n]+\n/m, "")), "README.md: missing rule K-31");
+    negative("README rule link removed", () => change("README.md", (text) => text.replace(/^(- \*\*K-31\.[^\n]*?)\[[^\]]+\]\([^)]+\)/m, "$1unlinked")), "README.md K-31: missing rule link");
+    negative("README target heading fenced", () => change("AGENTS.md", (text) => text.replace("## Change Discipline\n", "~~~text\n## Change Discipline\n~~~\n")), "README.md K-31:");
+    change("README.md", (text) => text.replace(/^(- \*\*K-31\.\*\* )/m, "$1In this pack, "));
+    check(); restore(); check();
+    console.log("PASS README rule prose rewording: green");
     negative("required section removed", () => change("references/issue-only-lane.md", (text) => text.replace("### Post-`ready` exit\n", "")), "missing or duplicate section");
     for (const [, field, value] of LANE_FIELDS) {
       negative(`required lane field removed: ${field}`, () => change("references/issue-only-lane.md", (text) => text.replace(`${field} ${value}\n`, "")), `${field} missing or duplicate field`);
@@ -8163,6 +7642,13 @@ function validateMachineShapes() {
   if (consumption && (!Number.isInteger(consumption.attempt) || consumption.outcome !== "applied | rejected | blocked")) fail("consumption record: attempt or outcome dictionary changed");
 }
 
+validateReadme();
+if (process.argv.includes("--readme-only")) {
+  if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
+  console.log("README sections and 34 rule links passed.");
+  process.exit(0);
+}
+
 if (!process.argv.includes("--ae6-fixtures") && !process.argv.includes("--document-skeleton-only") && !process.argv.includes("--model-policy-only") && !process.argv.includes("--model-policy-fixtures")) { validateReadBudget(); validateReadBudgetFixtures(); }
 failures.push(...checkModelPolicy(root));
 if (!process.argv.includes("--ae6-fixtures") && !process.argv.includes("--document-skeleton-only") && !process.argv.includes("--model-policy-only") && failures.length === 0) validateModelPolicyFixtures();
@@ -8181,13 +7667,13 @@ if (process.argv.includes("--document-skeleton-only") || process.argv.includes("
   validateSkills();
   validateReadFirstTierContract();
   validateProjectUpdateSurface();
-  validateOwnerLayerProcedureSurface();
-  validateOwnerLayerDocumentsBareIssueKeyFree();
-  validateOwnerLayerDocumentsFenceFree();
-  validateOwnerLayerMapParser();
-  validateOwnerLayerMap();
-  validateOwnerLayerConstitutionParser();
-  validateOwnerLayerConstitution();
+
+
+
+
+
+
+
   validateArtifactContractParity();
   validateRepairAndRoutingContract();
   validateRegistryGateContract();
@@ -8202,14 +7688,14 @@ if (process.argv.includes("--document-skeleton-only") || process.argv.includes("
 validateSkills();
 validateReadFirstTierContract();
 validateProjectUpdateSurface();
-validateOwnerLayerProcedureSurface();
-validateOwnerLayerDocumentsBareIssueKeyFree();
-validateOwnerLayerDocumentsFenceFree();
+
+
+
 validateRetiredAdapterReferenceAllowlist();
-validateOwnerLayerMapParser();
-validateOwnerLayerMap();
-validateOwnerLayerConstitutionParser();
-validateOwnerLayerConstitution();
+
+
+
+
 validateArtifactContractParity();
 validateRepairAndRoutingContract();
 validatePackIdentityAndQuiescenceBehavior();
