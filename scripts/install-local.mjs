@@ -28,13 +28,15 @@ const INSTALL_LOCK_PROTOCOL_FILE = "protocol.json";
 const INSTALL_LOCK_PROTOCOL = "token-claims-v1";
 const INSTALL_LOCK_TOKEN_PATTERN = /^[A-Za-z0-9-]{1,128}$/;
 // Upstream scripts/ files published into
-// <skills-root>/.mono-agent-workflow/scripts/. They import only Node built-ins,
-// so there are no sibling-script dependencies; add future runtime dependencies
-// here so the whole executable pack contract is installed together.
+// <skills-root>/.mono-agent-workflow/scripts/. Runtime scripts depend on one
+// another: wave-cost → review-ledger → gate and runtime; spawn and resume →
+// launch; watch-workers → delivery-state. Keep every relative import here so
+// the whole executable pack contract is installed together.
 const RUNTIME_SCRIPTS = [
   "resolve-issue-context.mjs",
   "verify-pack-state.mjs",
   "wave-cost.mjs",
+  "review-ledger.mjs",
   "read-budget.mjs",
   "watch-workers.mjs",
   "gate.mjs",

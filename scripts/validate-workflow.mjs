@@ -42,6 +42,257 @@ function fail(message) {
   failures.push(message);
 }
 
+function extractRuntimeScripts(installerSource) {
+  const declarations = [...installerSource.matchAll(/\bconst\s+RUNTIME_SCRIPTS\s*=\s*\[([\s\S]*?)\]\s*;/g)];
+  if (declarations.length !== 1) {
+    throw new Error(`expected one RUNTIME_SCRIPTS declaration, found ${declarations.length}`);
+  }
+
+  const body = declarations[0][1].replace(/\/\/[^\n]*/g, "");
+  const scripts = [];
+  let rest = body;
+  while (true) {
+    rest = rest.replace(/^\s*(?:,\s*)?/, "");
+    if (!rest) break;
+    const entry = rest.match(/^(["'])([^"'\\\r\n]+\.mjs)\1/);
+    if (!entry) throw new Error("RUNTIME_SCRIPTS must contain only literal .mjs paths");
+    scripts.push(entry[2]);
+    rest = rest.slice(entry[0].length);
+  }
+  if (scripts.length === 0) throw new Error("RUNTIME_SCRIPTS must not be empty");
+  return scripts;
+}
+
+function javascriptModuleTokens(source) {
+  const tokens = [];
+  const regexPrefixIdentifiers = new Set([
+    "case", "delete", "in", "instanceof", "new", "of", "return", "throw", "typeof", "void", "yield",
+  ]);
+  const canStartRegex = () => {
+    const previous = tokens.at(-1);
+    if (!previous) return true;
+    if (previous.type === "identifier") return regexPrefixIdentifiers.has(previous.value);
+    return /^[([{,:;=!?&|+*%^~<>-]$/.test(previous.value);
+  };
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index];
+    if (/\s/.test(character)) {
+      index += 1;
+      continue;
+    }
+    if (source.startsWith("//", index)) {
+      index = source.indexOf("\n", index + 2);
+      if (index < 0) break;
+      continue;
+    }
+    if (source.startsWith("/*", index)) {
+      const end = source.indexOf("*/", index + 2);
+      if (end < 0) throw new Error("unterminated block comment in runtime script");
+      index = end + 2;
+      continue;
+    }
+    if (character === "/" && canStartRegex()) {
+      let inCharacterClass = false;
+      let closed = false;
+      index += 1;
+      while (index < source.length) {
+        const next = source[index++];
+        if (next === "\\") index += 1;
+        else if (next === "[") inCharacterClass = true;
+        else if (next === "]") inCharacterClass = false;
+        else if (next === "/" && !inCharacterClass) {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) throw new Error("unterminated regular expression in runtime script");
+      while (index < source.length && /[A-Za-z]/.test(source[index])) index += 1;
+      tokens.push({ type: "regex", value: "" });
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      const quote = character;
+      let value = "";
+      let escaped = false;
+      let closed = false;
+      index += 1;
+      while (index < source.length) {
+        const next = source[index++];
+        if (next === quote) {
+          closed = true;
+          break;
+        }
+        if (next === "\\") {
+          escaped = true;
+          if (index < source.length) value += source[index++];
+        } else {
+          value += next;
+        }
+      }
+      if (!closed) throw new Error("unterminated string in runtime script");
+      tokens.push({ type: "string", value, escaped });
+      continue;
+    }
+    if (character === "`") {
+      let closed = false;
+      index += 1;
+      while (index < source.length) {
+        const next = source[index++];
+        if (next === "\\") index += 1;
+        else if (next === "`") {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) throw new Error("unterminated template literal in runtime script");
+      tokens.push({ type: "template", value: "" });
+      continue;
+    }
+    if (/[A-Za-z_$]/.test(character)) {
+      const start = index++;
+      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index])) index += 1;
+      tokens.push({ type: "identifier", value: source.slice(start, index) });
+      continue;
+    }
+    tokens.push({ type: "punctuator", value: character });
+    index += 1;
+  }
+  return tokens;
+}
+
+function relativeMjsModuleSpecifiers(source) {
+  const tokens = javascriptModuleTokens(source);
+  const specifiers = [];
+  const add = (token) => {
+    if (token?.type === "string" && !token.escaped && /^\.\.?\/.+\.mjs$/.test(token.value)) {
+      specifiers.push(token.value);
+    }
+  };
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.type !== "identifier" || !["import", "export"].includes(token.value)) continue;
+    if (tokens[index - 1]?.value === ".") continue;
+
+    if (token.value === "import" && tokens[index + 1]?.value === "(") {
+      if (tokens[index + 3]?.value === ")") add(tokens[index + 2]);
+      continue;
+    }
+    if (token.value === "import" && tokens[index + 1]?.type === "string") {
+      add(tokens[index + 1]);
+      continue;
+    }
+    for (let cursor = index + 1; cursor < tokens.length && tokens[cursor].value !== ";"; cursor += 1) {
+      if (tokens[cursor].value === "from") {
+        add(tokens[cursor + 1]);
+        break;
+      }
+    }
+  }
+  return specifiers;
+}
+
+function installedRuntimeImportDiagnostics(runtimeScripts, scriptSource = (script) => read(`scripts/${script}`)) {
+  const installed = new Set(runtimeScripts.map((script) => path.posix.normalize(script)));
+  const diagnostics = [];
+
+  for (const script of runtimeScripts) {
+    const source = scriptSource(script);
+    for (const specifier of new Set(relativeMjsModuleSpecifiers(source))) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(script), specifier));
+      if (!installed.has(target)) diagnostics.push(`${script} → ${target}`);
+    }
+  }
+  return diagnostics;
+}
+
+function validateInstalledRuntimeImports() {
+  const installerSource = read("scripts/install-local.mjs");
+  let runtimeScripts;
+  try {
+    runtimeScripts = extractRuntimeScripts(installerSource);
+  } catch (error) {
+    fail(`installed-runtime imports resolve: ${error.message}`);
+    return;
+  }
+
+  const diagnostics = installedRuntimeImportDiagnostics(runtimeScripts);
+  if (diagnostics.length > 0) {
+    fail(`installed-runtime imports resolve: ${diagnostics.join(", ")}`);
+  }
+
+  const withoutReviewLedger = runtimeScripts.filter((script) => script !== "review-ledger.mjs");
+  const missingLedgerDiagnostics = installedRuntimeImportDiagnostics(withoutReviewLedger);
+  if (JSON.stringify(missingLedgerDiagnostics) !== JSON.stringify(["wave-cost.mjs → review-ledger.mjs"])) {
+    fail("installed-runtime missing-review-ledger fixture must return exactly wave-cost.mjs → review-ledger.mjs");
+  }
+
+  const syntheticSources = new Map([
+    ["nested/entry.mjs", [
+      "import one from './static-single.mjs';",
+      "import two from \"../shared/static-double.mjs\";",
+      "const three = import('./dynamic-single.mjs');",
+      "const four = import(\"../shared/dynamic-double.mjs\");",
+      "export { five } from '../shared/re-export.mjs';",
+      "const ignored = \"import './not-an-import.mjs'\";",
+      "const pattern = /import [\"']\\.\\/not-an-import\\.mjs/;",
+      "// import six from './commented-out.mjs';",
+      "/* export { seven } from '../shared/commented-out.mjs'; */",
+      "import fs from 'node:fs';",
+    ].join("\n")],
+    ["nested/static-single.mjs", ""],
+    ["shared/static-double.mjs", ""],
+    ["nested/dynamic-single.mjs", ""],
+    ["shared/dynamic-double.mjs", ""],
+    ["shared/re-export.mjs", ""],
+  ]);
+  const syntheticScripts = [...syntheticSources.keys()];
+  const syntheticRead = (script) => syntheticSources.get(script);
+  if (installedRuntimeImportDiagnostics(syntheticScripts, syntheticRead).length !== 0) {
+    fail("installed-runtime import-form fixture must resolve both quotes, ./ and ../, static and dynamic imports");
+  }
+  const onlyImporter = installedRuntimeImportDiagnostics(["nested/entry.mjs"], syntheticRead);
+  if (JSON.stringify(onlyImporter) !== JSON.stringify([
+    "nested/entry.mjs → nested/static-single.mjs",
+    "nested/entry.mjs → shared/static-double.mjs",
+    "nested/entry.mjs → nested/dynamic-single.mjs",
+    "nested/entry.mjs → shared/dynamic-double.mjs",
+    "nested/entry.mjs → shared/re-export.mjs",
+  ])) {
+    fail("installed-runtime import-form negative fixture must report imports and re-exports without comment or string false positives");
+  }
+  console.log("PASS installed-runtime imports resolve: full list empty; missing review-ledger gives wave-cost.mjs → review-ledger.mjs");
+
+  for (const [label, source] of [
+    ["missing declaration", "const OTHER_SCRIPTS = [];"],
+    ["empty declaration", "const RUNTIME_SCRIPTS = [];"],
+  ]) {
+    try {
+      extractRuntimeScripts(source);
+      fail(`installed-runtime ${label} fixture must fail closed`);
+    } catch {
+      // Expected: extraction errors are validation failures, never an empty success.
+    }
+  }
+}
+
+function reviewLedgerFixture() {
+  const reviewEvent = {
+    sources: [],
+    status: "unknown",
+    launchCause: "unknown",
+    usage: null,
+    announcedPasses: null,
+    confirmedPasses: null,
+  };
+  return { issue: "MONO-999", attempts: [{ attempt: 1, unresolvedCoverage: [], events: [
+    { ...reviewEvent, id: "collection", kind: "collection-request" },
+    { ...reviewEvent, id: "withheld", kind: "collection-request", status: "withheld" },
+    { ...reviewEvent, id: "helper", kind: "helper-invocation", announcedPasses: 2 },
+  ] }] };
+}
+
 
 function validateReadBudget() {
   try {
@@ -666,6 +917,8 @@ function validateLocalInstallBehavior() {
   const installedResolver = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "resolve-issue-context.mjs");
   const installedPackVerifier = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "verify-pack-state.mjs");
   const installedWatcher = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "watch-workers.mjs");
+  const installedReviewLedger = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "review-ledger.mjs");
+  const installedWaveCost = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "wave-cost.mjs");
   const readmeRelativePath = ".mono-agent-workflow/README.md";
   const installedReadme = path.join(skillsRoot, readmeRelativePath);
   const legacySkillDir = path.join(skillsRoot, "linear-check");
@@ -714,6 +967,20 @@ function validateLocalInstallBehavior() {
     }
     if (installedIdentity.installedSkills?.length !== EXPECTED_SKILLS.length) {
       fail(`Fresh local install must contain exactly ${EXPECTED_SKILLS.length} skills`);
+    }
+    if (!fs.existsSync(installedReviewLedger)) {
+      fail("Local install missing the review ledger runtime script");
+    } else {
+      const reviewLedgerManifestPath = ".mono-agent-workflow/scripts/review-ledger.mjs";
+      const reviewLedgerManifest = installedIdentity.runtimeScripts?.find(
+        (entry) => entry.path === reviewLedgerManifestPath
+      );
+      const installedReviewLedgerHash = createHash("sha256")
+        .update(fs.readFileSync(installedReviewLedger))
+        .digest("hex");
+      if (reviewLedgerManifest?.sha256 !== installedReviewLedgerHash) {
+        fail("Local install review ledger hash must match the runtimeScripts manifest");
+      }
     }
     for (const retired of ["mono-project", "mono-prd", "mono-spec"]) {
       if (fs.existsSync(path.join(skillsRoot, retired))) {
@@ -804,6 +1071,35 @@ function validateLocalInstallBehavior() {
     }
 
     runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]);
+
+    // Named integration fixture: the installed wave-cost script must load its
+    // sibling review-ledger module, never the upstream source-tree copy.
+    const installedWaveCostFixtureRoot = path.join(skillsRoot, "installed-wave-cost-fixture");
+    const installedWaveCostLogs = path.join(installedWaveCostFixtureRoot, "logs");
+    const installedWaveCostLedger = path.join(installedWaveCostFixtureRoot, "review-ledger.json");
+    fs.mkdirSync(installedWaveCostLogs, { recursive: true });
+    fs.writeFileSync(
+      path.join(installedWaveCostLogs, "MONO-999-mono-implement-a1.jsonl"),
+      `${JSON.stringify({ type: "thread.started", thread_id: "installed-wave-cost-fixture" })}\n`
+    );
+    fs.writeFileSync(installedWaveCostLedger, `${JSON.stringify(reviewLedgerFixture())}\n`);
+    const installedWaveCostOutput = parseWaveCostOutput(runNode([
+      installedWaveCost,
+      "MONO-999",
+      "--root",
+      installedWaveCostFixtureRoot,
+      "--ledger",
+      installedWaveCostLedger,
+    ]));
+    if (
+      installedWaveCostOutput.json.autoreview.ledger.collections !== 2 ||
+      installedWaveCostOutput.json.autoreview.ledger.invocations !== 1 ||
+      !installedWaveCostOutput.line.includes("авто-ревью: сборов 2 (отклонено 1), вызовов 1") ||
+      !installedWaveCostOutput.line.includes("измерено 0 из 1")
+    ) {
+      fail("installed wave-cost review-ledger fixture must use the installed runtime and preserve fixture counters");
+    }
+    console.log("PASS installed wave-cost review-ledger fixture: collections 2, withheld 1, invocations 1, measured 0 of 1");
 
     // AC3: execute the INSTALLED watcher, not the upstream source copy. A
     // malformed synthetic worker log produces spawn-fail immediately, avoiding
@@ -1140,6 +1436,17 @@ function validateMultiRootInstallBehavior() {
       // AC3: every synced root gets the pack-private resolver at the canonical path.
       if (!fs.existsSync(path.join(skillsRoot, ".mono-agent-workflow", "scripts", "resolve-issue-context.mjs"))) {
         fail(`install-local --all-roots must install the issue-only resolver into ${skillsRoot}`);
+      }
+      const reviewLedgerPath = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "review-ledger.mjs");
+      const installedLock = JSON.parse(fs.readFileSync(path.join(skillsRoot, lockName), "utf8"));
+      const reviewLedgerEntry = installedLock.runtimeScripts?.find(
+        (entry) => entry.path === ".mono-agent-workflow/scripts/review-ledger.mjs"
+      );
+      if (
+        !fs.existsSync(reviewLedgerPath) ||
+        reviewLedgerEntry?.sha256 !== createHash("sha256").update(fs.readFileSync(reviewLedgerPath)).digest("hex")
+      ) {
+        fail(`install-local --all-roots must install and hash the review ledger into ${skillsRoot}`);
       }
     }
 
@@ -5765,12 +6072,7 @@ function validateWaveCostBehavior() {
 
     // Named behavior fixture: a review ledger replaces the legacy review counters.
     const reviewLedgerFile = path.join(fixtureRoot, "review-ledger.json");
-    const reviewEvent = { sources: [], status: "unknown", launchCause: "unknown", usage: null, announcedPasses: null, confirmedPasses: null };
-    fs.writeFileSync(reviewLedgerFile, JSON.stringify({ issue: "MONO-999", attempts: [{ attempt: 1, unresolvedCoverage: [], events: [
-      { ...reviewEvent, id: "collection", kind: "collection-request" },
-      { ...reviewEvent, id: "withheld", kind: "collection-request", status: "withheld" },
-      { ...reviewEvent, id: "helper", kind: "helper-invocation", announcedPasses: 2 },
-    ] }] }));
+    fs.writeFileSync(reviewLedgerFile, JSON.stringify(reviewLedgerFixture()));
     const reviewLedgerOutput = parseWaveCostOutput(runNode(["scripts/wave-cost.mjs", "MONO-999", "--root", fixtureRoot, "--ledger", reviewLedgerFile]));
     if (reviewLedgerOutput.json.autoreview.ledger.collections !== 2 || reviewLedgerOutput.json.autoreview.ledger.invocations !== 1 ||
       !reviewLedgerOutput.line.includes("авто-ревью: сборов 2 (отклонено 1), вызовов 1") || !reviewLedgerOutput.line.includes("измерено 0 из 1")) {
@@ -7677,6 +7979,7 @@ validateCheckModeDeclaration();
 validateDocumentBoundaries();
 validateCostCommandStructure();
 validateMachineShapes();
+validateInstalledRuntimeImports();
 if (process.argv.includes("--document-skeleton-only") || process.argv.includes("--ae6-fixtures")) {
   validateSkills();
   validateReadFirstTierContract();
