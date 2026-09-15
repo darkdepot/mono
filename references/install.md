@@ -374,3 +374,7 @@ The project check fails when:
 - Do not keep `Land workflow`; use `workflows.deploy`.
 - Do not make Project Updates a required gate; record user review acceptance as a Linear comment.
 - Do not turn the project update `mono-deploy` publishes at closeout into a gate: it is an informational result of the deploy, and its failure never blocks closeout or changes the deploy verdict.
+
+## Revision 4 Delivery Migration
+
+Use --breaking, after verifying idle control and an empty workers.json; a live wave blocks installation. Install mono-deliver and the complete runtime dependency list, then run --check and the scripts from the installed root. Stage-specific dispatch/resume templates have no revision-4 consumer. At deploy remove these old orchestrator-root helpers and record their replacements: helpers/spawn-codex-gate.sh -> installed scripts/orchestrator/spawn.mjs; helpers/resume-codex.sh -> installed scripts/orchestrator/resume.mjs; helpers/consume-gate-ack.mjs -> installed scripts/orchestrator/consume-gate-ack.mjs. Workers list replacements only; the orchestrator owns external deletion. Do not edit real skill roots during implementation; use a scratch skills root.

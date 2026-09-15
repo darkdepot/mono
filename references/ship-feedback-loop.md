@@ -1,10 +1,10 @@
 # Ship Feedback Loop
 
-Own PR stabilization through `mono-ship`; delegate configured ship/docs/resolver workflows. Merge/deploy/post-ship/closeout/learnings belong to deploy.
+Own PR stabilization in `mono-ship`; delegate configured ship/docs/resolvers. Leave merge/deploy/post-ship/closeout/learnings to deploy.
 
 ## Inputs
 
-Gather current package, preflight certificate, PR number/URL/head, configured documentation and feedback workflows. Under dispatch use snapshot for Linear context.
+Gather package, preflight certificate, PR number/URL/head and configured docs/feedback. Use dispatch snapshot for Linear.
 
 ## Review Bot Configuration Check
 
@@ -21,11 +21,11 @@ Before first resolver cycle inspect bot re-review-on-push/re-request settings. F
 
 ## Defaults
 
-Poll every 10 minutes; maximum 3 resolver rounds and 90 minutes wall-clock; quiet period 10 minutes without new review comments, check or head changes. Only novel findings consume rounds.
+Use orchestration.delivery configuration: pollSec (10), quietSec (120), evidenceLimitSec (2400), all positive seconds. Keep the maximum 3 novel resolver rounds and Non-Blocking Convergence; dedup consumes no round. The evidence deadline is per PR attempt and survives head changes; a new head or new inspected evidence restarts the quiet pause. Run the installed gate script, never a second timer in prose.
 
 ## Finding Dedup
 
-Close later re-emissions of accepted/fixed or evidence-rejected findings with published reply citing prior thread/commit/decline rationale. Dedup consumes no round and does not restart quiet time; a cosmetic target that keeps changing remains one adjudicated finding. Treat uncertainty or a new angle as novel and keep open. Never weaken/delete/bypass tests to reach green; autoreview's no-test-edits rule applies here.
+Close later re-emissions of accepted/fixed or evidence-rejected findings with published reply citing prior thread/commit/decline rationale. Dedup consumes no round; its published reply is a new evidence event; a cosmetic target that keeps changing remains one adjudicated finding. Treat uncertainty or a new angle as novel and keep open. Never weaken/delete/bypass tests to reach green; autoreview's no-test-edits rule applies here.
 
 ## Non-Blocking Convergence
 
@@ -43,11 +43,23 @@ Require empty output for worker-owned reviews.
 
 ## Green Exit
 
-Require stable latest head; docs run there/no changes/intentionally unavailable; required checks green or repo-accepted non-blocking; latest Greptile complete or intentionally unavailable; zero unresolved threads, own pending drafts and unaddressed available Greptile comments; merge state clean or repo-deployable; quiet period passed. Every closure rationale must be public.
+Run installed gate.mjs ship --request <json>: live open PR/stable head;
+docs on head/no changes/intentionally unavailable; mandatory pre-ship review
+performed/readiness passed; head CI green or accepted terminal non-blocking;
+Head Greptile completed/intentionally unavailable; zero unresolved threads,
+own drafts, requested changes or unaddressed bot remarks; public closure rationales;
+evidence pause before deadline. Require MERGEABLE with CLEAN, or UNSTABLE
+only with accepted terminal non-blocking failures and nothing pending.
+Await UNKNOWN/empty rollups. Parse CheckRun/StatusContext; require head bot checks,
+not old reviews after force-push. Before judgment require sealed preflight proof
+for PR head/merge-base; record its path. New heads invalidate proofs; return gate reason.
+Rules API 403/404: record unavailability; retain other gates. Retry other read failures
+until deadline; evidence-limit parks, waiving nothing.
 
 ## Green Certificate
 
-Record the full `mono-ship green certificate` from `skills/mono-ship/SKILL.md` durably in Linear comments/resources for recovery by deploy. Include convergence deferrals and published-replies result.
+Store full `mono-ship green certificate` from `skills/mono-ship/SKILL.md`
+in Linear for deploy recovery: convergence deferrals/published replies included.
 
 ## Review Status Reporting
 

@@ -11,8 +11,7 @@ implements stage work itself.
 - Orchestrator: one session per product; owns worker dispatch, monitoring, all
   Linear mutations during orchestration, technical decisions, deploy
   delegation, and the ledger.
-- Workers: one Issue each; run `mono-implement` → `mono-preflight` →
-  `mono-ship` sequentially in the same session and worktree under the AFK
+- Workers: one Issue each; run `mono-deliver`, whose implement/preflight/ship phases keep their owners in one session and worktree under the AFK
   contract from `templates/orchestrator-dispatch.md`; they never write to
   Linear directly.
 
@@ -225,8 +224,7 @@ put it to the owner with the verdict already attached, and only then write.
 ## Orchestration Mode Precedence
 
 Apply the Orchestration Mode Precedence section of `references/worker-contract.md`.
-Consume every stage-terminal report by applying each permitted queued mutation
-with read-back before advancing the pipeline. The resume sweep is crash recovery,
+Consume every phase report/full write queue through Delivery Write Barriers below before confirming progression; consume final green/parked separately. The resume sweep is crash recovery,
 never the normal application path. Dispatch lifecycle moves use the handshake
 below: gates precede application and the worker resumes only on verified state.
 Never defer a check onto a queued mutation or describe pending state as applied.
@@ -255,7 +253,7 @@ much redundancy the generator emits:
 | Byte-frozen paths with their expected hashes; the exact protected-surface list | carried | carried |
 | Verification surface: one runnable command per item, or the item marked as a judgment check | carried | carried |
 | Restating AFK gates the skill already binds — single-writer, no sub-delegation, never-ask, report-before-stop | restated inline | one pointer line to the stage skill and this section |
-| Stage-terminal status semantics (`blocked` vs `needs-human` vs `needs-decision` vs drift) | restated as an explicit decision list | named only where this Issue makes one likely |
+| Parked reason semantics (`blocked` vs `needs-human` vs `needs-decision` vs drift) | restated as an explicit decision list | named only where this Issue makes one likely |
 | Worked output shapes (comment, certificate, report skeletons) | inlined in the dispatch | referenced by path, composed at write time |
 | Per-step ordering the skill already fixes | re-enumerated | omitted |
 
@@ -274,11 +272,10 @@ quoted — and it is NOT available under «Решил сам:», so the orchestr
 never grant it to itself.
 
 Dispatch-moment lifecycle moves are the moves a dispatch itself carries: the
-Project → Delivery move of a project's first `mono-implement` dispatch, and
+Project → Delivery move of a project's first delivery dispatch, and
 the Issue-to-started move that activates an issue-only Issue. Applicability
 follows from that: only a dispatch carrying such a move runs the handshake.
-`mono-preflight` and `mono-ship` advances carry no lifecycle move, so they are
-dispatched and resumed exactly as before, with no gate phase.
+Preflight and ship are internal phases, with no new dispatch or lifecycle gate pause. The startup dispatch is mono-deliver, including activation of a Project-first Issue while its Project is already Delivery.
 
 Order, and it is the whole protocol:
 
@@ -417,8 +414,7 @@ Order, and it is the whole protocol:
    ack before its report, so consuming during that interval would discard the
    only durable recovery evidence if the worker died. Preserve the ack and
    `registryEntry.gates` while polling for the correlated ordinary stage report.
-   Shape and freshness do not correlate a blocked report to an attempt because
-   the shared report path carries no attempt number. Before consumption,
+   Shape and freshness do not correlate a blocked report to an attempt until its attempt and transport/worktree provenance are verified. Before consumption,
    reconcile the transport thread and worktree exactly as for the
    `gates-passed`-plus-report ambiguity below; if current-attempt authorship is
    not proven, keep the ack and field and resolve the ambiguity.
@@ -438,8 +434,7 @@ Order, and it is the whole protocol:
    A `gates-passed` ack beside a stage report is the genuinely ambiguous one.
    It is what the crash window above looks like — the resume succeeded, the
    worker ran and reported, and the orchestrator died before consuming the ack
-   — and it is equally what a superseded worker leaves behind, because a report
-   carries no attempt number and may belong to an earlier attempt rather than
+   — and it is equally what a superseded worker leaves behind, because a stale report may belong to an earlier attempt rather than
    to this ack. Either reading is wrong in one direction: consuming the ack
    strands a current dispatch that never ran, resuming again replays one that
    did. Reconcile before acting — establish from the transport thread and the
@@ -448,8 +443,7 @@ Order, and it is the whole protocol:
    between a resume and its rename: an unconsumed ack alone never authorizes a
    second resume.
 
-   The watcher does not resolve it, and deliberately so. A stage report carries
-   no attempt number, so a superseded worker still alive can write one after
+   The watcher does not resolve it, and deliberately so. A report carries an attempt number, but a superseded worker still alive can write one after
    its successor's log was born and after that successor's ack; no ordering
    rule distinguishes the two. A watcher that suppressed the ack on that
    evidence would discard the CURRENT attempt's gate-ack and strand its
@@ -489,7 +483,7 @@ Order, and it is the whole protocol:
    resume, unchanged: resuming is a stage resume, so the gate is mandatory.
 
    First, the immediate post-resume registry update that records the new
-   writer per Worker Transports preserves `registryEntry.gates`. After that
+   writer per Worker Transports preserves `registryEntry.gates`. The runtime records last_resume with the new pid, thread, registration time and exact gate-ack digest; consumption requires this marker, not the stale gate-phase pid. A subsequently exited resumed writer can still be consumed so the watcher re-arms and detects the real failure. After that
    writer registration is confirmed, the orchestrator atomically publishes
    the private consumption record with `outcome: applied`, then renames every
    candidate for the attempt to `<ISSUE-KEY>-gate-ack-a<N>.applied.json` in
@@ -526,8 +520,8 @@ handshake.
 | Consume `.rejected` | The attempt is TERMINAL: atomically publish the private consumption record with `outcome: rejected`, rename every ack candidate, then remove `gates`. Recovery is an immediate verified respawn of a NEW gate attempt with its own list; never same-attempt nudge after consumption. |
 | Consume `.blocked` | Only after the correlated stage report is present and valid: atomically publish the private consumption record with `outcome: blocked`, rename every ack candidate, then remove `gates` and route the report. |
 | Malformed `gates` on a gate-carrying entry | Treat it as a producer contract error and terminate the attempt; verified-respawn a NEW gate attempt with a correct list. |
-| `gates` present on `mono-preflight` or `mono-ship` | Presence is forbidden, not a selector: start a new attempt of that same stage WITHOUT `gates`. |
-| Stage advance or any other non-gate dispatch | Reconcile every unconsumed ack first, then atomically change `stage`/`log` and remove `gates` in the same registry write. |
+| `gates` retained after startup consumption | Reconcile the private consumption record and finish cleanup before processing phase reports. |
+| Phase advance | Reconcile startup ack first; preserve delivery stage/log and confirm the complete phase queue. Never dispatch a new stage. |
 | Crash after consumption-record publication | Resume treats the well-formed private CURRENT-attempt record as intent: finish renaming every remaining ack candidate to the suffix selected by `outcome`, then remove stale `gates`. Tombstones and mailbox files never authorize either action. |
 
 Blocked path: a gate that fails makes the ack `status: blocked`, and the worker
@@ -587,16 +581,16 @@ in full for both audiences. Never substitute a checkout's `SURFACE_REVISION`.
 
 ### Sandbox ladder
 
-Sandbox grants follow a stage ladder: `mono-implement` uses `workspace-write` without network; `mono-preflight` adds network and writable main-checkout `.git` while retaining the writable orchestrator root for mailbox delivery; `mono-ship` keeps those grants and permits push.
-
-| Stage | Sandbox mode and grants | Why |
-| --- | --- | --- |
-| `mono-implement` | `workspace-write`, no network, plus the writable orchestrator root | Edit only the linked worktree and deliver the mailbox report. |
-| `mono-preflight` | `workspace-write`, network, writable main-checkout `.git`, plus the writable orchestrator root | Run the review helper, commit from the linked worktree, and deliver the mailbox report. |
-| `mono-ship` | The `mono-preflight` grants, with push permitted | Push the branch, create and stabilize the PR, and keep mailbox delivery available. |
-| Any stage that edits a protected hidden directory such as `.agents` | An explicit writable grant for that exact directory | Codex protects dot-directories even when their worktree is writable. |
-
-Escalating to a fully disabled sandbox is not normal operation; record it in `ledger.md` as a deviation with the reason.
+A mono-deliver process needs the union of phase capabilities from launch:
+workspace-write, network, writable worktree, main-checkout .git and only <root>/reports as mailbox.
+Keep <root>/confirmations, workers.json, attempts.json, control.json, consumed/,
+logs/ and dispatch/ outside worker grants. Spawn uses --add-dir <root>/reports;
+resume uses the supported writable_roots config override. Persist the complete
+write-grant list in the launch capsule; phase capsules copy these dispatch pins.
+Phase authority still limits code to implement, commits to preflight, PR/push to
+ship; broader process capability never widens the Issue. Standalone phase grants
+follow the worker contract. Hidden directories need exact grants. Disabled sandbox
+remains exceptional, recorded in the ledger with the owner mandate/reason.
 
 ### Worker model selection
 
@@ -604,120 +598,34 @@ For a new Codex worker, select [role:worker-default](model-policy.md#roles).
 The orchestrator may select [role:worker-complex](model-policy.md#roles) per
 dispatch by judgment, recording the reason under «Решил сам:». There is no
 automatic risk-class-to-worker mapping. Read model AND effort from the selected
-row into `<worker-model>` and `<worker-effort>` in the spawn command below.
-Before launch substitute these placeholders, and record the role, policy
-values, parameters actually set and transport case in the generated dispatch
-and registry per `templates/orchestrator-report.md`. On resume preserve the
+row; pass the selected role to the installed spawn tool, which resolves both
+values at launch. Record the role, policy values, parameters actually set and
+transport case in dispatch and registry per `templates/orchestrator-report.md`. On resume preserve the
 recorded launch pins; do not resolve new policy values for an existing thread.
 
-- `codex-cli`: the orchestrator — in any runtime with shell access — creates
-  and steers headless Codex worker threads; this subsumes the older `codex`
-  binding. Spawn as a background process, one per Issue:
-
-  ```bash
-  codex exec --json \
-    --cd <worktree> \
-    --sandbox workspace-write \
-    --add-dir ~/.mono-agent-workflow/orchestrator/<product> \
-    -c 'model="<worker-model>"' \
-    -c 'model_reasoning_effort="<worker-effort>"' \
-    "$(cat <dispatch-prompt-file>)" < /dev/null \
-    > ~/.mono-agent-workflow/orchestrator/<product>/logs/<ISSUE-KEY>-<stage>-a1.jsonl \
-    2> ~/.mono-agent-workflow/orchestrator/<product>/logs/<ISSUE-KEY>-<stage>-a1.stderr.log &
-  ```
-
-  Spawn verification, mandatory for every spawn attempt:
-
-  - The dispatch prompt is passed only as a file
-    (`"$(cat <dispatch-prompt-file>)" < /dev/null`); inline prompts are
-    forbidden. Quoting drift silently truncates inline prompts, and without
-    `< /dev/null` a mis-parsed command drops the CLI into interactive stdin
-    mode instead of failing.
-  - `thread.started` must appear in the log within 60 seconds of spawn;
-    otherwise kill the process and retry as the next attempt.
-  - A non-empty log with no valid JSON event is an immediate spawn failure —
-    kill and retry; never wait out the timeout. A non-JSON line followed by
-    valid JSON events is contamination, not spawn failure; inspect the separate
-    stderr log, while liveness monitoring continues from the JSON events.
-  - Recording "ok" or a live thread in the worker registry or ledger with an
-    empty `thread_id` is forbidden. A gate-carrying attempt has one narrow
-    pre-spawn exception: its inactive entry is published with `thread_id: null`
-    and `pid: null` before the process exists, then replaced with live identity
-    only after `thread.started` is parsed.
-  - Log files are numbered from the first attempt
-    (`logs/<ISSUE-KEY>-<stage>-a1.jsonl`, retries `-a2`, `-a3`, ...) so a
-    retry never overwrites the failed attempt's evidence.
-  - The worker model and reasoning effort are pinned explicitly in the spawn
-    command (`-c 'model=...'`, `-c 'model_reasoning_effort=...'`); CLI
-    defaults drift between versions (the wave-1 `model_switch` precedent),
-    and a silently switched model voids the dispatch contract.
-
-  Before a gate-carrying worker process can start, create its empty
-  attempt-numbered log, fsync the log file and its `logs/` directory, and only
-  then atomically pre-register the inactive `workers.json` entry with that
-  `log`, stage, pack identity, the publication-time
-  `spawned_at`, and exact `gates` list. The
-  worker process starts only after this durable write succeeds, so its ack
-  cannot overtake the producer contract. Immediately after `thread.started` is
-  parsed, replace `thread_id: null` and `pid: null` with the verified live
-  identity while preserving `log` and `gates`. A failed spawn retires that
-  inactive entry before the next attempt is pre-registered. The watcher treats
-  that exact empty-log/null-identity state as inactive startup: it emits no
-  liveness event for one stall-threshold startup window until a valid
-  `thread.started` arrives. Empty or partial output, contamination, another
-  JSON event, and a complete non-JSON line all remain in that same bounded
-  state; at timeout they become `spawn-fail`. The startup window
-  begins at that registry publication's `spawned_at`, never at a prepared log's
-  mtime. A missing, invalid, or more-than-five-seconds-future `spawned_at`
-  cannot define a safe window and emits `spawn-fail` immediately, never
-  `dead`. Log inspection is bounded to 256 KiB per watcher pass and resumes
-  from its prior cursor on the next pass, so an append-only pre-start stream
-  cannot monopolize monitoring and a later `thread.started` remains
-  discoverable. If the startup timeout arrives before that scan is complete,
-  the watcher freezes the then-observed file size and finishes inspecting that
-  snapshot before emitting `spawn-fail`; later appends cannot extend the
-  decision indefinitely. Recurring mode continues across intervals;
-  `--once` performs additional bounded passes in the same invocation until
-  that frozen snapshot is resolved. Timeout comparison uses elapsed
-  milliseconds and never rounds a not-yet-expired startup upward. An inactive
-  entry whose attempt log is missing or
-  unreadable emits `spawn-fail` as well, so a damaged producer barrier heals
-  through the same verified new-attempt path.
-
-  Immediately after verifying every non-gate spawn, resume, or session
-  rotation, in the same orchestrator turn and before any other action, update
-  that worker's `workers.json` entry with at least the current `pid`, `log`,
-  `last_activity_at`, and `stage` (and the new `thread_id` on rotation). A
-  same-attempt gate resume preserves the existing list until the lifecycle
-  table authorizes removal. A live worker paired with a stale registry PID
-  violates the registry contract; watcher events produced from that entry are
-  untrustworthy, and investigating any such event must begin by reconciling
-  the registry with the actual writer process.
-
-  Parse the `thread.started` event from the log for the thread id and record
-  it in the worker registry, together with the background process pid (`$!`)
-  so the heartbeat watcher can probe writer liveness. Continue or steer the
-  same thread with the same attempt-numbered stdout/stderr pair (resume appends
-  because each attempt log is cumulative):
-
-  Resume does not accept the global `--cd`, `--sandbox`, or `--add-dir` flags; any of them in a resume command is a contract error — set the working directory with `cd` and grants through `-c` overrides.
-
-  ```bash
-  cd <worktree> && codex exec resume <thread-id> --json \
-    -c 'model="<pinned model>"' \
-    -c 'model_reasoning_effort="<pinned effort>"' \
-    -c 'sandbox_mode="workspace-write"' \
-    -c 'sandbox_workspace_write.writable_roots=["<orchestrator-root>"]' \
-    "$(cat <dispatch-prompt-file>)" < /dev/null \
-    >> ~/.mono-agent-workflow/orchestrator/<product>/logs/<ISSUE-KEY>-<stage>-a<N>.jsonl \
-    2>> ~/.mono-agent-workflow/orchestrator/<product>/logs/<ISSUE-KEY>-<stage>-a<N>.stderr.log &
-  ```
-
-  The thread keeps its context across stages. Ship-stage spawns and resumes add
-  `-c 'sandbox_workspace_write.network_access=true'` (push and PR creation
-  need network). The dispatch prompt names the installed stage-skill body
-  (`~/.codex/skills/<stage-skill>/SKILL.md`) because Codex workers load
-  skills by reading files, not through a skill tool.
+- `codex-cli`: use installed scripts/orchestrator/spawn.mjs --request <json>
+  and resume.mjs --request <json>; paths are relative to the installed
+  ../.mono-agent-workflow/ runtime, never a product checkout or session helper.
+  Run --help for request fields. Spawn enforces start gate, control halt/state,
+  attempt cap, durable empty-log pre-registration and explicit model/effort.
+  It persists launch metadata in the attempt log before execution, preserving
+  price evidence after registry retirement. No shell interpolation: prompt is
+  read from dispatchFile and passed as one argument; stdin is /dev/null.
+  Observe thread.started within 120 seconds; failed startup keeps its attempt
+  and process evidence for reconciliation, never overwrites logs. Do not call a
+  null-thread entry live. Register pid promptly, then thread once observed.
+  Keep startup gate list while waiting or same-attempt recovery; new attempts
+  provide a fresh list. The watcher bounds incomplete startup independently.
+  Resume preserves launch pins and appends the same log, refuses a live writer
+  and changed identity, uses cwd plus sandbox/network writable-root overrides (sandbox_workspace_write.network_access).
+  Reconcile a crash before another resume; never silently retry a possibly live
+  detached process. A launch.lock left by a crashed caller requires process and
+  registry reconciliation before removal. No phase dispatches/resume templates.
+  Use consume-gate-ack.mjs only after handshake read-back/resume registration;
+  its durable private record precedes ack rename and gates cleanup. At deploy,
+  remove old helpers/spawn-codex-gate.sh, helpers/resume-codex.sh and
+  helpers/consume-gate-ack.mjs, recording the installed replacements. Workers do
+  not delete the external helpers.
 
 ### Claude worker transports
 
@@ -827,9 +735,9 @@ complete cut-over window.
   `surfaceRevision`, plus the optional `product_name` — the product-language
   name this Issue is called by in owner-facing statuses — and optional
   attempt-scoped `gates` only for the current
-  gate-carrying `mono-implement` attempt (shape and validity in
+  gate-carrying `mono-deliver` attempt (shape and validity in
   `templates/orchestrator-report.md`). Updated on
-  every verified spawn, resume, session rotation, stage advance, and respawn
+  every verified spawn, resume, session rotation, phase transition, and respawn
   under the immediate-update rule in Worker Transports; workers never touch it.
 - Product control: `control.json` beside `workers.json`, with the exact shape in
   `templates/orchestrator-report.md`. The orchestrator owns the lifecycle
@@ -861,79 +769,92 @@ never report it as applied.
 
 ## Monitoring Protocol
 
-- Do not steer an actively progressing worker; do not raise the proof bar
-  mid-flight; polling alone never justifies intervention.
-- Intervene only on: a worker-reported question or blocker, exhausted work,
-  repeated failures with no progress, gross divergence from the assigned
-  Issue, or an unsafe mutation.
-- Read the worker's latest state before any intervention or respawn.
-- Before processing any report event or poll, and before any heartbeat enters
-  the common healing ladder, validate `registryEntry.gates` with a stage-aware
-  branch. This recovery check preempts report routing and stage advancement:
-  a report from an entry that takes a malformed or forbidden-presence branch
-  is not consumed as a successful stage result. On a gate-carrying
-  `mono-implement` entry, a present
-  malformed value is a producer contract error: terminate the current attempt
-  and verified-respawn a NEW gate attempt with its own correct non-empty unique
-  list; never same-attempt nudge it. On a `mono-preflight` or `mono-ship`
-  entry, any presence is forbidden: start a new attempt of that same stage
-  WITHOUT `gates`. When an ack exists but `gates` is absent, take the same
-  NEW-attempt producer-contract recovery; with no ack, absence leaves ordinary
-  liveness handling unchanged. These branches run here before the common
-  ladder; the handshake table defines the state transition but does not route
-  recovery.
-  A later-stage entry can never legitimately retain `gates`: stage/log
-  advance and `gates` removal are one atomic post-reconciliation registry write.
-  Therefore first finish any journal recovery while the entry is still
-  `mono-implement`; only unexplained presence on an already later-stage entry
-  takes the forbidden-presence respawn branch.
-- Before applying the ordinary no-ack healing ladder, inspect the private
-  consumption namespace only for a `mono-implement` registry entry whose CURRENT stage-qualified
-  log is `<ISSUE-KEY>-mono-implement-a<N>.jsonl`. A well-formed private
-  consumption record for that same `<N>` with `outcome: rejected` is a durable
-  terminal routing signal. Skip same-attempt nudge and verified-respawn a NEW
-  gate attempt with its own correct list. Preflight and ship entries never
-  consult these records, even when their stage-local attempt number is also
-  `<N>`. Watcher liveness events remain unchanged; this is orchestrator
-  recovery routing from trusted durable state.
-- An unconsumed valid `blocked` ack with no correlated report is a
-  missing-report recovery case, never the no-ack path. Preserve both the ack
-  and `registryEntry.gates`; use the ordinary reportless-exit recovery to
-  resume the same thread once and demand its stage report. Consume `.blocked`
-  only after that report validates. A failed recovery may advance to the
-  existing rebuild/respawn rung, but it never turns the ack into absent
-  evidence or authorizes early cleanup.
-- Stuck or dead worker: rebuild stage state from Linear plus the last mailbox
-  report (the branch survives in the worktree) and respawn a worker to
-  continue the stage, not restart the Issue.
-- `codex-cli` liveness ladder: process exit with a mailbox report is the
-  normal advance signal; process exit without a report — resume the thread
-  once with `cd <worktree> && codex exec resume <thread-id> --json -c 'model="<pinned model>"' -c 'model_reasoning_effort="<pinned effort>"' -c 'sandbox_mode="workspace-write"' [-c 'sandbox_workspace_write.network_access=true'] [-c 'sandbox_workspace_write.writable_roots=["<path>",...]'] "$(cat <dispatch-prompt-file>)" < /dev/null >> <attempt-log>.jsonl 2>> <attempt-log>.stderr.log &`, demanding the report; a failed resume or a second reportless exit is a
-  stuck worker (rebuild and respawn per the bullet above). Stage budgets,
-  guidance not gates: implement 60m, preflight 30m, ship 90m. A ship worker
-  whose turn ends before green is resumed with «continue stabilization» using
-  that same working resume form.
-- Gate-pause carve-out: a worker that has written a fresh `gates-passed`
-  gate-ack and gone quiet is waiting by contract, not stuck (Two-Phase
-  Dispatch Handshake). Its exited process (`codex-cli`) or ended turn
-  (`claude-code-desktop`, `fallback`) is the expected end of the gate phase,
-  not a liveness signal. The correct response is to apply the dispatch's
-  lifecycle moves with read-back and resume that worker:
-  never a nudge, respawn, session rotation, or owner page. The ladder applies
-  only when no gate-ack arrives at all, which is the ordinary liveness case
-  above. Whenever an UNCONSUMED gate-ack exists for that attempt, any `stall` or
-  `dead` for it is a consumption boundary rather than a death — however long
-  after the ack it arrives. Suppression for such an attempt is bounded, so the
-  event is the protocol asking for reconciliation of an ack/report pair it
-  refuses to bury, not evidence the worker died: the gate-phase process is gone
-  by design, the resumed one may never have been registered, and the worker may
-  in fact have completed. Reconcile the registry against the actual writer
-  process and the mailbox first, then consume or resume as that shows. Routing
-  such an event into healing or replay is a contract error — it can respawn a
-  worker whose work already landed. Only an attempt with NO unconsumed ack
-  takes the ordinary healing ladder.
-- Material scope drift: stop the worker and escalate through
-  `scope-drift-needs-handoff`; scope is always the user's decision.
+Do not steer progressing workers, raise proof mid-flight or intervene for polling
+alone. Intervene on reported questions/blockers, exhausted work, repeated failures
+without progress, gross scope divergence or unsafe mutation; inspect latest state
+first. Check startup registry gates before ack/report routing: malformed/absent
+with ack is a producer contract error; reconcile/retire and create a verified new
+attempt with correct gates, never same-attempt nudge. After consumption, gates
+must be absent. Finish private journal recovery before phase routing.
+
+Read ack status before any report. Applied/rejected/blocked private records bind
+only the current attempt. Rejected is terminal: reconcile, then new attempt within
+cap, never nudge. Blocked ack without report waits for same-attempt report recovery;
+preserve ack/gates until verified report exists, then consume blocked. Passed ack
+with report or uncertain resume requires transport/worktree reconciliation, never
+second lifecycle application/resume from an ack alone. Record recovery sync and
+rename before gates removal; tombstones never authorize cleanup.
+
+A fresh passed startup ack is a contracted pause, not death. Any stall/dead while
+its ack remains unconsumed is a consumption boundary: reconcile writer/mailbox
+before healing. Phase event: validate capsule/attempt and consume its whole queue
+through the barrier below; do not resume a worker waiting on a confirmation file.
+The watcher suppresses liveness only for the configured bounded confirmation wait.
+
+No-ack/no-report exit: resume the same thread once demanding its capsule/report;
+second reportless exit or failed resume rebuilds from Linear plus capsule/worktree
+and uses a verified new attempt, preserving outstanding write IDs and reconciliation.
+Use installed resume/spawn tools; do not reset Issue or attempt counts.
+Keep dirty work on same-thread resume. If that thread cannot resume, park
+needs-decision with its capsule and preserved dirty tree; never loop new spawns,
+discard changes or bypass the mandatory clean-tree start gate. A clean recovery
+checkpoint needs the preflight owner before a verified new attempt. Halt refuses
+new spawns/resumes, not running workers. Escalate only after the healing ladder
+(nudge → respawn → session rotation) is exhausted or an Always-ask decision exists.
+Keep decisions/results in ledger. Delivery budget is guidance, not a gate.
+Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
+
+## Delivery Write Barriers
+
+Poll phase reports as well as events; events accelerate, never prove application.
+Validate identity/attempt/head/sequence and full queue, including comments and
+certificates. Use installed delivery-state.mjs confirm with the orchestrator-owned
+Linear adapter. The adapter receives action=reconcile|apply, issue, attempt,
+idempotencyKey and write via stdin; stdout JSON returns state=present|missing|unknown
+and read-back evidence. Reconcile compares desired payload/target, locates comments
+by stable marker/idempotency key, and returns unknown on ambiguity/read failure.
+Apply never means confirmed: the runtime reconciles again afterward. Implement
+adapters with the configured Linear connector; never give one to a worker.
+
+Runtime fsyncs an applying intent, then the exact per-write present result under
+consumed/<ISSUE-KEY>-a<N>/<id>.json before whole-queue confirmation. On recovery
+reconcile ALL Linear writes against Linear, even local successes, applying only missing
+ones. Keep IDs/payloads stable; conflicting payload for an old ID refuses. Read-back
+must prove the desired effect, not merely a successful API response. Retry only
+after reconciliation; missing confirmations cannot duplicate comments. Never claim
+an unavailable adapter completed a queue: leave pending and park at the deadline.
+
+For operation=preflight-collect, route the adapter to the gate, never Linear.
+Validate the single-item confirmation-request against dispatch product, pinned
+installed skillsRoot, risk/critical, verification command, worktree/head/base and
+evidenceRoot. On spawn, pin evidenceRoot and the complete workerWritableRoots in the request/registry. On resume, any extra grant requires an amended dispatch with the complete effective list; the runtime refuses evidence-root overlap and persists effective grants before launch. Build collection and worker verification requests from these current pins, never an earlier dispatch. Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY
+worker-writable root (including the orchestrator root and temporary grants).
+Only the orchestrator outside all worker sandboxes runs collect:true. Optionally pin reviewDataset to an orchestrator-owned absolute file under evidenceRoot; the gate binds receipt reviewDataset as {source,digest,copy}. Keep the source unchanged through collection and worker verification. Immediately before the helper, copy it to .orchestrator/review-dataset-<digest8>.md in the reviewed checkout and pass that repo-relative path via --dataset. Verify the copy digest against the source before and after the helper; remove the copy afterwards, best effort. Keep .orchestrator/ ignored; no worker runs during collection. The gate
+runs verification AND the installed autoreview helper inside codex sandbox with only the worktree and one private temp directory writable per invocation. Keep TMPDIR/TMP/TEMP and review output in that temp directory. Use workerWritableRoots only to exclude evidenceRoot, never as collector grants; keep all orchestrator control state read-only. Exclude skillsRoot/evidenceRoot; a denial probe fails closed if that
+boundary is missing. Record the probe independently of the command exit code; a review with findings fails as a review failure. Keep the trusted autoreview helper outside that write scope, including its real symlink target. Pause the worker during collection. Repository-configured executable Git filters are unsupported by privileged gate/helper reads: the gate refuses before execution, including after verification. If a product requires such filters, obtain a trusted isolation policy instead of disabling this check. Reconcile
+an existing authenticated receipt matching request.collectionId and all pins before repeating collection; failed
+reviews are completed runs too, not missing actions. Return present evidence as
+{receipt: <evidenceRoot>/history/<runId>.json, receiptDigest: <SHA-256 of canonical envelope>, gate: <exact gate answer>}, including a fail. The runtime checks immutable history identity, digest, signature and collection ID before confirming or accepting confirmation; the mutable head receipt is never confirmation evidence. Fsync that result
+and confirm through the same runtime. Publish and confirm enforce code → preflight → ship: read the latest earlier phase reports and every earlier sequence confirmation for the attempt before proceeding. Confirmations retain the report snapshot, so overwritten phase files do not erase sequence evidence. Missing or mismatched predecessors refuse before adapter calls. Fallback publication supplies --root; confirmation reads the report directory and root mailbox and refuses conflicting copies. Worker collect:false must pass before ready;
+A review fix uses a new head/write ID. Use write.id=request.collectionId=preflight-collect:<head>:<n>. Increment n for each collection request on that head, including transient retries after a recorded failure; also advance the phase sequence. Never reuse the failed collection ID for a new run; a lost response retains its original ID. Bind confirmation evidence to the immutable history receipt as well as the current head receipt. Never let a worker collect or select new
+pins. Preserve failed receipts. Configure confirmationTimeoutSec BEFORE dispatch
+to cover verification plus review; the 900-second default may park a longer run.
+Pass the same --config to delivery-state.mjs confirm; its adapter timeout uses confirmationTimeoutSec. The gate locks collection per head in evidenceRoot. Spawn releases the registry lock after durable PID registration, waits for thread.started outside it, and registers the same attempt/PID thread under a short lock. A stale lock requires confirming the collector has stopped and reconciling its receipt before removal; never start a competing collector. Never extend an in-flight deadline; reconcile any late collector completion. Before the ship gate independently run preflight
+collect:false with the same dispatch request. No new daemon or key service.
+
+Publish whole-queue confirmations under <root>/confirmations/, outside all worker write grants. The worker wait refuses any confirmation path overlapping capsule.writable_roots. Keep reports as the sole writable mailbox; journal and registry remain outside the sandbox grant. Hostile local operator attestation remains out of scope. Run scripts/sandbox-contract.test.mjs outside a worker sandbox to prove the real Codex CLI boundary; absent CLI and detected nested Seatbelt are explicit skips, never host proof. Other failures block. The routine verify suite includes this test; the orchestrator runs it outside worker sandboxes for the actual boundary proof.
+
+Publish confirmation only for the entire digest-bound queue, including empty
+queues. Preserve in-phase order: drift sync before PR, ready certificate before
+formal review, In Review/PR chip after PR. Keep phase=code|preflight|ship and the
+same delivery context/log. A retry after terminal parked archives a reconciled
+capsule only after remapping outstanding obligations to its new attempt through
+Linear reconciliation; never erase old receipts or replay from an empty queue.
+
+Consume final green only after current preflight/ship gates and all confirmations. For parked,
+write the reason/text and next action to Linear in this SAME turn, read it back,
+and then decide/escalate; missing write access remains an explicit pending action,
+never a hidden stop. No report → recovery, never implicit green.
 
 ## Heartbeat
 
@@ -946,7 +867,7 @@ the upstream repository source used for pack development and fixtures. It is
 a zero-dependency, read-only watcher over the orchestrator root: it reads
 `logs/`, `reports/`, `workers.json`, and `control.json`, writes nothing, and
 emits one stable line per watcher event to stdout —
-`<ISO time> EVENT:<stall|dead|spawn-fail|report|gate-ack|idle> <ISSUE-KEY|-> <detail>`.
+`<ISO time> EVENT:<stall|dead|spawn-fail|report|phase|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
 The watcher observes the active registry (`workers.json`), not the
 directory's history; retired Issues' logs are outside its scope.
 
@@ -970,7 +891,7 @@ directory's history; retired Issues' logs are outside its scope.
   the correlation surface. The report must match the worker registry's A5
   identity and issue/stage, and must satisfy the exact v2 freshness predicate:
   report mtime is at least the log birthtime and at least log mtime minus the
-  stall threshold. On `report`, read the correlated report and advance the stage pipeline.
+  stall threshold. On `report`, read the correlated report and consume its final green/parked outcome.
   Report delivery is at-least-once across watcher restarts:
   one process suppresses an unchanged mtime+size version and emits an updated
   version, while a restarted watcher emits the current version once again.
@@ -1012,8 +933,8 @@ directory's history; retired Issues' logs are outside its scope.
   watcher never mutates the registry snapshot. It also validates the ack whole
   and fails closed: a missing or malformed ack `gates` array, or
   `gates-passed` over a gate that did not pass, is treated as no ack at all. It is scoped to
-  the stage that can have a gate phase — a `mono-implement` log — so an ack
-  beside a `mono-preflight` or `mono-ship` log, whose dispatches carry no
+  the delivery that can have a startup gate phase — a `mono-deliver` log — so an ack
+  beside a legacy `mono-preflight` or `mono-ship` log, which carries no
   lifecycle move, is spurious and neither delivers nor suppresses.
   A fresh usable gate-ack suppresses `stall` and both `dead` branches for that
   worker during a bounded handoff: `gates-passed` waits for lifecycle
@@ -1177,7 +1098,7 @@ pins can anchor this policy text, not the collection itself.
 
 Cost is telemetry, not a gate: no thresholds, no blocking, visibility
 only. Never pause, steer, or fail a worker because of cost numbers, and
-never let cost collection delay a stage advance; a missing number is
+never let cost collection delay a phase transition; a missing number is
 recorded as unavailable, never blocks, and never pages the user. Cost
 data feeds status updates and the final wave report per
 `templates/orchestrator-brief.md` («цена: …» per Issue, «Цена волны» for
@@ -1198,18 +1119,17 @@ A fresh orchestrator session rebuilds state without loss:
    unverified reconstruction fails closed and is excluded from the issue-only queue. This
    scan adds parentless issue-only discovery only; it does not change dependency
    ordering or reclassify any fail-closed result.
-3. Read `ledger.md` and all mailbox reports; apply queued Linear mutations
-   that were never applied.
-4. Corroborate key ledger claims — dispatches, stage advances, deploys —
+3. Read ledger, phase capsules and mailbox reports; reconcile every queued write against Linear and apply only missing writes through Delivery Write Barriers. Never replay a queue from local receipts alone.
+4. Corroborate key ledger claims — dispatches, phase transitions, deploys —
    against worker log and report timestamps. A ledger line with no
    supporting evidence is marked unverified and its state is re-derived
    from Linear plus logs instead of being trusted. This is a judgment rule
    for the resuming session, not a pin-enforceable check: it defines how
    much to trust the ledger, not a mechanical validation.
 5. Read `workers.json` and list live worker sessions when the runtime allows
-   it. Consult `consumed/` only when `registryEntry.stage` is `mono-implement`
+   it. Consult `consumed/` only when `registryEntry.stage` is `mono-deliver`
    and the CURRENT registry log basename is
-   `<ISSUE-KEY>-mono-implement-a<N>.jsonl`. Before clearing any stale
+   `<ISSUE-KEY>-mono-deliver-a<N>.jsonl`. Before clearing any stale
    `registryEntry.gates`, parse the CURRENT
    attempt `<N>` from that entry's `log` and require the private orchestrator
    consumption record. First successfully fsync the orchestrator-root directory
@@ -1238,13 +1158,13 @@ A fresh orchestrator session rebuilds state without loss:
    lockfile before using its thread id. When surfaceRevision differs, do not rebind
    or resume that thread; report it blocked for a fresh compatible dispatch.
    Otherwise rebind to surviving `codex-cli` workers by thread id
-   (`cd <worktree> && codex exec resume <thread-id> --json -c 'model="<pinned model>"' -c 'model_reasoning_effort="<pinned effort>"' -c 'sandbox_mode="workspace-write"' [-c 'sandbox_workspace_write.network_access=true'] [-c 'sandbox_workspace_write.writable_roots=["<path>",...]'] "$(cat <dispatch-prompt-file>)" < /dev/null >> <attempt-log>.jsonl 2>> <attempt-log>.stderr.log &`) instead of respawning them.
+   through installed scripts/orchestrator/resume.mjs instead of respawning them.
 6. Output the rebuilt status table before taking any new action.
 
 Forced mid-wave resume drill — a planned one-time operational act,
 not a recurring gate: during the next wave the orchestrator deliberately
 performs a clean handoff to a fresh session mid-wave, at a safe boundary
-per Context Budget (after the current monitoring pass or stage advance
+per Context Budget (after the current monitoring pass or phase transition
 completes, never mid-dispatch), runs this Resume procedure for real, and
 records every reconstruction discrepancy in the ledger — unverified
 ledger claims, lost thread bindings, unapplied Linear mutations, report

@@ -35,8 +35,8 @@ The install writes local runtime files into each installed skills root:
 - `.mono-agent-workflow.lock.json` with upstream identity, version, commit, dirty flag, installed skill paths/hashes, and copied asset hashes.
 
 The lockfile also exposes the canonical dispatch identity: `packVersion`,
-`sourceCommit`, and positive integer `surfaceRevision`. Surface revision `3`
-identifies the current 10-skill surface; later breaking surface migrations must
+`sourceCommit`, and positive integer `surfaceRevision`. Surface revision `4`
+identifies the 11-skill surface with mono-deliver, write barriers, gates and installed orchestration tools; later breaking surface migrations must
 advance it explicitly rather than deriving it from directory count.
 
 Opening `<skills-root>/<name>/SKILL.md` must be enough for the agent runtime
@@ -64,7 +64,7 @@ Example shape:
   "schemaVersion": 3,
   "packVersion": "0.20.1",
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
-  "surfaceRevision": 3,
+  "surfaceRevision": 4,
   "upstreamRepo": "darkdepot/mono",
   "upstreamVersion": "0.20.1",
   "upstreamCommit": "0123456789abcdef0123456789abcdef01234567",
@@ -232,3 +232,7 @@ Use SemVer tags for workflow releases.
 
 Before `v1.0.0`, breaking changes are allowed in minor releases only when the
 changelog and release notes call them out clearly.
+
+## Delivery Surface Migration
+
+Install revision 4 only through --breaking with quiescence (idle control and empty worker registry); never mix stage dispatches with delivery workers. Install gate.mjs, runtime.mjs, delivery-state.mjs and orchestrator/{launch,spawn,resume,consume-gate-ack}.mjs together. control.json adds boolean halt (default false), checked by spawn/resume and reported by the watcher; it never terminates running workers. Keep attempts.json as the durable per-Issue attempt-count registry when workers.json entries retire. Stage-specific dispatch/resume templates are replaced by one delivery dispatch and capsule recovery.

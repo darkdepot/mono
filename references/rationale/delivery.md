@@ -22,3 +22,5 @@ usage. Wave-1 precedent: a full production wave ran with zero cost
 visibility — one Issue consumed 49M input tokens (97% cached), one PR
 accumulated 59 review submissions, and none of it appeared in any report.
 Model-tiering policy has no data without this telemetry.
+
+Refuse collector and start-gate Git reads when .gitmodules or an indexed gitlink is present: executable-filter inspection covers only the superproject, so submodules are unsupported.

@@ -19,6 +19,7 @@ const failures = [];
 const EXPECTED_SKILLS = [
   "mono-check",
   "mono-deploy",
+  "mono-deliver",
   "mono-handoff",
   "mono-idea",
   "mono-implement",
@@ -75,7 +76,7 @@ function validateReadBudgetFixtures() {
     for (const skill of DELIVERY_SKILLS) write(`skills/${skill}/SKILL.md`, base);
     fixture("recursive union, shared once and cycles", () => {
       const budget = measureReadBudget(scratch);
-      require(budget.files.length === 6, "union must have exactly six files");
+      require(budget.files.length === DELIVERY_SKILLS.length + 3, "union must contain delivery skills plus three shared files");
       const sum = budget.files.reduce((value, entry) => value + fs.statSync(path.join(scratch, entry.path)).size, 0);
       require(sum === budget.bytes && budget.approximate_tokens === sum / 4, "byte/token accounting differs");
       require(budget.within_ceiling, "small corpus must pass");
@@ -102,7 +103,7 @@ function validateReadBudgetFixtures() {
     });
     fixture("relative aliases count a shared file once", () => {
       write("references/nested.md", "Read `references/./shared.md`.\n");
-      require(measureReadBudget(scratch).files.length === 6, "alias counted twice");
+      require(measureReadBudget(scratch).files.length === DELIVERY_SKILLS.length + 3, "alias counted twice");
       write("references/nested.md", "Read `references/shared.md`.\n");
     });
     fixture("bare filename in a reading list is counted", () => {
@@ -1089,7 +1090,7 @@ function validateLocalInstallBehavior() {
     if (installedIdentity.sourceCommit !== expectedCommit) {
       fail("Local install lockfile sourceCommit must equal the immutable source HEAD");
     }
-    if (installedIdentity.surfaceRevision !== 3) {
+    if (installedIdentity.surfaceRevision !== 4) {
       fail("Local install lockfile surfaceRevision must equal the current surface revision");
     }
     if (installedIdentity.installedSkills?.length !== EXPECTED_SKILLS.length) {
@@ -1751,8 +1752,8 @@ function validateBreakingInstallBehavior() {
       const freshLock = JSON.parse(
         fs.readFileSync(path.join(skillsRoot, lockName), "utf8")
       );
-      if (freshLock.surfaceRevision !== 3 || freshLock.installedSkills?.length !== 10) {
-        fail(`Fresh breaking-install fixture must start with 10 skills at surfaceRevision 3 in ${skillsRoot}`);
+      if (freshLock.surfaceRevision !== 4 || freshLock.installedSkills?.length !== 11) {
+        fail(`Fresh breaking-install fixture must start with 11 skills at surfaceRevision 4 in ${skillsRoot}`);
       }
     }
     seedPreviousSkillSurface(
@@ -1849,8 +1850,8 @@ function validateBreakingInstallBehavior() {
       const migratedLock = JSON.parse(
         fs.readFileSync(path.join(skillsRoot, lockName), "utf8")
       );
-      if (migratedLock.surfaceRevision !== 3 || migratedLock.installedSkills?.length !== 10) {
-        fail(`Breaking install did not migrate the previous surface to 10 skills at surfaceRevision 3 in ${skillsRoot}`);
+      if (migratedLock.surfaceRevision !== 4 || migratedLock.installedSkills?.length !== 11) {
+        fail(`Breaking install did not migrate the previous surface to 11 skills at surfaceRevision 4 in ${skillsRoot}`);
       }
       for (const retired of ["mono-issue-intake", "mono-project", "mono-prd", "mono-spec"]) {
         if (fs.existsSync(path.join(skillsRoot, retired))) {
@@ -1873,11 +1874,11 @@ function validateBreakingInstallBehavior() {
     const idempotentOutput = runNode(["scripts/install-local.mjs", "--breaking"], { env });
     for (const skillsRoot of [codexRoot, claudeRoot]) {
       if (!idempotentOutput.includes(`Breaking install committed for ${skillsRoot}`)) {
-        fail(`Idempotent 10→10 breaking install did not commit ${skillsRoot}`);
+        fail(`Idempotent 11→11 breaking install did not commit ${skillsRoot}`);
       }
       const idempotentLock = JSON.parse(fs.readFileSync(path.join(skillsRoot, lockName), "utf8"));
-      if (idempotentLock.surfaceRevision !== 3 || idempotentLock.installedSkills?.length !== 10) {
-        fail(`Idempotent 10→10 breaking install changed the target surface at ${skillsRoot}`);
+      if (idempotentLock.surfaceRevision !== 4 || idempotentLock.installedSkills?.length !== 11) {
+        fail(`Idempotent 11→11 breaking install changed the target surface at ${skillsRoot}`);
       }
     }
     runNode(["scripts/install-local.mjs", "--check"], { env });
@@ -6748,8 +6749,7 @@ function checkModelPolicy(base) {
   for (const [file, section] of NORMATIVE_MODEL_SECTIONS) binding(file, modelSection(body(file), section), ["autoreview"]);
   const preflightFile = "skills/mono-preflight/SKILL.md";
   const preflight = body(preflightFile);
-  const workflow = preflight.split(/^Workflow:\s*$/m)[1] || "";
-  const reviewStep = /^5\.[^\n]*\n([\s\S]*?)(?=^6\.)/m.exec(workflow)?.[1] || "";
+  const reviewStep = namedWorkflowStep(preflight, "autoreview") ?? "";
   binding(preflightFile, reviewStep, ["autoreview"]);
   binding("skills/mono-orchestrate/SKILL.md", body("skills/mono-orchestrate/SKILL.md"), ["orchestrator"]);
   const certificate = preflight.split("Autoreview route:")[1]?.split("\n")[0] || "";
@@ -6770,7 +6770,6 @@ function checkModelPolicy(base) {
   for (const [section, executable, model, effort] of [
     [codexVoice, "codex exec", "second-voice-model", "second-voice-effort"],
     [claudeVoice, "claude -p", "second-voice-alt-model", "second-voice-alt-effort"],
-    [workers, "codex exec", "worker-model", "worker-effort"],
   ]) {
     try {
       const command = modelCommand(section, executable);
@@ -6917,7 +6916,7 @@ function validateModelPolicyFixtures() {
     change("README.md", (text) => text + `\n${[...MODEL_ENUM_ALLOWLIST].join(" ")}\n`);
     check(); restore(); check();
     console.log("PASS model-policy enum allowlist");
-    negative("spawn effort source", () => change("references/orchestration.md", (text) => text.replaceAll('<worker-effort>', roles.get("worker-default").effort)), "command must consume row model AND effort");
+    // Worker launch policy is exercised by the installed spawn/resume fixture in delivery-runtime.test.mjs; no shell-template prose pin.
     negative("AE4 route outside canonical section", () => change("references/autoreview-routing.md", (text) => {
       const tiny = text.split("\n").find((line) => rowKey(line) === "tiny");
       if (!tiny) throw new Error("Fixture route tiny not found");
@@ -7046,20 +7045,8 @@ const STRING_PINS = [
   ["references/versioning.md","sourceCommit"],
   ["references/versioning.md","surfaceRevision"],
   ["references/versioning.md","verify-pack-state.mjs"],
-  ["skills/mono-implement/SKILL.md","verify-pack-state.mjs identity"],
-  ["skills/mono-implement/SKILL.md","packVersion"],
-  ["skills/mono-implement/SKILL.md","sourceCommit"],
-  ["skills/mono-implement/SKILL.md","surfaceRevision"],
   ["skills/mono-implement/SKILL.md","blocked"],
-  ["skills/mono-preflight/SKILL.md","verify-pack-state.mjs identity"],
-  ["skills/mono-preflight/SKILL.md","packVersion"],
-  ["skills/mono-preflight/SKILL.md","sourceCommit"],
-  ["skills/mono-preflight/SKILL.md","surfaceRevision"],
   ["skills/mono-preflight/SKILL.md","blocked"],
-  ["skills/mono-ship/SKILL.md","verify-pack-state.mjs identity"],
-  ["skills/mono-ship/SKILL.md","packVersion"],
-  ["skills/mono-ship/SKILL.md","sourceCommit"],
-  ["skills/mono-ship/SKILL.md","surfaceRevision"],
   ["skills/mono-ship/SKILL.md","blocked"],
   ["references/orchestration.md","control.json"],
   ["references/orchestration.md","protocol.json"],
@@ -7226,7 +7213,6 @@ const STRING_PINS = [
   ["skills/mono-implement/SKILL.md","implemented-needs-preflight"],
   ["skills/mono-implement/SKILL.md","scope-drift-needs-handoff"],
   ["skills/mono-implement/SKILL.md","gstack-learnings-search"],
-  ["skills/mono-implement/SKILL.md","Учтённые learnings:"],
   ["skills/mono-preflight/SKILL.md","mono-preflight certificate"],
   ["skills/mono-preflight/SKILL.md","Issue(s):"],
   ["skills/mono-preflight/SKILL.md","Branch:"],
@@ -7260,10 +7246,8 @@ const STRING_PINS = [
   ["skills/mono-orchestrate/SKILL.md","templates/orchestrator-report.md"],
   ["skills/mono-orchestrate/SKILL.md","deployApproval"],
   ["skills/mono-orchestrate/SKILL.md","Session verdicts:"],
-  ["skills/mono-orchestrate/SKILL.md","timed-out"],
   ["skills/mono-orchestrate/SKILL.md","codex-cli"],
   ["skills/mono-orchestrate/SKILL.md","workers.json"],
-  ["skills/mono-orchestrate/SKILL.md","codex exec resume"],
   ["skills/mono-orchestrate/SKILL.md","orchestration.transport"],
   ["skills/mono-orchestrate/SKILL.md","maxParallelWorkers"],
   ["templates/review-output.md","Ревью Linear: <ready|advisory-ready|needs-fixes|blocked>"],
@@ -7298,7 +7282,7 @@ const STRING_PINS = [
   ["references/review-rubric.md","`advisory-ready`"],
   ["references/review-rubric.md","`needs-fixes`"],
   ["references/review-rubric.md","`blocked`"],
-  ["references/orchestration.md","EVENT:<stall|dead|spawn-fail|report|gate-ack|idle>"],
+  ["references/orchestration.md","EVENT:<stall|dead|spawn-fail|report|phase|gate-ack|halt|idle>"],
   ["references/orchestration.md","`recorded-late`"],
 ];
 const REQUIRED_HEADINGS = [
@@ -7580,7 +7564,7 @@ const MACHINE_TOKENS = new Set([
   "Documentation workflow",
   "Drift candidate:",
   "EVENT:",
-  "EVENT:<stall|dead|spawn-fail|report|gate-ack|idle>",
+  "EVENT:<stall|dead|spawn-fail|report|phase|gate-ack|halt|idle>",
   "Exit disposition:",
   "Expansion destination:",
   "Frozen slice disposition:",

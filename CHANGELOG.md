@@ -8,6 +8,23 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ### Changed
 
+- MONO-75 (breaking, surfaceRevision 4): dispatch one mono-deliver context with separate code/preflight/ship owners. Add durable per-write reconciliation, whole-queue confirmations and phase capsules; finish as green or parked. Install head-bound gates and orchestration launch/resume/ack tools together, with halt and persistent attempt caps. Replace fixed PR silence with bounded evidence accumulation; preserve all green conditions. Count the sequencer and worker contract without raising the 99,882-byte ceiling.
+- Collect preflight evidence only from the orchestrator outside worker write grants; workers verify pinned receipts with collect:false. Bind dispatch inputs and retain one confirmation-request for each collection. Grant only reports/ as the worker mailbox, keep confirmations/control state outside the grant, and record capsule writable_roots. Use preflight-collect:<head>:<n> for collection retries. Run verification and review behind sandbox evidence-write denial probes and writable private temp directories; disable Git monitors/hooks and refuse repository executable filters during gate reads and serialize collection per head. Use the configured confirmation budget for adapters. Preserve global Git excludesFile without restoring executable global settings. Skip the real sandbox fixture inside nested Seatbelt; require the orchestrator host proof. Seal collection consistency before persistence and review against the immutable base SHA. Bind bot remark dispositions to current comment content. Ship watch waits for pending evidence until its deadline. Accept UNSTABLE/MERGEABLE when all non-passing checks are policy-accepted terminal non-blocking and nothing is pending; retain required-check success and refuse terminal merge obstacles. While checks are pending, accumulate BLOCKED/UNKNOWN evidence; one-shot returns the pending reason and watch stops only at readiness or its deadline. Limit collector writes to the worktree and one private temp directory, regardless of request-listed worker grants. Preserve successful sandbox denial proof when verification or review exits with a failure. Refuse collector/start Git reads for repositories with submodules rather than inspecting nested executable-filter configurations. Bind optional orchestrator-owned review datasets under evidenceRoot by source path and file SHA-256. Supply a temporary repo-relative copy to the helper, verify its digest before/after review, record source/digest/copy and remove the copy afterwards. Launch the helper with the gate’s hardened Git environment.
+
+- Preserve startup-log cursors beyond 1 MiB; bind collection confirmations to authenticated immutable history receipts; reject outstanding requested changes; share complete parked-report correlation between watcher and acknowledgement consumption.
+
+- Enforce phase and sequence predecessors in both publication and queue confirmation; retain report snapshots in durable confirmations and re-read them during recovery before applying later writes. Find fallback predecessors under dispatched writable roots when later phases return to the normal mailbox.
+
+- Require the live PR head/base’s sealed preflight receipt inside the ship gate before judged outcomes; retain receipt identity in ship evidence state and its path in the gate answer.
+
+- Bind review receipts to head and merge-base, refresh remote-tracking base refs and use the live PR base tip in ship. Preserve receipts across base advances with an unchanged diff; new heads or a different merge-base still refuse.
+
+- Record rules API 403/404 as unavailable on the repository plan/visibility while retaining explicit required checks and merge checks. Keep branch slashes in the endpoint path; retry other GitHub read failures only within the existing ship deadline. Materialize the captured PR base object when a force-push makes it unreachable from the freshly fetched branch tip.
+
+- Restore trusted global/system credentials, URL rewrites and askpass/SSH settings only for base fetches; keep hardened Git reads, disabled hooks/monitors and replacement/graft protections. Report failed fetches as pending in watch and refuse one-shot.
+
+- Await lazy UNKNOWN mergeability even after checks finish; keep one-shot pending, watch recovery and the original deadline. Known terminal merge/check failures still refuse immediately.
+
 - MONO-74: split the delivery-worker contract from orchestrator transport,
   registry, watcher and resume policy. Shorten delivery/deploy instructions,
   centralize worker report and certificate references, and move explanatory

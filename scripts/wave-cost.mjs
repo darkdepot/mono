@@ -587,7 +587,7 @@ function collectModel(root, issue, logResults) {
   }
   for (const log of logResults) {
     for (const { value } of log.events) {
-      if (value?.type !== "thread.started") continue;
+      if (!["thread.started", "mono.launch"].includes(value?.type)) continue;
       const model = value.model ?? value.usage?.model;
       const effort = value.effort ?? value.model_reasoning_effort ?? value.usage?.effort;
       if (model || effort) {
@@ -729,7 +729,7 @@ function russianLine(result) {
   const measuredClause = totalIsMeasured
     ? `${measured} токенов измеримо (вход ${measuredInput}, из кэша ${cachedPercent}%, выход ${measuredOutput})`
     : measured;
-  return `Цена волны ${result.issue}: ${measuredClause}; исполнитель ${worker}, авто-ревью ${autoreview}, оркестратор ${orchestrator}; чтение пака ~${formatTokenCount(result.pack_reading.approx_tokens)} токенов; до зелёного PR ${green}, до слияния ${merge}; круги ревью ${rounds}; модель/усилие ${model}; ${PHASE_USAGE_NOTE}.`;
+  return `Цена волны ${result.issue}: ${measuredClause}; исполнитель ${worker}, авто-ревью ${autoreview}, оркестратор ${orchestrator}; чтение пака ~${formatTokenCount(result.pack_reading.approx_tokens)} токенов; до зелёного PR ${green}, до слияния ${merge}; круги ревью ${rounds}; проходов авто-ревью ${typeof result.autoreview.passes === "number" ? result.autoreview.passes : shortUnavailable(result.autoreview.passes)}; модель/усилие ${model}; ${PHASE_USAGE_NOTE}.`;
 }
 
 function main() {
