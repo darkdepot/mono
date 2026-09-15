@@ -1,285 +1,251 @@
 # Mono Agent Workflow
 
-Reusable Mono workflow skills for AI coding agents.
+A reusable skill pack for owners and coding agents who deliver software through Linear and GitHub. Use it to turn a raw idea into approved work, run one delivery worker from code to a green pull request, and deploy with evidence. The owner decides the product; agents carry the work and show what they actually verified.
 
-Canonical repository: [github.com/darkdepot/mono](https://github.com/darkdepot/mono).
+Canonical repository: [darkdepot/mono](https://github.com/darkdepot/mono).
 
-The workflow keeps Linear as the source of truth from raw idea to landed PR:
-
-```text
-mono-idea -> discovery/reviews -> mono-handoff -> approved Issue(s) -> mono-implement -> mono-preflight -> mono-ship -> mono-deploy
-```
-
-GitHub remains the branch, PR, review, CI, deploy, and merge-history surface. Linear owns the Project, PRD, Tech Spec, Issue contract, review acceptance, and drift notes.
-
-## Skills
-
-- `mono-idea`: raw idea intake, AskQuestion mini-grill, Project in Idea.
-- `mono-issue`: atomic front door for genuinely one-PR, projectless issue-only work; owns the create-then-approve fingerprint transaction and fails closed to Project-first.
-- `mono-handoff`: primary post-discovery bridge into Project, PRD, Tech Spec, package approval, and Issue(s).
-- `mono-review`: report-only artifact quality and risk review.
-- `mono-check`: report-only transition readiness checks.
-- `mono-implement`: Delivery Start and implementation execution from approved Issue(s).
-- `mono-preflight`: local branch readiness, targeted verification, mandatory `autoreview` clean gate using [role:autoreview](references/model-policy.md#roles) and risk-routed effort, and preflight certificate.
-- `mono-ship`: wrapper around configured project ship, documentation, review feedback, and green certificate workflows.
-- `mono-deploy`: wrapper around configured project deploy, post-ship check, Linear closeout, and learning capture workflows.
-- `mono-orchestrate`: control-plane orchestrator session per product; drives projects and Issues through worker sessions, decides technical questions itself, escalates only product decisions (scope, design, risk); runs discovery in director mode — a Second Voice reviewer agent interrogates, the orchestrator answers, and the user gets reviewed prototypes at checkpoints; reports to the owner in product language (what the product now does, never Issue keys or stages as the subject; «Нужно от тебя:» always last).
-
-The workflow includes an execution quality layer inspired by proven agent-skill
-guardrails: PRDs must cover actor, capability, and benefit; Issues must be
-durable AFK/HITL execution contracts; bug/perf work must carry a feedback-loop
-proof expectation; and deep/risky work gets an architecture-quality lens.
+This README is the complete introduction and owner-rule index. Follow its links for executable instructions, artifact contracts, templates, and runtime commands. Keep it current in the same PR whenever described behavior changes, as required by [Change Discipline](AGENTS.md#change-discipline).
 
 ## Workflow
 
-```text
-raw idea
--> /mono-idea outside Plan Mode
--> Linear Project in Idea
-
-optional Plan Mode discovery
--> /office-hours or /brainstorming
--> /plan-design-review if UI/product surface
--> /plan-eng-review when architecture is ready
-
-when final discovery/review plan appears
--> do not approve direct implementation
--> run /mono-handoff
-
-/mono-handoff
--> if still in Plan Mode: produce handoff exit-plan
--> inspect scoped discovery/review artifacts through artifact intake
--> draft package and ask package approval before durable writes
--> after approval: update Linear artifacts
--> run required/advisory mono-review gate
--> apply accepted artifact fixes
--> create Linear Issue(s)
--> stop with approved Issue(s), or route explicit implementation-start approval to mono-implement
-
-/mono-implement
--> verify implementation-start approval
--> move Project to Delivery when ready
--> run/report mono-check delivery
--> select implementation engine and implement from approved Issue(s)
--> exit to mono-preflight
-
-/mono-preflight
--> inspect branch/worktree/diff
--> classify final risk, select the explicit route from references/autoreview-routing.md, and run mandatory autoreview until clean
--> commit when safe/configured
--> emit preflight certificate
-
-/mono-ship
--> consume preflight certificate when present
--> run pre-ship mono-review and mono-check pre-ship when required
--> create/sync PR through configured ship workflow
--> run repo documentation workflow before final green when configured
--> stabilize review/CI/Greptile
--> emit mono-ship green certificate
-
-/mono-deploy
--> consume mono-ship green certificate
--> verify current PR head SHA still matches
--> run configured Deploy workflow
--> run/report mono-check post-ship
--> close Linear and record durable learnings
-```
-
-Orchestrated mode (optional):
+A **wave** is the work dispatched for an Issue, including retries, review, and its eventual delivery or recorded stop. A green PR is ready for deploy; deploy supplies the merge, delivery verification, and Linear closeout.
 
 ```text
-/mono-orchestrate (one session per product)
--> resume state from Linear + ledger + mailbox + worker registry
--> run idea/discovery/handoff in-session (Director Discovery + Second Voice: checkpoints, not question streams)
--> dispatch one worker per Issue (implement -> preflight -> ship)
--> answer technical questions; escalate scope/design/risk as decision briefs
--> run mono-deploy per deployApproval policy
+raw idea → Project in Idea → discovery → reviewed and approved package
+→ approved Issue → start handshake → one mono-deliver worker
+    code → confirmed write queue → local readiness → confirmed certificate
+    → PR → reviews and checks → confirmed green certificate
+→ mono-deploy → verification → Linear closeout and project update
 ```
 
-Recommended pairing: a Claude Code orchestrator session with one headless
-Codex CLI worker per Issue (`codex-cli` transport — `codex exec` spawns,
-resumable threads across stages, mailbox reports, `workers.json` registry for
-resume). Set `orchestration.transport` in the project config or let the
-orchestrator detect the runtime; see `references/orchestration.md`.
+1. **Capture.** Bring a raw idea to `mono-idea`, outside Plan Mode. Create a strengthened Project in Idea, assigned to the owner, without PRD, Tech Spec, Issues, or code. An unmistakable one-PR request may instead enter `mono-issue` under its eligibility rules.
+2. **Discover.** Shape the problem through `/office-hours` or `/brainstorming`; review a product/UI surface with `/plan-design-review` and an implementation architecture with `/plan-eng-review`. These outputs are inputs to handoff, not permission to code. In orchestrated discovery, a Second Voice challenges the draft, the orchestrator answers technical questions, and the owner sees reviewed prototypes and prepared decisions at checkpoints.
+3. **Package.** Run `mono-handoff`. Inspect supplied artifacts and scoped sources, draft the Project/PRD/Tech Spec and Issue slicing, review before the first durable package write, and obtain package approval. Persist the approved package in Linear and apply accepted fixes through its owner. Keep the Project pre-delivery until implementation start is explicitly authorized; documents alone never authorize Delivery.
+4. **Start.** `mono-implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement and pauses; the orchestrator applies and reads back the move, then resumes the same worker. Recheck readiness against that amended snapshot before code.
+5. **Implement and prepare.** `mono-deliver` sequences `mono-implement`, `mono-preflight`, and `mono-ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review. Commit a ready branch and record its certificate. Preserve separate phase ownership even though the worker context is shared.
+6. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
+7. **Deploy and close.** `mono-deploy` verifies that the current PR head matches the green certificate, applies the configured approval policy, and delegates the configured deploy workflow. Verify delivery and run live acceptance where users consume the result. Close the Issue only after its delivery requirements pass; publish the informational project update, report cost, record useful learnings, and retire the worker. Only the shipment of the last open Project Issue may complete that Project.
 
-Discovery artifacts from `/office-hours`, `/brainstorming`, and reviews are inputs, not durable Linear truth. Linear becomes current when `mono-handoff` persists the package.
+### Artifacts and truth
 
-Use `mono-handoff` for post-discovery packaging, direct requests to write or repair a PRD or Tech Spec, scope changes, or any state where Project, PRD, Tech Spec, and execution Issues are not current together. Raw requests to create a new Project start at `mono-idea`; accepted pre-ship drift belongs to `mono-ship`.
+| Surface | What belongs there |
+| --- | --- |
+| Linear Project body | What, why, target outcome, in scope, out of scope |
+| Project metadata, resources, comments | Lifecycle, active documents and Issues, relationships, approvals, review disposition, handoff |
+| PRD | WHAT: actors, problem, workflows, requirements, acceptance and success |
+| Tech Spec | HOW: architecture, real system contracts, failures, implementation units, validation and rollback |
+| Issue | One-PR execution contract, dependencies, AFK/HITL readiness, context snapshot, acceptance and verification |
+| GitHub | Branch, PR, code review, CI, deploy and merge history |
+| Worker report | Phase, exact head, decisions, every pending write and verification result; no direct Linear mutation |
 
-PRD and Tech Spec creation does not mean Delivery. A Project should move to Delivery only through `mono-implement` after approved execution Issue(s) exist and implementation-start approval is explicit.
+Keep whole PRD and Tech Spec bodies out of Issues. Link them through Project resources and Issue chips/snapshots. Use stable requirement and acceptance IDs when required by risk. Prefer one Issue; split only into independently demonstrable vertical slices with explicit dependencies. Mark **AFK** when an agent can execute alone, or **HITL** when a named human action remains. For a bug or performance issue, carry reproduction/baseline and fix-proof expectations, or an explicit reason that the symptom cannot yet be reproduced.
+
+### Issue-only work and repair
+
+Use `mono-issue` only when [all nine eligibility conditions](skills/mono-issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) hold: an enabled lane, a genuinely one-PR self-contained request, eligible risk, and authenticated owner approval are essential parts of that boundary. Create the non-startable Issue first, then approve its exact whole-body fingerprint. The five-field seam selects the lane; a marker is an approval receipt, never a routing shortcut. Missing, broken or stale trust evidence fails closed. Renew an edited issue-only body through `mono-issue`; park and restart Project-first when required, without inventing Project documents inside the lane.
+
+Use `mono-handoff` for [Project-first repair](references/repair-machine.md#classification-table): classify the exact proposed change, obtain report-only review, apply the class-specific worker, snapshot, approval and lifecycle effects, then check readiness. Risk growth or ambiguity raises the class. Review never repairs; `mono-check` never mutates. Accepted pre-ship drift belongs to `mono-ship`.
+
+## Gates
+
+A gate proves only its stated boundary. `mono-review` returns quality/risk findings (`ready`, `advisory-ready`, `needs-fixes`, `blocked`); `mono-check` reports inspected readiness (`PASS`, `FAIL`, `BLOCKED`). Neither silently changes an artifact. Their judgments supplement executable checks.
+
+| Gate | What it proves |
+| --- | --- |
+| Package review and approval | The draft was reviewed at the required risk level before writing, and the owner accepted the package; implementation still needs start authorization |
+| Pack identity / `gate.mjs start` | Installed version, source commit and surface revision match dispatch; branch, base and clean worktree match the start request |
+| Start handshake / delivery check | The worker checked snapshot, approvals, resolved findings and context seam; the orchestrator applied/read back lifecycle changes; the amended package is ready for code |
+| `gate.mjs preflight` | Current committed head/merge-base has successful verification and authentic clean review evidence on the required model/effort route; missing, stale, fabricated or incomplete evidence fails |
+| Pre-ship review and check | Diff matches the Issue, readiness is recoverable, required review is complete, artifacts are current and accepted drift is synchronized |
+| `gate.mjs ship` | PR is open on the certified head, checks and bot review cover that head, threads and bot remarks are resolved/disposed, closure replies are published, no own review draft or outstanding change request remains, and mergeability is acceptable under policy |
+| Deploy verification and live QA | Certified change was merged and delivered to the target; acceptance was checked where consumed, with explicit evidence or a permitted recorded skip |
+
+Ship also requires recorded valid outcomes for pre-ship review, readiness, and documentation. Apply only the repository's accepted check exceptions. Pending or unknown evidence is not success; terminal failures stop the gate. A new head invalidates its old proof. The gate accumulates evidence on the current head, waits the configured quiet interval after events, and stops at its deadline rather than waiting forever.
+
+### Write barriers and recovery
+
+The orchestrator is the single Linear writer. A worker uses its dispatched snapshot as its entire Linear context and queues every required comment, state change, link and certificate in its report. Publish the whole queue with the phase capsule; continue only after its durable confirmation. In-phase confirmation requests preserve drift-before-PR, ready-certificate-before-formal-review and In-Review-after-PR ordering. A queued write is not an applied write.
+
+After a lost response, the orchestrator reconciles every write against its durable result and external state, then applies only missing actions. Keep stable write IDs for reconciliation; changed payloads need new IDs. Resume the same context and phase from its capsule with the complete open queue, decisions, head and writable roots. Recheck pack identity on every resume. A head change never drops pending obligations.
+
+The orchestrator collects preflight verification and autoreview evidence outside worker sandboxes; workers only read the sealed receipt with `collect:false`. Evidence lives outside every worker-writable root. Reports are the worker mailbox; confirmations and orchestrator control state remain read-only to workers. A timeout parks the delivery with a dictionary reason. Final outcomes are `green` or `parked`, with the latter reflected visibly in Linear; intermediate readiness is never terminal delivery.
+
+## Roles and Decisions
+
+| Role | Responsibility and decision boundary |
+| --- | --- |
+| Owner | Product scope, slicing, design, acceptance of risk, package/start approval, deploy approval per policy |
+| Orchestrator | One control session per product; inspect, dispatch, monitor, answer technical questions, apply/read back Linear writes, run discovery/handoff and deploy; never absorb code/preflight/ship |
+| Delivery worker | One Issue/worktree/context; execute code, local readiness and ship in order; report evidence and queues; no Linear access, sub-workers, session management or owner questions in AFK mode |
+| Second Voice | Independent pre-write package challenge on the policy-selected cross-vendor route |
+| Autoreviewer | Independent code review using [role:autoreview](references/model-policy.md#roles) and risk-based effort; supply tool evidence |
+| PR reviewers and CI | Evaluate the actual PR head; findings and check results become inputs to ship |
+
+Record technical decisions as “Decided independently” in owner-facing reporting. Ask about scope, slicing, risk acceptance and design with prepared options and a recommendation; show design choices visually. Do not ask questions whose answer is already in the repository, Linear or config. The worker sends a blocked question and recommendation through its report to the orchestrator.
+
+Resolve all model choices from [the model policy](references/model-policy.md#roles), never copied model IDs or helper defaults. Risk has four classes: `tiny`, `standard`, `deep`, `risky`; use the higher approved/final-diff class. Risk controls review depth and artifact needs, while a complex worker is an explicit orchestrator launch decision with a recorded reason. Preserve model/effort provenance; missing authoritative runtime data means unverified, not compliant. Policy changes govern new launches after installation, without rewriting historical records.
+
+In orchestrated mode, use the configured transport or documented runtime detection. Codex CLI supports one resumable worker thread per Issue. The registry, mailbox and append-only ledger support recovery; write only observed events with their actual recording times. The installed watcher reports liveness and phase events. `control.json.halt` stops new launches/resumes without interrupting running workers; persistent attempt limits bound retries. Keep compaction wiring outside product repos and carry exact next action, pending obligations and decisions through compaction.
+
+## Cost
+
+A wave's cost is telemetry, not a gate. Read the **Cost** line in deploy closeout and the **Wave Cost** line in orchestrator status; project updates carry only a short product-level conclusion. The installed `wave-cost.mjs` calculates the figures from reports, logs and ledger:
+
+- Dispatch-to-green-PR and dispatch-to-merge elapsed time.
+- All measurable token use across worker turns and attempts, including parked and failed attempts, plus autoreviewer and orchestrator use where available; worker use is a diagnostic subtotal.
+- Actual pack bytes read, review rounds, model and effort.
+- Explicit unavailable components with reasons; never estimates presented as measurements.
+
+Sum non-overlapping per-turn usage across every attempt. Cached input is part of input, not another amount to add. The static worker reading budget is a separate measure: one union of mandatory, conditional and nested readings, shared files counted once, bounded at **99,882 bytes** with bytes/4 shown as an approximation. README is outside the worker reading list. Explanatory rationale stays outside that list and adds no gates.
+
+```bash
+node '<skills-root>/.mono-agent-workflow/scripts/wave-cost.mjs' <ISSUE-KEY>
+node scripts/read-budget.mjs
+```
+
+See [Cost Telemetry](references/orchestration.md#cost-telemetry) for inputs and unavailable-data handling. Compare improvements only against a recorded baseline and protocol; report insufficient evidence plainly.
 
 ## Install Locally
 
-Install or update the workflow as a local skill pack from this upstream checkout:
+Prerequisites: a checkout of this repository, Node.js for its scripts, Git, the relevant agent runtime and Linear access for the orchestrator/interactive owner stages, GitHub access through `gh`, and an installed external `autoreview` skill/helper. Mono does not vendor that helper; missing mandatory review support blocks readiness. Use the policy model and [canonical effort routes](references/autoreview-routing.md#canonical-routes).
+
+Install or update from the upstream checkout:
 
 ```bash
 node scripts/install-local.mjs --remove-stale
+node scripts/install-local.mjs --check
 ```
 
-For a breaking skill-surface revision, use the transactional mode instead:
+The default is `--all-roots`: discover previously installed roots using `.mono-agent-workflow.lock.json` in `~/.codex/skills`, `~/.claude/skills` and recorded roots, then sync/check each root. A fresh machine falls back to `~/.codex/skills`. Migration also recognizes the previous-brand lock and generated `linear-*` files; remove only installer-owned legacy payloads.
+
+Each root receives generated `mono-*/SKILL.md`, adjacent `AGENTS.md`, references and templates, runtime scripts under `.mono-agent-workflow/scripts/`, this README at `.mono-agent-workflow/README.md`, and `.mono-agent-workflow.lock.json`. The lock records version, immutable source commit, surface revision, dirty flag and installed hashes, including `assets.readme`. Checks reject missing, edited, stale or unexpected payloads and invalid lock entries. Sync replaces the private runtime directory, removing retired files. Edit the upstream pack, never generated skills.
+
+For a breaking skill-surface revision:
 
 ```bash
 node scripts/install-local.mjs --breaking
 ```
 
-Breaking installation requires every orchestrator product root to be idle with
-an empty worker registry, updates all discovered roots atomically, and performs
-its own post-check. Restart open agent sessions after the cut-over so they reload
-the installed skill registry.
+Breaking install requires idle orchestrator state and empty worker registries. It coordinates roots under the global install lock, freezes the orchestrator tree, stages and checks all roots transactionally, rolls back on failure, and retains recovery data on incomplete recovery. Restart open agent sessions after cut-over. Verify the installing checkout HEAD equals the merge SHA from the PR record before a deploy install; an old or divergent checkout is a deploy blocker. See [installation](references/install.md#breaking-surface-changes) and [versioning](references/versioning.md#local-lockfile).
 
-The default mode is `--all-roots`: the installer discovers every previously-installed skills root by checking for `.mono-agent-workflow.lock.json` in the known roots (`~/.codex/skills`, `~/.claude/skills`, and any root recorded in a discovered lockfile) and syncs each of them in one run, reporting the per-root installed version. During the brand migration it also recognizes the previous `.linear-agent-workflow.lock.json`, removes generated `linear-*` skills, and replaces the old lock/runtime paths with Mono equivalents. On a fresh machine with no lockfiles it falls back to `~/.codex/skills`.
-
-Each installed skills root contains:
-
-- `<skills-root>/mono-*`: executable local skill bodies generated from upstream.
-- `<skills-root>/mono-*/references` and `<skills-root>/mono-*/templates`: copied beside each local skill for progressive disclosure.
-- `<skills-root>/.mono-agent-workflow.lock.json`: upstream repo, version, commit, dirty flag, installed skill paths, and copied asset hashes.
-
-`mono-preflight` also requires the external `autoreview` skill/helper in the agent runtime. This workflow does not vendor `autoreview`; preflight blocks when the helper is missing.
-
-`mono-preflight` does not inherit the external helper's model default. It
-resolves the model from [role:autoreview](references/model-policy.md#roles) and effort from the canonical table in
-`references/autoreview-routing.md`, re-selects after final risk
-reclassification, and records the route and command in the preflight
-certificate.
-
-Check every installed root without writing:
+Use an explicit root and isolated state only for scratch tests or an alternate runtime; never point a test at real installed roots:
 
 ```bash
-node scripts/install-local.mjs --check
+MONO_WORKFLOW_STATE_ROOT=/tmp/mono-test-state node scripts/install-local.mjs --skills-root /tmp/mono-test-skills
+MONO_WORKFLOW_STATE_ROOT=/tmp/mono-test-state node scripts/install-local.mjs --skills-root /tmp/mono-test-skills --check
 ```
-
-Use a single explicit skills root only for testing or alternate runtimes:
-
-```bash
-node scripts/install-local.mjs --skills-root /path/to/skills --remove-stale
-```
-
-The checks fail when local skills are missing, stale, edited, too small to be executable, copied references/templates are missing, stale, edited, or unexpected, lockfile hashes drift, or any discovered root is pinned to an older upstream version.
 
 ## Project Config
 
-Project repos must not vendor this workflow. They should contain only a repo-specific JSON config:
+Product repositories keep only `.agents/mono-workflow.config.json` for Mono. Do not vendor skill bodies, wrappers, locks, local workflow checkers, hooks or updater CI there.
 
 ```bash
-node scripts/project-config.mjs --repo /path/to/project --project-name Zeni --write --clean
-node scripts/project-config.mjs --repo /path/to/project --check
-node scripts/project-config.mjs --repo /path/to/project --clean --check
+node scripts/project-config.mjs --repo /path/to/product --project-name Product --write --clean
+node scripts/project-config.mjs --repo /path/to/product --check
 ```
 
-The config path is `.agents/mono-workflow.config.json`. It records project policy such as Linear team, Linear-facing language, artifact roots, `autoreview` prerequisite, implementation workflow, ship workflow, documentation workflow, review feedback workflow, and deploy workflow.
+Configure product/team names, Linear/repository languages, narrow artifact roots, implementation, ship, documentation, review-feedback and deploy workflows, and the required `autoreviewHelper` prerequisite. Optional workflows may be `null`; a missing deploy workflow blocks deployment. Optional QA/authentication policy defines how live verification accesses the product; owner-session access requires permission. `--clean` removes legacy generated Mono and previous-brand workflow files while migrating project policy.
 
-`--clean` removes legacy generated project installs:
+Set `deployApproval` to `always` (default), `risky-only` (approval for standard/deep/risky and unknown risk; only tiny proceeds without asking), or `never`. Approval binds the exact PR/head. Configure `orchestration.transport` and `maxParallelWorkers` (default 3) when needed. Delivery settings default to a 900-second confirmation timeout, 120-second quiet interval, 2,400-second evidence limit, 10-second polling and three attempts. Enable issue-only explicitly with `issueOnlyLane.enabled` and the canonical approving `ownerPrincipal`. See [Project Policy](references/install.md#project-policy) for the full config contract.
 
-- `.agents/skills/mono-*`
-- `.claude/skills/mono-*`
-- `.agents/mono-workflow-check.mjs`
-- `.agents/mono-workflow.lock.json`
-- `.agents/mono-workflow.config.md`
-- `.github/workflows/update-mono-workflow.yml`
-- `.github/workflows/update-mono-agent-workflow.yml`
-- Previous-brand `.agents/linear-workflow*`, `.agents/skills/linear-*`, `.claude/skills/linear-*`, and `.github/workflows/update-linear-*.yml` files.
+## Owner Rules
 
-For Zeni, the configured flow can set implementation to Compound `ce-work`, then use gstack `ship`, gstack `document-release`, Compound `ce-resolve-pr-feedback`, and gstack `land-and-deploy` through `Deploy workflow`.
+The following 34 numbered entries are the sole owner-rule index, transferred from the former constitution. Each line states the obligation, its reason and the executable source; it is not a second full copy of the source text. Rule numbers preserve traceability. Link validation proves that a file and section are addressable; pack checks and same-PR README freshness preserve truth. Change rules through a Linear Issue and the orchestrator.
 
-See `references/install.md` for install details and `references/versioning.md` for the local skill pack and project config contract.
+- **K-01.** Write statuses, reports and briefs with the product or user outcome as their subject so the owner can understand them without knowing the workflow — [Product Language For The Owner](references/human-friendly-output.md#product-language-for-the-owner).
+- **K-02.** Put Issue keys, slice codes, SHAs, stage names and internal labels in the closing technical block rather than making them the subject, so identifiers cannot hide the result — [Product Language For The Owner](references/human-friendly-output.md#product-language-for-the-owner).
+- **K-03.** Distinguish live production verification, automatic post-deploy verification and deployment without live inspection, reserving “works” or “in production” claims for current live proof so unverified delivery cannot masquerade as verified behavior — [Product Language For The Owner](references/human-friendly-output.md#product-language-for-the-owner).
+- **K-04.** End every status with the owner's required decisions (including “none”) and repeat the decision count at the start so requests cannot get lost — [Status Update](templates/orchestrator-brief.md#статус-status-update).
+- **K-05.** Include “What went wrong” in every status, naming delays over five minutes and departures from agreements or explicitly saying none, so the real cost remains visible — [Status Update](templates/orchestrator-brief.md#статус-status-update).
+- **K-06.** Publish one shipment-form project update for each deployed Issue with an outcome title, one or two sentences and the Issue link last, so releases appear in the project feed — [Shape](templates/project-update.md#shape).
+- **K-07.** Limit update titles to ten words and bodies to one or two sentences and 35 words, allowing a third sentence only in the final Project update, so updates remain readable — [Invariants, item 2](templates/project-update.md#invariants).
+- **K-08.** Exclude SHAs, build numbers, PRs, slices, rounds, reviews, stages, sessions, dates and completion percentages from project-update prose while permitting product vocabulary, so the update describes the product — [Invariants, item 15](templates/project-update.md#invariants).
+- **K-09.** Give separate outcomes separate updates and use no subheadings, lists or more than one link inside an update, so each result stays visible — [Invariants, item 14](templates/project-update.md#invariants).
+- **K-10.** Use the State form when no shipment occurred, report factual Project health, make the link optional and end with the owner's needed action, so progress cannot look like delivery — [State update](templates/project-update.md#state-update).
+- **K-11.** Complete a Project only through the shipment of its last open Issue and begin its final update with the configured “Project completed” prefix, so the feed has a delivered conclusion — [Deploy](references/lifecycle.md#deploy) and [Invariants, item 13](templates/project-update.md#invariants).
+- **K-12.** Name the theme Project in an issue-only Issue and send its shipment update there, so a projectless result still has a visible home — [Theme project](references/issue-only-lane.md#theme-project).
+- **K-13.** Assign new agent-created Project leads and Issue assignees to the acting owner while preserving existing assignments, so created work reaches the owner's lists — [Linear Artifact Rules](references/artifact-rules.md#linear-artifact-rules).
+- **K-14.** Treat project updates as informational closeout results whose absence or failure cannot block delivery or change its verdict, so reporting cannot stop shipment — [Skill Design Rules](AGENTS.md#skill-design-rules).
+- **K-15.** Turn a raw idea into an Idea-state Project with one strengthened brief and no PRD, Tech Spec, Issues or code, so implementation planning waits for the decision to proceed — [Idea state](references/contracts/project.md#pc-013--idea-state).
+- **K-16.** Present the Project brief, PRD, Tech Spec and Issue slicing as one package with a completed review verdict, so one decision does not become a stream of questions — [Pre-write package review](references/orchestration.md#pre-write-package-review).
+- **K-17.** Have an independent cross-vendor Second Voice review the package draft before its first Linear write, so author and reviewer do not share the same blind spots — [Second Voice](references/orchestration.md#second-voice).
+- **K-18.** Decide repository-, Linear- and config-derived implementation details, document structure and risk classification autonomously, but ask about scope, slicing, risk acceptance and design, so routine questions do not consume owner time or seize owner authority — [Autonomy Defaults](references/questioning.md#autonomy-defaults).
+- **K-19.** Apply the project's deploy-approval policy (always, all except tiny, or never) to the exact code head, so yesterday's approval cannot authorize different code — [Project Policy](references/install.md#project-policy).
+- **K-20.** Grant issue-only delivery only when all nine conditions hold and the owner approves the exact Issue fingerprint, falling back to Project-first on doubt, so the shortcut cannot bypass its boundary — [Nine eligibility conditions](skills/mono-issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) and [Trust boundary](references/issue-only-lane.md#trust-boundary).
+- **K-21.** Invalidate approval whenever an approved issue-only body changes and obtain new review and fingerprint approval, so the approved text remains the executed contract — [Renewal recovery](skills/mono-issue/SKILL.md#renewal-recovery).
+- **K-22.** Run code autoreview at every risk class using the policy's autoreview model and class-routed effort from low through the highest escalated route, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Canonical Routes](references/autoreview-routing.md#canonical-routes).
+- **K-23.** Classify work as tiny, standard, deep or risky to set artifact requirements and review depth, treating money, data, access, production and public interfaces as risky domains, so dangerous work cannot pass through a light process — [Risk Classification](references/readiness-gates.md#risk-classification).
+- **K-24.** Require package review before writing and formal pre-ship review for standard, deep and risky work, permitting only a recorded tiny advisory exception, so review can challenge decisions before they become accepted artifacts — [Review Gate Policy](references/readiness-gates.md#review-gate-policy).
+- **K-25.** Close an Issue only after merge, delivery and verification, except under an explicitly accepted merge-as-delivery policy, so closed work cannot silently fail to reach users — [Deploy](references/lifecycle.md#deploy).
+- **K-26.** Verify user-facing changes live against Issue acceptance after deployment and file defects as immediate out-of-queue hotfixes, while still requiring the original Issue's own green live pass for closure, so automated checks cannot substitute for the user experience — [Deploy](references/lifecycle.md#deploy).
+- **K-27.** Include a compact checked/not-checked boundary in every stage result and call uninspected work unverified, so the owner cannot infer unsupported confidence — [Checked / Not Checked](references/human-friendly-output.md#checked--not-checked).
+- **K-28.** Report a stop with completed work, the exact blocking point, unperformed work and the smallest unblock action, so unfinished work cannot be mistaken for ready — [Blocked / Timed-Out Shape](references/human-friendly-output.md#blocked--timed-out-shape).
+- **K-29.** Append only observed facts with actual recording times to the ledger and append corrections instead of rewriting history, so invented history cannot conceal delays — [Mailbox And Ledger](references/orchestration.md#mailbox-and-ledger).
+- **K-30.** Let only the orchestrator write Linear in orchestrated mode and have workers queue writes or questions with recommendations in reports, so two writers cannot create divergent truth — [Orchestration Mode Precedence](references/worker-contract.md#orchestration-mode-precedence).
+- **K-31.** Start every pack change with a Linear Issue before the first edit, so no shortcut evades review and verification — [Change Discipline](AGENTS.md#change-discipline).
+- **K-32.** Update affected checks with behavior changes using structure and named behavior fixtures, keep prose free of pins and agent-only rules free of a second machine encoding, and preserve the four bounded contracts and fingerprints unless explicitly changed, so editorial rewrites stay green while protected invariants remain checked — [Fixture Coupling](AGENTS.md#fixture-coupling).
+- **K-33.** Write Linear artifacts and comments in the configured project language (Russian here) and skill instructions in English, so the owner can read the artifacts and models can execute the pack consistently — [Language](AGENTS.md#language).
+- **K-34.** Route pack rule changes through a Linear Issue and the orchestrator, updating affected README sections in the same PR, so owner intent and the shipped description stay synchronized — [Change Discipline](AGENTS.md#change-discipline).
 
-## Owner Layer
+## Skills
 
-The pack is English because models read it. The owner layer is the Russian
-documentation the owner reads and edits instead: `docs/ru/karta-paka.md` says
-what every pack file is for and what to change, and
-`docs/ru/konstituciya-paka.md` states the rules the owner sees and decides,
-each anchored to a pack heading or stable ID.
-
-The Linear team documents «Карта пака» and «Конституция пака» are the copy the
-owner reads and edits. This repository holds the copy the validator checks, and
-`scripts/install-local.mjs` publishes a third copy into
-`<skills-root>/.mono-agent-workflow/docs/ru/` with its hash in the lockfile.
-
-An owner edit becomes work through the ordinary path: the orchestrator compares
-the Linear documents with the installed copies at every session start and on
-«сверь конституцию/карту», files each difference as one non-startable draft
-Issue, and that draft is approved like any other before the pack changes. After
-the deploy, `mono-deploy` writes the merged copy back into Linear only when the
-owner has not edited the document since — otherwise the owner's text stays and
-the closeout says so. See `references/install.md` for paths and hashes.
+| Skill | Use it for |
+| --- | --- |
+| [mono-idea](skills/mono-idea/SKILL.md) | Raw idea intake and strengthened Idea Project |
+| [mono-issue](skills/mono-issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
+| [mono-handoff](skills/mono-handoff/SKILL.md) | Project-first packaging, slicing and reviewed artifact repair |
+| [mono-review](skills/mono-review/SKILL.md) | Report-only quality/risk review |
+| [mono-check](skills/mono-check/SKILL.md) | Readiness-only transition assessment |
+| [mono-deliver](skills/mono-deliver/SKILL.md) | One delivery context sequencing its three phase owners |
+| [mono-implement](skills/mono-implement/SKILL.md) | Delivery Start and approved code execution |
+| [mono-preflight](skills/mono-preflight/SKILL.md) | Local verification, independent autoreview, commit and ready certificate |
+| [mono-ship](skills/mono-ship/SKILL.md) | Accepted pre-ship drift, PR, docs, feedback and green certificate |
+| [mono-deploy](skills/mono-deploy/SKILL.md) | Merge/deploy delegation, verification, closeout and learnings |
+| [mono-orchestrate](skills/mono-orchestrate/SKILL.md) | Product control plane: dispatch, monitoring, decisions and Linear writes |
 
 ## Documentation Map
 
-- `CHANGELOG.md`: released workflow behavior changes.
-- `examples/profile-workbench-regression.md`: regression example for handoff-first artifact quality.
-- `examples/zeni-dogfood.md`: first Zeni dogfood flow and anti-examples.
-- `docs/ru/karta-paka.md`: Russian owner-layer map of every pack file — purpose, audience, key rules, and what to change.
-- `docs/ru/konstituciya-paka.md`: Russian owner-layer constitution — the rules the owner sees and decides, each anchored to a pack heading or stable ID.
-- `references/artifact-intake.md`: scoped discovery and review artifact intake.
-- `references/artifact-quality.md`: quality bar for Project, PRD, Tech Spec, Issue, preflight, ship, deploy, and review artifacts.
-- `references/artifact-rules.md`: source-of-truth and Linear-facing artifact rules.
-- `references/execution-quality.md`: PRD, Issue, bug/perf, and architecture guardrails.
-- `references/human-friendly-output.md`: user-facing status and confidence-boundary wording.
-- `references/install.md`: local install and project config guide.
-- `references/lifecycle.md`: idea, discovery, handoff, delivery, preflight, ship, and deploy lifecycle.
-- `references/questioning.md`: when workflow skills should ask humans.
-- `references/readiness-gates.md`: risk classes, review policy, and owner boundaries.
-- `references/review-rubric.md`: `mono-review` inspection rubric.
-- `references/ship-feedback-loop.md`: `mono-ship` green-certificate loop.
-- `references/versioning.md`: SemVer, local skill pack, and project config contract.
-- `templates/check-output.md`: `mono-check` output template.
-- `templates/deploy-output.md`: `mono-deploy` output template.
-- `templates/issue.md`: Linear Issue template.
-- `templates/prd.md`: Linear PRD template.
-- `templates/project-update.md`: project update form, text invariants, and acceptance set.
-- `templates/project.md`: Linear Project body template.
-- `templates/review-output.md`: `mono-review` output template.
-- `templates/ship-output.md`: `mono-ship` output template.
-- `templates/ship-status-ux.md`: interactive `mono-ship` status copy and worked examples.
-- `templates/tech-spec.md`: Linear Tech Spec template.
+| Need | Source |
+| --- | --- |
+| Artifact contracts and stable rule IDs | [Contract index](references/artifact-contracts.md), [Project](references/contracts/project.md), [PRD](references/contracts/prd.md), [Tech Spec](references/contracts/tech-spec.md), [Issue](references/contracts/issue.md); retired IDs are not reused |
+| Scoped discovery intake and source precedence | [Artifact intake](references/artifact-intake.md); supplied paths, current Linear package and scoped context take precedence over stale scratch evidence; name missing/conflicting inputs |
+| Artifact form and execution quality | [Artifact rules](references/artifact-rules.md), [quality bar](references/artifact-quality.md), [execution quality](references/execution-quality.md), [repair](references/repair-machine.md) |
+| Risk, review and phase boundaries | [Readiness gates](references/readiness-gates.md), [review rubric](references/review-rubric.md), [lifecycle](references/lifecycle.md), [ship feedback loop](references/ship-feedback-loop.md) |
+| Decisions and owner-facing wording | [Questioning](references/questioning.md), [human output](references/human-friendly-output.md), [decision/status/wave brief](templates/orchestrator-brief.md) |
+| Runtime and worker recovery | [Orchestration](references/orchestration.md), [worker contract](references/worker-contract.md), [dispatch](templates/orchestrator-dispatch.md), [report](templates/orchestrator-report.md), [compaction](templates/compact-instructions.md) |
+| Linear artifact templates | [Project](templates/project.md), [PRD](templates/prd.md), [Tech Spec](templates/tech-spec.md), [Issue](templates/issue.md), [project updates](templates/project-update.md); templates define form, contracts define obligations |
+| Review, check and delivery output | [Review](templates/review-output.md), [check](templates/check-output.md), [ship](templates/ship-output.md), [interactive ship status](templates/ship-status-ux.md), [deploy](templates/deploy-output.md); examples are placeholders, not evidence |
+| Installation and policy | [Install](references/install.md), [versioning](references/versioning.md), [models](references/model-policy.md), [autoreview routing](references/autoreview-routing.md) |
+| Rationale outside worker reading | [Audience](references/rationale/audience.md), [review](references/rationale/review.md), [output](references/rationale/output.md), [delivery](references/rationale/delivery.md); explanation adds no obligations |
+| Worked examples and history | [Zeni dogfood](examples/zeni-dogfood.md), [profile regression](examples/profile-workbench-regression.md), [CHANGELOG](CHANGELOG.md) |
+
+Runtime scripts live in [scripts/](scripts/): `gate.mjs` checks evidence; `delivery-state.mjs` publishes/confirms queues; `runtime.mjs` provides durable writes, locks and hashes; `orchestrator/spawn.mjs`, `resume.mjs` and `consume-gate-ack.mjs` use the shared launch implementation; `watch-workers.mjs` monitors registered work; `resolve-issue-context.mjs` resolves the issue-only seam; `verify-pack-state.mjs` verifies identity/quiescence; `wave-cost.mjs` measures cost; `read-budget.mjs` bounds reading. Invoke runtime scripts from the installed pack, with `--help` and pinned dispatch inputs. Installation and config maintenance use `install-local.mjs` and `project-config.mjs` from the upstream checkout.
 
 ## Principles
 
-- Reusable first: the workflow lives in this repo and is installed as a local skill pack, not copied into project repos.
-- Config-only projects: project repos keep only `.agents/mono-workflow.config.json` for repo-specific policy.
-- Linear first: durable requirements live in Linear.
-- Handoff first: discovery implementation plans must pass through `mono-handoff` before implementation.
-- Artifact intake first: local discovery/review files are scoped evidence, not broad-search source of truth.
-- Delivery ladder: implementation starts through `mono-implement`, branch readiness flows through `mono-preflight`, PR green certification remains in `mono-ship`, and deploy/closeout belongs to `mono-deploy`.
-- Strong artifacts first: skills and examples carry the workflow contract; scripts are only lightweight smoke guards for known regressions.
-- Product brief Projects: Project bodies cover only five concerns: what, why, target outcome, in scope, and out of scope. Default Russian headings are `Что`, `Зачем`, `Образ результата`, `Что входит`, and `Что не входит`.
-- WHAT/HOW/execution split: PRD defines behavior and acceptance, Tech Spec defines implementation, Issue defines one PR.
-- Risk-based review: `mono-review` is required for standard, deep, risky, or drifted flows and advisory for tiny PRD-lite/no-spec exceptions.
-- Review/check split: `mono-review` returns findings and next owner; `mono-check` owns `PASS`, `FAIL`, and `BLOCKED` readiness.
-- One issue by default: split only into vertical slices with dependencies.
-- Agent-ready Issues: mark `AFK` or `HITL`, name dependencies, avoid brittle line-number edit scripts, and require repro/fix proof for bug/perf work.
-- No silent sync: report drift before moving stages.
-- Report-only checks: `PASS` means inspected and no blocking drift found, not deterministic proof.
-- Autonomy with transparency: agents resolve non-contested choices themselves and surface them as «Решил сам»; scope boundaries, issue slicing, risk acceptance, and design decisions stay with the user, and design choices are presented visually.
+Keep skills as routes and artifact-scoped owners, wrappers as sequencing, and references/templates as progressive reading. A module should carry meaningful complexity behind a real interface; deep/risky changes require evidence at system seams. Trace actor → capability → benefit, and prove one behavior before expanding implementation. Record real external-system responses rather than inventing contracts.
+
+Keep gates and responsibilities intact in both interactive and orchestrated delivery. Review supplies findings and the next owner; check supplies readiness; accepted fixes go through handoff, issue renewal, ship drift or explicit artifact owners. Never silently synchronize drift or promote stale approval. Read only relevant, bounded sources, name stale/unavailable/conflicting inputs, and preserve the confidence boundary.
+
+Treat Markdown as agent instructions. Protect executable behavior with fixtures, artifact contracts with their bounded fingerprints and consumer checks, and document shape with skeleton checks. Do not encode agent-only rules twice or pin sentences. Every pack change begins with a Linear Issue; README freshness is mandatory even when the optional documentation workflow is unavailable.
 
 ## Validation
 
-Run the one-command entry point before finishing any change:
+Run before completing a change:
 
 ```bash
 node scripts/verify.mjs
 ```
 
-CI runs `node scripts/verify.mjs` automatically on every PR and push to `main`.
+The entry point includes `git diff --check`, syntax checks, artifact/workflow checks, scratch installation and runtime fixtures. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
-To additionally verify the installed local skill pack (maintainer machine only):
-
-```bash
-node scripts/verify.mjs --install-check
-```
-
-### Individual checks
+Use focused checks while editing:
 
 ```bash
-git diff --check
-node --check scripts/install-local.mjs
-node --check scripts/project-config.mjs
-node --check scripts/lint-mono-artifacts.mjs
+node scripts/validate-workflow.mjs --readme-only
+node scripts/validate-workflow.mjs --model-policy-fixtures
+node scripts/read-budget.mjs
 node scripts/lint-mono-artifacts.mjs
-node --check scripts/validate-workflow.mjs
-node scripts/validate-workflow.mjs
-node scripts/install-local.mjs --check
-node scripts/project-config.mjs --repo /path/to/project --check
 ```
+
+On a maintainer machine only, `node scripts/verify.mjs --install-check` additionally checks real installed roots. Runtime tests use scratch roots; the real sandbox-boundary test runs outside a worker sandbox and reports an explicit skip when nested sandboxing prevents it. Installation, live production QA, deploy and owner acceptance are separate evidence boundaries, never implied by a local green check.

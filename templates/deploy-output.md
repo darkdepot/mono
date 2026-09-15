@@ -20,7 +20,6 @@ Deploy status:
 - Linear closeout: <Done/not done + reason>.
 - Project update: <posted <url> | already posted <url> | not posted — <reason> | n/a — <reason>>.
 - Project: <Completed | stays <status>, open <N> | stays <status> — <reason> | n/a — <reason>>.
-- Owner layer: <n/a — <reason> | <file>: <published @ <sha> | not published — <reason>>[; <file>: …]>.
 - Cost: <the exact Russian line from `scripts/wave-cost.mjs <ISSUE-KEY>` | unavailable: <reason>>.
 - Learnings recorded: <none or keys>.
 - Learnings consulted: <none/keys/helper unavailable>.
@@ -54,7 +53,6 @@ Post-ship check:
 Linear closeout:
 Project update:
 Project:
-Owner layer:
 Cost:
 Learnings recorded:
 Learnings consulted:
@@ -75,5 +73,4 @@ Verdict-to-human translation:
 - Для отсутствующего Deploy workflow: «Deploy workflow не настроен; укажи `Deploy workflow` или запусти deploy-путь репозитория вручную.»
 - Для `Project update: not posted`: скажи, что поставка выкачена, а запись в ленте проекта не появилась, и назови причину; вердикт деплоя от этого не меняется.
 - Для `Project update: n/a` на полосе issue-only: скажи, что поставка выкачена, а в ленте проектов не отражена, и назови причину из задачи — либо тематический проект не назван вовсе (задача утверждена до этого правила), либо в ней стоит `нет` с объяснением, и тогда повтори это объяснение своими словами; вердикт деплоя от этого не меняется.
-- Для `Owner layer: not published`: скажи, что выложенная правка не доехала до документа в Linear, назови причину — владелец правил документ позже снимка, снимка нет или коннектор не подтвердил запись — и что его текст остался нетронутым; вердикт деплоя от этого не меняется.
 - Для `timed-out`: назови, что не устаканилось — merge, deploy, верификация или Linear closeout.

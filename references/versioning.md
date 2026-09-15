@@ -31,7 +31,7 @@ The install writes local runtime files into each installed skills root:
 - `mono-*/SKILL.md` as executable generated local skill bodies;
 - `mono-*/AGENTS.md` beside each generated local skill;
 - `mono-*/references/*` and `mono-*/templates/*` beside each generated local skill;
-- `.mono-agent-workflow/docs/ru/*.md` as pack-private owner-layer documents;
+- `.mono-agent-workflow/README.md` as the complete pack description;
 - `.mono-agent-workflow.lock.json` with upstream identity, version, commit, dirty flag, installed skill paths/hashes, and copied asset hashes.
 
 The lockfile also exposes the canonical dispatch identity: `packVersion`,
@@ -55,7 +55,7 @@ The local lockfile pins:
 - generated local skill paths and hashes;
 - copied `AGENTS.md`, `references/`, and `templates/` hashes;
 - pack-private workflow runtime script paths and hashes (`runtimeScripts`);
-- pack-private owner-layer document paths and hashes (`ownerLayer`).
+- the installed README hash (`assets.readme`).
 
 Example shape:
 
@@ -72,6 +72,7 @@ Example shape:
   "installedAt": "2026-06-10T00:00:00.000Z",
   "skillsRoot": "$HOME/.codex/skills",
   "assets": {
+    "readme": "...",
     "agents": "...",
     "references": [{ "path": "artifact-quality.md", "sha256": "..." }],
     "templates": [{ "path": "prd.md", "sha256": "..." }]
@@ -80,9 +81,6 @@ Example shape:
     { "path": ".mono-agent-workflow/scripts/resolve-issue-context.mjs", "sha256": "..." },
     { "path": ".mono-agent-workflow/scripts/verify-pack-state.mjs", "sha256": "..." },
     { "path": ".mono-agent-workflow/scripts/watch-workers.mjs", "sha256": "..." }
-  ],
-  "ownerLayer": [
-    { "path": ".mono-agent-workflow/docs/ru/karta-paka.md", "sha256": "..." }
   ],
   "installedSkills": [
     {
