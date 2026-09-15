@@ -38,6 +38,72 @@ protected paths/hashes, verification lines and the resolved identity command.
   verification, never wave it through.
 - Delivery budget: <monitoring guidance, not a gate>
 
+<!-- review-pilot:start -->
+## Review discipline for this task (experiment for project <PROJECT>)
+
+Generator: include this block only for the explicitly approved pilot Issues. It
+repeats and sharpens the stage owners' rules; it never replaces or relaxes them.
+
+<!-- review-pilot:matrix -->
+### Repeated invariant
+
+For two finding-bearing review events linked by the orchestrator to one
+`findingKey` in this attempt, supply `behaviour_matrices` before requesting
+another collection: `invariant`, `states` with `state` and `expected`, targeted
+`verification`, and `decisionIds` referring to this report's dispositions.
+The orchestrator checks the matrix and test result before requesting collection.
+
+<!-- review-pilot:checkpoint -->
+### Five answers when progress stops
+
+After two consecutive rounds adjudicated as `none`, supply `checkpoint`:
+`confirmedDefects` (what remains broken), `evidence` (what proves it),
+`failedFixes` (what was tried and why it failed), `nextExperiment` (the smallest
+next test), `stopCondition` (what result changes the next action).
+Supply `progress_claim` with `progress`, `evidence`, and `eventIds`; the
+orchestrator decides whether progress occurred before requesting collection.
+
+<!-- review-pilot:dispositions -->
+### Evidence for dispositions
+
+Propose `review_dispositions` as typed `decision` entries with `id`, `eventId`,
+`findingKey` supplied by the orchestrator, `problem`, `trigger`, `evidence`,
+`impact`, `origin`, `decision`, `validity`, `verification`, `supersedes`,
+`proposedBy`, and `recordedAt`. The orchestrator checks and records proposals.
+Never infer a finding key. Missing identity goes back to the orchestrator.
+
+<!-- review-pilot:reopening -->
+### Previously refuted findings
+
+Without a new fact, answer a repeated refuted finding with the decision `id`
+and evidence, without another code edit. A contradictory reproduction can
+justify a new decision with `supersedes`; a new trigger is a new finding.
+A finding still required by the gate remains unresolved: park through the
+existing decision path. Journal entries cannot turn findings into clean proof.
+
+<!-- review-pilot:local -->
+### Local reviewer calls
+
+Keep the phase's required model, effort, threshold and clean-result rule.
+Add `--stream-engine-output` and the pinned `--dataset` path to every local
+call. Preserve the output and reference the collection request in the report.
+A diagnostic hint never supplies a certificate or waives a stage check.
+
+<!-- review-pilot:dataset -->
+### Pinned materialized dataset
+
+- datasetVersion: <immutable version number>
+- datasetPath: <.orchestrator/review-dataset-<d8>.md>
+- datasetDigest: <SHA-256 of the pinned version>
+
+The orchestrator materializes this ordinary, ignored file and verifies its
+digest before local review. Use it unchanged. A new version needs a fresh
+materialization and dispatch pin before the next call; the collector still
+makes its own verified copy. The orchestrator removes materializations at the
+end of the attempt. Missing matrix/checkpoint evidence causes a recorded
+`withheld` request, with a reason, and no collection call.
+<!-- review-pilot:end -->
+
 ## Engine
 
 - Transport: <codex-cli | claude-code-desktop | fallback>

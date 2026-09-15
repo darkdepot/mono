@@ -7288,6 +7288,26 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "<!-- review-pilot:start -->",
+  "<!-- review-pilot:matrix -->",
+  "<!-- review-pilot:checkpoint -->",
+  "<!-- review-pilot:dispositions -->",
+  "<!-- review-pilot:reopening -->",
+  "<!-- review-pilot:local -->",
+  "<!-- review-pilot:dataset -->",
+  "<!-- review-pilot:end -->",
+  "findingKey",
+  "behaviour_matrices",
+  "checkpoint",
+  "progress_claim",
+  "review_dispositions",
+  "supersedes",
+  "--stream-engine-output",
+  "--dataset",
+  "datasetVersion:",
+  "datasetPath:",
+  "datasetDigest:",
+
   ...README_SECTIONS,
   "!inspection.hasThreadStarted",
   "\"75\"",
@@ -7716,7 +7736,48 @@ function laneFieldFaults(text) {
   }
   return faults;
 }
+function pilotDispatchFaults(text) {
+  const start = "<!-- review-pilot:start -->", end = "<!-- review-pilot:end -->";
+  requireMachineToken(start); requireMachineToken(end);
+  if (text.split(start).length !== 2 || text.split(end).length !== 2 || text.indexOf(end) < text.indexOf(start)) return ["pilot block boundaries"];
+  const block = text.slice(text.indexOf(start) + start.length, text.indexOf(end));
+  const sections = [
+    ["matrix", ["findingKey", "behaviour_matrices"]],
+    ["checkpoint", ["checkpoint", "progress_claim"]],
+    ["dispositions", ["review_dispositions", "findingKey"]],
+    ["reopening", ["supersedes"]],
+    ["local", ["--stream-engine-output", "--dataset"]],
+    ["dataset", ["datasetVersion:", "datasetPath:", "datasetDigest:"]],
+  ];
+  const faults = [];
+  let previous = -1;
+  for (const [name, fields] of sections) {
+    const marker = `<!-- review-pilot:${name} -->`; requireMachineToken(marker);
+    const index = block.indexOf(marker);
+    if (index < 0 || block.split(marker).length !== 2 || index <= previous) { faults.push(`pilot section ${name}`); continue; }
+    previous = index;
+    const rest = block.slice(index + marker.length), next = rest.indexOf("<!-- review-pilot:");
+    const section = next < 0 ? rest : rest.slice(0, next);
+    if (!/^### .+/m.test(section)) faults.push(`pilot section heading ${name}`);
+    for (const field of fields) { requireMachineToken(field); if (!section.includes(field)) faults.push(`pilot field ${field}`); }
+  }
+  return faults;
+}
+function validatePilotDispatch() {
+  const text = read("templates/orchestrator-dispatch.md");
+  failures.push(...pilotDispatchFaults(text));
+  // Named negative fixtures prove missing sections/fields fail, while editorial
+  // changes to every heading remain unconstrained.
+  for (const marker of ["matrix", "checkpoint", "dispositions", "reopening", "local", "dataset"]) {
+    if (!pilotDispatchFaults(text.replace(`<!-- review-pilot:${marker} -->`, "")).length) fail(`pilot missing-section fixture ${marker}`);
+  }
+  for (const field of ["--stream-engine-output", "datasetDigest:"]) {
+    if (!pilotDispatchFaults(text.replaceAll(field, "")).length) fail(`pilot missing-field fixture ${field}`);
+  }
+  if (pilotDispatchFaults(text.replace(/^### .+$/gm, "### Reworded heading")).length) fail("pilot prose-independence fixture");
+}
 function validateDocumentSkeleton() {
+  validatePilotDispatch();
   for (const [file, token] of STRING_PINS) assertIncludes(file, token);
   for (const [file, heading] of REQUIRED_HEADINGS) {
     if (!read(file).split("\n").some((line) => /^#{1,6}\s+/.test(line) && line.replace(/^#{1,6}\s+/, "").trim() === heading)) fail(`${file}: missing required heading ${heading}`);

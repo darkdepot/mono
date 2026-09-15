@@ -5,6 +5,8 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, identity, isMain, flags, withLock, deliveryConfig, validateEvidenceGrants } from "./runtime.mjs";
 
+import { validateEntry } from "./decisions.mjs";
+
 export const PHASES = ["code", "preflight", "ship"];
 export const PARKED_REASONS = ["blocked", "needs-decision", "needs-human", "drift-candidate", "timed-out", "scope-drift-needs-handoff", "write-unconfirmed", "evidence-limit"];
 export function correlatedDeliveryReport(report, stat, entry, logStat, stallSec = 120) {
@@ -49,7 +51,44 @@ export function validatePhase(report) {
         write.target !== report.head || !new RegExp(`^preflight-collect:${report.head}:[1-9][0-9]*$`).test(write.id))) throw new Error("invalid collection write ID/head");
     ids.add(write.id);
   }
+  validatePilotFields(report);
   return report;
+}
+// Proposal validation is structural. Only the orchestrator can accept a disposition
+// or progress claim; confirmation continues to bind the entire unchanged report.
+function validatePilotFields(report) {
+  const text = value => typeof value === "string" && value.trim().length > 0;
+  const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
+  const reference = value => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(value);
+  const ids = new Set(), decisions = new Map();
+  for (const [field, type] of [["review_dispositions", "decision"], ["behaviour_matrices", "matrix"]]) {
+    if (report[field] === undefined) continue;
+    if (!Array.isArray(report[field])) throw new Error(`${field} must be an array`);
+    for (const entry of report[field]) {
+      validateEntry(entry);
+      if (entry.type !== type || ids.has(entry.id)) throw new Error(`invalid or duplicate ${field} entry`);
+      ids.add(entry.id);
+      if (type === "decision") {
+        if (!reference(entry.eventId)) throw new Error("disposition eventId reference required");
+        decisions.set(entry.id, entry);
+      } else {
+        if (!Array.isArray(entry.decisionIds) || !entry.decisionIds.length || new Set(entry.decisionIds).size !== entry.decisionIds.length ||
+            entry.decisionIds.some(id => !decisions.has(id) || decisions.get(id).findingKey !== entry.invariant))
+          throw new Error("matrix decisionIds must reference dispositions for its invariant in this report");
+      }
+    }
+  }
+  for (const entry of decisions.values()) {
+    if (entry.supersedes === entry.id || (decisions.has(entry.supersedes) && decisions.get(entry.supersedes).findingKey !== entry.findingKey))
+      throw new Error("invalid disposition supersedes reference");
+  }
+  if (report.checkpoint !== undefined && (!object(report.checkpoint) ||
+      !["confirmedDefects", "evidence", "failedFixes", "nextExperiment", "stopCondition"].every(k => text(report.checkpoint[k]))))
+    throw new Error("checkpoint requires all five answers");
+  const claim = report.progress_claim;
+  if (claim !== undefined && (!object(claim) || !["fixed", "evidence", "new-cause", "none"].includes(claim.progress) || !text(claim.evidence) ||
+      !Array.isArray(claim.eventIds) || !claim.eventIds.length || claim.eventIds.some(id => !reference(id)) || new Set(claim.eventIds).size !== claim.eventIds.length))
+    throw new Error("progress_claim requires progress, evidence and eventIds references");
 }
 export function confirmationPath(report, root) {
   return path.join(root, "confirmations", `${report.issue}-phase-${report.phase}-a${report.attempt}-s${report.sequence}.confirmed.json`);

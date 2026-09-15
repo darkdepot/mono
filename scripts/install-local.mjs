@@ -37,6 +37,7 @@ const RUNTIME_SCRIPTS = [
   "verify-pack-state.mjs",
   "wave-cost.mjs",
   "review-ledger.mjs",
+  "decisions.mjs",
   "read-budget.mjs",
   "watch-workers.mjs",
   "gate.mjs",

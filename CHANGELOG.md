@@ -8,6 +8,8 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ### Changed
 
+- MONO-80: add the append-only decision journal, deterministic current-entry rendering, immutable dataset versions (including identical-input recovery of an interrupted digest publication) and digest-checked ignored materializations. Validate optional phase proposals without changing confirmation semantics; derive review hints from adjudications and retain reasoned withheld collection requests. Add the approved-pilot dispatch block and orchestration instructions, install the new runtime module, and cover journal/history, versions, materialization, proposal references, hints and dispatch structure with fixtures. Worker corpus bytes remain unchanged.
+
 - MONO-83: install `review-ledger.mjs` with the private runtime, reject installer manifests whose relative `.mjs` imports are not included, and cover the missing dependency plus a real installed `wave-cost.mjs --ledger` path with named fixtures.
 
 - MONO-79: add review-event accounting with cross-source identities, explicit launch causes, separate certification roles, unresolved coverage and evidence-backed adjudications. Capture reviewer usage before receipt signing, retain validation lines while streaming, accept only the legacy and streaming fixed invocations, and archive immutable dataset versions. Prefer review-ledger counters and provider usage in wave cost, preserve the legacy line without a ledger, and exclude retired registry entries when selecting final delivery reports. Add correlation, retention, usage, archive and cost fixtures.
