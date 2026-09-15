@@ -951,3 +951,64 @@ test('wave cost prefers review ledger counters and ignores newer retired registr
     assert.match(result.stdout,/авто-ревью: сборов 2 \(отклонено 1\), вызовов 1/);assert.match(result.stdout,/измерено 0 из 1/);
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('pilot phase proposals validate shape and references while legacy reports and confirmations remain valid',async()=>{
+  const {validatePhase,confirmQueue,validateConfirmation}=await import('./delivery-state.mjs');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-pilot-report-'));
+  const report={issue:'MONO-999',stage:'mono-deliver',attempt:1,packVersion:'test',sourceCommit:'a'.repeat(40),surfaceRevision:4,phase:'code',sequence:1,kind:'phase',head:'b'.repeat(40),linear_mutations_pending:[],capsule:{phase:'code',head:'b'.repeat(40),decisions:[],open_queue:[],writable_roots:[path.join(root,'reports')]}};
+  const proposal={type:'decision',id:'d1',eventId:'1:helper-invocation:local1',findingKey:'invariant',problem:'problem',trigger:'trigger',evidence:'repro',impact:'impact',origin:'original',decision:'refuted',validity:{head:report.head,base:'a'.repeat(40),contracts:[],assumptions:[]},verification:'test passes',supersedes:null,proposedBy:'worker',recordedAt:'2026-09-16T00:00:00Z'};
+  const matrix={type:'matrix',id:'m1',invariant:'invariant',states:[{state:'absent',expected:'refusal'}],verification:'targeted test passes',recordedAt:'2026-09-16T00:00:00Z',decisionIds:['d1']};
+  try {
+    assert.equal(validatePhase(report),report);
+    const pilot={...report,review_dispositions:[proposal],behaviour_matrices:[matrix],checkpoint:{confirmedDefects:'one',evidence:'repro',failedFixes:'previous attempt',nextExperiment:'targeted test',stopCondition:'reproduction passes'},progress_claim:{progress:'none',evidence:'test still fails',eventIds:[proposal.eventId]}};
+    validatePhase(pilot);
+    for(const fields of [{review_dispositions:{}},{review_dispositions:[{...proposal,findingKey:''}]},{review_dispositions:[proposal,proposal]},{behaviour_matrices:[{...matrix,decisionIds:['missing']}]},{checkpoint:{confirmedDefects:'one'}},{progress_claim:{progress:'done',evidence:'claimed',eventIds:[]}},{review_dispositions:[{...proposal,supersedes:'invalid reference space'}]}])assert.throws(()=>validatePhase({...pilot,...fields}));
+    const ack=await confirmQueue(pilot,root,async()=>{throw new Error('empty queue must not call adapter');});
+    assert.equal(validateConfirmation(pilot,ack),true);
+    assert.throws(()=>validateConfirmation({...pilot,checkpoint:{...pilot.checkpoint,nextExperiment:'changed'}},ack),/does not cover/);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('decide uses adjudicated links and progress, with no prose inference or cross-attempt accumulation',async()=>{
+  const {decideReview}=await import('./review-ledger.mjs');
+  const entry={type:'decision',id:'d1',findingKey:'same-invariant',problem:'p',trigger:'t',evidence:'e',impact:'i',origin:'original',decision:'confirmed',validity:{head:'a'.repeat(40),base:'b'.repeat(40),contracts:[],assumptions:[]},verification:'test',supersedes:null,proposedBy:'worker',recordedAt:'2026-09-16T00:00:00Z'};
+  const journal={issue:'MONO-999',entries:[entry]};
+  const events=[1,2,3].map(n=>({id:`1:helper-invocation:${n}`,kind:'helper-invocation',parent:null,status:'findings',findings:1}));
+  const ledger={issue:journal.issue,attempts:[{attempt:1,events,unresolvedCoverage:[]}]};
+  const records=events.map(e=>({eventId:e.id,origin:'original',evidence:'same text does not identify a finding',links:['d1'],progress:'none',recordedBy:'orchestrator'}));
+  assert.deepEqual(decideReview({ledger,records:[],journal,attempt:1}).matrixFindingKeys,[]);
+  let hint=decideReview({ledger,records:records.slice(0,2),journal,attempt:1});
+  assert.deepEqual(hint.matrixFindingKeys,['same-invariant']);assert.equal(hint.checkpointRequired,true);
+  hint=decideReview({ledger,records:[records[0],records[0]],journal,attempt:1});
+  assert.deepEqual(hint.matrixFindingKeys,[]);assert.equal(hint.checkpointRequired,false);
+  hint=decideReview({ledger,records:records.map(r=>({...r,links:[],progress:'fixed'})),journal,attempt:1});
+  assert.deepEqual(hint.matrixFindingKeys,[]);assert.equal(hint.checkpointRequired,false);
+  hint=decideReview({ledger,records:[...records.slice(0,2),{...records[2],progress:'evidence'}],journal,attempt:1});
+  assert.equal(hint.checkpointRequired,false);
+  hint=decideReview({ledger,records:[...records.slice(0,2),{...records[2],progress:null}],journal,attempt:1});
+  assert.equal(hint.checkpointRequired,false);
+  const other={...ledger,attempts:[...ledger.attempts,{attempt:2,events:[{...events[0],id:'2:helper-invocation:1'}]}]};
+  hint=decideReview({ledger:other,records:[records[0],{...records[1],eventId:'2:helper-invocation:1'}],journal,attempt:1});
+  assert.deepEqual(hint.matrixFindingKeys,[]);assert.equal(hint.checkpointRequired,false);
+  assert.throws(()=>decideReview({ledger,records,journal:{...journal,issue:'MONO-1'},attempt:1}),/issue/);
+});
+
+test('withheld request requires a reason, survives ledger rebuild and creates zero invocations',async()=>{
+  const {withholdCollection,buildReviewLedger,summarizeLedger}=await import('./review-ledger.mjs');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-withheld-'));
+  try {
+    const args={evidenceRoot:root,issue:'MONO-999',record:{attempt:1,collectionId:'pilot-request-1',reason:'matrix missing',recordedBy:'orchestrator'}};
+    await assert.rejects(withholdCollection({...args,record:{...args.record,reason:''}}),/reason/);
+    const injected={...args.record,usage:{normalized:{input:99}},findings:2,parent:'other',head:'a'.repeat(40),datasetVersion:9,certificationRole:'certified',launchCause:'fix',causeEvidence:'invented'};
+    const file=await withholdCollection({...args,record:injected});
+    await withholdCollection(args);
+    await assert.rejects(withholdCollection({...args,record:{...args.record,reason:'changed'}}),/changed/);
+    const records=json(file);assert.equal(records.length,1);
+    assert.deepEqual(records[0],{...args.record,kind:'collection-request',status:'withheld'});
+    const ledger=buildReviewLedger({issue:args.issue,sources:records.map(data=>({type:'ledger',attempt:data.attempt,ref:file,data}))});
+    const event=ledger.attempts[0].events[0];
+    assert.equal(event.reason,'matrix missing');assert.equal(event.certificationRole,'none');
+    assert.equal(event.usage,null);assert.equal(event.parent,null);assert.equal(event.findings,null);
+    const summary=summarizeLedger(ledger);assert.equal(summary.collections,1);assert.equal(summary.withheld,1);assert.equal(summary.invocations,0);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});

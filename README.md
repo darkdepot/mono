@@ -104,6 +104,37 @@ A wave's cost is telemetry, not a gate. Read the **Cost** line in deploy closeou
 
 Build a review ledger with `review-ledger.mjs build --issue <KEY> --root <orchestrator-root> --evidence-root <evidenceRoot>`; `print` reads the same sources without writing. Use `--out <scratch-directory>` to save a reviewable copy, and `wave-cost.mjs --ledger <copy.json>` to price that copy. Ambiguous source links appear in `unresolvedCoverage`, without guessed merges or duplicate calls. Causes remain `unknown` without evidence; self-check requires observed content identity. `adjudicate --issue <KEY> --evidence-root <evidenceRoot> --record <json-file>` appends an orchestrator's origin, evidence, decision links and progress record; it does not infer classifications from filenames.
 
+### Review decision pilot
+
+The approved pilot adds an append-only decision journal and optional phase-report
+proposals without changing gates or certificates. The orchestrator owns the
+journal, dataset versions, materialization and collection decision; workers
+propose evidence-backed dispositions, behaviour matrices and five checkpoint
+answers. The [pilot protocol](references/orchestration.md#review-decision-pilot)
+defines the fields and the [dispatch block](templates/orchestrator-dispatch.md)
+repeats the relevant stage rules only for approved pilot Issues.
+
+Installed `decisions.mjs record|list|render` uses `--issue KEY --evidence-root DIR`;
+`record --record FILE` accepts `decision`, `matrix` or `verification` entries.
+IDs cannot be overwritten. Revisions append a `supersedes` link, and deterministic
+rendering includes only current entries. `version --source DATASET` publishes
+`datasets/<KEY>-review-scope.v<N>.md` plus `.sha256` only when bytes change, reusing
+identical archived content. An interrupted archive/digest publication is recovered
+under the shared archive lock only when the retry has identical bytes; changed
+inputs cannot supply a missing digest for an older archive. `materialize --version N --worktree DIR --digest SHA256`
+returns a verified plain `.orchestrator/review-dataset-<d8>.md`, requires Git
+exclusion and refuses indexed paths. Local reviews receive that pinned path via
+`--dataset` and retain usage with `--stream-engine-output`; remove each copy at
+attempt end using the same materialize pins plus `--remove true`.
+
+`review-ledger.mjs decide --issue KEY --evidence-root DIR --attempt N` reads
+adjudicated decision links and progress to suggest a matrix or checkpoint; it
+never infers a finding key or grants readiness. Missing required evidence leads
+the orchestrator to `withhold --record FILE` with attempt, collectionId, reason
+and recordedBy, then rebuild the ledger. This records demand without executing
+collection. Dispatch/dataset bytes are measured separately as pilot overhead;
+the worker reading corpus stays unchanged.
+
 Collections retain validation and usage lines in bounded streaming output before signing. Reviewer input, cache reads, cache writes and output stay separate: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. Raw samples remain available; missing usage is null with a reason. Collection datasets are archived as immutable `<KEY>-review-scope.v<N>.md` files with `.sha256` sidecars, and receipts bind version and digest. Old receipts remain valid without usage or archive metadata; those inputs remain unavailable for reproduction.
 
 Sum non-overlapping per-turn usage across every attempt. Cached input is part of input, not another amount to add. The static worker reading budget is a separate measure: one union of mandatory, conditional and nested readings, shared files counted once, bounded at **99,882 bytes** with bytes/4 shown as an approximation. README is outside the worker reading list. Explanatory rationale stays outside that list and adds no gates.
@@ -229,7 +260,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 | Rationale outside worker reading | [Audience](references/rationale/audience.md), [review](references/rationale/review.md), [output](references/rationale/output.md), [delivery](references/rationale/delivery.md); explanation adds no obligations |
 | Worked examples and history | [Zeni dogfood](examples/zeni-dogfood.md), [profile regression](examples/profile-workbench-regression.md), [CHANGELOG](CHANGELOG.md) |
 
-Runtime scripts live in [scripts/](scripts/): `gate.mjs` checks evidence; `delivery-state.mjs` publishes/confirms queues; `runtime.mjs` provides durable writes, locks and hashes; `orchestrator/spawn.mjs`, `resume.mjs` and `consume-gate-ack.mjs` use the shared launch implementation; `watch-workers.mjs` monitors registered work; `resolve-issue-context.mjs` resolves the issue-only seam; `verify-pack-state.mjs` verifies identity/quiescence; `review-ledger.mjs` builds and summarizes review-event ledgers; `wave-cost.mjs` measures cost; `read-budget.mjs` bounds reading. Invoke runtime scripts from the installed pack, with `--help` and pinned dispatch inputs. Installation and config maintenance use `install-local.mjs` and `project-config.mjs` from the upstream checkout.
+Runtime scripts live in [scripts/](scripts/): `gate.mjs` checks evidence; `delivery-state.mjs` publishes/confirms queues; `runtime.mjs` provides durable writes, locks and hashes; `orchestrator/spawn.mjs`, `resume.mjs` and `consume-gate-ack.mjs` use the shared launch implementation; `watch-workers.mjs` monitors registered work; `resolve-issue-context.mjs` resolves the issue-only seam; `verify-pack-state.mjs` verifies identity/quiescence; `decisions.mjs` records decisions and versions/materializes datasets; `review-ledger.mjs` builds and summarizes review-event ledgers and supplies adjudication hints; `wave-cost.mjs` measures cost; `read-budget.mjs` bounds reading. Invoke runtime scripts from the installed pack, with `--help` and pinned dispatch inputs. Installation and config maintenance use `install-local.mjs` and `project-config.mjs` from the upstream checkout.
 
 ## Principles
 

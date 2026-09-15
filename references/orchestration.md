@@ -805,6 +805,75 @@ new spawns/resumes, not running workers. Escalate only after the healing ladder
 Keep decisions/results in ledger. Delivery budget is guidance, not a gate.
 Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
 
+## Review decision pilot
+
+Enable the dispatch pilot block only for approved experimental Issues. Stage
+rules, statuses, certificates and final-head proof remain unchanged. The worker
+proposes; the orchestrator adjudicates and writes evidence. Do not install the
+pilot obligations as universal stage rules before the pilot disposition.
+
+Use installed `decisions.mjs` with `--issue KEY --evidence-root DIR`:
+`record --record FILE` appends to `decisions/<KEY>.json`; `list` reads history;
+`render` emits one deterministic current-decision section. Entry types are
+`decision`, `matrix`, and `verification` (the checkpoint belongs to the phase
+report). Decisions carry the orchestrator-assigned findingKey, problem,
+trigger, evidence, impact, origin, decision, validity {head, base, contracts,
+assumptions}, verification, supersedes, proposedBy and recordedAt. Matrices
+carry invariant, states [{state, expected}], verification and recordedAt;
+verification entries carry forId, method, result and recordedAt. Every entry
+has id/type. New evidence appends a new ID and a supersedes link to the current
+entry of the same type and invariant; old entries are retained, never edited.
+Refutation alone cannot clear a finding still required by the gate.
+
+`version --source FILE` replaces the managed section in the source dataset,
+retaining other sections, and creates immutable
+`datasets/<KEY>-review-scope.v<N>.md` plus `.sha256` only for changed bytes.
+An identical archived version is reused. If a crash left an archive without its
+digest, an identical retry restores only the missing sidecar under the shared
+archive lock; different bytes refuse recovery. Pin its version, path and digest
+before the next review; do not revise a source during collection/verification.
+`materialize --version N --worktree DIR --digest SHA256` checks that archive,
+writes a plain `.orchestrator/review-dataset-<d8>.md` outside the Git index,
+requires Git exclusion, verifies the written digest, and returns its path.
+Keep `.orchestrator/` in the main checkout's info/exclude. Workers receive the
+repo-relative path and digest and use it unchanged with --dataset for local
+passes, plus --stream-engine-output. New version: materialize and repin before
+review. The collector retains its separate copy protocol. At attempt end use
+`materialize` with the same pins and `--remove true` to remove each copy.
+
+Optional phase fields are proposals, not accepted decisions:
+- review_dispositions: decision entries plus eventId. A supersedes ID outside
+  this report is a journal reference whose existence the orchestrator checks.
+- behaviour_matrices: matrix entries plus decisionIds, referencing dispositions
+  in this report with the same findingKey. Include targeted verification results.
+- checkpoint: five nonempty answers named confirmedDefects, evidence,
+  failedFixes, nextExperiment, stopCondition.
+- progress_claim: {progress: fixed|evidence|new-cause|none, evidence, eventIds}.
+The validator checks types and local references; the orchestrator checks
+external references and meaning. Legacy reports and confirm semantics persist.
+
+Before a collection request, read `review-ledger.mjs decide --issue KEY
+--evidence-root DIR --attempt N`. It reads the saved ledger, adjudications and
+journal; only explicit adjudication links to decision IDs supply findingKey.
+It returns matrixFindingKeys for keys in two finding-bearing rounds of this
+attempt, and checkpointRequired for the last two adjudicated rounds with
+progress none. Parent collection/helper/internal-pass events count as one
+round; record order determines round order, with later records updating that
+round's progress. Unknown links remain visible; never infer a key from prose.
+Review missing coverage before acting on the hint. Adjudicate progress only
+with evidence, including null when unresolved.
+
+If the required matrix/test result or five answers are absent, do not call
+the collection adapter. Record `review-ledger.mjs withhold --issue KEY
+--evidence-root DIR --record FILE` with {attempt, collectionId, reason,
+recordedBy}; rebuild the ledger to include this collection-request with status
+withheld. It counts demand and zero executions. Give a later actual request a
+new ID. Otherwise record the decision to proceed and run the unchanged gate.
+Publish the pilot protocol before its control/two pilot waves and report the
+outcome before proposing universal rules. Measure generated dispatch bytes and
+rendered dataset bytes as pilot overhead, separately from the unchanged worker
+corpus; report source and scratch-installed read-budget measurements.
+
 ## Delivery Write Barriers
 
 Poll phase reports as well as events; events accelerate, never prove application.

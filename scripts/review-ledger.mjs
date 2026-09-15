@@ -5,6 +5,7 @@ import os from 'node:os';
 import readline from 'node:readline';
 import { atomicJson, canonical, withLock, isMain } from './runtime.mjs';
 import { parseReviewUsage } from './gate.mjs';
+import { readJournal, validateJournal } from './decisions.mjs';
 
 const causes = ['fix','head-change','retry','final-request','self-check','unknown'];
 const statuses = ['scoped-clean','findings','filtered','incorrect','incomplete','reviewer_unavailable','withheld','unknown'];
@@ -35,7 +36,7 @@ function event(kind,key,data,sources) {
   const route = data.route ? {engine:data.route.engine ?? 'claude',model:data.route.model ?? null,effort:data.route.effort ?? null,provider:data.route.provider ?? 'unknown'} : null;
   return {id:`${data.attempt}:${kind}:${key}`,kind,sources:uniqueSources(sources),parent:data.parent ?? null,stage:data.stage ?? null,
     head:data.head ?? null,base:data.base ?? null,route,threshold:data.threshold ?? null,datasetVersion:data.datasetVersion ?? data.reviewDataset?.version ?? null,
-    status:statuses.includes(data.status)?data.status:'unknown',findings:data.findings ?? null,announcedPasses:data.announcedPasses ?? null,confirmedPasses:data.confirmedPasses ?? null,
+    status:statuses.includes(data.status)?data.status:'unknown',reason:data.reason ?? null,findings:data.findings ?? null,announcedPasses:data.announcedPasses ?? null,confirmedPasses:data.confirmedPasses ?? null,
     launchCause:launchCause(data),certificationRole:['none','certified','superseded'].includes(data.certificationRole)?data.certificationRole:'none',
     startedAt:data.startedAt ?? null,endedAt:data.endedAt ?? null,usage:data.usage ?? null,usageReason:data.usageReason ?? 'usage unavailable in sources',
     reproducibility:reproducibility(data)};
@@ -212,6 +213,8 @@ function helperLaunch(command, knownCommands) {
 }
 export async function readLedgerSources({issue,root,evidenceRoot}) {
   const sources=[];
+  const withheldFile=path.join(evidenceRoot,'reviews',`${issue}-withheld.json`);
+  if(fs.existsSync(withheldFile))for(const data of jsonFile(withheldFile))sources.push({type:'ledger',ref:withheldFile,attempt:data.attempt,data});
   for(const file of [...files(path.join(root,'consumed'),true),...files(path.join(root,'reports'),true)]) {
     if(!file.endsWith('.json')||!path.basename(file).startsWith(issue+'-'))continue;
     try{const data=jsonFile(file);if(data.issue===issue)sources.push({type:'report',ref:file,attempt:data.attempt??1,data});}catch{sources.push({type:'unresolved',ref:file,attempt:1,data:{reason:'malformed report'}});}
@@ -280,6 +283,60 @@ export async function adjudicate({evidenceRoot,issue,record}) {
     const clean=Object.fromEntries(['eventId','origin','evidence','links','progress','recordedBy'].map(k=>[k,record[k]]));
     if(!records.some(r=>canonical(r)===canonical(clean)))atomicJson(file,[...records,clean]);return file;});
 }
+export function decideReview({ledger,records,journal,attempt}) {
+  validateJournal(journal);
+  if(journal.issue!==ledger.issue)throw new Error('journal issue mismatch');
+  if(!Array.isArray(records)||!Number.isSafeInteger(attempt)||attempt<1)throw new Error('records and positive attempt required');
+  const state=ledger.attempts.find(a=>a.attempt===attempt);
+  if(!state)throw new Error('attempt absent from ledger');
+  const events=new Map(state.events.map(e=>[e.id,e])), decisions=new Map(journal.entries.filter(e=>e.type==='decision').map(e=>[e.id,e]));
+  const rounds=new Map(), unresolved=[];
+  for(const record of records) {
+    const event=events.get(record.eventId);
+    if(!event)continue;
+    if(!Array.isArray(record.links)||!['fixed','evidence','new-cause','none',null].includes(record.progress))throw new Error('invalid adjudication record');
+    // An internal pass and its enclosing helper/collection are one review round.
+    let round=event;
+    const visited=new Set();
+    while(round.parent && events.has(round.parent)) {
+      if(visited.has(round.id))throw new Error('cyclic ledger parents');
+      visited.add(round.id);round=events.get(round.parent);
+    }
+    let item=rounds.get(round.id);
+    if(!item){item={eventIds:[],keys:new Set(),progress:null};rounds.set(round.id,item);}
+    if(!item.eventIds.includes(event.id))item.eventIds.push(event.id);
+    item.progress=record.progress;
+    if(event.status==='findings' && Number.isSafeInteger(event.findings) && event.findings>0) {
+      for(const link of record.links) {
+        const decision=decisions.get(link);
+        if(decision)item.keys.add(decision.findingKey);
+        else unresolved.push({eventId:event.id,link});
+      }
+    }
+  }
+  const counts=new Map();
+  for(const round of rounds.values())for(const key of round.keys)counts.set(key,(counts.get(key)??0)+1);
+  const recent=[...rounds.values()].slice(-2);
+  return {issue:ledger.issue,attempt,matrixFindingKeys:[...counts].filter(([,n])=>n>=2).map(([key])=>key).sort(),
+    checkpointRequired:recent.length===2 && recent.every(r=>r.progress==='none'),
+    rounds:[...rounds].map(([id,r])=>({id,eventIds:r.eventIds,progress:r.progress})),unresolvedLinks:unresolved};
+}
+export async function withholdCollection({evidenceRoot,issue,record}) {
+  if(!issuePattern.test(issue)||!record||!Number.isSafeInteger(record.attempt)||record.attempt<1||
+    typeof record.collectionId!=='string'||!record.collectionId.trim()||typeof record.reason!=='string'||!record.reason.trim()||
+    typeof record.recordedBy!=='string'||!record.recordedBy.trim())throw new Error('withheld requires issue, attempt, collectionId, reason and recordedBy');
+  const file=path.join(evidenceRoot,'reviews',`${issue}-withheld.json`);
+  return withLock(file+'.lock',()=>{
+    const records=fs.existsSync(file)?jsonFile(file):[];
+    if(!Array.isArray(records))throw new Error('invalid withheld records');
+    const clean=Object.fromEntries(['attempt','collectionId','reason','recordedBy'].map(key=>[key,record[key]]));
+    const next={...clean,kind:'collection-request',status:'withheld'};
+    const previous=records.find(r=>r.attempt===record.attempt&&r.collectionId===record.collectionId);
+    if(previous && canonical(previous)!==canonical(next))throw new Error('withheld request payload changed');
+    if(!previous)atomicJson(file,[...records,next]);
+    return file;
+  });
+}
 export function printLedger(ledger) {
   const summary=summarizeLedger(ledger);
   const lines=[`Review ledger ${ledger.issue}`,'| Attempt | Collections | Withheld | Invocations | Announced passes | Confirmed passes |','| --- | ---: | ---: | ---: | ---: | ---: |'];
@@ -290,12 +347,20 @@ export function printLedger(ledger) {
 }
 async function main() {
   const argv=process.argv.slice(2),command=argv.shift(),options={};
-  if(command==='--help'||argv.includes('--help')){console.log('Usage: review-ledger.mjs build|print|adjudicate --issue KEY [--root DIR] [--evidence-root DIR] [--out DIR] [--record JSON_FILE]');return;}
-  for(let i=0;i<argv.length;i+=2){if(!['--issue','--root','--evidence-root','--out','--record'].includes(argv[i])||!argv[i+1])throw new Error('invalid arguments');options[argv[i].slice(2)]=argv[i+1];}
+  if(command==='--help'||argv.includes('--help')){console.log('Usage: review-ledger.mjs build|print|adjudicate|decide|withhold --issue KEY [--root DIR] [--evidence-root DIR] [--out DIR] [--record JSON_FILE] [--attempt N]');return;}
+  for(let i=0;i<argv.length;i+=2){if(!['--issue','--root','--evidence-root','--out','--record','--attempt'].includes(argv[i])||!argv[i+1])throw new Error('invalid arguments');options[argv[i].slice(2)]=argv[i+1];}
   const issue=options.issue;if(!issuePattern.test(issue??''))throw new Error('valid --issue required');
   const state=process.env.MONO_WORKFLOW_STATE_ROOT??path.join(os.homedir(),'.mono-agent-workflow');
   const root=path.resolve(options.root??path.join(state,'orchestrator','mono-agent-workflow'));
   const evidenceRoot=path.resolve(options['evidence-root']??path.join(state,'evidence',path.basename(root)));
+  if(command==='decide') {
+    const ledger=jsonFile(path.join(evidenceRoot,'reviews',`${issue}.json`));
+    if(ledger.issue!==issue)throw new Error('ledger issue mismatch');
+    const recordsFile=path.join(evidenceRoot,'reviews',`${issue}-adjudications.json`);
+    const records=fs.existsSync(recordsFile)?jsonFile(recordsFile):[];
+    console.log(JSON.stringify(decideReview({ledger,records,journal:readJournal({evidenceRoot,issue}),attempt:Number(options.attempt)}),null,2));return;
+  }
+  if(command==='withhold'){if(!options.record)throw new Error('--record required');console.log(await withholdCollection({evidenceRoot,issue,record:jsonFile(options.record)}));return;}
   if(command==='adjudicate'){if(!options.record)throw new Error('--record required');console.log(await adjudicate({evidenceRoot,issue,record:jsonFile(options.record)}));return;}
   if(!['build','print'].includes(command))throw new Error('expected build, print or adjudicate');
   const ledger=buildReviewLedger({issue,sources:await readLedgerSources({issue,root,evidenceRoot})});
