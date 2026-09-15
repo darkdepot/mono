@@ -23,7 +23,7 @@ Write skills in English; Linear templates/examples in Russian.
 
 ## Skill Design Rules
 
-Keep SKILL descriptions as routing, atomics on one artifact, wrappers on orchestration. Use `references/`/`templates/` progressively; do not copy long templates into skills. Preserve separate handoff/implement/preflight/ship/deploy ownership; no monolithic delivery skill. Orchestrator sequences/routes only, never implements or absorbs stages.
+Keep SKILL descriptions as routing, atomics on one artifact, wrappers on orchestration. Use `references/`/`templates/` progressively; do not copy long templates into skills. Preserve separate handoff/implement/preflight/ship/deploy ownership. `mono-deliver` sequences the three delivery phases in one worker context; keep each phase rule in its owning skill, never merge them into a monolith. Orchestrator dispatches, confirms writes and monitors; it never implements or absorbs stages.
 
 Keep review report-only (quality/risk, no mutations), check readiness-only. Repair: handoff mutates Project-first, `mono-review artifact` judges classification, `mono-check repair` reports readiness, issue renews issue-only, ship owns accepted pre-ship drift. Apply accepted fixes only through these owners or explicit atomics.
 

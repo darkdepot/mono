@@ -9,14 +9,14 @@ either shape.
 
 ## Worker Report
 
-Use the Worker Report section of `references/worker-contract.md` for the unchanged worker JSON, verification items, certificate pointer, and status dictionary.
+Use the Worker Report section of `references/worker-contract.md` for phase capsules, confirmations, final green/parked reports, verbatim verification items and the parked-reason dictionary.
 
 ## Worker Registry
 
 Path: `~/.mono-agent-workflow/orchestrator/<product>/workers.json`
 
 Orchestrator-owned runtime metadata; workers never read or write it. One
-entry per Issue, updated on gate pre-registration, spawn, stage advance, and
+entry per Issue, updated on gate pre-registration, spawn, phase progress, and
 respawn. The registry
 is what lets a fresh orchestrator session rebind to surviving `codex-cli`
 threads (`codex exec resume <thread_id>`) instead of respawning them, and it
@@ -42,7 +42,9 @@ is the durable source of the gate names dispatched for the current attempt.
     "thread_id": "<codex thread id, or null>",
     "worktree": "<absolute path>",
     "branch": "<branch>",
-    "stage": "<mono-implement | mono-preflight | mono-ship>",
+    "stage": "mono-deliver",
+    "attempt": "<positive integer>",
+    "confirmationTimeoutSec": 900,
     "product_name": "<product-language name for owner-facing statuses, or omitted>",
     "gates": ["<dispatched gate name>"],
     "packVersion": "<installed lockfile packVersion>",
@@ -83,9 +85,9 @@ provenance, not a runtime audit or permission to change a running model.
 
 `gates` is optional. When present it is a non-empty array of unique,
 non-empty strings, permitted only on the registry entry for a gate-carrying
-`mono-implement` dispatch. It is scoped to the current attempt identified by
+`mono-deliver` dispatch. It is scoped to the current attempt identified by
 `log`: a verified new gate attempt replaces it with that attempt's exact list,
-and it never survives into `mono-preflight`, `mono-ship`, or another attempt.
+and it never survives handshake consumption or another attempt.
 When an ack exists, an absent or malformed `gates` value makes the ack
 unusable and requires a verified new attempt with a correct list. With no ack,
 field absence does not change the entry's watcher liveness signals.
@@ -97,7 +99,7 @@ It is descriptive metadata — it gates nothing, changes no worker contract,
 and never replaces the Issue key in machine fields.
 
 `thread_id: null` together with `pid: null` is permitted only for the
-inactive gate-startup state: a gate-carrying `mono-implement` entry with valid
+inactive gate-startup state: a gate-carrying `mono-deliver` entry with valid
 `gates`, its empty attempt-numbered `log`, and publication-time `spawned_at`,
 atomically registered only after that log file and its `logs/` directory have
 both been fsynced and before the worker process starts. The watcher keeps that
@@ -114,8 +116,8 @@ not extend the deadline. `--once` completes it through additional bounded
 passes, and elapsed milliseconds are compared without rounding the startup
 window upward. A missing or unreadable attempt log also emits
 `spawn-fail`.
-After `thread.started`, the
-orchestrator updates the same entry with live identity while preserving `log`
+The launcher records pid immediately, while thread_id stays null through the
+same bounded startup window. After `thread.started`, it records thread identity while preserving `log`
 and `gates`; every other live `codex-cli` entry carries verified process
 identity.
 
@@ -127,7 +129,8 @@ The orchestrator owns this file beside `workers.json`. Its complete schema is:
 
 ```json
 {
-  "state": "idle"
+  "state": "idle",
+  "halt": false
 }
 ```
 
@@ -149,3 +152,5 @@ Path: `~/.mono-agent-workflow/orchestrator/<product>/ledger.md`
 ```
 
 Only the orchestrator writes the ledger. Routine polling is never recorded.
+
+Delivery entries keep stage=mono-deliver across phases. Startup gates are removed only after durable handshake consumption. Phase reports bind attempt, sequence, head and the full queue; confirmations bind their digest. Use scripts/orchestrator tools from the installed runtime. attempts.json retains per-Issue counts after active entries retire; never reset it to bypass a configured cap. halt refuses both spawn and resume without touching an existing process.

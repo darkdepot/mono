@@ -45,6 +45,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { validatePhase, validateConfirmation, confirmationPath, correlatedDeliveryReport } from "./delivery-state.mjs";
 
 const DEFAULT_STALL_SEC = 120;
 const MIN_STALL_SEC = 90;
@@ -548,8 +549,9 @@ function readRegistryGates(registryEntry) {
 // line, remains startup. Only a valid thread.started event completes startup;
 // other JSON events and non-JSON contamination remain bounded until timeout.
 function isInactiveGateRegistryEntry(registryEntry) {
-  if (registryEntry?.stage !== "mono-implement") return null;
-  if (registryEntry.thread_id !== null || registryEntry.pid !== null) return null;
+  if (!["mono-implement", "mono-deliver"].includes(registryEntry?.stage)) return null;
+  if (registryEntry.thread_id !== null) return null;
+  if (registryEntry.pid !== null && !(registryEntry.stage === "mono-deliver" && Number.isInteger(registryEntry.pid) && registryEntry.pid > 0)) return null;
   if (readRegistryGates(registryEntry) === null) return null;
   if (typeof registryEntry.log !== "string") return null;
   return true;
@@ -707,7 +709,7 @@ const GATE_PHASE_STAGE = "mono-implement";
 // suppression, never an event.
 function registryGateAckLog(issueKey, registryEntry) {
   if (registryEntry?.transport !== "codex-cli") return null;
-  if (registryEntry.stage !== GATE_PHASE_STAGE) return null;
+  if (![GATE_PHASE_STAGE, "mono-deliver"].includes(registryEntry.stage)) return null;
   if (!hasPackIdentity(registryEntry)) return null;
   const filePath =
     typeof registryEntry.log === "string" ? path.resolve(expandHome(registryEntry.log)) : null;
@@ -795,6 +797,8 @@ function correlatedReport(log, reportsDir, registryEntry) {
   for (const field of ["packVersion", "sourceCommit", "surfaceRevision"]) {
     if (report[field] !== registryEntry[field]) return null;
   }
+  if (report.stage === "mono-deliver" && (report.attempt !== log.attempt ||
+      !correlatedDeliveryReport(report, reportStat, registryEntry, log.stat, args.stallSec))) return null;
   return { reportPath, stat: reportStat };
 }
 
@@ -1060,11 +1064,48 @@ function checkIdle(registrySnapshot, controlState, nowMs) {
   );
 }
 
+function checkPhase(log, entry, nowMs) {
+  if (entry?.stage !== "mono-deliver" || !isCorrelatedDeliveryLog(log, entry)) return false;
+  const roots = [args.root, path.join(entry.worktree, ".orchestrator")];
+  const phases = [];
+  for (const phase of ["code", "preflight", "ship"]) {
+    const files = [path.join(roots[0], "reports", `${log.issue}-phase-${phase}.json`), path.join(roots[1], `${log.issue}-phase-${phase}.json`)];
+    const present = files.filter(file => fs.existsSync(file));
+    if (present.length > 1) { warnOnce(`phase report in both locations for ${log.issue}`); return false; }
+    if (!present.length) continue;
+    try {
+      const file = present[0], stat = fs.statSync(file);
+      if (stat.size > 4 * 1024 * 1024 || stat.mtimeMs > nowMs + FS_TIMESTAMP_SLACK_MS) continue;
+      const report = validatePhase(JSON.parse(fs.readFileSync(file, "utf8")));
+      if (report.issue !== log.issue || report.attempt !== log.attempt || ["packVersion", "sourceCommit", "surfaceRevision"].some(key => report[key] !== entry[key])) continue;
+      const publishedAtMs = Date.parse(report.publishedAt);
+      if (!Number.isFinite(publishedAtMs) || publishedAtMs > nowMs + FS_TIMESTAMP_SLACK_MS) continue;
+      phases.push({ file, stat, report, publishedAtMs });
+    } catch { continue; }
+  }
+  const order = ["code", "preflight", "ship"];
+  phases.sort((a, b) => order.indexOf(b.report.phase) - order.indexOf(a.report.phase) || b.report.sequence - a.report.sequence);
+  const latest = phases[0]; if (!latest) return false;
+  const version = `${latest.stat.mtimeMs}:${latest.stat.size}`;
+  if (emittedReportVersions.get(latest.file) !== version) {
+    emittedReportVersions.set(latest.file, version);
+    emitEvent("phase", log.issue, `phase ${latest.report.phase} sequence ${latest.report.sequence}: ${latest.file}`, `phase:${latest.file}:${version}`, nowMs);
+  }
+  const confirmation = confirmationPath(latest.report, args.root);
+  try { validateConfirmation(latest.report, JSON.parse(fs.readFileSync(confirmation, "utf8"))); return false; } catch { /* still awaiting whole queue */ }
+  const timeout = entry.confirmationTimeoutSec ?? 900;
+  return Number.isFinite(timeout) && timeout > 0 && nowMs - latest.publishedAtMs >= 0 && nowMs - latest.publishedAtMs <= timeout * 1000;
+}
+
 function scan() {
   const nowMs = Date.now();
   const registrySnapshot = loadRegistry(path.join(args.root, "workers.json"));
   const registry = registrySnapshot.entries;
   const controlState = loadControlState(path.join(args.root, "control.json"));
+  try {
+    if (JSON.parse(fs.readFileSync(path.join(args.root, "control.json"), "utf8")).halt === true)
+      emitEvent("halt", "-", "new spawns and resumes disabled; running workers untouched", "halt", nowMs);
+  } catch { /* loadControlState already reports unreadable control */ }
   const latestLogs = collectLatestLogs(path.join(args.root, "logs"));
   const reportsDir = path.join(args.root, "reports");
   const currentLogPaths = new Set();
@@ -1120,7 +1161,8 @@ function scan() {
     // Both events go out; the consumer branches on the ack's status.
     checkGateAck(attemptLog, gateAck, nowMs);
     checkReport(log, report, nowMs);
-    checkLog(attemptLog, gateAck, report, registry, nowMs);
+    const waitingOnPhase = checkPhase(attemptLog, registryEntry, nowMs);
+    if (!waitingOnPhase) checkLog(attemptLog, gateAck, report, registry, nowMs);
   }
   checkRegistry(registry, nowMs);
   checkIdle(registrySnapshot, controlState, nowMs);

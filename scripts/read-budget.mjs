@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 // Validator ceiling for the union, in bytes. Tokens are only bytes / 4.
 export const READ_BUDGET_MAX_BYTES = 99_882;
-export const DELIVERY_SKILLS = ["mono-implement", "mono-preflight", "mono-ship"];
+export const DELIVERY_SKILLS = ["mono-deliver", "mono-implement", "mono-preflight", "mono-ship"];
 
 function withoutFences(text) {
   let fence = null;

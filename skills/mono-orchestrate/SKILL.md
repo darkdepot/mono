@@ -308,209 +308,50 @@ Workflow states:
      The upstream pack source remains `scripts/watch-workers.mjs` for
      development and fixtures.
    - One Issue per worker. Spawn through the runtime transport with
-     `templates/orchestrator-dispatch.md`: full context snapshot, AFK
+     `templates/orchestrator-dispatch.md`: one delivery, full context snapshot, AFK
      contract, engine block, mailbox path, authorization. Include the
      no-sub-delegation rule in every dispatch prompt.
-   - Before starting every gate-carrying `mono-implement` spawn, respawn,
-     or session rotation, create its empty attempt log, fsync that file and
-     its `logs/` directory, and only then atomically pre-register
-     `registryEntry.gates` as the exact non-empty, unique list of gate names
-     dispatched for THAT attempt alongside `stage`, `log`, pack
-     identity, publication-time `spawned_at`, `thread_id: null`, and `pid: null`.
-     The worker process starts only after that durable write succeeds. After
-     `thread.started`, update the
-     same entry with verified live identity while preserving `log` and `gates`;
-     retire an inactive entry when spawn fails. The watcher recognizes the
-     null-identity entry as inactive startup and keeps any output quiet for one
-     stall-threshold window measured from `spawned_at` until a valid
-     `thread.started` arrives. At timeout it emits `spawn-fail`. A missing,
-     invalid, or more-than-five-seconds-future timestamp emits `spawn-fail`
-     immediately rather than entering `dead` healing. The watcher reads at
-     most 256 KiB of that log per pass and resumes from its cursor on the next
-     pass, preserving later `thread.started` detection without blocking other
-     workers. At timeout it freezes the observed log size and finishes that
-     snapshot before declaring `spawn-fail`; subsequent appends cannot prolong
-     the decision. `--once` completes the snapshot through additional bounded
-     passes in the same invocation, and timeout comparison uses elapsed
-     milliseconds without rounding upward. A missing or unreadable attempt log also emits
-     `spawn-fail`.
-     Preserve the list on a
-     same-attempt no-ack nudge/resume and while a passed ack awaits confirmed
-     resume. Never copy it to a new attempt implicitly: a verified new
-     gate-carrying attempt writes its own list, while `mono-preflight`,
-     `mono-ship`, and every other non-gate dispatch omit it. The complete
-     rename-before-delete lifecycle is single-homed in the Registry gate-list
-     lifecycle table of `references/orchestration.md`.
-   - A dispatch that carries a lifecycle move — a project's first
-     `mono-implement` dispatch, or an issue-only activation — runs the
-     two-phase handshake: emit the pre-move snapshot with the Gate Phase block
-     filled, apply no move until the worker's `gates-passed` gate-ack, check
-     the exact ack artifact the event named — mailbox and fallback share a
-     filename and can disagree — against `registryEntry.gates` from the
-     current attempt's registry entry: `gates-passed` requires exact set
-     equality on the gate names, never a count; `blocked` accepts a non-empty
-     subset but no foreign or duplicate names. Then apply every move only for
-     `gates-passed`, with
-     read-back, resume that same worker with the read-back as an explicit
-     snapshot amendment, register the resumed writer while preserving
-     `registryEntry.gates`, atomically publish the private orchestrator
-     `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with
-     `outcome: applied`, rename every candidate for that attempt to
-     `<ISSUE-KEY>-gate-ack-a<N>.applied.json`, and only then remove `gates` in
-     a separate registry write. The rename covers the mailbox and the worktree fallback, not only
-     the artifact the event named. An ack you reject for incomplete gate
-     coverage is consumed too — atomically publish the trusted record with `outcome: rejected`, then rename
-     it `<ISSUE-KEY>-gate-ack-a<N>.rejected.json` and remove `gates`. That attempt is terminal;
-     verified-respawn a NEW gate attempt with its own list and never
-     same-attempt nudge it. Tombstones are delivery/suppression markers only
-     and never authorize Resume cleanup; only a well-formed record for the
-     current attempt in the private `consumed/` namespace does. A fabricated
-     mailbox record is never cleanup authority. That order is load-bearing in both directions: an ack
-     left in place keeps suppressing that worker's `stall` and `dead` events,
-     while consuming it before the resumed writer is registered leaves a window
-     where the watcher calls a healthy resume dead. Neither order closes the
-     crash window between the resume and the rename: when you cannot tell
-     whether a resume landed, reconcile against the transport thread and the
-     worktree before any second resume, because an unconsumed ack on its own
-     never authorizes resuming twice. The rule, the ack shape,
-     and the blocked and no-ack paths have one home: Two-Phase Dispatch
-     Handshake in `references/orchestration.md`. Applying a dispatch-moment
-     move earlier needs an explicit owner mandate recorded in the ledger; it is
-     never a «Решил сам:» decision.
-   - Resolve worker roles and both policy values per Worker model selection
-     in `references/orchestration.md`. Select `worker-complex` only by judgment
-     for this dispatch, with the reason recorded under «Решил сам:»; never
-     derive it automatically from risk class. Record the selected role, policy
-     intent, actual launch parameters and transport case in the dispatch and
-     registry per `templates/orchestrator-report.md`. Do not backfill legacy
-     records; preserve existing launch pins on resume.
-   - For `codex-cli` and `fallback` transports, create the worker's worktree
-     before spawn per `references/orchestration.md` Worker Transports.
-   - Verify every spawn per Worker Transports in
-     `references/orchestration.md`: prompt passed as a file, `thread.started`
-     in the log within 60s (else kill+retry), attempt-numbered logs from
-     `-a1`, model and reasoning effort pinned in the command.
-   - Record every spawn in `workers.json` (transport, thread id, worktree,
-     branch, stage, `packVersion`, `sourceCommit`, `surfaceRevision`, the
-     optional `product_name` — this Issue's product-language name, recorded
-     whenever owner-facing statuses use one — and the
-     attempt-scoped `gates` list when this is a gate-carrying attempt); update
-     it on stage advance and respawn. Never record an empty thread id for a
-     live worker.
-   - Set `control.json` to `active` before dispatch. Use `draining` when new
-     dispatch is stopped while registered workers close, and `idle` only with
-     an empty active registry.
-   - Cap concurrent workers at `orchestration.maxParallelWorkers` (default 3);
-     queue the rest.
-   - Respect Issue dependencies; queue dependents until their blockers
-     report done.
-   - Name workers `<ISSUE-KEY>: <stage>`.
+   - Dispatch mono-deliver once per approved Issue with the full snapshot,
+     exact identity command, start-gate request and required phase capabilities.
+     Use installed scripts/orchestrator/spawn.mjs; never session-local helpers.
+     Select worker role by the model policy and recorded technical judgment;
+     preserve launch pins on resume. The tool enforces halt, attempt cap and
+     durable registration before execution. Keep worktree, attempt log and
+     context across phases. Respect dependencies/concurrency configuration.
+   - For lifecycle-carrying startup follow Two-Phase Dispatch Handshake in
+     references/orchestration.md exactly: pre-move snapshot, validated ack,
+     read-back of every move, same-thread resume, verified writer registration,
+     private consumption record, ack rename, gates removal. Use installed
+     resume.mjs and consume-gate-ack.mjs. Missing/contradictory evidence never
+     permits lifecycle replay; poll both mailbox and fallback.
+   - Use active control for dispatch, draining for existing work only, idle only
+     with empty registry. halt refuses spawn/resume without stopping workers.
+     Keep attempts.json when an entry retires; never reset the cap.
 5. `monitor`
-   - Poll the mailbox cheaply for BOTH reports and gate-acks. The ack is durable
-     state, not just an event: watcher delivery is at-least-once per watcher
-     process, so a consumer that crashed or missed the event is not told again
-     while that process lives. The poll is what makes the handshake recoverable;
-     the event only accelerates it and is never proof of validation. An
-     unconsumed ack found by polling is handled exactly as a delivered one,
-     and both paths validate it against `registryEntry.gates` from the current
-     attempt rather than process memory.
-   - Follow the Monitoring Protocol in `references/orchestration.md`. Do not steer an actively progressing worker.
-   - Before processing any report event or poll, and before any heartbeat event
-     enters the common healing ladder, perform the stage-aware
-     `registryEntry.gates` shape check. This check preempts report routing and
-     stage advancement: when a malformed or forbidden-presence branch applies,
-     do not accept that attempt's report. A malformed present value
-     on a gate-carrying `mono-implement` entry is a producer contract error:
-     terminate that attempt and verified-respawn a NEW gate attempt with its
-     own correct list; do not same-attempt nudge it. Any presence on a
-     `mono-preflight` or `mono-ship` entry is forbidden: start a new attempt
-     of that same stage WITHOUT `gates`. These are monitor recovery branches,
-     not watcher mutations and not handshake routing.
-     When an ack exists but `gates` is absent, the ack is unusable and the
-     current attempt takes the NEW-attempt recovery branch with a correct
-     dispatched list. There is no source-identity discriminator or form-only
-     legacy branch. With no ack, field absence leaves watcher liveness signals
-     unchanged.
-     Because stage/log advance and `gates` removal are one atomic
-     post-reconciliation write, later-stage presence is never an in-progress
-     cleanup window: finish journal recovery while the entry is still
-     `mono-implement`; otherwise take the forbidden-presence branch.
-   - Read reports only after that stage-aware check; advance the same worker
-     session to the next stage (`mono-implement` → `mono-preflight` →
-     `mono-ship`). For `codex-cli` workers advance the same thread with
-     `codex exec resume` and treat process exit plus report as the normal
-     advance signal (liveness ladder in `references/orchestration.md`).
-   - Before the ordinary no-ack healing ladder, only when `registryEntry.stage` is `mono-implement` and its CURRENT log
-     is `<ISSUE-KEY>-mono-implement-a<N>.jsonl`, a well-formed private record
-     for that same `<N>` with `outcome: rejected` skips same-attempt nudge and
-     routes directly to a verified respawn of a NEW gate attempt with its own
-     correct list. Preflight and ship entries never consult the record. The
-     private record preserves terminal routing across an orchestrator crash
-     before or after ack rename and `gates` removal. If the record exists while
-     an unconsumed ack remains, finish the rename selected by `outcome` first.
-     A watcher redelivery or poll of that ack is consumption recovery, not
-     authority to apply lifecycle moves again.
-   - An unconsumed valid `blocked` ack without its correlated stage report is
-     missing-report recovery, not the no-ack ladder. Preserve the ack and
-     `registryEntry.gates`; resume the same thread once to demand the report,
-     and consume `.blocked` only after the report validates.
-   - Heartbeat watcher events (`stall`, `dead`, `spawn-fail`) are Monitoring
-     Protocol triggers: read the worker's latest state, then heal through
-     the ladder nudge → respawn → session rotation; alert the user only when
-     the ladder is exhausted. Record every healing step and its result in
-     the ledger (Heartbeat in `references/orchestration.md`).
-   - A `gate-ack` event is a delivery signal, not durable proof and not a
-     liveness event. Read the exact artifact named by the event and validate it
-     against `registryEntry.gates` from the current attempt before reading its
-     `status`; polling performs the identical validation. That validation is
-     status-asymmetric: `gates-passed` requires exact set equality, while
-     `blocked` accepts a non-empty subset with no foreign or duplicate names.
-     After validation, read the ack's `status` first, never the report on its own.
-     `blocked` applies no move at
-     all, and its ack arrives before its report by contract.
-     Do not publish the consumption record, rename the ack, or remove
-     `registryEntry.gates` until the correlated ordinary stage report exists
-     and validates. Before consuming `.blocked`, reconcile the transport thread and worktree
-     to prove the current attempt authored the shared-path report; report shape
-     and freshness alone are insufficient. Preserve the ack and field while
-     polling or resolving ambiguity.
-     Only after that report validates, atomically publish the private
-     orchestrator `<orchestrator-root>/consumed/<ISSUE-KEY>-gate-ack-a<N>.json` record with
-     `outcome: blocked`, rename the ack as
-     `<ISSUE-KEY>-gate-ack-a<N>.blocked.json`, remove `registryEntry.gates`, and
-     route the report through `decide-or-escalate` like any non-green report —
-     the two arriving
-     together is that path working, not a crash.
-     `gates-passed` applies the
-     dispatch's lifecycle moves with read-back and resumes that worker — unless
-     this stage's report is already present, which is AMBIGUOUS rather than
-     proof, because reports carry no attempt number and that one may belong to
-     a superseded worker. Reconcile before acting — check the transport thread
-     and the worktree for whether THIS attempt executed — and never silently
-     consume the ack or resume on it twice (Two-Phase Dispatch Handshake in
-     `references/orchestration.md`). For every outcome, atomically publish the
-     trusted consumption record first — durable file, atomic rename, then
-     `fsync` of the containing `consumed/` directory; before publishing or
-     trusting any record, also `fsync` the orchestrator-root directory that
-     contains `consumed/`, whether or not the namespace already existed — then
-     rename every ack candidate, then remove `gates`. A visible record after a
-     failed directory sync is not authority: Resume re-syncs `consumed/`
-     successfully before trusting it. A
-     worker-writable tombstone or mailbox record never substitutes for that
-     private current-attempt record during Resume cleanup. For `outcome:
-     blocked`, that record binds only the ack outcome: after a crash, re-run
-     transport/worktree reconciliation before routing any report and never use
-     the record itself as report-version proof. A worker quiet after a fresh
-     `gates-passed` ack is waiting by contract — never heal it.
-   - Route non-green reports (`blocked`, `needs-human`, `drift-candidate`,
-     `needs-decision`, `scope-drift-needs-handoff`) to `decide-or-escalate`
-     instead of advancing.
-   - Audit `verification_items` coverage before advancing a stage-terminal
-     report: missing coverage of the Issue's «Как проверить», or wholesale
-     deferral with no `pass` items, is treated as non-green regardless of the
-     report status.
-   - On `timed-out`: treat as a stuck worker; rebuild stage state from Linear
-     and the last mailbox report and respawn per the Monitoring Protocol.
+   - Apply Monitoring Protocol before every event/poll. Validate startup gates,
+     ack status and current-attempt provenance before report routing. Private
+     consumed records guide crash recovery; mailbox tombstones never authorize it.
+     Ack/report ambiguity requires transport/worktree reconciliation. A blocked
+     ack waits for its correlated report before consumption; rejected attempt
+     requires a new verified attempt, never same-attempt nudge.
+   - Consume phase events AND poll phase files. Validate capsule and full queue;
+     apply Delivery Write Barriers with durable per-write results/reconciliation.
+     Grant workers reports/ only; publish confirmations/ outside their grants. Handle preflight-collect with sandboxed verification/review at the pinned evidenceRoot; recheck collect:false before ship.
+     Publish whole-queue confirmation; never send a stage-resume prompt to a
+     worker waiting on a file. Preserve certificate-before-review,
+     drift-before-PR, In-Review-after-PR ordering. On recovery read capsule and
+     reconcile Linear before applying only missing writes.
+   - Validate each terminal verification_items list against every Issue line;
+     missing coverage or wholesale deferral without pass is non-green. Green
+     requires all confirmations plus an independently run installed ship gate.
+     Parked requires dictionary reason/text: reflect it in Linear with read-back
+     in this same turn, then route decide-or-escalate. A failed Linear write stays
+     visible as pending, never reported applied.
+   - For stall/dead/spawn-fail inspect latest state before healing. Startup ack
+     pause is not death; reconcile unconsumed ack first. Phase confirmation wait
+     is bounded by config. No report: same-thread resume once to demand capsule
+     and report; failed recovery uses a new attempt within cap, not a restarted
+     Issue. Record every healing step/result. Do not steer progressing workers.
 6. `decide-or-escalate`
    - Technical questions: decide, record in the ledger under «Решил сам:»
      with a one-line reason, answer the worker.

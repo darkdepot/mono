@@ -5,90 +5,91 @@ description: Use when starting or running implementation from approved Linear Is
 
 # Mono Implement
 
-Own Delivery Start/code; next preflight. Read `.agents/mono-workflow.config.json` for team/language/roots/workflows; ship owns PR, deploy delivery/closeout.
+Own Delivery Start/code, then preflight. Ship owns PR; deploy owns closeout.
+Read project `.agents/mono-workflow.config.json` for team/language/roots/workflows.
 
 Read first:
 
 Read now:
-
 1. `AGENTS.md`
 2. `references/worker-contract.md`
 3. `references/readiness-gates.md`
 4. `references/human-friendly-output.md`
 
 Read when:
+- `references/questioning.md` — asking interactive questions.
+- `references/issue-only-lane.md` — `lifecycle_state_entity=issue` or lane park/freeze/exit.
+- `../mono-preflight/SKILL.md` — exiting implemented-needs-preflight.
 
-- `references/questioning.md` — when asking interactive questions.
-- `references/issue-only-lane.md` — when the seam is `lifecycle_state_entity=issue`, or a lane park, freeze, or exit is in play.
-- `skills/mono-preflight/SKILL.md` — when exiting `implemented-needs-preflight`.
+Gather package/resources/comments, approvals/review/checks, config/validation
+and git/base. Run dispatch identity before work/resume; no discovery/chat-only
+start. Return sequenced phase results/full queue for confirmation, otherwise a stage report.
 
-Gather package/resources/comments/intake/approval/review/checks/config, repo validation/conventions, git/base. No discovery/review/local-plan/chat-only start.
+## Workflow
 
-Before work/resume run `verify-pack-state.mjs identity` with dispatch `packVersion`, `sourceCommit`, `surfaceRevision`; mismatch blocks code/lifecycle.
-
-Workflow states:
-
-1. `start-checkpoint`: dispatch uses branch below. Interactively fetch/validate Issues, explicit start approval, handoff disposition and seam; confirm prerequisites, then lane-ordered lifecycle/delivery check. Inspect git/use safe branch when needed. Consult `gstack-learnings-search --limit 10` (optional scoped --query/--type); unavailable/none is advisory and recorded. Record start comment.
-2. `execute`: select engine; implement approved one PR only unless Issue allows parallel slices. Discovery stays closed unless artifacts missing/contradictory. Ask only blocking product/UX/business/access/dirty/risk decisions (mailbox under dispatch); validate incrementally. Material drift → scope-drift-needs-handoff.
-3. `exit`: one status, files/checks/unrun/git/drift/comment/next; every Issue verification line in worker-contract verification_items. Never omit/pass skipped checks. Russian exit comment for blocked/needs-human/drift; no extra success comment.
+start-checkpoint validates package/start approval/handoff/seam and lane lifecycle
+below; dispatch uses its branch/snapshot. Consult gstack-learnings-search --limit 10
+(optional scoped query/type); unavailable/none is advisory. Record start comment.
+Execute approved one PR with incremental verification. AFK forbids sub-workers;
+interactive parallel slices require Issue permission. No discovery unless missing/
+contradictory artifacts. Blocking product/UX/business/access/dirty/risk decisions
+use mailbox under dispatch; material drift → scope-drift-needs-handoff.
+Exit with fields below; comment in Russian for blocked/needs-human/drift only.
+Never create PR or run/claim formal pre-ship review/check.
 
 ## Orchestration branch of `start-checkpoint`
 
-Apply worker-contract precedence.
-
-1. Run exact dispatch identity command; mismatch/nonzero = `blocked`.
-2. Use snapshot package, decisions and approvals.
-3. Verify approved Issue, explicit start approval and resolved/accepted/deferred handoff findings. Missing field = `blocked`.
-4. Resolve Context-seam branch from snapshot. Missing input = `blocked`, no move. Move-carrying dispatch: run handshake now; issue-only delivery check runs before ack. Write ack and stop under that protocol.
-5. After resume re-run identity; require applied-move amendment/read-back. No-move dispatch needs current snapshot. No lifecycle/redundant moves:
-   - Project-first: require visible Project Delivery; evaluate/report delivery check now against amended state or already-Delivery no-move snapshot.
-   - Issue-only: confirm started-state amendment and earlier pre-ack delivery verdict. No-move retry requires already-started state and re-evaluation of the same Issue inputs. Non-PASS is `needs-human`; missing inputs `blocked`, before code; neither authorizes successful ack/move.
-   In `notes`, name snapshot state, verdict and run/report arm. Queue only other permitted mutations; disclose lag, never defer checks or claim writes applied.
-6. Use dispatched worktree/branch.
-7. Consult advisory learnings; report unavailable/none.
-8. Queue required implementation-start comment in `linear_mutations_pending`.
-9. No interactive approval prompt; missing approval = `blocked`.
+1. Run exact dispatch identity; mismatch/nonzero blocks.
+2. Read snapshot package, decisions and approvals.
+3. Require approved Issue, explicit start approval and resolved/accepted/deferred
+   handoff findings. Missing field blocks.
+4. Resolve the five-field seam from snapshot. Missing input blocks without moves.
+   Move-carrying dispatch runs worker handshake now; issue-only delivery check
+   precedes ack. Publish ack and pause as that protocol requires.
+5. Resume: rerun identity; require every applied-move/read-back amendment.
+   No-move dispatch requires current snapshot. Never repeat lifecycle moves.
+   Project-first: require visible Delivery; run/report delivery check against
+   amended or already-Delivery state. Issue-only: require started-state
+   amendment and earlier pre-ack PASS; no-move retry requires started state and
+   re-evaluation. Non-PASS → needs-human; missing inputs → blocked before code.
+   Record snapshot state, verdict and run/report arm in notes. Queue only other
+   permitted mutations; disclose lag, never defer checks or claim application.
+6. Keep dispatched worktree/branch; consult advisory learnings.
+7. Queue implementation-start comment. No interactive approval prompt; missing
+   approval blocks. The sequencer confirms writes required before progression.
 
 ## Context-seam branch at Delivery Start
 
-Apply Context seam in `references/worker-contract.md` before lifecycle change. Project-first: obtain start approval, move Project to Delivery, run/report `mono-check delivery`, record start comment. Missing prerequisites park/restart; integrity errors → needs-human.
+Apply worker-contract Context seam. Project-first: obtain start approval, move
+Project to Delivery, run/report mono-check delivery, record start comment.
+Missing prerequisites park/restart; integrity errors → needs-human.
+Issue-only: fresh authenticated fingerprint approval authorizes start without
+another approval. Require pre-start delivery PASS, move only Issue to configured
+started state, record lifecycle/fingerprint/oracle IDs/engine/verification,
+implement oracle's one PR. Scope/topology/risk outside lane requires parking,
+approved superseding marker and restarting Project-first; never retrofit docs
+or Project onto the parked Issue.
 
-Fresh issue-only order: authenticated fingerprint approval is start authorization, no second approval; require pre-start delivery PASS, otherwise needs-human; move only Issue to configured started/in-progress; record lifecycle/fingerprint/oracle IDs/engine/verification in start comment; implement oracle's one PR, then preflight. Scope/topology/risk outside lane before code requires parking, superseding marker approval and restarting Project-first, never retrofitting Project/docs onto parked Issue.
+Separate interactive package/start approval. Require explicit Issue/start authority;
+bundled handoff approval counts. State that start allows Delivery/branch/code,
+never PR/merge/deploy. Offer start (recommended for final scope) or defer;
+«запускай реализацию» suffices. Never infer ambiguous approval or re-ask valid approval.
 
-Implementation-start approval UX:
+## Engine and Start Comment
 
-Separate package/start approval. Require explicit implementation/Issue-key authorization; bundled handoff start approval counts, never re-ask. Ambiguity does not count; issue-only uses fresh authenticated fingerprint approval.
+Use configured Implementation workflow. If absent/None choose Compound ce-work
+for general implementation; Superpowers executing-plans for an approved concrete
+plan, test-driven-development for encodable acceptance, systematic-debugging for
+repro loops, subagent-driven-development only for permitted independent slices
+with explicit ownership; gstack qa when browser/manual verification dominates.
+AFK no-subworker rule wins. Unavailable engine: execute here under
+`references/execution-quality.md` and record substitution.
 
-Required prompt shape:
+Start comment (Russian by default): name Issues; inspected Project/PRD/Spec,
+approvals/review/checks; approved scope only; workflow and selection reason;
+verification plan; learnings or helper unavailable; uninspected browser/manual,
+PR/deploy boundary. Queue it in dispatch mode.
 
-```text
-Пакет утверждён. Теперь отдельное решение — старт реализации.
-
-Что это разрешает: Project переходит в Delivery, создаётся ветка, агент пишет код по <Issue keys>.
-Чего это НЕ разрешает: PR, merge и deploy — они потребуют отдельных шагов.
-
-1. Стартовать сейчас — рекомендую, если scope финален.
-2. Отложить — пакет останется утверждённым, старт можно дать позже любой фразой "запускай реализацию".
-```
-
-Implementation engine selection:
-
-Use configured `Implementation workflow`; absent/`None`, choose: Compound `ce-work` for general Issue/plan work; Superpowers `executing-plans` for a concrete approved plan without rediscovery, `test-driven-development` for encodable acceptance/repro, `systematic-debugging` for bug/perf repro loops, `subagent-driven-development` only for independent slices with explicit file/surface boundaries; gstack `qa` after implementation when browser/product/manual verification dominates. AFK no-subworker rule still applies. Unavailable skill: execute under this skill and `references/execution-quality.md`; record substitution in notes.
-
-Exit statuses: `implemented-needs-preflight`, `blocked`, `scope-drift-needs-handoff`, `needs-human` under worker contract. Never create PRs or run/claim `mono-review pre-ship` / `mono-check pre-ship`. Use configured comment language, Russian default; tiny follows `references/readiness-gates.md`.
-
-Implementation-start comment shape:
-
-```text
-Начал реализацию по <Issue keys>.
-
-Проверил: <Project, PRD, Tech Spec, Issue, approval/review/check state>.
-Делаю строго по утверждённому Issue; ничего сверх scope не добавляю.
-Объем: <approved one-PR slice>.
-Workflow реализации: <configured workflow or default selection and why>.
-План проверки: <targeted tests/checks/manual surfaces expected later>.
-Учтённые learnings: <none|ключи|helper unavailable>.
-Пока не проверено: <browser/manual/PR review/deploy/etc.>.
-```
-
-Final: status, Issue IDs, sources, branch/dirty/committed, files, checks run/unrun, drift, comment outcome, next owner (preflight).
+Statuses: implemented-needs-preflight, blocked, scope-drift-needs-handoff,
+needs-human. Final names Issue/sources, branch dirty/committed, files, checks,
+drift, comment outcome and preflight as next owner. Tiny output follows readiness.

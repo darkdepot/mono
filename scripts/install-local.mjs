@@ -13,7 +13,7 @@ const LOCKFILE_NAME = ".mono-agent-workflow.lock.json";
 const LEGACY_LOCKFILE_NAME = ".linear-agent-workflow.lock.json";
 const GENERATED_MARKER = "Installed by Mono Agent Workflow";
 const LEGACY_GENERATED_MARKER = "Installed from darkdepot/linear-agent-workflow";
-const SURFACE_REVISION = 3;
+const SURFACE_REVISION = 4;
 
 // Pack-private shared directory at the skills root (a sibling of LOCKFILE_NAME).
 // It holds workflow runtime scripts the installed skills invoke at delivery time
@@ -37,6 +37,13 @@ const RUNTIME_SCRIPTS = [
   "wave-cost.mjs",
   "read-budget.mjs",
   "watch-workers.mjs",
+  "gate.mjs",
+  "runtime.mjs",
+  "delivery-state.mjs",
+  "orchestrator/launch.mjs",
+  "orchestrator/spawn.mjs",
+  "orchestrator/resume.mjs",
+  "orchestrator/consume-gate-ack.mjs",
 ];
 // Upstream docs/ru/*.md published into
 // <skills-root>/.mono-agent-workflow/docs/ru/. This is the owner layer: the
@@ -498,6 +505,7 @@ function sync(
   fs.rmSync(packDir, { recursive: true, force: true });
   fs.mkdirSync(runtimeDir, { recursive: true });
   for (const script of plan.runtimeScripts) {
+    fs.mkdirSync(path.dirname(script.destPath), { recursive: true });
     fs.copyFileSync(script.sourcePath, script.destPath);
   }
   for (const doc of plan.ownerLayer) {

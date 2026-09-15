@@ -1,0 +1,687 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import crypto from "node:crypto";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { spawnSync, execFileSync } from "node:child_process";
+import { test } from "node:test";
+
+const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, typeof value === "string" ? value : JSON.stringify(value)); };
+const json = file => JSON.parse(fs.readFileSync(file, "utf8"));
+const run = (command, args, cwd, env) => spawnSync(command, args, { cwd, env, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+const pass = result => { assert.equal(result.status, 0, result.stderr + result.stdout); return result; };
+
+test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and durable ack", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-delivery-installed-"));
+  const skills = path.join(root, "skills"), state = path.join(root, "orchestrator"), repo = path.join(root, "repo"), bin = path.join(root, "bin");
+  const mailbox = path.join(state, "reports");
+  const env = { ...process.env, MONO_WORKFLOW_STATE_ROOT: path.join(root, "install-state"), MONO_WORKFLOW_KNOWN_ROOTS: skills, PATH: `${bin}:${process.env.PATH}` };
+  let livePid;
+  const oldPath = process.env.PATH;
+  try {
+    pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills], checkout, env));
+    pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills, "--check"], checkout, env));
+    const runtime = path.join(skills, ".mono-agent-workflow/scripts");
+    for (const script of ["gate.mjs", "delivery-state.mjs", "orchestrator/spawn.mjs", "orchestrator/resume.mjs", "orchestrator/consume-gate-ack.mjs"]) {
+      pass(run(process.execPath, [path.join(runtime, script), "--help"], root, env));
+    }
+    assert.ok(fs.existsSync(path.join(skills, "mono-deliver/SKILL.md")));
+    const budget = jsonFromRun(pass(run(process.execPath, [path.join(runtime, "read-budget.mjs"), "--json"], root, env)));
+    assert.ok(budget.within_ceiling && budget.ceiling_bytes === 99_882);
+    assert.ok(budget.files.some(file => file.path === "skills/mono-deliver/SKILL.md"));
+    assert.ok(budget.files.some(file => file.path === "references/worker-contract.md"));
+    fs.mkdirSync(repo); pass(run("git", ["init", "-b", "delivery"], repo, env));
+    write(path.join(repo, "tracked.txt"), "tracked\n"); pass(run("git", ["add", "tracked.txt"], repo, env));
+    pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture"], repo, env));
+    const head = pass(run("git", ["rev-parse", "HEAD"], repo, env)).stdout.trim();
+    const lock = path.join(skills, ".mono-agent-workflow.lock.json"), pins = json(lock);
+    const baseRequest = { root: state, issue: "MONO-999", worktree: repo, branch: "delivery", base: head, lock,
+      packVersion: pins.packVersion, sourceCommit: pins.sourceCommit, surfaceRevision: pins.surfaceRevision };
+    const fsmonitor = path.join(root, "fsmonitor"), monitorMarker = path.join(root, "fsmonitor-ran");
+    write(fsmonitor, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(monitorMarker)},'unsafe git invocation');`);
+    fs.chmodSync(fsmonitor, 0o700);
+    pass(run("git", ["config", "core.fsmonitor", fsmonitor], repo, env));
+    const gateRequest = path.join(root, "gate.json"); write(gateRequest, baseRequest);
+    pass(run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, env));
+    const globalConfig = path.join(root, "global-gitconfig"), globalIgnore = path.join(root, "global-ignore");
+    write(globalIgnore, "global-only.tmp\n");
+    write(globalConfig, `[core]\nexcludesFile = ${JSON.stringify(globalIgnore)}\nfsmonitor = ${JSON.stringify(fsmonitor)}\n`);
+    const globalEnv = { ...env, GIT_CONFIG_GLOBAL: globalConfig };
+    write(path.join(repo, "global-only.tmp"), "ignored only by global config");
+    const installedStart = () => run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, globalEnv);
+    pass(installedStart());
+    const localIgnore = path.join(root, "local-ignore"); write(localIgnore, "local-only.tmp\n");
+    pass(run("git", ["config", "core.excludesFile", localIgnore], repo, env));
+    assert.match(installedStart().stdout, /working tree is dirty/, "local excludes overrides global excludes");
+    fs.unlinkSync(path.join(repo, "global-only.tmp")); write(path.join(repo, "local-only.tmp"), "local override");
+    pass(installedStart()); fs.unlinkSync(path.join(repo, "local-only.tmp"));
+    pass(run("git", ["config", "--unset", "core.excludesFile"], repo, env));
+    assert.equal(fs.existsSync(monitorMarker), false, "global fsmonitor was never imported");
+    write(path.join(repo, "dirty"), "dirty");
+    const dirtyResult = run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, env);
+    assert.match(dirtyResult.stdout, /fail: working tree is dirty/, JSON.stringify(dirtyResult));
+    fs.unlinkSync(path.join(repo, "dirty"));
+
+    assert.equal(fs.existsSync(monitorMarker), false);
+
+    const helper = path.join(skills, "autoreview/scripts/autoreview");
+    write(helper, `#!/usr/bin/env node
+const fs=require('node:fs'); const a=process.argv.slice(2); const val=k=>a[a.indexOf(k)+1];
+if(a.includes('--dataset')&&require('node:path').isAbsolute(val('--dataset'))){console.error('--dataset must be a repo-relative path');process.exit(2);}
+const failed=process.env.MONO_FIXTURE_REVIEW_FINDINGS==='1';
+const report={findings:failed?[{priority:'P2',title:'fixture finding'}]:[],overall_correctness:failed?'patch is incorrect':'patch is correct'};
+report.fixture={dataset:a.includes('--dataset')?{path:val('--dataset'),content:fs.readFileSync(val('--dataset'),'utf8')}:null,
+  gitEnv:Object.fromEntries(['GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM','GIT_NO_REPLACE_OBJECTS','GIT_GRAFT_FILE','GIT_MONO_FIXTURE'].map(k=>[k,process.env[k]??null])),
+  home:process.env.HOME,path:process.env.PATH};
+fs.writeFileSync(val('--json-output'),JSON.stringify(report));
+fs.writeFileSync(val('--status-output'),JSON.stringify({schema_version:1,status:failed?'findings':'scoped-clean',engine:'claude',exit_code:failed?1:0,report_produced:true,timed_out:false}));
+console.log('autoreview target: branch | engine: claude | model: '+val('--model')+' | thinking: '+val('--thinking'));
+console.log(failed?'autoreview findings: accepted/actionable findings reported':'autoreview clean: no accepted/actionable findings reported');
+console.log('overall: '+report.overall_correctness+' (0.9)');
+if(process.env.MONO_FIXTURE_ALTER_DATASET==='1')fs.appendFileSync(val('--dataset'),'changed after review');
+process.exit(failed?1:0);
+`); fs.chmodSync(helper, 0o700);
+    // Model the outside orchestrator's sandbox launcher. Nested OS sandboxes
+    // cannot be launched from this test worker; permission bits model the denial.
+    // The real outside collector must pass its write-denial probe at deployment.
+    write(path.join(bin, "codex"), `#!/usr/bin/env node
+const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');
+const a=process.argv.slice(2);if(a[0]!=='sandbox'||!a.includes('mono-collector'))process.exit(71);
+const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1));
+const profile=a.find(v=>v.startsWith('permissions.mono-collector='));
+const grants=[...profile.matchAll(/("[^"]+")="write"/g)].map(m=>JSON.parse(m[1]));
+const protectedRoot=path.dirname(p.probe);if(grants.some(g=>protectedRoot===g||protectedRoot.startsWith(g+path.sep)))process.exit(72);
+const open=process.env.MONO_FIXTURE_OPEN_SANDBOX==='1';if(!open)fs.chmodSync(protectedRoot,0o500);let r;
+try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit'});}finally{if(!open)fs.chmodSync(protectedRoot,0o700);}
+process.exit(r.status===null?1:r.status);
+`); fs.chmodSync(path.join(bin, "codex"), 0o700);
+    fs.mkdirSync(mailbox, { recursive: true });
+    const preflight = { product: "fixture", collectionId: `preflight-collect:${head}:1`, root: state, worktree: repo, head, skillsRoot: skills, risk: "risky", critical: null, baseRef: "HEAD", evidenceRoot: path.join(root, "evidence"), workerWritableRoots: [repo, mailbox], collect: false,
+      verification: { command: process.execPath, args: ["-e", "const fs=require('node:fs'),os=require('node:os');fs.writeFileSync(fs.mkdtempSync(os.tmpdir()+'/fixture-')+'/temp','ok')"] } };
+    write(gateRequest, preflight);
+    const preflightCall = () => run(process.execPath, [path.join(runtime, "gate.mjs"), "preflight", "--request", gateRequest], root, env);
+    assert.equal(preflightCall().status, 1, "missing artifact must refuse");
+    const submoduleReason = "submodules unsupported by the collector (executable-filter inspection covers the superproject only)";
+    const refusesSubmodules = () => {
+      write(gateRequest, baseRequest);
+      const start = run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, env);
+      assert.equal(start.status, 1); assert.equal(start.stdout.trim(), `gate start: fail: ${submoduleReason}`);
+      write(gateRequest, { ...preflight, collect: true });
+      const collect = preflightCall();
+      assert.equal(collect.status, 1); assert.equal(collect.stdout.trim(), `gate preflight: fail: ${submoduleReason}`);
+    };
+    write(path.join(repo, ".gitmodules"), ""); refusesSubmodules(); fs.unlinkSync(path.join(repo, ".gitmodules"));
+    // A missing .gitmodules must not hide an indexed gitlink.
+    pass(run("git", ["-c", "core.fsmonitor=false", "update-index", "--add", "--cacheinfo", `160000,${head},nested`], repo, env));
+    refusesSubmodules();
+    pass(run("git", ["-c", "core.fsmonitor=false", "update-index", "--force-remove", "nested"], repo, env));
+    // The fixture controller models the orchestrator. Its evidence root is
+    // outside both modeled worker grants; the worker only invokes collect:false.
+    const { publishPhase: publishCollection, confirmQueue: confirmCollection, validateConfirmation: validateCollectionConfirmation } = await import(pathToFileURL(path.join(runtime, "delivery-state.mjs")));
+    const { digest: receiptDigest, canonical } = await import(pathToFileURL(path.join(runtime, "runtime.mjs")));
+    write(gateRequest, { ...preflight, workerWritableRoots: [path.parse(root).root] });
+    assert.match(preflightCall().stdout, /evidenceRoot must be outside/);
+    const collectionRequest = { ...preflight, collect: true };
+    fs.mkdirSync(preflight.evidenceRoot, { recursive: true });
+    const collectionLock = path.join(preflight.evidenceRoot, `${head}.collect.lock`);
+    write(collectionLock, { pid: process.pid });
+    write(gateRequest, collectionRequest);
+    assert.match(preflightCall().stdout, /fail: operation locked: .*live holder .*do not remove/);
+    fs.unlinkSync(collectionLock);
+
+    const collectWrite = { id: `preflight-collect:${head}:1`, operation: "preflight-collect", target: head, payload: { request: collectionRequest } };
+    collectionRequest.collectionId = collectWrite.id; preflight.collectionId = collectWrite.id;
+    const codeReport = publishCollection({ ...baseRequest, issue: "MONO-998", stage: "mono-deliver", attempt: 1,
+      phase: "code", sequence: 1, kind: "phase", head, linear_mutations_pending: [],
+      capsule: { phase: "code", head, decisions: [], writable_roots: [repo, mailbox], open_queue: [] } }, path.join(state, "reports/MONO-998-phase-code.json"));
+    await confirmCollection(codeReport, state, () => { throw new Error("empty code queue"); });
+    const collectionReport = publishCollection({ ...baseRequest, issue: "MONO-998", stage: "mono-deliver", attempt: 1,
+      phase: "preflight", sequence: 1, kind: "confirmation-request", head, linear_mutations_pending: [collectWrite],
+      capsule: { phase: "preflight", head, decisions: [], writable_roots: [repo, mailbox], open_queue: [collectWrite] } }, path.join(state, "reports/MONO-998-phase-preflight.json"));
+    const collectionEvidence = new Map(); let collectionRuns = 0;
+    const collectionAdapter = async (action, write) => {
+      assert.equal(write.operation, "preflight-collect"); assert.equal(write.target, head);
+      if (action === "apply") {
+        writeFileRequest(write.payload.request);
+        const answer = pass(preflightCall()).stdout.trim();
+        const sealed = json(path.join(preflight.evidenceRoot, `${head}.json`));
+        collectionRuns++; collectionEvidence.set(write.id, { receipt: path.join(preflight.evidenceRoot, "history", `${sealed.receipt.runId}.json`), receiptDigest: receiptDigest(sealed), gate: answer });
+      }
+      return collectionEvidence.has(write.id) ? { state: "present", evidence: collectionEvidence.get(write.id) } : { state: "missing" };
+    };
+    const firstConfirmation = await confirmCollection(collectionReport, state, collectionAdapter);
+    const mutableConfirmation = structuredClone(firstConfirmation);
+    mutableConfirmation.results[0].evidence.receipt = path.join(preflight.evidenceRoot, `${head}.json`);
+    assert.throws(() => validateCollectionConfirmation(collectionReport, mutableConfirmation), /immutable receipt/);
+    const wrongDigest = structuredClone(firstConfirmation); wrongDigest.results[0].evidence.receiptDigest = "0".repeat(64);
+    assert.throws(() => validateCollectionConfirmation(collectionReport, wrongDigest), /immutable receipt/);
+    function writeFileRequest(request) { write(gateRequest, request); }
+    write(gateRequest, preflight); pass(preflightCall());
+    const receiptFile = path.join(preflight.evidenceRoot, `${head}.json`), envelope = json(receiptFile);
+    assert.equal(envelope.receipt.review.sandbox.probed, true);
+    assert.equal(fs.existsSync(envelope.receipt.verification.sandbox.tempRoot), false);
+    assert.equal(fs.existsSync(envelope.receipt.review.sandbox.tempRoot), false);
+    assert.equal(envelope.receipt.invocation[envelope.receipt.invocation.indexOf("--base") + 1], head);
+    const datasetFile = path.join(preflight.evidenceRoot, "datasets", "scope.md");
+    const datasetText = "Orchestrator-owned fixture scope decisions.\n";
+    write(path.join(repo, ".git/info/exclude"), ".orchestrator/\n");
+    write(datasetFile, datasetText);
+    const datasetRequest = { ...preflight, reviewDataset: datasetFile };
+    env.GIT_MONO_FIXTURE = "must not reach helper";
+    write(gateRequest, { ...datasetRequest, collect: true }); pass(preflightCall());
+    delete env.GIT_MONO_FIXTURE;
+    const datasetEnvelope = json(receiptFile), datasetReceipt = datasetEnvelope.receipt;
+    assert.equal(validateCollectionConfirmation(collectionReport, firstConfirmation), true, "later collection does not change earlier confirmation identity");
+    const datasetDigest = crypto.createHash("sha256").update(datasetText).digest("hex");
+    const datasetCopy = `.orchestrator/review-dataset-${datasetDigest.slice(0, 8)}.md`;
+    assert.deepEqual(datasetReceipt.reviewDataset, { source: datasetFile, digest: datasetDigest, copy: datasetCopy });
+    assert.deepEqual(datasetReceipt.invocation.slice(-2), ["--dataset", datasetCopy]);
+    assert.deepEqual(datasetReceipt.review.json.fixture.dataset, { path: datasetCopy, content: datasetText });
+    assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "collector removes the helper copy");
+    assert.equal(fs.readFileSync(datasetFile, "utf8"), datasetText, "orchestrator source is unchanged");
+    assert.deepEqual(datasetReceipt.review.json.fixture.gitEnv, { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null", GIT_MONO_FIXTURE: null });
+    assert.equal(datasetReceipt.review.json.fixture.home, env.HOME);
+    assert.equal(datasetReceipt.review.json.fixture.path, env.PATH);
+    write(gateRequest, datasetRequest); pass(preflightCall());
+    write(gateRequest, preflight); assert.match(preflightCall().stdout, /receipt reviewDataset differs/);
+    const otherDataset = path.join(preflight.evidenceRoot, "datasets", "other.md"); write(otherDataset, datasetText);
+    write(gateRequest, { ...datasetRequest, reviewDataset: otherDataset });
+    assert.match(preflightCall().stdout, /receipt reviewDataset differs/);
+    write(datasetFile, datasetText + "Changed decision.\n"); write(gateRequest, datasetRequest);
+    assert.match(preflightCall().stdout, /receipt reviewDataset differs/);
+    write(datasetFile, datasetText); pass(preflightCall());
+    env.MONO_FIXTURE_ALTER_DATASET = "1";
+    write(gateRequest, { ...datasetRequest, collect: true });
+    assert.match(preflightCall().stdout, /collection consistency failed/);
+    assert.equal(json(receiptFile).receipt.consistency.error, "review dataset copy digest differs from source");
+    assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "failed copy verification still cleans up");
+    delete env.MONO_FIXTURE_ALTER_DATASET;
+    env.MONO_FIXTURE_REVIEW_FINDINGS = "1";
+    assert.equal(preflightCall().stdout.trim(), "gate preflight: fail: autoreview failed or incomplete");
+    assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "review findings still clean up the copy");
+    delete env.MONO_FIXTURE_REVIEW_FINDINGS;
+    write(receiptFile, datasetEnvelope); write(gateRequest, datasetRequest); pass(preflightCall());
+    const outsideDataset = path.join(root, "outside.md"); write(outsideDataset, datasetText);
+    const aliasDataset = path.join(preflight.evidenceRoot, "datasets", "alias.md"); fs.symlinkSync(outsideDataset, aliasDataset);
+    for (const collect of [true, false]) {
+      for (const reviewDataset of ["relative.md", outsideDataset, aliasDataset]) {
+        write(gateRequest, { ...datasetRequest, reviewDataset, collect });
+        assert.match(preflightCall().stdout, /reviewDataset must be (an absolute path under|under) evidenceRoot/);
+      }
+    }
+    write(receiptFile, envelope); write(gateRequest, preflight); pass(preflightCall());
+    // Request pins describe the worker boundary; they never become collector grants.
+    const broadRequest = { ...preflight, collect: true, workerWritableRoots: [repo, state, path.join(state, "confirmations")] };
+    write(gateRequest, broadRequest); pass(preflightCall());
+    const narrow = json(receiptFile).receipt;
+    for (const command of [narrow.verification, narrow.review]) {
+      const profile = command.sandbox.args.find(arg => arg.startsWith("permissions.mono-collector="));
+      const grants = [...profile.matchAll(/("[^"]+")="write"/g)].map(match => JSON.parse(match[1]));
+      assert.deepEqual(grants.sort(), [fs.realpathSync(repo), command.sandbox.tempRoot].map(p => fs.realpathSync(path.dirname(p)) + path.sep + path.basename(p)).sort());
+      assert.ok(!grants.some(grant => grant === state || grant.startsWith(state + path.sep)));
+    }
+    for (const flag of ["--json-output", "--status-output"]) {
+      assert.equal(path.dirname(narrow.review.args[narrow.review.args.indexOf(flag) + 1]), narrow.review.sandbox.tempRoot);
+    }
+    write(gateRequest, { ...broadRequest, collect: false }); pass(preflightCall());
+    env.MONO_FIXTURE_REVIEW_FINDINGS = "1";
+    write(gateRequest, { ...preflight, collect: true });
+    const findingResult = preflightCall();
+    assert.equal(findingResult.status, 1);
+    assert.equal(findingResult.stdout.trim(), "gate preflight: fail: autoreview failed or incomplete");
+    const failedReview = json(receiptFile).receipt;
+    assert.equal(failedReview.review.exitCode, 1);
+    assert.equal(failedReview.review.sandbox.probed, true);
+    assert.equal(failedReview.loop.residualFindings[0].priority, "P2");
+    delete env.MONO_FIXTURE_REVIEW_FINDINGS;
+    write(gateRequest, preflight);
+    assert.equal(preflightCall().stdout.trim(), "gate preflight: fail: autoreview failed or incomplete");
+    write(receiptFile, envelope);
+    const tree = pass(run("git", ["rev-parse", "HEAD^{tree}"], repo, env)).stdout.trim();
+    const alternate = pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit-tree", tree, "-m", "alternate"], repo, env)).stdout.trim();
+    const baseRef = "refs/heads/review-base";
+    pass(run("git", ["update-ref", baseRef, head], repo, env));
+    const changedBase = { ...preflight, baseRef, collectionId: `preflight-collect:${head}:3`, verification: {
+      command: "git", args: ["update-ref", baseRef, alternate] } };
+    write(gateRequest, { ...changedBase, collect: true });
+    assert.match(preflightCall().stdout, /collection consistency failed/);
+    assert.equal(json(receiptFile).receipt.consistency.passed, false);
+    assert.equal(json(receiptFile).receipt.review.json, null);
+    pass(run("git", ["update-ref", baseRef, head], repo, env));
+    write(gateRequest, changedBase);
+    assert.match(preflightCall().stdout, /collection consistency failed/);
+    write(receiptFile, envelope); write(gateRequest, preflight);
+    write(receiptFile, { receipt: envelope.receipt, signature: "hand-made" });
+    assert.match(preflightCall().stdout, /hand-made or modified/); write(receiptFile, envelope);
+    env.MONO_FIXTURE_OPEN_SANDBOX = "1";
+    write(gateRequest, { ...preflight, collect: true });
+    assert.match(preflightCall().stdout, /fail: local verification failed/);
+    assert.match(json(receiptFile).receipt.verification.output, /sandbox permits evidence writes/);
+    assert.equal(json(receiptFile).receipt.verification.sandbox.probed, false);
+    assert.equal(json(receiptFile).receipt.review.json, null);
+    delete env.MONO_FIXTURE_OPEN_SANDBOX;
+    const retry = { ...preflight, collectionId: `preflight-collect:${head}:2` };
+    write(gateRequest, retry);
+    assert.match(preflightCall().stdout, /receipt collectionId differs/);
+    const retryWrite = { ...collectWrite, id: retry.collectionId, payload: { request: { ...retry, collect: true } } };
+    const retryReport = publishCollection({ ...collectionReport, sequence: 2, linear_mutations_pending: [retryWrite],
+      capsule: { ...collectionReport.capsule, open_queue: [retryWrite] } }, path.join(state, "reports/MONO-998-phase-preflight.json"));
+    await confirmCollection(retryReport, state, collectionAdapter);
+    await confirmCollection(retryReport, state, collectionAdapter);
+    assert.equal(collectionRuns, 2);
+    assert.equal(validateCollectionConfirmation(collectionReport, firstConfirmation), true);
+    const wrongRun = structuredClone(firstConfirmation); wrongRun.results[0].evidence = collectionEvidence.get(retry.collectionId);
+    assert.throws(() => validateCollectionConfirmation(collectionReport, wrongRun), /immutable receipt/);
+    write(gateRequest, retry); pass(preflightCall());
+    assert.equal(json(receiptFile).receipt.head, head);
+    write(receiptFile, envelope);
+    for (const nested of ["receipt.key", "history", `${head}.json`]) {
+      for (const collect of [true, false]) {
+        write(gateRequest, { ...preflight, collect, workerWritableRoots: [...preflight.workerWritableRoots, path.join(preflight.evidenceRoot, nested)] });
+        assert.match(preflightCall().stdout, /evidenceRoot must be outside/);
+      }
+    }
+    const linkedDir = path.join(repo, ".git", "linked-helper"), linkedHelper = path.join(linkedDir, "autoreview");
+    write(linkedHelper, fs.readFileSync(helper, "utf8")); fs.chmodSync(linkedHelper, 0o700);
+    fs.unlinkSync(helper); fs.symlinkSync(linkedHelper, helper);
+    write(gateRequest, { ...preflight, collect: true, workerWritableRoots: [...preflight.workerWritableRoots, linkedDir] });
+    assert.match(preflightCall().stdout, /autoreview helper real path must be outside/);
+    fs.unlinkSync(helper); fs.copyFileSync(linkedHelper, helper); fs.chmodSync(helper, 0o700);
+    const filter = path.join(root, "clean-filter"), filterMarker = path.join(root, "filter-ran");
+    write(filter, `#!/usr/bin/env node\nconst fs=require('node:fs');fs.writeFileSync(${JSON.stringify(filterMarker)},'unsafe');process.stdout.write(fs.readFileSync(0));`);
+    fs.chmodSync(filter, 0o700);
+    pass(run("git", ["config", "filter.unsafe.clean", filter], repo, env));
+    write(path.join(repo, ".git/info/attributes"), "tracked.txt filter=unsafe\n");
+    fs.utimesSync(path.join(repo, "tracked.txt"), new Date(), new Date(Date.now() + 10_000));
+    write(gateRequest, baseRequest);
+    assert.match(run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, env).stdout, /repository Git filters require/);
+    write(gateRequest, { ...preflight, collect: true });
+    assert.match(preflightCall().stdout, /repository Git filters require/);
+    assert.equal(fs.existsSync(filterMarker), false);
+    pass(run("git", ["config", "--unset", "filter.unsafe.clean"], repo, env));
+    fs.unlinkSync(path.join(repo, ".git/info/attributes"));
+    const attack = path.join(preflight.evidenceRoot, "untrusted-proof");
+    write(gateRequest, { ...preflight, collect: true, verification: { command: process.execPath,
+      args: ["-e", `require('node:fs').writeFileSync(${JSON.stringify(attack)},'forged')`] } });
+    assert.match(preflightCall().stdout, /fail: local verification failed/);
+    assert.equal(fs.existsSync(attack), false);
+    assert.equal(json(receiptFile).receipt.verification.sandbox.probed, true);
+    write(receiptFile, envelope); write(gateRequest, preflight); pass(preflightCall());
+    const sealed = structuredClone(envelope); sealed.receipt.route.effort = "low"; write(receiptFile, sealed);
+    assert.equal(preflightCall().status, 1, "tampered route refused"); write(receiptFile, envelope);
+    for (const collect of [true, false]) {
+      for (const extra of [{ probe: "/not-the-evidence-root" }, { exitCode: 0 }, { args: [42] }]) {
+        write(gateRequest, { ...preflight, collect, verification: { ...preflight.verification, ...extra } });
+        assert.match(preflightCall().stdout, /fail: verification must contain only command and string-array args/);
+      }
+    }
+    assert.equal(fs.existsSync(monitorMarker), false);
+    pass(run("git", ["config", "--unset", "core.fsmonitor"], repo, env));
+    for (const [field, value] of [["skillsRoot", path.join(root, "other-skills")], ["risk", "standard"], ["critical", "different escalation"], ["verification", { command: process.execPath, args: ["-e", "process.exit(1)"] }]]) {
+      write(gateRequest, { ...preflight, [field]: value });
+      assert.match(preflightCall().stdout, new RegExp(`fail: receipt ${field} differs`));
+    }
+    for (const parent of [repo, mailbox]) {
+      const planted = path.join(parent, "planted-proof"); fs.mkdirSync(planted);
+      fs.copyFileSync(receiptFile, path.join(planted, `${head}.json`));
+      fs.copyFileSync(path.join(preflight.evidenceRoot, "receipt.key"), path.join(planted, "receipt.key"));
+      for (const collect of [false, true]) {
+        write(gateRequest, { ...preflight, evidenceRoot: planted, collect });
+        assert.match(preflightCall().stdout, /fail: evidenceRoot must be outside/);
+      }
+      fs.rmSync(planted, { recursive: true });
+    }
+    const writable = path.join(root, "worker-extra"); fs.mkdirSync(writable);
+    write(gateRequest, { ...preflight, evidenceRoot: writable, workerWritableRoots: [repo, mailbox, writable] });
+    assert.match(preflightCall().stdout, /fail: evidenceRoot must be outside/);
+    const alias = path.join(root, "evidence-alias"); fs.symlinkSync(state, alias);
+    write(gateRequest, { ...preflight, evidenceRoot: alias });
+    assert.match(preflightCall().stdout, /fail: evidenceRoot must be outside/);
+    write(gateRequest, preflight); pass(preflightCall());
+
+
+    const github = { headRefOid: head, state: "OPEN", mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefName: "main", baseRefOid: head, baseRef: { branchProtectionRule: null } };
+    const checks = [
+      { __typename: "CheckRun", name: "validate", status: "COMPLETED", conclusion: "SUCCESS", checkSuite: { commit: { oid: head } } },
+      { __typename: "StatusContext", context: "Devin Review", state: "SUCCESS", createdAt: "2026-09-14T20:17:00Z" },
+      { __typename: "CheckRun", name: "Greptile Review", status: "COMPLETED", conclusion: "SUCCESS", checkSuite: { commit: { oid: head } } },
+    ];
+    const githubFile = path.join(root, "github.json"); write(githubFile, { github, checks });
+    write(path.join(bin, "gh"), `#!/usr/bin/env node
+const fs=require('node:fs');const a=process.argv.slice(2);const data=JSON.parse(fs.readFileSync(${JSON.stringify(githubFile)},'utf8'));
+const connection=nodes=>({nodes,pageInfo:{hasNextPage:false,endCursor:null}});const q=a.find(v=>v.startsWith('query='))||'';let result;
+if(a.includes('user'))result={login:'worker'};
+else if(a.includes('--slurp'))result=[[]];
+else if(a.some(v=>v.includes('/rules/branches/'))){
+if(a.some(v=>v.includes('%2F'))){console.error('branch slash must remain a path separator');process.exit(1);}
+if(data.rulesStatus){
+const status=data.rulesStatus;
+if(data.rulesFailuresLeft>0){data.rulesFailuresLeft--;if(!data.rulesFailuresLeft)delete data.rulesStatus;fs.writeFileSync(${JSON.stringify(githubFile)},JSON.stringify(data));}
+console.log(JSON.stringify({status:String(status),message:'fixture rules unavailable'}));console.error('gh: fixture rules unavailable (HTTP '+status+')');process.exit(1);
+}
+result=[];
+}
+else if(q.includes('statusCheckRollup')){
+let checks=data.checks;
+if(data.pendingReads>0){
+checks=data.pendingMode==='unknown-green'?checks:['empty','unknown'].includes(data.pendingMode)?[]:checks.map(c=>c.name==='validate'?{...c,status:'IN_PROGRESS',conclusion:null}:c);
+data.pendingReads--;data.pendingMerge=data.pendingMode==='blocked'?'BLOCKED':data.pendingMode==='unstable'?'UNSTABLE':['unknown','unknown-green'].includes(data.pendingMode)?'UNKNOWN':null;fs.writeFileSync(${JSON.stringify(githubFile)},JSON.stringify(data));
+}
+result={data:{repository:{object:{statusCheckRollup:{contexts:connection(checks)}}}}};
+}
+else if(q.includes('reviewThreads'))result={data:{repository:{pullRequest:{reviewThreads:connection([])}}}};
+else {
+let pr=data.pendingMerge?{...data.github,mergeStateStatus:data.pendingMerge,mergeable:data.pendingMerge==='UNKNOWN'?'UNKNOWN':data.github.mergeable}:data.github;
+if(data.pendingReads===0&&data.pendingMerge){delete data.pendingMerge;fs.writeFileSync(${JSON.stringify(githubFile)},JSON.stringify(data));}
+result={data:{repository:{pullRequest:pr}}};
+}
+console.log(JSON.stringify(result));
+`); fs.chmodSync(path.join(bin, "gh"), 0o700);
+    const judgmentFile = path.join(root, "judgment.json"), config = path.join(root, "config.json");
+    write(judgmentFile, { head, preShipReview: "выполнено", readinessCheck: "пройдена", documentation: "без изменений", closures: [], botRemarks: [] });
+    write(config, { orchestration: { delivery: { quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 30 } } });
+    const shipRequest = { preflight, repo: "fixture/repo", number: 87, attempt: 1, stateFile: path.join(root, "ship-state.json"), judgmentFile, config, watch: true };
+    write(gateRequest, shipRequest);
+    const shipCall = () => run(process.execPath, [path.join(runtime, "gate.mjs"), "ship", "--request", gateRequest], root, env);
+    // Exercise proof failures before even opening the worker judgment file.
+    const proofRequest = { ...shipRequest, judgmentFile: path.join(root, "absent-judgment.json") };
+    write(gateRequest, { ...proofRequest, preflight: undefined });
+    assert.match(shipCall().stdout, /fail: ship requires preflight collect:false/);
+    write(gateRequest, { ...proofRequest, preflight: { ...preflight, collect: true } });
+    assert.match(shipCall().stdout, /fail: ship requires preflight collect:false/);
+    write(gateRequest, proofRequest);
+    fs.unlinkSync(receiptFile);
+    assert.match(shipCall().stdout, /fail: .*ENOENT.*\.json/);
+    write(receiptFile, envelope);
+    write(githubFile, { github: { ...github, headRefOid: alternate }, checks });
+    assert.match(shipCall().stdout, /fail: preflight request does not match live PR head/);
+    write(githubFile, { github: { ...github, baseRefOid: alternate }, checks });
+    assert.equal(shipCall().status, 1, "unrelated base history refuses");
+    write(githubFile, { github, checks });
+    // The fixture collector owns its key; seal invalid outputs to test semantic validation too.
+    const saveFixtureReceipt = receipt => write(receiptFile, { receipt,
+      signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(receipt)).digest("hex") });
+    for (const [change, reason] of [
+      [r => { r.head = alternate; }, /missing or stale autoreview artifact\/head\/base/],
+      [r => { r.base = alternate; }, /missing or stale autoreview artifact\/head\/base/],
+      [r => { r.route.effort = "low"; }, /wrong policy route/],
+      [r => { r.review.exitCode = 1; }, /autoreview failed or incomplete/],
+    ]) {
+      const invalid = structuredClone(envelope.receipt); change(invalid); saveFixtureReceipt(invalid);
+      assert.match(shipCall().stdout, reason);
+    }
+    write(receiptFile, { receipt: envelope.receipt, signature: "worker-asserted" });
+    assert.match(shipCall().stdout, /hand-made or modified autoreview artifact/);
+    write(receiptFile, envelope);
+    write(gateRequest, shipRequest);
+    const greenShip = pass(shipCall());
+    assert.match(greenShip.stdout, /^gate ship: pass:/);
+    assert.ok(greenShip.stdout.includes(`preflight receipt: ${fs.realpathSync(receiptFile)}`));
+    assert.equal(json(shipRequest.stateFile).preflightReceipt.path, fs.realpathSync(receiptFile));
+    assert.equal(json(shipRequest.stateFile).preflightReceipt.runId, envelope.receipt.runId);
+
+    for (const status of [403, 404]) {
+      const unavailable = { ...shipRequest, stateFile: path.join(root, `rules-${status}.json`) };
+      write(gateRequest, unavailable);
+      write(githubFile, { github: { ...github, baseRefName: "release/stable" }, checks, rulesStatus: status });
+      assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
+      assert.deepEqual(json(unavailable.stateFile).rules, { available: false, reason: `rules unavailable on this plan/visibility (HTTP ${status})` });
+      write(gateRequest, { ...unavailable, watch: false, policy: { requiredChecks: ["required-missing"] } });
+      assert.match(shipCall().stdout, /required check required-missing absent or pending/);
+    }
+    for (const status of [401, 500]) {
+      const unavailable = { ...shipRequest, stateFile: path.join(root, `rules-refuse-${status}.json`), watch: false };
+      write(gateRequest, unavailable); write(githubFile, { github, checks, rulesStatus: status });
+      assert.ok(shipCall().stdout.includes(`gate ship: fail: GitHub read unavailable (HTTP ${status})`));
+      write(gateRequest, { ...unavailable, stateFile: path.join(root, `rules-recover-${status}.json`), watch: true });
+      write(githubFile, { github, checks, rulesStatus: status, rulesFailuresLeft: 1 });
+      assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
+    }
+    const errorConfig = path.join(root, "rules-timeout-config.json");
+    write(errorConfig, { orchestration: { delivery: { quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 1 } } });
+    const errorState = path.join(root, "rules-timeout.json");
+    write(gateRequest, { ...shipRequest, config: errorConfig, stateFile: errorState });
+    write(githubFile, { github, checks, rulesStatus: 500 });
+    assert.match(shipCall().stdout, /gate ship: fail: evidence-limit/);
+    assert.match(json(errorState).pendingReason, /HTTP 500/);
+    write(githubFile, { github, checks });
+    // A remote base can advance without changing the reviewed diff or PR head.
+    const remoteRepo = path.join(root, "base-remote.git");
+    pass(run("git", ["init", "--bare", remoteRepo], root, env));
+    pass(run("git", ["remote", "add", "origin", remoteRepo], repo, env));
+    pass(run("git", ["push", "origin", `${head}:refs/heads/main`], repo, env));
+    const remotePreflight = { ...preflight, baseRef: "origin/main" };
+    // Fetch needs the trusted global rewrite; reads must keep executable config disabled.
+    const rewriteConfig = path.join(root, "fetch-global-config"), rewriteURL = "mono-fixture://base";
+    write(rewriteConfig, `[url "${remoteRepo}"]\n  insteadOf = ${rewriteURL}\n[core]\n  fsmonitor = ${JSON.stringify(fsmonitor)}\n`);
+    pass(run("git", ["remote", "set-url", "origin", rewriteURL], repo, env));
+    const fetchEnv = { ...env, GIT_CONFIG_GLOBAL: rewriteConfig };
+    pass(run("git", ["-c", "core.fsmonitor=false", "config", "core.fsmonitor", fsmonitor], repo, env));
+    write(gateRequest, remotePreflight);
+    const credentialedPreflight = collect => {
+      write(gateRequest, { ...remotePreflight, collect });
+      return run(process.execPath, [path.join(runtime, "gate.mjs"), "preflight", "--request", gateRequest], root, fetchEnv);
+    };
+    pass(credentialedPreflight(false));
+    pass(credentialedPreflight(true));
+    assert.equal(json(receiptFile).receipt.review.json.fixture.gitEnv.GIT_CONFIG_GLOBAL, "/dev/null");
+    assert.equal(fs.existsSync(monitorMarker), false, "global and local fsmonitor remain disabled for reads/fetch");
+    pass(run("git", ["-c", "core.fsmonitor=false", "config", "--unset", "core.fsmonitor"], repo, env));
+    write(receiptFile, envelope);
+    write(gateRequest, remotePreflight);
+    assert.match(preflightCall().stdout, /gate preflight: fail: base fetch failed/);
+    const failedFetch = { ...shipRequest, preflight: remotePreflight, stateFile: path.join(root, "fetch-refusal.json"), watch: false };
+    write(gateRequest, failedFetch);
+    assert.match(shipCall().stdout, /gate ship: fail: base fetch failed/);
+    const fetchWait = { ...failedFetch, config: errorConfig, stateFile: path.join(root, "fetch-pending.json"), watch: true };
+    write(gateRequest, fetchWait);
+    assert.match(shipCall().stdout, /gate ship: fail: evidence-limit/);
+    assert.match(json(fetchWait.stateFile).pendingReason, /base fetch failed/);
+    pass(run("git", ["remote", "set-url", "origin", remoteRepo], repo, env));
+
+    const advanced = pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+      "commit-tree", tree, "-p", head, "-m", "base advanced"], repo, env)).stdout.trim();
+    pass(run("git", ["push", "origin", `${advanced}:refs/heads/main`], repo, env));
+    assert.equal(pass(run("git", ["rev-parse", "origin/main"], repo, env)).stdout.trim(), advanced);
+    pass(run("git", ["update-ref", "refs/remotes/origin/main", head], repo, env)); // Simulate a stale tracking ref.
+    write(gateRequest, remotePreflight); pass(preflightCall());
+    assert.equal(pass(run("git", ["rev-parse", "origin/main"], repo, env)).stdout.trim(), advanced, "collect:false refreshes the remote base");
+    write(githubFile, { github: { ...github, baseRefOid: advanced }, checks });
+    write(gateRequest, { ...shipRequest, preflight: remotePreflight, stateFile: path.join(root, "advanced-base.json") });
+    assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
+    // A captured base may no longer be reachable from the ref fetched after a force-push.
+    const captured = pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+      "commit-tree", tree, "-p", advanced, "-m", "captured before force-push"], remoteRepo, env)).stdout.trim();
+    assert.notEqual(run("git", ["cat-file", "-e", captured], repo, env).status, 0);
+    write(githubFile, { github: { ...github, baseRefOid: captured }, checks });
+    write(gateRequest, { ...shipRequest, preflight: remotePreflight, stateFile: path.join(root, "captured-base.json") });
+    assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
+    pass(run("git", ["cat-file", "-e", captured], repo, env));
+    write(githubFile, { github: { ...github, baseRefOid: advanced }, checks });
+    write(gateRequest, { ...remotePreflight, collect: true }); pass(preflightCall());
+    assert.equal(json(receiptFile).receipt.base, head, "collector records merge-base, not advanced tip");
+    assert.equal(json(receiptFile).receipt.invocation[3], head, "helper reviews the same immutable diff base");
+    write(receiptFile, envelope);
+    const rebased = pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+      "commit-tree", tree, "-p", advanced, "-m", "rebased head"], repo, env)).stdout.trim();
+    pass(run("git", ["update-ref", "refs/heads/delivery", rebased], repo, env));
+    write(githubFile, { github: { ...github, headRefOid: rebased, baseRefOid: advanced }, checks });
+    write(gateRequest, { ...shipRequest, preflight: { ...remotePreflight, head: rebased, collectionId: `preflight-collect:${rebased}:1` },
+      stateFile: path.join(root, "rebased-head.json") });
+    assert.match(shipCall().stdout, /fail: .*ENOENT.*\.json/, "new head has no receipt");
+    pass(run("git", ["update-ref", "refs/heads/delivery", head], repo, env));
+    write(githubFile, { github, checks });
+    const oneShotState = path.join(root, "one-shot-checks.json");
+    write(gateRequest, { ...shipRequest, watch: false, stateFile: oneShotState });
+    write(githubFile, { github, checks: [] });
+    assert.match(shipCall().stdout, /fail: checks not created/);
+    write(githubFile, { github: { ...github, mergeStateStatus: "UNKNOWN" }, checks });
+    assert.match(shipCall().stdout, /fail: mergeability pending/);
+    write(githubFile, { github, checks });
+    const clock = json(oneShotState); clock.startedAt = Date.now() - 31_000; write(oneShotState, clock);
+    assert.match(shipCall().stdout, /fail: evidence-limit:/);
+
+    const nonBlocking = { ...shipRequest, stateFile: path.join(root, "accepted-red.json"),
+      policy: { nonBlockingChecks: [{ name: "validate", reason: "repository accepts this optional check" }] } };
+    write(githubFile, { github: { ...github, mergeStateStatus: "UNSTABLE" }, checks: checks.map(c => c.name === "validate" ? { ...c, conclusion: "FAILURE" } : c) });
+    write(gateRequest, nonBlocking);
+    assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
+    write(gateRequest, { ...shipRequest, stateFile: path.join(root, "unaccepted-red.json") });
+    assert.match(shipCall().stdout, /gate ship: fail: check validate not green/);
+    write(gateRequest, { ...shipRequest, stateFile: path.join(root, "blocked-green.json") });
+    write(githubFile, { github: { ...github, mergeStateStatus: "BLOCKED" }, checks });
+    assert.match(shipCall().stdout, /gate ship: fail: merge state is not clean/);
+    for (const pendingMode of ["empty", "check", "unstable", "unknown", "unknown-green", "blocked"]) {
+      write(gateRequest, { ...shipRequest, stateFile: path.join(root, `wait-${pendingMode}.json`) });
+      write(githubFile, { github, checks, pendingMode, pendingReads: 1 });
+      assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
+      assert.equal(json(githubFile).pendingReads, 0);
+    }
+    write(config, { orchestration: { delivery: { quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 1 } } });
+    for (const state of ["BLOCKED", "UNKNOWN"]) {
+      const pendingChecks = state === "UNKNOWN" ? [] : checks.map(c => c.name === "validate" ? { ...c, status: "IN_PROGRESS", conclusion: null } : c);
+      write(githubFile, { github: { ...github, mergeStateStatus: state, mergeable: state === "UNKNOWN" ? "UNKNOWN" : "MERGEABLE" }, checks: pendingChecks });
+      const waiting = { ...shipRequest, policy: { requiredChecks: ["validate"] }, stateFile: path.join(root, `one-shot-${state}.json`), watch: false };
+      write(gateRequest, waiting);
+      const oneShot = shipCall(); assert.equal(oneShot.status, 1);
+      assert.match(oneShot.stdout, /gate ship: fail: (check validate pending on head|checks not created on head)/);
+      write(gateRequest, { ...waiting, stateFile: path.join(root, `wait-deadline-${state}.json`), watch: true });
+      assert.match(shipCall().stdout, /fail: evidence-limit:/);
+    }
+    for (const unknown of [{ mergeable: "UNKNOWN" }, { mergeStateStatus: "UNKNOWN" }]) {
+      const waiting = { ...shipRequest, stateFile: path.join(root, `complete-${Object.keys(unknown)[0]}.json`), watch: false };
+      write(githubFile, { github: { ...github, ...unknown }, checks });
+      write(gateRequest, waiting);
+      assert.match(shipCall().stdout, /gate ship: fail: mergeability pending/);
+      write(gateRequest, { ...waiting, watch: true });
+      assert.match(shipCall().stdout, /gate ship: fail: evidence-limit/);
+    }
+    write(gateRequest, { ...shipRequest, stateFile: path.join(root, "wait-red.json") });
+    write(githubFile, { github, checks: checks.map(c => c.name === "validate" ? { ...c, conclusion: "FAILURE" } : c) });
+    assert.match(shipCall().stdout, /fail: check validate not green/);
+
+    write(path.join(state, "control.json"), { state: "active", halt: false }); write(path.join(state, "workers.json"), {});
+    const capture = path.join(root, "codex-args.json"), threadReady = path.join(root, "thread-ready");
+    write(path.join(bin, "codex"), `#!/usr/bin/env node
+const fs=require('node:fs'); fs.writeFileSync(${JSON.stringify(capture)},JSON.stringify(process.argv.slice(2)));
+fs.writeSync(1,JSON.stringify({type:'startup-noise',text:'x'.repeat(2*1024*1024)})+'\\n');
+const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){clearInterval(wait);console.log(JSON.stringify({type:'thread.started',thread_id:'fixture-thread'}));}},10);setInterval(()=>{},1000);
+`); fs.chmodSync(path.join(bin, "codex"), 0o700);
+    const dispatchFile = path.join(root, "dispatch.md"); write(dispatchFile, "fixture prompt with literal $(do-not-execute) and `backticks`");
+    const request = { ...baseRequest, evidenceRoot: preflight.evidenceRoot, workerWritableRoots: [repo, mailbox], role: "worker-default", dispatchFile, writable_roots: [repo], gates: ["identity", "context"], lifecycle_moves: [] };
+    process.env.PATH = env.PATH;
+    const { spawnWorker, resumeWorker } = await import(pathToFileURL(path.join(runtime, "orchestrator/launch.mjs")));
+    const policyFile = path.join(skills, "mono-implement/references/model-policy.md");
+    const originalPolicy = fs.readFileSync(policyFile, "utf8");
+    write(policyFile, originalPolicy.replace(/(\| `worker-default` \| )`[^`]+` \| `[^`]+`/, '$1`fixture-model` | `medium`'));
+    await assert.rejects(spawnWorker({ ...request, writable_roots: [root], workerWritableRoots: [root, repo, mailbox] }), /evidenceRoot must be outside/);
+    await assert.rejects(spawnWorker({ ...request, workerWritableRoots: [repo] }), /effective write grants differ/);
+    await assert.rejects(spawnWorker({ ...request, writable_roots: [state], workerWritableRoots: [repo, mailbox, state] }), /only reports may be worker-writable/);
+    const starting = spawnWorker(request);
+    for (let i = 0; i < 100; i++) {
+      livePid = json(path.join(state, "workers.json"))[request.issue]?.pid;
+      if (livePid && !fs.existsSync(path.join(state, "launch.lock"))) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.ok(livePid); assert.equal(fs.existsSync(path.join(state, "launch.lock")), false);
+    const { withLock: shortControlLock } = await import(pathToFileURL(path.join(runtime, "runtime.mjs")));
+    await shortControlLock(path.join(state, "launch.lock"), () => write(threadReady, "allow thread.started"));
+    const launched = await starting; livePid = launched.pid;
+    const entry = json(path.join(state, "workers.json"))[request.issue];
+    assert.deepEqual(entry.capsule.writable_roots, entry.workerWritableRoots);
+    assert.equal(entry.capsule.head, head);
+    assert.equal(entry.stage, "mono-deliver"); assert.equal(entry.attempt, 1);
+    assert.equal(entry.model, "fixture-model"); assert.equal(entry.effort, "medium");
+    const argv = json(capture); assert.ok(argv.includes(`model=${JSON.stringify(entry.model)}`));
+    assert.ok(argv.includes(`model_reasoning_effort=${JSON.stringify(entry.effort)}`));
+    assert.ok(argv.includes('sandbox_workspace_write.network_access=true'));
+    assert.equal(argv[argv.indexOf('--add-dir') + 1], mailbox);
+    assert.ok(!entry.workerWritableRoots.includes(state));
+    assert.equal(argv.at(-1), fs.readFileSync(dispatchFile, "utf8"));
+    assert.equal(JSON.parse(fs.readFileSync(entry.log, "utf8").split("\n")[0]).model, entry.model);
+    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile }), /still live/);
+    write(path.join(state, "control.json"), { state: "active", halt: true });
+    await assert.rejects(spawnWorker(request), /halt/);
+    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile }), /halt/);
+    process.kill(livePid, 0);
+    const watch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
+    assert.match(watch.stdout, /EVENT:halt/);
+    write(path.join(state, "control.json"), { state: "active", halt: false });
+    write(path.join(state, "reports/MONO-999-gate-ack-a1.json"), { issue: request.issue, phase: "gate", status: "gates-passed",
+      gates: request.gates.map(gate => ({ gate, status: "pass", evidence: "fixture" })) });
+    const { consumeAck } = await import(pathToFileURL(path.join(runtime, "orchestrator/consume-gate-ack.mjs")));
+    await assert.rejects(consumeAck({ root: state, issue: request.issue, attempt: 1, outcome: "applied", readback: [] }), /resumed writer registration for this ack/);
+    process.kill(livePid, "SIGTERM"); livePid = null;
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await assert.rejects(consumeAck({ root: state, issue: request.issue, attempt: 1, outcome: "applied", readback: [] }), /resumed writer registration for this ack/);
+    const ackPath = path.join(state, "reports/MONO-999-gate-ack-a1.json"), ackBytes = fs.readFileSync(ackPath);
+    fs.unlinkSync(ackPath);
+    const gateRecovery = await resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile }); livePid = gateRecovery.pid;
+    assert.equal(json(path.join(state, "workers.json"))[request.issue].last_resume.gateAckDigest, null);
+    fs.writeFileSync(ackPath, ackBytes);
+    await assert.rejects(consumeAck({ root: state, issue: request.issue, attempt: 1, outcome: "applied", readback: [] }), /resumed writer registration for this ack/);
+    process.kill(livePid, "SIGTERM"); livePid = null;
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const postGate = await resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile }); livePid = postGate.pid;
+    assert.equal(json(path.join(state, "workers.json"))[request.issue].last_resume.pid, livePid);
+    await consumeAck({ root: state, issue: request.issue, attempt: 1, outcome: "applied", readback: [] });
+    await consumeAck({ root: state, issue: request.issue, attempt: 1, outcome: "applied", readback: [] });
+    assert.equal(json(path.join(state, "workers.json"))[request.issue].gates, undefined);
+    assert.equal(json(path.join(state, "consumed/MONO-999-gate-ack-a1.json")).outcome, "applied");
+    const { publishPhase, confirmQueue } = await import(pathToFileURL(path.join(runtime, "delivery-state.mjs")));
+    const report = publishPhase({ ...baseRequest, stage: "mono-deliver", attempt: 1, phase: "code", head,
+      sequence: 1, kind: "phase", linear_mutations_pending: [], capsule: { phase: "code", head, decisions: [], writable_roots: [repo, mailbox], open_queue: [] } }, path.join(state, "reports/MONO-999-phase-code.json"));
+    const phaseWatch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
+    assert.match(phaseWatch.stdout, /EVENT:phase.*MONO-999/);
+    assert.doesNotMatch(phaseWatch.stdout, /EVENT:(dead|stall)/);
+    await confirmQueue(report, state, () => { throw new Error("empty queue must not invoke adapter"); });
+    const preflightReport = publishPhase({ ...report, phase: "preflight", capsule: { ...report.capsule, phase: "preflight" } }, path.join(state, "reports/MONO-999-phase-preflight.json"));
+    const laterPhaseWatch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
+    assert.match(laterPhaseWatch.stdout, /EVENT:phase.*phase preflight sequence 1/);
+    assert.doesNotMatch(laterPhaseWatch.stdout, /EVENT:(dead|stall)/);
+    await confirmQueue(preflightReport, state, () => { throw new Error("empty queue"); });
+    publishPhase({ ...report, phase: "ship", capsule: { ...report.capsule, phase: "ship" } }, path.join(state, "reports/MONO-999-phase-ship.json"));
+    const shipPhaseWatch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
+    assert.match(shipPhaseWatch.stdout, /EVENT:phase.*phase ship sequence 1/);
+    write(policyFile, originalPolicy);
+    process.kill(livePid, "SIGTERM"); livePid = null;
+    await new Promise(resolve => setTimeout(resolve, 100));
+    write(path.join(repo, "recovery-dirty.txt"), "preserve recovery work");
+    const extra = path.join(root, "extra"); fs.mkdirSync(extra);
+    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [root], workerWritableRoots: [repo, mailbox, root] }), /evidenceRoot must be outside/);
+    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [extra] }), /effective write grants differ/);
+    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [state], workerWritableRoots: [repo, mailbox, state] }), /only reports may be worker-writable/);
+    const resumed = await resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [extra], workerWritableRoots: [repo, mailbox, extra], network_access: false }); livePid = resumed.pid;
+    const resumedEntry = json(path.join(state, "workers.json"))[request.issue];
+    assert.deepEqual(resumedEntry.workerWritableRoots, [repo, mailbox, extra].map(p => fs.realpathSync(p)).sort());
+    assert.deepEqual(resumedEntry.writable_roots, resumedEntry.workerWritableRoots);
+    assert.deepEqual(resumedEntry.capsule.writable_roots, resumedEntry.workerWritableRoots);
+    assert.equal(resumedEntry.network_access, false);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const resumedArgs = json(capture);
+    assert.deepEqual(resumedArgs.slice(0, 3), ["exec", "resume", "fixture-thread"]);
+    assert.ok(resumedArgs.includes(`model=${JSON.stringify(entry.model)}`));
+    assert.ok(resumedArgs.includes('sandbox_workspace_write.network_access=false'));
+    assert.ok(resumedArgs.includes(`model_reasoning_effort=${JSON.stringify(entry.effort)}`));
+    assert.ok(!resumedArgs.includes("--sandbox") && !resumedArgs.includes("--cd") && !resumedArgs.includes("--add-dir"));
+    process.kill(livePid, "SIGTERM"); livePid = null;
+    assert.equal(fs.readFileSync(path.join(repo, "recovery-dirty.txt"), "utf8"), "preserve recovery work");
+    write(path.join(state, "workers.json"), {});
+    await assert.rejects(spawnWorker(request), /working tree is dirty/);
+    assert.equal(json(path.join(state, "attempts.json"))[request.issue], 1);
+    fs.unlinkSync(path.join(repo, "recovery-dirty.txt"));
+    write(path.join(state, "attempts.json"), { "MONO-999": 3 });
+    await assert.rejects(spawnWorker(request), /attempt cap/);
+    const price = pass(run(process.execPath, [path.join(runtime, "wave-cost.mjs"), request.issue, "--root", state], root, env));
+    assert.equal(JSON.parse(price.stdout.split("\nЦена волны")[0]).model.model, entry.model);
+  } finally {
+    process.env.PATH = oldPath;
+    if (livePid) { try { process.kill(livePid, "SIGTERM"); } catch { /* already exited */ } }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function jsonFromRun(result) { return JSON.parse(result.stdout); }

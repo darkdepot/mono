@@ -1,6 +1,6 @@
 # Worker Dispatch Prompt
 
-Generator instructions: fill every placeholder and emit one Issue/stage dispatch.
+Generator instructions: fill every placeholder and emit one Issue delivery dispatch.
 Use Generated dispatch as audience adapter in `references/orchestration.md`:
 select configured `orchestration.workerAudience` (default `gpt-worker`), preserve
 its redundancy matrix and reading floor. Repeat rules only where that profile
@@ -10,9 +10,18 @@ protected paths/hashes, verification lines and the resolved identity command.
 ## Assignment
 
 - Issue: <ISSUE-KEY> — <title>
-- Stage skill: <mono-implement | mono-preflight | mono-ship>
+- Delivery skill: mono-deliver
+- Attempt: <positive integer>
+- Gate request: <absolute start-gate JSON; lock/pins/worktree/branch/base>
+- Runtime scripts: <absolute installed scripts directory>
+- Product: <product slug>
+- evidenceRoot: <absolute ~/.mono-agent-workflow/evidence/<product>/ outside EVERY worker-writable root>
+- Preflight pins: <installed skillsRoot, approved risk/critical, exact verification command/args, baseRef>
+- workerWritableRoots: <complete absolute grants, including temporary roots; only <root>/reports within orchestrator root; copy to capsule.writable_roots>
+- Collection: orchestrator collect:true outside worker sandboxes; worker collect:false only
+- Confirmation timeout: <configured seconds>
 - Worktree/branch: <path / branch>
-- Worker session name: `<ISSUE-KEY>: <stage>`
+- Worker session name: `<ISSUE-KEY>: mono-deliver`
 - Chip title (user-visible, Russian): `<ISSUE-KEY>: <стадия по-русски>`
 - packVersion: `<installed lockfile packVersion>`
 - sourceCommit: `<installed lockfile sourceCommit>`
@@ -27,12 +36,12 @@ protected paths/hashes, verification lines and the resolved identity command.
 - Constraints: <exact protected surfaces/hashes, contracts, statuses, gates>
 - Blocked protocol: follow the stage and worker contract; report failed/skipped
   verification, never wave it through.
-- Stage budget: <monitoring guidance, not a gate>
+- Delivery budget: <monitoring guidance, not a gate>
 
 ## Engine
 
 - Transport: <codex-cli | claude-code-desktop | fallback>
-- Stage skill body: <absolute installed stage SKILL.md path; read fully before
+- Delivery skill body: <absolute installed mono-deliver/SKILL.md path; read fully before
   work for codex-cli; invoke installed skill for other transports>
 - Project config: `.agents/mono-workflow.config.json`
 - Pack identity gate: <fully resolved `verify-pack-state.mjs identity` command
@@ -40,7 +49,7 @@ protected paths/hashes, verification lines and the resolved identity command.
   four flags, absolute installed paths and dispatch pins; single-quote values,
   escape embedded quotes as `'\''`; require exit 0 and
   `pack-state: identity verified`. Do not substitute checkout SURFACE_REVISION>
-- Sandbox: <exact stage grants from worker contract, including mailbox root>
+- Sandbox: <workspace-write, network, worktree/main-checkout .git/mailbox writable roots; phase authority still limits writes>
 - Report delivery: <absolute mailbox path and worktree fallback>
 
 The codex-cli installed root is `~/.codex/skills/`. Emit this command with every placeholder resolved; it is invocation data, not a second gate definition:
@@ -93,14 +102,22 @@ queued comment.
 
 ## Mailbox
 
-- Exit report: <absolute orchestrator reports/<ISSUE-KEY>-<stage>.json>
-- Fallback on denied write: <absolute worktree/.orchestrator/<ISSUE-KEY>-<stage>.json>
+- Exit report: <absolute orchestrator reports/<ISSUE-KEY>-mono-deliver.json>
+- Fallback on denied write: <absolute worktree/.orchestrator/<ISSUE-KEY>-mono-deliver.json>
 - Shape: Worker Report in `references/worker-contract.md`.
 - Write on completion/blocker/other stop, except a passed gate-pause ack.
 - Never commit `.orchestrator/` or touch orchestrator-owned state.
 
 ## Authorization
 
-- Allowed: <exact stage-appropriate scope; push/PR only for ship>
+- Allowed: <one Issue delivery; push/PR only inside ship after its gates>
 - Not allowed: direct Linear writes, merge/deploy/Issue closeout, other Issues
   or orchestrator state. Stage rules win on rules; dispatch wins on facts.
+
+## Recovery
+
+On interruption resume the same thread with the current snapshot amendment and the latest own phase capsule/confirmation paths. Re-run identity and continue that phase; do not generate a stage-specific dispatch or resume template. Require a confirmed whole queue before advancing.
+
+Set write.id=request.collectionId=preflight-collect:<head>:<n>; increment n per collection request on that head. Preserve the ID on lost-response reconciliation; a failed run is recorded, its retry gets a new ID.
+
+Pass evidenceRoot and workerWritableRoots to spawn; any resume grant expansion requires this dispatch pin to be amended to the complete effective roots and supplied to resume.

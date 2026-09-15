@@ -190,7 +190,7 @@ Required:
 - Run the configured Documentation workflow before final green when configured.
 - If documentation changes the PR head, rerun review/check stabilization on the new head.
 - If configured, delegate review feedback stabilization to the configured resolver.
-- Poll checks, GitHub review state, unresolved threads, and Greptile every 10 minutes until strict green or terminal stop.
+- Run installed gate.mjs ship on live checks, reviews, threads and Greptile until current-head evidence passes its configured pause or the hard deadline parks the delivery.
 - Record `mono-ship green certificate` with PR URL, head SHA, CI, Greptile, unresolved feedback count, merge state, checked/not-checked boundary, and next `mono-deploy`.
 
 Forbidden:
@@ -271,3 +271,7 @@ Forbidden:
   `mono-deploy`.
 - Relaying discovery-skill question streams to the user one by one, or
   presenting an unreviewed first-draft prototype at the UX checkpoint.
+
+## One Delivery Context
+
+For orchestrated work dispatch mono-deliver once. Its code, preflight and ship phases retain the owners and order above. Each phase publishes its full write queue and capsule; only confirmation after durable per-write read-back permits progression. In-phase barriers preserve drift-before-PR, certificate-before-formal-review and In-Review-after-PR ordering. Recover the same phase after interruption; final status is green or parked with a dictionary reason, reflected in Linear in the same orchestrator turn.

@@ -1,6 +1,6 @@
 ---
 name: mono-preflight
-description: Use after implementation and before ship to verify local branch readiness through mandatory autoreview and produce a preflight certificate.
+description: Use after implementation to verify local readiness with mandatory autoreview before ship.
 ---
 
 # Mono Preflight
@@ -21,29 +21,51 @@ Read when:
 
 - `references/issue-only-lane.md` — when lifecycle_state_entity=issue, or a lane freeze/follow-up/cancel decision is in play.
 
-Before work/resume run `verify-pack-state.mjs identity` with dispatch `packVersion`, `sourceCommit`, `surfaceRevision`; mismatch blocks checks/review/commits. Gather package/config/validation/git/diff/base/start comments/certificates; apply worker-contract snapshot/queue rules.
+Run dispatch identity before work/resume. Gather package/config/validation,
+git/diff/base and start comments/certificates. Apply worker snapshot/queue rules;
+confirm sequenced phase queues before ship.
 
-Workflow:
+## Workflow
 
-1. Require an approved Issue and Delivery state or other explicit approval to proceed.
-2. Inspect git.
-3. Apply worker-contract Context seam before comparing scope: genuine Project-first against full package; issue-only against live oracle/fingerprint after re-reading approval/marker and `--emit-fingerprint`. Parentless candidate/missing Project artifacts = drift-candidate/fallback. Stale/mismatched/unapproved/unresolved Issue context cannot yield ready.
-4. Run targeted checks appropriate to the diff. Record unavailable checks in `Not checked`; local tests prove no uninspected manual/browser/mobile/prod/deploy/user-acceptance surface.
-5. Run mandatory autoreview:
+1. Require approved Issue and Delivery state or explicit proceed approval;
+   inspect git. Apply worker Context seam before comparing scope: Project-first
+   uses full package; issue-only uses current oracle/fingerprint, re-reading
+   approval/marker and emit-fingerprint. Candidate/missing artifacts/deep-risky
+   escalation → drift-candidate/fallback; stale or unresolved context cannot ready.
+2. Run targeted checks; report unavailable/manual/browser/mobile/prod/acceptance
+   surfaces honestly. Compare final diff risk with approved risk; higher wins.
+3. `autoreview`: resolve installed autoreview helper's concrete path; missing → blocked.
+   Read Classification and Invocation in references/autoreview-routing.md;
+   resolve [role:autoreview](references/model-policy.md#roles), explicit engine
+   claude, model and thinking effort. Never substitute reviews or defaults.
+4. Dirty tail: helper --mode local, fix accepted findings, then safely commit;
+   otherwise blocked/needs-human. Final committed scope requires --mode branch
+   --base <actual base>, or --mode commit --commit <ref> for single/already-landed
+   scope. Local clean alone never certifies committed work. Record exact commands.
+5. Require exit 0, complete clean result and no residual actionable findings.
+   Use --max-priority P2: clean/scoped-clean or exit-0 filtered with a correct
+   verdict, no accepted/missing findings and only P3 filtered. Log P3 advisory
+   dispositions; never loop on P3 alone. Nonzero/incomplete fails. Verify findings
+   against code/contracts; reject unsupported ones with evidence, apply defensible
+   small fixes at their owner boundary. No automatic broad/release-sensitive
+   rewrites or weakening/deleting/rewriting tests for green. After each code
+   change repeat targeted checks and autoreview; no arbitrary round cap. Repeated
+   tooling/capacity failure or needed decision → blocked/needs-human.
+6. Reclassify after fixes; require clean committed-scope review. Under the
+   sequencer request orchestrator preflight-collect (worker contract), then run
+   gate.mjs preflight collect:false. Never collect as worker. Missing/hand-made/
+   incomplete/stale artifacts fail; preserve failed runs and loop dispositions.
+7. Commit through ce-commit or repo convention only when safe; otherwise report
+   exact remaining action. Record the full certificate with mono-preflight
+   certificate in Linear; dispatch queues append #/certificate (single text copy).
+   Enumerate every Issue verification line and obey worker recovery/lead rules.
 
-- Resolve the installed `autoreview` skill/helper's concrete path (for example `~/.codex/skills/autoreview/scripts/autoreview`); absent helper is `blocked`. Record the exact invocation. Never replace this gate with Compound `ce-code-review`, `/review`, panels, self-review or handwritten summaries.
-- Dirty tail: run `<autoreview-helper> --mode local` on staged/unstaged/untracked changes first; fix accepted findings, then commit, or leave dirty as `blocked`/`needs-human`. Branch/PR scope: `--mode branch --base <resolved-base-ref>` using actual PR/default base. Already-landed/single-commit scope: `--mode commit --commit <ref>`.
-- Apply Classification and Invocation in `references/autoreview-routing.md`; resolve [role:autoreview](references/model-policy.md#roles), pass `--engine claude`, `--model`, `--thinking`. Issue-only deep/risky escalation is drift-candidate/fallback; still run higher-risk review, never ready outside lane.
-- Success requires helper exit 0 and `autoreview clean: no accepted/actionable findings reported`. Nonzero with actionable findings is not clean. Verify every finding against code/contracts, reject only unsupported findings with evidence, and apply defensible small fixes at the correct owner boundary. Never auto-apply broad or release-sensitive rewrites, or weaken/delete/rewrite tests to reach green.
-- After a review-triggered code change, repeat relevant targeted checks and autoreview. Loop until clean; no arbitrary round cap. Missing helper, undetermined scope, repeated tooling/capacity failure, or a required human decision stops `blocked`/`needs-human`. Never silently dismiss a repeated finding or certify ready while it persists.
-- After committed fixes, apply canonical final reclassification, then require clean branch/PR or commit review as appropriate. Local clean alone never certifies committed work.
-
-6. Commit via Compound `ce-commit` or configured repo convention when safe. Otherwise leave the branch state and exact next action explicit.
-7. Record the full certificate in a Linear comment/resource with `mono-preflight certificate`. Under dispatch queue the comment using `append #/certificate`; the report field is its sole text copy. Apply worker-contract recovery/lead rules and enumerate all Issue verification lines.
-
-8. Emit the certificate.
-
-Certificate statuses: `ready` (local branch ready for ship), `blocked` (state/validation/auth/tooling missing), `drift-candidate` (possible scope drift), `needs-human` (decision needed). Unconfirmed drift goes to ship's formal decision; clearly outside-package work returns to handoff/atomic repair before PR. Issue-only after ready: freeze only independently shippable fingerprint-matching slice, exclude expansion to separate follow-up Project, otherwise cancel. Set new follow-up lead/Issue assignees to acting user (`lead: "me"`, `assignee: "me"`); preserve existing assignments. Follow lane contract.
+Statuses: ready, blocked, drift-candidate, needs-human. Unconfirmed drift goes to
+ship's formal decision; outside-package work returns to handoff/atomic repair
+before PR. Issue-only ready may freeze only a fingerprint-matching independently
+shippable slice and move expansion to follow-up Project, otherwise cancel. Set
+new follow-up lead/Issue assignee to acting user (me), preserve existing ones;
+follow lane contract. Apply Tiny Output Profile when appropriate.
 
 Preflight certificate shape:
 
@@ -63,10 +85,6 @@ Not checked: <manual QA/browser/mobile/deploy/etc.>
 Next: <mono-ship | mono-handoff | needs-human>
 ```
 
-For `tiny` work, follow the Tiny Output Profile in references/readiness-gates.md.
-
-Human Linear comment/resource shape:
-
-Apply worker-contract Certificate recovery; for needs-human, `Decision needed:` names exact Russian decision/unblock.
-
-Final response: full certificate, git state, boundary, autoreview evidence, drift and next.
+Apply worker Certificate recovery/lead and Tiny Output Profile. Decision needed
+names the Russian decision/unblock. Final: certificate, git, boundary, autoreview
+proof, drift and next owner.
