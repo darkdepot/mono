@@ -62,14 +62,13 @@ lifecycle snapshot, no ack/amendment. Consumption never replaces approval.
 
 ## Sandbox ladder
 
-Launch workspace-write: network, worktree, main-checkout .git, only
-<root>/reports as mailbox (--add-dir on spawn; writable_roots on resume).
-Record capsule.writable_roots at launch/resume. Never grant the
-orchestrator root: confirmations, registry, control, consumed and logs stay read-only.
-Forbid early PR/push/unrelated network. Standalone implement: no network unless
-excepted; preflight adds network/.git, ship push. Require exact hidden grants;
-record disabled sandbox in orchestrator ledger. Denied mailbox: identical
-uncommitted JSON fallback.
+Workspace-write/network: worktree; the worktree-specific Git directory and the common Git directory, derived from the worktree; mailbox <root>/reports (--add-dir spawn; writable_roots resume).
+codex 0.153.4 guards explicit linked-worktree metadata.
+Launch/resume: set capsule.writable_roots. Orchestrator root, confirmations,
+registry, control, consumed, logs: read-only.
+No early PR/push/unrelated network. Standalone implement: no network unless excepted;
+preflight network/.git; ship push. Exact hidden grants. Disabled sandbox: log in
+orchestrator ledger. Denied mailbox: same uncommitted JSON fallback.
 
 ## Context seam
 
@@ -212,4 +211,4 @@ verbatim verification items; follow AFK stops.
 
 Parked reasons: blocked, needs-decision, needs-human, drift-candidate, timed-out, scope-drift-needs-handoff, write-unconfirmed, evidence-limit (предел доказательств). Include exact question/recommendation for decisions. Orchestrator reflects parked in Linear in the same turn with read-back; green requires all queues confirmed/current-head gates passed.
 
-Keep Issue «Как проверить» verbatim/in order, without splitting/merging/re-keying/omitting. Use pass/deferred/not-run; never pass unrun checks; name later-stage owner. Prefix judgment evidence judgment check: and inspected state. Repeat dispatch pins. Standalone: dispatched path/status; sequenced: intermediate results.
+Keep every Issue «Как проверить» item verbatim/in order. Use pass/deferred/not-run; never pass unrun checks; name later-stage owner. Prefix judgment evidence judgment check: and inspected state. Repeat dispatch pins. Standalone: dispatched path/status; sequenced: intermediate results.

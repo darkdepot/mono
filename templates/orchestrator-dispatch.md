@@ -17,7 +17,7 @@ protected paths/hashes, verification lines and the resolved identity command.
 - Product: <product slug>
 - evidenceRoot: <absolute ~/.mono-agent-workflow/evidence/<product>/ outside EVERY worker-writable root>
 - Preflight pins: <installed skillsRoot, approved risk/critical, exact verification command/args, baseRef>
-- workerWritableRoots: <complete absolute grants, including temporary roots; only <root>/reports within orchestrator root; copy to capsule.writable_roots>
+- workerWritableRoots: <complete absolute grants, including temporary roots and the worktree-specific Git directory and the common Git directory, derived from the worktree; only <root>/reports within orchestrator root; copy to capsule.writable_roots>
 - Collection: orchestrator collect:true outside worker sandboxes; worker collect:false only
 - Confirmation timeout: <configured seconds>
 - Worktree/branch: <path / branch>
@@ -49,7 +49,8 @@ protected paths/hashes, verification lines and the resolved identity command.
   four flags, absolute installed paths and dispatch pins; single-quote values,
   escape embedded quotes as `'\''`; require exit 0 and
   `pack-state: identity verified`. Do not substitute checkout SURFACE_REVISION>
-- Sandbox: <workspace-write, network, worktree/main-checkout .git/mailbox writable roots; phase authority still limits writes>
+- Sandbox: <workspace-write, network, worktree, the worktree-specific Git directory and the common Git directory, derived from the worktree, and mailbox writable roots; phase authority still limits writes>
+  codex 0.153.4 protects the metadata directory of an explicitly listed linked worktree.
 - Report delivery: <absolute mailbox path and worktree fallback>
 
 The codex-cli installed root is `~/.codex/skills/`. Emit this command with every placeholder resolved; it is invocation data, not a second gate definition:

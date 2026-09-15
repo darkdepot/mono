@@ -28,8 +28,13 @@ function appendLog(file, event) {
 }
 function effectiveGrants(entry, root, extraWritable = [], pins = entry.workerWritableRoots) {
   if (!Array.isArray(extraWritable) || !Array.isArray(pins)) throw new Error("complete dispatch workerWritableRoots required");
+  const gitDirs = [["--absolute-git-dir"], ["--path-format=absolute", "--git-common-dir"]].map(args => {
+    const directory = worktreeGit(entry.worktree, args);
+    if (!path.isAbsolute(directory)) throw new Error("Git directory must be absolute");
+    return fs.realpathSync(directory);
+  });
   const normalize = values => [...new Set(values.map(resolvedLocation))].sort();
-  const roots = normalize([entry.worktree, path.join(root, "reports"), ...entry.writable_roots, ...extraWritable]);
+  const roots = normalize([entry.worktree, path.join(root, "reports"), ...gitDirs, ...entry.writable_roots, ...extraWritable]);
   validateEvidenceGrants(entry.evidenceRoot, roots);
   const controlRoot = resolvedLocation(root), mailbox = resolvedLocation(path.join(root, "reports"));
   for (const grant of roots) {
@@ -41,6 +46,15 @@ function effectiveGrants(entry, root, extraWritable = [], pins = entry.workerWri
   validateEvidenceGrants(path.join(skills, "autoreview/scripts/autoreview"), roots, "autoreview helper real path");
   if (canonical(roots) !== canonical(normalize(pins))) throw new Error("effective write grants differ from dispatch workerWritableRoots");
   return roots;
+}
+function worktreeGit(worktree, args) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  Object.assign(env, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0" });
+  try {
+    return execFileSync("git", ["rev-parse", ...args], { cwd: worktree, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch (error) {
+    throw new Error(`Cannot read worktree Git ${args.join(" ")}: ${error.message}`);
+  }
 }
 async function launchCodex(root, entry, prompt, resume) {
   const registryPath = path.join(root, "workers.json");
@@ -142,7 +156,7 @@ export async function spawnWorker(request) {
       model_policy, model_launch, model: model_policy.model, effort: model_policy.effort,
       writable_roots: roots, workerWritableRoots: roots, evidenceRoot: resolvedLocation(request.evidenceRoot), network_access: true, lifecycle_moves: request.lifecycle_moves,
       confirmationTimeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
-      capsule: { phase: "code", head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: request.worktree, encoding: "utf8" }).trim(),
+      capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
         open_queue: [], decisions: [], writable_roots: roots } };
     if (gates.length) entry.gates = gates;
     attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);

@@ -582,7 +582,8 @@ in full for both audiences. Never substitute a checkout's `SURFACE_REVISION`.
 ### Sandbox ladder
 
 A mono-deliver process needs the union of phase capabilities from launch:
-workspace-write, network, writable worktree, main-checkout .git and only <root>/reports as mailbox.
+workspace-write, network, writable worktree, the worktree-specific Git directory and the common Git directory, derived from the worktree, and only <root>/reports as mailbox.
+codex 0.153.4 protects the metadata directory of an explicitly listed linked worktree.
 Keep <root>/confirmations, workers.json, attempts.json, control.json, consumed/,
 logs/ and dispatch/ outside worker grants. Spawn uses --add-dir <root>/reports;
 resume uses the supported writable_roots config override. Persist the complete

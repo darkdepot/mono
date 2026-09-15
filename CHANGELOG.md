@@ -8,6 +8,8 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ### Changed
 
+- MONO-78: derive and canonicalize both Git directories from the requested worktree on launch and resume, with locally cleaned Git reads for directory discovery and capsule HEAD. Keep exact grant pins and all protected-path guards. Read green time, recorded merge time and review rounds independently from top-level `mono-deliver` fields, with legacy report/ledger fallback and valid zero rounds. Update dispatch, sandbox and README instructions; cover exact sets, environment redirection, guards and cost sources with fixtures. Add a paired host fetch/add/commit probe, deferred to the orchestrator at deploy inside nested sandboxes.
+
 - MONO-76: make the English README the complete pack description and sole 34-rule owner index, with required-section and resolvable-link checks. Require a Linear Issue before pack edits and same-PR README freshness. Remove the Russian owner documents, reconciliation/publication workflows and their validators; migrate documentation model-policy and installer fixtures to README. Install README with an asset hash and omit the ownerLayer lock field. Linear document stubs and orchestrator-root cleanup remain deploy-owned.
 
 - MONO-75 (breaking, surfaceRevision 4): dispatch one mono-deliver context with separate code/preflight/ship owners. Add durable per-write reconciliation, whole-queue confirmations and phase capsules; finish as green or parked. Install head-bound gates and orchestration launch/resume/ack tools together, with halt and persistent attempt caps. Replace fixed PR silence with bounded evidence accumulation; preserve all green conditions. Count the sequencer and worker contract without raising the 99,882-byte ceiling.
