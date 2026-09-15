@@ -9,7 +9,7 @@ const PHASE_USAGE_NOTE = "по фазам недоступно";
 
 function usage(exitCode = 2) {
   console.error(
-    "Usage: node wave-cost.mjs <ISSUE-KEY> [--root <orchestrator-root>] [--orchestrator-transcript <jsonl>]"
+    "Usage: node wave-cost.mjs <ISSUE-KEY> [--root <orchestrator-root>] [--orchestrator-transcript <jsonl>] [--evidence-root <dir>] [--ledger <json>]"
   );
   process.exit(exitCode);
 }
@@ -21,6 +21,9 @@ function parseArgs(argv) {
     if (arg === "--root") {
       args.root = argv[(index += 1)] || "";
       if (!args.root) usage();
+    } else if (arg === "--evidence-root" || arg === "--ledger") {
+      args[arg === "--ledger" ? "reviewLedger" : "evidenceRoot"] = argv[++index];
+      if (!argv[index]) usage();
     } else if (arg === "--orchestrator-transcript") {
       args.orchestratorTranscript = argv[(index += 1)] || "";
       if (!args.orchestratorTranscript) usage();
@@ -350,7 +353,7 @@ function loadJsonReports(root, issue) {
 
 function latestStageReport(reports, stage, issue) {
   return reports
-    .filter((report) => report.value?.issue === issue && report.value?.stage === stage)
+    .filter((report) => report.value?.issue === issue && report.value?.stage === stage && !report.value.retired_at && !report.name.endsWith("-registry-retired.json") && !["phase", "confirmation-request"].includes(report.value.kind))
     .sort((left, right) => right.mtimeMs - left.mtimeMs)[0] ?? null;
 }
 
@@ -705,6 +708,12 @@ function compactModel(model) {
   return `${modelValue}/${effortValue}`;
 }
 
+function reviewCostLine(s) {
+  const causeCounts = ["fix", "head-change", "retry", "final-request", "self-check", "unknown"].map(key => s.causes[key]);
+  const providers = Object.entries(s.providers).map(([provider, n]) => `${provider}: вход ${n.input}, чтение кэша ${n.cacheRead}, запись кэша ${n.cacheWrite ?? "н/д"}, выход ${n.output}`).join("; ") || "н/д";
+  return `авто-ревью: сборов ${s.collections} (отклонено ${s.withheld}), вызовов ${s.invocations} (правки/новая версия/перезапуски/финальные/самопроверки/неизвестно: ${causeCounts.join("/")}), проходов объявлено ${s.announcedPasses ?? "н/д"} / подтверждено ${s.confirmedPasses ?? "н/д"}, расход по провайдеру ${providers} (измерено ${s.measured} из ${s.invocations})`;
+}
+
 function russianLine(result) {
   const totalIsMeasured = result.measurable_total_status === "measured";
   const measured = totalIsMeasured
@@ -722,7 +731,7 @@ function russianLine(result) {
     result.worker.usage_status === "measured"
       ? formatTokenCount(result.worker.usage.non_overlapping_total_tokens)
       : shortUnavailable(result.worker.usage_status);
-  const autoreview = compactComponent(result.autoreview.usage);
+  const autoreview = result.autoreview.ledger ? reviewCostLine(result.autoreview.ledger) : `авто-ревью ${compactComponent(result.autoreview.usage)}`;
   const orchestrator = compactComponent(
     typeof result.orchestrator.usage === "string"
       ? result.orchestrator.usage
@@ -738,10 +747,10 @@ function russianLine(result) {
   const measuredClause = totalIsMeasured
     ? `${measured} токенов измеримо (вход ${measuredInput}, из кэша ${cachedPercent}%, выход ${measuredOutput})`
     : measured;
-  return `Цена волны ${result.issue}: ${measuredClause}; исполнитель ${worker}, авто-ревью ${autoreview}, оркестратор ${orchestrator}; чтение пака ~${formatTokenCount(result.pack_reading.approx_tokens)} токенов; до зелёного PR ${green}, до слияния ${merge}; круги ревью ${rounds}; проходов авто-ревью ${typeof result.autoreview.passes === "number" ? result.autoreview.passes : shortUnavailable(result.autoreview.passes)}; модель/усилие ${model}; ${PHASE_USAGE_NOTE}.`;
+  return `Цена волны ${result.issue}: ${measuredClause}; исполнитель ${worker}, ${autoreview}, оркестратор ${orchestrator}; чтение пака ~${formatTokenCount(result.pack_reading.approx_tokens)} токенов; до зелёного PR ${green}, до слияния ${merge}; круги ревью ${rounds}${result.autoreview.ledger ? "" : `; проходов авто-ревью ${typeof result.autoreview.passes === "number" ? result.autoreview.passes : shortUnavailable(result.autoreview.passes)}`}; модель/усилие ${model}; ${PHASE_USAGE_NOTE}.`;
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   const root = resolveRoot(args.root, args.issue);
   const logs = attemptLogFiles(root, args.issue);
@@ -749,7 +758,21 @@ function main() {
   const { worker, oldRule, logResults } = collectWorker(root, logs);
   const reports = loadJsonReports(root, args.issue);
   const ledger = ledgerEntries(root, args.issue);
-  const autoreview = collectAutoreview(logResults);
+  let autoreview = collectAutoreview(logResults);
+  const evidenceRoot = args.evidenceRoot || path.join(process.env.MONO_WORKFLOW_STATE_ROOT || path.join(os.homedir(), ".mono-agent-workflow"), "evidence", path.basename(root));
+  const reviewLedgerFile = args.reviewLedger || path.join(evidenceRoot, "reviews", `${args.issue}.json`);
+  if (args.reviewLedger || fs.existsSync(reviewLedgerFile)) {
+    const ledger = JSON.parse(fs.readFileSync(reviewLedgerFile, "utf8"));
+    if (ledger.issue !== args.issue || !Array.isArray(ledger.attempts) || ledger.attempts.some(a => !Array.isArray(a.events) || !Array.isArray(a.unresolvedCoverage))) throw new Error("invalid review ledger for Issue");
+    const { summarizeLedger } = await import("./review-ledger.mjs");
+    const summary = summarizeLedger(ledger);
+    const measuredReview = zeroUsage();
+    for (const [provider, counters] of Object.entries(summary.providers)) {
+      addUsage(measuredReview, { input_tokens: counters.input + (provider.startsWith("claude/") ? counters.cacheRead + (counters.cacheWrite ?? 0) : 0),
+        cached_input_tokens: counters.cacheRead, cache_write_input_tokens: counters.cacheWrite ?? 0, output_tokens: counters.output, reasoning_output_tokens: 0 });
+    }
+    autoreview = { passes: summary.announcedPasses, usage: summary.measured ? finalizeUsage(measuredReview) : unavailable("no measured reviewer usage in ledger"), ledger: summary, source: reviewLedgerFile };
+  }
   const orchestratorUsage = parseTranscriptUsage(args.orchestratorTranscript, args.issue);
   const orchestrator = {
     ledger_entries: ledger.allIssueLines.length,
@@ -799,9 +822,7 @@ function main() {
   console.log(russianLine(result));
 }
 
-try {
-  main();
-} catch (error) {
+main().catch(error => {
   console.error(`wave-cost: ${error.message}`);
   process.exit(1);
-}
+});

@@ -5763,6 +5763,20 @@ function validateWaveCostBehavior() {
       fail("wave-cost fully measured Russian summary must be one compact sentence of at most 320 characters");
     }
 
+    // Named behavior fixture: a review ledger replaces the legacy review counters.
+    const reviewLedgerFile = path.join(fixtureRoot, "review-ledger.json");
+    const reviewEvent = { sources: [], status: "unknown", launchCause: "unknown", usage: null, announcedPasses: null, confirmedPasses: null };
+    fs.writeFileSync(reviewLedgerFile, JSON.stringify({ issue: "MONO-999", attempts: [{ attempt: 1, unresolvedCoverage: [], events: [
+      { ...reviewEvent, id: "collection", kind: "collection-request" },
+      { ...reviewEvent, id: "withheld", kind: "collection-request", status: "withheld" },
+      { ...reviewEvent, id: "helper", kind: "helper-invocation", announcedPasses: 2 },
+    ] }] }));
+    const reviewLedgerOutput = parseWaveCostOutput(runNode(["scripts/wave-cost.mjs", "MONO-999", "--root", fixtureRoot, "--ledger", reviewLedgerFile]));
+    if (reviewLedgerOutput.json.autoreview.ledger.collections !== 2 || reviewLedgerOutput.json.autoreview.ledger.invocations !== 1 ||
+      !reviewLedgerOutput.line.includes("авто-ревью: сборов 2 (отклонено 1), вызовов 1") || !reviewLedgerOutput.line.includes("измерено 0 из 1")) {
+      fail("review-ledger cost fixture must separate requested collections, withheld demand, helper calls and measured usage coverage");
+    }
+
     fs.appendFileSync(
       transcript,
       event({
