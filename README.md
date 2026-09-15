@@ -87,11 +87,16 @@ Resolve all model choices from [the model policy](references/model-policy.md#rol
 
 In orchestrated mode, use the configured transport or documented runtime detection. Codex CLI supports one resumable worker thread per Issue. The registry, mailbox and append-only ledger support recovery; write only observed events with their actual recording times. The installed watcher reports liveness and phase events. `control.json.halt` stops new launches/resumes without interrupting running workers; persistent attempt limits bound retries. Keep compaction wiring outside product repos and carry exact next action, pending obligations and decisions through compaction.
 
+Launch and resume derive the worktree-specific and common Git directories from the requested worktree, canonicalize them, and require the complete effective grant set to match the dispatch pin exactly. A regular checkout contributes one Git directory. Git environment overrides cannot redirect these reads or the capsule HEAD; worker environment settings remain intact. The evidence, installed skills, autoreview helper and orchestrator paths remain guarded. Missing or extra pinned roots refuse launch; resume still requires the original pack identity.
+
+Run `node --test scripts/worktree-sandbox.test.mjs` on the orchestrator host at deploy for the paired Git permission proof. It reports `deferred` inside a nested sandbox; outside one, missing Codex or sandbox startup failure fails the probe. This host check runs separately from the portable `verify.mjs` suite.
+
 ## Cost
 
 A wave's cost is telemetry, not a gate. Read the **Cost** line in deploy closeout and the **Wave Cost** line in orchestrator status; project updates carry only a short product-level conclusion. The installed `wave-cost.mjs` calculates the figures from reports, logs and ledger:
 
-- Dispatch-to-green-PR and dispatch-to-merge elapsed time.
+- Dispatch-to-green-PR and dispatch-to-merge elapsed time, independently selected from the `mono-deliver` report's top-level fields first, legacy `mono-ship` reports next, then ledger events. A green PR and a recorded merge are separate events: merge time never comes from delivery completion.
+- Review rounds from `mono-deliver.review_rounds` (including zero), falling back to legacy `mono-ship` forms. Invalid or missing values fall through; source fields identify the selected report or event. Only `green_at` proves green in a delivery report; legacy ship completion/report timestamps remain supported.
 - All measurable token use across worker turns and attempts, including parked and failed attempts, plus autoreviewer and orchestrator use where available; worker use is a diagnostic subtotal.
 - Actual pack bytes read, review rounds, model and effort.
 - Explicit unavailable components with reasons; never estimates presented as measurements.

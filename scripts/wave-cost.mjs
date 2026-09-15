@@ -460,18 +460,20 @@ function ledgerEntries(root, issue) {
   return { filename, entries, allIssueLines };
 }
 
-function explicitReportTimestamp(report, names) {
+function explicitReportTimestamp(report, names, { nested = true } = {}) {
   if (!report) return null;
-  const queue = [report.value];
-  while (queue.length > 0) {
-    const value = queue.shift();
-    if (!value || typeof value !== "object") continue;
-    for (const [key, child] of Object.entries(value)) {
-      if (names.includes(key) && typeof child === "string") {
-        const parsed = new Date(child);
+  for (const name of names) {
+    const queue = [report.value];
+    while (queue.length > 0) {
+      const value = queue.shift();
+      if (!value || typeof value !== "object") continue;
+      if (typeof value[name] === "string") {
+        const parsed = new Date(value[name]);
         if (!Number.isNaN(parsed.getTime())) return parsed;
       }
-      if (child && typeof child === "object") queue.push(child);
+      for (const child of Object.values(value)) {
+        if (nested && child && typeof child === "object") queue.push(child);
+      }
     }
   }
   return null;
@@ -527,22 +529,25 @@ function collectIntervals(ledger, reports, issue) {
     ledger.entries.filter((entry) => /MERGED AND DEPLOYED|landed\/deployed|\bMERGED\b/i.test(entry.text))
   );
   const implementReport = latestStageReport(reports, "mono-implement", issue);
+  const deliverReport = latestStageReport(reports, "mono-deliver", issue);
   const shipReport = latestStageReport(reports, "mono-ship", issue);
   const reportDispatchAt = explicitReportTimestamp(implementReport, [
     "dispatch_at",
     "dispatched_at",
     "started_at",
   ]);
-  const reportGreenAt = explicitReportTimestamp(shipReport, ["green_at", "completed_at", "reported_at"]);
-  const reportMergeAt = explicitReportTimestamp(shipReport, ["merged_at", "merge_at"]);
+  const deliverGreenAt = explicitReportTimestamp(deliverReport, ["green_at"], { nested: false });
+  const shipGreenAt = explicitReportTimestamp(shipReport, ["green_at", "completed_at", "reported_at"]);
+  const deliverMergeAt = explicitReportTimestamp(deliverReport, ["merged_at", "merge_at"], { nested: false });
+  const shipMergeAt = explicitReportTimestamp(shipReport, ["merged_at", "merge_at"]);
   const dispatchAt = reportDispatchAt ?? (dispatchEntry ? dispatchAnchor(dispatchEntry) : null);
-  const greenAt = reportGreenAt ?? greenEntry?.timestamp ?? null;
-  const mergeAt = reportMergeAt ?? mergeEntry?.timestamp ?? null;
+  const greenAt = deliverGreenAt ?? shipGreenAt ?? greenEntry?.timestamp ?? null;
+  const mergeAt = deliverMergeAt ?? shipMergeAt ?? mergeEntry?.timestamp ?? null;
 
   return {
     event_definitions: {
       start: "dispatch recorded for the Issue",
-      green_pr: "mono-ship green recorded for the Issue",
+      green_pr: "green PR recorded for the Issue",
       merge: "merge recorded for the Issue",
     },
     sources: {
@@ -551,16 +556,20 @@ function collectIntervals(ledger, reports, issue) {
         : dispatchEntry?.timestamp
           ? `ledger.md:${dispatchEntry.line}`
           : unavailable("dispatch event not found"),
-      green_pr: reportGreenAt
-        ? shipReport.filename
-        : greenEntry?.timestamp
-          ? `ledger.md:${greenEntry.line}`
-          : unavailable("green PR event not found"),
-      merge: reportMergeAt
-        ? shipReport.filename
-        : mergeEntry?.timestamp
-          ? `ledger.md:${mergeEntry.line}`
-          : unavailable("merge event not found"),
+      green_pr: deliverGreenAt
+        ? deliverReport.filename
+        : shipGreenAt
+          ? shipReport.filename
+          : greenEntry?.timestamp
+            ? `ledger.md:${greenEntry.line}`
+            : unavailable("green PR event not found"),
+      merge: deliverMergeAt
+        ? deliverReport.filename
+        : shipMergeAt
+          ? shipReport.filename
+          : mergeEntry?.timestamp
+            ? `ledger.md:${mergeEntry.line}`
+            : unavailable("merge event not found"),
     },
     dispatch_to_green_pr: duration(dispatchAt, greenAt, "dispatch or green PR event not found"),
     dispatch_to_merge: duration(dispatchAt, mergeAt, "dispatch or merge event not found; parked runs have no merge duration"),
@@ -626,7 +635,7 @@ function collectReviewRounds(shipReport) {
     const match =
       /review rounds\s*[:=]\s*([0-9]+)/i.exec(candidate) ??
       /novel_resolver_rounds["'`]?\s*[:=]\s*([0-9]+)/i.exec(candidate);
-    if (match) return Number(match[1]);
+    if (match && Number.isSafeInteger(Number(match[1]))) return Number(match[1]);
   }
   return unavailable("ship report does not report review rounds");
 }
@@ -751,7 +760,10 @@ function main() {
   if (typeof autoreview.usage !== "string") addUsage(measuredUsage, autoreview.usage);
   if (typeof orchestratorUsage !== "string") addUsage(measuredUsage, orchestratorUsage.usage);
   const shipReport = latestStageReport(reports, "mono-ship", args.issue);
-  const reviewRounds = collectReviewRounds(shipReport);
+  const deliverReport = latestStageReport(reports, "mono-deliver", args.issue);
+  const directRounds = deliverReport?.value?.review_rounds;
+  const deliveryRoundsValid = Number.isSafeInteger(directRounds) && directRounds >= 0;
+  const reviewRounds = deliveryRoundsValid ? directRounds : collectReviewRounds(shipReport);
   const result = {
     schema_version: 1,
     issue: args.issue,
@@ -777,6 +789,9 @@ function main() {
     pack_reading: collectPackReading(logResults),
     intervals: collectIntervals(ledger, reports, args.issue),
     review_rounds: reviewRounds,
+    review_rounds_source: deliveryRoundsValid
+      ? deliverReport.filename
+      : typeof reviewRounds === "number" ? shipReport.filename : unavailable("no valid review rounds in delivery or ship report"),
     model: collectModel(root, args.issue, logResults),
     phase_usage_note: PHASE_USAGE_NOTE,
   };
