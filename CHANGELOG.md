@@ -8,6 +8,8 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ### Changed
 
+- MONO-83: install `review-ledger.mjs` with the private runtime, reject installer manifests whose relative `.mjs` imports are not included, and cover the missing dependency plus a real installed `wave-cost.mjs --ledger` path with named fixtures.
+
 - MONO-79: add review-event accounting with cross-source identities, explicit launch causes, separate certification roles, unresolved coverage and evidence-backed adjudications. Capture reviewer usage before receipt signing, retain validation lines while streaming, accept only the legacy and streaming fixed invocations, and archive immutable dataset versions. Prefer review-ledger counters and provider usage in wave cost, preserve the legacy line without a ledger, and exclude retired registry entries when selecting final delivery reports. Add correlation, retention, usage, archive and cost fixtures.
 
 - MONO-78: derive and canonicalize both Git directories from the requested worktree on launch and resume, with locally cleaned Git reads for directory discovery and capsule HEAD. Keep exact grant pins and all protected-path guards. Read green time, recorded merge time and review rounds independently from top-level `mono-deliver` fields, with legacy report/ledger fallback and valid zero rounds. Update dispatch, sandbox and README instructions; cover exact sets, environment redirection, guards and cost sources with fixtures. Add a paired host fetch/add/commit probe, deferred to the orchestrator at deploy inside nested sandboxes.
