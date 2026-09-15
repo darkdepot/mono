@@ -80,6 +80,7 @@ fs.writeFileSync(val('--status-output'),JSON.stringify({schema_version:1,status:
 console.log('autoreview target: branch | engine: claude | model: '+val('--model')+' | thinking: '+val('--thinking'));
 console.log(failed?'autoreview findings: accepted/actionable findings reported':'autoreview clean: no accepted/actionable findings reported');
 console.log('overall: '+report.overall_correctness+' (0.9)');
+if(a.includes('--stream-engine-output'))console.log('claude usage: input_tokens=10 cache_read_input_tokens=20 cache_creation_input_tokens=30 output_tokens=4');
 if(process.env.MONO_FIXTURE_ALTER_DATASET==='1')fs.appendFileSync(val('--dataset'),'changed after review');
 process.exit(failed?1:0);
 `); fs.chmodSync(helper, 0o700);
@@ -161,10 +162,26 @@ process.exit(r.status===null?1:r.status);
     write(gateRequest, preflight); pass(preflightCall());
     const receiptFile = path.join(preflight.evidenceRoot, `${head}.json`), envelope = json(receiptFile);
     assert.equal(envelope.receipt.review.sandbox.probed, true);
+    assert.deepEqual(envelope.receipt.review.usage.normalized, { input: 10, cacheRead: 20, cacheWrite: 30, output: 4 });
+    assert.equal(envelope.receipt.review.usageReason, null);
+    const usageTampered = structuredClone(envelope); usageTampered.receipt.review.usage.normalized.input = 11;
+    write(receiptFile, usageTampered); write(gateRequest, preflight);
+    assert.match(preflightCall().stdout, /hand-made or modified/, "usage is sealed before signing");
+    write(receiptFile, envelope); pass(preflightCall());
+    const legacy = structuredClone(envelope.receipt);
+    legacy.invocation = legacy.invocation.filter(arg => arg !== "--stream-engine-output");
+    delete legacy.review.usage; delete legacy.review.usageReason;
+    write(receiptFile, { receipt: legacy, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(legacy)).digest("hex") });
+    pass(preflightCall());
+    legacy.invocation.push("--unsupported");
+    write(receiptFile, { receipt: legacy, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(legacy)).digest("hex") });
+    assert.match(preflightCall().stdout, /provenance\/command mismatch/);
+    write(receiptFile, envelope);
+
     assert.equal(fs.existsSync(envelope.receipt.verification.sandbox.tempRoot), false);
     assert.equal(fs.existsSync(envelope.receipt.review.sandbox.tempRoot), false);
     assert.equal(envelope.receipt.invocation[envelope.receipt.invocation.indexOf("--base") + 1], head);
-    const datasetFile = path.join(preflight.evidenceRoot, "datasets", "scope.md");
+    const datasetFile = path.join(preflight.evidenceRoot, "datasets", "MONO-998-review-scope.md");
     const datasetText = "Orchestrator-owned fixture scope decisions.\n";
     write(path.join(repo, ".git/info/exclude"), ".orchestrator/\n");
     write(datasetFile, datasetText);
@@ -176,8 +193,8 @@ process.exit(r.status===null?1:r.status);
     assert.equal(validateCollectionConfirmation(collectionReport, firstConfirmation), true, "later collection does not change earlier confirmation identity");
     const datasetDigest = crypto.createHash("sha256").update(datasetText).digest("hex");
     const datasetCopy = `.orchestrator/review-dataset-${datasetDigest.slice(0, 8)}.md`;
-    assert.deepEqual(datasetReceipt.reviewDataset, { source: datasetFile, digest: datasetDigest, copy: datasetCopy });
-    assert.deepEqual(datasetReceipt.invocation.slice(-2), ["--dataset", datasetCopy]);
+    assert.deepEqual(datasetReceipt.reviewDataset, { source: datasetFile, digest: datasetDigest, copy: datasetCopy, version: 1, archive: path.join(fs.realpathSync(preflight.evidenceRoot), "datasets", "MONO-998-review-scope.v1.md") });
+    assert.deepEqual(datasetReceipt.invocation.slice(-3), ["--dataset", datasetCopy, "--stream-engine-output"]);
     assert.deepEqual(datasetReceipt.review.json.fixture.dataset, { path: datasetCopy, content: datasetText });
     assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "collector removes the helper copy");
     assert.equal(fs.readFileSync(datasetFile, "utf8"), datasetText, "orchestrator source is unchanged");
@@ -185,7 +202,13 @@ process.exit(r.status===null?1:r.status);
       GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null", GIT_MONO_FIXTURE: null });
     assert.equal(datasetReceipt.review.json.fixture.home, env.HOME);
     assert.equal(datasetReceipt.review.json.fixture.path, env.PATH);
+    assert.equal(datasetReceipt.evidenceRoot, fs.realpathSync(preflight.evidenceRoot));
     write(gateRequest, datasetRequest); pass(preflightCall());
+    const datasetEvidenceAlias = path.join(root, "dataset-evidence-alias");
+    fs.symlinkSync(preflight.evidenceRoot, datasetEvidenceAlias, "dir");
+    write(gateRequest, { ...datasetRequest, evidenceRoot: datasetEvidenceAlias }); pass(preflightCall());
+    write(gateRequest, { ...datasetRequest, evidenceRoot: fs.realpathSync(preflight.evidenceRoot) }); pass(preflightCall());
+
     write(gateRequest, preflight); assert.match(preflightCall().stdout, /receipt reviewDataset differs/);
     const otherDataset = path.join(preflight.evidenceRoot, "datasets", "other.md"); write(otherDataset, datasetText);
     write(gateRequest, { ...datasetRequest, reviewDataset: otherDataset });
@@ -911,4 +934,20 @@ test("wave cost independently selects delivery, legacy and ledger metrics", () =
     assert.equal(result.data.intervals.dispatch_to_merge.seconds, 1200);
     assert.equal(result.data.review_rounds, 2);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('wave cost prefers review ledger counters and ignores newer retired registry reports', () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-review-cost-')),issue='MONO-995';
+  try {
+    write(path.join(root,'logs',`${issue}-mono-deliver-a1.jsonl`),JSON.stringify({type:'turn.completed',usage:{input_tokens:1,cached_input_tokens:0,output_tokens:1}})+'\n');
+    write(path.join(root,'consumed',`${issue}-mono-deliver.json`),{issue,stage:'mono-deliver',review_rounds:2});
+    write(path.join(root,'reports',`${issue}-registry-retired.json`),{issue,stage:'mono-deliver',retired_at:'2026-09-15T15:34:24Z',review_rounds:999});
+    const ledger=path.join(root,'evidence/reviews',`${issue}.json`);
+    const base={sources:[],status:'unknown',launchCause:'unknown',announcedPasses:null,confirmedPasses:null,usage:null};
+    write(ledger,{issue,attempts:[{attempt:1,unresolvedCoverage:[],events:[{...base,id:'c1',kind:'collection-request'},{...base,id:'c2',kind:'collection-request',status:'withheld'},{...base,id:'h1',kind:'helper-invocation'}]}]});
+    const result=run(process.execPath,[path.join(checkout,'scripts/wave-cost.mjs'),issue,'--root',root,'--evidence-root',path.join(root,'evidence')],checkout,process.env);
+    pass(result);const output=JSON.parse(result.stdout.split('\nЦена волны')[0]);
+    assert.equal(output.review_rounds,2);assert.equal(output.autoreview.ledger.collections,2);assert.equal(output.autoreview.ledger.invocations,1);
+    assert.match(result.stdout,/авто-ревью: сборов 2 \(отклонено 1\), вызовов 1/);assert.match(result.stdout,/измерено 0 из 1/);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });

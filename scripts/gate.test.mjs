@@ -148,3 +148,127 @@ test("preflight rejects absent, failed, incomplete, stale and wrong-route eviden
     const r = structuredClone(receipt); mutate(r); assert.throws(() => validatePreflight(r, head, receipt.base, route));
   }
 });
+
+test("stream retention preserves validation lines and usage beyond the diagnostic tail", async () => {
+  const gate = await import('./gate.mjs');
+  assert.equal(typeof gate.captureOutput, 'function');
+  const capture = gate.captureOutput({ tailBytes: 64 });
+  const header = 'autoreview target: branch\nengine: claude\nmodel: policy-model\nthinking: high\n';
+  for (const part of [header.slice(0, 15), header.slice(15), 'noise\n'.repeat(10000),
+    'claude usage: input_tokens=10 cache_read_input_tokens=20 cache_creation_input_tokens=30 output_tokens=4 cost_usd=0.100000\n',
+    'autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority\noverall: patch is correct (0.9)\n']) capture.write(part);
+  const result = capture.finish();
+  assert.ok(result.output.includes(header));
+  assert.ok(result.output.length < 2000);
+  assert.deepEqual(gate.parseReviewUsage(result.output, 'claude').usage, {engine:'claude',raw:{input_tokens:10,cache_read_input_tokens:20,cache_creation_input_tokens:30,output_tokens:4,cost_usd:0.1},normalized:{input:10,cacheRead:20,cacheWrite:30,output:4}});
+  assert.deepEqual(gate.parseReviewUsage('codex usage: input_tokens=100 cached_input_tokens=40 output_tokens=5 reasoning_output_tokens=2\n','codex').usage.normalized,{input:100,cacheRead:40,cacheWrite:null,output:5});
+  assert.equal(gate.parseReviewUsage('', 'claude').usage, null);
+  assert.ok(gate.parseReviewUsage('', 'claude').usageReason);
+});
+
+test("validation refuses duplicate or lost consumed lines while accepting legacy headers", () => {
+  const route = {model:'policy-model',effort:'high'};
+  const output = 'autoreview target: branch | engine: claude | model: policy-model | thinking: high\nautoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n';
+  const receipt = {head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,output},loop:{iterations:1,residualFindings:[],disposition:'clean'}};
+  assert.doesNotThrow(()=>validatePreflight(receipt,head,'base',route));
+  for (const bad of [output+'engine: other\n', output+'overall: patch is incorrect (0.8)\n', output.replace('model: policy-model','missing model'),output+output]) {
+    assert.throws(()=>validatePreflight({...receipt,review:{exitCode:0,output:bad}},head,'base',route));
+  }
+});
+
+test("only legacy and streaming fixed invocations are valid", async () => {
+  const { validReviewInvocation } = await import('./gate.mjs');
+  assert.equal(typeof validReviewInvocation,'function');
+  const fixed=['--mode','branch','--base','base','--engine','claude','--model','model','--thinking','high','--max-priority','P2'];
+  assert.equal(validReviewInvocation(fixed,fixed),true);
+  assert.equal(validReviewInvocation([...fixed,'--stream-engine-output'],fixed),true);
+  for(const extra of [['--stream-engine-output','--stream-engine-output'],['--foo'],['--max-priority','P3']]) assert.equal(validReviewInvocation([...fixed,...extra],fixed),false);
+});
+
+test("dataset archives reuse identical bytes and refuse an explicit version overwrite", async () => {
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const { archiveReviewDataset } = await import('./gate.mjs');
+  assert.equal(typeof archiveReviewDataset,'function');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-dataset-'));
+  try {
+    const source=path.join(root,'datasets/MONO-998-review-scope.md'); fs.mkdirSync(path.dirname(source)); fs.writeFileSync(source,'first');
+    const a=await archiveReviewDataset(source,root); assert.equal(a.version,1);
+    assert.equal(fs.readFileSync(a.archive,'utf8'),'first'); assert.equal(fs.readFileSync(a.archive+'.sha256','utf8').trim(),a.digest);
+    assert.deepEqual(await archiveReviewDataset(source,root),a);
+    fs.writeFileSync(source,'second'); const b=await archiveReviewDataset(source,root); assert.equal(b.version,2);
+    fs.writeFileSync(b.archive,'tampered'); await assert.rejects(archiveReviewDataset(source,root),/immutable|digest/);
+    assert.equal(fs.readFileSync(a.archive,'utf8'),'first');
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('oversized diagnostic lines do not invalidate complete review evidence', async () => {
+  const {captureOutput}=await import('./gate.mjs');
+  const capture=captureOutput({tailBytes:64});
+  capture.write('diagnostic: '+ 'x'.repeat(2*1024*1024));capture.write('\n');
+  capture.write('autoreview target: branch\nengine: claude\nmodel: policy-model\nthinking: high\nautoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n');
+  const result=capture.finish();assert.equal(result.retentionError,null);assert.ok(result.diagnosticTail.length<=64);
+  const route={model:'policy-model',effort:'high'};
+  assert.doesNotThrow(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...result},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route));
+  const consumed=captureOutput();consumed.write('model: '+'x'.repeat(2*1024*1024)+'\n');assert.ok(consumed.finish().retentionError);
+});
+
+test('the collection lock remains held until its asynchronous action settles', async () => {
+  const fs=await import('node:fs'),os=await import('node:os'),path=await import('node:path');
+  const {withLock}=await import('./runtime.mjs');
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-async-lock-')),file=path.join(root,'collection.lock');
+  let release;const barrier=new Promise(resolve=>{release=resolve;});
+  try {
+    const running=withLock(file,async()=>{await barrier;return 'done';});
+    assert.equal(fs.existsSync(file),true);
+    await assert.rejects(withLock(file,()=>{throw new Error('second action must not run');}),error=>error.code==='ELOCKED');
+    release();assert.equal(await running,'done');assert.equal(fs.existsSync(file),false);
+  }finally{release();fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('streamed commands receive EOF on stdin instead of hanging the collection', async () => {
+  const {runCaptured}=await import('./gate.mjs');
+  const result=await runCaptured(process.execPath,['-e',"const timer=setTimeout(()=>process.exit(9),500);process.stdin.resume();process.stdin.on('end',()=>{clearTimeout(timer);process.exit(0)});"],process.cwd());
+  assert.equal(result.exitCode,0);
+});
+
+test('retention preserves duplicate legacy helper headers outside the diagnostic tail', async () => {
+  const {captureOutput}=await import('./gate.mjs');
+  const capture=captureOutput({tailBytes:64});
+  capture.write('autoreview target: branch | engine: claude | model: policy-model | thinking: high\n');
+  capture.write('autoreview target: branch | engine: conflicting | model: policy-model | thinking: high\n'+'noise\n'.repeat(100));
+  capture.write('autoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n');
+  const route={model:'policy-model',effort:'high'};
+  assert.throws(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...capture.finish()},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route));
+});
+
+test('streamed JSON quoting helper syntax does not become helper evidence', async () => {
+  const {captureOutput}=await import('./gate.mjs');
+  const capture=captureOutput({tailBytes:64});
+  const header='autoreview target: branch | engine: claude | model: policy-model | thinking: high';
+  capture.write(header+'\n');
+  capture.write(JSON.stringify({tool_result:header+'; review passes: 999'})+'\n');
+  capture.write(JSON.stringify({tool_result:'x'.repeat(2*1024*1024)+' | engine: quoted'})+'\n');
+  capture.write('bundle: 42 bytes; review passes: 1\nautoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n');
+  const result=capture.finish(),route={model:'policy-model',effort:'high'};
+  assert.equal(result.retentionError,null);
+  assert.equal((result.output.match(/review passes:/g)||[]).length,1);
+  assert.doesNotThrow(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...result},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route));
+});
+
+test("dataset archive recovers a missing digest only for identical source bytes", async () => {
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const { archiveReviewDataset } = await import('./gate.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-dataset-recovery-'));
+  try {
+    const source = path.join(root, 'MONO-998-review-scope.md');
+    const archive = path.join(root, 'datasets', 'MONO-998-review-scope.v1.md');
+    fs.mkdirSync(path.dirname(archive)); fs.writeFileSync(source, 'complete dataset'); fs.writeFileSync(archive, 'complete dataset');
+    const result = await archiveReviewDataset(source, root);
+    assert.equal(result.version, 1); assert.equal(fs.readFileSync(archive + '.sha256', 'utf8').trim(), result.digest);
+    assert.equal(fs.readFileSync(archive, 'utf8'), 'complete dataset');
+    fs.unlinkSync(archive + '.sha256'); fs.writeFileSync(source, 'different dataset');
+    await assert.rejects(archiveReviewDataset(source, root), /orphan|digest/);
+    assert.equal(fs.existsSync(archive + '.sha256'), false);
+    assert.equal(fs.readFileSync(archive, 'utf8'), 'complete dataset');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

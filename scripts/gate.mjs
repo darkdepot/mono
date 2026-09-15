@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants } from "./runtime.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -97,12 +97,8 @@ export function validatePreflight(receipt, head, base, route) {
   requireThat(receipt.verification?.exitCode === 0, "local verification failed or missing");
   requireThat(receipt.review?.exitCode === 0, "autoreview failed or incomplete");
   const output = receipt.review.output ?? "";
-  requireThat(output.includes("autoreview target: branch") && output.includes("engine: claude") &&
-    output.includes(`model: ${route.model}`) && output.includes(`thinking: ${route.effort}`), "autoreview output route/scope incomplete");
-  requireThat(output.split("\n").some(line => line === "autoreview clean: no accepted/actionable findings reported" ||
-    line === "autoreview filtered: no findings at the requested priority; not a correctness certificate" ||
-    line === "autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority"), "autoreview clean result missing");
-  requireThat(/^overall: patch is correct \(/m.test(output), "autoreview correctness result missing");
+  validateReviewLines(output, route);
+  requireThat(!receipt.review.retentionError, "autoreview output retention failed");
   requireThat(receipt.loop?.iterations > 0 && receipt.loop.disposition === "clean" && Array.isArray(receipt.loop.residualFindings) && receipt.loop.residualFindings.length === 0, "autoreview loop incomplete or residual findings remain");
   if (receipt.review.json) {
     const report = receipt.review.json;
@@ -113,11 +109,102 @@ export function validatePreflight(receipt, head, base, route) {
   return "local verification and tool autoreview verified on head";
 }
 
-function runCaptured(command, args, cwd, env = process.env) {
-  const result = spawnSync(command, args, { cwd, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  return { command, args, exitCode: result.status, output: (result.stdout ?? "") + (result.stderr ?? ""), error: result.error?.message ?? null };
+const verdictLines = new Set([
+  "autoreview clean: no accepted/actionable findings reported",
+  "autoreview filtered: no findings at the requested priority; not a correctness certificate",
+  "autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority",
+]);
+function validateReviewLines(output, route) {
+  const lines = output.split("\n");
+  const fields = lines.filter(line => /^(?:autoreview target|engine|model|thinking):/.test(line)).flatMap(line => line.split(" | "));
+  for (const [key, expected] of Object.entries({ "autoreview target": "branch", engine: "claude", model: route.model, thinking: route.effort })) {
+    const values = fields.filter(line => line.startsWith(`${key}:`));
+    requireThat(values.length === 1 && values[0] === `${key}: ${expected}`, "autoreview output route/scope incomplete or ambiguous");
+  }
+  requireThat(lines.filter(line => /^autoreview (?:clean|filtered|scoped-clean|findings|incorrect|incomplete):/.test(line)).length === 1 &&
+    lines.some(line => verdictLines.has(line)), "autoreview clean result missing or ambiguous");
+  const overall = lines.filter(line => line.startsWith("overall:"));
+  requireThat(overall.length === 1 && /^overall: patch is correct \(/.test(overall[0]), "autoreview correctness result missing or ambiguous");
 }
-export function runSandboxed(command, args, repo, evidenceRoot, { env = process.env, reviewArtifacts = false } = {}) {
+export function validReviewInvocation(actual, fixed) {
+  return canonical(actual) === canonical(fixed) || canonical(actual) === canonical([...fixed, "--stream-engine-output"]);
+}
+
+// Keep semantic lines separately from diagnostics; a saturated semantic budget
+// refuses the result instead of silently dropping evidence used by validation.
+export function captureOutput({ tailBytes = 8192, retainedBytes = 1024 * 1024 } = {}) {
+  let pending = "", tail = "", kept = "", retentionError = null, discarding = false;
+  const requiredPrefix = /^(autoreview target:|engine:|model:|thinking:|overall:|autoreview (?:clean|filtered|scoped-clean|findings|incorrect|incomplete):|(?:claude|codex) usage:|mono-boundary-denied:)/;
+  const requiredLine = line => requiredPrefix.test(line);
+  const consume = line => {
+    if (requiredLine(line) || /^(?:bundle: [0-9]+ bytes; )?review passes: [0-9]+$/.test(line)) {
+      if (Buffer.byteLength(kept) + Buffer.byteLength(line) + 1 > retainedBytes) retentionError = "semantic output retention limit exceeded";
+      else kept += line + "\n";
+    } else tail = (tail + line + "\n").slice(-tailBytes);
+  };
+  return {
+    write(chunk) {
+      for (const segment of String(chunk).split(/(?<=\n)/)) {
+        if (!discarding) pending += segment;
+        else tail = (tail + segment).slice(-tailBytes);
+        if (Buffer.byteLength(pending) > retainedBytes) {
+          if (requiredLine(pending)) retentionError = "output line retention limit exceeded";
+          else tail = (tail + pending).slice(-tailBytes);
+          pending = ""; discarding = true;
+        }
+        if (segment.endsWith("\n")) {
+          if (!discarding) consume(pending.replace(/\r?\n$/, ""));
+          pending = ""; discarding = false;
+        }
+      }
+    },
+    finish() {
+      if (pending) consume(pending);
+      pending = "";
+      return { output: kept, diagnosticTail: tail, retentionError };
+    },
+  };
+}
+export function parseReviewUsage(output, engine) {
+  const lines = output.split("\n").filter(line => /^(claude|codex) usage:/.test(line));
+  const missing = reason => ({ usage: null, usageReason: reason });
+  if (!lines.length) return missing("helper output does not report token usage");
+  const fields = engine === "claude" ? ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"] : ["input_tokens", "cached_input_tokens", "output_tokens"];
+  if (!["claude", "codex"].includes(engine)) return missing("unsupported usage engine");
+  const samples = [];
+  for (const line of lines) {
+    if (!line.startsWith(`${engine} usage: `)) return missing("ambiguous usage engine");
+    const raw = {};
+    for (const token of line.slice(`${engine} usage: `.length).split(/\s+/)) {
+      const match = /^([a-z_]+)=([0-9]+(?:\.[0-9]+)?)$/.exec(token);
+      if (!match || Object.hasOwn(raw, match[1])) return missing("invalid or ambiguous usage counters");
+      raw[match[1]] = Number(match[2]);
+    }
+    if (fields.some(key => !Number.isSafeInteger(raw[key]) || raw[key] < 0) || (engine === "codex" && raw.cached_input_tokens > raw.input_tokens)) return missing("missing or invalid usage counters");
+    samples.push(raw);
+  }
+  const sum = key => samples.reduce((total, raw) => total + raw[key], 0);
+  const normalized = { input: sum("input_tokens"), cacheRead: sum(fields[1]), cacheWrite: engine === "claude" ? sum(fields[2]) : null, output: sum("output_tokens") };
+  if (Object.values(normalized).some(value => value !== null && !Number.isSafeInteger(value))) return missing("usage counter overflow");
+  return { usage: { engine, raw: samples.length === 1 ? samples[0] : { samples }, normalized }, usageReason: null };
+}
+export async function runCaptured(command, args, cwd, env = process.env) {
+  return new Promise(resolve => {
+    const out = captureOutput(), err = captureOutput();
+    const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    let error = null;
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    child.stdout.on("data", chunk => out.write(chunk)); child.stderr.on("data", chunk => err.write(chunk));
+    child.on("error", cause => { error = cause.message; });
+    child.on("close", exitCode => {
+      const stdout = out.finish(), stderr = err.finish();
+      resolve({ command, args, exitCode, output: stdout.output + stderr.output,
+        diagnosticTail: (stdout.diagnosticTail + stderr.diagnosticTail).slice(-8192),
+        retentionError: stdout.retentionError ?? stderr.retentionError, error });
+    });
+  });
+}
+export async function runSandboxed(command, args, repo, evidenceRoot, { env = process.env, reviewArtifacts = false } = {}) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-sandbox-temp-"));
   try {
   const roots = [...new Set([repo, tempRoot].map(resolvedLocation))];
@@ -139,8 +226,8 @@ if(r.error)console.error(r.error.message);process.exit(r.status===null?1:r.statu
   const profile = `permissions.mono-collector={filesystem={${filesystem}},network={enabled=true}}`;
   const sandboxArgs = ["sandbox", "-C", repo, "-P", "mono-collector", "-c", profile,
     "--", process.execPath, "-e", launcher, JSON.stringify({ probe, probeMarker, command, args })];
-  const result = runCaptured("codex", sandboxArgs, repo, { ...env, TMPDIR: tempRoot, TMP: tempRoot, TEMP: tempRoot });
-  return { ...result, command, args,
+  const result = await runCaptured("codex", sandboxArgs, repo, { ...env, TMPDIR: tempRoot, TMP: tempRoot, TEMP: tempRoot });
+  return { ...result, command, args, output: result.output + (reviewArtifacts ? "" : "\n" + result.diagnosticTail),
     ...(reviewArtifacts ? { json: fs.existsSync(jsonFile) ? readJson(jsonFile) : null,
       status: fs.existsSync(statusFile) ? readJson(statusFile) : null } : {}),
     sandbox: { command: "codex", args: sandboxArgs, mode: "workspace-write", tempRoot,
@@ -177,11 +264,56 @@ function reviewDatasetBinding(request, evidenceRoot) {
   const digest = fileDigest(file);
   return { reviewDataset: { source: file, digest, copy: `.orchestrator/review-dataset-${digest.slice(0, 8)}.md` } };
 }
+function publishImmutable(file, data) {
+  const staging = fs.mkdtempSync(path.join(path.dirname(file), ".dataset-stage-"));
+  const staged = path.join(staging, "content");
+  try {
+    const fd = fs.openSync(staged, "wx", 0o600);
+    try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    // Linking a completed file publishes it without replacing an existing version.
+    fs.linkSync(staged, file);
+  } finally { fs.rmSync(staging, { recursive: true, force: true }); }
+}
+export async function archiveReviewDataset(source, evidenceRoot) {
+  regularEvidence(source);
+  const name = path.basename(source);
+  const match = /^(.+?)(?:\.v([1-9][0-9]*))?\.md$/.exec(name);
+  requireThat(match && /^[A-Za-z0-9_-]+$/.test(match[1]), "invalid dataset archive name");
+  const directory = path.join(fs.realpathSync(evidenceRoot), "datasets");
+  fs.mkdirSync(directory, { recursive: true });
+  requireThat(fs.realpathSync(directory) === directory, "dataset archive directory must not be a symlink");
+  return withLock(path.join(directory, `${match[1]}.archive.lock`), () => {
+    const bytes = fs.readFileSync(source), hash = crypto.createHash("sha256").update(bytes).digest("hex");
+    let highest = 0, existing = null;
+    for (const file of fs.readdirSync(directory).sort()) {
+      if (!file.startsWith(`${match[1]}.v`) || !file.endsWith(".md")) continue;
+      const version = Number(file.slice(match[1].length + 2, -3));
+      if (!Number.isSafeInteger(version) || version < 1) continue;
+      const archive = path.join(directory, file); regularEvidence(archive);
+      const digest = fileDigest(archive);
+      if (!fs.existsSync(archive + ".sha256")) {
+        requireThat(digest === hash, "orphan dataset archive differs from source; digest recovery refused");
+        publishImmutable(archive + ".sha256", digest + "\n");
+      }
+      regularEvidence(archive + ".sha256");
+      requireThat(fs.readFileSync(archive + ".sha256", "utf8").trim() === digest, "immutable dataset archive digest mismatch");
+      highest = Math.max(highest, version);
+      if (digest === hash && (!match[2] || version === Number(match[2]))) existing = { version, digest, archive };
+      if (match[2] && version === Number(match[2])) requireThat(digest === hash, "immutable dataset version cannot be overwritten");
+    }
+    if (existing) return existing;
+    const version = match[2] ? Number(match[2]) : highest + 1;
+    const archive = path.join(directory, `${match[1]}.v${version}.md`);
+    publishImmutable(archive, bytes);
+    publishImmutable(archive + ".sha256", hash + "\n");
+    return { version, digest: hash, archive };
+  });
+}
 export async function preflightGate(request) {
-  if (request.collect !== true) return verifyPreflight(request).reason;
+  if (request.collect !== true) return (await verifyPreflight(request)).reason;
   requireThat(/^[a-f0-9]{40}$/.test(request.head), "dispatch head required");
   const root = preflightEvidenceRoot(request);
-  return withLock(path.join(root, `${request.head}.collect.lock`), () => verifyPreflight(request).reason);
+  return withLock(path.join(root, `${request.head}.collect.lock`), async () => (await verifyPreflight(request)).reason);
 }
 function reviewBaseTip(repo, baseRef, liveTip) {
   const ref = git(repo, "rev-parse", "--symbolic-full-name", baseRef);
@@ -200,7 +332,7 @@ function reviewBaseTip(repo, baseRef, liveTip) {
   }
   return git(repo, "rev-parse", "--verify", `${liveTip ?? baseRef}^{commit}`);
 }
-function verifyPreflight(request, live = null) {
+async function verifyPreflight(request, live = null) {
   if (live) {
     requireThat(request.head === live.head, "preflight request does not match live PR head");
     requireThat(/^[a-f0-9]{40}$/.test(live.baseRefOid ?? ""), "live PR base unavailable");
@@ -234,7 +366,17 @@ function verifyPreflight(request, live = null) {
     const envelope = readJson(receiptFile);
     requireThat(envelope.signature === sign(evidenceKey(evidenceRoot, false), envelope.receipt), "hand-made or modified autoreview artifact");
     receipt = envelope.receipt;
-    for (const [key, value] of Object.entries(binding)) requireThat(canonical(receipt[key]) === canonical(value), `receipt ${key} differs from dispatch request`);
+    for (const [key, value] of Object.entries(binding)) {
+      const actual = key === "reviewDataset" && receipt[key] ? { source: receipt[key].source, digest: receipt[key].digest, copy: receipt[key].copy } : receipt[key];
+      requireThat(canonical(actual) === canonical(value), `receipt ${key} differs from dispatch request`);
+    }
+    if (receipt.reviewDataset?.version) {
+      const archived = receipt.reviewDataset;
+      requireThat(Number.isSafeInteger(archived.version) && archived.version > 0 && typeof archived.archive === "string" &&
+        path.basename(archived.archive).endsWith(`.v${archived.version}.md`) && fs.realpathSync(archived.archive).startsWith(fs.realpathSync(evidenceRoot) + path.sep), "dataset archive outside evidence root or invalid version");
+      regularEvidence(archived.archive); regularEvidence(archived.archive + ".sha256");
+      requireThat(fileDigest(archived.archive) === archived.digest && fs.readFileSync(archived.archive + ".sha256", "utf8").trim() === archived.digest, "dataset archive digest mismatch");
+    }
     requireThat(canonical({ command: receipt.verification?.command, args: receipt.verification?.args }) === canonical(request.verification), "receipt verification differs from dispatch request");
   }
   const route = reviewRoute(request.skillsRoot, request.risk, request.critical);
@@ -251,7 +393,9 @@ function verifyPreflight(request, live = null) {
       "head or base changed during verification");
   };
   if (request.collect === true) {
-    const verification = runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot);
+    const archive = dataset.reviewDataset ? await archiveReviewDataset(dataset.reviewDataset.source, evidenceRoot) : null;
+    if (archive) requireThat(archive.digest === dataset.reviewDataset.digest, "review dataset changed before archive");
+    const verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot);
     let review = { exitCode: null, output: "", json: null, status: null };
     const consistency = { passed: true, error: null };
     const checkConsistency = () => {
@@ -271,7 +415,7 @@ function verifyPreflight(request, live = null) {
           fs.copyFileSync(dataset.reviewDataset.source, copy);
         }
         checkCopy();
-        review = runSandboxed(helper, invocation, repo, evidenceRoot, { env, reviewArtifacts: true });
+        review = await runSandboxed(helper, [...invocation, "--stream-engine-output"], repo, evidenceRoot, { env, reviewArtifacts: true });
         checkCopy();
       } catch (error) {
         consistency.passed = false; consistency.error ??= error.message;
@@ -281,15 +425,17 @@ function verifyPreflight(request, live = null) {
     }
     requireThat(digest(fs.readFileSync(helper, "utf8")) === helperDigest, "autoreview helper changed during collection");
     checkConsistency();
-    receipt = { producer: "gate-autoreview-v2", ...binding, runId: crypto.randomUUID(), head, base, route, helper, helperDigest, invocation,
+    Object.assign(review, parseReviewUsage(review.output, "claude"));
+    receipt = { producer: "gate-autoreview-v2", ...binding, runId: crypto.randomUUID(), head, base, route, helper, helperDigest, invocation: [...invocation, "--stream-engine-output"],
       verification, review, consistency, loop: { iterations: review.exitCode === null ? 0 : 1, disposition: review.exitCode === 0 && consistency.passed ? "clean" : "failed", residualFindings: review.json?.findings ?? ["missing structured report"] } };
+    if (archive) receipt.reviewDataset = { ...receipt.reviewDataset, ...archive };
     if (fs.existsSync(path.join(evidenceRoot, "receipt.key"))) regularEvidence(path.join(evidenceRoot, "receipt.key"));
     const key = evidenceKey(evidenceRoot, true);
     atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt, signature: sign(key, receipt) });
     atomicJson(receiptFile, { receipt, signature: sign(key, receipt) });
   }
   requireThat(receipt.producer === "gate-autoreview-v2" && receipt.helper === helper && receipt.helperDigest === helperDigest &&
-    canonical(receipt.invocation) === canonical(invocation), "autoreview artifact provenance/command mismatch");
+    validReviewInvocation(receipt.invocation, invocation), "autoreview artifact provenance/command mismatch");
   requireThat(receipt.consistency?.passed === true && receipt.consistency.error === null, "collection consistency failed or missing");
   requireThat(receipt.verification.exitCode === 0, "local verification failed or missing");
   requireThat(receipt.verification.sandbox?.mode === "workspace-write" && receipt.verification.sandbox.probed === true, "verification sandbox proof missing");
@@ -471,7 +617,7 @@ export async function shipGate(request) {
     try {
       const snapshot = readShipSnapshot(request.repo, request.number, deadline);
       requireThat(request.preflight?.collect === false, "ship requires preflight collect:false request");
-      const proof = verifyPreflight(request.preflight, snapshot);
+      const proof = await verifyPreflight(request.preflight, snapshot);
       const judgment = readJson(request.judgmentFile);
       const now = Date.now(); const state = { ...advanceEvidence(previous, { ...snapshot, preflightReceipt: proof.receipt, judgment, policy: request.policy ?? {} }, now), scope, preflightReceipt: proof.receipt, rules: snapshot.rules };
       atomicJson(request.stateFile, state); previous = state;
