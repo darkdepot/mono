@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig } from "./runtime.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const safeGitArgs = ["--no-pager", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat", "-c", "advice.graftFileDeprecated=false"];
@@ -78,22 +78,60 @@ export function startGate(request) {
   return "pack identity, branch base and clean tree verified";
 }
 
-export function reviewRoute(skillsRoot, risk, critical) {
-  const dir = path.join(skillsRoot, "mono-preflight/references");
-  const policy = fs.readFileSync(path.join(dir, "model-policy.md"), "utf8");
-  const model = policy.split("\n").find(line => /^\| `autoreview` \|/.test(line))?.match(/^\| `autoreview` \| `([^`]+)`/u)?.[1];
-  const routing = fs.readFileSync(path.join(dir, "autoreview-routing.md"), "utf8");
-  const line = routing.split("\n").find(line => critical
-    ? line.startsWith("| `risky` with critical escalation |")
-    : line.startsWith(`| \`${risk}\` |`));
-  const effort = line?.match(/\| `(low|medium|high|xhigh)` \|/)?.[1];
-  requireThat(model && effort && (!critical || risk === "risky"), "unresolved final risk route");
-  return { model, effort };
+export function reviewRoute(skillsRoot, risk, critical, config = {}) {
+  const resolved = resolveRole('autoreview', config, { skillsRoot });
+  const effort = resolved.effortByRisk[critical ? 'riskyCritical' : risk];
+  requireThat(effort && (!critical || risk === 'risky'), 'unresolved final risk route');
+  const { effortByRisk, ...route } = resolved;
+  return { ...route, effort };
+}
+export function normalizeReceiptRoute(route) {
+  return route && route.engine === undefined ? { ...route, engine: 'claude', provider: 'unknown' } : route;
+}
+export function pinnedReviewRoute(request, base) {
+  const pins = request.modelRoutes;
+  const config = baseModelConfig(request.worktree, pins?.base ?? base);
+  if (pins) {
+    requireThat(git(request.worktree, 'merge-base', base, pins.base) === pins.base, 'model route base is not an ancestor of the review base');
+    requireThat(pins.configDigest === digest(config) && pins.roles?.autoreview, 'model route config fingerprint mismatch');
+    for (const [role, route] of Object.entries(pins.roles)) requireThat(canonical(route) === canonical(resolveRole(role, config, { skillsRoot: request.skillsRoot })), `model route fingerprint mismatch: ${role}`);
+  } else requireThat(config.models === undefined, 'modelRoutes launch pins required for product model overrides');
+  return reviewRoute(request.skillsRoot, request.risk, request.critical, config);
+}
+export function reviewEnvironment(route, source = process.env) {
+  const providerVariable = /^(?:ANTHROPIC_|CLAUDE_CODE_|OPENAI_|CODEX_API_|KIMI_|PI_|AWS_|AZURE_|GOOGLE_|GEMINI_|CLOUD_ML_|AUTOREVIEW_.*FALLBACK)|(?:API_KEY|ACCESS_KEY|SECRET_ACCESS_KEY|AUTH_TOKEN|ACCESS_TOKEN|API_TOKEN|TOKEN|PAT|BASE_URL|ENDPOINT|CREDENTIALS)$/;
+  const env = Object.fromEntries(Object.entries(source).filter(([key]) => !providerVariable.test(key) && key !== route.credentialEnv));
+  const { engine, provider, credentialEnv } = route;
+  if (credentialEnv) {
+    requireThat(typeof source[credentialEnv] === 'string' && source[credentialEnv].length > 0, `missing route credential variable ${credentialEnv}`);
+    let target = 'OPENAI_API_KEY';
+    if (engine === 'claude') target = credentialEnv === 'ANTHROPIC_API_KEY' ? 'ANTHROPIC_API_KEY' : 'ANTHROPIC_AUTH_TOKEN';
+    if (engine === 'kimi') target = 'KIMI_API_KEY';
+    if (engine === 'pi') target = { openai: 'OPENAI_API_KEY', xai: 'XAI_API_KEY', google: 'GEMINI_API_KEY', minimax: 'MINIMAX_API_KEY' }[provider.id];
+    requireThat(target, 'unsupported provider credential mapping'); env[target] = source[credentialEnv];
+  }
+  if (provider.endpoint) env[engine === 'claude' ? 'ANTHROPIC_BASE_URL' : engine === 'kimi' ? 'KIMI_BASE_URL' : 'OPENAI_BASE_URL'] = provider.endpoint;
+  return env;
+}
+export function reviewInvocation(route, base) {
+  return ['--mode', 'branch', '--base', base, '--engine', route.engine ?? 'claude', '--model', route.model, '--thinking', route.effort, '--max-priority', 'P2'];
+}
+export function redactReviewCredentials(value, route, source = process.env) {
+  const secret = route.credentialEnv ? source[route.credentialEnv] : null;
+  if (typeof secret !== 'string' || !secret.length) return value;
+  const forms = [secret, Buffer.from(secret).toString('base64')];
+  const redact = entry => {
+    if (typeof entry === 'string') return forms.reduce((text, form) => text.split(form).join('[REDACTED]'), entry);
+    if (Array.isArray(entry)) return entry.map(redact);
+    if (entry && typeof entry === 'object') return Object.fromEntries(Object.entries(entry).map(([key, item]) => [key, redact(item)]));
+    return entry;
+  };
+  return redact(value);
 }
 
 export function validatePreflight(receipt, head, base, route) {
   requireThat(receipt?.head === head && receipt.base === base, "missing or stale autoreview artifact/head/base");
-  requireThat(canonical(receipt.route) === canonical(route), "autoreview artifact has wrong policy route");
+  requireThat(canonical(normalizeReceiptRoute(receipt.route)) === canonical(normalizeReceiptRoute(route)), "autoreview artifact has wrong policy route");
   requireThat(receipt.verification?.exitCode === 0, "local verification failed or missing");
   requireThat(receipt.review?.exitCode === 0, "autoreview failed or incomplete");
   const output = receipt.review.output ?? "";
@@ -117,7 +155,7 @@ const verdictLines = new Set([
 function validateReviewLines(output, route) {
   const lines = output.split("\n");
   const fields = lines.filter(line => /^(?:autoreview target|engine|model|thinking):/.test(line)).flatMap(line => line.split(" | "));
-  for (const [key, expected] of Object.entries({ "autoreview target": "branch", engine: "claude", model: route.model, thinking: route.effort })) {
+  for (const [key, expected] of Object.entries({ "autoreview target": "branch", engine: route.engine ?? "claude", model: route.model, thinking: route.effort })) {
     const values = fields.filter(line => line.startsWith(`${key}:`));
     requireThat(values.length === 1 && values[0] === `${key}: ${expected}`, "autoreview output route/scope incomplete or ambiguous");
   }
@@ -357,7 +395,7 @@ async function verifyPreflight(request, live = null) {
   const base = git(repo, "merge-base", head, baseTip);
   const receiptFile = path.join(evidenceRoot, `${head}.json`);
   const dataset = reviewDatasetBinding(request, evidenceRoot);
-  const binding = { ...dataset, product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
+  const binding = { ...dataset, ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
   let receipt;
@@ -367,6 +405,8 @@ async function verifyPreflight(request, live = null) {
     requireThat(envelope.signature === sign(evidenceKey(evidenceRoot, false), envelope.receipt), "hand-made or modified autoreview artifact");
     receipt = envelope.receipt;
     for (const [key, value] of Object.entries(binding)) {
+      // Legacy receipts predate pins; below, validate them and require both bases to be override-free.
+      if (key === "modelRoutes" && receipt.route && receipt.route.engine === undefined && receipt.modelRoutes === undefined) continue;
       const actual = key === "reviewDataset" && receipt[key] ? { source: receipt[key].source, digest: receipt[key].digest, copy: receipt[key].copy } : receipt[key];
       requireThat(canonical(actual) === canonical(value), `receipt ${key} differs from dispatch request`);
     }
@@ -379,12 +419,17 @@ async function verifyPreflight(request, live = null) {
     }
     requireThat(canonical({ command: receipt.verification?.command, args: receipt.verification?.args }) === canonical(request.verification), "receipt verification differs from dispatch request");
   }
-  const route = reviewRoute(request.skillsRoot, request.risk, request.critical);
+  let route = pinnedReviewRoute(request, base);
+  if (receipt?.route && receipt.route.engine === undefined) {
+    requireThat(baseModelConfig(repo, base).models === undefined &&
+      (!request.modelRoutes || baseModelConfig(repo, request.modelRoutes.base).models === undefined), 'legacy receipt cannot certify model override pins');
+    route = { model: route.model, effort: route.effort };
+  }
   const helper = fs.realpathSync(path.join(request.skillsRoot, "autoreview/scripts/autoreview"));
   validateEvidenceGrants(request.skillsRoot, [repo], "installed skillsRoot");
   validateEvidenceGrants(helper, [repo], "autoreview helper real path");
   const helperDigest = digest(fs.readFileSync(helper, "utf8"));
-  const invocation = ["--mode", "branch", "--base", base, "--engine", "claude", "--model", route.model, "--thinking", route.effort, "--max-priority", "P2"];
+  const invocation = reviewInvocation(route, base);
   if (dataset.reviewDataset) invocation.push("--dataset", dataset.reviewDataset.copy);
   const unchanged = () => {
     requireThat(canonical(reviewDatasetBinding(request, evidenceRoot)) === canonical(dataset), "review dataset changed during collection/verification");
@@ -403,8 +448,7 @@ async function verifyPreflight(request, live = null) {
     };
     checkConsistency();
     if (verification.exitCode === 0 && consistency.passed) {
-      const env = safeGitEnv();
-      for (const key of ["AUTOREVIEW_FALLBACK_MODEL", "AUTOREVIEW_CLAUDE_FALLBACK_MODEL"]) delete env[key];
+      const env = reviewEnvironment(route, safeGitEnv());
       const copy = dataset.reviewDataset ? path.join(repo, dataset.reviewDataset.copy) : null;
       const checkCopy = () => {
         if (copy) requireThat(fileDigest(copy) === dataset.reviewDataset.digest, "review dataset copy digest differs from source");
@@ -415,7 +459,7 @@ async function verifyPreflight(request, live = null) {
           fs.copyFileSync(dataset.reviewDataset.source, copy);
         }
         checkCopy();
-        review = await runSandboxed(helper, [...invocation, "--stream-engine-output"], repo, evidenceRoot, { env, reviewArtifacts: true });
+        review = redactReviewCredentials(await runSandboxed(helper, [...invocation, "--stream-engine-output"], repo, evidenceRoot, { env, reviewArtifacts: true }), route);
         checkCopy();
       } catch (error) {
         consistency.passed = false; consistency.error ??= error.message;
@@ -425,7 +469,7 @@ async function verifyPreflight(request, live = null) {
     }
     requireThat(digest(fs.readFileSync(helper, "utf8")) === helperDigest, "autoreview helper changed during collection");
     checkConsistency();
-    Object.assign(review, parseReviewUsage(review.output, "claude"));
+    Object.assign(review, parseReviewUsage(review.output, route.engine ?? "claude"));
     receipt = { producer: "gate-autoreview-v2", ...binding, runId: crypto.randomUUID(), head, base, route, helper, helperDigest, invocation: [...invocation, "--stream-engine-output"],
       verification, review, consistency, loop: { iterations: review.exitCode === null ? 0 : 1, disposition: review.exitCode === 0 && consistency.passed ? "clean" : "failed", residualFindings: review.json?.findings ?? ["missing structured report"] } };
     if (archive) receipt.reviewDataset = { ...receipt.reviewDataset, ...archive };
@@ -442,7 +486,7 @@ async function verifyPreflight(request, live = null) {
   requireThat(receipt.review.sandbox?.mode === "workspace-write" && receipt.review.sandbox.probed === true, "autoreview sandbox proof missing");
   requireThat(receipt.review.exitCode === 0, "autoreview failed or incomplete");
   requireThat(receipt.review.json && receipt.review.status?.schema_version === 1 && receipt.review.status.exit_code === 0 &&
-    receipt.review.status.engine === "claude" && ["clean", "scoped-clean", "filtered"].includes(receipt.review.status.status) &&
+    receipt.review.status.engine === (route.engine ?? "claude") && ["clean", "scoped-clean", "filtered"].includes(receipt.review.status.status) &&
     receipt.review.status.report_produced === true && receipt.review.status.timed_out === false, "incomplete or non-clean helper output/status artifact");
   unchanged();
   const reason = validatePreflight(receipt, head, base, route);
@@ -639,7 +683,8 @@ if (isMain(import.meta.url)) {
     const args = flags(rest);
     if (name === "--help" || args.help) console.log(`Usage: gate.mjs start|preflight|ship --request <json>
 start request: {worktree, branch, base, lock, packVersion, sourceCommit, surfaceRevision}
-preflight request: {product,collectionId,root,worktree,head,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,collect,verification:{command,args}}
+preflight request: {product,collectionId,root,worktree,head,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,modelRoutes?,collect,verification:{command,args}}
+  modelRoutes pins immutable base/configDigest/roles from resolveModelRoutes; overrides require pins.
   risk is the final approved/diff risk; critical is a concrete escalation reason or null.
   Pin every request field from dispatch. Orchestrator only: collect:true, outside worker sandboxes.
   Worker only: collect:false, reads <evidenceRoot>/<head>.json without creating files.

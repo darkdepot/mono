@@ -6502,7 +6502,7 @@ function checkModelPolicy(base) {
   let roles;
   try { roles = policyRoles(body(MODEL_POLICY_PATH)); }
   catch (error) { return [`${MODEL_POLICY_PATH}: ${error.message}`]; }
-  for (const section of ["Reviewer and producer", "Audience profile", "Application boundary", "Orchestrator self-check", "Launch evidence"]) {
+  for (const section of ["Reviewer and producer", "Product overrides", "Audience profile", "Application boundary", "Orchestrator self-check", "Launch evidence"]) {
     if (!modelSection(body(MODEL_POLICY_PATH), section).trim()) errors.push(`${MODEL_POLICY_PATH}: missing policy section ${section}`);
   }
   function binding(file, section, expected) {
@@ -6594,7 +6594,7 @@ function checkModelPolicy(base) {
         [...REVIEW_ROUTES].some(([key, effort]) => routes.get(key) !== effort) ||
         [...routes.keys()].some((key) => !REVIEW_ROUTES.has(key))) errors.push(`${routingFile}: route set must be exactly four classes, five unique routes and unchanged class efforts`);
     for (const command of [...modelSection(routing, "Invocation").matchAll(/^<autoreview-helper>.*$/gm)].map((match) => match[0])) {
-      if (!command.includes("--engine claude --model <autoreview-model> --thinking ")) errors.push(`${routingFile}: invocation must use explicit role model and route effort`);
+      if (!command.includes("--engine <autoreview-engine> --model <autoreview-model> --thinking ")) errors.push(`${routingFile}: invocation must use explicit role model and route effort`);
     }
     if (!modelSection(routing, "Invocation").includes("--thinking <effort>")) errors.push(`${routingFile}: missing generic invocation`);
   } catch (error) { errors.push(`${routingFile}: ${error.message}`); }
@@ -6629,6 +6629,8 @@ function validateModelPolicyFixtures() {
       fs.cpSync(path.join(root, name), path.join(scratch, name), { recursive: true });
     }
     const script = path.join(scratch, "scripts/validate-workflow.mjs");
+    fs.mkdirSync(path.join(scratch, '.agents'), { recursive: true });
+    fs.copyFileSync(path.join(root, '.agents/mono-workflow.config.json'), path.join(scratch, '.agents/mono-workflow.config.json'));
     const check = () => runNode([script, "--model-policy-only"], { cwd: scratch });
     const file = (name) => path.join(scratch, name);
     const originalPolicy = fs.readFileSync(file(MODEL_POLICY_PATH), "utf8");
@@ -6708,6 +6710,9 @@ function validateModelPolicyFixtures() {
     change("README.md", (text) => text + `\n${[...MODEL_ENUM_ALLOWLIST].join(" ")}\n`);
     check(); restore(); check();
     console.log("PASS model-policy enum allowlist");
+    runNode(["--test", "scripts/project-config.test.mjs", "scripts/gate.test.mjs"], { cwd: scratch });
+    runNode(["--test", "--test-name-pattern=launch pins resolve BASE", "scripts/delivery-runtime.test.mjs"], { cwd: scratch });
+    console.log("PASS model role consumers: config, gate and immutable BASE launch pins");
     // Worker launch policy is exercised by the installed spawn/resume fixture in delivery-runtime.test.mjs; no shell-template prose pin.
     negative("AE4 route outside canonical section", () => change("references/autoreview-routing.md", (text) => {
       const tiny = text.split("\n").find((line) => rowKey(line) === "tiny");
@@ -6734,7 +6739,7 @@ function validateModelPolicyFixtures() {
     const reviewTemplate = modelCommand(modelSection(routing, "Invocation").split("Examples:")[0], "<autoreview-helper>");
     const route = modelTable(modelSection(routing, "Canonical Routes"), ["risk class", "role", "reasoning effort", "intended use"]).find((row) => row[0] === "`risky`");
     const reviewCommand = reviewTemplate.replaceAll("<autoreview-model>", changedRoles.get("autoreview").model)
-      .replaceAll("<effort>", route[2].replaceAll("`", ""));
+      .replaceAll("<autoreview-engine>", "claude").replaceAll("<effort>", route[2].replaceAll("`", ""));
     if (!voiceCommand.includes(`model="${nextVoiceModel}"`) || !voiceCommand.includes(`model_reasoning_effort="${nextEffort}"`) ||
         !reviewCommand.includes(`--model ${nextReviewModel} --thinking ${REVIEW_ROUTES.get("risky")}`)) fail("AE5 commands must consume changed model and effort cells");
     console.log(`PASS model-policy AE5 Second Voice: ${voiceCommand}`);

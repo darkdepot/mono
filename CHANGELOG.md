@@ -6,6 +6,12 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- Add per-product model role overrides with engine/transport and effort validation,
+  bound producer/reviewer decisions, and immutable BASE route fingerprints through
+  dispatch, collection, receipts and launches. Isolate invocation provider variables,
+  preserve legacy receipt checks, and update policy references by displacement.
+
+
 ### Changed
 
 - MONO-81: add an installed reviewer comparison bench and default candidate routes. Freeze archived code/base, dataset and helper inputs; exclude irreproducible cases and unadmitted routes; run the common tools-off protocol and a separate production baseline; retain anonymous grading, gold scoring, failures, usage coverage and feasibility reports. Add scratch fixtures and the sampling protocol. Permit model literals only in the explicitly marked experimental routes file, with negative fixtures preserving production-consumer restrictions. Reviewer policy, delivery gates and the worker corpus remain unchanged.

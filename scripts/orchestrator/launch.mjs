@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
-import { atomicJson, readJson, identity, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest } from "../runtime.mjs";
-import { startGate } from "../gate.mjs";
+import { atomicJson, readJson, identity, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig } from "../runtime.mjs";
+import { startGate, reviewEnvironment } from "../gate.mjs";
 
 export function guard(root, resume = false) {
   const control = readJson(path.join(root, "control.json"));
@@ -13,14 +13,26 @@ export function guard(root, resume = false) {
 function checkRequest(request) {
   if (!path.isAbsolute(request.root ?? "") || !/^[A-Z][A-Z0-9]*-\d+$/.test(request.issue)) throw new Error("root/issue required");
 }
-function policyRow(skillsRoot, role) {
-  if (!["worker-default", "worker-complex"].includes(role)) throw new Error("invalid Codex worker role");
-  const text = fs.readFileSync(path.join(skillsRoot, "mono-implement/references/model-policy.md"), "utf8");
-  const line = text.split("\n").find(line => line.startsWith(`| \`${role}\` |`));
-  const cells = line?.split("|").slice(1, 4).map(cell => cell.trim().replaceAll("`", ""));
-  if (!cells || cells.length !== 3) throw new Error("worker policy row unavailable");
-  return { role: cells[0], model: cells[1], effort: cells[2] };
+export function resolveWorkerPins(request) {
+  const config = baseModelConfig(request.worktree, request.base);
+  const transport = config.orchestration?.transport ?? 'codex-cli';
+  if (request.transport !== undefined && request.transport !== transport) throw new Error('request transport conflicts with immutable BASE config');
+  if (transport !== 'codex-cli' || !['worker-default', 'worker-complex'].includes(request.role)) throw new Error('unsupported worker role/transport for codex-cli launch');
+  const modelRoutes = resolveModelRoutes(request.worktree, request.base, request.role, { skillsRoot: request.lock ? path.dirname(request.lock) : undefined });
+  if (request.modelRoutes && canonical(request.modelRoutes) !== canonical(modelRoutes)) throw new Error('dispatch model route fingerprint mismatch');
+  return modelRoutes;
 }
+
+export function workerEnvironment(route, source = process.env) {
+  const env = { ...source };
+  if (route?.credentialEnv || route?.provider.endpoint) {
+    for (const key of ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY']) delete env[key];
+    const credential = route.credentialEnv ? { [route.credentialEnv]: source[route.credentialEnv] } : {};
+    Object.assign(env, reviewEnvironment(route, credential));
+  }
+  return env;
+}
+
 function appendLog(file, event) {
   const fd = fs.openSync(file, "a", 0o600);
   try { fs.writeSync(fd, JSON.stringify(event) + "\n"); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
@@ -77,7 +89,9 @@ async function launchCodex(root, entry, prompt, resume) {
   const stdout = fs.openSync(entry.log, "a"), stderr = fs.openSync(entry.log.replace(/\.jsonl$/, ".stderr.log"), "a", 0o600);
   let child;
   try {
-    child = spawn("codex", args, { cwd: entry.worktree, detached: true, stdio: ["ignore", stdout, stderr] });
+    const route = entry.modelRoutes?.roles[entry.model_policy.role];
+    child = spawn("codex", args, { cwd: entry.worktree, detached: true, stdio: ["ignore", stdout, stderr],
+      env: workerEnvironment(route) });
     await new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
   } finally { fs.closeSync(stdout); fs.closeSync(stderr); }
   child.unref();
@@ -122,7 +136,9 @@ async function waitForThread(root, entry, pid) {
   throw new Error(`spawn-fail: no thread.started within 120 seconds; inspect retained attempt and pid ${pid}`);
 }
 export async function spawnWorker(request) {
-  checkRequest(request); guard(request.root);
+  checkRequest(request);
+  const modelRoutes = resolveWorkerPins(request);
+  guard(request.root);
   const launched = await withLock(path.join(request.root, "launch.lock"), async () => {
     guard(request.root);
     const file = path.join(request.root, "workers.json"), registry = readJson(file);
@@ -135,7 +151,7 @@ export async function spawnWorker(request) {
     startGate(request);
     if (!path.isAbsolute(request.dispatchFile ?? "")) throw new Error("absolute dispatch file required");
     const prompt = fs.readFileSync(request.dispatchFile, "utf8");
-    const model_policy = policyRow(path.dirname(request.lock), request.role);
+    const model_policy = { role: request.role, ...modelRoutes.roles[request.role] };
     if (request.role === "worker-complex" && !request.modelReason?.trim()) throw new Error("complex worker selection requires a recorded reason");
     if (!Array.isArray(request.writable_roots) || request.writable_roots.some(p => !path.isAbsolute(p))) throw new Error("explicit writable roots required");
     fs.mkdirSync(path.join(request.root, "reports"), { recursive: true });
@@ -153,7 +169,7 @@ export async function spawnWorker(request) {
       thread_id: null, pid: null, worktree: request.worktree, branch: request.branch, product_name: request.product_name,
       packVersion: request.packVersion, sourceCommit: request.sourceCommit, surfaceRevision: request.surfaceRevision,
       lock: request.lock, spawned_at: new Date().toISOString(), last_activity_at: null, log,
-      model_policy, model_launch, model: model_policy.model, effort: model_policy.effort,
+      modelRoutes, model_policy, model_launch, model: model_policy.model, effort: model_policy.effort,
       writable_roots: roots, workerWritableRoots: roots, evidenceRoot: resolvedLocation(request.evidenceRoot), network_access: true, lifecycle_moves: request.lifecycle_moves,
       confirmationTimeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
       capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
@@ -161,7 +177,7 @@ export async function spawnWorker(request) {
     if (gates.length) entry.gates = gates;
     attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);
     registry[request.issue] = entry; atomicJson(file, registry);
-    appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, model_policy, model_launch,
+    appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, modelRoutes, model_policy, model_launch,
       model: entry.model, effort: entry.effort });
     return { entry, ...await launchCodex(request.root, entry, prompt, false) };
   });

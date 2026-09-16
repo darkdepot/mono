@@ -1,6 +1,7 @@
 # Autoreview Role Routing
 
-Resolve model only from [role:autoreview](model-policy.md#roles), effort from final risk below. Never rely on helper defaults or silently substitute engine/model/effort.
+Resolve [role:autoreview](model-policy.md#roles) from pinned BASE config. Select
+engine/model/provider and final-risk effort from that route, never helper defaults.
 
 ## Canonical Routes
 
@@ -12,15 +13,18 @@ Resolve model only from [role:autoreview](model-policy.md#roles), effort from fi
 | `risky` | [role:autoreview](model-policy.md#roles) | `high` | Auth/data/release/API/security. |
 | `risky` with critical escalation | [role:autoreview](model-policy.md#roles) | `xhigh` | Concrete critical signal below. |
 
-Same role for all classes; substitute resolved placeholders.
+These are defaults. Product `effortByRisk` replaces them; critical escalation
+selects `riskyCritical`. An unsupported effort fails before launch.
 
 ### Reviewer capability
 
-Require reviewer ≥ producer capability under `model-policy.md` pairing/rule; role resolution alone is no proof. No Second-Voice cross-vendor gate for code review.
+Require the bound owner-approved pairing; resolution is no capability proof.
+Code review has no Second Voice cross-vendor gate.
 
 ### Effort recalibration
 
-If live QA shows `medium` insufficient for `standard`, change this canonical table to `high`; never use ad-hoc per-run re-tiering.
+If `medium` is insufficient for `standard`, approve `high` through policy or
+product config; never re-tier silently during a run.
 
 ### Same-model review
 
@@ -28,21 +32,26 @@ When `<worker-model> = <autoreview-model>`, disclose same-model review. Retain l
 
 ## Classification
 
-1. Read the most recent approved artifact's risk (Project/review/Spec/Issue).
-2. Compare final diff; use the higher class. With no durable classification use readiness policy; ambiguity moves up, and unclassified non-tiny defaults to deep.
-3. Reclassify after review fixes change scope/owner/risk and before final durable-scope review; select the route again. Upward risk or a new/stronger critical signal stales earlier clean evidence, including risky high→xhigh.
-4. Escalate risky to xhigh only for concrete irreversible production/data mutation, complex security boundary, near-limit dispersed review scope, or release blocker after conflicting credible reviews. Record the signal; importance alone does not qualify.
+1. Read the latest approved risk (Project/review/Spec/Issue).
+2. Use the higher approved/final-diff class. Ambiguity moves up; unclassified non-tiny defaults to deep.
+3. Reclassify after scope/risk changes. Upward risk or stronger critical signals stale earlier clean evidence.
+4. Escalate risky for irreversible production/data mutation, complex security, near-limit dispersed scope or a release blocker after conflicting credible reviews. Record the signal; importance alone is insufficient.
 
 Decide model/effort technically; ask only for uninferable product/risk acceptance.
 
 ## Invocation
 
 ```bash
-<autoreview-helper> --mode <scope> <scope-args> --engine claude --model <autoreview-model> --thinking <effort>
+<autoreview-helper> --mode <scope> <scope-args> --engine <autoreview-engine> --model <autoreview-model> --thinking <effort>
 ```
 
-Pin engine/model/effort every invocation. Keep route across retries/fixes unless risk escalates. Capacity/auth/model unavailability retries the same route, then blocks. Never pass `--fallback-model` or enable `AUTOREVIEW_FALLBACK_MODEL` / `AUTOREVIEW_CLAUDE_FALLBACK_MODEL`.
+Pin engine/model/effort and route fingerprint. The gate clears ambient provider
+variables and maps only the route endpoint and named credential. Each engine
+keeps two fixed forms: with or without `--stream-engine-output`. Retries retain
+the route; risk escalation selects its stronger effort. Unavailability retries
+then blocks. No `--fallback-model`, `AUTOREVIEW_FALLBACK_MODEL` or
+`AUTOREVIEW_CLAUDE_FALLBACK_MODEL`.
 
 ## Certificate Evidence
 
-Record risk/source, critical signal/none, model/effort, explicit final --engine claude/--model/--thinking command and reclassification. Missing flags/wrong role/final-risk route invalidates ready.
+Record risk/source, critical signal/none, model/effort, explicit --engine/--model/--thinking command and fingerprint and reclassification. Missing flags/wrong role/final-risk route invalidates ready.

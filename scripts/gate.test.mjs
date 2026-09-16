@@ -272,3 +272,53 @@ test("dataset archive recovers a missing digest only for identical source bytes"
     assert.equal(fs.readFileSync(archive, 'utf8'), 'complete dataset');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('review environment is built from the route and engines retain two invocation forms', async () => {
+  const { reviewEnvironment, reviewInvocation } = await import('./gate.mjs');
+  assert.equal(typeof reviewEnvironment, 'function');
+  const secret = String(Math.random());
+  const ambient = { PATH: '/bin', HOME: '/fixture', REVIEW_CREDENTIAL: secret,
+    ANTHROPIC_AUTH_TOKEN: 'external', ANTHROPIC_BASE_URL: 'https://external.invalid',
+    ANTHROPIC_DEFAULT_OPUS_MODEL: 'external', OPENAI_API_KEY: 'external', XAI_API_KEY: 'external',
+    KIMI_BASE_URL: 'https://external.invalid', AWS_PROFILE: 'external', GOOGLE_APPLICATION_CREDENTIALS: '/external',
+    AUTOREVIEW_FALLBACK_MODEL: 'external', CLAUDE_CODE_USE_BEDROCK: '1' };
+  for (const [engine, id, target, endpointKey, effort] of [
+    ['claude', 'example', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'high'],
+    ['kimi', 'moonshot', 'KIMI_API_KEY', 'KIMI_BASE_URL', 'on'],
+    ['pi', 'openai', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'high'],
+    ['codex', 'openai', 'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'high'],
+  ]) {
+    const route = {engine,model:'example',effort,provider:{id,endpoint:'https://route.invalid/v1'},credentialEnv:'REVIEW_CREDENTIAL',fingerprint:'f'.repeat(64)};
+    const env = reviewEnvironment(route, ambient);
+    assert.equal(env[target], secret); assert.equal(env[endpointKey], route.provider.endpoint);
+    assert.equal(env.REVIEW_CREDENTIAL, undefined);
+    for (const key of Object.keys(ambient).filter(key=>!['PATH','HOME',target,endpointKey].includes(key))) assert.equal(env[key],undefined,key);
+    const invocation = reviewInvocation(route, 'base');
+    assert.equal(invocation[invocation.indexOf('--engine')+1],engine);
+    const {validReviewInvocation}=await import('./gate.mjs');
+    assert.ok(validReviewInvocation(invocation, invocation)); assert.ok(validReviewInvocation([...invocation,'--stream-engine-output'],invocation));
+    assert.equal(validReviewInvocation([...invocation,'--fallback-model','other'],invocation),false);
+    assert.throws(()=>reviewEnvironment(route,{}),/credential.*REVIEW_CREDENTIAL/i);
+  }
+});
+
+test('receipt route fingerprints bind the resolved route; legacy remains claude/unknown', async () => {
+  const { normalizeReceiptRoute } = await import('./gate.mjs');
+  assert.equal(typeof normalizeReceiptRoute,'function');
+  const legacy = {model:'policy-model',effort:'high'};
+  assert.deepEqual(normalizeReceiptRoute(legacy),{...legacy,engine:'claude',provider:'unknown'});
+  const route={...legacy,engine:'kimi',effort:'on',provider:{id:'moonshot',endpoint:null},credentialEnv:null,fingerprint:'a'.repeat(64)};
+  const receipt={head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,output:'autoreview target: branch | engine: kimi | model: policy-model | thinking: on\nautoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority\noverall: patch is correct (0.9)\n'},loop:{iterations:1,residualFindings:[],disposition:'clean'}};
+  assert.doesNotThrow(()=>validatePreflight(receipt,head,'base',route));
+  assert.throws(()=>validatePreflight(receipt,head,'base',{...route,fingerprint:'b'.repeat(64)}),/route|fingerprint/);
+});
+
+test('declared provider credentials are redacted from reviewer evidence without rewriting numeric usage', async () => {
+  const { redactReviewCredentials } = await import('./gate.mjs');
+  assert.equal(typeof redactReviewCredentials, 'function');
+  const secret=String(Math.random());
+  const review={output:'diagnostic '+secret,diagnosticTail:Buffer.from(secret).toString('base64'),json:{usage:42,nested:[secret]}};
+  const clean=redactReviewCredentials(review,{credentialEnv:'REVIEW_CREDENTIAL'},{REVIEW_CREDENTIAL:secret});
+  assert.equal(clean.output,'diagnostic [REDACTED]');assert.equal(clean.diagnosticTail,'[REDACTED]');
+  assert.equal(clean.json.usage,42);assert.deepEqual(clean.json.nested,['[REDACTED]']);
+});
