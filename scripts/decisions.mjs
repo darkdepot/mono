@@ -42,7 +42,10 @@ export function validateEntry(entry) {
     requireThat(text(entry.invariant) && text(entry.verification) && Array.isArray(entry.states) && entry.states.length>0 &&
       entry.states.every(s=>object(s)&&text(s.state)&&text(s.expected)),'matrix invariant, states and verification required');
     requireThat(new Set(entry.states.map(s=>s.state)).size===entry.states.length,'duplicate matrix state');
-  } else requireThat(idPattern.test(entry.forId ?? '') && text(entry.method) && text(entry.result),'verification forId, method and result required');
+  } else {
+    requireThat(idPattern.test(entry.forId ?? '') && text(entry.method) && text(entry.result),'verification forId, method and result required');
+    if(entry.waiver!==undefined)requireThat(object(entry.waiver)&&text(entry.waiver.findingKey)&&text(entry.waiver.reason),'verification waiver findingKey and reason required');
+  }
   return entry;
 }
 export function validateJournal(journal) {
@@ -59,7 +62,11 @@ export function validateJournal(journal) {
       requireThat(prior[key]===entry[key],`supersedes must preserve ${key}`);
       replaced.add(prior.id);
     }
-    if(entry.type==='verification')requireThat(seen.has(entry.forId) && seen.get(entry.forId).type!=='verification','verification forId must reference an earlier decision or matrix');
+    if(entry.type==='verification') {
+      const target=seen.get(entry.forId);
+      requireThat(target && target.type!=='verification','verification forId must reference an earlier decision or matrix');
+      if(entry.waiver!==undefined)requireThat(target.type==='decision'&&!replaced.has(entry.forId)&&target.findingKey===entry.waiver.findingKey,'verification waiver forId must reference a current decision with the same findingKey');
+    }
     seen.set(entry.id,entry);
   }
   return journal;

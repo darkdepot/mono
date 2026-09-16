@@ -49,6 +49,9 @@ test('adjudication writes evidence and links in scratch without altering receipt
  try {
   const record={eventId:'1:helper-invocation:1',origin:'incomplete-fix',evidence:'fixture proof',links:['D1'],progress:'fixed',recordedBy:'orchestrator'};
   const file=await adjudicate({evidenceRoot:root,issue:'MONO-998',record});assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),[record]);
+  const replacement={...record,links:['D2']};
+  await adjudicate({evidenceRoot:root,issue:'MONO-998',record:replacement});
+  assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),[replacement]);
   await assert.rejects(adjudicate({evidenceRoot:root,issue:'MONO-998',record:{...record,evidence:''}}),/evidence/);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });

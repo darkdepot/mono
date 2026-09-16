@@ -153,7 +153,7 @@ against its receipt. Apply only missing actions; fsync results under consumed/<I
 confirms the entire queue. Unknown/conflicting/read-error blocks; reconcile lost responses, including comments. Empty queues also wait.
 Partial/stale/foreign confirmation blocks. Resume the capsule after
 break/compaction; timeout orchestration.delivery.confirmationTimeoutSec (default
-900 seconds) parks write-unconfirmed (запись не подтверждена).
+1800 seconds) parks write-unconfirmed (запись не подтверждена).
 
 In-phase confirmation-request preserves ship order: accepted drift before PR,
 ready certificate before formal review, In Review/PR chip after PR. Queueing

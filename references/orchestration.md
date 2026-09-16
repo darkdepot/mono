@@ -828,7 +828,10 @@ report). Decisions carry the orchestrator-assigned findingKey, problem,
 trigger, evidence, impact, origin, decision, validity {head, base, contracts,
 assumptions}, verification, supersedes, proposedBy and recordedAt. Matrices
 carry invariant, states [{state, expected}], verification and recordedAt;
-verification entries carry forId, method, result and recordedAt. Every entry
+verification entries carry forId, method, result and recordedAt. A matrix waiver
+is a verification entry with waiver {findingKey, reason}; forId must name a
+decision on that findingKey. Only current entries apply, so superseding the
+decision also retires its waiver. Every entry
 has id/type. New evidence appends a new ID and a supersedes link to the current
 entry of the same type and invariant; old entries are retained, never edited.
 Refutation alone cannot clear a finding still required by the gate.
@@ -860,6 +863,10 @@ Optional phase fields are proposals, not accepted decisions:
 The validator checks types and local references; the orchestrator checks
 external references and meaning. Legacy reports and confirm semantics persist.
 
+An orchestrator decision that adds a requirement to the diff, such as
+documentation, a fixture or a boundary change, must reach the worker as a
+dispatch amendment before the next collection is approved.
+
 Before a collection request, read `review-ledger.mjs decide --issue KEY
 --evidence-root DIR --attempt N`. It reads the saved ledger, adjudications and
 journal; only explicit adjudication links to decision IDs supply findingKey.
@@ -870,6 +877,12 @@ round; record order determines round order, with later records updating that
 round's progress. Unknown links remain visible; never infer a key from prose.
 Review missing coverage before acting on the hint. Adjudicate progress only
 with evidence, including null when unresolved.
+
+Pre-collect checklist:
+- The dispatch dataset version and digest equal `decisions.mjs version` for the
+  current journal and source dataset; identical bytes reuse the version.
+- No requirement remains undelivered to the worker.
+- The last collection's finding keys have been delivered to the worker.
 
 If the required matrix/test result or five answers are absent, do not call
 the collection adapter. Record `review-ledger.mjs withhold --issue KEY
@@ -916,11 +929,20 @@ reviews are completed runs too, not missing actions. Return present evidence as
 and confirm through the same runtime. Publish and confirm enforce code → preflight → ship: read the latest earlier phase reports and every earlier sequence confirmation for the attempt before proceeding. Confirmations retain the report snapshot, so overwritten phase files do not erase sequence evidence. Missing or mismatched predecessors refuse before adapter calls. Fallback publication supplies --root; confirmation reads the report directory and root mailbox and refuses conflicting copies. Worker collect:false must pass before ready;
 A review fix uses a new head/write ID. Use write.id=request.collectionId=preflight-collect:<head>:<n>. Increment n for each collection request on that head, including transient retries after a recorded failure; also advance the phase sequence. Never reuse the failed collection ID for a new run; a lost response retains its original ID. Bind confirmation evidence to the immutable history receipt as well as the current head receipt. Never let a worker collect or select new
 pins. Preserve failed receipts. Configure confirmationTimeoutSec BEFORE dispatch
-to cover verification plus review; the 900-second default may park a longer run.
+to cover verification plus review; the 1800-second default may still park a longer run.
+Keep it below evidenceLimitSec as a configuration consistency rule. The evidence
+limit runs from the ship attempt's startedAt, while confirmation waiting runs
+separately from the phase report's publishedAt; the inequality does not prove
+evidence freshness.
 Pass the same --config to delivery-state.mjs confirm; its adapter timeout uses confirmationTimeoutSec. The gate locks collection per head in evidenceRoot. Spawn releases the registry lock after durable PID registration, waits for thread.started outside it, and registers the same attempt/PID thread under a short lock. A stale lock requires confirming the collector has stopped and reconciling its receipt before removal; never start a competing collector. Never extend an in-flight deadline; reconcile any late collector completion. Before the ship gate independently run preflight
 collect:false with the same dispatch request. No new daemon or key service.
 
 Publish whole-queue confirmations under <root>/confirmations/, outside all worker write grants. The worker wait refuses any confirmation path overlapping capsule.writable_roots. Keep reports as the sole writable mailbox; journal and registry remain outside the sandbox grant. Hostile local operator attestation remains out of scope. Run scripts/sandbox-contract.test.mjs outside a worker sandbox to prove the real Codex CLI boundary; absent CLI and detected nested Seatbelt are explicit skips, never host proof. Other failures block. The routine verify suite includes this test; the orchestrator runs it outside worker sandboxes for the actual boundary proof.
+
+A confirmation timeout parking the worker as `write-unconfirmed` is an expected
+path while a collection continues. Reconcile the late result with the same
+collection ID, then confirm the original queue and resume the worker; do not
+create a replacement request for a response that was merely late.
 
 Publish confirmation only for the entire digest-bound queue, including empty
 queues. Preserve in-phase order: drift sync before PR, ready certificate before

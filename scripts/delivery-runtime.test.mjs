@@ -13,6 +13,16 @@ const json = file => JSON.parse(fs.readFileSync(file, "utf8"));
 const run = (command, args, cwd, env) => spawnSync(command, args, { cwd, env, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
 const pass = result => { assert.equal(result.status, 0, result.stderr + result.stdout); return result; };
 
+test("delivery config defaults confirmation to 1800 seconds and keeps it below the evidence limit", async () => {
+  const { deliveryConfig } = await import("./runtime.mjs");
+  assert.equal(deliveryConfig().confirmationTimeoutSec, 1800);
+  assert.doesNotThrow(() => deliveryConfig({ orchestration: { delivery: { confirmationTimeoutSec: 2399, evidenceLimitSec: 2400 } } }));
+  assert.throws(
+    () => deliveryConfig({ orchestration: { delivery: { confirmationTimeoutSec: 2400, evidenceLimitSec: 2400 } } }),
+    /confirmationTimeoutSec.*2400.*evidenceLimitSec.*2400/
+  );
+});
+
 test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and durable ack", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-delivery-installed-"));
   const skills = path.join(root, "skills"), state = path.join(root, "orchestrator"), repo = path.join(root, "repo"), bin = path.join(root, "bin");
@@ -426,7 +436,7 @@ console.log(JSON.stringify(result));
 `); fs.chmodSync(path.join(bin, "gh"), 0o700);
     const judgmentFile = path.join(root, "judgment.json"), config = path.join(root, "config.json");
     write(judgmentFile, { head, preShipReview: "выполнено", readinessCheck: "пройдена", documentation: "без изменений", closures: [], botRemarks: [] });
-    write(config, { orchestration: { delivery: { quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 30 } } });
+    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 20, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 30 } } });
     const shipRequest = { preflight, repo: "fixture/repo", number: 87, attempt: 1, stateFile: path.join(root, "ship-state.json"), judgmentFile, config, watch: true };
     write(gateRequest, shipRequest);
     const shipCall = () => run(process.execPath, [path.join(runtime, "gate.mjs"), "ship", "--request", gateRequest], root, env);
@@ -485,7 +495,7 @@ console.log(JSON.stringify(result));
       assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
     }
     const errorConfig = path.join(root, "rules-timeout-config.json");
-    write(errorConfig, { orchestration: { delivery: { quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 1 } } });
+    write(errorConfig, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 1 } } });
     const errorState = path.join(root, "rules-timeout.json");
     write(gateRequest, { ...shipRequest, config: errorConfig, stateFile: errorState });
     write(githubFile, { github, checks, rulesStatus: 500 });
@@ -584,7 +594,7 @@ console.log(JSON.stringify(result));
       assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
       assert.equal(json(githubFile).pendingReads, 0);
     }
-    write(config, { orchestration: { delivery: { quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 1 } } });
+    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 1 } } });
     for (const state of ["BLOCKED", "UNKNOWN"]) {
       const pendingChecks = state === "UNKNOWN" ? [] : checks.map(c => c.name === "validate" ? { ...c, status: "IN_PROGRESS", conclusion: null } : c);
       write(githubFile, { github: { ...github, mergeStateStatus: state, mergeable: state === "UNKNOWN" ? "UNKNOWN" : "MERGEABLE" }, checks: pendingChecks });
@@ -1021,6 +1031,22 @@ test('decide uses adjudicated links and progress, with no prose inference or cro
   hint=decideReview({ledger:other,records:[records[0],{...records[1],eventId:'2:helper-invocation:1'}],journal,attempt:1});
   assert.deepEqual(hint.matrixFindingKeys,[]);assert.equal(hint.checkpointRequired,false);
   assert.throws(()=>decideReview({ledger,records,journal:{...journal,issue:'MONO-1'},attempt:1}),/issue/);
+});
+
+test('decide separates a current matrix waiver and restores the matrix after its decision is superseded',async()=>{
+  const {decideReview}=await import('./review-ledger.mjs');
+  const entry={type:'decision',id:'d1',findingKey:'same-invariant',problem:'p',trigger:'t',evidence:'e',impact:'i',origin:'original',decision:'confirmed',validity:{head:'a'.repeat(40),base:'b'.repeat(40),contracts:[],assumptions:[]},verification:'test',supersedes:null,proposedBy:'worker',recordedAt:'2026-09-16T00:00:00Z'};
+  const waiver={type:'verification',id:'v1',forId:'d1',method:'owner decision',result:'waived',waiver:{findingKey:'same-invariant',reason:'documentation-only invariant'},recordedAt:'2026-09-16T00:01:00Z'};
+  const events=[1,2].map(n=>({id:`1:helper-invocation:${n}`,kind:'helper-invocation',parent:null,status:'findings',findings:1}));
+  const ledger={issue:'MONO-999',attempts:[{attempt:1,events,unresolvedCoverage:[]}]};
+  const records=events.map(event=>({eventId:event.id,origin:'original',evidence:'fixture',links:['d1'],progress:'fixed',recordedBy:'orchestrator'}));
+  let hint=decideReview({ledger,records,journal:{issue:ledger.issue,entries:[entry,waiver]},attempt:1});
+  assert.deepEqual(hint.matrixFindingKeys,[]);
+  assert.deepEqual(hint.waivedFindingKeys,[{findingKey:'same-invariant',reason:'documentation-only invariant',forId:'d1'}]);
+  const replacement={...entry,id:'d2',supersedes:'d1',recordedAt:'2026-09-16T00:02:00Z'};
+  hint=decideReview({ledger,records,journal:{issue:ledger.issue,entries:[entry,waiver,replacement]},attempt:1});
+  assert.deepEqual(hint.matrixFindingKeys,['same-invariant']);
+  assert.deepEqual(hint.waivedFindingKeys,[]);
 });
 
 test('withheld request requires a reason, survives ledger rebuild and creates zero invocations',async()=>{

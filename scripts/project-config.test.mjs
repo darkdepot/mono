@@ -79,6 +79,40 @@ test('CLI check enforces pair refusal and acceptance on real config files', () =
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('Mono config pins the confirmation window and CLI rejects a window at the evidence limit', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-delivery-config-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    assert.equal(config.orchestration.delivery.confirmationTimeoutSec, 1800);
+    fs.mkdirSync(path.join(root, '.agents'));
+    const file = path.join(root, '.agents/mono-workflow.config.json');
+    const check = () => spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+    fs.writeFileSync(file, JSON.stringify(config));
+    let result = check(); assert.equal(result.status, 0, result.stderr);
+    config.orchestration.delivery.confirmationTimeoutSec = 2400;
+    config.orchestration.delivery.evidenceLimitSec = 2400;
+    fs.writeFileSync(file, JSON.stringify(config));
+    result = check(); assert.equal(result.status, 1); assert.match(result.stderr, /confirmationTimeoutSec.*2400.*evidenceLimitSec.*2400/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('CLI check rejects a non-object orchestration delivery config', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-delivery-shape-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    const file = path.join(root, '.agents/mono-workflow.config.json');
+    const check = () => spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+    for (const malformed of ['invalid', []]) {
+      config.orchestration.delivery = malformed;
+      fs.writeFileSync(file, JSON.stringify(config));
+      const result = check();
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /orchestration\.delivery.*object/i);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('non-model token settings remain valid through CLI and BASE role resolution', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-model-scan-'));
   const env = { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
