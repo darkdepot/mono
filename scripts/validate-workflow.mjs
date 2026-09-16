@@ -6514,7 +6514,9 @@ function checkModelPolicy(base) {
   }
   for (const file of [...modelActiveFiles(base), "AGENTS.md"]) {
     const text = body(file);
-    if (file !== MODEL_POLICY_PATH) {
+    const experimentalBenchData = file === "scripts/review-bench-routes.mjs" &&
+      text.split("\n")[0] === "// mono:experimental-bench-route-data";
+    if (file !== MODEL_POLICY_PATH && !experimentalBenchData) {
       for (const id of executableModelIds(text)) errors.push(`${file}: executable model id outside policy: ${id}`);
     }
     for (const ref of modelRoleReferences(text)) {
@@ -6698,6 +6700,10 @@ function validateModelPolicyFixtures() {
     }
     for (const name of ["README.md", "references/execution-quality.md", "templates/orchestrator-brief.md", "scripts/verify.mjs"]) {
       negative(`active detector ${name}`, () => change(name, (text) => text + `\n${fabricated("claude", "stale")}\n`), `${name}: executable model id outside policy`);
+    }
+    negative("bench route data requires its header marker", () => change("scripts/review-bench-routes.mjs", (text) => text.replace("// mono:experimental-bench-route-data\n", "")), "scripts/review-bench-routes.mjs: executable model id outside policy");
+    for (const name of ["scripts/review-bench.mjs", "README.md", "references/execution-quality.md", "templates/orchestrator-brief.md"]) {
+      negative(`bench route marker cannot exempt another consumer ${name}`, () => change(name, (text) => `// mono:experimental-bench-route-data\n${text}\n${fabricated("gpt", "bench")}\n`), `${name}: executable model id outside policy`);
     }
     change("README.md", (text) => text + `\n${[...MODEL_ENUM_ALLOWLIST].join(" ")}\n`);
     check(); restore(); check();
@@ -7288,6 +7294,8 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "// mono:experimental-bench-route-data",
+  "scripts/review-bench-routes.mjs",
   "<!-- review-pilot:start -->",
   "<!-- review-pilot:matrix -->",
   "<!-- review-pilot:checkpoint -->",

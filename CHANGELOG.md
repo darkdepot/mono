@@ -8,6 +8,8 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ### Changed
 
+- MONO-81: add an installed reviewer comparison bench and default candidate routes. Freeze archived code/base, dataset and helper inputs; exclude irreproducible cases and unadmitted routes; run the common tools-off protocol and a separate production baseline; retain anonymous grading, gold scoring, failures, usage coverage and feasibility reports. Add scratch fixtures and the sampling protocol. Permit model literals only in the explicitly marked experimental routes file, with negative fixtures preserving production-consumer restrictions. Reviewer policy, delivery gates and the worker corpus remain unchanged.
+
 - MONO-80: add the append-only decision journal, deterministic current-entry rendering, immutable dataset versions (including identical-input recovery of an interrupted digest publication) and digest-checked ignored materializations. Validate optional phase proposals without changing confirmation semantics; derive review hints from adjudications and retain reasoned withheld collection requests. Add the approved-pilot dispatch block and orchestration instructions, install the new runtime module, and cover journal/history, versions, materialization, proposal references, hints and dispatch structure with fixtures. Worker corpus bytes remain unchanged.
 
 - MONO-83: install `review-ledger.mjs` with the private runtime, reject installer manifests whose relative `.mjs` imports are not included, and cover the missing dependency plus a real installed `wave-cost.mjs --ledger` path with named fixtures.
