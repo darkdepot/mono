@@ -6,6 +6,11 @@ select configured `orchestration.workerAudience` (default `gpt-worker`), preserv
 its redundancy matrix and reading floor. Repeat rules only where that profile
 requires them; never soften/replace them. Both audiences get exact facts,
 protected paths/hashes, verification lines and the resolved identity command.
+Before rendering Codex dispatch, run installed `orchestrator/spawn.mjs --pins <request-json>`;
+Claude transports use installed `runtime.mjs --role worker-claude --worktree <repo> --base <commit>`.
+Copy `modelRoutes` unchanged into launch and every preflight request. It
+resolves the selected worker and autoreview roles from immutable BASE config;
+the worker diff never selects its own reviewer.
 
 ## Assignment
 
@@ -16,6 +21,7 @@ protected paths/hashes, verification lines and the resolved identity command.
 - Runtime scripts: <absolute installed scripts directory>
 - Product: <product slug>
 - evidenceRoot: <absolute ~/.mono-agent-workflow/evidence/<product>/ outside EVERY worker-writable root>
+- Model routes: <modelRoutes JSON: base, configDigest, roles with engine/model/effort or effortByRisk/provider/credentialEnv/fingerprint; variable names only>
 - Preflight pins: <installed skillsRoot, approved risk/critical, exact verification command/args, baseRef>
 - workerWritableRoots: <complete absolute grants, including temporary roots and the worktree-specific Git directory and the common Git directory, derived from the worktree; only <root>/reports within orchestrator root; copy to capsule.writable_roots>
 - Collection: orchestrator collect:true outside worker sandboxes; worker collect:false only

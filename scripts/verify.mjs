@@ -62,7 +62,7 @@ const steps = [
   { label: "node --check scripts/watch-workers.mjs", cmd: "node", cmdArgs: ["--check", "scripts/watch-workers.mjs"] },
   { label: "node --check scripts/verify.mjs", cmd: "node", cmdArgs: ["--check", "scripts/verify.mjs"] },
   { label: "node scripts/lint-mono-artifacts.mjs", cmd: "node", cmdArgs: ["scripts/lint-mono-artifacts.mjs"] },
-  { label: "node --test delivery runtime fixtures", cmd: "node", cmdArgs: ["--test", "scripts/gate.test.mjs", "scripts/delivery-state.test.mjs", "scripts/delivery-runtime.test.mjs", "scripts/decisions.test.mjs", "scripts/sandbox-contract.test.mjs"] },
+  { label: "node --test delivery runtime fixtures", cmd: "node", cmdArgs: ["--test", "scripts/project-config.test.mjs", "scripts/gate.test.mjs", "scripts/delivery-state.test.mjs", "scripts/delivery-runtime.test.mjs", "scripts/decisions.test.mjs", "scripts/sandbox-contract.test.mjs"] },
   { label: "node scripts/validate-workflow.mjs", cmd: "node", cmdArgs: ["scripts/validate-workflow.mjs"] },
 ];
 

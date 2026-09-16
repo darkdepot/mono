@@ -137,13 +137,19 @@ selected policy row; never copy an effort literal into this consumer.
 #### Claude orchestrator
 
 Orchestrator on Claude → [role:second-voice](model-policy.md#roles).
-Use the exact model id and effort from that row in a fresh Codex thread:
+Resolve from the immutable BASE config with the installed runtime before launch:
+
+```bash
+node <installed-runtime>/runtime.mjs --role second-voice --worktree <repo> --base <base-commit>
+```
+
+Use `modelRoutes.roles["second-voice"]` model/effort in a fresh Codex thread:
 
 ```bash
 codex exec --json -c 'model="<second-voice-model>"' -c 'model_reasoning_effort="<second-voice-effort>"' "$(cat <review-prompt-file>)" < /dev/null
 ```
 
-Replace both placeholders from the selected row before launch. Continue
+Replace both placeholders from the resolved route and record its fingerprint/base. Continue
 with `codex exec resume`, preserving the requested launch pins. This is a
 reviewer, not a worker: no worktree, Issue or registry entry. Record its
 thread id, resolved role, requested model and effort, and round count in
@@ -598,9 +604,10 @@ remains exceptional, recorded in the ledger with the owner mandate/reason.
 For a new Codex worker, select [role:worker-default](model-policy.md#roles).
 The orchestrator may select [role:worker-complex](model-policy.md#roles) per
 dispatch by judgment, recording the reason under «Решил сам:». There is no
-automatic risk-class-to-worker mapping. Read model AND effort from the selected
-row; pass the selected role to the installed spawn tool, which resolves both
-values at launch. Record the role, policy values, parameters actually set and
+automatic risk-class-to-worker mapping. Resolve model AND effort from the
+selected role over immutable BASE config through installed spawn --pins; copy
+modelRoutes into dispatch, launch and preflight requests. Spawn verifies them
+before launch. Record the role, policy values, parameters actually set and
 transport case in dispatch and registry per `templates/orchestrator-report.md`. On resume preserve the
 recorded launch pins; do not resolve new policy values for an existing thread.
 
@@ -631,7 +638,8 @@ recorded launch pins; do not resolve new policy values for an existing thread.
 ### Claude worker transports
 
 Both Claude worker transports select [role:worker-claude](model-policy.md#roles).
-They share policy intent, but their launch guarantees differ. Record the case
+Resolve its modelRoutes with installed runtime.mjs --role worker-claude from
+immutable BASE config. They share policy intent, but launch guarantees differ. Record the case
 in every generated dispatch and registry entry, with unknown values kept
 separate from the policy target:
 
@@ -644,7 +652,7 @@ separate from the policy target:
   fill them with policy intent.
 - `fallback` (CLI/headless): named long-lived background subagents inside the
   orchestrator session; same contract and reporting. Set the Agent tool
-  `model` parameter through the runtime alias for the selected row; record
+  `model` parameter through the runtime alias for the resolved role; record
   that alias and the assumption about its mapping. Effort is not controllable:
   record runtime default, not the policy effort as applied. If the runtime
   cannot represent that model, report the unavailable route rather than

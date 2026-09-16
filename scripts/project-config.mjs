@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { validateModels } from "./runtime.mjs";
 
 const CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.json";
 const LEGACY_CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.md";
@@ -290,6 +291,7 @@ function validateConfig(config, failures) {
   if (hasPlaceholder(config)) {
     failures.push("Project config contains unresolved <...> placeholder");
   }
+  try { validateModels(config); } catch (error) { failures.push(error.message); }
   if ("landWorkflow" in config || config.workflows?.land) {
     failures.push("Project config must use workflows.deploy, not Land workflow compatibility fields");
   }

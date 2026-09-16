@@ -121,7 +121,7 @@ process.exit(r.status===null?1:r.status);
     // The fixture controller models the orchestrator. Its evidence root is
     // outside both modeled worker grants; the worker only invokes collect:false.
     const { publishPhase: publishCollection, confirmQueue: confirmCollection, validateConfirmation: validateCollectionConfirmation } = await import(pathToFileURL(path.join(runtime, "delivery-state.mjs")));
-    const { digest: receiptDigest, canonical } = await import(pathToFileURL(path.join(runtime, "runtime.mjs")));
+    const { digest: receiptDigest, canonical, resolveModelRoutes } = await import(pathToFileURL(path.join(runtime, "runtime.mjs")));
     write(gateRequest, { ...preflight, workerWritableRoots: [path.parse(root).root] });
     assert.match(preflightCall().stdout, /evidenceRoot must be outside/);
     const collectionRequest = { ...preflight, collect: true };
@@ -168,11 +168,32 @@ process.exit(r.status===null?1:r.status);
     write(receiptFile, usageTampered); write(gateRequest, preflight);
     assert.match(preflightCall().stdout, /hand-made or modified/, "usage is sealed before signing");
     write(receiptFile, envelope); pass(preflightCall());
+    assert.equal(envelope.receipt.route.engine, 'claude');
+    assert.equal(envelope.receipt.route.provider.id, 'anthropic');
+    assert.match(envelope.receipt.route.fingerprint, /^[a-f0-9]{64}$/);
     const legacy = structuredClone(envelope.receipt);
+    legacy.route = { model: legacy.route.model, effort: legacy.route.effort };
     legacy.invocation = legacy.invocation.filter(arg => arg !== "--stream-engine-output");
     delete legacy.review.usage; delete legacy.review.usageReason;
     write(receiptFile, { receipt: legacy, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(legacy)).digest("hex") });
     pass(preflightCall());
+    const defaultModelRoutes = resolveModelRoutes(repo, head, 'worker-default');
+    write(gateRequest, { ...preflight, modelRoutes: defaultModelRoutes });
+    pass(preflightCall());
+    const wrongDefaultPins = structuredClone(defaultModelRoutes);
+    wrongDefaultPins.roles.autoreview.fingerprint = '0'.repeat(64);
+    write(gateRequest, { ...preflight, modelRoutes: wrongDefaultPins });
+    assert.match(preflightCall().stdout, /model route fingerprint mismatch/);
+    legacy.modelRoutes = defaultModelRoutes;
+    write(receiptFile, { receipt: legacy, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(legacy)).digest("hex") });
+    write(gateRequest, { ...preflight, modelRoutes: defaultModelRoutes }); pass(preflightCall());
+    delete legacy.modelRoutes;
+    write(gateRequest, { ...preflight, collect: true }); pass(preflightCall());
+    const recollected = json(receiptFile).receipt;
+    assert.equal(recollected.route.engine, 'claude');
+    assert.equal(recollected.route.provider.id, 'anthropic');
+    assert.match(recollected.route.fingerprint, /^[a-f0-9]{64}$/);
+    write(gateRequest, preflight); pass(preflightCall());
     legacy.invocation.push("--unsupported");
     write(receiptFile, { receipt: legacy, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(legacy)).digest("hex") });
     assert.match(preflightCall().stdout, /provenance\/command mismatch/);
@@ -616,6 +637,8 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     const entry = json(path.join(state, "workers.json"))[request.issue];
     assert.deepEqual(entry.capsule.writable_roots, entry.workerWritableRoots);
     assert.equal(entry.capsule.head, head);
+    assert.equal(entry.modelRoutes.roles['worker-default'].model, entry.model);
+    assert.match(entry.modelRoutes.roles.autoreview.fingerprint, /^[a-f0-9]{64}$/);
     assert.equal(entry.stage, "mono-deliver"); assert.equal(entry.attempt, 1);
     assert.equal(entry.model, "fixture-model"); assert.equal(entry.effort, "medium");
     const argv = json(capture); assert.ok(argv.includes(`model=${JSON.stringify(entry.model)}`));
@@ -727,7 +750,7 @@ test("launch and resume derive exact Git grants from the requested worktree", as
     write(dispatchFile, "fixture"); write(path.join(state, "control.json"), { state: "active", halt: false });
     write(path.join(state, "workers.json"), {}); fs.mkdirSync(mailbox);
     write(path.join(bin, "codex"), `#!/usr/bin/env node
-const fs=require('node:fs');fs.appendFileSync(${JSON.stringify(capture)},JSON.stringify({args:process.argv.slice(2),gitDir:process.env.GIT_DIR,gitSentinel:process.env.GIT_MONO_SENTINEL})+'\\n');
+const fs=require('node:fs');fs.appendFileSync(${JSON.stringify(capture)},JSON.stringify({args:process.argv.slice(2),gitDir:process.env.GIT_DIR,gitSentinel:process.env.GIT_MONO_SENTINEL,credentialDigests:Object.fromEntries(['GITHUB_TOKEN','PRODUCT_API_KEY','OPENAI_API_KEY'].map(k=>[k,require('node:crypto').createHash('sha256').update(process.env[k]??'').digest('hex')]))})+'\\n');
 console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
 `); fs.chmodSync(path.join(bin, "codex"), 0o700);
     process.env.PATH = `${bin}:${process.env.PATH}`;
@@ -749,6 +772,11 @@ console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
     assert.notEqual(pass(run("git", ["rev-parse", "HEAD"], second, env)).stdout.trim(), head);
     process.env.GIT_DIR = path.join(second, ".git");
     process.env.GIT_MONO_SENTINEL = "preserve worker env";
+    const credentialDigests = {};
+    for (const name of ['GITHUB_TOKEN', 'PRODUCT_API_KEY', 'OPENAI_API_KEY']) {
+      process.env[name] = crypto.randomBytes(24).toString('hex');
+      credentialDigests[name] = crypto.createHash('sha256').update(process.env[name]).digest('hex');
+    }
     const alias = path.join(root, "linked-alias"); fs.symlinkSync(worktree, alias);
     const commonReal = path.join(root, "common-real"); fs.renameSync(common, commonReal); fs.symlinkSync(commonReal, common);
     const canonicalExpected = [worktree, mailbox, commonReal, path.join(commonReal, "worktrees/linked")].sort();
@@ -760,6 +788,7 @@ console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
     assert.equal(entry.capsule.head, head);
     assert.equal(starts().at(-1).gitDir, path.join(second, ".git"));
     assert.equal(starts().at(-1).gitSentinel, "preserve worker env");
+    assert.deepEqual(starts().at(-1).credentialDigests, credentialDigests);
     // The fixture child exits immediately after its observable launch event.
     await new Promise(resolve => setTimeout(resolve, 100));
     for (const badPin of [canonicalExpected.filter(p => p !== path.join(commonReal, "worktrees/linked")), canonicalExpected.filter(p => p !== commonReal), [...canonicalExpected, extra]]) {
@@ -777,6 +806,7 @@ console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
     for (let i = 0; i < 100 && starts().length < 2; i++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(starts().length, 2);
     assert.deepEqual(argsRoots(starts().at(-1).args), canonicalExpected);
+    assert.deepEqual(starts().at(-1).credentialDigests, credentialDigests);
     const resumed = json(path.join(state, "workers.json"))[request.issue];
     for (const actual of [resumed.writable_roots, resumed.workerWritableRoots, resumed.capsule.writable_roots]) assert.deepEqual(actual, canonicalExpected);
     assert.equal(starts().at(-1).gitDir, path.join(second, ".git"));
@@ -1011,4 +1041,144 @@ test('withheld request requires a reason, survives ledger rebuild and creates ze
     assert.equal(event.usage,null);assert.equal(event.parent,null);assert.equal(event.findings,null);
     const summary=summarizeLedger(ledger);assert.equal(summary.collections,1);assert.equal(summary.withheld,1);assert.equal(summary.invocations,0);
   }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('worker provider overrides preserve product credentials and replace only Codex routing', async () => {
+  const { workerEnvironment } = await import('./orchestrator/launch.mjs');
+  const source = Object.fromEntries(['GITHUB_TOKEN', 'PRODUCT_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'MODEL_CREDENTIAL'].map(name => [name, crypto.randomBytes(24).toString('hex')]));
+  source.OPENAI_BASE_URL = 'https://old.example.invalid/v1';
+  const route = { engine: 'codex', provider: { id: 'example', endpoint: 'https://route.example.invalid/v1' }, credentialEnv: 'MODEL_CREDENTIAL' };
+  const env = workerEnvironment(route, source);
+  assert.equal(env.GITHUB_TOKEN, source.GITHUB_TOKEN);
+  assert.equal(env.PRODUCT_API_KEY, source.PRODUCT_API_KEY);
+  assert.equal(env.OPENAI_API_KEY, source.MODEL_CREDENTIAL);
+  assert.equal(env.OPENAI_BASE_URL, route.provider.endpoint);
+  assert.equal(env.CODEX_API_KEY, undefined);
+  assert.deepEqual(workerEnvironment({ engine: 'codex', provider: { id: 'openai', endpoint: null }, credentialEnv: null }, source), source);
+  assert.deepEqual(workerEnvironment(undefined, source), source);
+});
+
+test('launch pins resolve BASE config and refuse unsupported transport before launch', async () => {
+  const { resolveWorkerPins } = await import('./orchestrator/launch.mjs');
+  const { requiredPairings, resolveModelRoutes } = await import('./runtime.mjs');
+  const { pinnedReviewRoute } = await import('./gate.mjs');
+  assert.equal(typeof resolveWorkerPins, 'function');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-base-models-'));
+  const env = {...process.env,GIT_AUTHOR_NAME:'Fixture',GIT_AUTHOR_EMAIL:'fixture@example.invalid',GIT_COMMITTER_NAME:'Fixture',GIT_COMMITTER_EMAIL:'fixture@example.invalid'};
+  try {
+    pass(run('git',['init','-b','main'],root,env));
+    const config={orchestration:{transport:'codex-cli'},models:{roles:{'worker-default':{engine:'codex',model:'example-worker',effort:'medium'}}}};
+    config.models.pairingAccepted=requiredPairings(config).map(pair=>({...pair,linearDecision:'https://linear.app/example/issue/TEST-1#comment',by:'owner',date:'2026-09-16'}));
+    write(path.join(root,'.agents/mono-workflow.config.json'),config);
+    pass(run('git',['add','.'],root,env));pass(run('git',['commit','-m','base config'],root,env));
+    const base=pass(run('git',['rev-parse','HEAD'],root,env)).stdout.trim();
+    const request={worktree:root,base,role:'worker-default',transport:'codex-cli'};
+    const pins=resolveWorkerPins(request);
+    assert.equal(pins.roles['worker-default'].model,'example-worker');assert.equal(pins.roles['worker-default'].effort,'medium');
+    assert.match(pins.roles.autoreview.fingerprint,/^[a-f0-9]{64}$/);
+    for(const transport of ['kimi','fallback','claude-code-desktop']) assert.throws(()=>resolveWorkerPins({...request,transport}),/transport/);
+    assert.throws(()=>resolveWorkerPins({...request,role:'worker-claude'}),/role|transport/);
+    write(path.join(root,'.agents/mono-workflow.config.json'),{models:{roles:{autoreview:{engine:'invalid'}}}});
+    pass(run('git',['add','.'],root,env));pass(run('git',['commit','-m','diff changes config'],root,env));
+    assert.deepEqual(resolveWorkerPins(request),pins);
+    const review=pinnedReviewRoute({worktree:root,modelRoutes:pins,risk:'risky',critical:null},base);
+    assert.equal(review.fingerprint,pins.roles.autoreview.fingerprint);
+    assert.throws(()=>pinnedReviewRoute({worktree:root,modelRoutes:{...pins,configDigest:'changed'},risk:'risky',critical:null},base),/fingerprint/);
+    const voice=resolveModelRoutes(root,base,'second-voice');assert.equal(voice.roles['second-voice'].engine,'codex');
+    for (const transport of ['fallback', 'claude-code-desktop']) {
+      write(path.join(root,'.agents/mono-workflow.config.json'),{...config,orchestration:{transport}});
+      pass(run('git',['add','.'],root,env));pass(run('git',['commit','-m',`base transport ${transport}`],root,env));
+      const transportBase=pass(run('git',['rev-parse','HEAD'],root,env)).stdout.trim();
+      assert.throws(()=>resolveWorkerPins({...request,base:transportBase}),/transport/,`request codex-cli must not override BASE ${transport}`);
+      assert.throws(()=>resolveWorkerPins({...request,base:transportBase,transport}),/transport/);
+      assert.throws(()=>resolveWorkerPins({...request,base:transportBase,transport:undefined}),/transport/);
+    }
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('installed collectors seal configured engines and consume the same BASE route after config changes', async () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-engines-'));
+  const skills=path.join(root,'skills'),repo=path.join(root,'repo'),state=path.join(root,'state'),bin=path.join(root,'bin');
+  const env={...process.env,MONO_WORKFLOW_STATE_ROOT:path.join(root,'install-state'),MONO_WORKFLOW_KNOWN_ROOTS:skills,
+    PATH:bin+path.delimiter+process.env.PATH,GIT_AUTHOR_NAME:'Fixture',GIT_AUTHOR_EMAIL:'fixture@example.invalid',GIT_COMMITTER_NAME:'Fixture',GIT_COMMITTER_EMAIL:'fixture@example.invalid'};
+  try {
+    pass(run(process.execPath,['scripts/install-local.mjs','--skills-root',skills],checkout,env));
+    const runtime=path.join(skills,'.mono-agent-workflow/scripts');
+    const {requiredPairings,resolveModelRoutes,canonical}=await import(pathToFileURL(path.join(runtime,'runtime.mjs')));
+    write(path.join(bin,'codex'),`#!/usr/bin/env node
+const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path'),a=process.argv.slice(2);
+if(a[0]!=='sandbox')process.exit(71);
+const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1)),root=path.dirname(p.probe);
+fs.chmodSync(root,0o500);let r;try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit'});}finally{fs.chmodSync(root,0o700);}process.exit(r.status??1);
+`);fs.chmodSync(path.join(bin,'codex'),0o700);
+    const helper=path.join(skills,'autoreview/scripts/autoreview');
+    write(helper,`#!/usr/bin/env node
+const fs=require('node:fs'),crypto=require('node:crypto'),a=process.argv.slice(2),val=k=>a[a.indexOf(k)+1],engine=val('--engine');
+const keys=['ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY','XAI_API_KEY','KIMI_API_KEY','KIMI_BASE_URL','OPENAI_BASE_URL','ANTHROPIC_BASE_URL','ANTHROPIC_DEFAULT_OPUS_MODEL','REVIEW_CREDENTIAL'];
+const environment=Object.fromEntries(keys.filter(k=>process.env[k]!==undefined).map(k=>[k,crypto.createHash('sha256').update(process.env[k]).digest('hex')]));
+fs.writeFileSync(val('--json-output'),JSON.stringify({findings:[],overall_correctness:'patch is correct',environment}));
+fs.writeFileSync(val('--status-output'),JSON.stringify({schema_version:1,status:'scoped-clean',engine,exit_code:0,report_produced:true,timed_out:false}));
+console.log('autoreview target: branch | engine: '+engine+' | model: '+val('--model')+' | thinking: '+val('--thinking'));
+console.log('autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority');console.log('overall: patch is correct (0.9)');
+`);fs.chmodSync(helper,0o700);
+    fs.mkdirSync(repo);fs.mkdirSync(state);pass(run('git',['init','-b','fixture'],repo,env));
+    pass(run('git',['commit','--allow-empty','-m','ancestor without models'],repo,env));
+    const ancestor = pass(run('git',['rev-parse','HEAD'],repo,env)).stdout.trim();
+    const ancestorPins = resolveModelRoutes(repo, ancestor, 'worker-default');
+    for(const engine of ['claude','kimi','pi','codex']) {
+      const config={models:{roles:{autoreview:{engine,model:'example-reviewer',effortByRisk:Object.fromEntries(['tiny','standard','deep','risky','riskyCritical'].map(r=>[r,engine==='kimi'?'on':'high'])),
+        provider:{id:engine==='claude'?'external':engine==='kimi'?'moonshot':'openai',endpoint:'https://fixture.invalid/v1',credentialEnv:'REVIEW_CREDENTIAL'}}}}};
+      config.models.pairingAccepted=requiredPairings(config).map(pair=>({...pair,linearDecision:'https://linear.app/example/issue/TEST-1#decision',by:'owner',date:'2026-09-16'}));
+      write(path.join(repo,'.agents/mono-workflow.config.json'),config);pass(run('git',['add','.'],repo,env));pass(run('git',['commit','-m','base '+engine],repo,env));
+      const base=pass(run('git',['rev-parse','HEAD'],repo,env)).stdout.trim(),modelRoutes=resolveModelRoutes(repo,base,'worker-default');
+      write(path.join(repo,'.agents/mono-workflow.config.json'),{models:{roles:{autoreview:{engine:'invalid-in-diff'}}}});
+      pass(run('git',['add','.'],repo,env));pass(run('git',['commit','-m','head config differs'],repo,env));
+      const head=pass(run('git',['rev-parse','HEAD'],repo,env)).stdout.trim();
+      const request={product:'fixture',collectionId:`preflight-collect:${head}:1`,root:state,worktree:repo,head,skillsRoot:skills,risk:'risky',critical:null,baseRef:base,evidenceRoot:path.join(root,'evidence'),workerWritableRoots:[repo,state],collect:true,modelRoutes,verification:{command:process.execPath,args:['-e','process.exit(0)']}};
+      const file=path.join(root,'request.json');write(file,request);
+      const secret=crypto.randomBytes(24).toString('hex'),callEnv={...env,REVIEW_CREDENTIAL:secret,ANTHROPIC_DEFAULT_OPUS_MODEL:'external',ANTHROPIC_AUTH_TOKEN:'external',XAI_API_KEY:'external',KIMI_BASE_URL:'https://external.invalid',OPENAI_API_KEY:'external'};
+      const call=()=>run(process.execPath,[path.join(runtime,'gate.mjs'),'preflight','--request',file],repo,callEnv);
+      pass(call());
+      const receiptPath=path.join(request.evidenceRoot,head+'.json'),envelope=json(receiptPath),receipt=envelope.receipt;
+      assert.equal(receipt.route.engine,engine);assert.equal(receipt.route.fingerprint,modelRoutes.roles.autoreview.fingerprint);
+      assert.equal(receipt.review.status.engine,engine);
+      const target=engine==='claude'?'ANTHROPIC_AUTH_TOKEN':engine==='kimi'?'KIMI_API_KEY':'OPENAI_API_KEY';
+      const endpoint=engine==='claude'?'ANTHROPIC_BASE_URL':engine==='kimi'?'KIMI_BASE_URL':'OPENAI_BASE_URL';
+      assert.deepEqual(Object.keys(receipt.review.json.environment).sort(),[target,endpoint].sort());
+      assert.equal(receipt.review.json.environment[target],crypto.createHash('sha256').update(secret).digest('hex'));
+      assert.equal(fs.readFileSync(receiptPath,'utf8').includes(secret),false);
+      write(file,{...request,collect:false});pass(call());
+      write(file,{...request,collect:false,modelRoutes:ancestorPins});
+      const changedBinding = call(); assert.equal(changedBinding.status, 1);
+      assert.match(changedBinding.stdout, /receipt modelRoutes differs from dispatch request/, 'modern receipts retain their sealed pin binding');
+      write(file,{...request,collect:false});
+      if (engine === 'claude') {
+        const legacy = structuredClone(receipt);
+        legacy.route = { model: legacy.route.model, effort: legacy.route.effort };
+        for (const includePins of [false, true]) {
+          if (includePins) legacy.modelRoutes = modelRoutes;
+          else delete legacy.modelRoutes;
+          write(receiptPath, { receipt: legacy, signature: crypto.createHmac('sha256', fs.readFileSync(path.join(request.evidenceRoot, 'receipt.key'))).update(canonical(legacy)).digest('hex') });
+          const refusal = call(); assert.equal(refusal.status, 1);
+          assert.match(refusal.stdout, /legacy receipt cannot certify model override pins/);
+        }
+        const ancestorRequest = { ...request, collectionId: `preflight-collect:${head}:2`, modelRoutes: ancestorPins };
+        write(file, ancestorRequest); pass(call());
+        const ancestorLegacy = json(receiptPath).receipt;
+        ancestorLegacy.route = { model: ancestorLegacy.route.model, effort: ancestorLegacy.route.effort };
+        delete ancestorLegacy.modelRoutes;
+        write(receiptPath, { receipt: ancestorLegacy, signature: crypto.createHmac('sha256', fs.readFileSync(path.join(request.evidenceRoot, 'receipt.key'))).update(canonical(ancestorLegacy)).digest('hex') });
+        write(file, { ...ancestorRequest, collect: false });
+        const ancestorRefusal = call();
+        assert.equal(ancestorRefusal.status, 1, 'ancestor pins without models cannot bypass models at the review base: ' + ancestorRefusal.stdout);
+        assert.match(ancestorRefusal.stdout, /legacy receipt cannot certify model override pins/);
+        write(receiptPath, envelope);
+        write(file, { ...request, collect: false });
+      }
+      const tampered=structuredClone(modelRoutes);tampered.roles.autoreview.fingerprint='0'.repeat(64);
+      write(file,{...request,collect:false,modelRoutes:tampered});assert.equal(call().status,1);
+      write(file,{...request,collect:true,modelRoutes:tampered});assert.match(call().stdout,/fingerprint mismatch/);
+      write(file,{...request,collect:true,modelRoutes:undefined});assert.match(call().stdout,/launch pins required/);
+    }
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
 });

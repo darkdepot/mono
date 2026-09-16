@@ -83,7 +83,7 @@ The orchestrator collects preflight verification and autoreview evidence outside
 
 Record technical decisions as “Decided independently” in owner-facing reporting. Ask about scope, slicing, risk acceptance and design with prepared options and a recommendation; show design choices visually. Do not ask questions whose answer is already in the repository, Linear or config. The worker sends a blocked question and recommendation through its report to the orchestrator.
 
-Resolve production model choices from [the model policy](references/model-policy.md#roles), never copied model IDs or helper defaults. Only the exact, explicitly marked experimental bench routes file may contain candidate model IDs; this exception does not apply to production consumers. Risk has four classes: `tiny`, `standard`, `deep`, `risky`; use the higher approved/final-diff class. Risk controls review depth and artifact needs, while a complex worker is an explicit orchestrator launch decision with a recorded reason. Preserve model/effort provenance; missing authoritative runtime data means unverified, not compliant. Policy changes govern new launches after installation, without rewriting historical records.
+Resolve production model choices from [the model policy](references/model-policy.md#roles) plus validated product `models` overrides, never helper defaults. Candidate IDs may also live in the explicitly marked experimental bench routes file; production consumers resolve roles. Risk has four classes: `tiny`, `standard`, `deep`, `risky`; use the higher approved/final-diff class. Risk controls review depth and artifact needs, while a complex worker is an explicit orchestrator launch decision with a recorded reason. Preserve model/effort provenance; missing authoritative runtime data means unverified, not compliant. Policy changes govern new launches after installation, without rewriting historical records.
 
 In orchestrated mode, use the configured transport or documented runtime detection. Codex CLI supports one resumable worker thread per Issue. The registry, mailbox and append-only ledger support recovery; write only observed events with their actual recording times. The installed watcher reports liveness and phase events. `control.json.halt` stops new launches/resumes without interrupting running workers; persistent attempt limits bound retries. Keep compaction wiring outside product repos and carry exact next action, pending obligations and decisions through compaction.
 
@@ -193,6 +193,32 @@ node scripts/project-config.mjs --repo /path/to/product --check
 
 Configure product/team names, Linear/repository languages, narrow artifact roots, implementation, ship, documentation, review-feedback and deploy workflows, and the required `autoreviewHelper` prerequisite. Optional workflows may be `null`; a missing deploy workflow blocks deployment. Optional QA/authentication policy defines how live verification accesses the product; owner-session access requires permission. `--clean` removes legacy generated Mono and previous-brand workflow files while migrating project policy.
 
+Optional `models.roles` overrides model routes within the [role/transport matrix](references/model-policy.md#product-overrides).
+Autoreview accepts claude, kimi, pi or codex with `effortByRisk` for all five risk keys.
+Worker Codex roles stay on Codex, worker Claude stays on Claude; Second Voice stays
+cross-vendor and the orchestrator is not overridable. The CLI worker launcher
+continues to support only Codex workers. Native authentication uses null endpoint
+and credentialEnv; external credentials are environment variable **names**, never
+values. Pi supports native xai/google/minimax with a null endpoint, or OpenAI-compatible
+routing via `OPENAI_BASE_URL`; unsupported endpoint mappings are refused.
+Helpers that authenticate from the environment must declare `provider.credentialEnv` on `autoreview`; under the field-for-field rule, this is a pair change requiring a bound `pairingAccepted` record.
+
+Every changed producer/reviewer pair needs a `pairingAccepted` record with the exact
+producer and reviewer routes (including both providers, credential variable names
+and risk efforts), all risk classes, a `linearDecision` URL, `by` and `date`.
+`requiredPairings(config)` in `scripts/runtime.mjs` returns that pair data for review;
+`project-config.mjs --check` refuses absent or changed bindings and names the pair.
+It validates the recorded decision's binding, not model capability.
+
+Before dispatch, `orchestrator/spawn.mjs --pins <request-json>` prints `modelRoutes`
+from the immutable base commit. Carry those pins into launch and collection requests;
+config edits in the delivered diff cannot change that delivery's reviewer. New
+receipts record engine/model/effort/provider/fingerprint, verified at `collect:false`;
+legacy receipts retain their signature and meaning, read as claude/unknown. Collection
+builds provider environment from the route and keeps the existing two invocation forms,
+sealed-head requirement and all certification checks. No provider key value belongs
+in config, dispatch, registry or receipts. Resumes keep their original pins.
+
 Set `deployApproval` to `always` (default), `risky-only` (approval for standard/deep/risky and unknown risk; only tiny proceeds without asking), or `never`. Approval binds the exact PR/head. Configure `orchestration.transport` and `maxParallelWorkers` (default 3) when needed. Delivery settings default to a 900-second confirmation timeout, 120-second quiet interval, 2,400-second evidence limit, 10-second polling and three attempts. Enable issue-only explicitly with `issueOnlyLane.enabled` and the canonical approving `ownerPrincipal`. See [Project Policy](references/install.md#project-policy) for the full config contract.
 
 ## Owner Rules
@@ -266,7 +292,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 | Rationale outside worker reading | [Audience](references/rationale/audience.md), [review](references/rationale/review.md), [output](references/rationale/output.md), [delivery](references/rationale/delivery.md); explanation adds no obligations |
 | Worked examples and history | [Zeni dogfood](examples/zeni-dogfood.md), [profile regression](examples/profile-workbench-regression.md), [CHANGELOG](CHANGELOG.md) |
 
-Runtime scripts live in [scripts/](scripts/): `gate.mjs` checks evidence; `delivery-state.mjs` publishes/confirms queues; `runtime.mjs` provides durable writes, locks and hashes; `orchestrator/spawn.mjs`, `resume.mjs` and `consume-gate-ack.mjs` use the shared launch implementation; `watch-workers.mjs` monitors registered work; `resolve-issue-context.mjs` resolves the issue-only seam; `verify-pack-state.mjs` verifies identity/quiescence; `decisions.mjs` records decisions and versions/materializes datasets; `review-ledger.mjs` builds and summarizes review-event ledgers and supplies adjudication hints; `wave-cost.mjs` measures cost; `read-budget.mjs` bounds reading. Invoke runtime scripts from the installed pack, with `--help` and pinned dispatch inputs. Installation and config maintenance use `install-local.mjs` and `project-config.mjs` from the upstream checkout.
+Runtime scripts live in [scripts/](scripts/): `gate.mjs` checks evidence; `delivery-state.mjs` publishes/confirms queues; `runtime.mjs` provides role resolution, config validation, durable writes, locks and hashes; `orchestrator/spawn.mjs`, `resume.mjs` and `consume-gate-ack.mjs` use the shared launch implementation; `watch-workers.mjs` monitors registered work; `resolve-issue-context.mjs` resolves the issue-only seam; `verify-pack-state.mjs` verifies identity/quiescence; `decisions.mjs` records decisions and versions/materializes datasets; `review-ledger.mjs` builds and summarizes review-event ledgers and supplies adjudication hints; `wave-cost.mjs` measures cost; `read-budget.mjs` bounds reading. Invoke runtime scripts from the installed pack, with `--help` and pinned dispatch inputs. Installation and config maintenance use `install-local.mjs` and `project-config.mjs` from the upstream checkout.
 
 ## Principles
 

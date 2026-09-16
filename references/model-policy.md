@@ -1,66 +1,78 @@
 # Model Policy
 
-This is the only source of executable model identifiers in the active pack.
-Agents resolve a role before preparing a command, dispatch or certificate;
-those outputs record resolved values, never create another model source.
-Use a `role:<role>` Markdown link to this document's `#roles` section for
-every normative role reference. The validator checks both the role and the
-consumer that uses it; an arbitrary role mention is not a binding.
+The table supplies defaults; validated product config may override them below.
+Resolve roles before commands, dispatches and certificates. Normative references
+use a `role:<role>` link to `#roles`; outputs record values, not new defaults.
 
 ## Roles
 
 | Role | Model id | Reasoning effort | Applies to | Decided by |
 | --- | --- | --- | --- | --- |
-| `orchestrator` | `claude-fable-5-1` | n/a | Orchestrator session; effort is not set by this policy. | Owner, 2026-09-06. |
-| `second-voice` | `gpt-6-astra` | `high` | Second Voice for a Claude orchestrator; effort source: the approved Second Voice rule, both sides at high reasoning. | Owner, 2026-09-06. |
-| `second-voice-alt` | `claude-opus-5` | `high` | Second Voice for a GPT orchestrator; effort source: the same approved Second Voice rule. Independent of the Claude worker role. | Owner, 2026-09-06. |
-| `worker-default` | `gpt-5.6-sol` | `high` | Default Codex worker; effort source: the existing worker spawn command. | Owner, 2026-09-06. |
-| `worker-complex` | `gpt-6-astra` | `high` | Complex Codex work, selected per dispatch by orchestrator judgment with a recorded reason; never selected automatically by risk class. Effort source: the existing worker spawn command. | Owner, 2026-09-06. |
-| `worker-claude` | `claude-opus-5` | `high` | Claude worker transports; effort source: the existing worker spawn target, subject to the transport guarantees below. | Owner, 2026-09-06. |
-| `autoreview` | `claude-opus-5` | [Canonical Routes](autoreview-routing.md#canonical-routes) | Mandatory preflight reviewer; effort comes only from the final risk route. | Owner-approved reviewer/producer pairing, 2026-09-06. |
+| `orchestrator` | `claude-fable-5-1` | n/a | Orchestrator session; effort unset. | Owner, 2026-09-06. |
+| `second-voice` | `gpt-6-astra` | `high` | Second Voice for Claude; approved cross-vendor rule. | Owner, 2026-09-06. |
+| `second-voice-alt` | `claude-opus-5` | `high` | Second Voice for GPT; independent of worker role. | Owner, 2026-09-06. |
+| `worker-default` | `gpt-5.6-sol` | `high` | Default Codex worker. | Owner, 2026-09-06. |
+| `worker-complex` | `gpt-6-astra` | `high` | Complex Codex work; explicit reason per dispatch, never automatic by risk. | Owner, 2026-09-06. |
+| `worker-claude` | `claude-opus-5` | `high` | Claude worker transports; guarantees below. | Owner, 2026-09-06. |
+| `autoreview` | `claude-opus-5` | [Canonical Routes](autoreview-routing.md#canonical-routes) | Mandatory reviewer; final-risk effort. | Owner-approved reviewer/producer pairing, 2026-09-06. |
 
 ## Reviewer and producer
 
-The owner approved the pairing of the worker roles with the reviewer role in
-this table. The reviewer must be at least as capable as the code's producer.
-The table records that decision; it does not prove model capability. Any change
-that breaks, or cannot establish, reviewer capability at least equal to the
-producer requires an explicit owner decision BEFORE editing a model cell.
-Same-model review limitations apply whenever the resolved worker and reviewer
-identifiers match, regardless of the role names or transport.
+The table records owner-approved worker/reviewer pairs, not measured capability.
+Reviewer capability must be at least the producer's. Unestablished pairs require
+an owner decision; matching model IDs require same-model review disclosure.
+
+## Product overrides
+
+This replaces the table-only boundary. `.agents/mono-workflow.config.json` may
+set `models.roles`: role → `{engine|transport, model, effort|effortByRisk,
+provider:{id,endpoint,credentialEnv}}`. Omitted fields inherit defaults;
+changing engine requires compatible effort and provider. Keys live only in the
+orchestrator environment; `credentialEnv` is its variable NAME. Endpoint and
+credentialEnv may be null for native authentication. Unknown fields are refused.
+
+Matrix: `worker-default|worker-complex` → codex; `worker-claude` → claude;
+`autoreview` → claude|kimi|pi|codex; `second-voice` → native Codex for the Claude
+orchestrator (cross-vendor). `orchestrator` and `second-voice-alt` overrides are
+refused. No new worker transports: the CLI launcher accepts only Codex workers.
+Claude/Codex efforts: low|medium|high|xhigh|max; Kimi: on|off; Pi:
+off|minimal|low|medium|high|xhigh, subject to model compatibility. Autoreview uses
+`effortByRisk` with tiny, standard, deep, risky, riskyCritical; all are required.
+
+For every non-table worker/reviewer pair, `models.pairingAccepted[]` records
+`{producer,reviewer,riskClasses,linearDecision,by,date}`. Producer includes role;
+both sides carry engine, model, effort/effortByRisk, provider{id,endpoint} and
+credentialEnv. Risk classes include all five effort keys. Compare every field;
+a changed pair requires renewed acceptance naming that pair. Validation binds the Linear decision; it never measures capability.
+`requiredPairings(config)` prints the exact pair data for that decision.
 
 ## Audience profile
 
-`workerAudience` controls dispatch redundancy, not model selection. Its fit
-for future models is an unverified assumption; a model cell change does not
-change that profile or prove its suitability.
+`workerAudience` changes dispatch redundancy, not models; suitability for an
+unmeasured model remains an assumption.
 
 ## Application boundary
 
-New policy values apply to new launches after pack installation. Running
-threads keep their launch pins; resumes use those recorded pins, not freshly
-resolved table values. Never backfill old registry entries from a new policy.
-Missing fields remain unknown. The existing pack identity gate still forbids
-resuming a thread across a changed pack identity.
+`resolveRole(role, config)` reads table → override and fingerprints the canonical
+route plus config digest. Resolve from the immutable BASE config at launch;
+record `modelRoutes{base,configDigest,roles}` in dispatch/request/registry.
+Config diffs cannot change pinned routes. New settings govern new launches. Resumes retain pins, never backfill unknowns; changed pack identity
+still forbids resume.
 
 ## Orchestrator self-check
 
-At session start, compare the authoritative model identifier reported by the
-launch environment with the `orchestrator` row. Report exactly one outcome:
-«Модель оркестратора: по политике | не по политике | не удалось проверить».
-A matching identifier means «по политике»; a different one means «не по
-политике». Without an authoritative identifier report «не удалось проверить».
-Prompt self-identification is not evidence. This check neither switches a
-running session nor audits its model during execution.
+Compare the authoritative launch model with the orchestrator row once at start.
+Report «Модель оркестратора: по политике | не по политике | не удалось проверить».
+Match/difference/no authoritative ID select those outcomes respectively.
+Self-identification is not evidence; this check never switches a session.
 
 ## Launch evidence
 
-For Codex roles, evidence is the requested launch parameters: Codex output does
-not report the actual served model. Keep policy intent, parameters actually
-set, and unknown served identity separate in dispatches and registry records.
+Keep policy intent, launch parameters and served-model evidence separate.
+Codex reports requested parameters, not the actual served identity.
 
 | Transport case | Model parameter | Effort parameter | Actual served model |
 | --- | --- | --- | --- |
-| `codex-cli` | Exact resolved model id pinned in the launch command. | Resolved row effort pinned in the launch command. | Unknown; requested parameters are the evidence. |
-| `fallback` | Agent tool `model` parameter set through a runtime alias; alias-to-id correspondence is a runtime assumption, recorded explicitly. | Not controllable: runtime default, never the policy target reported as set. | Unknown. |
-| `claude-code-desktop` | Owner selects manually in the interface. | Not verified; do not infer it from policy intent. | Manually selected, actual model unverified. |
+| `codex-cli` | Resolved id pinned. | Resolved effort pinned. | Unknown; parameters are evidence. |
+| `fallback` | `model` alias; record alias-to-id assumption. | Runtime default, not policy effort. | Unknown. |
+| `claude-code-desktop` | Owner selects manually. | Unverified. | Unverified. |
