@@ -20,7 +20,10 @@
   },
   "orchestration": {
     "transport": "codex-cli",
-    "maxParallelWorkers": 3
+    "maxParallelWorkers": 3,
+    "delivery": {
+      "confirmationTimeoutSec": 1800
+    }
   },
   "issueOnlyLane": {
     "enabled": true,

@@ -44,7 +44,7 @@ is the durable source of the gate names dispatched for the current attempt.
     "branch": "<branch>",
     "stage": "mono-deliver",
     "attempt": "<positive integer>",
-    "confirmationTimeoutSec": 900,
+    "confirmationTimeoutSec": 1800,
     "product_name": "<product-language name for owner-facing statuses, or omitted>",
     "gates": ["<dispatched gate name>"],
     "packVersion": "<installed lockfile packVersion>",

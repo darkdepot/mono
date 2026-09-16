@@ -46,6 +46,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { validatePhase, validateConfirmation, confirmationPath, correlatedDeliveryReport } from "./delivery-state.mjs";
+import { deliveryConfig } from "./runtime.mjs";
 
 const DEFAULT_STALL_SEC = 120;
 const MIN_STALL_SEC = 90;
@@ -1093,7 +1094,7 @@ function checkPhase(log, entry, nowMs) {
   }
   const confirmation = confirmationPath(latest.report, args.root);
   try { validateConfirmation(latest.report, JSON.parse(fs.readFileSync(confirmation, "utf8"))); return false; } catch { /* still awaiting whole queue */ }
-  const timeout = entry.confirmationTimeoutSec ?? 900;
+  const timeout = entry.confirmationTimeoutSec ?? deliveryConfig().confirmationTimeoutSec;
   return Number.isFinite(timeout) && timeout > 0 && nowMs - latest.publishedAtMs >= 0 && nowMs - latest.publishedAtMs <= timeout * 1000;
 }
 

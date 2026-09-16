@@ -702,7 +702,7 @@ ship request: {preflight:<complete preflight collect:false request>, repo:"owner
   policy exceptions must come from the repository's accepted policy, never worker convenience.
   judgment: {head,preShipReview:"выполнено",readinessCheck:"пройдена",documentation:"выполнен на этой голове|без изменений|намеренно недоступен",documentationReason,closures:[{threadId,replyId}],botRemarks:[{id,commentDigest,outcome:"fixed|rejected|deferred|informational",evidence}]}
   Compute commentDigest with exported botRemarkDigest(comment) on each latest readShipSnapshot bot comment; re-inspect any edited comment.
-  config.orchestration.delivery: confirmationTimeoutSec=900, quietSec=120,
+  config.orchestration.delivery: confirmationTimeoutSec=1800, quietSec=120,
   evidenceLimitSec=2400, pollSec=10, attemptCap=3. Positive seconds/counts only.
   Never delete stateFile to reset a deadline. Start a new attempt only through orchestrator recovery.`);
     else {

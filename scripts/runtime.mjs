@@ -82,15 +82,24 @@ export function positive(value, fallback, name) {
   if (!Number.isFinite(value) || value <= 0) throw new Error(`invalid ${name}`);
   return value;
 }
-export function deliveryConfig(file) {
-  const config = file ? readJson(file)?.orchestration?.delivery ?? {} : {};
-  return {
-    confirmationTimeoutSec: positive(config.confirmationTimeoutSec, 900, "confirmationTimeoutSec"),
+export function deliveryConfig(source) {
+  const root = typeof source === "string" ? readJson(source) : source ?? {};
+  const configured = root?.orchestration?.delivery;
+  if (configured !== undefined && (configured === null || typeof configured !== "object" || Array.isArray(configured))) {
+    throw new Error("orchestration.delivery must be an object");
+  }
+  const config = configured ?? {};
+  const result = {
+    confirmationTimeoutSec: positive(config.confirmationTimeoutSec, 1800, "confirmationTimeoutSec"),
     quietSec: positive(config.quietSec, 120, "quietSec"),
     evidenceLimitSec: positive(config.evidenceLimitSec, 2400, "evidenceLimitSec"),
     pollSec: positive(config.pollSec, 10, "pollSec"),
     attemptCap: positive(config.attemptCap, 3, "attemptCap"),
   };
+  if (result.confirmationTimeoutSec >= result.evidenceLimitSec) {
+    throw new Error(`confirmationTimeoutSec (${result.confirmationTimeoutSec}) must be less than evidenceLimitSec (${result.evidenceLimitSec})`);
+  }
+  return result;
 }
 
 export const ROLE_ENGINES = {

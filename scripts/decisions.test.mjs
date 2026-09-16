@@ -36,6 +36,21 @@ test('journal appends typed entries, preserves history and rejects overwrites an
   } finally {fs.rmSync(evidenceRoot,{recursive:true,force:true});}
 });
 
+test('matrix waivers require a reason and a matching decision reference', async () => {
+  const evidenceRoot=scratch(), issue='MONO-999', add=entry=>recordDecision({evidenceRoot,issue,entry});
+  const verification=(id,extra={})=>({type:'verification',id,forId:'d1',method:'owner decision',result:'waived',waiver:{findingKey:'invariant-1',reason:'documented exception'},recordedAt:'2026-09-16T00:01:00Z',...extra});
+  try {
+    await add(decision('d1'));
+    await assert.rejects(add(verification('v1',{waiver:{findingKey:'invariant-1'}})),/reason/);
+    await assert.rejects(add(verification('v2',{forId:'missing'})),/forId/);
+    await assert.rejects(add(verification('v3',{waiver:{findingKey:'other',reason:'documented exception'}})),/findingKey/);
+    await add(verification('v4'));
+    assert.equal(readJournal({evidenceRoot,issue}).entries.at(-1).waiver.reason,'documented exception');
+    await add(decision('d2',{supersedes:'d1',decision:'confirmed',recordedAt:'2026-09-16T00:02:00Z'}));
+    await assert.rejects(add(verification('v5',{recordedAt:'2026-09-16T00:03:00Z'})),/current decision/);
+  } finally {fs.rmSync(evidenceRoot,{recursive:true,force:true});}
+});
+
 test('dataset versions change only with bytes; materialization is digest-checked, plain, ignored and removable', async () => {
   const evidenceRoot=scratch(), issue='MONO-999', worktree=path.join(evidenceRoot,'repo'),source=path.join(evidenceRoot,'source.md');
   const options={evidenceRoot,issue,source};

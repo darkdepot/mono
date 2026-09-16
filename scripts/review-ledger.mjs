@@ -5,7 +5,7 @@ import os from 'node:os';
 import readline from 'node:readline';
 import { atomicJson, canonical, withLock, isMain } from './runtime.mjs';
 import { parseReviewUsage } from './gate.mjs';
-import { readJournal, validateJournal } from './decisions.mjs';
+import { currentEntries, readJournal, validateJournal } from './decisions.mjs';
 
 const causes = ['fix','head-change','retry','final-request','self-check','unknown'];
 const statuses = ['scoped-clean','findings','filtered','incorrect','incomplete','reviewer_unavailable','withheld','unknown'];
@@ -281,7 +281,14 @@ export async function adjudicate({evidenceRoot,issue,record}) {
   const file=path.join(evidenceRoot,'reviews',`${issue}-adjudications.json`);fs.mkdirSync(path.dirname(file),{recursive:true});
   return withLock(file+'.lock',()=>{const records=fs.existsSync(file)?jsonFile(file):[];if(!Array.isArray(records))throw new Error('invalid adjudication records');
     const clean=Object.fromEntries(['eventId','origin','evidence','links','progress','recordedBy'].map(k=>[k,record[k]]));
-    if(!records.some(r=>canonical(r)===canonical(clean)))atomicJson(file,[...records,clean]);return file;});
+    let replaced=false;const next=[];
+    for(const existing of records) {
+      if(existing.eventId!==clean.eventId)next.push(existing);
+      else if(!replaced){next.push(clean);replaced=true;}
+    }
+    if(!replaced)next.push(clean);
+    if(canonical(records)!==canonical(next))atomicJson(file,next);
+    return file;});
 }
 export function decideReview({ledger,records,journal,attempt}) {
   validateJournal(journal);
@@ -316,8 +323,12 @@ export function decideReview({ledger,records,journal,attempt}) {
   }
   const counts=new Map();
   for(const round of rounds.values())for(const key of round.keys)counts.set(key,(counts.get(key)??0)+1);
+  const waivers=new Map();
+  for(const entry of currentEntries(journal))if(entry.type==='verification'&&entry.waiver)waivers.set(entry.waiver.findingKey,{findingKey:entry.waiver.findingKey,reason:entry.waiver.reason,forId:entry.forId});
+  const required=[...counts].filter(([,n])=>n>=2).map(([key])=>key).sort();
+  const waivedFindingKeys=required.filter(key=>waivers.has(key)).map(key=>waivers.get(key));
   const recent=[...rounds.values()].slice(-2);
-  return {issue:ledger.issue,attempt,matrixFindingKeys:[...counts].filter(([,n])=>n>=2).map(([key])=>key).sort(),
+  return {issue:ledger.issue,attempt,matrixFindingKeys:required.filter(key=>!waivers.has(key)),waivedFindingKeys,
     checkpointRequired:recent.length===2 && recent.every(r=>r.progress==='none'),
     rounds:[...rounds].map(([id,r])=>({id,eventIds:r.eventIds,progress:r.progress})),unresolvedLinks:unresolved};
 }

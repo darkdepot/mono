@@ -6,6 +6,11 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-84: increase the confirmation default to 1800 seconds with a shared
+  configuration check that keeps it below the evidence limit; make adjudication
+  replacement key off `eventId`; add current, reasoned matrix waivers; and
+  document amendment-before-collection ordering and late-collection recovery.
+
 - Add per-product model role overrides with engine/transport and effort validation,
   bound producer/reviewer decisions, and immutable BASE route fingerprints through
   dispatch, collection, receipts and launches. Isolate invocation provider variables,

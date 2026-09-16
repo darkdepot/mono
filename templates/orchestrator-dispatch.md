@@ -58,6 +58,7 @@ For two finding-bearing review events linked by the orchestrator to one
 another collection: `invariant`, `states` with `state` and `expected`, targeted
 `verification`, and `decisionIds` referring to this report's dispositions.
 The orchestrator checks the matrix and test result before requesting collection.
+A matrix waiver exists only as a journal entry with a reason.
 
 <!-- review-pilot:checkpoint -->
 ### Five answers when progress stops

@@ -102,7 +102,7 @@ A wave's cost is telemetry, not a gate. Read the **Cost** line in deploy closeou
 - Actual pack bytes read, review rounds, model and effort.
 - Explicit unavailable components with reasons; never estimates presented as measurements.
 
-Build a review ledger with `review-ledger.mjs build --issue <KEY> --root <orchestrator-root> --evidence-root <evidenceRoot>`; `print` reads the same sources without writing. Use `--out <scratch-directory>` to save a reviewable copy, and `wave-cost.mjs --ledger <copy.json>` to price that copy. Ambiguous source links appear in `unresolvedCoverage`, without guessed merges or duplicate calls. Causes remain `unknown` without evidence; self-check requires observed content identity. `adjudicate --issue <KEY> --evidence-root <evidenceRoot> --record <json-file>` appends an orchestrator's origin, evidence, decision links and progress record; it does not infer classifications from filenames.
+Build a review ledger with `review-ledger.mjs build --issue <KEY> --root <orchestrator-root> --evidence-root <evidenceRoot>`; `print` reads the same sources without writing. Use `--out <scratch-directory>` to save a reviewable copy, and `wave-cost.mjs --ledger <copy.json>` to price that copy. Ambiguous source links appear in `unresolvedCoverage`, without guessed merges or duplicate calls. Causes remain `unknown` without evidence; self-check requires observed content identity. `adjudicate --issue <KEY> --evidence-root <evidenceRoot> --record <json-file>` records an orchestrator's origin, evidence, decision links and progress without inferring classifications from filenames. Repeating an `eventId` replaces that event's adjudication in place; the latest record wins and other records keep their order.
 
 ### Reviewer comparison bench
 
@@ -123,7 +123,11 @@ repeats the relevant stage rules only for approved pilot Issues.
 Installed `decisions.mjs record|list|render` uses `--issue KEY --evidence-root DIR`;
 `record --record FILE` accepts `decision`, `matrix` or `verification` entries.
 IDs cannot be overwritten. Revisions append a `supersedes` link, and deterministic
-rendering includes only current entries. `version --source DATASET` publishes
+rendering includes only current entries. A matrix waiver is a `verification`
+entry whose `waiver` names the decision's `findingKey` and gives a reason;
+`forId` must reference that decision. `review-ledger.mjs decide` reports current
+waivers in `waivedFindingKeys` instead of `matrixFindingKeys`; superseding the
+referenced decision makes its waiver inactive. `version --source DATASET` publishes
 `datasets/<KEY>-review-scope.v<N>.md` plus `.sha256` only when bytes change, reusing
 identical archived content. An interrupted archive/digest publication is recovered
 under the shared archive lock only when the retry has identical bytes; changed
