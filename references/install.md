@@ -221,18 +221,22 @@ cut-over.
 Create, migrate, or check a project config from this upstream checkout:
 
 ```bash
-node scripts/project-config.mjs --repo /path/to/project --project-name Zeni --write --clean
+node scripts/project-config.mjs --repo /path/to/project --project-name Product --write --clean
 node scripts/project-config.mjs --repo /path/to/project --check
 node scripts/project-config.mjs --repo /path/to/project --clean --check
 ```
+
+The generator uses `--project-name` for both `projectName` and `linearTeam`.
+When the Linear team key is different, set `linearTeam` in the generated JSON
+before running `--check`; the example below uses `PROD`.
 
 The project config is JSON:
 
 ```json
 {
   "schemaVersion": 1,
-  "projectName": "Zeni",
-  "linearTeam": "Zeni",
+  "projectName": "Product",
+  "linearTeam": "PROD",
   "languages": {
     "linear": "Russian",
     "repo": "English"

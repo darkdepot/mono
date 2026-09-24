@@ -13,6 +13,11 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   limit, keeps Pi tools-off only, refuses frozen-plan overrides, and separates
   common and production report groups without disclosing protocol to graders.
 
+- MONO-87: replace consumer-specific examples and template text with a fictional
+  neutral product, remove the owner identifier from the pack config, disable its
+  issue-only lane, and preserve fixture coverage through machine-token and
+  structural checks.
+
 - MONO-84: increase the confirmation default to 1800 seconds with a shared
   configuration check that keeps it below the evidence limit; make adjudication
   replacement key off `eventId`; add current, reasoned matrix waivers; and
@@ -263,7 +268,7 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   retired model, keeping its re-tier pointer verbatim.
 - The remaining autoreview-route mentions follow the same move: `AGENTS.md`,
   `README.md`, `references/install.md`, `references/lifecycle.md`,
-  `references/versioning.md`, and `examples/zeni-dogfood.md`.
+  `references/versioning.md`, and `examples/consumer-dogfood.md`.
 - `scripts/validate-workflow.mjs` moves every affected pin together with its
   text and drops three pins that guarded editorial wording on a paragraph this
   change abolishes: `PROVISIONAL pending live-QA validation of the`,
@@ -671,7 +676,7 @@ Wave-1 hardening release: MONO-1 through MONO-4 close the reliability gaps found
 
 - Add `linear-deploy` as the post-ship owner for Deploy workflow delegation, verified delivery evidence, post-ship check, Linear closeout, and durable learning capture.
 - Add `templates/deploy-output.md` and a durable `linear-ship green certificate` contract for handoff from ship to deploy.
-- Add optional consumer config field `Documentation workflow`, defaulting Zeni to `gstack document-release`.
+- Add optional consumer config field `Documentation workflow`, defaulting the first consumer to `gstack document-release`.
 
 ### Changed
 
@@ -744,7 +749,7 @@ Wave-1 hardening release: MONO-1 through MONO-4 close the reliability gaps found
 
 ### Added
 
-- Add a lightweight regression smoke script and a Profile Workbench example for the first Zeni dogfood failure mode.
+- Add a lightweight regression smoke script and a Profile Workbench example for the first consumer dogfood failure mode.
 
 ### Fixed
 
@@ -781,7 +786,7 @@ Wave-1 hardening release: MONO-1 through MONO-4 close the reliability gaps found
 
 - Two generated wrapper modes:
   - `self` mode for dogfooding this repository from its current checkout.
-  - `consumer` mode for pinned, reviewable installs in repos like Zeni.
+  - `consumer` mode for pinned, reviewable installs such as the first consumer.
 - Consumer lockfile contract at `.agents/linear-workflow.lock.json`.
 - Install, update, check, and smoke-test scripts for wrapper generation and drift checks.
 - Versioning reference for SemVer, lockfiles, wrapper hashes, and breaking-change policy.

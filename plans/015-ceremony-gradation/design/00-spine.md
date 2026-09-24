@@ -1,6 +1,6 @@
 # SPINE Design Contract — Workflow Assurance & Routing Redesign (ACCEPTED)
 
-Baseline anchor: main checkout `/Users/sasha/Projects/mono-agent-workflow` @ abd7d5f, VERSION 0.19.1. This is the FIXED spine; dependent contracts must honor Section 5's 12 decisions and may not re-decide it.
+Baseline anchor: `<main-checkout>` @ abd7d5f, VERSION 0.19.1. This is the FIXED spine; dependent contracts must honor Section 5's 12 decisions and may not re-decide it.
 
 ## Section 1 — Assurance Composition Contract
 

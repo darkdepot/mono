@@ -2455,9 +2455,9 @@ function validateIssueOnlyLaneBehavior() {
     // approval fingerprint the caller confirmed against the authenticated comment.
     const issueOnlyArgs = ["--label", "issue-only", "--approval-verified", fingerprint];
 
-    // Fixture 2 — happy: a valid marker plus both trusted signals and the real
-    // enabled upstream project config resolves the five fields correctly. This
-    // live-config coupling is intentional: AC1/AC4 guard the upstream opt-in.
+    // Fixture 2 — happy: a valid marker plus both trusted signals and a synthetic
+    // enabled consumer config resolves the five fields correctly. The upstream
+    // pack config is deliberately disabled and checked separately below.
     writeMarker([
       "Marker version: 1",
       `Scope fingerprint: ${fingerprint}`,
@@ -2466,7 +2466,7 @@ function validateIssueOnlyLaneBehavior() {
       `Approval: ${fingerprint} (approved by owner)`,
     ]);
     const happy = JSON.parse(
-      runNode(["scripts/resolve-issue-context.mjs", "--issue", issuePath, "--marker", markerPath, "--config", ".agents/mono-workflow.config.json", ...issueOnlyArgs])
+      runNode(["scripts/resolve-issue-context.mjs", "--issue", issuePath, "--marker", markerPath, "--config", enableConfigPath, ...issueOnlyArgs])
     );
     if (happy.package_kind !== "issue-only") fail("resolve-issue-context valid marker must be issue-only");
     if (happy.lifecycle_state_entity !== "issue") fail("resolve-issue-context issue-only must read the Issue lifecycle entity");
@@ -2482,6 +2482,16 @@ function validateIssueOnlyLaneBehavior() {
     if (happy.risk_class !== "standard") fail("resolve-issue-context issue-only must read the recorded risk class");
     if (happy.approval_status !== "approved-fresh") {
       fail("resolve-issue-context issue-only approval must be approved-fresh when the fingerprint matches");
+    }
+
+    const upstreamDisabled = JSON.parse(
+      runNode(["scripts/resolve-issue-context.mjs", "--issue", issuePath, "--marker", markerPath, "--config", ".agents/mono-workflow.config.json", ...issueOnlyArgs])
+    );
+    if (upstreamDisabled.package_kind !== "project-first") {
+      fail("resolve-issue-context upstream pack config must keep the issue-only lane disabled");
+    }
+    if (upstreamDisabled.behavioral_oracle !== null) {
+      fail("resolve-issue-context disabled upstream pack config must have no behavioral oracle");
     }
 
     // Fixture 7 — resume-discovery. Linear narrows the scan to open,
@@ -7145,15 +7155,15 @@ const REQUIRED_HEADINGS = [
   ["references/contracts/issue.md","IS-005 — Issue-only branch"],
   ["references/contracts/issue.md","IS-008 — Project-first sources"],
   ["references/contracts/issue.md","IS-019 — Project-first chips"],
-  ["examples/zeni-dogfood.md","Risk-Based Review Gate Examples"],
-  ["examples/zeni-dogfood.md","Correct Risky Handoff Review"],
-  ["examples/zeni-dogfood.md","Correct Implement To Preflight To Ship"],
-  ["examples/zeni-dogfood.md","Anti-Example: Ship Owns Deploy"],
-  ["examples/zeni-dogfood.md","Anti-Example: Vendored Project Install"],
-  ["examples/zeni-dogfood.md","Correct Tiny Advisory Review"],
-  ["examples/zeni-dogfood.md","Anti-Example: Required Review Skipped"],
-  ["examples/zeni-dogfood.md","Anti-Example: Review Mutates Linear"],
-  ["examples/zeni-dogfood.md","Anti-Example: Preflight Owns Ship"],
+  ["examples/consumer-dogfood.md","Risk-Based Review Gate Examples"],
+  ["examples/consumer-dogfood.md","Correct Risky Handoff Review"],
+  ["examples/consumer-dogfood.md","Correct Implement To Preflight To Ship"],
+  ["examples/consumer-dogfood.md","Anti-Example: Ship Owns Deploy"],
+  ["examples/consumer-dogfood.md","Anti-Example: Vendored Project Install"],
+  ["examples/consumer-dogfood.md","Correct Tiny Advisory Review"],
+  ["examples/consumer-dogfood.md","Anti-Example: Required Review Skipped"],
+  ["examples/consumer-dogfood.md","Anti-Example: Review Mutates Linear"],
+  ["examples/consumer-dogfood.md","Anti-Example: Preflight Owns Ship"],
   ["references/readiness-gates.md","Tiny Output Profile"],
   ["references/artifact-quality.md","PRD"],
   ["references/artifact-quality.md","Tech Spec"],
@@ -7243,7 +7253,7 @@ const REQUIRED_HEADINGS = [
   ["references/contracts/issue.md","IS-004 — Targeted-use eligibility"],
   ["README.md","Principles"],
   ["AGENTS.md","Skill Design Rules"],
-  ["examples/zeni-dogfood.md","Zeni Dogfood Example"],
+  ["examples/consumer-dogfood.md","Consumer Dogfood Example"],
   ["references/artifact-intake.md","Source Precedence"],
   ["references/artifact-intake.md","Configured Artifact Roots"],
   ["references/autoreview-routing.md","Autoreview Role Routing"],
@@ -7484,7 +7494,7 @@ const MACHINE_TOKENS = new Set([
   "drift-candidate",
   "error",
   "evidence",
-  "examples/zeni-dogfood.md",
+  "examples/consumer-dogfood.md",
   "explicit",
   "fallback",
   "forbidden",
@@ -7862,7 +7872,7 @@ function validateDocumentBoundaries() {
     if (read(file).split("\n").some((line) => /^#{1,6}\s+/.test(line) && line.replace(/^#{1,6}\s+/, "").trim() === heading)) fail(`${file}: forbidden workflow heading ${heading}`);
   }
   for (const file of ["skills/mono-ship/SKILL.md", "templates/ship-output.md"]) if (read(file).includes("pr-created")) fail(`${file}: retired terminal status pr-created`);
-  for (const file of ["skills/mono-preflight/SKILL.md", "README.md", "CHANGELOG.md", "examples/zeni-dogfood.md"]) if (read(file).includes("`tiny` ->")) fail(`${file}: duplicate canonical autoreview route`);
+  for (const file of ["skills/mono-preflight/SKILL.md", "README.md", "CHANGELOG.md", "examples/consumer-dogfood.md"]) if (read(file).includes("`tiny` ->")) fail(`${file}: duplicate canonical autoreview route`);
   const dispatch = read("templates/orchestrator-dispatch.md");
   if (dispatch.includes("pass | deferred | not-run")) fail("dispatch duplicates the report's verification status dictionary");
   const report = read("templates/orchestrator-report.md") + read("references/worker-contract.md");

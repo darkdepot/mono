@@ -1001,7 +1001,7 @@ git commit -m "docs: mark plan 011 done in plans index"
   (`gstack ship`), not to this plan.
 - Installer changes — `install-local.mjs` discovers new skills, references,
   and templates automatically.
-- Project repo changes (e.g. switching Zeni `deployApproval` to
+- Project repo changes (e.g. switching the first consumer's `deployApproval` to
   `risky-only`) — separate explicit step with the user.
 - Any change to existing stage skills' ownership or gates.
 

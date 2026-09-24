@@ -149,13 +149,13 @@ model resolved from [role:autoreview](model-policy.md#roles) and reasoning effor
 `references/autoreview-routing.md` for the final risk class. Project config
 does not duplicate this technical routing table.
 
-Example Zeni project config:
+Example Product project config:
 
 ```json
 {
   "schemaVersion": 1,
-  "projectName": "Zeni",
-  "linearTeam": "Zeni",
+  "projectName": "Product",
+  "linearTeam": "PROD",
   "languages": {
     "linear": "Russian",
     "repo": "English"

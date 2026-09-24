@@ -47,8 +47,8 @@ never dispatch another stage. Preserve the following order.
 6. Delegate PR creation to configured Ship workflow, with package/preflight
    context. Record number/URL/head; queue In Review and PR chip after creation,
    then confirm them before further dependent progression.
-7. Run Documentation workflow after PR/before stabilization (gstack document-release
-   for default Zeni/GStack). Record head effect; pushes restart on new head.
+7. Run Documentation workflow after PR/before stabilization (configured, e.g.
+   `gstack document-release`). Record head effect; pushes restart on new head.
    Missing workflow means intentionally unavailable with reason; always report outcome.
 8. Delegate Review feedback workflow once inspectable. Follow feedback-loop bot
    config/dedup/published-replies/convergence rules. Missing resolver: inspect once;

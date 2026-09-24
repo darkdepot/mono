@@ -98,9 +98,9 @@ the two that form does not carry.
     ревью, Second Voice, PR, worktree, сессия, стадия, идемпотентность,
     kill-switch, tombstone, кэш-метки, stale-while-revalidate, CI, байты,
     квитанции, коды требований и приёмки (R14, AC4, AE13), даты и время,
-    проценты готовности. Разрешён словарь продукта: превью, Cashflow, Zenmoney,
-    выписка, подписка, контрагент, долг, Альфред, имена помощников, названия
-    скиллов, интеграций и экранов — как названия, а не как подлежащее.
+    проценты готовности. Названия экранов, интеграций, помощников и сущностей
+    продукта допустимы как названия, а не как подлежащее; полный список хранится
+    в продуктовом решении в Linear.
 
 ## Live mode
 
@@ -159,52 +159,47 @@ every other invariant binds it, 14 and 15 included.
 
 ## Examples
 
-Verbatim, from the accepted set. «Выкладка», ordinary update (ZENI-379):
+Synthetic example. «Выкладка», ordinary update:
 
 ```text
-**Платёж по подписке из банка теперь можно перевести в долг**
+**Общие доски теперь можно закреплять для всей команды**
 
-Раньше защита импортированных операций этому мешала. Суммы, даты и источник остаются нетронутыми, а поправка от банка ляжет отдельной строкой.
+Закреплённая доска остаётся наверху у всех участников рабочего пространства. Личные доски и порядок остальных досок не меняются.
 
-[ZENI-379](https://linear.app/darkdepot/issue/ZENI-379/bag-mcpdebt-provider-imported-blokiruet-perevod-realnyh-platezhej-kami)
+[<KEY-1>](<url>)
 ```
 
-«Выкладка», final update (ZENI-381):
+Synthetic «Выкладка», final update:
 
 ```text
-**Проект завершён: новые операции не создают дубль контрагента**
+**Проект завершён: заметки сохраняют историю изменений**
 
-Для контрагентов вроде Wirex обогащение дополняет существующую карточку правилами, не трогая имя, аватар и настройки. Это была последняя поставка: обогащение контрагентов доставлено целиком.
+Предыдущие версии заметки и автор каждого изменения теперь видны. Это была последняя поставка: история изменений доступна во всех рабочих пространствах.
 
-[ZENI-381](https://linear.app/darkdepot/issue/ZENI-381/mcp-privyazyvat-novye-tipy-operacij-k-sushestvuyushemu-kontragentu-po)
+[<KEY-2>](<url>)
 ```
 
-«Состояние» (ZENI-393 as the blocking Issue):
+Synthetic «Состояние» with a blocking Issue:
 
 ```text
-**Долги из чата работают, кроме повторного импорта по ним**
+**Импорт заметок работает, кроме вложенных списков**
 
-Заведение долга, погашение и перевод подписки в долг уже на проде. Остался один баг: после перевода в долг повторный импорт из Zenmoney и выписок падает вместо корректирующей строки.
+Обычный текст, заголовки и изображения переносятся без ручной правки. Остался один баг: вложенные списки импортируются без уровней.
 
-[ZENI-393](https://linear.app/darkdepot/issue/ZENI-393/bag-importa-zenmoney-sync-i-statement-upsert-obnovlyayut-yadro)
+[<KEY-3>](<url>)
 ```
 
 ## Acceptance set
 
-The 32 updates published or rewritten on 2026-09-07 after the CPO review — 26
-rewritten in place and 6 written new from their Issues — are the accepted
-format. They live in the feeds of «Pulse», «Модельная политика», «Финансовый
-оркестратор Zeni», «Свежесть веба», «P4a», «Zeni Mobile оффлайн», «Документы к
-транзакциям», «Debt Operations V1», «P2 Counterparty Enrichment», and «Без
-искусственных квот». Recover them from Linear with `get_status_updates` on those
-projects.
+The acceptance set is stored in the owner's Linear workspace and named in the
+product decision that adopts this template.
 
-They are the acceptance set for the invariants above — for the FORM of an
+It is the acceptance set for the invariants above — for the FORM of an
 update, not for its language, since this pack's Linear language is Russian.
-Every one of them must pass every text invariant, with the retrospective `· влито …` tail excluded
+Every update in it must pass every text invariant, with the retrospective `· влито …` tail excluded
 because it never belongs to a live update. Invariants 11 and 12 are process
 rules about how an update is produced, which a published body cannot
-demonstrate on its own. When one of them fails an invariant, the
+demonstrate on its own. When an update fails an invariant, the
 invariant is wrong and gets fixed — not the example.
 
 Two drafts that must fail. «Прошли preflight и autoreview, PR #812 смержен в
