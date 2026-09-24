@@ -241,4 +241,4 @@ closeout and the independent review pass ran after the outage cleared.
 - Any change to `mono-preflight`'s autoreview gate, `mono-review`,
   `mono-check`, or gate ordering.
 - Automating runtime-imposed confirmation clicks in Claude Code Desktop.
-- Project repo changes (e.g. adding the orchestration block to Zeni's config).
+- Project repo changes (e.g. adding the orchestration block to the first consumer's config).

@@ -1,25 +1,25 @@
-# Zeni Dogfood Example
+# Consumer Dogfood Example
 
-Zeni is the first consumer repo for this workflow.
+Acme Notes is the fictional first consumer repository for this workflow.
 
 Project policy:
 
-- Zeni keeps its existing project-specific skills.
-- Zeni keeps only `.agents/mono-workflow.config.json` for this workflow.
-- Zeni must not vendor `.agents/skills/mono-*`, `.claude/skills/mono-*`, workflow lockfiles, local checkers, or updater CI for this workflow.
+- Acme Notes keeps its existing project-specific skills.
+- Acme Notes keeps only `.agents/mono-workflow.config.json` for this workflow.
+- Acme Notes must not vendor `.agents/skills/mono-*`, `.claude/skills/mono-*`, workflow lockfiles, local checkers, or updater CI for this workflow.
 - Use the local skill pack installed from this upstream repo through `scripts/install-local.mjs`.
-- Zeni stores project policy in `.agents/mono-workflow.config.json` and repo docs.
-- Zeni's configured implementation workflow is Compound `ce-work`.
-- Zeni's configured ship workflow is gstack `ship`.
-- Zeni's configured documentation workflow is gstack `document-release`.
-- Zeni's configured review feedback workflow is Compound `ce-resolve-pr-feedback`.
-- Zeni's configured deploy workflow is gstack `land-and-deploy`.
+- Acme Notes stores project policy in `.agents/mono-workflow.config.json` and repo docs.
+- Acme Notes' configured implementation workflow is Compound `ce-work`.
+- Acme Notes' configured ship workflow is gstack `ship`.
+- Acme Notes' configured documentation workflow is gstack `document-release`.
+- Acme Notes' configured review feedback workflow is Compound `ce-resolve-pr-feedback`.
+- Acme Notes' configured deploy workflow is gstack `land-and-deploy`.
 
 Dogfood order:
 
 1. Ship the reusable workflow MVP.
 2. Install/update the local skill pack from this upstream repo.
-3. Write or migrate Zeni's `.agents/mono-workflow.config.json` and clean legacy project installs.
+3. Write or migrate Acme Notes' `.agents/mono-workflow.config.json` and clean legacy project installs.
 4. Use `mono-idea` for raw idea intake.
 5. Use discovery/review skills in Plan Mode when helpful.
 6. Use `mono-handoff` before implementation.
@@ -36,7 +36,7 @@ Dogfood order:
 Input:
 
 ```text
-Improve Settings > Agent by splitting Identity & phase, Voice & guardrails, and Context into separate saveable blocks. Improve Goals design and think through Yield target binding.
+Split Settings > Notifications into independently saveable blocks for email, mobile push, and quiet hours.
 ```
 
 Expected behavior:
@@ -102,7 +102,7 @@ Expected Issue relationship shape:
 Input:
 
 ```text
-Settings > Agent will change identity, phase, voice guardrails, and context behavior across multiple saveable blocks.
+Settings > Notifications will change email, mobile push, and quiet-hours behavior across multiple saveable blocks.
 ```
 
 Expected behavior:

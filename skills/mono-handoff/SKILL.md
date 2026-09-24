@@ -282,7 +282,7 @@ Completion example:
 - Project: [Settings skeleton states cleanup](<url>) - статус `Discovery`; верхний контейнер работы и короткий product brief.
 - PRD: [Settings structural skeletons](<url>) - WHAT: какие Settings loading states покрываем, что значит structural-not-literal, где границы.
 - Tech Spec: [Settings structural skeletons](<url>) - HOW: skeleton kit, route-family mapping, validation, rollout/rollback.
-- Issue: [ZENI-6](<url>) - первый execution slice; сейчас это один PR.
+- Issue: [PROD-6](<url>) - первый execution slice; сейчас это один PR.
 
 Пакет уже проверен: `mono-review handoff` и `mono-check` прошли, блокеров нет. Повторно запускать `mono-review` сейчас не нужно. Следующий review нужен перед PR/ship, после реализации.
 

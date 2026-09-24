@@ -41,9 +41,18 @@ function mustExclude(relativePath, snippet) {
   }
 }
 
+function sectionBetween(content, startHeading, endHeading) {
+  const start = content.indexOf(startHeading);
+  const end = content.indexOf(endHeading, start + startHeading.length);
+  if (start === -1 || end === -1) {
+    return "";
+  }
+  return content.slice(start, end);
+}
+
 // This is intentionally a small smoke guard, not a template police system.
 // The real contract lives in the skills and examples. This script only catches
-// the specific regressions that broke the first Zeni dogfood flow.
+// the specific regressions that broke the first consumer dogfood flow.
 
 for (const [file, snippets] of [
   [
@@ -107,21 +116,74 @@ for (const [file, snippets] of [
       "Do fail when a document has the wrong responsibility",
     ],
   ],
-  [
-    "examples/profile-workbench-regression.md",
-    [
-      "The fix is stronger artifact construction, not more template bureaucracy.",
-      "R1. Блоки Identity & phase",
-      "AE1. Покрывает R1, R2, R3.",
-      "Поддерживает R1, R2, R3.",
-      "<project id=\"project-profile-workbench\">Agent profile settings cleanup</project>",
-      "Bad Anti-Examples",
-    ],
-  ],
 ]) {
   for (const snippet of snippets) {
     mustInclude(file, snippet);
   }
+}
+
+const profileExample = read("examples/profile-workbench-regression.md");
+const prdFragment = sectionBetween(profileExample, "## Good PRD Fragment", "## Good Tech Spec Fragment");
+const requirementIds = Array.from({ length: 7 }, (_, index) => `R${index + 1}`);
+const acceptanceIds = Array.from({ length: 3 }, (_, index) => `AE${index + 1}`);
+
+for (const id of requirementIds) {
+  if (!new RegExp(`^\\s*-\\s+${id}\\.`, "m").test(prdFragment)) {
+    fail(`examples/profile-workbench-regression.md must keep the ${id} requirement anchor`);
+  }
+}
+
+function listItemBlock(text, anchor) {
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => new RegExp(`^\\s*-\\s+${anchor}\\.`).test(line));
+  if (start === -1) return "";
+  const block = [lines[start]];
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*-\s+/.test(line)) break;
+    block.push(line);
+  }
+  return block.join("\n");
+}
+
+const coveredRequirements = new Set();
+for (const id of acceptanceIds) {
+  const block = listItemBlock(prdFragment, id);
+  if (!block) {
+    fail(`examples/profile-workbench-regression.md must keep the ${id} acceptance anchor`);
+    continue;
+  }
+  const references = [...block.matchAll(/\bR([1-7])\b/g)].map((match) => `R${match[1]}`);
+  if (references.length === 0) {
+    fail(`examples/profile-workbench-regression.md ${id} must trace to at least one R anchor`);
+  }
+  references.forEach((reference) => coveredRequirements.add(reference));
+}
+
+for (const id of requirementIds) {
+  if (!coveredRequirements.has(id)) {
+    fail(`examples/profile-workbench-regression.md acceptance examples must cover ${id}`);
+  }
+}
+
+const techSpecFragment = sectionBetween(
+  profileExample,
+  "## Good Tech Spec Fragment",
+  "## Good Issue Links Shape"
+);
+if (!techSpecFragment) {
+  fail("examples/profile-workbench-regression.md must keep the Good Tech Spec and Good Issue Links sections");
+}
+const techSpecDecisionFragment = sectionBetween(techSpecFragment, "## Архитектура", "## Валидация");
+if (!techSpecDecisionFragment) {
+  fail("examples/profile-workbench-regression.md Tech Spec must keep architecture and validation sections");
+} else if (!/\bR[1-7]\b/.test(techSpecDecisionFragment)) {
+  fail("examples/profile-workbench-regression.md Tech Spec decision body must trace to an R anchor");
+}
+if (!/^## Bad Anti-Examples$/m.test(profileExample)) {
+  fail("examples/profile-workbench-regression.md must keep the Bad Anti-Examples section");
+}
+if (!/<project id="project-profile-workbench">[^<]+<\/project>/.test(profileExample)) {
+  fail("examples/profile-workbench-regression.md must keep the project chip with a non-empty title");
 }
 
 for (const [file, snippets] of [

@@ -1,6 +1,6 @@
 # Profile Workbench Regression Example
 
-This example captures the Zeni dogfood failure that motivated Handoff-First
+This example captures the first consumer dogfood failure that motivated Handoff-First
 Linear Workflow v2.
 
 The important regression is not "a heading changed." The regression is an agent
@@ -43,33 +43,33 @@ The Project is a product brief, not a workflow dashboard.
 ```markdown
 # Что
 
-Переработать Settings > Profile в Profile Workbench для контекста Альфреда:
-три независимых save-блока, Goals через Add goal modal, Yield targets как
-честная platform + optional asset поверхность.
+Переработать Settings > Operator Profile в Operator Profile Workbench для CRM:
+три независимых save-блока, Roles через Add role modal, Service regions как
+отдельная list-first поверхность.
 
 # Зачем
 
-Оператор сейчас откладывает правки профиля, потому экран выглядит как одна
+Оператор сейчас откладывает правки профиля, потому что экран выглядит как одна
 большая risky form. Профиль должен снова стать местом, которое спокойно
 поддерживается вручную.
 
 # Образ результата
 
-Оператор меняет один участок контекста и понимает, что именно будет сохранено.
-Goals читаются как список, создание вынесено в modal, Yield targets не
-притворяются account-level настройкой.
+Оператор меняет один раздел профиля и понимает, что именно будет сохранено.
+Roles читаются как список, создание вынесено в modal, Service regions не
+смешиваются с настройками доступа команды.
 
 # Что входит
 
-- Split saves для Identity & phase, Voice & guardrails, Context.
-- Goals list-first UI и Add goal modal.
-- Yield targets list-first UI с platform/asset wording.
+- Split saves для Identity, Notifications, Context.
+- Roles list-first UI и Add role modal.
+- Service regions list-first UI с названием и статусом.
 
 # Что не входит
 
-- Account-level или institution-level yield target schema.
-- Goal lifecycle beyond create/remove.
-- Перенос контекста в Settings > Agent.
+- Team-level permissions и схема организации.
+- Role lifecycle beyond create/remove.
+- Перенос контекста в отдельный экран команды.
 ```
 
 ## Good PRD Fragment
@@ -79,42 +79,40 @@ The PRD answers WHAT and gives stable requirement anchors.
 ```markdown
 ## Требования
 
-**Безопасное редактирование profile**
-- R1. Блоки Identity & phase, Voice & guardrails и Context визуально и
+**Безопасное редактирование профиля оператора**
+- R1. Блоки Identity, Notifications и Context визуально и
   поведенчески являются отдельными save-поверхностями.
-- R2. Сохранение одного profile-блока не отправляет unrelated fields из других
+- R2. Сохранение одного блока профиля не отправляет unrelated fields из других
   блоков как null или empty updates.
-- R3. У каждого profile-блока есть descriptive save copy: Save identity,
-  Save voice, Save context.
+- R3. У каждого блока профиля есть descriptive save copy: Save identity,
+  Save notifications, Save context.
 
-**Goals**
-- R4. Goals отображаются как list-first поверхность.
-- R5. Создание goal открывается через Add goal и не находится inline под
+**Roles**
+- R4. Roles отображаются как list-first поверхность.
+- R5. Создание role открывается через Add role и не находится inline под
   списком.
 
-**Yield targets**
-- R6. Yield targets отображаются как platform + optional asset expectations.
-- R7. Yield target copy не подразумевает account-level или institution-level
-  binding.
+**Service regions**
+- R6. Service regions отображаются как список названий и статусов.
+- R7. Текст региона не подразумевает командные права или схему организации.
 
 ## Примеры приемки
 
-- AE1. Покрывает R1, R2, R3. Дано: existing profile с заполненными voice и
-  context fields. Когда оператор редактирует Identity & phase и нажимает Save
-  identity, тогда отправляются только identity-owned fields, а остальные
-  profile fields остаются без изменений.
-- AE2. Покрывает R4, R5. Дано: Goals card видима. Когда оператор нажимает Add
-  goal, тогда открывается modal с существующими create fields, а inline create
+- AE1. Покрывает R1, R2, R3. Дано: existing profile с заполненными notifications
+  и context fields. Когда оператор редактирует Identity и нажимает Save identity,
+  тогда отправляются только identity-owned fields, а остальные profile fields
+  остаются без изменений.
+- AE2. Покрывает R4, R5. Дано: Roles card видима. Когда оператор нажимает Add
+  role, тогда открывается modal с существующими create fields, а inline create
   form под списком отсутствует.
-- AE3. Покрывает R6, R7. Дано: Yield targets показаны. Когда target не имеет
-  asset, тогда UI описывает его как применимый ко всем assets на platform и не
-  использует account, institution или linked-account wording.
+- AE3. Покрывает R6, R7. Дано: Service regions показаны. Когда регион неактивен,
+  тогда UI показывает его статус и не связывает его с командными правами.
 
 ## Критерии успеха
 
 - Оператор может внести одну небольшую правку профиля без ощущения, что будет
-  переписан весь profile.
-- Tech Spec scope можно вывести без изобретения yield target account semantics.
+  переписан весь профиль.
+- Tech Spec scope можно вывести без изобретения схемы командных прав.
 ```
 
 ## Good Tech Spec Fragment
@@ -124,11 +122,11 @@ The Tech Spec answers HOW and traces decisions back to PRD anchors.
 ```markdown
 ## Источник PRD
 
-Поддерживает R1-R7 из PRD: Agent profile settings cleanup.
+Поддерживает R1-R7 из PRD: Operator profile editing.
 
 ## Архитектура
 
-Сохраняем существующие profile service и data model. Текущий широкий profile
+Сохраняем существующие operator profile service и data model. Текущий широкий
 save action разделяется на три server actions, каждая владеет только fields
 своего блока.
 
@@ -136,20 +134,18 @@ save action разделяется на три server actions, каждая вл
 
 ## Контракты и границы
 
-- Identity action владеет identity, phase, jurisdiction, residency и related
-  identity fields.
-- Voice action владеет tone и guardrail fields.
+- Identity action владеет display name, handle, locale и avatar fields.
+- Notifications action владеет email, mobile push и quiet-hours fields.
 - Context action владеет background/context narrative fields.
-- Goals и Yield targets сохраняют существующую data shape.
+- Roles и Service regions сохраняют существующую data shape.
 
 Поддерживает R2, R4, R6.
 
 ## Валидация
 
 - Unit tests покрывают partial FormData для каждой split action.
-- Browser smoke подтверждает, что Save identity, Save voice, Save context
-  видимы, Add goal открывает modal, а Yield target copy использует
-  platform/asset language.
+- Browser smoke подтверждает, что Save identity, Save notifications, Save context
+  видимы, Add role открывает modal, а Service regions показывают название и статус.
 
 Поддерживает AE1, AE2, AE3.
 ```
@@ -161,9 +157,9 @@ The Issue contains chips and resources, not copied documents.
 ```markdown
 # Связи
 
-<project id="project-profile-workbench">Agent profile settings cleanup</project>
-<document id="prd-profile-workbench">PRD: Agent profile settings cleanup</document>
-<document id="spec-profile-workbench">Tech Spec: Agent profile settings cleanup</document>
+<project id="project-profile-workbench">Operator profile editing</project>
+<document id="prd-profile-workbench">PRD: Operator profile editing</document>
+<document id="spec-profile-workbench">Tech Spec: Operator profile editing</document>
 ```
 
 The Issue may also add PRD and Tech Spec as resources or links when the Linear

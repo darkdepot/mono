@@ -221,7 +221,7 @@ Session state is reconstructable, by design:
 
 Out of scope:
 
-- No changes to project repos beyond optionally switching Zeni's
+- No changes to project repos beyond optionally switching the first consumer's
   `deployApproval` to `risky-only` (separate, explicit step).
 - No new external services; mailbox is plain files.
 - No automation of runtime-imposed confirmation clicks.

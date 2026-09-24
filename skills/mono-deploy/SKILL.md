@@ -50,7 +50,7 @@ Workflow:
 
 Record approval as `Деплой одобрен: <кем/когда>; PR #<n>, head <sha>`.
 
-5. `deploy`: delegate configured Deploy workflow (default Zeni/GStack `gstack land-and-deploy`). Never invent a path or merge/deploy without current green certificate/head match.
+5. `deploy`: delegate the Deploy workflow (configured, e.g. `gstack land-and-deploy`). Never invent a path or merge/deploy without current green certificate/head match.
 6. `verify`: capture merged SHA, target URL/environment, deploy status/evidence.
 7. `live-qa`: execute the Live QA gate below after deploy verification and before closeout.
 8. `post-ship`: run/report `mono-check post-ship` after evidence exists.
