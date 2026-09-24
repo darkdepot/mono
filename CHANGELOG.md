@@ -6,6 +6,10 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-88: add the experimental Grok 4.7 reviewer-bench route through Grok
+  Build subscription login only, keep it tools-off, reject every Grok credential
+  mapping, and document that historical frozen helpers cannot run the route.
+
 - MONO-85: replace key-backed reviewer bench routes with six Claude Code and
   Codex CLI subscription routes, require recorded subscription-login evidence,
   and add plan-scoped tools-on/off protocols. Tools-on admits Codex without

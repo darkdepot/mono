@@ -73,8 +73,9 @@ with different values use different plans and run IDs.
 ## Route admission and credentials
 
 The checked-in `scripts/review-bench-routes.mjs` declares only the approved Claude
-Code and Codex CLI subscription routes. It is installed with the bench. A custom
-routes JSON file uses the same array shape; a trusted `.mjs` file may export it.
+Code, Codex CLI and Grok Build subscription routes. It is installed with the bench.
+A custom routes JSON file uses the same array shape; a trusted `.mjs` file may
+export it.
 
 A subscription route has no credential mapping. It carries the orchestrator's
 login-status evidence instead:
@@ -121,19 +122,26 @@ probe or a promise of availability.
 `tools: "off"` is the default common protocol and adds both `--no-web-search` and
 `--no-tools`; Codex is refused because the helper does not support tools-off for
 that engine. `tools: "on"` keeps `--no-web-search` but omits `--no-tools`, admitting
-Codex while refusing Pi because the helper always disables Pi tools. These are
-engine-plus-model bundles with different tool implementations, comparable only
-inside the same plan protocol. For Claude, `--no-web-search` removes WebSearch and
-WebFetch. For Codex, it avoids enabling web search but cannot disable cache search.
-The report records those limits. A baseline route additionally receives a separate
-production-settings group with a different anonymous ID; blind grading never sees
-protocol labels, and reports never mix common and production groups.
+Codex while refusing Pi and Grok because the helper always disables tools for
+those engines. These are engine-plus-model bundles with different tool
+implementations, comparable only inside the same plan protocol. For Claude,
+`--no-web-search` removes WebSearch and WebFetch. For Codex, it avoids enabling
+web search but cannot disable cache search. The report records those limits. A
+baseline route additionally receives a separate production-settings group with a
+different anonymous ID; blind grading never sees protocol labels, and reports
+never mix common and production groups.
 
 After the owner logs a subscription provider into Pi, the orchestrator may add a
 custom Pi route with empty credentials and a `subscriptionLogin` record for the
 underlying `claude` or `codex` login. It first verifies the login and payment
 channel, freezes a `tools: "off"` plan under a new run ID, and performs dry-run
 admission. Pi routes are never admitted to a `tools: "on"` plan.
+
+The checked-in Grok route uses `grok login` and no API-key variables. Its login
+signal is the `You are logged in` line from `grok models`, not that command's exit
+code. The route is admitted only to `tools: "off"`, uses the engine's default
+`low` effort established by MONO-86, and is comparable only with the Claude routes
+inside that same `off` protocol.
 
 ## Plan file and commands
 
@@ -236,6 +244,10 @@ passed admission. With `tools: "off"`, the two Claude routes passed and all four
 Codex routes were excluded with `helper rejects tools-off for Codex`. Both runs
 reported zero provider calls and exposed no credential variables. The archive
 remains below the declared sampling targets; this is feasibility evidence only.
+Those historical cases freeze helper bytes without Grok support and are therefore
+incompatible with the Grok route. For a new manifest frozen with a Grok-capable
+helper, the admission expectations are three routes at `off` (two Claude plus
+Grok) and six at `on` (two Claude plus four Codex, with Grok excluded).
 
 Supply the Git checkout containing the historical objects as `--repo`.
 `--root` optionally records the orchestrator directory as provenance; it is not

@@ -159,8 +159,8 @@ export function freezeManifest(options) {
 
 function subscriptionLoginEvidence(route) {
   const evidence=route?.eligibility?.subscriptionLogin;
-  if(!evidence||!['claude','codex'].includes(evidence.cli)) return null;
-  if(route.engine!=='pi'&&evidence.cli!==route.engine) return null;
+  if(!evidence||!['claude','codex','grok'].includes(evidence.cli)) return null;
+  if(route.engine==='pi'?!['claude','codex'].includes(evidence.cli):evidence.cli!==route.engine) return null;
   if(typeof evidence.statusCommand!=='string'||!evidence.statusCommand.trim()||/[\r\n]/.test(evidence.statusCommand)) return null;
   if(typeof evidence.checkedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(evidence.checkedAt)||!Number.isFinite(Date.parse(evidence.checkedAt))) return null;
   if(typeof evidence.by!=='string'||!evidence.by.trim()) return null;
@@ -168,14 +168,20 @@ function subscriptionLoginEvidence(route) {
 }
 function routeCheck(route,env,tools='off') {
   const reasons=[],missing=[];
-  if(!route||!id(route.id)||!['claude','pi','codex'].includes(route.engine)||!id(route.model)||!['low','medium','high','xhigh','max'].includes(route.effort)) reasons.push('invalid route schema');
+  if(!route||!id(route.id)||!['claude','pi','codex','grok'].includes(route.engine)||!id(route.model)||!['low','medium','high','xhigh','max'].includes(route.effort)) reasons.push('invalid route schema');
   if(!route?.provider||!id(route.provider.id)||route.eligibility?.billingChannelAllowed!==true||typeof route.eligibility?.source!=='string'||!route.eligibility.source.trim()) reasons.push('billing channel not admitted with a source');
   if(route?.eligibility?.toVerify) reasons.push('provider compatibility or billing requires verification');
   if(route?.engine==='codex'&&tools==='off') reasons.push('helper rejects tools-off for Codex');
   if(route?.engine==='pi'&&tools==='on') reasons.push('helper forces tools off for pi');
+  if(route?.engine==='grok'&&tools==='on') reasons.push('helper forces tools off for grok');
+  const subscriptionLogin=subscriptionLoginEvidence(route);
+  if(route?.engine==='grok') {
+    if((route.credentialEnv?.length??0)>0||(route.environment&&typeof route.environment==='object'&&!Array.isArray(route.environment)&&Object.keys(route.environment).length>0)) reasons.push('grok routes accept subscription login only');
+    if(!subscriptionLogin) reasons.push('subscription login evidence required');
+  }
   if(!Array.isArray(route?.credentialEnv)||!route.credentialEnv.every(name)) reasons.push('invalid credential variable names');
   else if(route.credentialEnv.length===0) {
-    if(!subscriptionLoginEvidence(route)) reasons.push('subscription login evidence required');
+    if(route.engine!=='grok'&&!subscriptionLogin) reasons.push('subscription login evidence required');
   } else for(const variable of route.credentialEnv) if(!env[variable]) missing.push(variable);
   if(!route?.environment||typeof route.environment!=='object'||Array.isArray(route.environment)) reasons.push('environment mapping required');
   else for(const [target,source] of Object.entries(route.environment)) {

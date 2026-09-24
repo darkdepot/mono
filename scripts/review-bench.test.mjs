@@ -46,10 +46,10 @@ test('freeze recoverable inputs, deduplicate receipt/history, explain exclusions
   assert.deepEqual(fs.readFileSync(path.join(f.evidenceRoot,f.receipt.head+'.json')),before);
 });
 
-test('configured routes contain only subscription logins for the approved Claude and Codex selectors',()=>{
-  assert.deepEqual(configuredRoutes.map(route=>route.id),['incumbent','sonnet-high','sol-high','sol-medium','astra-high','terra-high']);
+test('configured routes contain only subscription logins for the approved Claude, Codex and Grok selectors',()=>{
+  assert.deepEqual(configuredRoutes.map(route=>route.id),['incumbent','sonnet-high','sol-high','sol-medium','astra-high','terra-high','grok-low']);
   assert.deepEqual(configuredRoutes.map(route=>[route.engine,route.effort]),[
-    ['claude','high'],['claude','high'],['codex','high'],['codex','medium'],['codex','high'],['codex','high'],
+    ['claude','high'],['claude','high'],['codex','high'],['codex','medium'],['codex','high'],['codex','high'],['grok','low'],
   ]);
   assert.equal(configuredRoutes.filter(route=>route.baseline).map(route=>route.id).join(','),'incumbent');
   for(const route of configuredRoutes) {
@@ -57,7 +57,7 @@ test('configured routes contain only subscription logins for the approved Claude
     assert.deepEqual(route.environment,{});
     assert.equal('toVerify' in route.eligibility,false);
     assert.deepEqual(route.eligibility.subscriptionLogin.cli,route.engine);
-    assert.equal(route.eligibility.subscriptionLogin.statusCommand,route.engine==='claude'?'claude auth status':'codex login status');
+    assert.equal(route.eligibility.subscriptionLogin.statusCommand,route.engine==='claude'?'claude auth status':route.engine==='grok'?'grok models':'codex login status');
   }
 });
 
@@ -88,9 +88,9 @@ process.exit(exit);
   const secret=crypto.randomBytes(24).toString('hex');
   return {...f,log,plan,good,routes:[good],env:{BENCH_CREDENTIAL:secret,UNRELATED_SECRET:'ambient-must-not-reach-helper'},secret};
 }
-const subscriptionLogin = cli => ({cli,statusCommand:`${cli} login status`,checkedAt:'2026-09-24T00:23:45Z',by:'fixture-orchestrator'});
+const subscriptionLogin = cli => ({cli,statusCommand:cli==='grok'?'grok models':`${cli} login status`,checkedAt:'2026-09-24T00:23:45Z',by:'fixture-orchestrator'});
 function subscriptionRoute(id,engine='claude') {
-  return {id,engine,model:engine==='codex'?'model-codex':'model-claude',effort:'high',provider:{id:engine==='codex'?'openai':'anthropic'},credentialEnv:[],environment:{},eligibility:{billingChannelAllowed:true,source:'fixture subscription login',subscriptionLogin:subscriptionLogin(engine)}};
+  return {id,engine,model:engine==='codex'?'model-codex':engine==='grok'?'model-grok':'model-claude',effort:engine==='grok'?'low':'high',provider:{id:engine==='codex'?'openai':engine==='grok'?'xai':'anthropic'},credentialEnv:[],environment:{},eligibility:{billingChannelAllowed:true,source:'fixture subscription login',subscriptionLogin:subscriptionLogin(engine)}};
 }
 function treeBytes(root) {
   let result='';for(const entry of fs.readdirSync(root,{withFileTypes:true})) {
@@ -107,14 +107,14 @@ test('admission rejects forbidden billing, missing keys and tools-on controls wi
 });
 
 test('subscription admission follows the plan tools protocol and preserves login evidence',async t=>{
-  const f=fake(t),claude=subscriptionRoute('claude-subscription'),codex=subscriptionRoute('codex-subscription','codex');
+  const f=fake(t),claude=subscriptionRoute('claude-subscription'),codex=subscriptionRoute('codex-subscription','codex'),grok=subscriptionRoute('grok-subscription','grok');
   const missingEvidence={...claude,id:'missing-evidence',eligibility:{billingChannelAllowed:true,source:'fixture subscription login'}};
   const mismatchedClaude={...claude,id:'mismatched-claude',eligibility:{...claude.eligibility,subscriptionLogin:subscriptionLogin('codex')}};
   const mismatchedCodex={...codex,id:'mismatched-codex',eligibility:{...codex.eligibility,subscriptionLogin:subscriptionLogin('claude')}};
   const missingKey={...f.good,id:'missing-key',credentialEnv:['MISSING_KEY'],environment:{ANTHROPIC_AUTH_TOKEN:'MISSING_KEY'}};
   const pi={id:'pi-subscription',engine:'pi',model:'model-pi',effort:'high',provider:{id:'openai'},credentialEnv:[],environment:{},eligibility:{billingChannelAllowed:true,source:'fixture Pi subscription login',subscriptionLogin:subscriptionLogin('codex')}};
   const onManifest=buildManifest({...f,plan:{...f.plan,tools:'on'}});
-  const on=await admitRoutes({manifest:onManifest,repo:f.repo,routes:[claude,codex,missingEvidence,mismatchedClaude,mismatchedCodex,missingKey,pi],env:f.env});
+  const on=await admitRoutes({manifest:onManifest,repo:f.repo,routes:[claude,codex,missingEvidence,mismatchedClaude,mismatchedCodex,missingKey,pi,grok],env:f.env});
   assert.equal(on[0].admitted,true);
   assert.deepEqual(on[0].subscriptionLogin,claude.eligibility.subscriptionLogin);
   assert.equal(on[1].admitted,true);
@@ -124,16 +124,36 @@ test('subscription admission follows the plan tools protocol and preserves login
   assert.ok(on[4].reasons.includes('subscription login evidence required'));
   assert.deepEqual(on[5].missingVariables,['MISSING_KEY']);
   assert.ok(on[6].reasons.includes('helper forces tools off for pi'));
+  assert.ok(on[7].reasons.includes('helper forces tools off for grok'));
   const calls=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse);
   const codexCalls=calls.filter(call=>call.args.includes('model-codex'));
   assert.ok(codexCalls.length>0);
   assert.ok(codexCalls.every(call=>call.args.includes('--no-web-search')&&!call.args.includes('--no-tools')&&!call.args.includes('--codex-config')));
 
   const offManifest=buildManifest({...f,plan:{...f.plan,tools:'off'}});
-  const off=await admitRoutes({manifest:offManifest,repo:f.repo,routes:[codex,pi],env:f.env});
+  const piWithGrokLogin={...pi,id:'pi-grok-login',eligibility:{...pi.eligibility,subscriptionLogin:subscriptionLogin('grok')}};
+  const off=await admitRoutes({manifest:offManifest,repo:f.repo,routes:[codex,pi,grok,piWithGrokLogin],env:f.env});
   assert.equal(off[0].admitted,false);
   assert.ok(off[0].reasons.includes('helper rejects tools-off for Codex'));
   assert.equal(off[1].admitted,true);
+  assert.equal(off[2].admitted,true);
+  assert.deepEqual(off[2].subscriptionLogin,grok.eligibility.subscriptionLogin);
+  assert.ok(off[3].reasons.includes('subscription login evidence required'));
+});
+
+test('grok admission requires matching subscription evidence and refuses every credential mapping',async t=>{
+  const f=fake(t),manifest=buildManifest({...f,plan:{...f.plan,tools:'off'}}),grok=subscriptionRoute('grok-subscription','grok');
+  const withoutLogin={...grok,id:'grok-without-login',eligibility:{billingChannelAllowed:true,source:'fixture subscription login'}};
+  const foreignLogin={...grok,id:'grok-foreign-login',eligibility:{...grok.eligibility,subscriptionLogin:subscriptionLogin('codex')}};
+  const keyWithoutLogin={...withoutLogin,id:'grok-key-without-login',credentialEnv:['BENCH_CREDENTIAL'],environment:{XAI_API_KEY:'BENCH_CREDENTIAL'}};
+  const keyWithForeignLogin={...foreignLogin,id:'grok-key-with-foreign-login',credentialEnv:['BENCH_CREDENTIAL'],environment:{XAI_API_KEY:'BENCH_CREDENTIAL'}};
+  const keyWithLogin={...grok,id:'grok-key-with-login',credentialEnv:['BENCH_CREDENTIAL'],environment:{XAI_API_KEY:'BENCH_CREDENTIAL'}};
+  const environmentWithLogin={...grok,id:'grok-environment-with-login',environment:{XAI_API_KEY:'BENCH_CREDENTIAL'}};
+  const admissions=await admitRoutes({manifest,repo:f.repo,routes:[withoutLogin,foreignLogin,keyWithoutLogin,keyWithForeignLogin,keyWithLogin,environmentWithLogin],env:f.env});
+  for(const index of [0,1,2,3]) assert.ok(admissions[index].reasons.includes('subscription login evidence required'));
+  for(const index of [2,3,4,5]) assert.ok(admissions[index].reasons.includes('grok routes accept subscription login only'));
+  assert.ok(admissions.every(admission=>!admission.admitted&&admission.providerCalls===0));
+  assert.equal(fs.existsSync(f.log),false);
 });
 
 test('run dry-run reads an unfrozen plan and rejects a plan override for a frozen manifest',t=>{
