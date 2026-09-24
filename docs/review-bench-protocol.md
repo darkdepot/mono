@@ -2,8 +2,8 @@
 
 The bench is an offline experiment runner, not a delivery gate. It never issues a
 certificate or changes the reviewer policy. The orchestrator owns archive access,
-provider credentials, live calls, grading and the subsequent decision. A worker
-can inventory the real archive read-only and exercise fake providers in scratch.
+subscription-login verification, live calls, grading and the subsequent decision.
+A worker can inventory the real archive read-only and exercise fake providers in scratch.
 
 ## Declare the sample before calling providers
 
@@ -67,69 +67,73 @@ them). Missing, ambiguous or computed declarations record `unknown` with a reaso
 the bench does not substitute its own budget. The input diff and dataset digests are the
 prepared-evidence inputs, not a claim to hash the model's private prompt or reply.
 Any future engine with different partitioning needs a separately declared harness
-comparison. The current helper rejects Codex with `--no-tools`; Terra medium/high
-remain listed controls but are excluded from this common protocol.
+comparison. Each plan selects exactly one common protocol through `tools`; runs
+with different values use different plans and run IDs.
 
 ## Route admission and credentials
 
-The checked-in `scripts/review-bench-routes.mjs` is a candidate declaration based
-on the approved research snapshot. Its dates and provider terms need refreshing
-by the orchestrator before live use. It is installed with the bench. A custom
+The checked-in `scripts/review-bench-routes.mjs` declares only the approved Claude
+Code and Codex CLI subscription routes. It is installed with the bench. A custom
 routes JSON file uses the same array shape; a trusted `.mjs` file may export it.
 
-Each route names its engine, model, effort, provider ID, optional HTTPS endpoint,
-credential variable names and target-to-source environment mapping. For example:
+A subscription route has no credential mapping. It carries the orchestrator's
+login-status evidence instead:
 
 ```json
 {
-  "id": "candidate",
-  "engine": "claude",
-  "model": "glm-5.3",
+  "id": "sol-high",
+  "engine": "codex",
+  "model": "<approved codex selector>",
   "effort": "high",
-  "provider": {"id": "zai", "endpoint": "https://api.z.ai/api/anthropic"},
-  "credentialEnv": ["ZAI_API_KEY"],
-  "environment": {"ANTHROPIC_AUTH_TOKEN": "ZAI_API_KEY"},
+  "provider": {"id": "openai"},
+  "credentialEnv": [],
+  "environment": {},
   "eligibility": {
     "billingChannelAllowed": true,
-    "source": "https://docs.z.ai/devpack/tool/claude"
+    "source": "MONO-85 approved Codex subscription login",
+    "subscriptionLogin": {
+      "cli": "codex",
+      "statusCommand": "codex login status",
+      "checkedAt": "2026-09-24T00:23:45Z",
+      "by": "mono-orchestrator"
+    }
   }
 }
 ```
 
-No key values belong in route files. The bench names missing variables and
-forwards only the listed mappings plus an explicit OS environment allowlist.
-Provider selectors, fallback-model overrides and unrelated credentials are not
-inherited. Raw child output is captured in memory; credential values are removed
-before persisted results or console summaries. Helper report/status files are
-private temporary files, read and discarded when the temporary repository is
-removed. The helper remains responsible for its own authentication and output
-isolation; the bench does not change it.
+The helper authenticates from `HOME`, which is part of the explicit environment
+allowlist. The bench prints `subscriptionLogin` in admissions and reports, but it
+never runs `statusCommand` and never decides whether the stored authentication is
+a subscription; the orchestrator performs that check immediately before a live
+run. An empty `credentialEnv` without a valid record is refused with
+`subscription login evidence required`. Custom key-backed fixtures remain valid
+for negative admission tests: a missing variable is named, never its value. No
+credential value or undeclared host variable is forwarded or persisted, and no
+Codex route receives `--codex-config`.
 
-Admission requires a positive billing assertion with a source and the absence of
-`eligibility.toVerify`. Schema errors, missing credentials, unverified billing or
-unsupported tools-off routing exclude a route before invoking the helper. An
-otherwise eligible route must pass the helper's actual `--dry-run` on the frozen
-cases: input construction, prompt/schema preparation, exact engine/model/effort,
-and isolation startup. A second check binds each actual call to its exact case
-and settings. Dry-run contacts no reviewer. A successful dry-run is local
-compatibility evidence, not a paid model-access probe or a promise of availability.
-A provider failure during a live call is retained as an operational failure.
+Admission also requires a positive billing assertion with a source and the absence
+of `eligibility.toVerify`. An otherwise eligible route must pass the helper's
+actual `--dry-run` on the frozen cases: input construction, prompt/schema
+preparation, exact engine/model/effort, and isolation startup. Dry-run contacts no
+reviewer. A successful dry-run is local compatibility evidence, not a live access
+probe or a promise of availability.
 
-The common invocation adds `--no-web-search --no-tools` for every route. A route
-marked `baseline: true` also gets a separate production-settings experiment only
-when its engine/model/effort match the archived production route. That experiment
-retains the collection tool/web settings. It gets different anonymous IDs, and
-the grader is not told which samples use the production protocol. The report
-separates common-protocol model comparisons from this harness comparison.
+`tools: "off"` is the default common protocol and adds both `--no-web-search` and
+`--no-tools`; Codex is refused because the helper does not support tools-off for
+that engine. `tools: "on"` keeps `--no-web-search` but omits `--no-tools`, admitting
+Codex while refusing Pi because the helper always disables Pi tools. These are
+engine-plus-model bundles with different tool implementations, comparable only
+inside the same plan protocol. For Claude, `--no-web-search` removes WebSearch and
+WebFetch. For Codex, it avoids enabling web search but cannot disable cache search.
+The report records those limits. A baseline route additionally receives a separate
+production-settings group with a different anonymous ID; blind grading never sees
+protocol labels, and reports never mix common and production groups.
 
-Z.ai uses its supported Claude Code channel. Kimi uses Moonshot pay-per-token,
-never Kimi Code membership for unattended automation. DeepSeek uses its
-Anthropic-format endpoint. Grok's Pi support and subscription terms, MiniMax's
-Token Plan and model compatibility, and Pi/Gemini availability are explicitly
-`toVerify`. Clear that field only with documented evidence. Codex quota does not
-make a tools-on control comparable to the tools-off experiment. The default
-incumbent uses an API key; an orchestrator may declare its authorized subscription
-login route with no credential mapping after verifying that payment channel.
+After the owner logs a subscription provider into Pi, the orchestrator may add a
+custom Pi route with empty credentials and a `subscriptionLogin` record for the
+underlying `claude` or `codex` login. It first verifies the login and payment
+channel, freezes a `tools: "off"` plan under a new run ID, and performs dry-run
+admission. Pi routes are never admitted to a `tools: "on"` plan.
 
 ## Plan file and commands
 
@@ -138,6 +142,7 @@ shape (the real file must contain matching defect/fix cases):
 
 ```json
 {
+  "tools": "on",
   "repeats": 3,
   "maxCalls": 2000,
   "timeoutSec": 600,
@@ -153,7 +158,7 @@ shape (the real file must contain matching defect/fix cases):
 
 ```sh
 node scripts/review-bench.mjs manifest --dry-run --evidence-root "$ARCHIVE" --repo "$REPO"
-node scripts/review-bench.mjs run --dry-run --evidence-root "$ARCHIVE" --repo "$REPO" --routes routes.json
+node scripts/review-bench.mjs run --dry-run --evidence-root "$ARCHIVE" --repo "$REPO" --plan plan.json --routes routes.json
 node scripts/review-bench.mjs manifest --evidence-root "$ARCHIVE" --repo "$REPO" --run-id comparison-1 --plan plan.json --routes routes.json
 node scripts/review-bench.mjs run --dry-run --evidence-root "$ARCHIVE" --repo "$REPO" --run-id comparison-1 --routes routes.json
 node scripts/review-bench.mjs run --evidence-root "$ARCHIVE" --repo "$REPO" --run-id comparison-1 --routes routes.json
@@ -166,7 +171,8 @@ only to a newly reserved `<evidenceRoot>/bench/<runId>/`. Existing artifacts are
 never overwritten. After interruption inspect `started.json` and individual
 `sample-*.json` files; count that attempted experiment and its incomplete outcomes
 in the study log, then use a new run ID. Never drop an interrupted attempt when
-comparing cost or availability.
+comparing cost or availability. An unfrozen `run --dry-run` reads `--plan`; once a
+manifest is frozen, its plan is authoritative and any `--plan` override is refused.
 
 ## Gold and blind grading
 
@@ -223,14 +229,13 @@ quality, failures, cost, provider limits and the relevant producer/reviewer pair
 
 ## Observed archive feasibility on this machine
 
-Corrected read-only inventory on 2026-09-16 (MONO-81 delivery, after its first
-preflight collection) examined 28 distinct archived runs. Six cases were
-reproducible across three task clusters (MONO-80, MONO-81 and MONO-83); 22 lacked
-an archived dataset version. All nine default routes were excluded; provider
-calls were zero. Seven routes lacked credential variables, several also required
-provider verification, and both Terra controls were incompatible with the
-helper's tools-off requirement. The archive remains below the declared sampling
-targets and has no predeclared gold sample; this is feasibility evidence only.
+A read-only scratch-installed inventory on 2026-09-24 found 23 reproducible cases
+across five task clusters (MONO-80 through MONO-84); 22 archived runs still lacked
+a dataset version. With a declared `tools: "on"` dry-run, all six checked-in routes
+passed admission. With `tools: "off"`, the two Claude routes passed and all four
+Codex routes were excluded with `helper rejects tools-off for Codex`. Both runs
+reported zero provider calls and exposed no credential variables. The archive
+remains below the declared sampling targets; this is feasibility evidence only.
 
 Supply the Git checkout containing the historical objects as `--repo`.
 `--root` optionally records the orchestrator directory as provenance; it is not

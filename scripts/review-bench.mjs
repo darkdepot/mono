@@ -67,6 +67,7 @@ function helperPartitioning(bytes) {
   const known=Number.isSafeInteger(budget)&&budget>0;
   return {algorithm:'pinned-helper-defaults',maxPromptBytes:known?budget:'unknown',reason:known?null:'frozen helper has no unique supported positive-integer budget declaration'};
 }
+const toolsProtocol = plan => plan?.tools??'off';
 
 export function buildManifest({evidenceRoot,repo,helper,plan=null,routes=defaultRoutes,env=process.env,orchestratorRoot=null}) {
   need(evidenceRoot&&repo,'evidence root and repository required');
@@ -110,11 +111,12 @@ export function buildManifest({evidenceRoot,repo,helper,plan=null,routes=default
   }
   cases.sort((a,b)=>a.id.localeCompare(b.id));
   if(plan) validatePlan(plan,cases);
-  return seal({schemaVersion:1,orchestratorRoot:orchestratorRoot?fs.realpathSync(orchestratorRoot):null,toolSettings:{webSearch:false,tools:false},cases,helpers,excluded,plan,routes,
+  return seal({schemaVersion:1,orchestratorRoot:orchestratorRoot?fs.realpathSync(orchestratorRoot):null,toolSettings:{webSearch:false,tools:toolsProtocol(plan)==='on'},cases,helpers,excluded,plan,routes,
     clusters:[...new Set(cases.map(c=>c.cluster))].sort(),feasibility:plan?'sample declared; quality depends on coverage and adjudication':'archive inventory only; sample and gold not yet frozen'});
 }
 function validatePlan(plan,cases) {
   need(plan&&Array.isArray(plan.cases)&&plan.cases.length>0,'sample cases required');
+  need(['off','on'].includes(toolsProtocol(plan)),'plan tools must be off or on');
   need(Number.isSafeInteger(plan.repeats)&&plan.repeats>=1&&plan.repeats<=20,'invalid repeats');
   need(Number.isSafeInteger(plan.maxCalls)&&plan.maxCalls>0,'call stop rule required');
   need(Number.isFinite(plan.timeoutSec)&&plan.timeoutSec>0&&plan.timeoutSec<=3600,'timeout stop rule required');
@@ -155,14 +157,26 @@ export function freezeManifest(options) {
   write(dir,'manifest.json',manifest,credentialValues(manifest.routes,options.env)); return manifest;
 }
 
-function routeCheck(route,env) {
+function subscriptionLoginEvidence(route) {
+  const evidence=route?.eligibility?.subscriptionLogin;
+  if(!evidence||!['claude','codex'].includes(evidence.cli)) return null;
+  if(route.engine!=='pi'&&evidence.cli!==route.engine) return null;
+  if(typeof evidence.statusCommand!=='string'||!evidence.statusCommand.trim()||/[\r\n]/.test(evidence.statusCommand)) return null;
+  if(typeof evidence.checkedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(evidence.checkedAt)||!Number.isFinite(Date.parse(evidence.checkedAt))) return null;
+  if(typeof evidence.by!=='string'||!evidence.by.trim()) return null;
+  return evidence;
+}
+function routeCheck(route,env,tools='off') {
   const reasons=[],missing=[];
   if(!route||!id(route.id)||!['claude','pi','codex'].includes(route.engine)||!id(route.model)||!['low','medium','high','xhigh','max'].includes(route.effort)) reasons.push('invalid route schema');
   if(!route?.provider||!id(route.provider.id)||route.eligibility?.billingChannelAllowed!==true||typeof route.eligibility?.source!=='string'||!route.eligibility.source.trim()) reasons.push('billing channel not admitted with a source');
   if(route?.eligibility?.toVerify) reasons.push('provider compatibility or billing requires verification');
-  if(route?.engine==='codex') reasons.push('helper rejects tools-off for Codex');
+  if(route?.engine==='codex'&&tools==='off') reasons.push('helper rejects tools-off for Codex');
+  if(route?.engine==='pi'&&tools==='on') reasons.push('helper forces tools off for pi');
   if(!Array.isArray(route?.credentialEnv)||!route.credentialEnv.every(name)) reasons.push('invalid credential variable names');
-  else for(const variable of route.credentialEnv) if(!env[variable]) missing.push(variable);
+  else if(route.credentialEnv.length===0) {
+    if(!subscriptionLoginEvidence(route)) reasons.push('subscription login evidence required');
+  } else for(const variable of route.credentialEnv) if(!env[variable]) missing.push(variable);
   if(!route?.environment||typeof route.environment!=='object'||Array.isArray(route.environment)) reasons.push('environment mapping required');
   else for(const [target,source] of Object.entries(route.environment)) {
     if(!name(target)||!name(source)||!route.credentialEnv?.includes(source)||!['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','XAI_API_KEY','GEMINI_API_KEY','MINIMAX_API_KEY'].includes(target)) reasons.push('environment must map allowed target names to declared credentials');
@@ -176,7 +190,7 @@ function routeCheck(route,env) {
     try {const u=new URL(route.provider.endpoint);need(u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash,'bad endpoint');} catch { reasons.push('invalid provider endpoint'); }
   }
   if(missing.length) reasons.push('missing credentials');
-  return {routeId:route?.id??'invalid',admitted:false,reasons:[...new Set(reasons)],missingVariables:missing,compatibilityPreflight:'not-run',providerCalls:0};
+  return {routeId:route?.id??'invalid',admitted:false,reasons:[...new Set(reasons)],missingVariables:missing,subscriptionLogin:route?.eligibility?.subscriptionLogin??null,compatibilityPreflight:'not-run',providerCalls:0};
 }
 function routeEnvironment(route,env) {
   const result=baseEnvironment();
@@ -184,9 +198,12 @@ function routeEnvironment(route,env) {
   if(route.provider.endpoint) result.ANTHROPIC_BASE_URL=route.provider.endpoint;
   return result;
 }
-function argumentsFor(c,route,production=false) {
+function argumentsFor(c,route,{protocol='common',tools='off'}={}) {
   const args=['--mode','branch','--base',c.base,'--engine',route.engine,'--model',route.model,'--thinking',route.effort,'--max-priority','P2','--dataset','.orchestrator/review-dataset-'+c.datasetDigest.slice(0,8)+'.md','--stream-engine-output'];
-  if(!production) args.push('--no-web-search','--no-tools');
+  if(protocol==='common') {
+    args.push('--no-web-search');
+    if(tools==='off') args.push('--no-tools');
+  }
   return args;
 }
 async function invoke(helper,args,cwd,env,timeoutSec) {
@@ -221,26 +238,29 @@ async function withCase(manifest,c,repo,fn) {
     return await fn({copy,helper,temp,dataset});
   } finally {fs.rmSync(temp,{recursive:true,force:true});}
 }
-function compatible(result,c,route,production) {
+function compatible(result,c,route,{protocol='common',tools='off'}={}) {
   const lines=result.output.split(/\r?\n/);
+  const production=protocol==='production';
   return result.exitCode===0&&!result.timedOut&&!result.overflow&&[
     'autoreview target: branch',`engine: ${route.engine}`,`model: ${route.model}`,`thinking: ${route.effort}`,
-    `tools: ${production?'on':'off'}`,`web_search: ${production?'on':'off'}`,'inputs: OK','bundle: constructible','prompt: OK'
+    `tools: ${production?'on':tools}`,`web_search: ${production?'on':'off'}`,'inputs: OK','bundle: constructible','prompt: OK'
   ].every(line=>lines.filter(l=>l===line).length===1)&&lines.some(l=>l.startsWith('engine check: ')&&l.endsWith(' OK'));
 }
 export async function admitRoutes({manifest,repo,routes,env=process.env}) {
   verifySeal(manifest); need(Array.isArray(routes)&&new Set(routes.map(r=>r.id)).size===routes.length,'duplicate or invalid routes');
+  const tools=toolsProtocol(manifest.plan);
   const admissions=[];
   for(const route of routes) {
-    const record=routeCheck(route,env);
+    const record=routeCheck(route,env,tools);
     if(!record.reasons.length) {
       if(!manifest.cases.length) record.reasons.push('no reproducible case for compatibility preflight');
       else {
         record.compatibilityPreflight='passed';
         for(const c of manifest.cases) {
           try {
-            const result=await withCase(manifest,c,repo,async({copy,helper})=>invoke(helper,[...argumentsFor(c,route),'--dry-run'],copy,routeEnvironment(route,env),60));
-            if(!compatible(result,c,route,false)) {record.compatibilityPreflight='failed';record.reasons.push('helper dry-run failed schema/model/effort/isolation/input checks');break;}
+            const settings={protocol:'common',tools};
+            const result=await withCase(manifest,c,repo,async({copy,helper})=>invoke(helper,[...argumentsFor(c,route,settings),'--dry-run'],copy,routeEnvironment(route,env),60));
+            if(!compatible(result,c,route,settings)) {record.compatibilityPreflight='failed';record.reasons.push('helper dry-run failed schema/model/effort/isolation/input checks');break;}
           } catch {record.compatibilityPreflight='failed';record.reasons.push('compatibility input unavailable');break;}
         }
       }
@@ -275,6 +295,7 @@ export async function runBench({manifest,repo,routes,evidenceRoot,runId,env=proc
   const credentials=credentialValues(routes,env);
   write(dir,'routes.private.json',mapping,credentials);
   const samples=[],blind=[],cases=selectedCases(manifest);
+  const commonTools=toolsProtocol(manifest.plan);
   let calls=0;
   for(const [index,mapped] of mapping.entries()) {
     if(!admissions[index].admitted) continue;
@@ -287,10 +308,11 @@ export async function runBench({manifest,repo,routes,evidenceRoot,runId,env=proc
           const start=Date.now();
           try {
             await withCase(manifest,c,repo,async({copy,helper,temp,dataset})=>{
-              const args=argumentsFor(c,mapped.route,protocol==='production'),childEnv=routeEnvironment(mapped.route,env);
+              const settings={protocol,tools:commonTools};
+              const args=argumentsFor(c,mapped.route,settings),childEnv=routeEnvironment(mapped.route,env);
               // Repeat admission on these exact inputs/settings before the paid invocation.
               const preflight=await invoke(helper,[...args,'--dry-run'],copy,childEnv,60);
-              if(!compatible(preflight,c,mapped.route,protocol==='production')) {sample.reason='exact-run compatibility preflight failed';return;}
+              if(!compatible(preflight,c,mapped.route,settings)) {sample.reason='exact-run compatibility preflight failed';return;}
               const output=path.join(temp,'report.json'),status=path.join(temp,'status.json');
               calls++;sample.providerCalls=1;
               const result=await invoke(helper,[...args,'--json-output',output,'--status-output',status],copy,childEnv,manifest.plan.timeoutSec);
@@ -391,15 +413,17 @@ export function reportBench({manifest,run,score}) {
       regressions:{falseAlarmsOnFix:samples.filter(s=>selected.find(c=>c.id===s.caseId).kind==='fix').reduce((n,s)=>n+score.scores.find(x=>x.sampleId===s.sampleId).falsePositive,0),novelFindings:sum('novel'),pairedMisses:pairs.filter(p=>p.status==='evaluated'&&p.missedDefects>0).length,pairedRegressions:pairs.filter(p=>p.status==='evaluated'&&p.falseAlarmsOnFix>0).length,pairedPlanned:pairs.length,pairedEvaluated:pairs.filter(p=>p.status==='evaluated').length,pairedUnresolved:pairs.filter(p=>p.status==='unresolved').length,pairs},
       elapsedMs:samples.reduce((n,s)=>n+s.elapsedMs,0),usage:{measured:samples.filter(s=>s.usage).length,denominator:samples.reduce((n,s)=>n+s.providerCalls,0),samples:samples.map(s=>({sampleId:s.sampleId,usage:s.usage,reason:s.usageReason}))}});
   }
+  const protocolGroups={common:summaries.filter(summary=>summary.protocol==='common'),production:summaries.filter(summary=>summary.protocol==='production')};
   return {schemaVersion:1,manifestDigest:manifest.digest,runDigest:run.digest,coverage,gaps,
     casesByRisk: Object.fromEntries([...new Set(selected.map(c=>lookup.get(c.id).risk))].map(risk=>[risk,selected.filter(c=>lookup.get(c.id).risk===risk).map(c=>({caseId:c.id,cluster:lookup.get(c.id).cluster,kind:c.kind,partition:c.partition}))])),excludedCases:manifest.excluded,excludedRoutes:run.admissions.filter(a=>!a.admitted),summaries,
-    harnessDifferences:{common:manifest.toolSettings,production:{webSearch:true,tools:true},comparison:'Report production separately; changes may be caused by tools, engine, provider or model. No attribution to model alone.'},
+    admissions:run.admissions,protocolGroups,
+    harnessDifferences:{common:{...manifest.toolSettings,limits:'Claude disables WebSearch and WebFetch; Codex cache search cannot be disabled.'},production:{webSearch:true,tools:true},comparison:'Report production separately; changes may be caused by tools, engine, provider or model. No attribution to model alone.'},
     outcome:gaps.length?'feasibility-only':'keep-incumbent',qualityRecommendation:null,
     interpretation:'Small samples can reject a candidate, not establish equivalence. Keep the incumbent until a separate recorded decision; unknown and failed outcomes never certify quality.'};
 }
 
 function summary(manifest) {
-  return {digest:manifest.digest,cases:manifest.cases.map(({id,cluster,head,base,datasetVersion,helperVersion})=>({id,cluster,head,base,datasetVersion,helperVersion})),clusters:manifest.clusters,excluded:manifest.excluded,feasibility:manifest.feasibility};
+  return {digest:manifest.digest,tools:toolsProtocol(manifest.plan),cases:manifest.cases.map(({id,cluster,head,base,datasetVersion,helperVersion})=>({id,cluster,head,base,datasetVersion,helperVersion})),clusters:manifest.clusters,excluded:manifest.excluded,feasibility:manifest.feasibility};
 }
 let cliCredentials=credentialValues(defaultRoutes);
 async function main(argv) {
@@ -418,8 +442,13 @@ async function main(argv) {
     console.log(JSON.stringify(summary(options['dry-run']?buildManifest(args):freezeManifest(args)),null,2));return;
   }
   if(command==='run') {
-    const manifest=options.manifest||runId?loadManifest():buildManifest({evidenceRoot,repo,orchestratorRoot:options.root,helper:options.helper});
-    const routes=options.routes?(options.routes.endsWith('.mjs')?(await import(pathToFileURL(path.resolve(options.routes)))).default:readJSON(options.routes)):manifest.routes;
+    const frozen=Boolean(options.manifest||runId);
+    need(!(frozen&&options.plan),'frozen manifest supplies the plan; --plan cannot override it');
+    need(options['dry-run']||frozen,'a frozen manifest and run id are required for a live run');
+    const requestedRoutes=options.routes?(options.routes.endsWith('.mjs')?(await import(pathToFileURL(path.resolve(options.routes)))).default:readJSON(options.routes)):null;
+    const manifest=frozen?loadManifest():buildManifest({evidenceRoot,repo,orchestratorRoot:options.root,helper:options.helper,plan:options.plan?readJSON(options.plan):null,routes:requestedRoutes??defaultRoutes});
+    const routes=requestedRoutes??manifest.routes;
+    if(frozen) need(canonical(routes)===canonical(manifest.routes),'run differs from frozen routes');
     cliCredentials=credentialValues(routes);
     if(options['dry-run']) console.log(JSON.stringify({manifest:summary(manifest),admissions:await admitRoutes({manifest,repo,routes}),providerCalls:0},null,2));
     else {const run=await runBench({manifest,repo,routes,evidenceRoot,runId});console.log(JSON.stringify({calls:run.calls,samples:run.samples.length,admissions:run.admissions},null,2));}return;
