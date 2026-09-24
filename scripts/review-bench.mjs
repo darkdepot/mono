@@ -16,7 +16,8 @@ const sha = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const oid = value => typeof value === 'string' && /^[a-f0-9]{40,64}$/.test(value);
 const name = value => typeof value === 'string' && /^[A-Z][A-Z0-9_]*$/.test(value);
 const readJSON = file => JSON.parse(fs.readFileSync(file,'utf8'));
-const environmentNames = ['PATH','HOME','TMPDIR','LANG','LC_ALL','SystemRoot','PATHEXT'];
+// Claude Code reads its macOS Keychain login by USER.
+const environmentNames = ['PATH','HOME','USER','LOGNAME','TMPDIR','LANG','LC_ALL','SystemRoot','PATHEXT'];
 function baseEnvironment() {
   const env = {};
   for (const key of environmentNames) if (process.env[key]) env[key]=process.env[key];
