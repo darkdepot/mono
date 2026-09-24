@@ -67,7 +67,18 @@ function fake(t,observation='Needs triage') {
   fs.writeFileSync(f.helper,`#!/usr/bin/env node
 const fs=require('node:fs');
 const args=process.argv.slice(2),get=k=>args[args.indexOf(k)+1],dry=args.includes('--dry-run');
-fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({dry,args,ambientLeaked:!!process.env.UNRELATED_SECRET})+'\\n');
+fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({
+  dry,
+  args,
+  ambientLeaked:!!process.env.UNRELATED_SECRET,
+  environment:{
+    USER:process.env.USER??null,
+    LOGNAME:process.env.LOGNAME??null,
+    ANTHROPIC_API_KEY:process.env.ANTHROPIC_API_KEY??null,
+    XAI_API_KEY:process.env.XAI_API_KEY??null,
+    SOME_TOKEN:process.env.SOME_TOKEN??null,
+  },
+})+'\\n');
 if(process.env.UNRELATED_SECRET) process.exit(9);
 for(const line of ['autoreview target: branch','engine: '+get('--engine'),'model: '+get('--model'),'thinking: '+get('--thinking'),'tools: '+(args.includes('--no-tools')?'off':'on'),'web_search: '+(args.includes('--no-web-search')?'off':'on'),'inputs: OK','bundle: constructible','prompt: OK','engine check: fixture OK']) console.log(line);
 if(dry) process.exit(0);
@@ -406,16 +417,26 @@ test('local diff formatting and attributes cannot change frozen evidence or repl
   assert.equal(run.samples.filter(s=>s.status==='findings').length,1);
 });
 
-test('OS environment allowlist excludes undeclared process credentials from helper children',async t=>{
-  const previous=process.env.UNRELATED_SECRET;
-  const marker=crypto.randomBytes(24).toString('hex');process.env.UNRELATED_SECRET=marker;
-  t.after(()=>{if(previous===undefined)delete process.env.UNRELATED_SECRET;else process.env.UNRELATED_SECRET=previous;});
+test('OS environment allowlist passes login names and excludes undeclared process credentials from helper children',async t=>{
+  const parent={
+    USER:'fixture-user',
+    LOGNAME:'fixture-logname',
+    ANTHROPIC_API_KEY:crypto.randomBytes(24).toString('hex'),
+    XAI_API_KEY:crypto.randomBytes(24).toString('hex'),
+    SOME_TOKEN:crypto.randomBytes(24).toString('hex'),
+    UNRELATED_SECRET:crypto.randomBytes(24).toString('hex'),
+  };
+  const previous=Object.fromEntries(Object.keys(parent).map(key=>[key,process.env[key]]));
+  Object.assign(process.env,parent);
+  t.after(()=>{for(const [key,value] of Object.entries(previous)) if(value===undefined)delete process.env[key];else process.env[key]=value;});
   const f=fake(t),manifest=freezeManifest({...f,runId:'host-environment'});
   const run=await runBench({...f,manifest,runId:'host-environment',routes:[f.good]});
   assert.equal(run.calls,2);
   const calls=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(calls.every(c=>c.environment.USER===parent.USER&&c.environment.LOGNAME===parent.LOGNAME),'declared login names did not reach a helper');
+  assert.ok(calls.every(c=>c.environment.ANTHROPIC_API_KEY===null&&c.environment.XAI_API_KEY===null&&c.environment.SOME_TOKEN===null),'undeclared host credentials reached a helper');
   assert.ok(calls.every(c=>!c.ambientLeaked),'undeclared host variable reached a helper');
-  assert.ok(!treeBytes(f.root).includes(marker),'undeclared host credential reached a file');
+  for(const key of ['ANTHROPIC_API_KEY','XAI_API_KEY','SOME_TOKEN','UNRELATED_SECRET']) assert.ok(!treeBytes(f.root).includes(parent[key]),'undeclared host credential reached a file');
 });
 
 test('a clean case cannot substitute for either member of a defect-fix pair',t=>{

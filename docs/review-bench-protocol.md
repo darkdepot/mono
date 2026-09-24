@@ -102,15 +102,17 @@ login-status evidence instead:
 }
 ```
 
-The helper authenticates from `HOME`, which is part of the explicit environment
-allowlist. The bench prints `subscriptionLogin` in admissions and reports, but it
-never runs `statusCommand` and never decides whether the stored authentication is
-a subscription; the orchestrator performs that check immediately before a live
-run. An empty `credentialEnv` without a valid record is refused with
-`subscription login evidence required`. Custom key-backed fixtures remain valid
-for negative admission tests: a missing variable is named, never its value. No
-credential value or undeclared host variable is forwarded or persisted, and no
-Codex route receives `--codex-config`.
+Claude Code finds its macOS Keychain login by `USER`; Codex CLI and Grok Build
+read login files under `HOME`. The bench exposes only the closed environment
+allowlist `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`,
+`SystemRoot`, and `PATHEXT`. It prints `subscriptionLogin` in admissions and
+reports, but it never runs `statusCommand` and never decides whether the stored
+authentication is a subscription; the orchestrator performs that check
+immediately before a live run. An empty `credentialEnv` without a valid record
+is refused with `subscription login evidence required`. Custom key-backed
+fixtures remain valid for negative admission tests: a missing variable is named,
+never its value. No credential value or undeclared host variable is forwarded or
+persisted, and no Codex route receives `--codex-config`.
 
 Admission also requires a positive billing assertion with a source and the absence
 of `eligibility.toVerify`. An otherwise eligible route must pass the helper's
