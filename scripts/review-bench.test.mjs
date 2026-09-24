@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { buildManifest } from './review-bench.mjs';
 import { digest as receiptDigest } from './runtime.mjs';
+import configuredRoutes from './review-bench-routes.mjs';
 
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function fixture(t) {
@@ -45,6 +46,21 @@ test('freeze recoverable inputs, deduplicate receipt/history, explain exclusions
   assert.deepEqual(fs.readFileSync(path.join(f.evidenceRoot,f.receipt.head+'.json')),before);
 });
 
+test('configured routes contain only subscription logins for the approved Claude and Codex selectors',()=>{
+  assert.deepEqual(configuredRoutes.map(route=>route.id),['incumbent','sonnet-high','sol-high','sol-medium','astra-high','terra-high']);
+  assert.deepEqual(configuredRoutes.map(route=>[route.engine,route.effort]),[
+    ['claude','high'],['claude','high'],['codex','high'],['codex','medium'],['codex','high'],['codex','high'],
+  ]);
+  assert.equal(configuredRoutes.filter(route=>route.baseline).map(route=>route.id).join(','),'incumbent');
+  for(const route of configuredRoutes) {
+    assert.deepEqual(route.credentialEnv,[]);
+    assert.deepEqual(route.environment,{});
+    assert.equal('toVerify' in route.eligibility,false);
+    assert.deepEqual(route.eligibility.subscriptionLogin.cli,route.engine);
+    assert.equal(route.eligibility.subscriptionLogin.statusCommand,route.engine==='claude'?'claude auth status':'codex login status');
+  }
+});
+
 import { freezeManifest, admitRoutes, runBench, scoreBench, reportBench } from './review-bench.mjs';
 function fake(t,observation='Needs triage') {
   const f=fixture(t),log=path.join(f.root,'calls.jsonl');
@@ -72,6 +88,10 @@ process.exit(exit);
   const secret=crypto.randomBytes(24).toString('hex');
   return {...f,log,plan,good,routes:[good],env:{BENCH_CREDENTIAL:secret,UNRELATED_SECRET:'ambient-must-not-reach-helper'},secret};
 }
+const subscriptionLogin = cli => ({cli,statusCommand:`${cli} login status`,checkedAt:'2026-09-24T00:23:45Z',by:'fixture-orchestrator'});
+function subscriptionRoute(id,engine='claude') {
+  return {id,engine,model:engine==='codex'?'model-codex':'model-claude',effort:'high',provider:{id:engine==='codex'?'openai':'anthropic'},credentialEnv:[],environment:{},eligibility:{billingChannelAllowed:true,source:'fixture subscription login',subscriptionLogin:subscriptionLogin(engine)}};
+}
 function treeBytes(root) {
   let result='';for(const entry of fs.readdirSync(root,{withFileTypes:true})) {
     const p=path.join(root,entry.name);if(entry.isDirectory()&&entry.name!=='.git')result+=treeBytes(p);else if(entry.isFile())result+=fs.readFileSync(p).toString();
@@ -84,6 +104,55 @@ test('admission rejects forbidden billing, missing keys and tools-on controls wi
   const a=await admitRoutes({manifest,repo:f.repo,routes,env:f.env});
   assert.ok(a.every(a=>!a.admitted&&a.providerCalls===0));assert.deepEqual(a[1].missingVariables,['MISSING_KEY']);
   assert.equal(fs.existsSync(f.log),false);
+});
+
+test('subscription admission follows the plan tools protocol and preserves login evidence',async t=>{
+  const f=fake(t),claude=subscriptionRoute('claude-subscription'),codex=subscriptionRoute('codex-subscription','codex');
+  const missingEvidence={...claude,id:'missing-evidence',eligibility:{billingChannelAllowed:true,source:'fixture subscription login'}};
+  const mismatchedClaude={...claude,id:'mismatched-claude',eligibility:{...claude.eligibility,subscriptionLogin:subscriptionLogin('codex')}};
+  const mismatchedCodex={...codex,id:'mismatched-codex',eligibility:{...codex.eligibility,subscriptionLogin:subscriptionLogin('claude')}};
+  const missingKey={...f.good,id:'missing-key',credentialEnv:['MISSING_KEY'],environment:{ANTHROPIC_AUTH_TOKEN:'MISSING_KEY'}};
+  const pi={id:'pi-subscription',engine:'pi',model:'model-pi',effort:'high',provider:{id:'openai'},credentialEnv:[],environment:{},eligibility:{billingChannelAllowed:true,source:'fixture Pi subscription login',subscriptionLogin:subscriptionLogin('codex')}};
+  const onManifest=buildManifest({...f,plan:{...f.plan,tools:'on'}});
+  const on=await admitRoutes({manifest:onManifest,repo:f.repo,routes:[claude,codex,missingEvidence,mismatchedClaude,mismatchedCodex,missingKey,pi],env:f.env});
+  assert.equal(on[0].admitted,true);
+  assert.deepEqual(on[0].subscriptionLogin,claude.eligibility.subscriptionLogin);
+  assert.equal(on[1].admitted,true);
+  assert.deepEqual(on[1].subscriptionLogin,codex.eligibility.subscriptionLogin);
+  assert.ok(on[2].reasons.includes('subscription login evidence required'));
+  assert.ok(on[3].reasons.includes('subscription login evidence required'));
+  assert.ok(on[4].reasons.includes('subscription login evidence required'));
+  assert.deepEqual(on[5].missingVariables,['MISSING_KEY']);
+  assert.ok(on[6].reasons.includes('helper forces tools off for pi'));
+  const calls=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse);
+  const codexCalls=calls.filter(call=>call.args.includes('model-codex'));
+  assert.ok(codexCalls.length>0);
+  assert.ok(codexCalls.every(call=>call.args.includes('--no-web-search')&&!call.args.includes('--no-tools')&&!call.args.includes('--codex-config')));
+
+  const offManifest=buildManifest({...f,plan:{...f.plan,tools:'off'}});
+  const off=await admitRoutes({manifest:offManifest,repo:f.repo,routes:[codex,pi],env:f.env});
+  assert.equal(off[0].admitted,false);
+  assert.ok(off[0].reasons.includes('helper rejects tools-off for Codex'));
+  assert.equal(off[1].admitted,true);
+});
+
+test('run dry-run reads an unfrozen plan and rejects a plan override for a frozen manifest',t=>{
+  const f=fake(t),route=subscriptionRoute('codex-subscription','codex');
+  const planFile=path.join(f.root,'tools-on-plan.json'),routesFile=path.join(f.root,'routes.json');
+  fs.writeFileSync(planFile,JSON.stringify({...f.plan,tools:'on'}));
+  fs.writeFileSync(routesFile,JSON.stringify([route]));
+  const script=new URL('./review-bench.mjs',import.meta.url).pathname;
+  const dry=spawnSync(process.execPath,[script,'run','--dry-run','--evidence-root',f.evidenceRoot,'--repo',f.repo,'--plan',planFile,'--routes',routesFile],{encoding:'utf8'});
+  assert.equal(dry.status,0,dry.stderr);
+  const result=JSON.parse(dry.stdout);
+  assert.equal(result.manifest.tools,'on');
+  assert.equal(result.admissions[0].admitted,true);
+  assert.equal(result.providerCalls,0);
+
+  freezeManifest({...f,runId:'frozen-plan',plan:{...f.plan,tools:'off'},routes:[route]});
+  const override=spawnSync(process.execPath,[script,'run','--dry-run','--evidence-root',f.evidenceRoot,'--repo',f.repo,'--run-id','frozen-plan','--plan',planFile,'--routes',routesFile],{encoding:'utf8'});
+  assert.notEqual(override.status,0);
+  assert.match(override.stderr,/frozen manifest supplies the plan; --plan cannot override it/);
 });
 
 test('frozen run, blind gold scoring and feasibility report preserve archives and redact keys',async t=>{
@@ -154,7 +223,7 @@ test('timeouts and predeclared call stops remain in recall and operational denom
 });
 
 test('production baseline is separate and its identity and tools are not disclosed to the grader',async t=>{
-  const f=fake(t),baseline={...f.good,model:'model-incumbent',baseline:true};
+  const f=fake(t),baseline={...subscriptionRoute('incumbent'),model:'model-incumbent',baseline:true};
   const manifest=freezeManifest({...f,runId:'baseline',routes:[baseline]}),run=await runBench({...f,manifest,runId:'baseline',routes:[baseline]});
   assert.equal(run.calls,4);
   const common=run.samples.find(s=>s.protocol==='common'),production=run.samples.find(s=>s.protocol==='production');
@@ -163,6 +232,16 @@ test('production baseline is separate and its identity and tools are not disclos
   assert.ok(blind.samples.every(s=>!('protocol' in s)));
   const calls=fs.readFileSync(f.log,'utf8').trim().split('\n').map(JSON.parse).filter(c=>!c.dry);
   assert.equal(calls.filter(c=>c.args.includes('--no-tools')).length,2);assert.equal(calls.filter(c=>!c.args.includes('--no-web-search')).length,2);
+  const score=scoreBench({manifest,run,adjudications:{entries:[]}}),report=reportBench({manifest,run,score});
+  assert.deepEqual(Object.keys(report.protocolGroups),['common','production']);
+  assert.equal(report.protocolGroups.common.length,1);
+  assert.equal(report.protocolGroups.production.length,1);
+  assert.ok(report.protocolGroups.common.every(group=>group.protocol==='common'));
+  assert.ok(report.protocolGroups.production.every(group=>group.protocol==='production'));
+  const grouped=[...report.protocolGroups.common,...report.protocolGroups.production];
+  assert.equal(grouped.length,report.summaries.length);
+  assert.equal(new Set(grouped).size,grouped.length);
+  assert.deepEqual(report.admissions[0].subscriptionLogin,baseline.eligibility.subscriptionLogin);
 });
 
 test('route identities are frozen before calls and incompatible credential targets get zero invocations',async t=>{

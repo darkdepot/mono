@@ -6,6 +6,13 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-85: replace key-backed reviewer bench routes with six Claude Code and
+  Codex CLI subscription routes, require recorded subscription-login evidence,
+  and add plan-scoped tools-on/off protocols. Tools-on admits Codex without
+  `--no-tools`, preserves `--no-web-search` with its documented cache-search
+  limit, keeps Pi tools-off only, refuses frozen-plan overrides, and separates
+  common and production report groups without disclosing protocol to graders.
+
 - MONO-84: increase the confirmation default to 1800 seconds with a shared
   configuration check that keeps it below the evidence limit; make adjudication
   replacement key off `eventId`; add current, reasoned matrix waivers; and
