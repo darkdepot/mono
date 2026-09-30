@@ -249,7 +249,7 @@ remains below the declared sampling targets; this is feasibility evidence only.
 Those historical cases freeze helper bytes without Grok support and are therefore
 incompatible with the Grok route. For a new manifest frozen with a Grok-capable
 helper, the admission expectations are three routes at `off` (two Claude plus
-Grok) and six at `on` (two Claude plus four Codex, with Grok excluded).
+Grok) and seven at `on` (two Claude plus five Codex, with Grok excluded).
 
 Supply the Git checkout containing the historical objects as `--repo`.
 `--root` optionally records the orchestrator directory as provenance; it is not
