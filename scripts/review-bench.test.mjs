@@ -47,9 +47,9 @@ test('freeze recoverable inputs, deduplicate receipt/history, explain exclusions
 });
 
 test('configured routes contain only subscription logins for the approved Claude, Codex and Grok selectors',()=>{
-  assert.deepEqual(configuredRoutes.map(route=>route.id),['incumbent','sonnet-high','sol-high','sol-medium','astra-high','terra-high','grok-low']);
+  assert.deepEqual(configuredRoutes.map(route=>route.id),['incumbent','sonnet-high','sol-high','sol-medium','sol61-high','sol61-medium','sol6-high','grok-low']);
   assert.deepEqual(configuredRoutes.map(route=>[route.engine,route.effort]),[
-    ['claude','high'],['claude','high'],['codex','high'],['codex','medium'],['codex','high'],['codex','high'],['grok','low'],
+    ['claude','high'],['claude','high'],['codex','high'],['codex','medium'],['codex','high'],['codex','medium'],['codex','high'],['grok','low'],
   ]);
   assert.equal(configuredRoutes.filter(route=>route.baseline).map(route=>route.id).join(','),'incumbent');
   for(const route of configuredRoutes) {
