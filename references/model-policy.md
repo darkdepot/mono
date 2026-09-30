@@ -9,7 +9,7 @@ use a `role:<role>` link to `#roles`; outputs record values, not new defaults.
 | Role | Model id | Reasoning effort | Applies to | Decided by |
 | --- | --- | --- | --- | --- |
 | `orchestrator` | `claude-fable-5-1` | n/a | Orchestrator session; effort unset. | Owner, 2026-09-06. |
-| `second-voice` | `gpt-6.1-sol` | `high` | Second Voice for Claude; approved cross-vendor rule. | Owner, 2026-09-30. |
+| `second-voice` | `gpt-6-astra` | `high` | Second Voice for Claude; approved cross-vendor rule. | Owner, 2026-09-30. |
 | `second-voice-alt` | `claude-opus-5` | `high` | Second Voice for GPT; independent of worker role. | Owner, 2026-09-06. |
 | `worker-default` | `gpt-6.1-sol` | `high` | Default Codex worker. | Owner, 2026-09-30. |
 | `worker-complex` | `gpt-6.1-sol` | `xhigh` | Complex Codex work; explicit reason per dispatch, never automatic by risk. | Owner, 2026-09-30. |
