@@ -1208,3 +1208,181 @@ console.log('autoreview scoped-clean: no accepted/actionable findings in the sel
     }
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('wait-mode consumption verifies the live writer incarnation and outstanding command', async () => {
+  const { consumeAck } = await import('./orchestrator/consume-gate-ack.mjs');
+  const { digest } = await import('./runtime.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-live-wait-'));
+  const issue = 'MONO-993', log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+  // Process inspection is denied inside the worker sandbox; model the outside
+  // orchestrator's ps boundary without making a provider/process-inspection call.
+  const procStart = 'Mon Jan  1 00:00:00 2024', oldPath = process.env.PATH;
+  const bin = path.join(root, 'bin');
+  write(path.join(bin, 'ps'), `#!/usr/bin/env node\nconsole.log(${JSON.stringify(procStart)});\n`);
+  fs.chmodSync(path.join(bin, 'ps'), 0o700); process.env.PATH = bin + path.delimiter + oldPath;
+  const ack = { issue, phase: 'gate', status: 'gates-passed', gates: [{ gate: 'identity', status: 'pass', evidence: 'fixture' }] };
+  const entry = { issue, stage: 'mono-deliver', attempt: 1, handshake: 'wait', pid: process.pid, procStart, thread_id: 'fixture-thread', log,
+    worktree: path.join(root, 'repo'), gates: ['identity'], lifecycle_moves: [{ entity: 'issue', key: issue, from: 'Backlog', to: 'In Progress' }] };
+  const started = { type: 'item.started', item: { id: 'item_18', type: 'command_execution', command: `/bin/zsh -lc 'node /fixture/skills/.mono-agent-workflow/scripts/delivery-state.mjs wait-ack --root /fixture/state --issue ${issue} --attempt 1 --ack /fixture/ack.json --moves /fixture/moves.json'`, aggregated_output: '', exit_code: null, status: 'in_progress' } };
+  const events = [{ type: 'thread.started', thread_id: entry.thread_id }, started, { type: 'item.completed', item: { id: 'item_19', type: 'agent_message', text: 'Waiting for gate-ack consumption.' } }];
+  const setLog = list => write(log, list.map(e => JSON.stringify(e)).join('\n') + '\n');
+  const request = { root, issue, attempt: 1, outcome: 'applied', readback: [{ moveDigest: digest(entry.lifecycle_moves[0]), evidence: { state: 'In Progress' } }] };
+  try {
+    setLog(events); write(path.join(root, 'reports', `${issue}-gate-ack-a1.json`), ack);
+    for (const change of [{ pid: 2147483647 }, { procStart: procStart + ' foreign' }, { thread_id: 'other' }]) {
+      write(path.join(root, 'workers.json'), { [issue]: { ...entry, ...change } });
+      await assert.rejects(consumeAck(request), /waiting writer not verified/);
+    }
+    write(path.join(root, 'workers.json'), { [issue]: entry });
+    for (const list of [events.slice(0, 1), [...events, { type: 'item.completed', item: { ...started.item, status: 'completed', exit_code: 0 } }],
+      [started, events[0]], [...events, { type: 'thread.started', thread_id: 'other' }],
+      [events[0], { ...started, item: { ...started.item, command: started.item.command.replace('--attempt 1', '--attempt 2') } }]]) {
+      setLog(list); await assert.rejects(consumeAck(request), /waiting writer not verified/);
+    }
+    setLog(events);
+    await consumeAck(request);
+    const registered = json(path.join(root, 'workers.json'))[issue];
+    assert.equal(registered.last_wait.pid, entry.pid);
+    assert.equal(registered.last_wait.procStart, procStart);
+    assert.equal(registered.last_wait.thread_id, entry.thread_id);
+    assert.equal(registered.last_wait.gateAckDigest, digest(ack));
+    assert.ok(Number.isFinite(Date.parse(registered.last_wait.consumedAt)));
+    const consumedAt = registered.last_wait.consumedAt;
+    // Recover the earlier crash window too: registry persisted, private record absent.
+    fs.unlinkSync(path.join(root, 'consumed', `${issue}-gate-ack-a1.json`));
+    fs.renameSync(path.join(root, 'reports', `${issue}-gate-ack-a1.applied.json`), path.join(root, 'reports', `${issue}-gate-ack-a1.json`));
+    write(path.join(root, 'workers.json'), { [issue]: { ...registered, gates: entry.gates } });
+    await consumeAck(request);
+    assert.equal(json(path.join(root, 'workers.json'))[issue].last_wait.consumedAt, consumedAt);
+    // Recover after private-record publication with no live writer: prior identical intent wins.
+    write(path.join(root, 'workers.json'), { [issue]: { ...registered, pid: 2147483647, gates: entry.gates } });
+    await consumeAck(request);
+    assert.equal(json(path.join(root, 'workers.json'))[issue].last_wait.consumedAt, consumedAt);
+    assert.equal(json(path.join(root, 'workers.json'))[issue].gates, undefined);
+  } finally { process.env.PATH = oldPath; fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scratch short launch pins profile, handshake, pins digest, version and process start', async () => {
+  const { spawnWorker } = await import('./orchestrator/launch.mjs');
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-short-launch-')));
+  const skills = path.join(root, 'skills'), state = path.join(root, 'state'), repo = path.join(root, 'repo'), bin = path.join(root, 'bin');
+  const env = { ...process.env, MONO_WORKFLOW_STATE_ROOT: path.join(root, 'install-state'), MONO_WORKFLOW_KNOWN_ROOTS: skills };
+  const oldPath = process.env.PATH; let pid;
+  try {
+    pass(run(process.execPath, ['scripts/install-local.mjs', '--skills-root', skills], checkout, env));
+    fs.mkdirSync(repo); pass(run('git', ['init', '-b', 'delivery'], repo, env));
+    pass(run('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'base'], repo, env));
+    const base = pass(run('git', ['rev-parse', 'HEAD'], repo, env)).stdout.trim();
+    const lock = path.join(skills, '.mono-agent-workflow.lock.json'), identity = json(lock);
+    const dispatchFile = path.join(root, 'dispatch.md'), pinsFile = path.join(root, 'pins.json');
+    write(dispatchFile, 'fixture'); write(pinsFile, { profile: 'short', handshake: 'wait' });
+    const pins = { file: pinsFile, digest: crypto.createHash('sha256').update(fs.readFileSync(pinsFile)).digest('hex') };
+    write(path.join(state, 'control.json'), { state: 'active', halt: false }); write(path.join(state, 'workers.json'), {});
+    fs.mkdirSync(path.join(state, 'reports'));
+    write(path.join(bin, 'codex'), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"short-fixture"}));setTimeout(()=>process.exit(0),10000);\n');
+    write(path.join(bin, 'ps'), '#!/usr/bin/env node\nconsole.log("Mon Jan  1 00:00:00 2024");\n');
+    for (const tool of ['codex', 'ps']) fs.chmodSync(path.join(bin, tool), 0o700);
+    process.env.PATH = bin + path.delimiter + oldPath;
+    const request = { root: state, issue: 'MONO-993', worktree: repo, branch: 'delivery', base, lock, ...identity,
+      role: 'worker-default', dispatchFile, evidenceRoot: path.join(root, 'evidence'), writable_roots: [],
+      workerWritableRoots: [repo, path.join(repo, '.git'), path.join(state, 'reports')], lifecycle_moves: [],
+      handshake: 'wait', profile: 'short', risk: 'standard', critical: null, afk: true, openDecisions: 0, pins };
+    for (const change of [{ risk: 'deep' }, { risk: 'risky' }, { critical: 'release blocker' }, { critical: undefined }, { afk: false },
+      { afk: undefined }, { openDecisions: 1 }, { openDecisions: undefined }, { handshake: 'unknown' }, { profile: 'unknown' },
+      { pins: { ...pins, digest: '0'.repeat(64) } }, { pinsVersion: 1 }]) {
+      await assert.rejects(spawnWorker({ ...request, ...change }), /short|handshake|profile|pins/);
+      assert.deepEqual(json(path.join(state, 'workers.json')), {}, 'refusal never registers an attempt');
+    }
+    ({ pid } = await spawnWorker(request));
+    const entry = json(path.join(state, 'workers.json'))[request.issue];
+    assert.equal(entry.profile, 'short'); assert.equal(entry.handshake, 'wait');
+    assert.deepEqual(entry.pins, pins); assert.equal(entry.pinsVersion, 0);
+    assert.equal(entry.procStart, 'Mon Jan  1 00:00:00 2024');
+  } finally { process.env.PATH = oldPath; if (pid) { try { process.kill(pid, 'SIGTERM'); } catch {} } fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+function watcherProcessFixture(root) {
+  const bin = path.join(root, 'bin');
+  write(path.join(bin, 'ps'), '#!/usr/bin/env node\nconsole.log("fixture-start");\n');
+  fs.chmodSync(path.join(bin, 'ps'), 0o700);
+  return { ...process.env, PATH: bin + path.delimiter + process.env.PATH };
+}
+
+test('watcher shares configured clocks and bounds wait continuation after consumption', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-wait-watch-'));
+  const env = watcherProcessFixture(root);
+  const issue = 'MONO-993', log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+  const config = path.join(root, 'config.json'), ackFile = path.join(root, 'reports', `${issue}-gate-ack-a1.json`);
+  const applied = ackFile.replace('.json', '.applied.json');
+  const events = json(path.join(checkout, 'scripts/fixtures/blocked-command-events.json'));
+  const ack = { issue, phase: 'gate', status: 'gates-passed', gates: [{ gate: 'identity', status: 'pass', evidence: 'fixture' }] };
+  const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1, packVersion: 'test', sourceCommit: 'a'.repeat(40), surfaceRevision: 4,
+    pid: process.pid, procStart: 'fixture-start', thread_id: 'fixture-thread', handshake: 'wait', worktree: path.join(root, 'repo'), log, gates: ['identity'] };
+  const registry = change => write(path.join(root, 'workers.json'), { [issue]: { ...entry, ...change } });
+  const watch = (extra = []) => run(process.execPath, ['scripts/watch-workers.mjs', '--root', root, '--config', config, '--once', ...extra], checkout, env);
+  const silence = seconds => { const past = new Date(Date.now() - seconds * 1000); fs.utimesSync(log, past, past); };
+  try {
+    const defaultClock = run(process.execPath, ['scripts/watch-workers.mjs', '--root', root, '--stall-sec', '90', '--once'], checkout);
+    assert.notEqual(defaultClock.status, 0); assert.match(defaultClock.stderr, /ackWaitSec.*effective.*stall/i);
+    write(config, { orchestration: { delivery: { stallSec: 150, ackWaitSec: 500, pollSec: 10 } } });
+    write(log, events.slice(0, 3).map(e => JSON.stringify(e)).join('\n') + '\n'); registry();
+    write(path.join(root, 'control.json'), { state: 'active' }); write(ackFile, ack);
+    silence(400);
+    const pending = pass(watch()); assert.match(pending.stderr, /stall-sec=150/); assert.doesNotMatch(pending.stdout, /EVENT:(stall|dead)/);
+    const incompatible = watch(['--stall-sec', '120']); assert.notEqual(incompatible.status, 0); assert.match(incompatible.stderr, /ackWaitSec.*effective.*stall/i);
+    write(config, { orchestration: { delivery: { stallSec: 120, ackWaitSec: 420, pollSec: 10 } } });
+    silence(481); assert.match(pass(watch()).stdout, /EVENT:stall/);
+    fs.renameSync(ackFile, applied);
+    for (const age of [0, 100, 119]) {
+      registry({ gates: undefined, last_wait: { pid: entry.pid, procStart: entry.procStart, thread_id: entry.thread_id, gateAckDigest: crypto.createHash('sha256').update('fixture').digest('hex'), consumedAt: new Date(Date.now() - age * 1000).toISOString() } });
+      assert.doesNotMatch(pass(watch()).stdout, /EVENT:(stall|dead)/, `bounded continuation at age ${age}`);
+    }
+    for (const change of [{ pid: 2147483647 }, { procStart: 'reused-pid-start' }]) {
+      const writer = { ...entry, ...change };
+      registry({ ...change, gates: undefined, last_wait: { pid: writer.pid, procStart: writer.procStart, thread_id: writer.thread_id, consumedAt: new Date().toISOString() } });
+      assert.match(pass(watch()).stdout, /EVENT:(stall|dead)/, 'continuation must not hide a dead or reused writer');
+    }
+    for (const stamp of [new Date(Date.now() - 120_500).toISOString(), new Date(Date.now() + 30_000).toISOString(), 'invalid']) {
+      registry({ gates: undefined, last_wait: { consumedAt: stamp } }); assert.match(pass(watch()).stdout, /EVENT:stall/);
+    }
+    registry({ gates: undefined, handshake: 'resume', last_wait: { consumedAt: new Date().toISOString() } }); assert.match(pass(watch()).stdout, /EVENT:stall/);
+    registry({ gates: undefined, last_wait: { consumedAt: new Date().toISOString() } });
+    fs.unlinkSync(applied); assert.match(pass(watch()).stdout, /EVENT:stall/, 'no tombstone, no continuation');
+    write(applied, ack);
+    fs.appendFileSync(log, JSON.stringify(events[3]) + '\n');
+    assert.doesNotMatch(pass(watch()).stdout, /EVENT:(stall|dead)/, 'completed command makes the log live');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('watcher consumption between scans suppresses only one fixed continuation window', async () => {
+  const { spawn } = await import('node:child_process');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-wait-scans-'));
+  const env = watcherProcessFixture(root);
+  const issue = 'MONO-993', log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+  const config = path.join(root, 'config.json'), ack = path.join(root, 'reports', `${issue}-gate-ack-a1.json`);
+  const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1, packVersion: 'test', sourceCommit: 'a'.repeat(40), surfaceRevision: 4,
+    handshake: 'wait', pid: process.pid, procStart: 'fixture-start', thread_id: 'fixture-thread', log, worktree: path.join(root, 'repo'), gates: ['identity'] };
+  let watcher; let output = '';
+  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  try {
+    const events = json(path.join(checkout, 'scripts/fixtures/blocked-command-events.json'));
+    write(log, events.slice(0, 3).map(e=>JSON.stringify(e)).join('\n')+'\n');
+    const quiet = new Date(Date.now()-400_000); fs.utimesSync(log, quiet, quiet);
+    write(config, { orchestration: { delivery: { stallSec: 120, ackWaitSec: 420, pollSec: 10 } } });
+    write(path.join(root, 'workers.json'), { [issue]: entry }); write(path.join(root, 'control.json'), { state: 'active' });
+    write(ack, { issue, phase: 'gate', status: 'gates-passed', gates: [{ gate: 'identity', status: 'pass', evidence: 'fixture' }] });
+    watcher = spawn(process.execPath, ['scripts/watch-workers.mjs', '--root', root, '--config', config, '--interval-sec', '1'], { cwd: checkout, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    watcher.stdout.on('data', chunk => { output += chunk.toString(); });
+    await pause(200); assert.match(output, /EVENT:gate-ack/); assert.doesNotMatch(output, /EVENT:(stall|dead)/);
+    // The consumer publishes last_wait before renaming, between watcher scans.
+    const consumedAt = new Date().toISOString();
+    write(path.join(root, 'workers.json'), { [issue]: { ...entry, gates: undefined, last_wait: { pid: entry.pid, procStart: entry.procStart, thread_id: entry.thread_id, consumedAt } } });
+    fs.renameSync(ack, ack.replace('.json', '.applied.json'));
+    await pause(1200); assert.doesNotMatch(output, /EVENT:(stall|dead)/);
+    write(path.join(root, 'workers.json'), { [issue]: { ...entry, gates: undefined, last_wait: { consumedAt: new Date(Date.now()-121_000).toISOString() } } });
+    await pause(1200); assert.match(output, /EVENT:stall/);
+  } finally {
+    if (watcher && watcher.exitCode === null) { watcher.kill('SIGTERM'); await new Promise(resolve=>watcher.once('exit',resolve)); }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

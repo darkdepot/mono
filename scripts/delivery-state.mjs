@@ -149,9 +149,10 @@ export function publishPhase(report, output, previousConfirmation, root = previo
 }
 function resolveWrite(write, report) {
   function resolve(value) {
-    if (value === "append #/certificate") {
+    if (typeof value === "string" && value.includes("append #/certificate")) {
       if (typeof report.certificate !== "string" || !report.certificate.trim()) throw new Error("certificate pointer has no certificate");
-      return report.certificate;
+      if (value.split("append #/certificate").length !== 2) throw new Error("certificate pointer must occur once");
+      return value.replace("append #/certificate", () => report.certificate);
     }
     if (Array.isArray(value)) return value.map(resolve);
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resolve(item)]));
@@ -203,11 +204,50 @@ export async function waitForConfirmation(report, file, timeoutSec, pollSec = 1)
     await new Promise((resolve) => setTimeout(resolve, Math.min(pollSec * 1000, deadline - Date.now())));
   }
 }
+export async function waitForGateAck({ root, issue, attempt, ack, moves, config }) {
+  if (!path.isAbsolute(root ?? "") || !path.isAbsolute(ack ?? "") ||
+      !/^[A-Z][A-Z0-9]*-\d+$/.test(issue) || !Number.isInteger(attempt) || attempt < 1 || !Array.isArray(moves))
+    throw new Error("invalid gate-ack wait request");
+  let fd;
+  const candidates = [ack, ack.replace(/\.json$/, ".applied.json"), ack.replace(/\.json$/, ".rejected.json")];
+  for (const candidate of candidates) {
+    try { fd = fs.openSync(candidate, "r"); break; }
+    catch (error) { if (error.code !== "ENOENT" || candidate === candidates.at(-1)) throw error; }
+  }
+  let own, ackMtime;
+  try { own = JSON.parse(fs.readFileSync(fd, "utf8")); ackMtime = fs.fstatSync(fd).mtimeMs; }
+  finally { fs.closeSync(fd); }
+  const ackDigest = digest(own);
+  if (own.issue !== issue || own.phase !== "gate" || own.status !== "gates-passed") throw new Error("invalid own gate-ack");
+  const { ackWaitSec, pollSec } = deliveryConfig(config);
+  const deadline = ackMtime + ackWaitSec * 1000;
+  const file = path.join(root, "consumed", `${issue}-gate-ack-a${attempt}.json`);
+  while (true) {
+    if (fs.existsSync(file)) {
+      const record = readJson(file);
+      if (record.issue !== issue || record.attempt !== attempt || record.ackDigest !== ackDigest)
+        throw new Error("gate-ack consumption identity/digest mismatch");
+      if (["blocked", "rejected"].includes(record.outcome)) throw new Error(`gate-ack ${record.outcome}`);
+      if (record.outcome !== "applied") throw new Error("invalid gate-ack consumption outcome");
+      if (!Array.isArray(record.readback) || record.readback.length !== moves.length ||
+          record.readback.some((entry, index) => entry?.moveDigest !== digest(moves[index]) || !entry.evidence))
+        throw new Error("lifecycle read-back incomplete");
+      return record;
+    }
+    if (Date.now() >= deadline) throw new Error("write-unconfirmed: gate-ack consumption not confirmed");
+    await new Promise(resolve => setTimeout(resolve, Math.min(pollSec * 1000, deadline - Date.now())));
+  }
+}
 if (isMain(import.meta.url)) {
   try {
     const [command, ...rest] = process.argv.slice(2); const args = flags(rest);
-    if (command === "--help" || args.help) console.log("Usage: delivery-state.mjs publish --report <file> --output <file> [--confirmation <previous ack>] [--root <orchestrator root>] | confirm --report <file> --root <dir> --adapter <executable> [--config <file>] | wait --report <file> --confirmation <file> [--config <file>]\nPhase: {issue,stage:'mono-deliver',attempt,packVersion,sourceCommit,surfaceRevision,phase:'code|preflight|ship',sequence,kind:'phase|confirmation-request',head,linear_mutations_pending:[{id,operation,target,payload}],capsule:{phase,head,open_queue:[same writes],decisions:[],writable_roots:[dispatch grants]}}. publish adds publishedAt, so resumed waits retain the original deadline. Publish/confirm require all earlier sequence confirmations and the latest earlier phase reports for this attempt. Confirmations retain their report snapshot. Fallback publish supplies --root explicitly (or the previous standard mailbox confirmation); confirm reads predecessor reports from the current report directory and the root mailbox, refusing conflicting copies. The exact payload string append #/certificate expands to report.certificate before hashing/applying; changed certificate needs a new write ID. Adapter stdin: {action:'reconcile|apply',issue,attempt,idempotencyKey,write}; reconcile returns {state:'present|missing|unknown',evidence}; present needs evidence, missing must be positively observed. IDs persist across retries; results bind the current attempt.");
-    else {
+    if (command === "--help" || args.help) console.log("Usage: delivery-state.mjs publish --report <file> --output <file> [--confirmation <previous ack>] [--root <orchestrator root>] | wait-ack --root <root> --issue <KEY> --attempt <N> --ack <path> --moves <json-file> [--config <file>] | confirm --report <file> --root <dir> --adapter <executable> [--config <file>] | wait --report <file> --confirmation <file> [--config <file>]\nPhase: {issue,stage:'mono-deliver',attempt,packVersion,sourceCommit,surfaceRevision,phase:'code|preflight|ship',sequence,kind:'phase|confirmation-request',head,linear_mutations_pending:[{id,operation,target,payload}],capsule:{phase,head,open_queue:[same writes],decisions:[],writable_roots:[dispatch grants]}}. publish adds publishedAt, so resumed waits retain the original deadline. Publish/confirm require all earlier sequence confirmations and the latest earlier phase reports for this attempt. Confirmations retain their report snapshot. Fallback publish supplies --root explicitly (or the previous standard mailbox confirmation); confirm reads predecessor reports from the current report directory and the root mailbox, refusing conflicting copies. A single append #/certificate pointer within a payload string expands to report.certificate before hashing/applying; changed certificate needs a new write ID. Adapter stdin: {action:'reconcile|apply',issue,attempt,idempotencyKey,write}; reconcile returns {state:'present|missing|unknown',evidence}; present needs evidence, missing must be positively observed. IDs persist across retries; results bind the current attempt.");
+    else if (command === "wait-ack") {
+      const record = await waitForGateAck({ root: args.root, issue: args.issue, attempt: Number(args.attempt),
+        ack: args.ack, moves: readJson(args.moves), config: args.config });
+      console.log(JSON.stringify(record));
+      console.log("delivery-state wait-ack: pass");
+    } else {
       const report = validatePhase(readJson(args.report));
       if (command === "publish") publishPhase(report, args.output, args.confirmation, args.root);
       else if (command === "confirm") {

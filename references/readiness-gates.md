@@ -21,7 +21,9 @@ ready = required review/no blockers or owner-applied accepted fixes; advisory-re
 
 ## Tiny Output Profile
 
-Tiny chat: outcome/link/next + boundary delta; ship/deploy always full Проверено/Не проверено. Start comment/preflight may share one Issue comment retaining `mono-preflight certificate`. Ship/deploy keep complete certificates, omit optional narrative.
+Tiny or short tiny/standard: outcome/link/next + boundary delta. Short start facts
+lead the ready comment; retain `mono-preflight certificate`. Ship/deploy always
+full Проверено/Не проверено and complete certificates; optional narrative omitted.
 
 ## Ownership
 

@@ -17,6 +17,9 @@ the worker diff never selects its own reviewer.
 - Issue: <ISSUE-KEY> — <title>
 - Delivery skill: mono-deliver
 - Attempt: <positive integer>
+- handshake: <wait | resume; default resume>
+- profile: <short | full; default full; short requires tiny/standard, critical null, afk true, openDecisions 0>
+- pins: <absolute dispatch pins file and SHA-256 digest; pinsVersion 0 at launch>
 - Gate request: <absolute start-gate JSON; lock/pins/worktree/branch/base>
 - Runtime scripts: <absolute installed scripts directory>
 - Product: <product slug>
@@ -161,8 +164,12 @@ worker contract without redefining it:
 - Lifecycle moves: <every move, still unapplied; snapshot deliberately pre-move>
 - Gates: <exact gate names from implement steps 1–4; issue-only adds delivery>
 - Gate-ack: <absolute reports/<ISSUE-KEY>-gate-ack-a<N>.json and fallback path>
-- Pause/resume: <transport-specific stop; resumed amendment with every applied
-  move/read-back, then identity again; blocked ack precedes terminal report>
+- Wait/resume: <codex-cli wait: after ack run installed delivery-state.mjs
+  wait-ack --root <root> --issue <KEY> --attempt <N> --ack <path> --moves <json-file>
+  --config <cfg>; deadline ack mtime + ackWaitSec; expiry parks write-unconfirmed
+  and exits. Valid own consumption read-backs amend state: post-move delivery
+  check, no identity rerun. Resume mode: stop/exit; amendment with every applied
+  move/read-back, then identity/check again. Blocked ack precedes terminal report>
 
 ## AFK Contract
 

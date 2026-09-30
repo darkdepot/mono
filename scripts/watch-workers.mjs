@@ -46,7 +46,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { validatePhase, validateConfirmation, confirmationPath, correlatedDeliveryReport } from "./delivery-state.mjs";
-import { deliveryConfig } from "./runtime.mjs";
+import { deliveryConfig, processStart } from "./runtime.mjs";
 
 const DEFAULT_STALL_SEC = 120;
 const MIN_STALL_SEC = 90;
@@ -90,7 +90,8 @@ function usage(exitCode = 2) {
   console.error("");
   console.error("Options:");
   console.error("  --root <dir>        Orchestrator root, e.g. ~/.mono-agent-workflow/orchestrator/<product> (required)");
-  console.error(`  --stall-sec <n>     Stall threshold in seconds (default ${DEFAULT_STALL_SEC}, minimum ${MIN_STALL_SEC})`);
+  console.error(`  --stall-sec <n>     Stall threshold (config stallSec, otherwise ${DEFAULT_STALL_SEC}; minimum ${MIN_STALL_SEC})`);
+  console.error("  --config <file>     Product delivery config; validate ackWaitSec against the effective threshold");
   console.error(`  --repeat-sec <n>    Do not repeat the same event more often than this (default ${DEFAULT_REPEAT_SEC})`);
   console.error(`  --interval-sec <n>  Scan interval in seconds (default ${DEFAULT_INTERVAL_SEC})`);
   console.error(`  --idle-sec <n>      Emit idle after no active workers for this long (default ${DEFAULT_IDLE_SEC})`);
@@ -120,7 +121,8 @@ function parsePositiveInt(flag, value) {
 function parseArgs(argv) {
   const args = {
     root: null,
-    stallSec: DEFAULT_STALL_SEC,
+    stallSec: null,
+    config: null,
     repeatSec: DEFAULT_REPEAT_SEC,
     intervalSec: DEFAULT_INTERVAL_SEC,
     idleSec: DEFAULT_IDLE_SEC,
@@ -132,6 +134,9 @@ function parseArgs(argv) {
       args.root = argv[(index += 1)];
     } else if (arg === "--stall-sec") {
       args.stallSec = parsePositiveInt(arg, argv[(index += 1)]);
+    } else if (arg === "--config") {
+      args.config = argv[(index += 1)];
+      if (!args.config || args.config.startsWith("--")) usage();
     } else if (arg === "--repeat-sec") {
       args.repeatSec = parsePositiveInt(arg, argv[(index += 1)]);
     } else if (arg === "--interval-sec") {
@@ -151,6 +156,12 @@ function parseArgs(argv) {
     console.error("--root is required (pass the orchestrator root explicitly).");
     usage();
   }
+  try {
+    const config = deliveryConfig(args.config ? path.resolve(expandHome(args.config)) : undefined);
+    args.stallSec ??= config.stallSec;
+    if (config.ackWaitSec > args.stallSec * 4 - config.pollSec)
+      throw new Error("ackWaitSec exceeds effective stallSec * 4 - pollSec");
+  } catch (error) { console.error(`watch-workers: ${error.message}`); process.exit(2); }
   if (args.stallSec < MIN_STALL_SEC) {
     console.error(`--stall-sec must be at least ${MIN_STALL_SEC} (got ${args.stallSec}); lower values misread normal turn gaps as stalls.`);
     process.exit(2);
@@ -827,6 +838,18 @@ function checkReport(log, report, nowMs) {
 // was unreachable exactly when it was needed. Orchestrator amendment 2 on
 // MONO-47 authorises this over the dispatch's additive-only-v3 constraint;
 // without a registry context the behaviour is unchanged.
+function waitingContinuation(log, entry, nowMs) {
+  if (entry?.handshake !== "wait" || entry.attempt !== log.attempt || !isCorrelatedDeliveryLog(log, entry)) return false;
+  const consumedAt = Date.parse(entry.last_wait?.consumedAt), age = nowMs - consumedAt;
+  if (!Number.isFinite(consumedAt) || age < 0 || age >= args.stallSec * 1000 || log.stat.mtimeMs >= consumedAt) return false;
+  if (!entry.procStart || !entry.thread_id || entry.last_wait.pid !== entry.pid ||
+      entry.last_wait.procStart !== entry.procStart || entry.last_wait.thread_id !== entry.thread_id ||
+      writerPidState(entry) !== "alive" || processStart(entry.pid) !== entry.procStart) return false;
+  const name = `${log.issue}-gate-ack-a${log.attempt}.applied.json`;
+  const candidates = [path.join(args.root, "reports", name), ...(typeof entry.worktree === "string" ? [path.join(entry.worktree, ".orchestrator", name)] : [])];
+  return candidates.some(file => readGateAckAt(file, log)?.status === "gates-passed");
+}
+
 function checkLog(log, gateAck, report, registry, nowMs) {
   const inspection = inspectLog(log.filePath);
   const { firstLine, hasJsonEvent } = inspection;
@@ -897,6 +920,9 @@ function checkLog(log, gateAck, report, registry, nowMs) {
   }
 
   if (ageSec < args.stallSec) return;
+  // One fixed post-consumption window, only while the waiting command's log
+  // has not resumed. Reading the tombstone never renews consumedAt.
+  if (waitingContinuation(log, registryEntry, nowMs)) return;
 
   // A worker that exited normally leaves a correlated report for this stage —
   // the same fail-closed snapshot `scan` already uses for delivery — and it is

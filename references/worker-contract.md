@@ -2,22 +2,21 @@
 
 ## AFK Contract
 
-Use dispatched Issue/branch/worktree only. No branch switching/creation, sub-workers,
+Use dispatched Issue/branch/worktree. No branch creation/switching, sub-workers,
 session management, other-Issue edits or orchestrator state access (workers.json,
-ledger.md, control.json, dispatch, consumed, logs/other reports). Never commit secrets
-or .orchestrator. No user questions: mailbox exact question/recommendation, then stop.
-Report before terminal stops; passed startup pause emits only ack. Map sequenced
-phase stops to parked; standalone phases retain statuses.
+ledger.md, control.json, dispatch, consumed, logs/other reports), except reading
+own consumed/<KEY>-gate-ack-a<N>.json. Never commit secrets/.orchestrator or ask
+users: mailbox question/recommendation, then stop. Report before terminal stops;
+passed pause emits only ack. Sequenced stops park; standalone keeps statuses.
 
 ## Orchestration Mode Precedence
 
-Snapshot replaces Linear/resolver reads. Skill wins rules,
-dispatch wins facts/pins/paths/constraints. Queue writes after
-gates pass; orchestrator applies/read-backs before progress. Disclose lag,
-never claim application or judge unapplied state. Missing inputs block by name,
-never infer or skip. Use confirmation barriers for write-before-progress;
-standalone dispatch stops needs-decision. Never defer checks into a queue.
-Interactive mode retains direct reads/writes/approval; lifecycle uses handshake.
+Snapshot replaces Linear/resolver reads. Skill owns rules; dispatch owns facts,
+pins/paths/constraints. Queue after gates; orchestrator applies/read-backs before
+progress. Disclose lag; never claim application or judge unapplied state. Name
+missing inputs and block, never infer/skip/defer checks. Confirm writes before
+progress; standalone parks needs-decision. Interactive keeps direct access and
+approval; lifecycle uses handshake.
 
 ## Pack identity gate invocation
 
@@ -33,13 +32,13 @@ node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs
 ```
 
 Require identity/all four flags. Resolve ../.mono-agent-workflow from installed
-skill; lock sits beside skills. Single-quote paths/pins (embedded quote: '\'').
-Never reconstruct the command or substitute checkout SURFACE_REVISION.
+skill; lock beside skills. Single-quote paths/pins (embedded quote: '\'').
+Never reconstruct command or substitute checkout SURFACE_REVISION.
 
 ## Two-Phase Dispatch Handshake
 
 Initial lifecycle moves only, including Issue activation in an already-Delivery
-Project. Pre-move snapshot is expected. Run implement steps 1–4 and issue-only
+Project. Pre-move snapshot is correct. Run implement steps 1–4 and issue-only
 pre-start delivery check before ack. On gate completion/blocker/other stop write
 one reports/<ISSUE-KEY>-gate-ack-a<N>.json; denied mailbox uses the same name in
 <worktree>/.orchestrator, never both.
@@ -53,12 +52,14 @@ one reports/<ISSUE-KEY>-gate-ack-a<N>.json; denied mailbox uses the same name in
 }
 ```
 
-Use unique, nonempty dispatched names. Gates-passed: exact set, all pass;
-blocked: nonempty subset, at least one blocked. Passed: stop, no code/move/queue/report.
-Blocked: ack then report (missing input: blocked; adverse verdict: needs-human), no move.
-Codex exits; desktop/fallback keeps session. Resume: require every move read-back,
-rerun identity/checks on amended state; never repeat moves. No-move retry: current
-lifecycle snapshot, no ack/amendment. Consumption never replaces approval.
+Unique nonempty gate names: gates-passed exact set/all pass; blocked nonempty
+subset/one blocked. Blocked: ack then report (missing: blocked; adverse: needs-human),
+no move. Passed: no code/move/queue/report yet. Codex wait: delivery-state.mjs
+wait-ack until ack mtime + ackWaitSec; expiry parks write-unconfirmed. Applied
+record read-backs amend state: check delivery, no identity rerun. Resume: Codex
+exits, desktop/fallback keeps session; require all move read-backs, rerun identity/
+checks. Never repeat moves. No-move retry: current snapshot, no ack/amendment.
+Consumption never replaces approval.
 
 ## Sandbox ladder
 
@@ -73,9 +74,9 @@ orchestrator ledger. Denied mailbox: same uncommitted JSON fallback.
 ## Context seam
 
 Before lifecycle/scope gates resolve Issue/marker/config/verified label/authenticated
-approval and emit-fingerprint on that body; dispatch uses snapshot. Whole-body
-SHA-256 only, no inferred oracle/lane/sixth field. Preserve trusted parent/marker/
-label/approval provenance separately for fallback. Project-first needs approved
+approval and emit-fingerprint; dispatch uses snapshot. Whole-body SHA-256 only;
+no inferred oracle/lane/sixth field. Keep parent/marker/label/approval provenance
+for fallback. Project-first needs approved
 Project/PRD/Spec-or-exception/Issue; escaped candidate proves nothing. Follow
 `references/issue-only-lane.md` Context Contract/Resolver/fallback for issue-only,
 candidate/freeze/exit, including `approval_status=approved-fresh`, matching fingerprints/owner,
@@ -116,15 +117,14 @@ or ship drift, never review itself.
 
 ## Execution and artifact handling
 
-Apply `references/execution-quality.md` and `references/artifact-quality.md`.
+Apply `references/execution-quality.md`/`references/artifact-quality.md`.
 Intake: explicit paths → fresh Linear package/reviews → decisions → configured
-narrow roots → project/branch/session/file-scoped gstack. No broad scans; absent
-roots unavailable. Approved newer Linear outranks scratch; stale evidence only
-explains compatible decisions. Material missing/conflicting scope/proof/risk/slicing
-requires accepted boundary or stop before writes; no stale contracts/certificates.
-Record read, unavailable, stale_or_ignored, conflicts, decisions_carried_forward,
-confidence_boundary (none when empty) in approval notes; one Russian chat sentence.
-Translate artifact roles; never paste local bodies into Linear.
+narrow roots → scoped gstack. No broad scans; absent roots unavailable. Newer
+approved Linear outranks scratch; stale evidence only explains compatible decisions.
+Missing/conflicting scope/proof/risk/slicing needs boundary or stop before
+writes; no stale contracts/certificates. Approval notes: read, unavailable,
+stale_or_ignored, conflicts, decisions_carried_forward, confidence_boundary (none
+when empty); one Russian chat sentence. Translate roles; never paste local bodies.
 
 ## Certificate recovery
 
@@ -134,17 +134,18 @@ Apply Machine Blocks In Linear Comments in
 
 ## Delivery Reports and Capsule
 
-Mono-deliver: one dispatch, terminal green/parked; ready/implemented-needs-preflight
-are intermediate. Map stops to parked reasons; no stage respawn. Standalone keeps
-phase statuses/certificates.
+Mono-deliver: one dispatch, green/parked terminal; ready/implemented-needs-preflight
+intermediate. Stops use parked reasons; no stage respawn. Standalone keeps
+statuses/certificates.
 
 Phase: reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json; denied mailbox uses
 worktree .orchestrator, same name, never both. Add phase, increasing positive
 sequence, kind (phase/confirmation-request), head, phase_result to final fields.
 Capsule phase/head match; open_queue equals ordered linear_mutations_pending.
-Each write: stable id, operation, target, payload. Certificate comments: append
-#/certificate, one text copy. Never reuse IDs for changed payloads or drop
-obligations on head change.
+Writes: stable id/operation/target/payload; new ID for changed payload, no lost
+obligations on new head. Certificate comments: append #/certificate, one copy.
+Short: confirm empty code queue; start facts in capsule.decisions and Russian
+ready-comment lead before unchanged machine core.
 
 Publish/wait through delivery-state.mjs. Confirmation path:
 confirmations/<ISSUE-KEY>-phase-<phase>-a<N>-s<sequence>.confirmed.json.
@@ -163,7 +164,7 @@ Pin product/evidenceRoot, skillsRoot, risk/critical, verification/write grants.
 Evidence: ~/.mono-agent-workflow/evidence/<product>/ outside ALL worker grants
 (including worktree/orchestrator root). Orchestrator: collect:true outside worker
 sandboxes; worker: collect:false. Readable keys grant no writes. Hostile local
-operator attestation: out of scope (one user/host).
+operator attestation is out of scope (one user/host).
 
 After commit publish kind=confirmation-request with one write:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
@@ -171,7 +172,7 @@ target=<head>, payload={request}. Adapter returns immutable receipt path/digest/
 answer even on failure; confirmation proves completion only. Verify collect:false.
 Findings: fix/recommit/request again. Transient failures: same head/route, increment
 n/sequence. Publish ready on pass.
-Ship: preflight={complete collect:false request}; judgment={head,preShipReview,
+Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify the sealed
 head/merge-base receipt before judgment; strings cannot replace it.
 Orchestrator rechecks preflight before ship.
@@ -180,7 +181,7 @@ Orchestrator rechecks preflight before ship.
 
 Path: ~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-mono-deliver.json;
 on denial: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON except
-verbatim verification items; follow AFK stops.
+verbatim verification items; obey AFK stops.
 
 ```json
 {

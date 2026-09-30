@@ -23,6 +23,11 @@ export function canonical(value) {
   return JSON.stringify(value);
 }
 export const digest = (value) => crypto.createHash("sha256").update(canonical(value)).digest("hex");
+export function processStart(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try { return execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim() || null; }
+  catch { return null; }
+}
 export function durableDirectory(dir) {
   if (fs.existsSync(dir)) return;
   const parent = path.dirname(dir);
@@ -94,10 +99,15 @@ export function deliveryConfig(source) {
     quietSec: positive(config.quietSec, 120, "quietSec"),
     evidenceLimitSec: positive(config.evidenceLimitSec, 2400, "evidenceLimitSec"),
     pollSec: positive(config.pollSec, 10, "pollSec"),
+    stallSec: positive(config.stallSec, 120, "stallSec"),
+    ackWaitSec: positive(config.ackWaitSec, 420, "ackWaitSec"),
     attemptCap: positive(config.attemptCap, 3, "attemptCap"),
   };
   if (result.confirmationTimeoutSec >= result.evidenceLimitSec) {
     throw new Error(`confirmationTimeoutSec (${result.confirmationTimeoutSec}) must be less than evidenceLimitSec (${result.evidenceLimitSec})`);
+  }
+  if (result.ackWaitSec > result.stallSec * 4 - result.pollSec) {
+    throw new Error("ackWaitSec must be <= stallSec * 4 - pollSec");
   }
   return result;
 }

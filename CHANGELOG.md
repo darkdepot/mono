@@ -6,6 +6,14 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-93: add bounded in-place gate-ack waiting, live-writer consumption,
+  handshake/profile/pins registry fields, shared stall/ack clocks and finite
+  post-consumption watcher continuation. Short tiny/standard deliveries may
+  skip the local helper pass and put start facts in the ready-comment lead;
+  targeted checks, commit, certifying collection, queue confirmations and
+  existing gates/legacy consumption stay required. Update rules and fixtures
+  without worker-corpus growth or new reading edges.
+
 - MONO-89: pass `USER` and `LOGNAME` through the reviewer-bench environment
   allowlist so Claude Code can find its macOS Keychain login, while keeping
   provider credentials and other undeclared host variables isolated.

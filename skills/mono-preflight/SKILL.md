@@ -38,23 +38,23 @@ confirm sequenced phase queues before ship.
    Read Classification and Invocation in references/autoreview-routing.md;
    resolve [role:autoreview](references/model-policy.md#roles), explicit engine
    claude, model and thinking effort. Never substitute reviews or defaults.
-4. Dirty tail: helper --mode local, fix accepted findings, then safely commit;
-   otherwise blocked/needs-human. Final committed scope requires --mode branch
-   --base <actual base>, or --mode commit --commit <ref> for single/already-landed
-   scope. Local clean alone never certifies committed work. Record exact commands.
-5. Require exit 0, complete clean result and no residual actionable findings.
-   Use --max-priority P2: clean/scoped-clean or exit-0 filtered with a correct
-   verdict, no accepted/missing findings and only P3 filtered. Log P3 advisory
-   dispositions; never loop on P3 alone. Nonzero/incomplete fails. Verify findings
-   against code/contracts; reject unsupported ones with evidence, apply defensible
-   small fixes at their owner boundary. No automatic broad/release-sensitive
-   rewrites or weakening/deleting/rewriting tests for green. After each code
-   change repeat targeted checks and autoreview; no arbitrary round cap. Repeated
-   tooling/capacity failure or needed decision → blocked/needs-human.
-6. Reclassify after fixes; require clean committed-scope review. Under the
-   sequencer request orchestrator preflight-collect (worker contract), then run
-   gate.mjs preflight collect:false. Never collect as worker. Missing/hand-made/
-   incomplete/stale artifacts fail; preserve failed runs and loop dispositions.
+4. Full/final deep or risky: mandatory local helper loop --mode local, fix
+   accepted findings, then safely commit. Short tiny/standard: local pass optional;
+   targeted checks, commit and collection mandatory. Local clean cannot certify
+   committed scope: --mode branch --base <actual base>, or --mode commit --commit
+   <ref> for single/already-landed scope. Record commands; failures block.
+5. Certifying review needs exit 0, complete clean result/no actionable residuals.
+   --max-priority P2 permits clean/scoped-clean or exit-0 filtered/correct verdict
+   with no accepted/missing findings and only P3 filtered. Record P3 advisory;
+   never loop on P3 alone. Verify findings against contracts/code; reject with
+   evidence or apply small defensible owner-scoped fixes. No broad/release-sensitive
+   rewrites or test weakening/deletion/rewriting for green. Repeat targeted checks
+   and required local loop after changes; tooling/decision blockers park.
+6. Reclassify after fixes. Sequencer: request orchestrator preflight-collect,
+   then gate.mjs preflight collect:false; never worker collection. Require clean
+   committed-scope proof; missing/hand-made/incomplete/stale fails. Retain failed
+   runs/dispositions. Gate iterations come from receipt; narrative may say
+   Autoreview loop: 0 local passes + N collections on short.
 7. Commit through ce-commit or repo convention only when safe; otherwise report
    exact remaining action. Record the full certificate with mono-preflight
    certificate in Linear; dispatch queues append #/certificate (single text copy).

@@ -1,0 +1,26 @@
+{
+  "issue": "MONO-993",
+  "stage": "mono-deliver",
+  "attempt": 1,
+  "packVersion": "test",
+  "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "surfaceRevision": 4,
+  "phase": "code",
+  "sequence": 1,
+  "kind": "phase",
+  "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "certificate": null,
+  "linear_mutations_pending": [],
+  "capsule": {
+    "phase": "code",
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "decisions": [
+      "short: start facts recorded; approved package and delivery check PASS"
+    ],
+    "writable_roots": [
+      "/fixture/repo"
+    ],
+    "open_queue": []
+  },
+  "phase_result": "implemented-needs-preflight"
+}

@@ -5,7 +5,7 @@ description: Use to deliver one approved Issue from code to a green PR in one wo
 
 # Mono Deliver
 
-One Issue/context/worktree; implement/preflight/ship own phases. Deploy stays outside.
+One Issue/context/worktree; implement/preflight/ship own phases. Deploy is outside.
 
 Read first:
 
@@ -22,10 +22,10 @@ Resolve ../.mono-agent-workflow/scripts from this installed skill, never the che
 
 ## Sequence and Recovery
 
-Before work/resume/restart/compaction run dispatch identity and read the latest own
+Before work/resume/restart/compaction run identity and read latest own
 phase capsule/confirmation; copy launch writable_roots into the capsule. Read PR facts through gh; continue that phase.
-Missing/conflicting inputs park. New heads invalidate proof, never pending writes.
-Start: gate.mjs start --request <file>, then implement handshake.
+Park missing/conflicting inputs. New heads stale proof, never queues.
+Start: gate.mjs start --request <file>; implement handshake; wait mode runs wait-ack after ack.
 
 1. Execute implement; publish its code phase result/full queue, confirm, enter readiness.
 2. Execute preflight; commit. Publish a confirmation-request with one
@@ -37,13 +37,13 @@ Start: gate.mjs start --request <file>, then implement handshake.
    <file> to pass/decision/deadline; confirm full ship queue including certificate.
    Orchestrator rechecks collect:false before ship.
 
-ready/implemented-needs-preflight stay intermediate; never reset context/dispatch.
+ready/implemented-needs-preflight are intermediate; preserve context/dispatch.
 Publish: delivery-state.mjs publish --report <candidate> --output <own phase path>.
 Use confirmation-request for dependencies; log continuation in decisions.
 Wait through delivery-state.mjs wait --report <phase> --confirmation <path>
 --config <project config>. Re-read capsule; only exit 0 permits progression.
-Follow worker-contract queue/ID/timeout/recovery rules.
+Keep worker-contract queue/ID/timeout/recovery rules.
 
-Final: apply worker Report green/parked rules; retain every verification item.
+Final: worker Report green/parked rules; retain every verification item.
 Report before stopping except passed startup pause. Orchestrator reflects parked
 in Linear in the same turn.

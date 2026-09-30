@@ -1,0 +1,43 @@
+{
+  "issue": "MONO-993",
+  "stage": "mono-deliver",
+  "attempt": 1,
+  "packVersion": "test",
+  "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "surfaceRevision": 4,
+  "phase": "preflight",
+  "sequence": 1,
+  "kind": "phase",
+  "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "certificate": "mono-preflight certificate\nPreflight: ready\nIssue(s): MONO-993\nBranch: fixture; commit state: committed\nChanged files: fixture\nLocal verification: targeted checks PASS\nAutoreview: clean; final command: orchestrator collection; clean result: exit 0 + scoped-clean\nAutoreview route: risk=standard; source=Issue; critical=none; model=fixture; effort=medium; reclassified=no\nAutoreview loop: 0 local passes + 1 collection; accepted findings fixed: none; residual actionable findings: none\nDrift candidate: none\nDecision needed: none\nNot checked: deploy\nNext: mono-ship",
+  "linear_mutations_pending": [
+    {
+      "id": "MONO-993:preflight:ready-certificate:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "operation": "comment",
+      "target": "MONO-993",
+      "payload": {
+        "body": "Начал реализацию по утверждённой задаче, проверил пакет и разрешение на старт; целевые проверки и сбор ревью пройдены. Следующий этап — PR.\n\n```\nappend #/certificate\n```"
+      }
+    }
+  ],
+  "capsule": {
+    "phase": "preflight",
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "decisions": [
+      "short: start facts recorded; approved package and delivery check PASS"
+    ],
+    "writable_roots": [
+      "/fixture/repo"
+    ],
+    "open_queue": [
+      {
+        "id": "MONO-993:preflight:ready-certificate:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "operation": "comment",
+        "target": "MONO-993",
+        "payload": {
+          "body": "Начал реализацию по утверждённой задаче, проверил пакет и разрешение на старт; целевые проверки и сбор ревью пройдены. Следующий этап — PR.\n\n```\nappend #/certificate\n```"
+        }
+      }
+    ]
+  }
+}
