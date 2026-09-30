@@ -267,6 +267,48 @@ Anything a worker cannot execute without guessing — an absolute path, a comman
 literal, a hash, a confusable pair of values in play — is carried in full to
 both audiences. Facts are never compressed for either column.
 
+### Orchestrator dispatch command
+
+Run installed `scripts/orchestrator/dispatch.mjs --issue KEY --root DIR --config
+FILE --snapshot DIR`; optional risk/critical, profile, handshake and role/reason
+flags pin the attempt. Supply --moves JSON, --open-decisions N and --verification
+JSON, or their `orchestration.dispatch` defaults. Additional defaults are product,
+evidenceRoot, reviewDataset/reviewDatasetVersion and budget. --gates JSON overrides
+the four implement startup gate names (issue-only adds delivery check).
+--worker-writable-roots JSON supplies additional roots, including temporary roots;
+the command derives worktree/Git/mailbox roots. --skills-root selects an installed
+pack explicitly for scratch tests; normal execution resolves its installed root.
+
+The config is at the project repo's `.agents/mono-workflow.config.json`.
+The command fetches origin/main, creates `.worktrees/KEY` on `mono/key` from it
+or verifies that existing worktree branch. It reads `issue-KEY.md`, `approval.md`,
+`project-brief.md`, `prd.md`, `tech-spec.md` from --snapshot. Issue-only replaces
+Project docs with `issue-only.json` containing marker, label, fingerprint, config,
+ownerApproval and the five-field seam. The orchestrator provides authenticated
+facts; the worker still judges approval and delivery readiness at its gates.
+
+Artifacts live in `dispatch/KEY-aN/`: pins.json, pins.sha256, start-gate.json,
+spawn.json, dispatch.md, moves.json and snapshot/. The command resolves modelRoutes
+from immutable BASE through spawn --pins, renders every named placeholder from
+`templates/orchestrator-dispatch.md`, runs gate start, then spawn and appends one
+`date -u` ledger line. No pre-spawn refusal registers an attempt. --preapply
+refuses until I4; --full-snapshot retains complete documents.
+Retrying a refused attempt replaces the snapshot directory with exactly its
+current composition, after capturing all inputs; superseded files are removed.
+
+Short snapshot: Issue, approval, brief, prd-extract.md and spec-extract.md. Extract
+exact A/F/R/AE/U keys with numeric IDs and optional prime/Cyrillic suffixes;
+expand ranges, follow “Покрывает …” and inline semicolon coverage transitively
+with cycle protection. Definitions start in list items or headings and end at
+the next heading or peer list definition of any known family, including I slice
+definitions; I remains outside PRD/Spec coverage lookup. Always retain PRD Кратко/Что не входит в MVP/Допущения and Spec
+Кратко/Архитектура/Контракты и границы/Риски и защита/Что может сломаться и как
+защищаемся/Валидация/Релиз и откат; absent optional sections are skipped. Unknown
+keys refuse; duplicate definitions retain full docs with a note. Full deep/risky
+and explicitly full dispatches retain full documents; issue-only has no Project
+documents. --review-pilot JSON explicitly selects the template's optional review
+block with project/version/path/digest facts; it never changes stage rules.
+
 ## Two-Phase Dispatch Handshake
 
 **No dispatch-moment lifecycle move is applied before the worker's gate-ack.**
@@ -926,14 +968,80 @@ corpus; report source and scratch-installed read-budget measurements.
 ## Delivery Write Barriers
 
 Poll phase reports as well as events; events accelerate, never prove application.
+Use installed `scripts/orchestrator/accept.mjs ack --root DIR --issue KEY
+--attempt N`: validate the sole ack location, registry correlation, gate coverage
+and outcome before exposing any plan. Without an existing consumption record,
+the plan contains planDigest, plannedAt, ackDigest and moves with moveDigest.
+After connector writes, --readback FILE requires that planDigest and one dated
+read-back per move observed no earlier than the plan. Identical prior consumption
+completes rename/gate cleanup without a new plan; contradictory records refuse.
+
+Use `scripts/orchestrator/accept.mjs report --root DIR --report FILE` for connector
+queues. For nonempty queues, before opening or printing writes it uses the existing
+delivery-state barriers to validate all predecessor reports/confirmations; a refusal
+exposes no connector instructions or new session. Empty queues establish the session
+first, then validate predecessors during the real confirmation. Session setup failure
+leaves no confirmation. No predecessor rules are duplicated.
+It opens `{sessionId, openedAt, reportDigest}` under
+`consumed/KEY-aN/sessions/<sessionId>/session.json`; `current-<reportDigest>.json`
+identifies the active session. A retry first prints the reread list (find comments
+by marker before republication), then opens a fresh session and prints expanded
+certificate writes. Supply --session UUID and repeated --observe 'writeId=JSON'
+(or writeId=@file) observations with sessionId, writeId, reportDigest, writeDigest,
+observedAt, state and evidence. Fresh means at/after publication and session opening;
+missing additionally requires absent:true. Complete present observations delegate
+delivery-state confirm with MONO_ACCEPT_ROOT, MONO_ACCEPT_SESSION and
+MONO_ACCEPT_REPORT, using the pack `scripts/orchestrator/linear-adapter.mjs`.
+The adapter recomputes the report/write digests, verifies the active session and
+returns unknown for absent/stale/foreign observations. apply prints a connector
+instruction on stderr and returns no success result. No command writes to Linear.
+
+Launch pins are immutable. `accept.mjs amend --root DIR --issue KEY --attempt N
+--text TEXT` writes `pins.v<n>.json` and prepares a resume file/request before
+calling resume.mjs; only a successful resume advances pinsVersion in the registry.
+A refused resume prints its reason and leaves the registry unchanged. Amendments
+serialize across preparation and resume; registration and admission share launch.lock.
+Before resume, `amendment.pending.json` beside the version files retains their digests,
+attempt/thread identity and the prior registered resume. An identical retry compares
+that record with the newly registered resume and finishes the pins update without
+launching again. Changed prepared bytes or a different amendment refuse while a
+delivered version awaits registration. Cleanup after registration is recoverable too.
+If launch fails without a new registered resume, restore the prior launch grants
+under launch.lock; a delivered resume recovers forward instead of rolling back.
+Risk/critical only escalate; dataset changes
+require a newer --review-dataset-version; --worker-writable-roots must be the
+complete effective grants; --full-snapshot --snapshot DIR includes the full docs
+in the resume amendment. The document bytes participate in amendment identity;
+changed bytes require a new version even at the same source path. The version
+stores fullSnapshot directory/digest and subsequent independent amendments carry
+those verified documents forward without requiring the caller to resupply them.
+Same amendment bytes recover the same version.
+Registered amendments retain completion history by amendment digest, including
+prepared-file digests and their resume results, after pending cleanup. Identical
+completed retries return the original result without another launch, whether the
+delivered worker is live or has exited. Later amendments preserve these records;
+replaying an earlier result leaves the current pins, grants and worker unchanged.
+Changed completed bytes refuse; a new delivery needs a new amendment text.
+An undelivered pending replacement retains the original rollback grants;
+provisional grant expansion from an interrupted resume cannot become its baseline.
+`command-state.mjs admitCollection` and amend use launch.lock. Admission layout:
+`consumed/KEY-aN/admissions/<collectionId>.json` contains exactly
+`{collectionId, reportDigest, pinsVersion, manifestDigest}`; manifestDigest is the
+canonical digest of launch pins overlaid with that amendment version. New requests
+must declare the current report pinsVersion and match its effective request/grant
+fields, including reviewDatasetVersion as well as the dataset path. Omitted
+reviewDatasetVersion means version 0 only for an unversioned baseline; it cannot
+bypass a newer amendment. Identical previously admitted requests remain recoverable under their
+original version. MONO-96 owns receipt collection/recovery, not these commands.
+
 Validate identity/attempt/head/sequence and full queue, including comments and
 certificates. Use installed delivery-state.mjs confirm with the orchestrator-owned
-Linear adapter. The adapter receives action=reconcile|apply, issue, attempt,
+pack Linear adapter above. The adapter receives action=reconcile|apply, issue, attempt,
 idempotencyKey and write via stdin; stdout JSON returns state=present|missing|unknown
 and read-back evidence. Reconcile compares desired payload/target, locates comments
 by stable marker/idempotency key, and returns unknown on ambiguity/read failure.
 Apply never means confirmed: the runtime reconciles again afterward. Implement
-adapters with the configured Linear connector; never give one to a worker.
+observations with the configured Linear connector; never give adapter authority to a worker.
 
 Runtime fsyncs an applying intent, then the exact per-write present result under
 consumed/<ISSUE-KEY>-a<N>/<id>.json before whole-queue confirmation. On recovery
