@@ -27,5 +27,154 @@
   },
   "issueOnlyLane": {
     "enabled": false
+  },
+  "models": {
+    "roles": {
+      "worker-default": {
+        "engine": "codex",
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "worker-complex": {
+        "engine": "codex",
+        "model": "gpt-6.1-sol",
+        "effort": "xhigh"
+      },
+      "second-voice": {
+        "engine": "codex",
+        "model": "gpt-6.1-sol",
+        "effort": "high"
+      },
+      "autoreview": {
+        "engine": "codex",
+        "model": "gpt-6.1-sol",
+        "effortByRisk": {
+          "tiny": "low",
+          "standard": "medium",
+          "deep": "high",
+          "risky": "high",
+          "riskyCritical": "xhigh"
+        }
+      }
+    },
+    "pairingAccepted": [
+      {
+        "producer": {
+          "role": "worker-default",
+          "engine": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "high",
+          "provider": {
+            "id": "openai",
+            "endpoint": null
+          },
+          "credentialEnv": null
+        },
+        "reviewer": {
+          "engine": "codex",
+          "model": "gpt-6.1-sol",
+          "effortByRisk": {
+            "tiny": "low",
+            "standard": "medium",
+            "deep": "high",
+            "risky": "high",
+            "riskyCritical": "xhigh"
+          },
+          "provider": {
+            "id": "openai",
+            "endpoint": null
+          },
+          "credentialEnv": null
+        },
+        "riskClasses": [
+          "tiny",
+          "standard",
+          "deep",
+          "risky",
+          "riskyCritical"
+        ],
+        "linearDecision": "https://linear.app/darkdepot/issue/MONO-90#comment-97ba1fa0-422e-4251-adba-c76ecf09ff65",
+        "by": "owner",
+        "date": "2026-09-30"
+      },
+      {
+        "producer": {
+          "role": "worker-complex",
+          "engine": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "xhigh",
+          "provider": {
+            "id": "openai",
+            "endpoint": null
+          },
+          "credentialEnv": null
+        },
+        "reviewer": {
+          "engine": "codex",
+          "model": "gpt-6.1-sol",
+          "effortByRisk": {
+            "tiny": "low",
+            "standard": "medium",
+            "deep": "high",
+            "risky": "high",
+            "riskyCritical": "xhigh"
+          },
+          "provider": {
+            "id": "openai",
+            "endpoint": null
+          },
+          "credentialEnv": null
+        },
+        "riskClasses": [
+          "tiny",
+          "standard",
+          "deep",
+          "risky",
+          "riskyCritical"
+        ],
+        "linearDecision": "https://linear.app/darkdepot/issue/MONO-90#comment-97ba1fa0-422e-4251-adba-c76ecf09ff65",
+        "by": "owner",
+        "date": "2026-09-30"
+      },
+      {
+        "producer": {
+          "role": "worker-claude",
+          "engine": "claude",
+          "model": "claude-opus-5",
+          "effort": "high",
+          "provider": {
+            "id": "anthropic",
+            "endpoint": null
+          },
+          "credentialEnv": null
+        },
+        "reviewer": {
+          "engine": "codex",
+          "model": "gpt-6.1-sol",
+          "effortByRisk": {
+            "tiny": "low",
+            "standard": "medium",
+            "deep": "high",
+            "risky": "high",
+            "riskyCritical": "xhigh"
+          },
+          "provider": {
+            "id": "openai",
+            "endpoint": null
+          },
+          "credentialEnv": null
+        },
+        "riskClasses": [
+          "tiny",
+          "standard",
+          "deep",
+          "risky",
+          "riskyCritical"
+        ],
+        "linearDecision": "https://linear.app/darkdepot/issue/MONO-90#comment-97ba1fa0-422e-4251-adba-c76ecf09ff65",
+        "by": "owner",
+        "date": "2026-09-30"
+      }
+    ]
   }
 }
