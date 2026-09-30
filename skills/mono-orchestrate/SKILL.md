@@ -166,6 +166,9 @@ Workflow states:
      no-sub-delegation rule in every dispatch prompt.
    - Dispatch mono-deliver once per approved Issue with the full snapshot,
      exact identity command, start-gate request and required phase capabilities.
+     Pin request handshake=wait|resume (default resume), profile=short|full
+     (default full), pins {file,digest}, pinsVersion=0; short only tiny/standard,
+     critical null, afk true, openDecisions 0 (last two supplied by orchestrator).
      Use installed scripts/orchestrator/spawn.mjs; never session-local helpers.
      Select worker role by the model policy and recorded technical judgment;
      preserve launch pins on resume. The tool enforces halt, attempt cap and
@@ -173,9 +176,10 @@ Workflow states:
      context across phases. Respect dependencies/concurrency configuration.
    - For lifecycle-carrying startup follow Two-Phase Dispatch Handshake in
      references/orchestration.md exactly: pre-move snapshot, validated ack,
-     read-back of every move, same-thread resume, verified writer registration,
-     private consumption record, ack rename, gates removal. Use installed
-     resume.mjs and consume-gate-ack.mjs. Missing/contradictory evidence never
+     read-back of every move, verified writer, private record, ack rename,
+     gates removal. Wait: consume live waiting writer without resume; resume:
+     same-thread registered writer. Use installed consume-gate-ack.mjs and,
+     only for exit/resume recovery, resume.mjs. Missing/contradictory evidence never
      permits lifecycle replay; poll both mailbox and fallback.
    - Use active control for dispatch, draining for existing work only, idle only
      with empty registry. halt refuses spawn/resume without stopping workers.
@@ -201,7 +205,9 @@ Workflow states:
      in this same turn, then route decide-or-escalate. A failed Linear write stays
      visible as pending, never reported applied.
    - For stall/dead/spawn-fail inspect latest state before healing. Startup ack
-     pause is not death; reconcile unconsumed ack first. Phase confirmation wait
+     pause is not death; reconcile unconsumed ack first. Wait consumption keeps
+     suppression until log continues, at most one stallSec from fixed consumedAt.
+     Phase confirmation wait
      is bounded by config. No report: same-thread resume once to demand capsule
      and report; failed recovery uses a new attempt within cap, not a restarted
      Issue. Record every healing step/result. Do not steer progressing workers.

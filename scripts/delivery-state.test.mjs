@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -182,5 +183,146 @@ else console.log(JSON.stringify(state[p.write.id]?{state:'present',evidence:p.wr
     const changed = structuredClone(report); changed.capsule.open_queue[0].payload = "changed";
     changed.linear_mutations_pending = changed.capsule.open_queue;
     await assert.rejects(confirmQueue(changed, root, adapter), /changed/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('wait-ack binds consumption to own ack, attempt and every dispatched move', async () => {
+  const { waitForGateAck } = await import('./delivery-state.mjs');
+  const { digest } = await import('./runtime.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-wait-ack-'));
+  const issue = 'MONO-993', attempt = 1;
+  const ack = path.join(root, 'reports', `${issue}-gate-ack-a1.json`);
+  const consumed = path.join(root, 'consumed', `${issue}-gate-ack-a1.json`);
+  const moves = [{ entity: 'issue', key: issue, from: 'Backlog', to: 'In Progress' }];
+  const own = { issue, phase: 'gate', status: 'gates-passed', gates: [{ gate: 'identity', status: 'pass', evidence: 'fixture' }] };
+  const put = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value)); };
+  const record = { issue, attempt, outcome: 'applied', ack: own, ackDigest: digest(own), readback: [{ moveDigest: digest(moves[0]), evidence: { state: 'In Progress' } }] };
+  const request = { root, issue, attempt, ack, moves, config: { orchestration: { delivery: { ackWaitSec: 2, pollSec: 0.01 } } } };
+  try {
+    put(ack, own);
+    for (const change of [{ issue: 'MONO-994' }, { attempt: 2 }, { ackDigest: '0'.repeat(64) }, { readback: [] }, { readback: [{ moveDigest: '0'.repeat(64), evidence: 'foreign' }] }]) {
+      put(consumed, { ...record, ...change });
+      await assert.rejects(waitForGateAck(request), /consumption|read-back/);
+    }
+    for (const outcome of ['blocked', 'rejected']) {
+      put(consumed, { ...record, outcome });
+      await assert.rejects(waitForGateAck(request), new RegExp(`gate-ack ${outcome}`));
+    }
+    const rejected = ack.replace(/\.json$/, '.rejected.json');
+    fs.renameSync(ack, rejected);
+    await assert.rejects(waitForGateAck(request), /gate-ack rejected/, 'an early rejection retains its recorded outcome');
+    put(consumed, { ...record, outcome: 'rejected', ackDigest: '0'.repeat(64) });
+    await assert.rejects(waitForGateAck(request), /identity\/digest mismatch/, 'the rejected tombstone does not bypass identity');
+    fs.renameSync(rejected, ack);
+    put(consumed, record);
+    assert.deepEqual(await waitForGateAck(request), record);
+    const tombstone = ack.replace(/\.json$/, '.applied.json');
+    fs.renameSync(ack, tombstone);
+    assert.deepEqual(await waitForGateAck(request), record, 'consumption can rename ack before initialization');
+    fs.renameSync(tombstone, ack);
+    fs.unlinkSync(consumed);
+    const futureRecord = setTimeout(() => put(consumed, record), 20);
+    assert.deepEqual(await waitForGateAck(request), record);
+    clearTimeout(futureRecord);
+    fs.unlinkSync(consumed);
+    const before = Date.now();
+    const past = new Date(before - 1900); fs.utimesSync(ack, past, past);
+    fs.renameSync(ack, tombstone);
+    await assert.rejects(waitForGateAck(request), /write-unconfirmed/);
+    assert.ok(Date.now() - before < 700, 'deadline uses ack mtime, not invocation time');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('wait-ack reads a recorded outcome before declaring expiry after a delayed poll', async () => {
+  const { waitForGateAck } = await import('./delivery-state.mjs');
+  const { digest } = await import('./runtime.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-wait-ack-delayed-poll-'));
+  const issue = 'MONO-993', attempt = 1;
+  const ack = path.join(root, 'reports', `${issue}-gate-ack-a1.json`);
+  const consumed = path.join(root, 'consumed', `${issue}-gate-ack-a1.json`);
+  const own = { issue, phase: 'gate', status: 'gates-passed', gates: [{ gate: 'identity', status: 'pass', evidence: 'fixture' }] };
+  const record = { issue, attempt, outcome: 'applied', ackDigest: digest(own), readback: [] };
+  fs.mkdirSync(path.dirname(ack), { recursive: true });
+  fs.mkdirSync(path.dirname(consumed), { recursive: true });
+  fs.writeFileSync(ack, JSON.stringify(own));
+  const deadline = fs.statSync(ack).mtimeMs + 200;
+  const publisher = setTimeout(() => {
+    fs.writeFileSync(consumed, JSON.stringify(record));
+    // Model an event-loop delay after publication but before the polling continuation.
+    while (Date.now() < deadline + 50) {}
+  }, 10);
+  try {
+    const request = { root, issue, attempt, ack, moves: [], config: { orchestration: { delivery: { ackWaitSec: 0.2, pollSec: 0.03 } } } };
+    assert.deepEqual(await waitForGateAck(request), record);
+    fs.writeFileSync(consumed, JSON.stringify({ ...record, attempt: 2 }));
+    await assert.rejects(waitForGateAck(request), /identity\/digest mismatch/, 'an expired poll still validates the record');
+    fs.unlinkSync(consumed);
+    await assert.rejects(waitForGateAck(request), /write-unconfirmed/, 'expiry still fails when no record exists');
+  } finally { clearTimeout(publisher); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('delivery configuration shares stall and ack clocks and rejects incompatible windows', async () => {
+  const { deliveryConfig } = await import('./runtime.mjs');
+  assert.equal(deliveryConfig().stallSec, 120);
+  assert.equal(deliveryConfig().ackWaitSec, 420);
+  assert.doesNotThrow(() => deliveryConfig({ orchestration: { delivery: { stallSec: 90, ackWaitSec: 350, pollSec: 10 } } }));
+  assert.throws(() => deliveryConfig({ orchestration: { delivery: { stallSec: 90, ackWaitSec: 351, pollSec: 10 } } }), /ackWaitSec.*stallSec/);
+  for (const [field, value] of [['stallSec', 0], ['ackWaitSec', -1], ['ackWaitSec', Infinity]])
+    assert.throws(() => deliveryConfig({ orchestration: { delivery: { [field]: value } } }), /invalid/);
+});
+
+test('short confirms empty code queue and expands a Russian ready lead without changing machine core', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-short-certificate-'));
+  const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const ready = JSON.parse(fs.readFileSync(path.join(checkout, 'scripts/fixtures/short-ready-report.json'), 'utf8'));
+  const reports = path.join(root, 'reports');
+  ready.capsule.writable_roots = [reports]; ready.capsule.open_queue = ready.linear_mutations_pending;
+  const code = JSON.parse(fs.readFileSync(path.join(checkout, 'scripts/fixtures/short-code-report.json'), 'utf8'));
+  code.capsule.writable_roots = [reports];
+  try {
+    const publishedCode = publishPhase(code, path.join(reports, 'MONO-993-phase-code.json'));
+    const codeConfirmation = await confirmQueue(publishedCode, root, () => { throw new Error('empty queue never calls adapter'); });
+    assert.deepEqual(codeConfirmation.results, []);
+    assert.equal(validateConfirmation(publishedCode, codeConfirmation), true);
+    const publishedReady = publishPhase(ready, path.join(reports, 'MONO-993-phase-preflight.json'));
+    let applied;
+    const confirmation = await confirmQueue(publishedReady, root, (action, write) => {
+      if (action === 'apply') { applied = write; return; }
+      return applied ? { state: 'present', evidence: 'fixture comment read-back' } : { state: 'missing' };
+    });
+    const body = applied.payload.body;
+    assert.match(body, /^Начал реализацию/);
+    assert.ok(body.includes('Autoreview loop: 0 local passes + 1 collection'));
+    assert.equal(body.split('```\n')[1].split('\n```')[0], ready.certificate);
+    assert.ok(ready.certificate.startsWith('mono-preflight certificate\nPreflight: ready\n'));
+    assert.equal(body.split('mono-preflight certificate').length, 2);
+    assert.equal(validateConfirmation(publishedReady, confirmation), true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scratch wait-ack CLI scenario refuses foreign digest, accepts own read-backs and expires', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-wait-cli-'));
+  const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const skills = path.join(root, 'skills'), state = path.join(root, 'state');
+  const put = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value)); };
+  const env = { ...process.env, MONO_WORKFLOW_STATE_ROOT: path.join(root, 'install-state'), MONO_WORKFLOW_KNOWN_ROOTS: skills };
+  const run = args => spawnSync(process.execPath, args, { cwd: checkout, env, encoding: 'utf8' });
+  try {
+    const installed = run(['scripts/install-local.mjs', '--skills-root', skills]); assert.equal(installed.status, 0, installed.stderr + installed.stdout);
+    const issue = 'MONO-993', ack = path.join(state, 'reports', `${issue}-gate-ack-a1.json`), config = path.join(root, 'config.json'), moves = path.join(root, 'moves.json');
+    const own = { issue, phase: 'gate', status: 'gates-passed', gates: [{ gate: 'identity', status: 'pass', evidence: 'fixture' }] };
+    put(ack, own); put(moves, []); put(config, { orchestration: { delivery: { ackWaitSec: 0.3, pollSec: 0.01 } } });
+    const consumed = path.join(state, 'consumed', `${issue}-gate-ack-a1.json`);
+    const command = [path.join(skills, '.mono-agent-workflow/scripts/delivery-state.mjs'), 'wait-ack', '--root', state, '--issue', issue, '--attempt', '1', '--ack', ack, '--moves', moves, '--config', config];
+    const canonical = value => value && typeof value === 'object' ? Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : `{${Object.keys(value).sort().map(k=>`${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}` : JSON.stringify(value);
+    const digest = value => createHash('sha256').update(canonical(value)).digest('hex');
+    put(consumed, { issue, attempt: 1, outcome: 'applied', ackDigest: '0'.repeat(64), readback: [] });
+    const forged = run(command); assert.notEqual(forged.status, 0); assert.match(forged.stderr, /digest mismatch/);
+    put(ack, own); put(consumed, { issue, attempt: 1, outcome: 'applied', ackDigest: digest(own), readback: [] });
+    const applied = run(command); assert.equal(applied.status, 0, applied.stderr); assert.match(applied.stdout, /wait-ack: pass/);
+    fs.unlinkSync(consumed); put(ack, own);
+    const expired = run(command); assert.notEqual(expired.status, 0); assert.match(expired.stderr, /write-unconfirmed/);
+    put(config, { orchestration: { delivery: { stallSec: 90, ackWaitSec: 351, pollSec: 10 } } });
+    const invalid = run(command); assert.notEqual(invalid.status, 0); assert.match(invalid.stderr, /ackWaitSec.*stallSec/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

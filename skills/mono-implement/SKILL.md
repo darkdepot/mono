@@ -45,18 +45,19 @@ Never create PR or run/claim formal pre-ship review/check.
    handoff findings. Missing field blocks.
 4. Resolve the five-field seam from snapshot. Missing input blocks without moves.
    Move-carrying dispatch runs worker handshake now; issue-only delivery check
-   precedes ack. Publish ack and pause as that protocol requires.
-5. Resume: rerun identity; require every applied-move/read-back amendment.
-   No-move dispatch requires current snapshot. Never repeat lifecycle moves.
-   Project-first: require visible Delivery; run/report delivery check against
-   amended or already-Delivery state. Issue-only: require started-state
-   amendment and earlier pre-ack PASS; no-move retry requires started state and
-   re-evaluation. Non-PASS → needs-human; missing inputs → blocked before code.
-   Record snapshot state, verdict and run/report arm in notes. Queue only other
-   permitted mutations; disclose lag, never defer checks or claim application.
-6. Keep dispatched worktree/branch; consult advisory learnings.
-7. Queue implementation-start comment. No interactive approval prompt; missing
-   approval blocks. The sequencer confirms writes required before progression.
+   precedes ack. Publish ack: wait-ack in wait mode; otherwise pause/exit.
+5. Wait: use record read-backs, no identity rerun. Legacy resume:
+   rerun identity; require every applied-move/read-back amendment. No-move:
+   current snapshot. Never repeat moves. Project-first: visible Delivery and
+   run/report delivery check on amended/already-Delivery state. Issue-only:
+   started-state amendment/earlier pre-ack PASS; no-move retry rechecks started
+   state. Non-PASS → needs-human; missing → blocked before code. Note state,
+   verdict/run/report arm. Queue only permitted writes; disclose lag, never
+   defer checks or claim application.
+6. Keep dispatch worktree/branch; consult advisory learnings.
+7. Full: queue start comment. Short: empty code queue; start facts in
+   capsule.decisions and Russian ready-certificate lead. Confirm empty queues too.
+   Missing approval blocks; no re-asking.
 
 ## Context-seam branch at Delivery Start
 

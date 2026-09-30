@@ -4051,6 +4051,7 @@ function validateWatcherContaminationBehavior() {
         fixtureRoot,
         "--stall-sec",
         "90",
+        ...watcherClockFixture(fixtureRoot),
         "--once",
       ],
       { cwd: root, encoding: "utf8" }
@@ -4275,7 +4276,7 @@ async function validateWatcherInactiveGateSpawnBehavior() {
 
     const result = spawnSync(
       process.execPath,
-      ["scripts/watch-workers.mjs", "--root", fixtureRoot, "--stall-sec", "90", "--once"],
+      ["scripts/watch-workers.mjs", "--root", fixtureRoot, "--stall-sec", "90", ...watcherClockFixture(fixtureRoot), "--once"],
       { cwd: root, encoding: "utf8" }
     );
     const stdout = result.stdout || "";
@@ -4390,6 +4391,12 @@ function waitForWatcherFixture(predicate, timeoutMs = 5_000) {
   return null;
 }
 
+function watcherClockFixture(fixtureRoot) {
+  const file = path.join(fixtureRoot, "watcher-clocks.json");
+  fs.writeFileSync(file, JSON.stringify({ orchestration: { delivery: { stallSec: 90, ackWaitSec: 350, pollSec: 10 } } }));
+  return ["--config", file];
+}
+
 function startWatcherFixture(fixtureRoot, extraArgs = []) {
   const stdoutPath = path.join(fixtureRoot, "watcher.stdout");
   const stderrPath = path.join(fixtureRoot, "watcher.stderr");
@@ -4403,6 +4410,7 @@ function startWatcherFixture(fixtureRoot, extraArgs = []) {
       fixtureRoot,
       "--stall-sec",
       "90",
+      ...watcherClockFixture(fixtureRoot),
       "--repeat-sec",
       "1",
       "--interval-sec",
@@ -4520,7 +4528,7 @@ async function validateWatcherV3Behavior() {
 
     const restart = spawnSync(
       process.execPath,
-      ["scripts/watch-workers.mjs", "--root", reportCycleRoot, "--stall-sec", "90", "--idle-sec", "30", "--once"],
+      ["scripts/watch-workers.mjs", "--root", reportCycleRoot, "--stall-sec", "90", ...watcherClockFixture(reportCycleRoot), "--idle-sec", "30", "--once"],
       { cwd: root, encoding: "utf8" }
     );
     if (restart.status !== 0 || !restart.stdout.includes("EVENT:report MONO-201")) {
@@ -4569,7 +4577,7 @@ async function validateWatcherV3Behavior() {
 
     const result = spawnSync(
       process.execPath,
-      ["scripts/watch-workers.mjs", "--root", correlationRoot, "--stall-sec", "90", "--idle-sec", "30", "--once"],
+      ["scripts/watch-workers.mjs", "--root", correlationRoot, "--stall-sec", "90", ...watcherClockFixture(correlationRoot), "--idle-sec", "30", "--once"],
       { cwd: root, encoding: "utf8" }
     );
     if (result.status !== 0) {
@@ -4652,7 +4660,7 @@ async function validateWatcherV3Behavior() {
 
     const result = spawnSync(
       process.execPath,
-      ["scripts/watch-workers.mjs", "--root", suppressionRoot, "--stall-sec", "90", "--idle-sec", "30", "--once"],
+      ["scripts/watch-workers.mjs", "--root", suppressionRoot, "--stall-sec", "90", ...watcherClockFixture(suppressionRoot), "--idle-sec", "30", "--once"],
       { cwd: root, encoding: "utf8" }
     );
     if (result.status !== 0) {
@@ -5497,7 +5505,7 @@ function validateWatcherGateAckBehavior() {
     const runOnce = () =>
       spawnSync(
         process.execPath,
-        [path.join(root, "scripts", "watch-workers.mjs"), "--root", fixtureRoot, "--stall-sec", "90", "--idle-sec", "30", "--once"],
+        [path.join(root, "scripts", "watch-workers.mjs"), "--root", fixtureRoot, "--stall-sec", "90", ...watcherClockFixture(fixtureRoot), "--idle-sec", "30", "--once"],
         // The timeout is the regression detector for the FIFO fixture: without
         // the pre-read lstat guard this scan never returns at all.
         { cwd: root, encoding: "utf8", timeout: 60_000 }
@@ -7093,6 +7101,13 @@ const STRING_PINS = [
   ["references/orchestration.md","`recorded-late`"],
 ];
 const REQUIRED_HEADINGS = [
+  ["references/worker-contract.md", "AFK Contract"],
+  ["references/worker-contract.md", "Two-Phase Dispatch Handshake"],
+  ["references/worker-contract.md", "Delivery Reports and Capsule"],
+  ["references/autoreview-routing.md", "Certificate Evidence"],
+  ["skills/mono-implement/SKILL.md", "Engine and Start Comment"],
+  ["skills/mono-preflight/SKILL.md", "Workflow"],
+  ["skills/mono-deliver/SKILL.md", "Sequence and Recovery"],
   ["references/repair-machine.md","Class 2 effect fixture: snapshot-sync"],
   ["references/repair-machine.md","Class 2 effect fixture: stale-preflight-cert"],
   ["references/repair-machine.md","Class 2 effect fixture: stale-worker-stop"],
@@ -7309,6 +7324,9 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  // MONO-93: command names, request/registry/config dictionary keys and values.
+  "wait-ack", "handshake", "profile", "short", "full", "pinsVersion",
+  "procStart", "last_wait", "consumedAt", "ackWaitSec", "stallSec",
   "// mono:experimental-bench-route-data",
   "scripts/review-bench-routes.mjs",
   "<!-- review-pilot:start -->",
@@ -7801,6 +7819,23 @@ function validatePilotDispatch() {
 }
 function validateDocumentSkeleton() {
   validatePilotDispatch();
+
+  // Agent rules remain prose/review; verify only changed section step skeletons.
+  for (const [file, section, count] of [
+    ["skills/mono-implement/SKILL.md", "Orchestration branch of `start-checkpoint`", 7],
+    ["skills/mono-preflight/SKILL.md", "Workflow", 7],
+    ["skills/mono-deliver/SKILL.md", "Sequence and Recovery", 3],
+  ]) {
+    const steps = (documentSection(read(file), section) ?? []).flatMap(line => {
+      const step = /^(\d+)\. /.exec(line); return step ? [Number(step[1])] : [];
+    });
+    if (JSON.stringify(steps) !== JSON.stringify(Array.from({length: count}, (_, i) => i + 1)))
+      fail(`${file}: changed section step skeleton ${section}`);
+  }
+  for (const [file, tokens] of [
+    ["templates/orchestrator-dispatch.md", ["handshake", "profile", "pinsVersion", "wait-ack"]],
+    ["references/orchestration.md", ["handshake", "profile", "procStart", "last_wait", "consumedAt", "ackWaitSec", "stallSec"]],
+  ]) for (const token of tokens) assertIncludes(file, token);
   for (const [file, token] of STRING_PINS) assertIncludes(file, token);
   for (const [file, heading] of REQUIRED_HEADINGS) {
     if (!read(file).split("\n").some((line) => /^#{1,6}\s+/.test(line) && line.replace(/^#{1,6}\s+/, "").trim() === heading)) fail(`${file}: missing required heading ${heading}`);

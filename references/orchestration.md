@@ -303,12 +303,17 @@ Order, and it is the whole protocol:
    delivery check there, because that check gates the move this dispatch
    carries. This is the stage's own opening, not a separate pre-stage: the
    same session, worktree, dispatch, and stage continue into execution.
-3. Gate-ack, then stop. The worker writes
+3. Gate-ack, then wait or stop. The worker writes
    `reports/<ISSUE-KEY>-gate-ack-a<N>.json` under the orchestrator root, where
-   `<N>` is the attempt number this dispatch's log carries, and then stops —
-   what "stops" means depends on the ack's own status. On `gates-passed` it
-   stops without queuing or applying the move, writing code, or producing a
-   stage report. On `blocked` the gate phase is over rather than paused, so it
+   `<N>` is the attempt number this dispatch's log carries. On `gates-passed`
+   it waits in codex-cli `handshake: wait`, or stops in `resume` mode, without
+   queuing/applying moves, code or phase reports yet. Wait uses installed
+   `delivery-state.mjs wait-ack --root <root> --issue <KEY> --attempt <N>
+   --ack <path> --moves <json-file> --config <cfg>`: deadline is ack mtime +
+   `ackWaitSec`; expiry parks `write-unconfirmed`, then exit/resume recovery.
+   Validate own issue/attempt, ackDigest and each dispatched moveDigest/read-back.
+   Applied read-backs amend the snapshot; run the post-move delivery check,
+   without rerunning the identity gate in the same process. On `blocked` the gate phase is over rather than paused, so it
    writes the stage report the Blocked path below requires — ack first, then
    report — and stops only after both exist. Leaving a blocked ack with no
    report would strand the Issue: the orchestrator would wait for a report that
@@ -341,9 +346,13 @@ Order, and it is the whole protocol:
 
    The gate-ack is not a stage report: it has its own path, its own two-value
    `status`, and it neither uses nor extends the `verification_items` enum.
-   The Worker Report shape and gate-ack shape are unchanged by this protocol;
-   the Worker Registry in `templates/orchestrator-report.md` gains only the
-   optional attempt-scoped `gates` field. Ack delivery follows the same sandbox
+   Worker Report and gate-ack machine shapes stay unchanged; launch/registry
+   fields additionally pin `handshake` (`wait|resume`, default `resume`),
+   `profile` (`short|full`, default `full`), `pins {file, digest}` (SHA-256 of
+   dispatch pins bytes), `pinsVersion: 0`, and `procStart` at `thread.started`
+   registration (`ps -p <pid> -o lstart=`, trimmed). Short requires tiny/standard,
+   `critical: null`, orchestrator-supplied `afk: true` and `openDecisions: 0`.
+   Legacy full/resume launches may omit pins; wait/short requires them. Ack delivery follows the same sandbox
    rule as a report: if the mailbox write is denied, write the same JSON to
    `<worktree>/.orchestrator/<ISSUE-KEY>-gate-ack-a<N>.json` (never committed). Both
    the orchestrator and the watcher read the fallback path as well as the
@@ -481,7 +490,18 @@ Order, and it is the whole protocol:
    confirms each with read-back per Linear Write Verification. A move whose
    read-back still shows the old state is pending, never applied, and the
    worker is not resumed for execution while it is pending.
-5. Resume for execution. The orchestrator resumes the same worker with a
+5. Continue for execution. In wait mode, consume the live waiting writer:
+   pid alive, matching procStart and thread_id; after that thread.started in
+   the attempt jsonl, an item.started command_execution contains
+   delivery-state.mjs wait-ack with this issue/attempt and has no item.completed
+   with the same item.id. Intervening status/agent messages do not end the wait.
+   Refusal: `waiting writer not verified`. Before the private record/tombstone,
+   persist last_wait {pid, procStart, thread_id, gateAckDigest, consumedAt}; write
+   consumedAt once, never renew it on recovery. Identical prior consumption
+   completes cleanup without re-verifying the writer. If waiting verification
+   fails, use the ordinary registered-resume recovery below.
+
+   In legacy resume mode, the orchestrator resumes the same worker with a
    resume signal that names each applied move together with its read-back
    result, explicitly as an amendment of the dispatch snapshot. Every
    post-resume check — including `mono-check delivery` — is evaluated against
@@ -522,7 +542,8 @@ handshake.
 | Verified gate-carrying spawn, respawn, or session rotation | Write the exact non-empty unique gate-name list for the NEW current attempt together with its attempt-numbered `log`. |
 | Same-attempt no-ack nudge or resume | Preserve `gates`; this is still the same attempt. |
 | `gates-passed` received, resumed writer not yet confirmed | Preserve `gates`; the durable consumer contract is still live. |
-| Consume `.applied` | Register the resumed writer while preserving `gates`, atomically publish the private consumption record with `outcome: applied`, rename every ack candidate, then remove `gates` separately. |
+| Consume `.applied` in resume mode | Register the resumed writer while preserving `gates`, atomically publish the private consumption record with `outcome: applied`, rename every ack candidate, then remove `gates` separately. |
+| Consume `.applied` in wait mode | Verify the live waiting writer, persist `last_wait` once, publish private consumption, rename ack candidates, then remove `gates`; no resume. |
 | Consume `.rejected` | The attempt is TERMINAL: atomically publish the private consumption record with `outcome: rejected`, rename every ack candidate, then remove `gates`. Recovery is an immediate verified respawn of a NEW gate attempt with its own list; never same-attempt nudge after consumption. |
 | Consume `.blocked` | Only after the correlated stage report is present and valid: atomically publish the private consumption record with `outcome: blocked`, rename every ack candidate, then remove `gates` and route the report. |
 | Malformed `gates` on a gate-carrying entry | Treat it as a producer contract error and terminate the attempt; verified-respawn a NEW gate attempt with a correct list. |
@@ -550,10 +571,10 @@ because a worker that never acked never reached the contracted wait.
 
 Both transports, because the pause and the resume differ in mechanism only:
 
-- `codex-cli`: the worker writes the ack and its process exits, exactly as at
-  a stage boundary. The orchestrator resumes the same thread with the
-  `codex exec resume` form in Worker Transports, passing the resume signal as
-  the dispatch prompt file. No user interaction.
+- `codex-cli`: `handshake: wait` keeps the process blocked in wait-ack within
+  ackWaitSec; consumption releases it. Expiry parks write-unconfirmed and exits.
+  `resume` (default) retains exit/same-thread `codex exec resume` with the
+  amendment prompt. No user interaction.
 - `claude-code-desktop` and `fallback`: the worker writes the ack and ends its
   turn; the session stays open and is continued with a session message
   carrying the resume signal. Transport price, named plainly: in
@@ -798,7 +819,14 @@ A fresh passed startup ack is a contracted pause, not death. Any stall/dead whil
 its ack remains unconsumed is a consumption boundary: reconcile writer/mailbox
 before healing. Phase event: validate capsule/attempt and consume its whole queue
 through the barrier below; do not resume a worker waiting on a confirmation file.
-The watcher suppresses liveness only for the configured bounded confirmation wait.
+The watcher suppresses phase liveness only for the bounded confirmation wait.
+Startup suppression remains stallSec × 4 from log silence. With --config, watcher
+--stall-sec defaults to product stallSec (120); an explicit flag overrides, minimum
+90. Config ackWaitSec (420) must be ≤ stallSec × 4 − pollSec (10); watcher startup
+also validates against its effective threshold. For wait + .applied, while log
+mtime < last_wait.consumedAt, continuation is ≤ ONE stallSec from consumedAt:
+finite, not future, 0 ≤ age < stallSec. Never renewable; log continuation or
+expiry restores ordinary monitoring.
 
 No-ack/no-report exit: resume the same thread once demanding its capsule/report;
 second reportless exit or failed resume rebuilds from Linear plus capsule/worktree
@@ -973,7 +1001,8 @@ directory's history; retired Issues' logs are outside its scope.
 
 - At wave start — before the first worker spawn — the orchestrator must
   start the watcher against the mailbox root:
-  `node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>`.
+  `node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product> --config <cfg>`.
+  Use the absolute product config path so watcher and worker share delivery clocks.
   Substitute `<installed-mono-orchestrate-dir>` with the absolute directory
   containing the loaded `mono-orchestrate/SKILL.md`; never resolve the `../`
   segment against the product/worktree current directory.
@@ -1038,13 +1067,13 @@ directory's history; retired Issues' logs are outside its scope.
   lifecycle move, is spurious and neither delivers nor suppresses.
   A fresh usable gate-ack suppresses `stall` and both `dead` branches for that
   worker during a bounded handoff: `gates-passed` waits for lifecycle
-  application and resume. A valid `blocked` ack gets the same bounded suppression until its stage
+  application and wait-mode consumption or resume. A valid `blocked` ack gets the same bounded suppression until its stage
   report is observed or the ack is consumed, so the normal ack-before-report
   interval cannot start duplicate healing. That suppression is bounded twice
   over. Normally the
-  orchestrator consuming the ack at resume time ends it — the watcher cannot
-  distinguish a retained ack from a live pause, so the rename in step 5 is what
-  re-arms the ladder. When both a `gate-ack` and a `report` are emitted for the
+  consuming the ack ends the startup window. Wait-mode .applied gets only the
+  fixed post-consumption continuation in Monitoring Protocol; legacy rename
+  immediately re-arms the ladder. When both a `gate-ack` and a `report` are emitted for the
   same worker, the `gate-ack`
   comes first, because the consumer reads the ack's status before it acts on
   the report. But if lifecycle application succeeds and the resume, the

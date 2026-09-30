@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
-import { atomicJson, readJson, identity, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig } from "../runtime.mjs";
+import { atomicJson, readJson, identity, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart } from "../runtime.mjs";
 import { startGate, reviewEnvironment } from "../gate.mjs";
+import crypto from "node:crypto";
 
 export function guard(root, resume = false) {
   const control = readJson(path.join(root, "control.json"));
@@ -12,6 +13,19 @@ export function guard(root, resume = false) {
 }
 function checkRequest(request) {
   if (!path.isAbsolute(request.root ?? "") || !/^[A-Z][A-Z0-9]*-\d+$/.test(request.issue)) throw new Error("root/issue required");
+}
+function deliveryLaunch(request) {
+  const handshake = request.handshake ?? "resume", profile = request.profile ?? "full";
+  if (!["wait", "resume"].includes(handshake)) throw new Error("invalid handshake");
+  if (!["short", "full"].includes(profile)) throw new Error("invalid profile");
+  if (profile === "short" && (!["tiny", "standard"].includes(request.risk) || request.critical !== null ||
+      request.afk !== true || request.openDecisions !== 0)) throw new Error("short requires tiny/standard, critical null, afk true and openDecisions 0");
+  if (request.pinsVersion !== undefined && request.pinsVersion !== 0) throw new Error("launch pinsVersion must be 0");
+  const pins = request.pins ?? null;
+  if (pins !== null && (!path.isAbsolute(pins.file ?? "") || !/^[a-f0-9]{64}$/.test(pins.digest ?? "") ||
+      crypto.createHash("sha256").update(fs.readFileSync(pins.file)).digest("hex") !== pins.digest)) throw new Error("dispatch pins digest mismatch");
+  if (pins === null && (handshake === "wait" || profile === "short")) throw new Error("dispatch pins required for wait/short");
+  return { handshake, profile, pins, pinsVersion: 0 };
 }
 export function resolveWorkerPins(request) {
   const config = baseModelConfig(request.worktree, request.base);
@@ -97,12 +111,14 @@ async function launchCodex(root, entry, prompt, resume) {
   child.unref();
   const registry = readRegistry();
   registry[entry.issue].pid = child.pid; registry[entry.issue].last_activity_at = new Date().toISOString();
+  const procStart = processStart(child.pid);
+  if (resume) registry[entry.issue].procStart = procStart;
   if (resume) registry[entry.issue].last_resume = { pid: child.pid, thread_id: entry.thread_id,
     registeredAt: registry[entry.issue].last_activity_at, gateAckDigest };
   atomicJson(registryPath, registry);
-  return { pid: child.pid, thread_id: entry.thread_id };
+  return { pid: child.pid, thread_id: entry.thread_id, procStart };
 }
-async function waitForThread(root, entry, pid) {
+async function waitForThread(root, entry, pid, launchedStart) {
   const registryPath = path.join(root, "workers.json");
   const deadline = Date.now() + 120_000;
   let offset = 0, pending = Buffer.alloc(0), threadId = null;
@@ -125,7 +141,11 @@ async function waitForThread(root, entry, pid) {
           const current = readJson(registryPath), writer = current[entry.issue];
           if (!writer || writer.attempt !== entry.attempt || writer.pid !== pid ||
               (writer.thread_id && writer.thread_id !== threadId)) throw new Error("startup writer changed before thread registration");
-          writer.thread_id = threadId; atomicJson(registryPath, current);
+          const currentStart = processStart(pid);
+          if (launchedStart && currentStart && currentStart !== launchedStart) throw new Error("startup writer process changed before thread registration");
+          writer.thread_id = threadId; writer.procStart = currentStart ?? launchedStart;
+          if (writer.handshake === "wait" && !writer.procStart) throw new Error("waiting writer process start unavailable");
+          atomicJson(registryPath, current);
           return { pid, thread_id: threadId };
         });
       } catch (error) { if (error.code !== "ELOCKED") throw error; }
@@ -137,6 +157,7 @@ async function waitForThread(root, entry, pid) {
 }
 export async function spawnWorker(request) {
   checkRequest(request);
+  const launch = deliveryLaunch(request);
   const modelRoutes = resolveWorkerPins(request);
   guard(request.root);
   const launched = await withLock(path.join(request.root, "launch.lock"), async () => {
@@ -165,7 +186,7 @@ export async function spawnWorker(request) {
     const fd = fs.openSync(log, "wx", 0o600); fs.fsyncSync(fd); fs.closeSync(fd); syncDir(path.dirname(log));
     const model_launch = { case: "codex-cli", model_parameter: model_policy.model, effort_parameter: model_policy.effort,
       effort_source: "explicit", actual_model: null, evidence: "requested command parameters" };
-    const entry = { issue: request.issue, transport: "codex-cli", stage: "mono-deliver", attempt,
+    const entry = { issue: request.issue, transport: "codex-cli", stage: "mono-deliver", attempt, ...launch,
       thread_id: null, pid: null, worktree: request.worktree, branch: request.branch, product_name: request.product_name,
       packVersion: request.packVersion, sourceCommit: request.sourceCommit, surfaceRevision: request.surfaceRevision,
       lock: request.lock, spawned_at: new Date().toISOString(), last_activity_at: null, log,
@@ -181,7 +202,7 @@ export async function spawnWorker(request) {
       model: entry.model, effort: entry.effort });
     return { entry, ...await launchCodex(request.root, entry, prompt, false) };
   });
-  return { attempt: launched.entry.attempt, ...await waitForThread(request.root, launched.entry, launched.pid) };
+  return { attempt: launched.entry.attempt, ...await waitForThread(request.root, launched.entry, launched.pid, launched.procStart) };
 }
 export async function resumeWorker(request) {
   checkRequest(request); guard(request.root, true);
