@@ -192,7 +192,7 @@ export async function acceptAmend(args) {
         const documents = supplied.documents ?? (current.fullSnapshot ? amendmentDocuments(current.fullSnapshot.directory, issue, current.packageKind) : null);
         if (documents && !supplied.documents && digest(documents) !== current.fullSnapshot.digest) throw new Error("registered full snapshot content changed");
         // Never overwrite even an abandoned version's recorded payload.
-        version = Math.max(current.pinsVersion, ...fs.readdirSync(output).flatMap(name => /^pins\.v(\d+)\.json$/u.exec(name)?.slice(1).map(Number) ?? [])) + 1;
+        version = Math.max(current.pinsVersion, ...fs.readdirSync(output).flatMap(name => /^(?:pins\.v(\d+)\.json|resume\.v(\d+)\.(?:json|md)|snapshot\.v(\d+))$/u.exec(name)?.slice(1).filter(Boolean).map(Number) ?? [])) + 1;
         state = "prepared";
         const pinsFile = path.join(output, `pins.v${version}.json`), resumeFile = path.join(output, `resume.v${version}.md`), resumeRequest = path.join(output, `resume.v${version}.json`);
         let text = args.text, fullSnapshot = null;

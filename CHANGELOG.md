@@ -8,7 +8,7 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 - MONO-97: unify amendment recovery under U11 with prepared/delivered/registered
   states, saved per-version inputs, ambiguity candidates and immutable recorded
-  snapshots. Correlated delivery recovers registration without another launch;
+  snapshots; partial snapshot staging reserves its version. Correlated delivery recovers registration without another launch;
   historical retries preserve current pins and grants. Record the conservative
   launch boundary before resume: uncertain delivery preserves evidence and
   refuses restart/replacement, while proven nondelivery restores original grants.

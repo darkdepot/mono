@@ -553,6 +553,20 @@ entry.workerWritableRoots=roots;entry.writable_roots=roots;entry.capsule.writabl
         assert.ok(readJson(pendingFile).pinsVersion > old.pinsVersion); assert.ok(readJson(pendingFile).launchMayHaveStartedAt);
         assert.equal(fs.readFileSync(old.resumeFile, "utf8").includes("Preparation before launch marker."), true);
       }));
+      await t.test("amend-incomplete-snapshot-preparation-reserves-version: retry preserves orphaned bytes", () => isolatedPreparation(({ before, output, acceptScript, acceptSource }) => {
+        write(acceptScript, acceptSource.replace('fs.mkdirSync(target);', 'fs.mkdirSync(target); process.kill(process.pid, "SIGKILL");'));
+        const args = [...amendArgs("Recover interrupted snapshot staging."), "--full-snapshot", "--snapshot", snapshot];
+        removeDeadLock(run(process.execPath, args));
+        const launchLock = path.join(root, "launch.lock"); assert.throws(() => process.kill(readJson(launchLock).pid, 0), { code: "ESRCH" }); fs.unlinkSync(launchLock);
+        const version = before[ack.issue].pinsVersion + 1, orphan = path.join(output, `snapshot.v${version}`);
+        assert.ok(fs.existsSync(orphan)); assert.equal(fs.existsSync(path.join(output, `pins.v${version}.json`)), false);
+        assert.equal(fs.existsSync(pendingFile), false);
+        const sentinel = path.join(orphan, "retained-preparation.txt"); fs.writeFileSync(sentinel, "Keep incomplete preparation evidence.");
+        write(acceptScript, acceptSource);
+        const recovered = JSON.parse(pass(run(process.execPath, args))); assert.equal(recovered.version, version + 1);
+        assert.equal(fs.readFileSync(sentinel, "utf8"), "Keep incomplete preparation evidence.");
+        assert.equal(fs.existsSync(path.join(output, `pins.v${version}.json`)), false);
+      }));
       await t.test("amend-earlier-completed-retry: later amendments preserve prior delivery results", () => {
         if (livePid) process.kill(livePid, "SIGTERM"); livePid = null;
         const command = path.join(runtime, "orchestrator/accept.mjs"), args = [command, "amend", "--root", root, "--issue", ack.issue, "--attempt", "1", "--text"];

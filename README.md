@@ -74,7 +74,9 @@ prints `writeDigests` for the expanded writes, including certificates. Amendment
 use one recovery state machine: `prepared`, `delivered` (registry-correlated
 resume), then `registered`. `amendment.pending.json` records preparation and
 whether launch may have started; `pins.v<n>.json` and version snapshot files are
-immutable. Requests resolve omitted inputs against each saved version: one match
+immutable. Partial preparation artifacts reserve their version, so snapshot
+staging interruptions cannot overwrite recorded bytes or block the next version.
+Requests resolve omitted inputs against each saved version: one match
 replays it, multiple matches refuse with candidate versions, and no match prepares
 a new amendment under the current escalation rules. Registered retries return
 saved results for live or exited workers, including after later amendments,
