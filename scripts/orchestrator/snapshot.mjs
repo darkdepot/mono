@@ -24,7 +24,7 @@ function parseDocument(text) {
   const parent = () => lists.at(-1) ?? headings.at(-1) ?? root;
   const closeLists = end => { while (lists.length) lists.pop().end = end; };
   for (let start = 0; start < lines.length; start++) {
-    const line = lines[start];
+    const line = lines[start].replace(/\r$/, "");
     const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (fence) {
       fence.end = start + 1;
