@@ -7366,7 +7366,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
-  "# Предприменение", "Предприменение:", "| path | sha256 |", "```text",
+  "# Предприменение", "Предприменение:", "sha256 `", "```text",
   // MONO-95: named placeholders, command paths and session/admission dictionary.
   "{{approval}}",
   "{{attempt}}",
@@ -7939,8 +7939,8 @@ function validateDocumentSkeleton() {
     ["references/orchestration.md", ["handshake", "profile", "procStart", "last_wait", "consumedAt", "ackWaitSec", "stallSec"]],
   ]) for (const token of tokens) assertIncludes(file, token);
   for (const [file, tokens] of [
-    ["templates/issue.md", ["# Предприменение", "| path | sha256 |", "```text"]],
-    ["templates/tech-spec.md", ["Предприменение:", "| path | sha256 |", "```text"]],
+    ["templates/issue.md", ["# Предприменение", "sha256 `", "```text"]],
+    ["templates/tech-spec.md", ["Предприменение:", "sha256 `", "```text"]],
   ]) for (const token of tokens) assertIncludes(file, token);
   for (const [file, token] of STRING_PINS) assertIncludes(file, token);
   for (const [file, heading] of REQUIRED_HEADINGS) {

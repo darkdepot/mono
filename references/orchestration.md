@@ -1491,11 +1491,16 @@ Workers never bootstrap or change it.
 Issue-only uses `# Предприменение` in the approved Issue. Project-first keeps a
 nested `Предприменение:` list item within the covered Tech Spec implementation
 unit; dispatch reads the full approved Spec before extraction and materializes
-only its wrapper as the Issue section in the snapshot. Both use `| path | sha256 |`,
-a separator and rows, followed by a list item naming each path in backticks and
-immediately a `text` fence. Opening/closing fences start at column zero, even
-inside a nested unit; content lines have no added nesting indentation. SHA-256
-covers raw UTF-8 lines without trimming/dedenting, joined with `\n` and ending
+only its wrapper as the Issue section in the snapshot. For each file, use one
+list item with a backtick-quoted path, the word `sha256`, a backtick-quoted
+64-character lowercase hex hash and nothing else, followed by a `text` fence.
+List items allow any nesting indentation; blank lines may occur after the marker,
+between items and before fences. Tables are refused. Candidate boundaries are
+headings and neighboring items at the marker's column or less, except items
+starting with a backtick-quoted path: collect those even when malformed and
+validate the entire manifest before application. Opening/closing fences start at
+column zero, even inside a nested unit; content has no added nesting indentation.
+SHA-256 covers raw UTF-8 lines without trimming/dedenting, joined with `\n` and ending
 with `\n`. Fence contents are opaque to the exported U12 block parser.
 
 Reject multiple candidates, indented fences, unmatched path/fence pairs, hashes
