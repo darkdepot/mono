@@ -984,7 +984,9 @@ The attempt lock `reports/KEY-collector-aN.lock` stores pid/procStart and the
 active gate incarnation. Start reclaims only a dead holder and dead gate tree;
 unknown process telemetry refuses. Collector and gate use separate dedicated process groups. A gate waits on stdin
 until the collector durably records its incarnation; parent death before release
-cannot launch an unregistered gate. Group membership preserves orphan descendants.
+cannot launch an unregistered gate. Validation also registers its gate group in
+the held per-head lock before release; reclamation checks both recorded trees.
+Group membership preserves orphan descendants.
 Legacy locks without group metadata require manual reconciliation; an unrelated
 live member of a shared group also prevents reclaim. Stop verifies incarnation,
 requests graceful shutdown and lets an active gate finish before releasing locks.

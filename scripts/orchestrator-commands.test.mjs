@@ -605,7 +605,8 @@ test("collector installed scratch: gate crash leaves both locks, admitted recove
   const runtimeUrl = new URL("./runtime.mjs", import.meta.url).href;
   const countFile = path.join(scratch, "count.json"), modeFile = path.join(scratch, "mode.json");
   const waitUntil = async predicate => { const deadline = Date.now() + 12000; while (!predicate()) { if (Date.now() > deadline) assert.fail("fixture deadline: " + (fs.existsSync(path.join(root,"reports",`${issue}-collector-a1.log`)) ? fs.readFileSync(path.join(root,"reports",`${issue}-collector-a1.log`),"utf8") : "no log")); await new Promise(resolve => setTimeout(resolve, 50)); } };
-  let started;
+  let started, validatorPid;
+  const validationFile = path.join(scratch, "validation.json");
   try {
     for (const dir of [repo, evidence, bin, path.dirname(lock)]) fs.mkdirSync(dir, { recursive: true });
     write(rows, [lock, headLock]);
@@ -627,7 +628,7 @@ for(const row of found.values()) console.log(row.pid+' 1 '+row.processGroup+' S 
     write(path.join(skills, ".mono-agent-workflow/scripts/gate.mjs"), `import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';
 import {withLock,atomicJson,readJson,canonical} from ${JSON.stringify(runtimeUrl)};
 const request=readJson(process.argv[process.argv.indexOf('--request')+1]);
-if(!request.collect){const receipt=readJson(path.join(request.evidenceRoot,request.head+'.json')).receipt;console.log(receipt.verification.exitCode===0?'gate preflight: pass: fixture recovered':'gate preflight: fail: fixture verification failed');process.exit();}
+if(!request.collect){if(readJson(${JSON.stringify(modeFile)}).holdValidation){atomicJson(${JSON.stringify(validationFile)},{pid:process.pid});while(readJson(${JSON.stringify(modeFile)}).holdValidation)await new Promise(r=>setTimeout(r,50));}const receipt=readJson(path.join(request.evidenceRoot,request.head+'.json')).receipt;console.log(receipt.verification.exitCode===0?'gate preflight: pass: fixture recovered':'gate preflight: fail: fixture verification failed');process.exit();}
 await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),async()=>{
  const countFile=${JSON.stringify(countFile)},mode=readJson(${JSON.stringify(modeFile)});const count=readJson(countFile);count.collections++;atomicJson(countFile,count);if(mode.noReceipt)process.exit(78);
  const receipt={producer:'gate-autoreview-v2',runId:crypto.randomUUID(),head:request.head,base:request.head,collectionId:request.collectionId,product:request.product,skillsRoot:request.skillsRoot,
@@ -664,7 +665,16 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     const admissionFile = path.join(root, "consumed", `${issue}-a1/admissions`, `${queued.id}.json`);
     assert.equal(readJson(admissionFile).pinsVersion, 0);
     entry.pinsVersion = 1; atomicJson(path.join(scratch, "dispatch/pins.v1.json"), { pinsVersion: 1, risk: "deep" }); atomicJson(path.join(root, "workers.json"), { [issue]: entry });
-    atomicJson(modeFile, { crash: false }); started = await collectorStart(options);
+    atomicJson(modeFile, { holdValidation: true }); started = await collectorStart(options);
+    await waitUntil(() => fs.existsSync(validationFile)); validatorPid = readJson(validationFile).pid;
+    const recoveryPid = started.pid; process.kill(recoveryPid, "SIGKILL"); started = null;
+    await waitUntil(() => { try { process.kill(recoveryPid, 0); return false; } catch { return true; } });
+    const { reclaimLock: reclaimHead } = await import("./runtime.mjs");
+    assert.throws(() => reclaimHead(headLock), /locked/u, "a live detached validation gate protects the head lock after collector death");
+    await assert.rejects(collectorStart(options), /locked/u);
+    atomicJson(modeFile, { crash: false });
+    await waitUntil(() => collectorStatus(options).status === "stale"); validatorPid = null;
+    started = await collectorStart(options);
     const confirmed = path.join(root, "confirmations", `${issue}-phase-preflight-a1-s1.confirmed.json`);
     await waitUntil(() => fs.existsSync(confirmed)); validateConfirmation(report, readJson(confirmed));
     assert.equal(readJson(countFile).collections, 1, "history recovery never repeats review");
@@ -723,6 +733,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
       assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s3.confirmed.json`)), false);
     });
   } finally {
+    if (validatorPid) { try { process.kill(validatorPid, "SIGKILL"); } catch {} }
     if (started) { try { collectorStop(options); } catch {} }
     process.env.PATH = oldPath;
     if (oldRows === undefined) delete process.env.MONO_FIXTURE_ROWS; else process.env.MONO_FIXTURE_ROWS = oldRows;

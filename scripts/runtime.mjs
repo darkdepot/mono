@@ -57,11 +57,13 @@ export function processTable() {
   });
 }
 export function lockTreeDead(holder) {
-  if (!Number.isInteger(holder?.pid) || holder.pid <= 0 || !holder.procStart || !Number.isInteger(holder.processGroup) || holder.processGroup <= 0)
-    return false; // Legacy locks without a recorded group cannot prove orphan descendants dead.
   const processes = processTable().filter(row => !row.state.startsWith("Z"));
-  return !processes.some(row => (row.pid === holder.pid && row.procStart === holder.procStart) ||
-    (row.group === holder.processGroup && row.pid !== holder.pid));
+  const dead = record => Number.isInteger(record?.pid) && record.pid > 0 && record.procStart &&
+    Number.isInteger(record.processGroup) && record.processGroup > 0 &&
+    !processes.some(row => (row.pid === record.pid && row.procStart === record.procStart) ||
+      (row.group === record.processGroup && row.pid !== record.pid)) &&
+    (!record.gate || dead(record.gate));
+  return Boolean(dead(holder));
 }
 export function reclaimLock(file) {
   const marker = file + ".reclaim";

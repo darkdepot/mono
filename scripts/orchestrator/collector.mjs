@@ -38,7 +38,7 @@ function historyReceipt(request) {
   if (matches.length > 1) throw new Error("multiple history receipts for collectionId");
   return matches.length ? { file: matches[0], envelope: verifyReceipt(matches[0], request) } : null;
 }
-async function runGate(options, request) {
+async function runGate(options, request, heldLock = null) {
   const file = path.join(options.root, "reports", `${options.issue}-collector-a${options.attempt}-request.json`);
   atomicJson(file, request);
   const script = path.join(request.skillsRoot, ".mono-agent-workflow", "scripts", "gate.mjs");
@@ -49,18 +49,23 @@ if (token !== "go\\n") process.exit(1);
 process.argv = ${JSON.stringify([process.execPath, script, "preflight", "--request", file])};
 await import(${JSON.stringify(pathToFileURL(script).href)});`;
   const child = spawn(process.execPath, ["--input-type=module", "-e", runner], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
-  const lock = lockPath(options);
+  const locks = [lockPath(options), heldLock].filter(Boolean);
   child.stdin.on("error", () => {}); // Child exit may close the release pipe.
   try {
     const procStart = processStart(child.pid);
     if (!procStart) throw new Error("gate process incarnation unavailable");
-    if (fs.existsSync(lock)) atomicJson(lock, { ...readJson(lock), gate: { pid: child.pid, procStart, processGroup: child.pid } });
+    for (const lock of locks) {
+      if (!fs.existsSync(lock)) { if (lock === heldLock) throw new Error("held head lock disappeared"); continue; }
+      const holder = readJson(lock);
+      if (holder.pid !== process.pid) throw new Error(`operation locked: ${lock}; foreign holder`);
+      atomicJson(lock, { ...holder, gate: { pid: child.pid, procStart, processGroup: child.pid } });
+    }
     child.stdin.end("go\n");
   } catch (error) { child.stdin.destroy(); child.kill(); throw error; }
   let output = "";
   for (const stream of [child.stdout, child.stderr]) stream.on("data", data => { output = (output + data).slice(-64 * 1024); fs.appendFileSync(logPath(options), data); });
   await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
-  if (fs.existsSync(lock)) {
+  for (const lock of locks) if (fs.existsSync(lock)) {
     const holder = readJson(lock);
     if (holder.pid === process.pid && holder.gate?.pid === child.pid) { delete holder.gate; atomicJson(lock, holder); }
   }
@@ -87,7 +92,7 @@ async function collection(options, report, write, entry, admission) {
   const gate = await withLock(headLock, async () => {
     // History wins, even if another run replaced the mutable head receipt.
     atomicJson(path.join(evidenceRoot, `${write.target}.json`), found.envelope);
-    return runGate(options, { ...request, collect: false });
+    return runGate(options, { ...request, collect: false }, headLock);
   }, { reclaim: true });
   log(options, `reconciled ${write.id} from ${found.file}`);
   return { receipt: found.file, receiptDigest: digest(found.envelope), gate };
@@ -111,13 +116,12 @@ export async function collectOnce(options) {
     log(options, `confirmed ${phase} sequence ${report.sequence}: ${report.capsule.open_queue.length} writes`);
   }
 }
-function deadCollector(holder) { return lockTreeDead(holder) && (!holder.gate || holder.gate.processGroup === holder.processGroup || lockTreeDead(holder.gate)); }
 export async function collectorStart(options) {
   registryEntry(options.root, options.issue, options.attempt);
   const lock = lockPath(options);
   fs.mkdirSync(path.dirname(lock), { recursive: true });
   if (fs.existsSync(lock)) {
-    if (!deadCollector(readJson(lock))) throw new Error("collector locked: holder or gate descendants live/unverified");
+    if (!lockTreeDead(readJson(lock))) throw new Error("collector locked: holder or gate descendants live/unverified");
     reclaimLock(lock);
   }
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "start", "--root", options.root, "--issue", options.issue, "--attempt", String(options.attempt), "--foreground"],
@@ -138,7 +142,7 @@ export function collectorStatus(options) {
   const lock = lockPath(options);
   if (!fs.existsSync(lock)) return { status: "stopped" };
   const holder = readJson(lock);
-  return { status: deadCollector(holder) ? "stale" : "running-or-unverified", ...holder };
+  return { status: lockTreeDead(holder) ? "stale" : "running-or-unverified", ...holder };
 }
 export function collectorStop(options) {
   const status = collectorStatus(options);
