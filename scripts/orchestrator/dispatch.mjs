@@ -56,7 +56,7 @@ async function prepareDispatch(args) {
   if (manifest && !mandate) throw new Error("preapply section requires orchestration.preapply.mandate");
   if (manifest && !args.preapply) throw new Error("preapply section requires --preapply before spawn");
   if (args.preapply && !manifest) throw new Error("--preapply requires a preapply manifest");
-  if (manifest && !issueOnly) body = body.replace(/\n*$/u, "\n\n") + manifest.materialized;
+  if (manifest && !issueOnly && !manifest.alreadyMaterialized) body = body.replace(/\n*$/u, "\n\n") + manifest.materialized;
   const risk = args.risk ?? settings.risk ?? /(?:Риск|risk_class)\s*[:=]\s*(tiny|standard|deep|risky)/u.exec(body)?.[1];
   const critical = args.critical ?? settings.critical ?? null;
   if (!RISK_KEYS.slice(0, 4).includes(risk) || (critical !== null && (risk !== "risky" || !critical.trim()))) throw new Error("approved risk/critical required");

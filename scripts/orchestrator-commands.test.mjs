@@ -1226,6 +1226,27 @@ test("preapply AE12 named contracts on installed scratch", async t => {
       assert.equal(git(worktree, "rev-parse", "HEAD"), repairedHead);
       process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
     });
+    await t.test("preapply-full-materialized-snapshot-retry", () => {
+      const launched = JSON.parse(pass(run(process.execPath, [...options, "--preapply", "--full-snapshot"]))); pid = launched.pid;
+      const head = git(worktree, "rev-parse", "HEAD"), materialized = fs.readFileSync(path.join(launched.snapshot, "issue-MONO-997.md"), "utf8");
+      process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      const retryOptions = [...options]; retryOptions[retryOptions.indexOf("--snapshot") + 1] = launched.snapshot;
+      const retried = JSON.parse(pass(run(process.execPath, [...retryOptions, "--preapply", "--full-snapshot"]))); pid = retried.pid;
+      assert.equal(git(worktree, "rev-parse", "HEAD"), head);
+      assert.equal(fs.readFileSync(path.join(retried.snapshot, "issue-MONO-997.md"), "utf8"), materialized);
+      process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      const attempts = fs.readFileSync(path.join(root, "attempts.json"), "utf8");
+      write(path.join(retried.snapshot, "issue-MONO-997.md"), materialized.replace("AE12 repaired", "AE12 forged"));
+      retryOptions[retryOptions.indexOf("--snapshot") + 1] = retried.snapshot;
+      const refused = run(process.execPath, [...retryOptions, "--preapply", "--full-snapshot"]);
+      assert.notEqual(refused.status, 0); assert.match(refused.stderr, /sha256|materialized/u);
+      assert.equal(git(worktree, "rev-parse", "HEAD"), head); assert.equal(fs.readFileSync(path.join(root, "attempts.json"), "utf8"), attempts);
+      const approvedBytes = bytes.replace("AE12 applied", "AE12 repaired"), forgedBytes = approvedBytes.replace("AE12 repaired", "AE12 forged");
+      write(path.join(retried.snapshot, "issue-MONO-997.md"), materialized.replace(approvedBytes, forgedBytes).replace(hash(approvedBytes), hash(forgedBytes)));
+      const divergent = run(process.execPath, [...retryOptions, "--preapply", "--full-snapshot"]);
+      assert.notEqual(divergent.status, 0); assert.match(divergent.stderr, /materialized.*differs/u);
+      assert.equal(git(worktree, "rev-parse", "HEAD"), head); assert.equal(fs.readFileSync(path.join(root, "attempts.json"), "utf8"), attempts);
+    });
     await t.test("preapply-issue-only-direct-section", () => {
       const ignored = ".agents/ignored.txt", ignoredBytes = "approved ignored target\n";
       const ignoredManifest = good.replace("| --- | --- |\n", `| --- | --- |\n| ${ignored} | ${hash(ignoredBytes)} |\n`)

@@ -29,9 +29,11 @@ export function preapplyManifest(issue, prd, spec, issueOnly) {
       }
       document = specTree;
     } else candidates = [];
-    if (issueCandidates.length) throw new Error("Project-first preapply belongs to the covered Tech Spec unit");
   }
-  if (!candidates.length) return null;
+  if (!candidates.length) {
+    if (issueCandidates.length) throw new Error("Project-first preapply belongs to the covered Tech Spec unit");
+    return null;
+  }
   if (candidates.length !== 1) throw new Error("multiple preapply manifest candidates");
   const candidate = candidates[0];
   if (issueOnly && (candidate.level !== 1 || source(document, candidate) !== "# Предприменение")) throw new Error("preapply requires # Предприменение");
@@ -68,7 +70,9 @@ export function preapplyManifest(issue, prd, spec, issueOnly) {
   for (const entry of entries.values()) if (entry.bytes === undefined) throw new Error(`preapply path without fence: ${entry.path}`);
   const content = lines.slice(candidate.start + 1, candidate.end).join("\n");
   const materialized = "# Предприменение\n" + content + (content.endsWith("\n") ? "" : "\n");
-  return { entries: [...entries.values()], materialized };
+  const alreadyMaterialized = !issueOnly && issueCandidates.length > 0;
+  if (alreadyMaterialized && preapplyManifest(issue, null, null, true).materialized !== materialized) throw new Error("materialized preapply differs from the covered Tech Spec manifest");
+  return { entries: [...entries.values()], materialized, alreadyMaterialized };
 }
 
 export function preapplyMandate(config) {
