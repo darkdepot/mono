@@ -155,20 +155,24 @@ async function waitForThread(root, entry, pid, launchedStart) {
   }
   throw new Error(`spawn-fail: no thread.started within 120 seconds; inspect retained attempt and pid ${pid}`);
 }
+export function checkSpawnAvailability(request) {
+  guard(request.root);
+  const file = path.join(request.root, "workers.json"), registry = readJson(file);
+  if (registry[request.issue]) throw new Error("Issue already registered; reconcile and retire before another attempt");
+  const attemptsFile = path.join(request.root, "attempts.json");
+  const attempts = fs.existsSync(attemptsFile) ? readJson(attemptsFile) : {};
+  const used = attempts[request.issue] ?? 0;
+  if (!Number.isInteger(used) || used < 0) throw new Error("invalid attempt registry");
+  if (used >= deliveryConfig(request.config).attemptCap) throw new Error("attempt cap reached");
+  return { file, registry, attemptsFile, attempts, used };
+}
 export async function spawnWorker(request) {
   checkRequest(request);
   const launch = deliveryLaunch(request);
   const modelRoutes = resolveWorkerPins(request);
   guard(request.root);
   const launched = await withLock(path.join(request.root, "launch.lock"), async () => {
-    guard(request.root);
-    const file = path.join(request.root, "workers.json"), registry = readJson(file);
-    if (registry[request.issue]) throw new Error("Issue already registered; reconcile and retire before another attempt");
-    const attemptsFile = path.join(request.root, "attempts.json");
-    const attempts = fs.existsSync(attemptsFile) ? readJson(attemptsFile) : {};
-    const used = attempts[request.issue] ?? 0;
-    if (!Number.isInteger(used) || used < 0) throw new Error("invalid attempt registry");
-    if (used >= deliveryConfig(request.config).attemptCap) throw new Error("attempt cap reached");
+    const { file, registry, attemptsFile, attempts, used } = checkSpawnAvailability(request);
     startGate(request);
     if (!path.isAbsolute(request.dispatchFile ?? "")) throw new Error("absolute dispatch file required");
     const prompt = fs.readFileSync(request.dispatchFile, "utf8");

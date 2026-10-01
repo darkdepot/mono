@@ -8,6 +8,7 @@ import { atomicJson, readJson, isMain, deliveryConfig, RISK_KEYS, withLock } fro
 import { commandFlags, allowedFlags, sha256File } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
 import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
+import { checkSpawnAvailability } from "./launch.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const q = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -35,7 +36,7 @@ export async function dispatch(args) {
   return withLock(path.join(args.root, "dispatch.lock"), () => prepareDispatch(args));
 }
 
-function prepareDispatch(args) {
+async function prepareDispatch(args) {
   allowedFlags(args, ["issue", "root", "config", "snapshot", "risk", "critical", "profile", "handshake", "role", "reason", "full-snapshot", "preapply",
     "skills-root", "moves", "gates", "open-decisions", "verification", "review-dataset", "review-dataset-version", "review-pilot", "worker-writable-roots"]);
   const issue = args.issue;
@@ -148,22 +149,37 @@ function prepareDispatch(args) {
   if (pilot) Object.assign(values, { review_project: pilot.project, dataset_version: pilot.version, dataset_path: pilot.path, dataset_digest: pilot.digest });
   const template = fs.readFileSync(path.join(skillsRoot, "mono-orchestrate/templates/orchestrator-dispatch.md"), "utf8");
   fs.writeFileSync(dispatchFile, renderDispatch(template, values, Boolean(pilot)));
-  const preapplied = manifest ? applyPreapply(worktree, issue, manifest) : null;
+  const originalHead = git(worktree, "rev-parse", "HEAD");
+  const preapplied = manifest ? await withLock(path.join(args.root, "launch.lock"), () => {
+    checkSpawnAvailability(request);
+    return applyPreapply(worktree, issue, manifest);
+  }) : null;
   const preapplyLine = preapplied ? `PREAPPLY ${issue} ${preapplied.commit} per mandate ${mandate}` : null;
   const ledgerFile = path.join(args.root, "ledger.md");
-  if (preapplied && (!fs.existsSync(ledgerFile) || !fs.readFileSync(ledgerFile, "utf8").split("\n").some(line => line.endsWith(` ${preapplyLine}`)))) {
+  try {
+    if (preapplied && (!fs.existsSync(ledgerFile) || !fs.readFileSync(ledgerFile, "utf8").split("\n").some(line => line.endsWith(` ${preapplyLine}`)))) {
+      const stamp = execFileSync("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"], { encoding: "utf8" }).trim();
+      const fd = fs.openSync(path.join(args.root, "ledger.md"), "a");
+      try { fs.writeSync(fd, `- ${stamp} ${preapplyLine}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    }
+    if (preapplied) fs.appendFileSync(dispatchFile, `\n## Предприменённые изменения\n\nКоммит: ${preapplied.commit}\n\n| path | sha256 |\n| --- | --- |\n${preapplied.files.map(file => `| ${file.path} | ${file.sha256} |`).join("\n")}\n`);
+    const gateOutput = run("../gate.mjs", ["start", "--request", gateFile]);
+    if (!gateOutput.includes("gate start: pass")) throw new Error(gateOutput.trim());
+    const launched = JSON.parse(run("spawn.mjs", ["--request", spawnFile]));
     const stamp = execFileSync("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"], { encoding: "utf8" }).trim();
     const fd = fs.openSync(path.join(args.root, "ledger.md"), "a");
-    try { fs.writeSync(fd, `- ${stamp} ${preapplyLine}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    try { fs.writeSync(fd, `- ${stamp} DISPATCHED ${issue} a${launched.attempt}: ${dispatchFile}; pins ${pinsDigest}; profile ${profile}; snapshot ${extracts.note ?? "extracts"}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    return { ...launched, pins: request.pins, gateFile, dispatchFile, spawnFile, snapshot };
+  } catch (error) {
+    if (preapplied?.created) await withLock(path.join(args.root, "launch.lock"), () => {
+      const used = fs.existsSync(attemptsFile) ? readJson(attemptsFile)[issue] ?? 0 : 0;
+      if (used < attempt && git(worktree, "rev-parse", "HEAD") === preapplied.commit && !git(worktree, "status", "--porcelain", "--untracked-files=all")) {
+        git(worktree, "reset", "--hard", originalHead);
+        if (fs.existsSync(ledgerFile)) fs.writeFileSync(ledgerFile, fs.readFileSync(ledgerFile, "utf8").split("\n").filter(line => !line.endsWith(` ${preapplyLine}`)).join("\n"));
+      }
+    });
+    throw error;
   }
-  if (preapplied) fs.appendFileSync(dispatchFile, `\n## Предприменённые изменения\n\nКоммит: ${preapplied.commit}\n\n| path | sha256 |\n| --- | --- |\n${preapplied.files.map(file => `| ${file.path} | ${file.sha256} |`).join("\n")}\n`);
-  const gateOutput = run("../gate.mjs", ["start", "--request", gateFile]);
-  if (!gateOutput.includes("gate start: pass")) throw new Error(gateOutput.trim());
-  const launched = JSON.parse(run("spawn.mjs", ["--request", spawnFile]));
-  const stamp = execFileSync("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"], { encoding: "utf8" }).trim();
-  const fd = fs.openSync(path.join(args.root, "ledger.md"), "a");
-  try { fs.writeSync(fd, `- ${stamp} DISPATCHED ${issue} a${launched.attempt}: ${dispatchFile}; pins ${pinsDigest}; profile ${profile}; snapshot ${extracts.note ?? "extracts"}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  return { ...launched, pins: request.pins, gateFile, dispatchFile, spawnFile, snapshot };
 }
 
 if (isMain(import.meta.url)) {

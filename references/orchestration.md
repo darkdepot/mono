@@ -1503,6 +1503,10 @@ that disagree, paths outside `.agents/`, `..`, symbolic links (including parents
 and nonregular targets before application. A section without mandate or without
 --preapply refuses before spawn, without registering an attempt.
 
+Reuse spawn availability checks before application; refused pre-registration
+launches restore the owned commit and ledger entry. Stage approved ignored targets
+explicitly; transformed staged blobs refuse and restore files/index before commit.
+
 Commit `<KEY>: pre-applied .agents changes (orchestrator)` before start gates;
 render commit, paths and hashes in «Предприменённые изменения». Append a UTC
 `date -u` ledger entry `PREAPPLY <KEY> <sha> per mandate <url>`. Repeating the same

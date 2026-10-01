@@ -111,8 +111,31 @@ export function applyPreapply(worktree, issue, manifest) {
     }
     throw new Error("preapply identical bytes have no matching orchestrator commit");
   }
-  for (const entry of manifest.entries) { const file = path.join(worktree, entry.path); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, entry.bytes, "utf8"); }
-  git("add", "--", ...manifest.entries.map(entry => entry.path));
-  git("commit", "-m", title);
+  const originals = manifest.entries.map(entry => ({ ...entry,
+    original: fs.existsSync(path.join(worktree, entry.path)) ? fs.readFileSync(path.join(worktree, entry.path)) : null }));
+  const createdDirectories = new Set();
+  try {
+    for (const entry of originals) {
+      const file = path.join(worktree, entry.path);
+      let directory = path.dirname(file);
+      while (directory !== worktree && !fs.existsSync(directory)) { createdDirectories.add(directory); directory = path.dirname(directory); }
+      fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, entry.bytes, "utf8");
+    }
+    git("add", "--force", "--", ...names);
+    for (const entry of originals) {
+      const blob = execFileSync("git", ["show", `:${entry.path}`], { cwd: worktree });
+      if (hash(blob) !== entry.sha256) throw new Error(`preapply staged blob sha256 mismatch: ${entry.path}`);
+    }
+    git("commit", "-m", title);
+  } catch (error) {
+    git("reset", "--", ...names);
+    for (const entry of originals) {
+      const file = path.join(worktree, entry.path);
+      if (entry.original === null) fs.rmSync(file, { force: true });
+      else fs.writeFileSync(file, entry.original);
+    }
+    for (const directory of [...createdDirectories].sort((a, b) => b.length - a.length)) fs.rmdirSync(directory);
+    throw error;
+  }
   return { commit: git("rev-parse", "HEAD").trim(), created: true, files: manifest.entries.map(({ path, sha256 }) => ({ path, sha256 })) };
 }
