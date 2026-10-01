@@ -76,6 +76,6 @@ UTF-8 lines, each ending in LF, without trimming or adding indentation.
 
 - `.agents/mono-workflow.config.json`
 ```text
-<exact file bytes, ending with LF>
+<точные байты файла с завершающим LF>
 ```
 ````
