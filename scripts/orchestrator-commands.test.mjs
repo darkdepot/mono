@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { extractSnapshot, references, section } from "./orchestrator/snapshot.mjs";
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
 import { digest, readJson, atomicJson, withLock } from "./runtime.mjs";
-import { publishPhase, validateConfirmation } from "./delivery-state.mjs";
+import { publishPhase, validateConfirmation, confirmQueue } from "./delivery-state.mjs";
 import { expandedWrite, effectivePins, admitCollection, collectionPinsBinding } from "./orchestrator/command-state.mjs";
 import { acceptAck, acceptReport, acceptAmend } from "./orchestrator/accept.mjs";
 import { reconcile } from "./orchestrator/linear-adapter.mjs";
@@ -755,6 +755,138 @@ test("collector confirms an empty phase and leaves connector queues and terminal
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 
+async function collectorAttentionFixture(runFixture) {
+  const { collectOnce } = await import("./orchestrator/collector.mjs");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-attention-"));
+  const root = path.join(scratch, "root"), repo = path.join(scratch, "repo"), skillsRoot = path.join(scratch, "skills"), evidenceRoot = path.join(scratch, "evidence");
+  const issue = "MONO-999", head = "d".repeat(40), options = { root, issue, attempt: 1 };
+  const identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
+  const pins = { product: "fixture", root, worktree: repo, skillsRoot, evidenceRoot, baseRef: "origin/main", risk: "standard", critical: null,
+    verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo], reviewDatasetVersion: 0 };
+  const pinsFile = path.join(scratch, "pins.json");
+  const attention = path.join(root, "reports", `${issue}-collect-attention-a1.json`), log = path.join(root, "reports", `${issue}-collector-a1.log`);
+  const reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`), registry = path.join(root, "workers.json");
+  const phase = (name, sequence, queue = []) => ({ ...identity, issue, stage: "mono-deliver", attempt: 1, phase: name, kind: "confirmation-request", sequence, head,
+    publishedAt: new Date().toISOString(), linear_mutations_pending: queue, capsule: { phase: name, head, decisions: [], open_queue: queue, writable_roots: [repo] } });
+  const request = number => ({ ...pins, head, collect: false, collectionId: `preflight-collect:${head}:${number}` });
+  const report = (number, overrides = {}) => {
+    const value = { ...request(number), ...overrides };
+    return phase("preflight", number, [{ id: value.collectionId, operation: "preflight-collect", target: head, payload: { request: value } }]);
+  };
+  const poll = () => collectOnce(options);
+  const lines = () => fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter(line => line.includes("attention: ")) : [];
+  const oldPath = process.env.PATH;
+  try {
+    for (const dir of [repo, skillsRoot, evidenceRoot]) fs.mkdirSync(dir, { recursive: true });
+    atomicJson(pinsFile, pins);
+    const entry = { ...identity, issue, stage: "mono-deliver", attempt: 1, worktree: repo,
+      pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, spawned_at: new Date(Date.now() - 10000).toISOString() };
+    atomicJson(registry, { [issue]: entry });
+    atomicJson(path.join(root, "reports", `${issue}-phase-code.json`), phase("code", 1)); await poll();
+    const bin = path.join(scratch, "bin");
+    write(path.join(bin, "ps"), "#!/usr/bin/env node\nconsole.log('fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
+    process.env.PATH = `${bin}:${oldPath}`;
+    write(path.join(skillsRoot, ".mono-agent-workflow/scripts/gate.mjs"), "console.log('gate preflight: pass: fixture admission');\n");
+    const signedHistory = async value => {
+      const { createHmac, randomUUID } = await import("node:crypto"), { canonical } = await import("./runtime.mjs");
+      const key = Buffer.alloc(32, 9); fs.writeFileSync(path.join(evidenceRoot, "receipt.key"), key);
+      const receipt = { ...value, root: fs.realpathSync(root), worktree: fs.realpathSync(repo), evidenceRoot: fs.realpathSync(evidenceRoot), workerWritableRoots: [fs.realpathSync(repo)],
+        producer: "gate-autoreview-v2", runId: randomUUID(), reviewDataset: null, modelRoutes: null };
+      const file = path.join(evidenceRoot, "history", `${receipt.runId}.json`);
+      const envelope = { receipt, signature: createHmac("sha256", key).update(canonical(receipt)).digest("hex") };
+      atomicJson(file, envelope);
+      return { receipt: file, receiptDigest: digest(envelope), gate: "gate preflight: fail: fixture reconciled refusal" };
+    };
+    await runFixture({ poll, lines, attention, reportFile, registry, entry, phase, report, request, signedHistory, options, scratch });
+  } finally { process.env.PATH = oldPath; fs.rmSync(scratch, { recursive: true, force: true }); }
+}
+
+test("collector admission refusal writes exactly one attention line and durable pair", async () => {
+  await collectorAttentionFixture(async f => {
+    const report = f.report(1, { reviewDatasetVersion: 7 }); atomicJson(f.reportFile, report);
+    await f.poll();
+    const value = readJson(f.attention);
+    assert.deepEqual(Object.keys(value).sort(), ["at", "collectionId", "pinsVersion", "reason", "reportDigest"]);
+    assert.equal(value.reportDigest, digest(report)); assert.equal(value.pinsVersion, 0);
+    assert.equal(value.collectionId, report.capsule.open_queue[0].id); assert.equal(value.reason, "collection pin mismatch: reviewDatasetVersion");
+    assert.ok(Number.isFinite(Date.parse(value.at))); assert.equal(f.lines().length, 1);
+    assert.deepEqual(fs.readdirSync(path.dirname(f.attention)).filter(name => name.includes("collect-attention")), [path.basename(f.attention)]);
+  });
+});
+
+test("collector skips the same refused pair on another poll and in a restarted process", async () => {
+  await collectorAttentionFixture(async f => {
+    atomicJson(f.reportFile, f.report(1, { reviewDatasetVersion: 7 })); await f.poll();
+    const before = fs.readFileSync(f.attention, "utf8"), logFile = f.attention.replace("collect-attention", "collector").replace(".json", ".log");
+    const beforeLog = fs.readFileSync(logFile, "utf8"); await f.poll();
+    const module = new URL("./orchestrator/collector.mjs", import.meta.url).href;
+    pass(spawnSync(process.execPath, ["--input-type=module", "-e", `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { encoding: "utf8" }));
+    assert.equal(fs.readFileSync(f.attention, "utf8"), before); assert.equal(f.lines().length, 1);
+    assert.equal(fs.readFileSync(logFile, "utf8"), beforeLog);
+  });
+});
+
+test("collector retries identical report bytes after registry pinsVersion advances", async () => {
+  await collectorAttentionFixture(async f => {
+    const report = f.report(1, { reviewDatasetVersion: 7 }); atomicJson(f.reportFile, report); await f.poll();
+    atomicJson(path.join(path.dirname(f.entry.pins.file), "pins.v1.json"), { pinsVersion: 1 });
+    atomicJson(f.registry, { [f.options.issue]: { ...f.entry, pinsVersion: 1 } }); await f.poll();
+    assert.equal(f.lines().length, 2); assert.equal(readJson(f.attention).reportDigest, digest(report));
+    assert.equal(readJson(f.attention).pinsVersion, 1); assert.equal(readJson(f.attention).reason, "new collection request uses stale pinsVersion");
+  });
+});
+
+test("collector retries a new refused report and replaces the attention record", async () => {
+  await collectorAttentionFixture(async f => {
+    atomicJson(f.reportFile, f.report(1, { reviewDatasetVersion: 7 })); await f.poll();
+    const next = { ...f.report(2, { risk: "deep" }), sequence: 1 }; atomicJson(f.reportFile, next); await f.poll();
+    assert.equal(f.lines().length, 2); assert.equal(readJson(f.attention).reportDigest, digest(next));
+    assert.equal(readJson(f.attention).collectionId, next.capsule.open_queue[0].id); assert.equal(readJson(f.attention).reason, "collection pin mismatch: risk");
+  });
+});
+
+test("collector admitted current report clears only the exact attempt attention file", async () => {
+  await collectorAttentionFixture(async f => {
+    const report = f.report(1); atomicJson(f.reportFile, report);
+    atomicJson(f.attention, { reportDigest: digest(report), collectionId: report.capsule.open_queue[0].id, pinsVersion: 1, reason: "prior refusal", at: new Date().toISOString() });
+    const helper = f.attention.replace(".json", "-s1.txt"), other = f.attention.replace("-a1.json", "-a2.json");
+    write(helper, "helper evidence"); atomicJson(other, { reason: "other attempt" });
+    await f.signedHistory(f.request(1)); await f.poll();
+    assert.equal(fs.existsSync(f.attention), false); assert.equal(fs.readFileSync(helper, "utf8"), "helper evidence");
+    assert.equal(readJson(other).reason, "other attempt");
+  });
+});
+
+test("collector corrected higher-sequence D2 admission clears the refused D1 attention", async () => {
+  await collectorAttentionFixture(async f => {
+    const rejected = f.report(1, { reviewDatasetVersion: 7 }); atomicJson(f.reportFile, rejected); await f.poll();
+    // A later sequence still requires orchestrator reconciliation of D1.
+    const evidence = await f.signedHistory(rejected.capsule.open_queue[0].payload.request);
+    await confirmQueue(rejected, f.options.root, () => ({ state: "present", evidence }));
+    assert.equal(fs.existsSync(f.attention), true);
+    atomicJson(f.reportFile, f.report(2)); await f.signedHistory(f.request(2)); await f.poll();
+    assert.equal(fs.existsSync(f.attention), false);
+    assert.equal(readJson(path.join(f.options.root, "confirmations", `${f.options.issue}-phase-preflight-a1-s2.confirmed.json`)).status, "confirmed");
+  });
+});
+
+test("collector confirmation of another phase leaves attention untouched", async () => {
+  await collectorAttentionFixture(async f => {
+    atomicJson(f.reportFile, f.report(1, { reviewDatasetVersion: 7 })); await f.poll();
+    const before = fs.readFileSync(f.attention, "utf8");
+    atomicJson(path.join(f.options.root, "reports", `${f.options.issue}-phase-code.json`), f.phase("code", 2)); await f.poll();
+    assert.equal(fs.readFileSync(f.attention, "utf8"), before); assert.equal(f.lines().length, 1);
+  });
+});
+
+test("collector launch lock error creates no attention file", async () => {
+  await collectorAttentionFixture(async f => {
+    atomicJson(f.reportFile, f.report(1));
+    await withLock(path.join(f.options.root, "launch.lock"), async () => { await assert.rejects(f.poll(), /operation locked/u); });
+    assert.equal(fs.existsSync(f.attention), false); assert.equal(f.lines().length, 0);
+  });
+});
+
 test("collector installed scratch: gate crash leaves both locks, admitted recovery, binding checks and commands", async t => {
   const { collectorStart, collectorStop, collectorStatus, collectOnce } = await import("./orchestrator/collector.mjs");
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-recovery-"));
@@ -860,7 +992,9 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     });
     const stale = { ...request, collectionId: `preflight-collect:${head}:2` };
     atomicJson(reportFile, phase("preflight", 2, [{ ...queued, id: stale.collectionId, payload: { request: stale } }]));
-    await assert.rejects(collectOnce(options), /stale pinsVersion/u); assert.equal(readJson(countFile).collections, 1);
+    await collectOnce(options);
+    assert.equal(readJson(path.join(root, "reports", `${issue}-collect-attention-a1.json`)).reason, "new collection request uses stale pinsVersion");
+    assert.equal(readJson(countFile).collections, 1);
     await t.test("receipt actual binding rejects signed mismatches", async () => {
       for (const [field, value] of [["risk", "standard"], ["critical", "wrong"], ["workerWritableRoots", []], ["verification", { command: "wrong", args: [] }], ["reviewDataset", { source: "wrong" }], ["pins", { file: "wrong", digest: "0".repeat(64) }]]) {
         const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
@@ -869,6 +1003,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
         // admission/result, then use a fresh ID for the next recorded gate run.
         atomicJson(reportFile, next); atomicJson(modeFile, { corrupt: field, value });
         await assert.rejects(collectOnce(options), new RegExp(`binding mismatch: ${field}`));
+        assert.equal(fs.existsSync(path.join(root, "reports", `${issue}-collect-attention-a1.json`)), false);
         assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s2.confirmed.json`)), false);
       }
     });
@@ -890,6 +1025,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
       atomicJson(reportFile, incomplete); atomicJson(modeFile, { noReceipt: true });
       await assert.rejects(collectOnce(options), /without an answer/u);
       await assert.rejects(collectOnce(options), /orchestrator reconciliation required/u);
+      assert.equal(fs.existsSync(path.join(root, "reports", `${issue}-collect-attention-a1.json`)), false);
       assert.equal(readJson(countFile).collections, number);
       assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s3.confirmed.json`)), false);
     });

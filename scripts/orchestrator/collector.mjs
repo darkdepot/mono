@@ -6,10 +6,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants } from "../runtime.mjs";
 import { confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
-import { commandFlags, allowedFlags, registryEntry, correlatedPhase, validateReportBarriers, admitCollection, effectivePins, sha256File } from "./command-state.mjs";
+import { commandFlags, allowedFlags, registryEntry, correlatedPhase, validateReportBarriers, admitCollection, CollectionAdmissionRefusal, effectivePins, sha256File } from "./command-state.mjs";
 
 const lockPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.lock`);
 const logPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.log`);
+const attentionPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collect-attention-a${attempt}.json`);
 function log(options, text) { fs.appendFileSync(logPath(options), `${new Date().toISOString()} ${text}\n`); }
 function verifyReceipt(file, request) {
   const envelope = readJson(file), receipt = envelope.receipt;
@@ -110,8 +111,24 @@ export async function collectOnce(options) {
       throw new Error("collection requires a single preflight confirmation-request");
     const confirmation = confirmationPath(report, options.root);
     if (fs.existsSync(confirmation)) { validateConfirmation(report, readJson(confirmation)); continue; }
+    const attentionFile = attentionPath(options);
+    const attention = report.capsule.open_queue.length && fs.existsSync(attentionFile) ? readJson(attentionFile) : null;
+    const reportDigest = digest(report), pinsVersion = entry.pinsVersion ?? 0;
+    if (report.capsule.open_queue.length && attention?.reportDigest === reportDigest && attention.pinsVersion === pinsVersion) continue;
     await validateReportBarriers(options.root, report, path.dirname(files[0]));
-    const admissions = report.capsule.open_queue.length ? await admitCollection(options.root, report) : [], evidence = new Map();
+    let admissions = [];
+    if (report.capsule.open_queue.length) {
+      try { admissions = await admitCollection(options.root, report); }
+      catch (error) {
+        if (!(error instanceof CollectionAdmissionRefusal)) throw error;
+        atomicJson(attentionFile, { reportDigest, collectionId: report.capsule.open_queue[0].id, reason: error.message, pinsVersion, at: new Date().toISOString() });
+        log(options, `attention: ${error.message}`);
+        continue;
+      }
+      // A current preflight admission also replaces attention for an older report.
+      if (attention && fs.existsSync(attentionFile) && digest(readJson(attentionFile)) === digest(attention)) fs.unlinkSync(attentionFile);
+    }
+    const evidence = new Map();
     for (const write of report.capsule.open_queue) evidence.set(write.id, await collection(options, report, write, entry, admissions.find(item => item.collectionId === write.id)));
     await confirmQueue(report, options.root, (_action, write) => ({ state: "present", evidence: evidence.get(write.id) }), path.dirname(files[0]));
     log(options, `confirmed ${phase} sequence ${report.sequence}: ${report.capsule.open_queue.length} writes`);

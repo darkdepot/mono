@@ -6,6 +6,13 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-100: persist collector admission refusals once per report digest and
+  current registry pins version in the attempt's attention file. Retry only
+  when that pair changes; admission of the current collection-only preflight
+  report clears the exact file, including attention for a replaced report.
+  Add named fixtures for restart, retry, replacement, cleanup and lock errors;
+  admission rules/reasons, receipts, locks and polling interval stay unchanged.
+
 - MONO-99: bind worker collection requests to registered pins and dataset
   digests under U13, reusing admission comparison without gate-side writes.
   Emit `pending` (exit 2) with `publishRequest` before collection; preserve
