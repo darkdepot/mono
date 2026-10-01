@@ -1129,10 +1129,9 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     const rawConfig = fs.readFileSync(config, "utf8");
     const bytes = rawConfig.replace('"projectName": "Mono Agent Workflow"', '"projectName": "AE12 applied"');
     const hash = value => createHash("sha256").update(value).digest("hex");
-    const manifest = (filename, content, sha = hash(content)) => `| path | sha256 |\n| --- | --- |\n| ${filename} | ${sha} |\n\n    - \`${filename}\`\n\`\`\`text\n${content}\`\`\`\n`;
+    const manifest = (filename, content, sha = hash(content)) => `    - \`${filename}\` sha256 \`${sha}\`\n\`\`\`text\n${content}\`\`\`\n`;
     const target = ".agents/mono-workflow.config.json", opaquePath = ".agents/opaque.txt", opaqueBytes = JSON.parse(fixture("preapply-opaque-bytes.json")).bytes;
-    const good = manifest(target, bytes).replace(`| ${target} | ${hash(bytes)} |\n`, `| ${target} | ${hash(bytes)} |\n| ${opaquePath} | ${hash(opaqueBytes)} |\n`)
-      + `    - \`${opaquePath}\`\n\`\`\`text\n${opaqueBytes}\`\`\`\n`;
+    const good = manifest(target, bytes) + manifest(opaquePath, opaqueBytes);
     write(path.join(snapshot, "approval.md"), "Approved AE12; project Delivery."); write(path.join(snapshot, "project-brief.md"), "AE12"); write(path.join(snapshot, "prd.md"), "## Кратко\nAE12 scratch.\n");
     const setSpec = value => { write(path.join(snapshot, "issue-MONO-997.md"), body); write(path.join(snapshot, "tech-spec.md"), `- U7. AE12\n  - Предприменение:\n${value}- U8. Uncovered\n`); };
     setSpec(good);
@@ -1142,6 +1141,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
       const result = run(process.execPath, [...options, ...flags]); if (result.status === 0) { process.kill(JSON.parse(result.stdout).pid, "SIGTERM"); } assert.notEqual(result.status, 0, result.stdout); assert.match(result.stderr, pattern);
       assert.equal(git(worktree, "rev-parse", "HEAD"), base); assert.equal(fs.existsSync(path.join(root, "attempts.json")), false); assert.deepEqual(readJson(path.join(root, "workers.json")), {});
       assert.equal(fs.readFileSync(path.join(worktree, target), "utf8"), rawConfig);
+      assert.equal(fs.existsSync(path.join(worktree, opaquePath)), false);
     };
     await t.test("preapply-flag-required", () => { setSpec(good); refusal(/--preapply/u, []); });
     await t.test("preapply-mandate-required", () => { delete policy.orchestration.preapply; write(config, policy); refusal(/mandate/u); policy.orchestration.preapply = { mandate: input.mandate }; write(config, policy); });
@@ -1151,7 +1151,16 @@ test("preapply AE12 named contracts on installed scratch", async t => {
       ["preapply-nonregular", manifest(".agents", bytes), /path|regular/u],
       ["preapply-directory-target", manifest(".agents/directory", bytes), /regular/u],
       ["preapply-hash-mismatch", manifest(target, bytes, "0".repeat(64)), /sha256/u],
-      ["preapply-fence-without-path", good.replace(`    - \`${target}\`\n`, ""), /path/u],
+      ["preapply-table-form-refused", `| path | sha256 |\n| --- | --- |\n| ${target} | ${hash(bytes)} |\n\n    - \`${target}\`\n\`\`\`text\n${bytes}\`\`\`\n`, /path|manifest/u],
+      ["preapply-malformed-second-item", manifest(target, bytes) + manifest(opaquePath, opaqueBytes, "invalid").replace("    -", "  -"), /path|sha256/u],
+      ["preapply-malformed-second-extra-space", manifest(target, bytes) + manifest(opaquePath, opaqueBytes, "invalid").replace("    - ", "  -  "), /path|sha256/u],
+      ["preapply-malformed-second-tab", manifest(target, bytes) + manifest(opaquePath, opaqueBytes, "invalid").replace("    - ", "  -\t"), /path|sha256/u],
+      ["preapply-malformed-second-star-spacing", manifest(target, bytes) + manifest(opaquePath, opaqueBytes, "invalid").replace("    - ", "  *  "), /path|sha256/u],
+      ["preapply-duplicate-path", manifest(target, bytes) + manifest(target, bytes).replace("    -", "  -"), /duplicate|repeated/u],
+      ["preapply-truncated-hash", manifest(target, bytes) + manifest(opaquePath, opaqueBytes, "a".repeat(63)).replace("    -", "  -"), /path|sha256/u],
+      ["preapply-missing-sha256", manifest(target, bytes) + manifest(opaquePath, opaqueBytes).replace("sha256 ", "").replace("    -", "  -"), /path|sha256/u],
+      ["preapply-unclosed-path", manifest(target, bytes) + manifest(opaquePath, opaqueBytes).replace(`${opaquePath}\``, opaquePath).replace("    -", "  -"), /path|sha256/u],
+      ["preapply-fence-without-path", good.replace(`    - \`${target}\` sha256 \`${hash(bytes)}\`\n`, ""), /path/u],
       ["preapply-path-without-fence", manifest(target, bytes).replace(/```text\n[\s\S]*?```\n/u, ""), /fence/u],
       ["preapply-indented-fence", good.replaceAll("```", " ```"), /column|indent/u],
       ["preapply-four-space-fence", good.replaceAll("```", "    ```"), /column|indent/u],
@@ -1160,8 +1169,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     await t.test("preapply-dirty-tree", () => { setSpec(good); const dirty = path.join(worktree, "dirty"); write(dirty, "dirty"); refusal(/dirty/u); fs.unlinkSync(dirty); });
     await t.test("preapply-conflicting-file-parent", () => {
       const prefix = ".agents/new-file", child = prefix + "/child";
-      const value = good.replace("| --- | --- |\n", `| --- | --- |\n| ${prefix} | ${hash("one\n")} |\n| ${child} | ${hash("two\n")} |\n`)
-        + `    - \`${prefix}\`\n\`\`\`text\none\n\`\`\`\n    - \`${child}\`\n\`\`\`text\ntwo\n\`\`\`\n`;
+      const value = good + manifest(prefix, "one\n") + manifest(child, "two\n");
       setSpec(value); refusal(/regular|parent/u);
       assert.equal(fs.existsSync(path.join(worktree, prefix)), false);
     });
@@ -1173,16 +1181,14 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     });
     await t.test("preapply-late-refusal-preserves-existing-ignored-bytes", () => {
       const name = ".agents/ignored.txt", original = "existing local ignored bytes\n", replacement = "approved replacement\n";
-      const value = good.replace("| --- | --- |\n", `| --- | --- |\n| ${name} | ${hash(replacement)} |\n`)
-        + `    - \`${name}\`\n\`\`\`text\n${replacement}\`\`\`\n`;
+      const value = good + manifest(name, replacement);
       const file = path.join(worktree, name), log = path.join(root, "logs/MONO-997-mono-deliver-a1.jsonl"); write(file, original); write(log, "existing log fixture\n");
       try { setSpec(value); refusal(/EEXIST/u); assert.equal(fs.readFileSync(file, "utf8"), original); }
       finally { fs.unlinkSync(log); fs.rmSync(file, { force: true }); fs.rmSync(path.join(root, "ledger.md"), { force: true }); }
     });
     await t.test("preapply-transformed-staging-no-mutation", () => {
       const name = ".agents/filtered.txt", raw = "$Id: expanded-token $\n";
-      const value = good.replace("| --- | --- |\n", `| --- | --- |\n| ${name} | ${hash(raw)} |\n`)
-        + `    - \`${name}\`\n\`\`\`text\n${raw}\`\`\`\n`;
+      const value = good + manifest(name, raw);
       try { setSpec(value); refusal(/staged|blob|transform/u);
         assert.equal(fs.existsSync(path.join(worktree, name)), false); assert.equal(git(worktree, "status", "--porcelain"), "");
       } finally { git(worktree, "reset", "--hard", base); atomicJson(path.join(root, "workers.json"), {}); }
@@ -1261,8 +1267,7 @@ if(isMain(import.meta.url)){ const args=process.argv.slice(2), request=path.join
     });
     await t.test("preapply-issue-only-direct-section", () => {
       const ignored = ".agents/ignored.txt", ignoredBytes = "approved ignored target\n";
-      const ignoredManifest = good.replace("| --- | --- |\n", `| --- | --- |\n| ${ignored} | ${hash(ignoredBytes)} |\n`)
-        + `- \`${ignored}\`\n\`\`\`text\n${ignoredBytes}\`\`\`\n`;
+      const ignoredManifest = good + manifest(ignored, ignoredBytes);
       const laneBody = body + "# Предприменение\n" + ignoredManifest;
       write(path.join(snapshot, "issue-MONO-996.md"), laneBody);
       write(path.join(snapshot, "issue-only.json"), { marker: "fixture", label: "issue-only", fingerprint: hash(laneBody), config: "fixture enabled", ownerApproval: "approved",
@@ -1316,9 +1321,49 @@ test("preapply-current-head-missing-ignored-file: reapply instead of reusing anc
 
 test("preapply-covered-unit-selection: unrelated approved units are not dispatch candidates", () => {
   const bytes = "fixture\n", hash = createHash("sha256").update(bytes).digest("hex");
-  const manifest = `  - Предприменение:\n| path | sha256 |\n| --- | --- |\n| .agents/fixture | ${hash} |\n    - \`.agents/fixture\`\n\`\`\`text\n${bytes}\`\`\`\n`;
+  const manifest = `  - Предприменение:\n    - \`.agents/fixture\` sha256 \`${hash}\`\n\`\`\`text\n${bytes}\`\`\`\n`;
   const issue = "# Покрытие PRD/Spec\nU7\n", prd = "## Кратко\nFixture\n";
   assert.equal(preapplyManifest(issue, prd, `- U7. Current\n- U8. Other\n${manifest}`, false), null);
   const selected = preapplyManifest(issue, prd, `- U7. Current\n${manifest}- U8. Other\n${manifest}`, false);
   assert.deepEqual(selected.entries.map(entry => entry.path), [".agents/fixture"]);
+});
+
+
+test("preapply-linear-serialized: bytes survive materialization and U12 extraction", () => {
+  const spec = fixture("preapply-linear-serialized.md");
+  const issue = "# Покрытие PRD/Spec\nU7\n", prd = "## Кратко\nFixture\n";
+  const bytes = '{\n  "fixture": "neutral",\n  "enabled": true\n}\n';
+  const expected = [{ path: ".agents/fixture.json", sha256: createHash("sha256").update(bytes).digest("hex"), bytes }];
+  const parsed = preapplyManifest(issue, prd, spec, false);
+  assert.deepEqual(parsed.entries, expected);
+  assert.equal(parsed.materialized, "# Предприменение\n" + spec.slice(spec.indexOf("  * Предприменение:\n") + "  * Предприменение:\n".length));
+  assert.deepEqual(preapplyManifest(parsed.materialized, null, null, true).entries, expected);
+  const repeated = preapplyManifest(issue + parsed.materialized, prd, spec, false);
+  assert.equal(repeated.alreadyMaterialized, true);
+  assert.equal(repeated.materialized, parsed.materialized);
+  const extracted = extractSnapshot(issue, prd, spec);
+  assert.equal(extracted.spec, spec);
+  assert.deepEqual(preapplyManifest(issue, prd, extracted.spec, false).entries, expected);
+});
+
+test("preapply-ordinary-sibling-boundary: notes after the manifest remain outside it", () => {
+  const spec = fixture("preapply-linear-serialized.md");
+  const issue = "# Покрытие PRD/Spec\nU7\n", prd = "## Кратко\nFixture\n";
+  const expected = preapplyManifest(issue, prd, spec, false);
+  for (const marker of ["-", "*"]) {
+    const parsed = preapplyManifest(issue, prd, spec + `  ${marker} Verification notes\n`, false);
+    assert.deepEqual(parsed, expected);
+  }
+});
+
+test("preapply-whitespace-blank-lines: surrounding whitespace and raw content survive", () => {
+  const spec = fixture("preapply-linear-serialized.md").replaceAll("\n\n", "\n \t \n");
+  const issue = "# Покрытие PRD/Spec\nU7\n", prd = "## Кратко\nFixture\n";
+  const bytes = '{\n  "fixture": "neutral",\n  "enabled": true\n}\n';
+  const parsed = preapplyManifest(issue, prd, spec, false);
+  assert.deepEqual(parsed.entries, [{ path: ".agents/fixture.json", sha256: createHash("sha256").update(bytes).digest("hex"), bytes }]);
+  assert.ok(parsed.materialized.includes("\n \t \n"));
+  assert.deepEqual(preapplyManifest(parsed.materialized, null, null, true).entries, parsed.entries);
+  assert.equal(preapplyManifest(issue + parsed.materialized, prd, spec, false).alreadyMaterialized, true);
+  assert.equal(extractSnapshot(issue, prd, spec).spec, spec);
 });

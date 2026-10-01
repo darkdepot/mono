@@ -23,7 +23,7 @@ export function preapplyManifest(issue, prd, spec, issueOnly) {
       for (const unit of [...walk(specTree.root)].filter(node => node.type === "list" && /^U\d/u.test(node.id ?? "") && selected.has(node.id))) {
         for (const node of unit.children.filter(node => marker(specTree, node))) {
           if (node.column <= unit.column) throw new Error("preapply must be nested inside its implementation unit");
-          const boundary = unit.children.find(next => next.start > node.start && next.type === "item" && next.column <= node.column && !/^[ \t]*[-*] `[^`]+`[ \t]*$/u.test(source(specTree, next)));
+          const boundary = unit.children.find(next => next.start > node.start && next.type === "item" && next.column <= node.column && !/^[ \t]*[-*][ \t]+`/u.test(source(specTree, next)));
           candidates.push({ ...node, end: boundary?.start ?? unit.end });
         }
       }
@@ -41,24 +41,18 @@ export function preapplyManifest(issue, prd, spec, issueOnly) {
   const fences = new Map(blocks.filter(node => node.type === "fence").map(node => [node.start, node]));
   const lines = document.lines;
   let cursor = candidate.start + 1;
-  const skipEmpty = () => { while (cursor < candidate.end && lines[cursor] === "") cursor++; };
-  skipEmpty();
-  if (lines[cursor++]?.trim() !== "| path | sha256 |") throw new Error("preapply requires path/sha256 table");
-  if (!/^\s*\|\s*-+\s*\|\s*-+\s*\|\s*$/u.test(lines[cursor++] ?? "")) throw new Error("preapply requires table separator");
+  const skipEmpty = () => { while (cursor < candidate.end && /^[ \t]*$/u.test(lines[cursor])) cursor++; };
   const entries = new Map();
-  while (cursor < candidate.end && lines[cursor].trim().startsWith("|")) {
-    const row = /^\s*\|\s*([^|]+?)\s*\|\s*([a-f0-9]{64})\s*\|\s*$/u.exec(lines[cursor++]);
-    if (!row || entries.has(row[1])) throw new Error("invalid or duplicate preapply path/sha256 row");
-    entries.set(row[1], { path: row[1], sha256: row[2] });
-  }
-  if (!entries.size) throw new Error("empty preapply path table");
   while (cursor < candidate.end) {
     skipEmpty(); if (cursor >= candidate.end) break;
     if (/^[ \t]+(?:`{3,}|~{3,})/u.test(lines[cursor])) throw new Error("preapply fence must start at column 0 (no indentation)");
-    const item = /^[ \t]*[-*] `([^`]+)`[ \t]*$/u.exec(lines[cursor++]);
-    if (!item) throw new Error("preapply fence without path or unexpected manifest block");
-    const entry = entries.get(item[1]);
-    if (!entry || entry.bytes !== undefined) throw new Error("preapply path missing from table or repeated");
+    const line = lines[cursor++];
+    const item = /^[ \t]*[-*] `([^`]+)` sha256 `([a-f0-9]{64})`[ \t]*$/u.exec(line);
+    if (!item) throw new Error("invalid preapply path/sha256 item or fence without path");
+    if (entries.has(item[1])) throw new Error("invalid or duplicate preapply path/sha256 item");
+    const entry = { path: item[1], sha256: item[2] };
+    entries.set(entry.path, entry);
+    skipEmpty();
     const fence = fences.get(cursor);
     if (/^[ \t]+(?:`{3,}|~{3,})/u.test(lines[cursor] ?? "")) throw new Error("preapply fence must start at column 0 (no indentation)");
     if (!fence?.closed || fence.end > candidate.end || !/^(?:`{3,}|~{3,})text$/u.test(lines[cursor] ?? "")) throw new Error("preapply path without closed text fence");
@@ -67,7 +61,7 @@ export function preapplyManifest(issue, prd, spec, issueOnly) {
     if (hash(entry.bytes) !== entry.sha256) throw new Error(`preapply sha256 mismatch: ${entry.path}`);
     cursor = fence.end;
   }
-  for (const entry of entries.values()) if (entry.bytes === undefined) throw new Error(`preapply path without fence: ${entry.path}`);
+  if (!entries.size) throw new Error("empty preapply path list");
   const content = lines.slice(candidate.start + 1, candidate.end).join("\n");
   const materialized = "# Предприменение\n" + content + (content.endsWith("\n") ? "" : "\n");
   const alreadyMaterialized = !issueOnly && issueCandidates.length > 0;

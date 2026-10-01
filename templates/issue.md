@@ -65,16 +65,13 @@ Rules:
 
 Optional pre-application section (issue-only; Project-first dispatch materializes
 it from the approved Tech Spec unit). Substitute raw content and its hash; the
-path item is immediately followed by a column-zero `text` fence. Hash the raw
+path item may be indented and followed by blank lines before a column-zero `text`
+fence. Blank lines after the marker and between items are allowed. Hash the raw
 UTF-8 lines, each ending in LF, without trimming or adding indentation.
 
 ````markdown
 # Предприменение
-| path | sha256 |
-| --- | --- |
-| .agents/mono-workflow.config.json | <sha256> |
-
-- `.agents/mono-workflow.config.json`
+- `.agents/mono-workflow.config.json` sha256 `<sha256>`
 ```text
 <точные байты файла с завершающим LF>
 ```

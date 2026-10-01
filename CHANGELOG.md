@@ -6,6 +6,10 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-104: replace pre-application tables with path/sha256 list items; accept
+  Linear nesting and blank lines while preserving raw bytes and whole-manifest
+  refusals before application and attempt registration.
+
 - MONO-101: apply approved `.agents/` manifests by recorded owner mandate before
   dispatch start gates, with exact UTF-8 hashes, commit/ledger evidence and
   idempotent retries. Materialize covered Tech Spec manifests through the U12
