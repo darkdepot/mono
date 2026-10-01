@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { spawnSync, execFileSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { extractSnapshot, references, section } from "./orchestrator/snapshot.mjs";
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
@@ -189,7 +189,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills]));
     pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills, "--check"]));
     const runtime = path.join(skills, ".mono-agent-workflow/scripts");
-    for (const script of ["dispatch", "accept", "linear-adapter"]) pass(run(process.execPath, [path.join(runtime, `orchestrator/${script}.mjs`), "--help"]));
+    for (const script of ["dispatch", "accept", "linear-adapter", "collector"]) pass(run(process.execPath, [path.join(runtime, `orchestrator/${script}.mjs`), "--help"]));
     const budget = JSON.parse(pass(run(process.execPath, [path.join(runtime, "read-budget.mjs"), "--json"])));
     // Dirty scratch installs add a six-byte provenance suffix per skill. It is
     // installer metadata, not a corpus change; clean committed installs are exact.
@@ -545,6 +545,187 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     const registryFile = path.join(root, "workers.json");
     if (fs.existsSync(registryFile)) livePid ??= readJson(registryFile)["MONO-999"]?.pid;
     if (livePid) { try { process.kill(livePid, "SIGTERM"); } catch {} }
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("collector locks retain incarnation and reclaim only dead isolated process trees", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-lock-"));
+  const file = path.join(dir, "head.collect.lock");
+  const oldPath = process.env.PATH;
+  write(path.join(dir, "ps"), `#!/usr/bin/env node
+if (process.argv.includes("-axo")) console.log("${process.pid} 1 ${process.pid} S fixture-start"); else console.log("fixture-start");
+`); fs.chmodSync(path.join(dir, "ps"), 0o700); process.env.PATH = `${dir}:${oldPath}`;
+  try {
+    await withLock(file, async () => {
+      assert.equal(readJson(file).procStart, (await import("./runtime.mjs")).processStart(process.pid));
+      await assert.rejects(withLock(file, () => {}, { reclaim: true }), /locked/u);
+    });
+    const { reclaimLock } = await import("./runtime.mjs");
+    atomicJson(file, { pid: 99999999, procStart: "dead incarnation", processGroup: 99999999 });
+    reclaimLock(file);
+    assert.equal(fs.existsSync(file), false);
+    assert.equal(fs.existsSync(file + ".reclaim"), false);
+    atomicJson(file, { pid: process.pid, procStart: "old incarnation", processGroup: process.pid });
+    reclaimLock(file);
+    assert.equal(fs.existsSync(file), false, "a reused PID does not make the old incarnation live");
+  } finally { process.env.PATH = oldPath; fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("collector confirms an empty phase and leaves connector queues and terminal reports alone", async () => {
+  const { collectOnce } = await import("./orchestrator/collector.mjs");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-empty-"));
+  const root = path.join(scratch, "root"), repo = path.join(scratch, "repo");
+  const head = "a".repeat(40), issue = "MONO-999";
+  const identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
+  const entry = { issue, stage: "mono-deliver", attempt: 1, worktree: repo, ...identity, spawned_at: new Date(Date.now() - 10000).toISOString() };
+  const report = { ...entry, phase: "code", kind: "phase", sequence: 1, head, publishedAt: new Date().toISOString(), linear_mutations_pending: [],
+    capsule: { phase: "code", head, decisions: [], writable_roots: [repo], open_queue: [] } };
+  try {
+    atomicJson(path.join(root, "workers.json"), { [issue]: entry });
+    const file = path.join(root, "reports", `${issue}-phase-code.json`); atomicJson(file, report);
+    await collectOnce({ root, issue, attempt: 1 });
+    validateConfirmation(report, readJson(path.join(root, "confirmations", `${issue}-phase-code-a1-s1.confirmed.json`)));
+    report.sequence = 2; report.linear_mutations_pending = report.capsule.open_queue = [{ id: "comment-1", operation: "comment", target: issue, payload: "hello" }];
+    atomicJson(file, report); await collectOnce({ root, issue, attempt: 1 });
+    assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-code-a1-s2.confirmed.json`)), false);
+    atomicJson(file, { ...entry, status: "green" });
+    await assert.rejects(collectOnce({ root, issue, attempt: 1 }), /phase identity/u);
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+});
+
+test("collector installed scratch: gate crash leaves both locks, admitted recovery, binding checks and commands", async t => {
+  const { collectorStart, collectorStop, collectorStatus, collectOnce } = await import("./orchestrator/collector.mjs");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-recovery-"));
+  const root = path.join(scratch, "root"), repo = path.join(scratch, "repo"), evidence = path.join(scratch, "evidence"), skills = path.join(scratch, "skills"), bin = path.join(scratch, "bin");
+  const issue = "MONO-999", head = "b".repeat(40), attempt = 1, options = { root, issue, attempt };
+  const lock = path.join(root, "reports", `${issue}-collector-a1.lock`), headLock = path.join(evidence, `${head}.collect.lock`);
+  const oldPath = process.env.PATH, rows = path.join(scratch, "rows.json");
+  const oldRows = process.env.MONO_FIXTURE_ROWS;
+  const runtimeUrl = new URL("./runtime.mjs", import.meta.url).href;
+  const countFile = path.join(scratch, "count.json"), modeFile = path.join(scratch, "mode.json");
+  const waitUntil = async predicate => { const deadline = Date.now() + 12000; while (!predicate()) { if (Date.now() > deadline) assert.fail("fixture deadline: " + (fs.existsSync(path.join(root,"reports",`${issue}-collector-a1.log`)) ? fs.readFileSync(path.join(root,"reports",`${issue}-collector-a1.log`),"utf8") : "no log")); await new Promise(resolve => setTimeout(resolve, 50)); } };
+  let started;
+  try {
+    for (const dir of [repo, evidence, bin, path.dirname(lock)]) fs.mkdirSync(dir, { recursive: true });
+    write(rows, [lock, headLock]);
+    // Seatbelt denies host ps in a worker. This adapter supplies process telemetry
+    // for real detached fixture children, checking their OS liveness by signal 0.
+    write(path.join(bin, "ps"), `#!/usr/bin/env node
+const fs=require('fs');
+if(!process.argv.includes('-axo')) { console.log('fixture-start'); process.exit(); }
+const live=p=>{try{process.kill(p,0);return true}catch{return false}};
+const found=new Map([[process.ppid,{pid:process.ppid,processGroup:process.ppid}]]);
+for(const file of JSON.parse(fs.readFileSync(process.env.MONO_FIXTURE_ROWS))) if(fs.existsSync(file)) {
+ const holder=JSON.parse(fs.readFileSync(file)); for(const row of [holder,holder.gate,...(holder.descendants??[])].filter(Boolean)) if(live(row.pid)) found.set(row.pid,row);
+}
+for(const row of found.values()) console.log(row.pid+' 1 '+row.processGroup+' S fixture-start');
+`); fs.chmodSync(path.join(bin, "ps"), 0o700);
+    process.env.PATH = `${bin}:${oldPath}`; process.env.MONO_FIXTURE_ROWS = rows;
+    fs.writeFileSync(path.join(evidence, "receipt.key"), Buffer.alloc(32, 7));
+    atomicJson(modeFile, { crash: false }); atomicJson(countFile, { collections: 0 });
+    write(path.join(skills, ".mono-agent-workflow/scripts/gate.mjs"), `import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';
+import {withLock,atomicJson,readJson,canonical} from ${JSON.stringify(runtimeUrl)};
+const request=readJson(process.argv[process.argv.indexOf('--request')+1]);
+if(!request.collect){const receipt=readJson(path.join(request.evidenceRoot,request.head+'.json')).receipt;console.log(receipt.verification.exitCode===0?'gate preflight: pass: fixture recovered':'gate preflight: fail: fixture verification failed');process.exit();}
+await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),async()=>{
+ const countFile=${JSON.stringify(countFile)},mode=readJson(${JSON.stringify(modeFile)});const count=readJson(countFile);count.collections++;atomicJson(countFile,count);if(mode.noReceipt)process.exit(78);
+ const receipt={producer:'gate-autoreview-v2',runId:crypto.randomUUID(),head:request.head,base:request.head,collectionId:request.collectionId,product:request.product,skillsRoot:request.skillsRoot,
+ root:fs.realpathSync(request.root),worktree:fs.realpathSync(request.worktree),evidenceRoot:fs.realpathSync(request.evidenceRoot),risk:request.risk,critical:request.critical,workerWritableRoots:request.workerWritableRoots.map(p=>fs.realpathSync(p)).sort(),reviewDataset:null,
+ verification:{...request.verification,exitCode:mode.failed?1:0}};
+ if(mode.corrupt) receipt[mode.corrupt]=mode.value;
+ const envelope={receipt,signature:crypto.createHmac('sha256',fs.readFileSync(path.join(request.evidenceRoot,'receipt.key'))).update(canonical(receipt)).digest('hex')};
+ atomicJson(path.join(request.evidenceRoot,'history',receipt.runId+'.json'),envelope);
+ if(mode.crash){const holder=readJson(${JSON.stringify(lock)});process.kill(holder.pid,'SIGKILL');process.exit(77);}
+ atomicJson(path.join(request.evidenceRoot,request.head+'.json'),envelope);
+ console.log('gate preflight: pass: fixture collected');
+});
+`);
+    const pins = { product: "fixture", root, worktree: repo, skillsRoot: skills, baseRef: "origin/main", evidenceRoot: evidence,
+      risk: "standard", critical: null, verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo] };
+    const pinsFile = path.join(scratch, "dispatch/pins.json"); atomicJson(pinsFile, pins);
+    const identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
+    const entry = { ...identity, issue, stage: "mono-deliver", attempt, worktree: repo, pinsVersion: 0,
+      pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, spawned_at: new Date(Date.now() - 10000).toISOString() };
+    atomicJson(path.join(root, "workers.json"), { [issue]: entry });
+    const phase = (name, sequence, queue = []) => ({ ...identity, issue, stage: "mono-deliver", attempt, phase: name, kind: "confirmation-request", sequence, head,
+      publishedAt: new Date().toISOString(), linear_mutations_pending: queue, capsule: { phase: name, head, writable_roots: [repo], decisions: [], open_queue: queue } });
+    const code = phase("code", 1); atomicJson(path.join(root, "reports", `${issue}-phase-code.json`), code);
+    started = await collectorStart(options); assert.ok(started.procStart);
+    await assert.rejects(collectorStart(options), /locked/u);
+    assert.equal(collectorStatus(options).status, "running-or-unverified");
+    await waitUntil(() => fs.existsSync(path.join(root, "confirmations", `${issue}-phase-code-a1-s1.confirmed.json`)));
+    const request = { ...pins, head, collect: false, collectionId: `preflight-collect:${head}:1` };
+    const queued = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
+    const report = phase("preflight", 1, [queued]), reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`);
+    atomicJson(modeFile, { crash: true }); atomicJson(reportFile, report);
+    await waitUntil(() => fs.existsSync(path.join(evidence, "history")) && fs.readdirSync(path.join(evidence, "history")).length === 1 && collectorStatus(options).status === "stale");
+    assert.equal(fs.existsSync(lock), true); assert.equal(fs.existsSync(headLock), true); assert.equal(fs.existsSync(path.join(evidence, `${head}.json`)), false);
+    const admissionFile = path.join(root, "consumed", `${issue}-a1/admissions`, `${queued.id}.json`);
+    assert.equal(readJson(admissionFile).pinsVersion, 0);
+    entry.pinsVersion = 1; atomicJson(path.join(scratch, "dispatch/pins.v1.json"), { pinsVersion: 1, risk: "deep" }); atomicJson(path.join(root, "workers.json"), { [issue]: entry });
+    atomicJson(modeFile, { crash: false }); started = await collectorStart(options);
+    const confirmed = path.join(root, "confirmations", `${issue}-phase-preflight-a1-s1.confirmed.json`);
+    await waitUntil(() => fs.existsSync(confirmed)); validateConfirmation(report, readJson(confirmed));
+    assert.equal(readJson(countFile).collections, 1, "history recovery never repeats review");
+    assert.equal(fs.existsSync(headLock), false); assert.deepEqual(readJson(path.join(evidence, `${head}.json`)), readJson(readJson(confirmed).results[0].evidence.receipt));
+    collectorStop(options); await waitUntil(() => !fs.existsSync(lock)); started = null;
+    assert.equal(collectorStatus(options).status, "stopped");
+    await t.test("dead holder cannot reclaim a live orphan descendant", async () => {
+      const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { detached: true, stdio: "ignore" });
+      const exited = new Promise(resolve => child.once("exit", resolve));
+      try {
+        const holder = { pid: 99999999, procStart: "fixture-start", processGroup: 99999999,
+          descendants: [{ pid: child.pid, procStart: "fixture-start", processGroup: 99999999 }] };
+        atomicJson(lock, holder); atomicJson(headLock, holder);
+        await assert.rejects(collectorStart(options), /locked/u);
+        const { reclaimLock } = await import("./runtime.mjs");
+        assert.throws(() => reclaimLock(headLock), /locked/u);
+        assert.equal(fs.existsSync(headLock + ".reclaim"), false);
+        child.kill("SIGKILL"); await exited;
+        reclaimLock(headLock); collectorStop(options);
+        assert.equal(fs.existsSync(lock), false); assert.equal(fs.existsSync(headLock), false);
+      } finally { child.kill("SIGKILL"); }
+    });
+    const stale = { ...request, collectionId: `preflight-collect:${head}:2` };
+    atomicJson(reportFile, phase("preflight", 2, [{ ...queued, id: stale.collectionId, payload: { request: stale } }]));
+    await assert.rejects(collectOnce(options), /stale pinsVersion/u); assert.equal(readJson(countFile).collections, 1);
+    await t.test("receipt actual binding rejects signed mismatches", async () => {
+      for (const [field, value] of [["risk", "standard"], ["critical", "wrong"], ["workerWritableRoots", []], ["verification", { command: "wrong", args: [] }], ["reviewDataset", { source: "wrong" }]]) {
+        const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
+        const current = { ...request, risk: "deep", collectionId: id }, next = { ...phase("preflight", 2, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
+        // Each refusal is a separate scratch report; discard only its unconfirmed
+        // admission/result, then use a fresh ID for the next recorded gate run.
+        atomicJson(reportFile, next); atomicJson(modeFile, { corrupt: field, value });
+        await assert.rejects(collectOnce(options), new RegExp(`binding mismatch: ${field}`));
+        assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s2.confirmed.json`)), false);
+      }
+    });
+    await t.test("failed signed collections are completed and never reviewed twice", async () => {
+      const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
+      const current = { ...request, risk: "deep", collectionId: id };
+      const failed = { ...phase("preflight", 2, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
+      atomicJson(reportFile, failed); atomicJson(modeFile, { failed: true });
+      await collectOnce(options);
+      const confirmation = readJson(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s2.confirmed.json`));
+      validateConfirmation(failed, confirmation); assert.match(confirmation.results[0].evidence.gate, /^gate preflight: fail:/);
+      assert.equal(readJson(countFile).collections, number);
+      await collectOnce(options); assert.equal(readJson(countFile).collections, number);
+    });
+    await t.test("a started run without a receipt blocks automatic repetition", async () => {
+      const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
+      const current = { ...request, risk: "deep", collectionId: id };
+      const incomplete = { ...phase("preflight", 3, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
+      atomicJson(reportFile, incomplete); atomicJson(modeFile, { noReceipt: true });
+      await assert.rejects(collectOnce(options), /without an answer/u);
+      await assert.rejects(collectOnce(options), /orchestrator reconciliation required/u);
+      assert.equal(readJson(countFile).collections, number);
+      assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s3.confirmed.json`)), false);
+    });
+  } finally {
+    if (started) { try { collectorStop(options); } catch {} }
+    process.env.PATH = oldPath;
+    if (oldRows === undefined) delete process.env.MONO_FIXTURE_ROWS; else process.env.MONO_FIXTURE_ROWS = oldRows;
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 });

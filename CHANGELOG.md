@@ -6,6 +6,15 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-96: install the per-attempt orchestrator collector with start/stop/status,
+  empty/collection-only queue confirmation and signed history-first recovery.
+  Bind recovery to admitted pins versions and actual receipt fields; reconcile
+  mutable head receipts under the existing per-head lock without another review.
+  Locks retain process incarnations; exclusive reclaim markers permit takeover
+  only after isolated holder/gate process trees are dead. Live/unknown locks and
+  connector queues stay with the orchestrator; gate semantics and receipt order
+  are unchanged.
+
 - MONO-95: install orchestrator dispatch/accept commands and the pack Linear
   adapter. Dispatch renders the single template, pins launch identity, extracts
   exact referenced snapshot definitions and refuses before registration on

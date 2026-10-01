@@ -976,6 +976,34 @@ After connector writes, --readback FILE requires that planDigest and one dated
 read-back per move observed no earlier than the plan. Identical prior consumption
 completes rename/gate cleanup without a new plan; contradictory records refuse.
 
+Run installed `scripts/orchestrator/collector.mjs start|stop|status --root DIR
+--issue KEY --attempt N` outside all worker sandboxes. Start once per attempt;
+stop at retirement. It confirms empty and collection-only phase queues, never
+connector queues. Inspect `reports/KEY-collector-aN.log` for refusals/results.
+The attempt lock `reports/KEY-collector-aN.lock` stores pid/procStart and the
+active gate incarnation. Start reclaims only a dead holder and dead gate tree;
+unknown process telemetry refuses. Collector and gate use separate dedicated process groups. A gate waits on stdin
+until the collector durably records its incarnation; parent death before release
+cannot launch an unregistered gate. Group membership preserves orphan descendants.
+Legacy locks without group metadata require manual reconciliation; an unrelated
+live member of a shared group also prevents reclaim. Stop verifies incarnation,
+requests graceful shutdown and lets an active gate finish before releasing locks.
+
+Phase correlation uses validatePhase, registry issue/attempt/pack identity, the
+sole standard/fallback location, report digest and existing predecessor barriers;
+terminal delivery reports never substitute for phase reports. Collection admission
+shares launch.lock with amend, reads registry pinsVersion, and seals reportDigest
+and manifestDigest. Old admitted requests recover against their admitted version;
+new stale-version requests refuse. Before collection, find signed history by
+collectionId and compare actual receipt bindings (including risk/critical, dataset,
+grants and verification) against the admitted request. Under the per-head lock,
+restore the mutable head envelope from history and confirm completion, including
+failed runs, without repeating review. A durable collection-start record without
+a history receipt requires orchestrator reconciliation, never an automatic rerun. Reclaim a stale per-head lock only through
+its exclusive `.reclaim` marker after proving holder/group descendants dead.
+Live or unverified holders refuse. History-first receipt order and gate semantics
+remain unchanged; all queue confirmations use delivery-state's existing barriers.
+
 Use `scripts/orchestrator/accept.mjs report --root DIR --report FILE` for connector
 queues. For nonempty queues, before opening or printing writes it uses the existing
 delivery-state barriers to validate all predecessor reports/confirmations; a refusal
@@ -1070,8 +1098,8 @@ Keep it below evidenceLimitSec as a configuration consistency rule. The evidence
 limit runs from the ship attempt's startedAt, while confirmation waiting runs
 separately from the phase report's publishedAt; the inequality does not prove
 evidence freshness.
-Pass the same --config to delivery-state.mjs confirm; its adapter timeout uses confirmationTimeoutSec. The gate locks collection per head in evidenceRoot. Spawn releases the registry lock after durable PID registration, waits for thread.started outside it, and registers the same attempt/PID thread under a short lock. A stale lock requires confirming the collector has stopped and reconciling its receipt before removal; never start a competing collector. Never extend an in-flight deadline; reconcile any late collector completion. Before the ship gate independently run preflight
-collect:false with the same dispatch request. No new daemon or key service.
+Pass the same --config to delivery-state.mjs confirm; its adapter timeout uses confirmationTimeoutSec. The gate locks collection per head in evidenceRoot. Spawn releases the registry lock after durable PID registration, waits for thread.started outside it, and registers the same attempt/PID thread under a short lock. Collector reclaim uses the incarnation/group checks and marker above; never remove a live or unverified lock or start a competing collector. Never extend an in-flight deadline; reconcile any late collector completion. Before the ship gate independently run preflight
+collect:false with the same dispatch request. The pack collector uses the existing receipt key; no key service.
 
 Publish whole-queue confirmations under <root>/confirmations/, outside all worker write grants. The worker wait refuses any confirmation path overlapping capsule.writable_roots. Keep reports as the sole writable mailbox; journal and registry remain outside the sandbox grant. Hostile local operator attestation remains out of scope. Run scripts/sandbox-contract.test.mjs outside a worker sandbox to prove the real Codex CLI boundary; absent CLI and detected nested Seatbelt are explicit skips, never host proof. Other failures block. The routine verify suite includes this test; the orchestrator runs it outside worker sandboxes for the actual boundary proof.
 
