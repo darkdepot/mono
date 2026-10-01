@@ -1,0 +1,10 @@
+{
+  "coverage": "R1",
+  "prd": "- R1. Selected.\n````md\n```\n- R99. Example.\n~~~~\n```` info\nПокрывает R98.\n`````\nAfter.\n",
+  "ids": [
+    "R1"
+  ],
+  "includes": [
+    "After."
+  ]
+}

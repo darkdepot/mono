@@ -6,6 +6,13 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-98: parse snapshot documents into a block tree before selecting definitions
+  and transitive coverage under U12. Keep fences and other opaque markup out of
+  coverage; unknown IDs refuse before duplicate/unclosed-fence fallback. Add
+  named contract and MONO-95 fixtures plus pre-change package-byte baselines,
+  verified through scratch dispatch; identifier grammar, common sections and
+  delivery reading budget remain unchanged.
+
 - MONO-97: unify amendment recovery under U11 with prepared/delivered/registered
   states, saved per-version inputs, ambiguity candidates and immutable recorded
   snapshots; partial snapshot staging reserves its version. Correlated delivery recovers registration without another launch;

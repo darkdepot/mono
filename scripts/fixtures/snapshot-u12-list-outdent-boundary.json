@@ -1,0 +1,10 @@
+{
+  "coverage": "R1",
+  "prd": "    - R1. Selected.\n      Text.\n  * F1. Omitted. Покрывает R99.\n",
+  "includes": [
+    "Text."
+  ],
+  "excludes": [
+    "Omitted."
+  ]
+}

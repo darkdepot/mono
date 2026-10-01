@@ -1,0 +1,5 @@
+{
+  "coverage": "R1",
+  "prd": "- R1 (selected; R2; I1)\n- R2 (nested; R99; I2)\n",
+  "error": "unknown snapshot identifier: R99"
+}

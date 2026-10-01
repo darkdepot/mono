@@ -8,6 +8,8 @@ This README is the complete introduction and owner-rule index. Follow its links 
 
 ## Workflow
 
+Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot markup contract](references/orchestration.md#snapshot-markup-contract-u12): parse blocks, then select coverage; unknown IDs refuse, while duplicates or unclosed fences retain full documents.
+
 A **wave** is the work dispatched for an Issue, including retries, review, and its eventual delivery or recorded stop. A green PR is ready for deploy; deploy supplies the merge, delivery verification, and Linear closeout.
 
 ```text

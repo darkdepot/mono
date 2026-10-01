@@ -1,0 +1,10 @@
+{
+  "coverage": "R1",
+  "prd": "- R1. Selected.\n   ```md\n### R99. Fenced.\n    ```\nПокрывает R98.\n   ```\nAfter fence.\n",
+  "includes": [
+    "After fence."
+  ],
+  "ids": [
+    "R1"
+  ]
+}

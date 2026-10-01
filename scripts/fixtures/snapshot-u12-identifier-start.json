@@ -1,0 +1,5 @@
+{
+  "coverage": "R1",
+  "prd": "- R10. Not R1.\n- prefix R1. Not initial.\n- R1x. Not delimiter.\n",
+  "error": "unknown snapshot identifier: R1"
+}

@@ -1,0 +1,6 @@
+{
+  "coverage": "R1",
+  "prd": "- R1. Real definition.\n```md\n- R2. Fenced example.\n",
+  "full": true,
+  "note": "Unclosed"
+}

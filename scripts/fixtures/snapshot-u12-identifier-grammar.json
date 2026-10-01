@@ -1,0 +1,12 @@
+{
+  "coverage": "AE3а, U5′, U5', R8-R9",
+  "prd": "- AE3а. Acceptance.\n* R8. First.\n- R9. Second.\n",
+  "spec": "### U5′ (prime)\nFirst unit.\n## U5' (ascii)\nSecond unit.\n",
+  "ids": [
+    "AE3а",
+    "U5′",
+    "U5'",
+    "R8",
+    "R9"
+  ]
+}

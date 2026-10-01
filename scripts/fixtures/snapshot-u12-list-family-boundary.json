@@ -1,0 +1,7 @@
+{
+  "coverage": "R1",
+  "prd": "* R1. Selected.\n- AE1. Omitted. Покрывает R99.\n",
+  "excludes": [
+    "Omitted."
+  ]
+}

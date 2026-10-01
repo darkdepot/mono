@@ -1,0 +1,19 @@
+{
+  "coverage": "R1",
+  "prd": "## Кратко\nBrief.\n- R1. Selected.\n## Что не входит в MVP\nExcluded.\n## Допущения\nAssumptions.\n",
+  "spec": "## Кратко\nBrief.\n## Архитектура\nArchitecture.\n## Контракты и границы\nContracts.\n## Риски и защита\nRisks.\n## Что может сломаться и как защищаемся\nFailures.\n## Валидация\nValidation.\n## Релиз и откат\nRollback.\n",
+  "includes": [
+    "Brief.",
+    "Excluded.",
+    "Assumptions."
+  ],
+  "specIncludes": [
+    "Brief.",
+    "Architecture.",
+    "Contracts.",
+    "Risks.",
+    "Failures.",
+    "Validation.",
+    "Rollback."
+  ]
+}

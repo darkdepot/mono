@@ -1,0 +1,11 @@
+{
+  "coverage": "R1, AE1",
+  "prd": "- R1. Parent.\n  - AE1. Child.\n    Detail.\n",
+  "ids": [
+    "R1",
+    "AE1"
+  ],
+  "once": [
+    "Child."
+  ]
+}

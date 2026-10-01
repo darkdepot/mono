@@ -1,0 +1,13 @@
+{
+  "coverage": "R1",
+  "prd": "- A1. Outer.\n \t- R1. Selected.\n\t  - AE1. Retained child.\n    - U1. Omitted peer. Покрывает R99.\n",
+  "includes": [
+    "Retained child."
+  ],
+  "excludes": [
+    "Omitted peer."
+  ],
+  "ids": [
+    "R1"
+  ]
+}
