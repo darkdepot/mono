@@ -449,6 +449,24 @@ console.log(JSON.stringify(result));
     write(gateRequest, proofRequest);
     fs.unlinkSync(receiptFile);
     assert.match(shipCall().stdout, /fail: .*ENOENT.*\.json/);
+    // U13 absence must fail ship before judgment without a publishRequest.
+    const registryFile = path.join(state, "workers.json"), registryBefore = fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null;
+    const launchPins = path.join(state, "dispatch/MONO-998-a1/pins.json");
+    const boundPins = { ...preflight, reviewDataset: null, reviewDatasetVersion: 0, reviewDatasetDigest: null };
+    write(launchPins, boundPins);
+    const pinsBinding = { file: launchPins, digest: crypto.createHash("sha256").update(fs.readFileSync(launchPins)).digest("hex") };
+    write(registryFile, { "MONO-998": { ...pins, issue: "MONO-998", attempt: 1, stage: "mono-deliver", worktree: repo, pins: pinsBinding, pinsVersion: 0 } });
+    const history = path.join(preflight.evidenceRoot, "history"), savedHistory = history + ".saved";
+    fs.renameSync(history, savedHistory);
+    try {
+      write(gateRequest, { ...proofRequest, preflight: { ...preflight, pins: pinsBinding, reviewDatasetVersion: 0 } });
+      const missing = shipCall(); assert.equal(missing.status, 1); assert.match(missing.stdout, /missing or stale autoreview artifact/u);
+      assert.ok(!missing.stdout.includes("publishRequest") && !missing.stdout.includes("pending"));
+    } finally {
+      fs.renameSync(savedHistory, history);
+      if (registryBefore) fs.writeFileSync(registryFile, registryBefore); else fs.unlinkSync(registryFile);
+    }
+    write(gateRequest, proofRequest);
     write(receiptFile, envelope);
     write(githubFile, { github: { ...github, headRefOid: alternate }, checks });
     assert.match(shipCall().stdout, /fail: preflight request does not match live PR head/);

@@ -97,6 +97,7 @@ of a write. See [command inputs and snapshot composition](references/orchestrati
 and [sessions/admissions](references/orchestration.md#delivery-write-barriers).
 New collection admissions bind the effective dataset version as well as its path;
 an omitted version denotes only the unversioned baseline (version 0).
+On the short path, gates check registered pins and dataset bytes before returning `pending` (exit 2); workers publish only its `publishRequest`, and a sealed matching receipt is still required to pass.
 Scripts do not write to Linear; the orchestrator uses its connector. The installed collector handles empty/collection-only queues; `.agents/`
 pre-application remains a separate slice and --preapply refuses.
 
