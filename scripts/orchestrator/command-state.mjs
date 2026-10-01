@@ -118,3 +118,70 @@ export function admitUnderLock(root, report) {
   }
   return admitted;
 }
+
+// U11: registry evidence decides state; the pending file only records preparation
+// and the conservative launch boundary. Replay never reads mutable caller inputs.
+export function amendmentState(entry, record) {
+  const completed = Object.values(entry.completed_amendments ?? {}).find(value => value.pinsVersion === record.pinsVersion) ??
+    (entry.last_amendment?.pinsVersion === record.pinsVersion ? entry.last_amendment : null);
+  if (completed) return { state: "registered", completion: completed, resumed: completed.resumeResult };
+  const resumed = entry.last_resume;
+  if (resumed && canonical(resumed) !== canonical(record.previousResume) && resumed.pid === entry.pid &&
+      resumed.thread_id === record.threadId && entry.thread_id === record.threadId && Number.isInteger(resumed.pid) && resumed.pid > 0 &&
+      Number.isFinite(Date.parse(resumed.registeredAt)) && Date.parse(resumed.registeredAt) >= Date.parse(record.preparedAt) &&
+      Date.parse(resumed.registeredAt) <= Date.now())
+    return { state: "delivered", resumed: { pid: resumed.pid, thread_id: resumed.thread_id, procStart: entry.procStart } };
+  return { state: "prepared", resumed: null };
+}
+
+export function amendmentChange(args, inputs, supplied) {
+  return { risk: args.risk ?? inputs.risk, critical: args.critical ?? inputs.critical,
+    reviewDataset: args["review-dataset"] ?? inputs.reviewDataset ?? null,
+    reviewDatasetVersion: Number(args["review-dataset-version"] ?? inputs.reviewDatasetVersion ?? 0),
+    workerWritableRoots: supplied.roots ?? inputs.workerWritableRoots, text: args.text,
+    fullSnapshot: args["full-snapshot"] ? { digest: digest(supplied.documents) } :
+      (inputs.fullSnapshot ? { digest: inputs.fullSnapshot.digest } : null) };
+}
+
+export function amendmentDocuments(directory, issue, packageKind) {
+  return Object.fromEntries([`issue-${issue}.md`, "approval.md", ...(packageKind === "issue-only" ?
+    ["issue-only.json"] : ["project-brief.md", "prd.md", "tech-spec.md"])].map(name => [name, fs.readFileSync(path.join(directory, name), "utf8")]));
+}
+
+export function validateAmendment(entry, record) {
+  const output = path.dirname(entry.pins.file), version = record.pinsVersion;
+  if (record.issue !== entry.issue || record.attempt !== entry.attempt || record.launchPinsDigest !== entry.pins.digest ||
+      record.threadId !== entry.thread_id || !Number.isInteger(version) || version < 1 ||
+      !Number.isFinite(Date.parse(record.preparedAt)) || Date.parse(record.preparedAt) > Date.now() ||
+      record.pinsFile !== path.join(output, `pins.v${version}.json`) ||
+      record.resumeFile !== path.join(output, `resume.v${version}.md`) ||
+      record.resumeRequest !== path.join(output, `resume.v${version}.json`) ||
+      !record.effectiveInputs || !record.change || digest(record.change) !== record.changeDigest)
+    throw new Error("amendment recovery evidence mismatch");
+  const label = amendmentState(entry, record).state === "registered" ? "completed" : "pending";
+  for (const [file, hash] of [[record.pinsFile, record.pinsDigest], [record.resumeFile, record.resumeDigest], [record.resumeRequest, record.requestDigest]]) {
+    if (sha256File(file) !== hash) throw new Error(`${label} amendment content changed`);
+  }
+  const pins = readJson(record.pinsFile);
+  if (pins.pinsVersion !== version) throw new Error("amendment version mismatch");
+  if (pins.fullSnapshot && (pins.fullSnapshot.directory !== path.join(output, `snapshot.v${version}`) ||
+      digest(amendmentDocuments(pins.fullSnapshot.directory, entry.issue, record.effectiveInputs.packageKind)) !== pins.fullSnapshot.digest))
+    throw new Error(`${label} amendment snapshot content changed`);
+  const state = amendmentState(entry, record);
+  if (state.state === "registered" && (canonical(state.completion) !== canonical(record) ||
+      version > (entry.pinsVersion ?? 0) || state.resumed?.pid !== record.registeredResume?.pid ||
+      state.resumed?.thread_id !== record.threadId || record.registeredResume?.thread_id !== record.threadId))
+    throw new Error("completed amendment recovery evidence mismatch");
+  return state;
+}
+
+export function restoreAmendmentGrants(root, entry, record) {
+  if (record.launchMayHaveStartedAt || amendmentState(entry, record).state !== "prepared" ||
+      canonical(entry.last_resume ?? null) !== canonical(record.previousResume) || (entry.pinsVersion ?? 0) !== record.currentVersion)
+    throw new Error("delivery not proven absent; preserve amendment evidence");
+  const registryFile = path.join(root, "workers.json"), registry = readJson(registryFile), prior = record.previousLaunchGrants;
+  Object.assign(registry[entry.issue], { workerWritableRoots: prior.workerWritableRoots,
+    writable_roots: prior.writable_roots, network_access: prior.network_access });
+  registry[entry.issue].capsule.writable_roots = prior.capsuleRoots;
+  if (canonical(registry[entry.issue]) !== canonical(entry)) atomicJson(registryFile, registry);
+}

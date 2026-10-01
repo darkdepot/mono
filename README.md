@@ -70,12 +70,25 @@ dispatch, start gate, spawn and a UTC ledger event. Refusals before spawn regist
 no attempt; their retries rebuild the exact requested snapshot composition.
 `orchestrator/accept.mjs ack|report|amend` validates a move plan before
 connector writes, confirms report queues from fresh reconciliation sessions, and
-registers versioned amendments after successful resume and recovers interrupted
-registration from the pending amendment and registered resume. Failed launches
-restore undelivered registry grants, including when replacing an interrupted
-pending amendment. Connector queues confirm after their reconciliation session
-opens; the collector confirms empty queues through the existing runtime barriers. Completed amendment retries return
-their saved result without launching again, including after later amendments.
+prints `writeDigests` for the expanded writes, including certificates. Amendments
+use one recovery state machine: `prepared`, `delivered` (registry-correlated
+resume), then `registered`. `amendment.pending.json` records preparation and
+whether launch may have started; `pins.v<n>.json` and version snapshot files are
+immutable. Partial preparation artifacts reserve their version, so snapshot
+staging interruptions cannot overwrite recorded bytes or block the next version.
+Requests resolve omitted inputs against each saved version: one match
+replays it, multiple matches refuse with candidate versions, and no match prepares
+a new amendment under the current escalation rules. Registered retries return
+saved results for live or exited workers, including after later amendments,
+without reverting current pins or grants. Delivered retries finish registration
+without another launch. Before the launch marker, a prepared retry resumes the
+same version; proven nondelivery restores original grants before replacement.
+After the marker, missing correlated delivery is uncertain: evidence and grants
+are preserved, automatic restart and replacement refuse. Every amendment result
+names its version (or `null` before allocation), state and reason. `amend.lock`
+serializes completion; registry changes and collection admissions use `launch.lock`.
+Connector queues confirm after their reconciliation session opens; the collector
+confirms empty queues through the existing runtime barriers.
 The pack `linear-adapter.mjs` only
 reads current-session observations; printing an apply instruction is never proof
 of a write. See [command inputs and snapshot composition](references/orchestration.md#orchestrator-dispatch-command)

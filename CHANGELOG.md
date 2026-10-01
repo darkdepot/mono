@@ -6,6 +6,16 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-97: unify amendment recovery under U11 with prepared/delivered/registered
+  states, saved per-version inputs, ambiguity candidates and immutable recorded
+  snapshots; partial snapshot staging reserves its version. Correlated delivery recovers registration without another launch;
+  historical retries preserve current pins and grants. Record the conservative
+  launch boundary before resume: uncertain delivery preserves evidence and
+  refuses restart/replacement, while proven nondelivery restores original grants.
+  Amendment outputs include version/state/reason; report outputs include
+  `writeDigests` for expanded writes without changing the write objects. Add
+  installed scratch fixtures, including interrupted launch-boundary cases.
+
 - MONO-96: install the per-attempt orchestrator collector with start/stop/status,
   empty/collection-only queue confirmation and signed history-first recovery.
   Bind recovery to admitted pins versions and actual receipt fields; reconcile
