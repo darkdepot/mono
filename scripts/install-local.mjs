@@ -51,6 +51,7 @@ const RUNTIME_SCRIPTS = [
   "orchestrator/consume-gate-ack.mjs",
   "orchestrator/dispatch.mjs",
   "orchestrator/accept.mjs",
+  "orchestrator/collector.mjs",
   "orchestrator/linear-adapter.mjs",
   "orchestrator/snapshot.mjs",
   "orchestrator/command-state.mjs",

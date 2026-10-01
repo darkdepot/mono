@@ -22,7 +22,7 @@ raw idea → Project in Idea → discovery → reviewed and approved package
 2. **Discover.** Shape the problem through `/office-hours` or `/brainstorming`; review a product/UI surface with `/plan-design-review` and an implementation architecture with `/plan-eng-review`. These outputs are inputs to handoff, not permission to code. In orchestrated discovery, a Second Voice challenges the draft, the orchestrator answers technical questions, and the owner sees reviewed prototypes and prepared decisions at checkpoints.
 3. **Package.** Run `mono-handoff`. Inspect supplied artifacts and scoped sources, draft the Project/PRD/Tech Spec and Issue slicing, review before the first durable package write, and obtain package approval. Persist the approved package in Linear and apply accepted fixes through its owner. Keep the Project pre-delivery until implementation start is explicitly authorized; documents alone never authorize Delivery.
 4. **Start.** `mono-implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
-5. **Implement and prepare.** `mono-deliver` sequences `mono-implement`, `mono-preflight`, and `mono-ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. Confirm the empty code queue; start facts lead the Russian ready-certificate comment before its unchanged machine block. Full and final deep/risky work retain the local loop. Preserve phase ownership.
+5. **Implement and prepare.** `mono-deliver` sequences `mono-implement`, `mono-preflight`, and `mono-ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The pack collector auto-confirms empty and collection-only queues; connector queues require the orchestrator. Start facts lead the Russian ready-certificate comment before its unchanged machine block. Full and final deep/risky work retain the local loop. Preserve phase ownership.
 6. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
 7. **Deploy and close.** `mono-deploy` verifies that the current PR head matches the green certificate, applies the configured approval policy, and delegates the configured deploy workflow. Verify delivery and run live acceptance where users consume the result. Close the Issue only after its delivery requirements pass; publish the informational project update, report cost, record useful learnings, and retire the worker. Only the shipment of the last open Project Issue may complete that Project.
 
@@ -73,8 +73,8 @@ connector writes, confirms report queues from fresh reconciliation sessions, and
 registers versioned amendments after successful resume and recovers interrupted
 registration from the pending amendment and registered resume. Failed launches
 restore undelivered registry grants, including when replacing an interrupted
-pending amendment. Empty queues confirm
-after their reconciliation session opens. Completed amendment retries return
+pending amendment. Connector queues confirm after their reconciliation session
+opens; the collector confirms empty queues through the existing runtime barriers. Completed amendment retries return
 their saved result without launching again, including after later amendments.
 The pack `linear-adapter.mjs` only
 reads current-session observations; printing an apply instruction is never proof
@@ -82,8 +82,8 @@ of a write. See [command inputs and snapshot composition](references/orchestrati
 and [sessions/admissions](references/orchestration.md#delivery-write-barriers).
 New collection admissions bind the effective dataset version as well as its path;
 an omitted version denotes only the unversioned baseline (version 0).
-Scripts do not write to Linear; the orchestrator uses its connector. The collector
-and `.agents/` pre-application remain separate slices; --preapply refuses.
+Scripts do not write to Linear; the orchestrator uses its connector. The installed collector handles empty/collection-only queues; `.agents/`
+pre-application remains a separate slice and --preapply refuses.
 
 The orchestrator is the single Linear writer. A worker uses its dispatched snapshot as its entire Linear context and queues every required comment, state change, link and certificate in its report. Publish the whole queue with the phase capsule; continue only after its durable confirmation. In-phase confirmation requests preserve drift-before-PR, ready-certificate-before-formal-review and In-Review-after-PR ordering. A queued write is not an applied write.
 
@@ -176,6 +176,15 @@ node scripts/read-budget.mjs
 ```
 
 See [Cost Telemetry](references/orchestration.md#cost-telemetry) for inputs and unavailable-data handling. Compare improvements only against a recorded baseline and protocol; report insufficient evidence plainly.
+
+The orchestrator starts the installed `collector.mjs start --root DIR --issue KEY
+--attempt N` once per delivery attempt, uses `status` and the report log to inspect
+it, and stops it at attempt end. Empty and collection-only queues confirm
+automatically; connector writes still require fresh orchestrator read-backs.
+Signed history restores interrupted head receipts without a second review,
+including failed collections. Incarnation/group checks refuse live or unverified
+locks. This removes manual confirmation work; measured time/token savings still
+require comparable completed waves under the cost protocol.
 
 ## Install Locally
 

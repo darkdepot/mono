@@ -202,6 +202,9 @@ Workflow states:
      ack waits for its correlated report before consumption; rejected attempt
      requires a new verified attempt, never same-attempt nudge.
    - Consume phase events AND poll phase files. Validate capsule and full queue;
+     start installed `scripts/orchestrator/collector.mjs start --root DIR --issue KEY
+     --attempt N` outside worker sandboxes for empty/collection-only queues; inspect
+     `status` and its reports log, and `stop` at attempt end. Connector queues still
      apply Delivery Write Barriers through installed
      `scripts/orchestrator/accept.mjs report`: open a reconciliation session,
      inspect expanded writes (reread first on retry), apply through the connector,

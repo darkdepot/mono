@@ -47,25 +47,67 @@ export function atomicJson(file, value) {
   finally { fs.closeSync(fd); }
   fs.renameSync(temp, file); syncDir(path.dirname(file));
 }
-export async function withLock(file, action) {
+// A dedicated process group preserves descendants after their parent exits.
+export function processTable() {
+  const output = execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return output.trim().split("\n").filter(Boolean).map(line => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
+    if (!match) throw new Error("process tree unavailable");
+    return { pid: Number(match[1]), ppid: Number(match[2]), group: Number(match[3]), state: match[4], procStart: match[5].trim() };
+  });
+}
+export function lockTreeDead(holder) {
+  const processes = processTable().filter(row => !row.state.startsWith("Z"));
+  const dead = record => Number.isInteger(record?.pid) && record.pid > 0 && record.procStart &&
+    Number.isInteger(record.processGroup) && record.processGroup > 0 &&
+    !processes.some(row => (row.pid === record.pid && row.procStart === record.procStart) ||
+      (row.group === record.processGroup && row.pid !== record.pid)) &&
+    (!record.gate || dead(record.gate));
+  return Boolean(dead(holder));
+}
+export function reclaimLock(file) {
+  const marker = file + ".reclaim";
   durableDirectory(path.dirname(file));
+  let fd;
+  try { fd = fs.openSync(marker, "wx", 0o600); }
+  catch (error) { if (error.code !== "EEXIST") throw error; throw new Error(`operation locked: ${marker}`); }
+  try {
+    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, procStart: processStart(process.pid) })); fs.fsyncSync(fd); syncDir(path.dirname(file));
+    if (!fs.existsSync(file)) return;
+    const holder = readJson(file), hash = digest(holder);
+    if (!lockTreeDead(holder) || digest(readJson(file)) !== hash) throw new Error(`operation locked: ${file}; holder or descendants live/unverified`);
+    fs.unlinkSync(file); syncDir(path.dirname(file));
+  } finally { fs.closeSync(fd); fs.unlinkSync(marker); syncDir(path.dirname(file)); }
+}
+export async function withLock(file, action, { reclaim = false } = {}) {
+  durableDirectory(path.dirname(file));
+  if (reclaim && fs.existsSync(file)) reclaimLock(file);
+  if (fs.existsSync(file + ".reclaim")) throw new Error(`operation locked: ${file}.reclaim`);
+  let processGroup = null;
+  try { processGroup = processTable().find(row => row.pid === process.pid)?.group ?? null; } catch {}
+  const holder = { pid: process.pid, procStart: processStart(process.pid), processGroup, lockId: crypto.randomUUID(), createdAt: new Date().toISOString() };
   let fd;
   try { fd = fs.openSync(file, "wx", 0o600); }
   catch (error) {
     if (error.code !== "EEXIST") throw error;
-    let holder, live = false;
+    let heldPid, live = false;
     try {
-      holder = readJson(file).pid;
-      if (Number.isInteger(holder) && holder > 0) {
-        try { process.kill(holder, 0); live = true; } catch (cause) { live = cause.code === "EPERM"; }
+      heldPid = readJson(file).pid;
+      if (Number.isInteger(heldPid) && heldPid > 0) {
+        try { process.kill(heldPid, 0); live = true; } catch (cause) { live = cause.code === "EPERM"; }
       }
     } catch {}
-    const locked = new Error(`operation locked: ${file}; ${live ? `live holder ${holder}, retry after completion; do not remove its lock` : "holder not confirmed live; establish process state and reconcile before any lock removal"}`);
+    const locked = new Error(`operation locked: ${file}; ${live ? `live holder ${heldPid}, retry after completion; do not remove its lock` : "holder not confirmed live; establish process state and reconcile before any lock removal"}`);
     locked.code = "ELOCKED"; throw locked;
   }
-  fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })); fs.fsyncSync(fd);
-  try { return await action(); }
-  finally { fs.closeSync(fd); fs.unlinkSync(file); syncDir(path.dirname(file)); }
+  fs.writeFileSync(fd, JSON.stringify(holder)); fs.fsyncSync(fd); syncDir(path.dirname(file));
+  try {
+    if (fs.existsSync(file + ".reclaim")) throw new Error(`operation locked: ${file}.reclaim`);
+    return await action();
+  } finally {
+    fs.closeSync(fd);
+    if (fs.existsSync(file) && readJson(file).lockId === holder.lockId) { fs.unlinkSync(file); syncDir(path.dirname(file)); }
+  }
 }
 export function flags(args) {
   const result = {};
