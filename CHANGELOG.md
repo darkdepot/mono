@@ -6,6 +6,12 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-103: complete the first live `.agents/` pre-application check under the
+  owner's mandate (AE12). The orchestrator committed this repository's delivery
+  confirmation window change from 1800 to 1200 seconds before start gates; the
+  worker verified and preserved the config and aligned the test pin. Pack behavior
+  is unchanged.
+
 - MONO-104: replace pre-application tables with path/sha256 list items; accept
   Linear nesting and blank lines while preserving raw bytes and whole-manifest
   refusals before application and attempt registration.
