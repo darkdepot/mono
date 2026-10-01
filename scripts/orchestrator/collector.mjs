@@ -24,10 +24,10 @@ function verifyReceipt(file, request) {
     modelRoutes: request.modelRoutes ?? null };
   for (const [name, value] of Object.entries(expected)) if (canonical(receipt[name] ?? null) !== canonical(value)) throw new Error(`receipt binding mismatch: ${name}`);
   if (canonical({ command: receipt.verification?.command, args: receipt.verification?.args }) !== canonical(request.verification)) throw new Error("receipt binding mismatch: verification");
+  // Admission binds the request version; gate archive numbering is independent.
   if (request.reviewDataset) {
     if (receipt.reviewDataset?.source !== request.reviewDataset || receipt.reviewDataset.digest !== sha256File(request.reviewDataset) ||
-        receipt.reviewDataset.copy !== `.orchestrator/review-dataset-${receipt.reviewDataset.digest.slice(0, 8)}.md` ||
-        (receipt.reviewDataset.version ?? 0) !== (request.reviewDatasetVersion ?? 0)) throw new Error("receipt binding mismatch: reviewDataset");
+        receipt.reviewDataset.copy !== `.orchestrator/review-dataset-${receipt.reviewDataset.digest.slice(0, 8)}.md`) throw new Error("receipt binding mismatch: reviewDataset");
   } else if (receipt.reviewDataset !== null) throw new Error("receipt binding mismatch: reviewDataset");
   return envelope;
 }
@@ -126,16 +126,31 @@ export async function collectorStart(options) {
   }
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "start", "--root", options.root, "--issue", options.issue, "--attempt", String(options.attempt), "--foreground"],
     { detached: true, stdio: "ignore" });
+  const holder = await awaitCollectorReady(child, lock);
   child.unref();
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    if (fs.existsSync(lock)) {
-      try { const holder = readJson(lock); if (holder.pid === child.pid && holder.ready === true) return holder; }
-      catch (error) { if (!(error instanceof SyntaxError) && error.code !== "ENOENT") throw error; }
+  return holder;
+}
+export async function awaitCollectorReady(child, lock, timeoutMs = 5000) {
+  let exited = false, failure;
+  const closed = new Promise(resolve => {
+    child.once("error", error => { failure = error; exited = true; resolve(); });
+    child.once("close", () => { exited = true; resolve(); });
+  });
+  try {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline && !exited) {
+      if (fs.existsSync(lock)) {
+        try { const holder = readJson(lock); if (holder.pid === child.pid && holder.ready === true) return holder; }
+        catch (error) { if (!(error instanceof SyntaxError) && error.code !== "ENOENT") throw error; }
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
-    await new Promise(resolve => setTimeout(resolve, 50));
+    throw failure ?? new Error("collector did not acquire attempt lock; inspect collector log");
+  } catch (error) {
+    if (!exited) child.kill("SIGTERM");
+    await closed;
+    throw error;
   }
-  throw new Error("collector did not acquire attempt lock; inspect collector log");
 }
 export function collectorStatus(options) {
   registryEntry(options.root, options.issue, options.attempt);

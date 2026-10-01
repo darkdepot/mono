@@ -741,7 +741,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
   }
 });
 
-test("collector binds omitted dataset version to baseline zero during history recovery", async () => {
+test("collector recovers a baseline dataset with a separately numbered signed archive", async () => {
   const { collectOnce } = await import("./orchestrator/collector.mjs");
   const { createHmac, randomUUID } = await import("node:crypto");
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-baseline-"));
@@ -764,11 +764,40 @@ test("collector binds omitted dataset version to baseline zero during history re
     const queued = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
     atomicJson(path.join(root, "reports", `${issue}-phase-preflight.json`), phase("preflight", [queued]));
     const key = Buffer.alloc(32, 8); fs.writeFileSync(path.join(evidenceRoot, "receipt.key"), key);
+    const archived = await (await import("./gate.mjs")).archiveReviewDataset(reviewDataset, evidenceRoot);
+    assert.equal(archived.version, 1);
     const receipt = { ...pins, producer: "gate-autoreview-v2", runId: randomUUID(), head, base: head, collectionId: request.collectionId,
       root: fs.realpathSync(root), worktree: fs.realpathSync(repo), evidenceRoot: fs.realpathSync(evidenceRoot), workerWritableRoots: [fs.realpathSync(repo)],
-      reviewDataset: { source: reviewDataset, digest: datasetDigest, copy: `.orchestrator/review-dataset-${datasetDigest.slice(0, 8)}.md`, version: 1 } };
-    atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt, signature: createHmac("sha256", key).update((await import("./runtime.mjs")).canonical(receipt)).digest("hex") });
+      reviewDataset: { source: reviewDataset, digest: datasetDigest, copy: `.orchestrator/review-dataset-${datasetDigest.slice(0, 8)}.md`, ...archived } };
+    const history = path.join(evidenceRoot, "history", `${receipt.runId}.json`);
+    const runtime = await import("./runtime.mjs");
+    const sign = receipt => ({ receipt, signature: createHmac("sha256", key).update(runtime.canonical(receipt)).digest("hex") });
+    atomicJson(history, sign({ ...receipt, reviewDataset: { ...receipt.reviewDataset, digest: "0".repeat(64) } }));
     await assert.rejects(collectOnce({ root, issue, attempt: 1 }), /receipt binding mismatch: reviewDataset/u);
-    assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s1.confirmed.json`)), false);
+    assert.equal(fs.existsSync(path.join(evidenceRoot, head + ".json")), false);
+    atomicJson(history, sign(receipt));
+    const bin = path.join(scratch, "bin"), oldPath = process.env.PATH;
+    write(path.join(bin, "ps"), "#!/usr/bin/env node\nconsole.log('fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
+    write(path.join(skillsRoot, ".mono-agent-workflow/scripts/gate.mjs"), "console.log('gate preflight: pass: fixture baseline recovered');\n");
+    try {
+      process.env.PATH = `${bin}:${oldPath}`;
+      await collectOnce({ root, issue, attempt: 1 });
+    } finally { process.env.PATH = oldPath; }
+    const confirmation = readJson(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s1.confirmed.json`));
+    assert.equal(confirmation.status, "confirmed");
+    assert.equal(readJson(path.join(evidenceRoot, head + ".json")).receipt.reviewDataset.version, 1);
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+});
+
+test("collector startup timeout stops its detached child before reporting failure", async () => {
+  const { awaitCollectorReady } = await import("./orchestrator/collector.mjs");
+  const { spawn } = await import("node:child_process");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-timeout-"));
+  const lock = path.join(scratch, "late.lock");
+  const child = spawn(process.execPath, ["-e", `setTimeout(() => {require('fs').writeFileSync(${JSON.stringify(lock)}, JSON.stringify({pid:process.pid,ready:true}));}, 800);setInterval(()=>{},1000);`], { detached: true, stdio: "ignore" });
+  try {
+    await assert.rejects(awaitCollectorReady(child, lock, 100), /did not acquire attempt lock/u);
+    assert.ok(child.signalCode || child.exitCode !== null, "the child has exited before the rejection reaches the caller");
+    assert.equal(fs.existsSync(lock), false, "no collector can acquire a late lock after failed startup");
+  } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); fs.rmSync(scratch, { recursive: true, force: true }); }
 });
