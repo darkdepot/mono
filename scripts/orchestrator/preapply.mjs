@@ -23,7 +23,7 @@ export function preapplyManifest(issue, prd, spec, issueOnly) {
       for (const unit of [...walk(specTree.root)].filter(node => node.type === "list" && /^U\d/u.test(node.id ?? "") && selected.has(node.id))) {
         for (const node of unit.children.filter(node => marker(specTree, node))) {
           if (node.column <= unit.column) throw new Error("preapply must be nested inside its implementation unit");
-          const boundary = unit.children.find(next => next.start > node.start && next.type === "item" && next.column <= node.column && !/^[ \t]*[-*] `/u.test(source(specTree, next)));
+          const boundary = unit.children.find(next => next.start > node.start && next.type === "item" && next.column <= node.column && !/^[ \t]*[-*][ \t]+`/u.test(source(specTree, next)));
           candidates.push({ ...node, end: boundary?.start ?? unit.end });
         }
       }
