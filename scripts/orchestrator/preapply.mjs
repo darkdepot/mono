@@ -41,7 +41,7 @@ export function preapplyManifest(issue, prd, spec, issueOnly) {
   const fences = new Map(blocks.filter(node => node.type === "fence").map(node => [node.start, node]));
   const lines = document.lines;
   let cursor = candidate.start + 1;
-  const skipEmpty = () => { while (cursor < candidate.end && lines[cursor] === "") cursor++; };
+  const skipEmpty = () => { while (cursor < candidate.end && /^[ \t]*$/u.test(lines[cursor])) cursor++; };
   const entries = new Map();
   while (cursor < candidate.end) {
     skipEmpty(); if (cursor >= candidate.end) break;

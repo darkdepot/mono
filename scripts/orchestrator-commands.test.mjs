@@ -1342,3 +1342,25 @@ test("preapply-linear-serialized: bytes survive materialization and U12 extracti
   assert.equal(extracted.spec, spec);
   assert.deepEqual(preapplyManifest(issue, prd, extracted.spec, false).entries, expected);
 });
+
+test("preapply-ordinary-sibling-boundary: notes after the manifest remain outside it", () => {
+  const spec = fixture("preapply-linear-serialized.md");
+  const issue = "# Покрытие PRD/Spec\nU7\n", prd = "## Кратко\nFixture\n";
+  const expected = preapplyManifest(issue, prd, spec, false);
+  for (const marker of ["-", "*"]) {
+    const parsed = preapplyManifest(issue, prd, spec + `  ${marker} Verification notes\n`, false);
+    assert.deepEqual(parsed, expected);
+  }
+});
+
+test("preapply-whitespace-blank-lines: surrounding whitespace and raw content survive", () => {
+  const spec = fixture("preapply-linear-serialized.md").replaceAll("\n\n", "\n \t \n");
+  const issue = "# Покрытие PRD/Spec\nU7\n", prd = "## Кратко\nFixture\n";
+  const bytes = '{\n  "fixture": "neutral",\n  "enabled": true\n}\n';
+  const parsed = preapplyManifest(issue, prd, spec, false);
+  assert.deepEqual(parsed.entries, [{ path: ".agents/fixture.json", sha256: createHash("sha256").update(bytes).digest("hex"), bytes }]);
+  assert.ok(parsed.materialized.includes("\n \t \n"));
+  assert.deepEqual(preapplyManifest(parsed.materialized, null, null, true).entries, parsed.entries);
+  assert.equal(preapplyManifest(issue + parsed.materialized, prd, spec, false).alreadyMaterialized, true);
+  assert.equal(extractSnapshot(issue, prd, spec).spec, spec);
+});
