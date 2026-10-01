@@ -19,6 +19,7 @@ function verifyReceipt(file, request) {
       receipt?.producer !== "gate-autoreview-v2" || !/^[a-f0-9-]{36}$/.test(receipt.runId ?? "") ||
       fs.realpathSync(file) !== path.join(fs.realpathSync(request.evidenceRoot), "history", `${receipt.runId}.json`)) throw new Error("invalid signed history receipt");
   const expected = { collectionId: request.collectionId, head: request.head, product: request.product, skillsRoot: request.skillsRoot,
+    ...(request.pins ? { pins: request.pins } : {}),
     root: fs.realpathSync(request.root), worktree: fs.realpathSync(request.worktree), evidenceRoot: fs.realpathSync(request.evidenceRoot),
     risk: request.risk, critical: request.critical, workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort(),
     modelRoutes: request.modelRoutes ?? null };

@@ -322,3 +322,119 @@ test('declared provider credentials are redacted from reviewer evidence without 
   assert.equal(clean.output,'diagnostic [REDACTED]');assert.equal(clean.diagnosticTail,'[REDACTED]');
   assert.equal(clean.json.usage,42);assert.deepEqual(clean.json.nested,['[REDACTED]']);
 });
+
+test("U13 named collection fixtures through the gate CLI", async t => {
+  const fs = await import("node:fs"), path = await import("node:path"), os = await import("node:os"), crypto = await import("node:crypto");
+  const { spawnSync } = await import("node:child_process");
+  const { atomicJson, canonical, digest } = await import("./runtime.mjs");
+  const { sha256File } = await import("./orchestrator/command-state.mjs");
+  const files = fs.readdirSync("scripts/fixtures").filter(name => /^collection-u13-.*\.json$/u.test(name));
+  for (const name of files) await t.test(name, () => {
+    const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-u13-cli-"));
+    try {
+      const repo = path.join(scratch, "repo"), root = path.join(scratch, "orchestrator"), evidence = path.join(scratch, "evidence"), skills = path.join(scratch, "skills"), bin = path.join(scratch, "bin");
+      for (const dir of [repo, root, evidence, skills, bin]) fs.mkdirSync(dir);
+      const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+      const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, value); };
+      const git = (...args) => { const r = spawnSync("git", args, { cwd: repo, encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+      write(path.join(repo, ".gitignore"), ".orchestrator/\n");
+      git("init", "-b", "delivery"); git("add", ".gitignore"); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
+      const head = git("rev-parse", "HEAD"), dataset = path.join(evidence, "datasets/fixture.md");
+      write(dataset, "Approved U13 decisions.\n");
+      for (const policy of ["model-policy.md", "autoreview-routing.md"]) write(path.join(skills, "mono-implement/references", policy), fs.readFileSync(path.join("references", policy), "utf8"));
+      const helper = path.join(skills, "autoreview/scripts/autoreview");
+      write(helper, `#!/usr/bin/env node
+const fs=require('node:fs'), a=process.argv.slice(2), val=k=>a[a.indexOf(k)+1];
+fs.writeFileSync(val('--json-output'),JSON.stringify({findings:[],overall_correctness:'patch is correct'}));
+fs.writeFileSync(val('--status-output'),JSON.stringify({schema_version:1,status:'scoped-clean',engine:'claude',exit_code:0,report_produced:true,timed_out:false}));
+console.log('autoreview target: branch | engine: claude | model: '+val('--model')+' | thinking: '+val('--thinking'));
+console.log('autoreview clean: no accepted/actionable findings reported');console.log('overall: patch is correct (0.9)');
+`); fs.chmodSync(helper, 0o700);
+      // Model the outside collector launcher; the actual gate still runs both
+      // write-denial probes, verification, helper, signing and history writes.
+      const launcher = path.join(bin, "codex");
+      write(launcher, `#!/usr/bin/env node
+const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path'),a=process.argv.slice(2);
+if(a[0]!=='sandbox')process.exit(71);const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1));
+const protectedRoot=path.dirname(p.probe);fs.chmodSync(protectedRoot,0o500);let r;
+try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit'});}finally{fs.chmodSync(protectedRoot,0o700);}
+process.exit(r.status===null?1:r.status);
+`); fs.chmodSync(launcher, 0o700);
+      const pinsFile = path.join(root, "dispatch/MONO-999-a1/pins.json");
+      const pins = { product: "fixture", root, worktree: repo, skillsRoot: skills, baseRef: "HEAD", evidenceRoot: evidence,
+        risk: "standard", critical: null, verification: { command: process.execPath, args: ["-e", "process.exit(0)"] }, workerWritableRoots: [repo],
+        reviewDataset: dataset, reviewDatasetVersion: 1, reviewDatasetDigest: sha256File(dataset) };
+      atomicJson(pinsFile, pins);
+      const binding = { file: pinsFile, digest: sha256File(pinsFile) };
+      const entry = { issue: "MONO-999", attempt: 1, stage: "mono-deliver", worktree: repo,
+        packVersion: "fixture", sourceCommit: "b".repeat(40), surfaceRevision: 4, pins: binding, pinsVersion: 0 };
+      const registryFile = path.join(root, "workers.json");
+      const register = () => atomicJson(registryFile, { "MONO-999": entry }); register();
+      let request = { ...pins, head, collect: false, collectionId: `preflight-collect:${head}:1`, pins: binding }; delete request.reviewDatasetDigest;
+      const file = path.join(scratch, "request.json"), receiptFile = path.join(evidence, `${head}.json`);
+      const call = value => { atomicJson(file, value); return spawnSync(process.execPath, ["scripts/gate.mjs", "preflight", "--request", file], { env, encoding: "utf8" }); };
+      const collect = value => { const r = call({ ...value, collect: true }); assert.equal(r.status, 0, r.stdout + r.stderr); return JSON.parse(fs.readFileSync(receiptFile, "utf8")); };
+      const seal = envelope => { envelope.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(envelope.receipt)).digest("hex"); atomicJson(receiptFile, envelope); };
+      let expectedField = null, expectedValue = null, expectedStatus = 2;
+      if (fixture.mode === "mismatch") { expectedField = fixture.field; expectedValue = pins[fixture.field]; if (fixture.omit) delete request[fixture.field]; else request[fixture.field] = fixture.value; }
+      if (fixture.mode === "pins-digest") { request.pins = { ...binding, digest: "0".repeat(64) }; expectedField = "pins.digest"; expectedValue = binding.digest; }
+      if (fixture.mode === "dataset-tamper") { write(dataset, "Changed decisions.\n"); expectedField = "reviewDatasetDigest"; expectedValue = pins.reviewDatasetDigest; }
+      if (fixture.mode === "no-pins") { delete request.pins; expectedField = "pins"; expectedValue = binding; }
+      if (["amended", "admitted"].includes(fixture.mode)) {
+        if (fixture.mode === "admitted") { collect(request); expectedStatus = 0; }
+        if (fixture.mode === "admitted") atomicJson(path.join(root, "consumed/MONO-999-a1/admissions", `${request.collectionId}.json`),
+          { collectionId: request.collectionId, reportDigest: "f".repeat(64), pinsVersion: 0, manifestDigest: digest({ ...pins, pinsVersion: 0 }) });
+        const amendment = path.join(path.dirname(pinsFile), "pins.v1.json"); atomicJson(amendment, { pinsVersion: 1, reviewDatasetVersion: 2, reviewDatasetDigest: pins.reviewDatasetDigest });
+        entry.pinsVersion = 1; register();
+        if (fixture.mode === "amended") { expectedField = "pins.file"; expectedValue = amendment; }
+      }
+      if (fixture.mode === "no-dataset") {
+        pins.reviewDataset = null; pins.reviewDatasetVersion = 0; pins.reviewDatasetDigest = null; atomicJson(pinsFile, pins);
+        binding.digest = sha256File(pinsFile); register(); request = { ...request, reviewDatasetVersion: 0, pins: binding }; delete request.reviewDataset;
+        if (fixture.omitVersion) { delete request.reviewDatasetVersion; expectedField = "reviewDatasetVersion"; expectedValue = 0; }
+      }
+      if (fixture.mode === "other-head") {
+        const envelope = collect(request); envelope.receipt.collectionId = `preflight-collect:${head}:2`; seal(envelope);
+        request.collectionId = `preflight-collect:${head}:3`;
+      }
+      if (fixture.mode === "collect") { expectedStatus = 0; request.collect = true; }
+      if (fixture.mode === "legacy") {
+        delete pins.reviewDatasetDigest; atomicJson(pinsFile, pins); binding.digest = sha256File(pinsFile); register(); delete request.pins;
+        const envelope = collect(request); assert.equal(Object.hasOwn(envelope.receipt, "pins"), false); expectedStatus = 0;
+      }
+      if (fixture.mode === "receipt-pins") {
+        const envelope = collect(request); envelope.receipt.pins.digest = "0".repeat(64); seal(envelope); expectedStatus = 1;
+      }
+      if (fixture.mode === "history") {
+        const envelope = collect(request); envelope.receipt.collectionId = `preflight-collect:${head}:2`; seal(envelope); expectedStatus = 0;
+      }
+      if (fixture.mode === "unregistered-receipt") {
+        collect(request); fs.unlinkSync(registryFile); delete request.pins; expectedField = "pins"; expectedValue = binding;
+      }
+      if (fixture.mode === "unmatched-no-pins") {
+        entry.worktree = path.join(scratch, "another-worktree"); register(); delete request.pins;
+        expectedField = "registry"; expectedValue = "one registered attempt for worktree";
+      }
+      if (fixture.unregistered) fs.unlinkSync(registryFile);
+      const registryBefore = fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null, receiptBefore = fs.existsSync(receiptFile) ? fs.readFileSync(receiptFile) : null;
+      const result = call(request);
+      if (expectedField) { expectedStatus = 1; assert.equal(result.stdout.trim(), `gate preflight: fail: collection request mismatch: ${expectedField}; expected ${canonical(expectedValue)}`); }
+      assert.equal(result.status, expectedStatus, result.stdout + result.stderr);
+      assert.deepEqual(fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null, registryBefore, "gate never writes the registry");
+      assert.equal(fs.existsSync(path.join(root, "reports/MONO-999-phase-preflight.json")), false);
+      if (expectedStatus === 2) {
+        assert.deepEqual(result.stdout.trim().split("\n"), [`gate preflight: pending: ${request.collectionId}`, JSON.stringify({ publishRequest: request })]);
+        if (receiptBefore) assert.deepEqual(fs.readFileSync(receiptFile), receiptBefore);
+        else assert.equal(fs.existsSync(receiptFile), false);
+      }
+      if (fixture.mode === "receipt-pins") assert.match(result.stdout, /receipt pins differs from dispatch request/u);
+      if (fixture.mode === "collect") {
+        const envelope = JSON.parse(fs.readFileSync(receiptFile, "utf8")); assert.deepEqual(envelope.receipt.pins, binding);
+        assert.equal(fs.existsSync(path.join(evidence, "history", `${envelope.receipt.runId}.json`)), true);
+        const verified = call({ ...request, collect: false }); assert.equal(verified.status, 0, verified.stdout);
+      }
+      if (fixture.mode === "history") assert.deepEqual(fs.readFileSync(receiptFile), receiptBefore, "history verification does not reconcile the mutable head");
+    } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+  });
+});

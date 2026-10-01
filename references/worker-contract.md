@@ -2,16 +2,16 @@
 
 ## AFK Contract
 
-Use dispatched Issue/branch/worktree. No branch creation/switching, sub-workers,
+Use dispatched Issue/branch/worktree. No branch changes, sub-workers,
 session management, other-Issue edits or orchestrator state access (workers.json,
 ledger.md, control.json, dispatch, consumed, logs/other reports), except reading
 own consumed/<KEY>-gate-ack-a<N>.json. Never commit secrets/.orchestrator or ask
-users: mailbox question/recommendation, then stop. Report before terminal stops;
+users: mailbox question/recommendation, then stop. Only gates read registry/dispatch. Report before stops;
 passed pause emits only ack. Sequenced stops park; standalone keeps statuses.
 
 ## Orchestration Mode Precedence
 
-Snapshot replaces Linear/resolver reads. Skill owns rules; dispatch owns facts,
+Snapshot replaces Linear/resolver. Skill owns rules; dispatch owns facts,
 pins/paths/constraints. Queue after gates; orchestrator applies/read-backs before
 progress. Disclose lag; never claim application or judge unapplied state. Name
 missing inputs and block, never infer/skip/defer checks. Confirm writes before
@@ -52,14 +52,14 @@ one reports/<ISSUE-KEY>-gate-ack-a<N>.json; denied mailbox uses the same name in
 }
 ```
 
-Unique nonempty gate names: gates-passed exact set/all pass; blocked nonempty
+Unique gate names (nonempty): gates-passed exact set/all pass; blocked nonempty
 subset/one blocked. Blocked: ack then report (missing: blocked; adverse: needs-human),
 no move. Passed: no code/move/queue/report yet. Codex wait: delivery-state.mjs
 wait-ack until ack mtime + ackWaitSec; expiry parks write-unconfirmed. Applied
 record read-backs amend state: check delivery, no identity rerun. Resume: Codex
 exits, desktop/fallback keeps session; require all move read-backs, rerun identity/
 checks. Never repeat moves. No-move retry: current snapshot, no ack/amendment.
-Consumption never replaces approval.
+Consumption is not approval.
 
 ## Sandbox ladder
 
@@ -141,7 +141,7 @@ statuses/certificates.
 Phase: reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json; denied mailbox uses
 worktree .orchestrator, same name, never both. Add phase, increasing positive
 sequence, kind (phase/confirmation-request), head, phase_result to final fields.
-Capsule phase/head match; open_queue equals ordered linear_mutations_pending.
+Capsule phase/head match; open_queue = ordered linear_mutations_pending.
 Writes: stable id/operation/target/payload; new ID for changed payload, no lost
 obligations on new head. Certificate comments: append #/certificate, one copy.
 Short: confirm empty code queue; start facts in capsule.decisions and Russian
@@ -156,9 +156,8 @@ Partial/stale/foreign confirmation blocks. Resume the capsule after
 break/compaction; timeout orchestration.delivery.confirmationTimeoutSec (default
 1800 seconds) parks write-unconfirmed (запись не подтверждена).
 
-In-phase confirmation-request preserves ship order: accepted drift before PR,
-ready certificate before formal review, In Review/PR chip after PR. Queueing
-never proves application; only confirmed writes permit dependent progression.
+Confirm in-phase queues before dependent work: accepted drift before PR, ready
+certificate before formal review, In Review/PR chip after PR.
 
 Pin product/evidenceRoot, skillsRoot, risk/critical, verification/write grants.
 Evidence: ~/.mono-agent-workflow/evidence/<product>/ outside ALL worker grants
@@ -166,7 +165,8 @@ Evidence: ~/.mono-agent-workflow/evidence/<product>/ outside ALL worker grants
 sandboxes; worker: collect:false. Readable keys grant no writes. Hostile local
 operator attestation is out of scope (one user/host).
 
-After commit publish kind=confirmation-request with one write:
+After commit run pinned collect:false; pending (exit 2) is not pass. Publish only
+publishRequest as payload.request in kind=confirmation-request with one write:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
 target=<head>, payload={request}. Adapter returns immutable receipt path/digest/gate
 answer even on failure; confirmation proves completion only. Verify collect:false.
@@ -180,8 +180,7 @@ Orchestrator rechecks preflight before ship.
 ## Worker Report
 
 Path: ~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-mono-deliver.json;
-on denial: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON except
-verbatim verification items; obey AFK stops.
+on denial: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON; verification items verbatim; obey AFK stops.
 
 ```json
 {

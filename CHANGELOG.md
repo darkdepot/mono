@@ -6,6 +6,14 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-99: bind worker collection requests to registered pins and dataset
+  digests under U13, reusing admission comparison without gate-side writes.
+  Emit `pending` (exit 2) with `publishRequest` before collection; preserve
+  legacy receipts and optionally sign/verify the pins binding in gate/history
+  checks. Render the pinned request in dispatch and keep the worker corpus
+  within its prior budget. Receipt envelope/signature, admission shape and
+  history-before-head publication are unchanged.
+
 - MONO-98: parse snapshot documents into a block tree before selecting definitions
   and transitive coverage under U12. Keep fences and other opaque markup out of
   coverage; unknown IDs refuse before duplicate/unclosed-fence fallback. Add

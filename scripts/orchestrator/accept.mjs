@@ -201,7 +201,8 @@ export async function acceptAmend(args) {
           for (const [name, body] of Object.entries(documents)) { fs.writeFileSync(path.join(target, name), body); text += `\n\n## ${name}\n${body}`; }
           fullSnapshot = { directory: target, digest: digest(documents) };
         }
-        atomicJson(pinsFile, { pinsVersion: version, risk, critical, reviewDataset, reviewDatasetVersion, workerWritableRoots, fullSnapshot });
+        atomicJson(pinsFile, { pinsVersion: version, risk, critical, reviewDataset, reviewDatasetVersion,
+          reviewDatasetDigest: reviewDataset ? sha256File(reviewDataset) : null, workerWritableRoots, fullSnapshot });
         text += `\n\n## Effective attempt pins\npinsVersion: ${version}\npins file: ${pinsFile}\nSHA-256: ${sha256File(pinsFile)}\n${JSON.stringify({ ...current, ...readJson(pinsFile) }, null, 2)}\nPreserve the full queue and wait for its confirmation before advancing. Risk determines required local review even when the immutable launch profile was short.`;
         fs.writeFileSync(resumeFile, text + "\n");
         const previousLaunchGrants = { workerWritableRoots: entry.workerWritableRoots, writable_roots: entry.writable_roots,

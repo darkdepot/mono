@@ -100,6 +100,8 @@ function prepareDispatch(args) {
   const pins = { ...gate, modelRoutes, product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
     risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind,
     reviewDataset: args["review-dataset"] ?? settings.reviewDataset ?? null, reviewDatasetVersion: Number(args["review-dataset-version"] ?? settings.reviewDatasetVersion ?? 0) };
+  pins.reviewDatasetDigest = pins.reviewDataset ? sha256File(pins.reviewDataset) : null;
+  if (!pins.reviewDataset) pins.reviewDatasetVersion = 0;
   atomicJson(pinsFile, pins); const pinsDigest = sha256File(pinsFile);
   fs.writeFileSync(path.join(output, "pins.sha256"), `${pinsDigest}\n`);
   atomicJson(gateFile, gate); atomicJson(movesFile, moves);
@@ -119,7 +121,12 @@ function prepareDispatch(args) {
   const ack = path.join(args.root, "reports", `${issue}-gate-ack-a${attempt}.json`);
   const fallbackAck = path.join(worktree, ".orchestrator", `${issue}-gate-ack-a${attempt}.json`);
   const waitCommand = location => `node ${q(path.join(directory, "../delivery-state.mjs"))} wait-ack --root ${q(args.root)} --issue ${q(issue)} --attempt ${q(attempt)} --ack ${q(location)} --moves ${q(movesFile)} --config ${q(args.config)}`;
+  const collectionRequest = { product, root: pins.root, worktree, head: "HEAD", collectionId: "preflight-collect:HEAD:1", skillsRoot,
+    baseRef: pins.baseRef, evidenceRoot, modelRoutes: pins.modelRoutes, verification: pins.verification, risk: pins.risk, critical: pins.critical,
+    workerWritableRoots: pins.workerWritableRoots, ...(pins.reviewDataset ? { reviewDataset: pins.reviewDataset } : {}),
+    reviewDatasetVersion: pins.reviewDatasetVersion, pins: { file: pinsFile, digest: pinsDigest }, collect: false };
   const values = { issue, title: body.split("\n")[0].replace(/^#+\s*/u, ""), attempt, handshake, profile, pins_file: pinsFile, pins_digest: pinsDigest,
+    collection_request: JSON.stringify(collectionRequest, null, 2),
     gate_request: gateFile, runtime_scripts: path.resolve(directory, ".."), product, evidence_root: evidenceRoot, model_routes: JSON.stringify(modelRoutes),
     preflight_pins: JSON.stringify(pins), writable_roots: JSON.stringify(roots), confirmation_timeout: deliveryConfig(config).confirmationTimeoutSec,
     worktree, branch, pack_version: installed.packVersion, source_commit: installed.sourceCommit, surface_revision: installed.surfaceRevision,

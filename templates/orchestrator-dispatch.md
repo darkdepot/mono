@@ -39,6 +39,19 @@ the worker diff never selects its own reviewer.
 - sourceCommit: `{{source_commit}}`
 - surfaceRevision: `{{surface_revision}}`
 
+## Запрос сбора
+
+Use this pinned preflight request; replace HEAD in head/collectionId with the
+committed SHA and increment the collection number on retry. Gate-side reads of
+registry/dispatch are allowed; the worker must not read those directories.
+Run preflight with collect:false. Exit 2 is pending, not pass: publish only the
+returned publishRequest in payload.request, then wait for collection confirmation.
+Never construct a replacement request from the error text.
+
+```json
+{{collection_request}}
+```
+
 ## Goal Contract
 
 - Outcome: {{outcome}}

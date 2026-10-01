@@ -6,6 +6,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig } from "./runtime.mjs";
+import { checkCollectionRequest } from "./orchestrator/command-state.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const safeGitArgs = ["--no-pager", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat", "-c", "advice.graftFileDeprecated=false"];
@@ -348,7 +349,10 @@ export async function archiveReviewDataset(source, evidenceRoot) {
   });
 }
 export async function preflightGate(request) {
-  if (request.collect !== true) return (await verifyPreflight(request)).reason;
+  if (request.collect !== true) {
+    const proof = await verifyPreflight(request, null, true);
+    return proof.publishRequest ? proof : proof.reason;
+  }
   requireThat(/^[a-f0-9]{40}$/.test(request.head), "dispatch head required");
   const root = preflightEvidenceRoot(request);
   return withLock(path.join(root, `${request.head}.collect.lock`), async () => (await verifyPreflight(request)).reason);
@@ -370,7 +374,8 @@ function reviewBaseTip(repo, baseRef, liveTip) {
   }
   return git(repo, "rev-parse", "--verify", `${liveTip ?? baseRef}^{commit}`);
 }
-async function verifyPreflight(request, live = null) {
+async function verifyPreflight(request, live = null, allowPending = false) {
+  const pins = checkCollectionRequest(request);
   if (live) {
     requireThat(request.head === live.head, "preflight request does not match live PR head");
     requireThat(/^[a-f0-9]{40}$/.test(live.baseRefOid ?? ""), "live PR base unavailable");
@@ -390,20 +395,40 @@ async function verifyPreflight(request, live = null) {
   const repo = fs.realpathSync(request.worktree);
   cleanTree(repo);
   const head = git(repo, "rev-parse", "HEAD");
+  if (pins && head !== request.head) throw new Error(`collection request mismatch: head; expected ${canonical(head)}`);
+  if (pins && !new RegExp(`^preflight-collect:${head}:[1-9][0-9]*$`).test(request.collectionId ?? ""))
+    throw new Error(`collection request mismatch: collectionId; expected ${canonical(`preflight-collect:${head}:<n>`)}`);
   requireThat(head === request.head, "head differs from collection/verification request");
   const baseTip = reviewBaseTip(repo, request.baseRef, live?.baseRefOid);
   const base = git(repo, "merge-base", head, baseTip);
   const receiptFile = path.join(evidenceRoot, `${head}.json`);
   const dataset = reviewDatasetBinding(request, evidenceRoot);
-  const binding = { ...dataset, ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
+  const binding = { ...dataset, ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
-  let receipt;
+  let receipt, verifiedReceiptFile = receiptFile;
   if (request.collect === false) {
-    regularEvidence(receiptFile); regularEvidence(path.join(evidenceRoot, "receipt.key"));
-    const envelope = readJson(receiptFile);
-    requireThat(envelope.signature === sign(evidenceKey(evidenceRoot, false), envelope.receipt), "hand-made or modified autoreview artifact");
-    receipt = envelope.receipt;
+    const readSigned = file => {
+      regularEvidence(file); regularEvidence(path.join(evidenceRoot, "receipt.key"));
+      const envelope = readJson(file);
+      requireThat(envelope.signature === sign(evidenceKey(evidenceRoot, false), envelope.receipt), "hand-made or modified autoreview artifact");
+      return envelope.receipt;
+    };
+    if (!pins) receipt = readSigned(receiptFile);
+    else if (fs.existsSync(receiptFile)) receipt = readSigned(receiptFile);
+    if (pins && receipt?.collectionId !== request.collectionId) {
+      const history = path.join(evidenceRoot, "history");
+      const matches = fs.existsSync(history) ? fs.readdirSync(history).filter(name => name.endsWith(".json"))
+        .map(name => path.join(history, name)).filter(file => readJson(file).receipt?.collectionId === request.collectionId) : [];
+      requireThat(matches.length <= 1, "multiple history receipts for collectionId");
+      if (matches.length) { verifiedReceiptFile = matches[0]; receipt = readSigned(verifiedReceiptFile); }
+      else receipt = null;
+    }
+    if (!receipt) {
+      requireThat(allowPending, "missing or stale autoreview artifact/head/base");
+      return { publishRequest: { ...request, collect: false } };
+    }
+    if (!request.pins && receipt.pins) throw new Error(`collection request mismatch: pins; expected ${canonical(receipt.pins)}`);
     for (const [key, value] of Object.entries(binding)) {
       // Legacy receipts predate pins; below, validate them and require both bases to be override-free.
       if (key === "modelRoutes" && receipt.route && receipt.route.engine === undefined && receipt.modelRoutes === undefined) continue;
@@ -490,7 +515,7 @@ async function verifyPreflight(request, live = null) {
     receipt.review.status.report_produced === true && receipt.review.status.timed_out === false, "incomplete or non-clean helper output/status artifact");
   unchanged();
   const reason = validatePreflight(receipt, head, base, route);
-  return { reason, receipt: { path: receiptFile, runId: receipt.runId, digest: digest(receipt) } };
+  return { reason, receipt: { path: verifiedReceiptFile, runId: receipt.runId, digest: digest(receipt) } };
 }
 
 export function readShipSnapshot(repo, number, deadline = Infinity) {
@@ -683,11 +708,13 @@ if (isMain(import.meta.url)) {
     const args = flags(rest);
     if (name === "--help" || args.help) console.log(`Usage: gate.mjs start|preflight|ship --request <json>
 start request: {worktree, branch, base, lock, packVersion, sourceCommit, surfaceRevision}
-preflight request: {product,collectionId,root,worktree,head,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,modelRoutes?,collect,verification:{command,args}}
+preflight request: {product,collectionId,root,worktree,head,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,reviewDatasetVersion?,pins?:{file,digest},modelRoutes?,collect,verification:{command,args}}
   modelRoutes pins immutable base/configDigest/roles from resolveModelRoutes; overrides require pins.
   risk is the final approved/diff risk; critical is a concrete escalation reason or null.
   Pin every request field from dispatch. Orchestrator only: collect:true, outside worker sandboxes.
   Worker only: collect:false, reads <evidenceRoot>/<head>.json without creating files.
+  U13 attempts require registered pins and reviewDatasetVersion (0 without a dataset; omit reviewDataset).
+  Pending worker collection exits 2 with publishRequest; publish exactly that request. Pass exits 0; refusal exits 1.
   Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY worker-writable root,
   including worktree, orchestrator root and additional workerWritableRoots. Pin that list in dispatch.
   Collection grants only the worktree and one private temp directory; workerWritableRoots only excludes evidenceRoot.
@@ -709,7 +736,10 @@ ship request: {preflight:<complete preflight collect:false request>, repo:"owner
       requireThat(["start", "preflight", "ship"].includes(name), "unknown gate");
       const request = readJson(args.request);
       const reason = name === "start" ? startGate(request) : name === "preflight" ? await preflightGate(request) : await shipGate(request);
-      console.log(`gate ${name}: pass: ${reason}`);
+      if (name === "preflight" && reason.publishRequest) {
+        console.log(`gate preflight: pending: ${reason.publishRequest.collectionId}`);
+        console.log(JSON.stringify(reason)); process.exitCode = 2;
+      } else console.log(`gate ${name}: pass: ${reason}`);
     }
   } catch (error) { console.log(`gate ${name}: fail: ${error.message.replace(/\s+/g, " ")}`); process.exitCode = 1; }
 }

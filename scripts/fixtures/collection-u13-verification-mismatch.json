@@ -1,0 +1,8 @@
+{
+  "mode": "mismatch",
+  "field": "verification",
+  "value": {
+    "command": "false",
+    "args": []
+  }
+}

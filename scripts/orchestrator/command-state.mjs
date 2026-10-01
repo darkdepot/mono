@@ -88,6 +88,57 @@ export function effectivePins(entry) {
   return { ...base, ...amendment, pinsVersion: version };
 }
 
+export function collectionPinsBinding(entry, version = entry.pinsVersion ?? 0) {
+  const file = version ? path.join(path.dirname(entry.pins.file), `pins.v${version}.json`) : entry.pins.file;
+  return { file, digest: sha256File(file) };
+}
+export function collectionPinMismatch(request, pins) {
+  for (const key of ["product", "root", "worktree", "skillsRoot", "baseRef", "evidenceRoot", "modelRoutes", "verification", "risk", "critical", "reviewDataset", "reviewDatasetVersion", "workerWritableRoots"]) {
+    const fallback = key === "reviewDatasetVersion" ? 0 : null;
+    if (canonical(request[key] ?? fallback) !== canonical(pins[key] ?? fallback)) return { field: key, expected: pins[key] ?? fallback };
+  }
+  return null;
+}
+const requestMismatch = (field, expected) => { throw new Error(`collection request mismatch: ${field}; expected ${canonical(expected)}`); };
+
+// Gate-side admission comparison: reads the registry/dispatch/admission only.
+// No launch lock, admission record or worker phase is created here.
+export function checkCollectionRequest(request) {
+  const root = request.pins?.file ? path.dirname(path.dirname(path.dirname(request.pins.file))) : request.root;
+  const registryFile = path.join(root, "workers.json");
+  if (!fs.existsSync(registryFile) && !request.pins) return null;
+  const registered = readJson(registryFile);
+  const named = request.pins?.file && /^([A-Z][A-Z0-9]*-\d+)-a([1-9][0-9]*)$/u.exec(path.basename(path.dirname(request.pins.file)));
+  const entries = named ? [registered[named[1]]].filter(entry => entry?.attempt === Number(named[2])) :
+    Object.values(registered).filter(entry => entry.worktree === request.worktree && entry.stage === "mono-deliver");
+  if (entries.length !== 1) {
+    requestMismatch("registry", "one registered attempt for worktree");
+  }
+  const entry = registryEntry(root, entries[0].issue, entries[0].attempt);
+  if (!entry.pins && !request.pins) return null;
+  const launch = effectivePins({ ...entry, pinsVersion: 0 });
+  const u13 = Object.hasOwn(launch, "reviewDatasetDigest");
+  if (!u13 && !request.pins) return null;
+  if (!/^preflight-collect:[a-f0-9]{40}:[1-9][0-9]*$/u.test(request.collectionId ?? "")) requestMismatch("collectionId", "preflight-collect:<head>:<n>");
+  const admissionFile = path.join(attemptDirectory(root, entry), "admissions", `${request.collectionId}.json`);
+  const admission = fs.existsSync(admissionFile) ? readJson(admissionFile) : null;
+  const version = admission?.pinsVersion ?? entry.pinsVersion ?? 0;
+  const pins = effectivePins({ ...entry, pinsVersion: version });
+  if (admission && (admission.collectionId !== request.collectionId || admission.manifestDigest !== digest(pins))) requestMismatch("admission", "registered manifest for collectionId");
+  const expected = collectionPinsBinding(entry, version);
+  if (expected.file !== path.join(root, "dispatch", `${entry.issue}-a${entry.attempt}`, version ? `pins.v${version}.json` : "pins.json")) requestMismatch("pins.file", "registered dispatch pins file");
+  if (!request.pins) requestMismatch("pins", expected);
+  if (request.pins.file !== expected.file) requestMismatch("pins.file", expected.file);
+  if (canonical(request.pins) !== canonical(expected)) requestMismatch("pins.digest", expected.digest);
+  if (u13 && !Object.hasOwn(request, "reviewDatasetVersion")) requestMismatch("reviewDatasetVersion", pins.reviewDatasetVersion);
+  const mismatch = collectionPinMismatch(request, pins);
+  if (mismatch) requestMismatch(mismatch.field, mismatch.expected);
+  if (u13 && pins.reviewDataset === null && Object.hasOwn(request, "reviewDataset")) requestMismatch("reviewDataset", "omitted");
+  if (u13 && (pins.reviewDataset ? sha256File(pins.reviewDataset) : null) !== pins.reviewDatasetDigest) requestMismatch("reviewDatasetDigest", pins.reviewDatasetDigest);
+  if (request.collect !== false && request.collect !== true) requestMismatch("collect", false);
+  return pins;
+}
+
 // This exported seam is also the collector's admission transaction (MONO-96).
 // Both callers and amend serialize on launch.lock; callers must not nest it.
 export async function admitCollection(root, report) {
@@ -107,9 +158,11 @@ export function admitUnderLock(root, report) {
     }
     if ((report.pinsVersion ?? 0) !== pins.pinsVersion) throw new Error("new collection request uses stale pinsVersion");
     const request = write.payload.request;
-    for (const key of ["product", "root", "worktree", "skillsRoot", "baseRef", "evidenceRoot", "modelRoutes", "verification", "risk", "critical", "reviewDataset", "reviewDatasetVersion", "workerWritableRoots"]) {
-      const defaultValue = key === "reviewDatasetVersion" ? 0 : null;
-      if (canonical(request[key] ?? defaultValue) !== canonical(pins[key] ?? defaultValue)) throw new Error(`collection pin mismatch: ${key}`);
+    const mismatch = collectionPinMismatch(request, pins);
+    if (mismatch) throw new Error(`collection pin mismatch: ${mismatch.field}`);
+    if (Object.hasOwn(readJson(entry.pins.file), "reviewDatasetDigest") || request.pins) {
+      if (canonical(request.pins) !== canonical(collectionPinsBinding(entry))) throw new Error("collection pin mismatch: pins");
+      if (!Object.hasOwn(request, "reviewDatasetVersion")) throw new Error("collection pin mismatch: reviewDatasetVersion");
     }
     if (request.collect !== false || request.head !== report.head || canonical(report.capsule.writable_roots) !== canonical(pins.workerWritableRoots))
       throw new Error("collection head/grants/collect mismatch");
@@ -135,9 +188,10 @@ export function amendmentState(entry, record) {
 }
 
 export function amendmentChange(args, inputs, supplied) {
+  const reviewDataset = args["review-dataset"] ?? inputs.reviewDataset ?? null;
   return { risk: args.risk ?? inputs.risk, critical: args.critical ?? inputs.critical,
-    reviewDataset: args["review-dataset"] ?? inputs.reviewDataset ?? null,
-    reviewDatasetVersion: Number(args["review-dataset-version"] ?? inputs.reviewDatasetVersion ?? 0),
+    reviewDataset,
+    reviewDatasetVersion: !reviewDataset && (inputs.reviewDatasetVersion ?? 0) === 0 && Object.hasOwn(inputs, "reviewDatasetDigest") ? 0 : Number(args["review-dataset-version"] ?? inputs.reviewDatasetVersion ?? 0),
     workerWritableRoots: supplied.roots ?? inputs.workerWritableRoots, text: args.text,
     fullSnapshot: args["full-snapshot"] ? { digest: digest(supplied.documents) } :
       (inputs.fullSnapshot ? { digest: inputs.fullSnapshot.digest } : null) };
