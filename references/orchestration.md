@@ -1018,6 +1018,7 @@ Run installed `scripts/orchestrator/collector.mjs start|stop|status --root DIR
 --issue KEY --attempt N` outside all worker sandboxes. Start once per attempt;
 stop at retirement. It confirms empty and collection-only phase queues, never
 connector queues. Inspect `reports/KEY-collector-aN.log` for refusals/results.
+`reports/KEY-collect-attention-aN.json` signals an admission refusal to the orchestrator once per report digest/current registry pinsVersion pair, persists across restarts, and clears when the current collection-only preflight report is admitted, including a replacement for the refused report.
 The attempt lock `reports/KEY-collector-aN.lock` stores pid/procStart and the
 active gate incarnation. Start reclaims only a dead holder and dead gate tree;
 unknown process telemetry refuses. Collector and gate use separate dedicated process groups. A gate waits on stdin

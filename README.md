@@ -197,6 +197,9 @@ The orchestrator starts the installed `collector.mjs start --root DIR --issue KE
 --attempt N` once per delivery attempt, uses `status` and the report log to inspect
 it, and stops it at attempt end. Empty and collection-only queues confirm
 automatically; connector writes still require fresh orchestrator read-backs.
+Admission refusals write one attention file and log line per report digest and
+current registry pins version; polling resumes admission when either changes,
+and admission of the current preflight collection clears the attempt's file.
 Signed history restores interrupted head receipts without a second review,
 including failed collections. Incarnation/group checks refuse live or unverified
 locks. This removes manual confirmation work; measured time/token savings still

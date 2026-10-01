@@ -141,6 +141,7 @@ export function checkCollectionRequest(request) {
 
 // This exported seam is also the collector's admission transaction (MONO-96).
 // Both callers and amend serialize on launch.lock; callers must not nest it.
+export class CollectionAdmissionRefusal extends Error {}
 export async function admitCollection(root, report) {
   return withLock(path.join(root, "launch.lock"), () => admitUnderLock(root, report));
 }
@@ -153,19 +154,19 @@ export function admitUnderLock(root, report) {
     const reportDigest = digest(report);
     if (fs.existsSync(file)) {
       const prior = readJson(file);
-      if (prior.collectionId !== write.id || prior.reportDigest !== reportDigest) throw new Error("conflicting collection admission");
+      if (prior.collectionId !== write.id || prior.reportDigest !== reportDigest) throw new CollectionAdmissionRefusal("conflicting collection admission");
       admitted.push(prior); continue;
     }
-    if ((report.pinsVersion ?? 0) !== pins.pinsVersion) throw new Error("new collection request uses stale pinsVersion");
+    if ((report.pinsVersion ?? 0) !== pins.pinsVersion) throw new CollectionAdmissionRefusal("new collection request uses stale pinsVersion");
     const request = write.payload.request;
     const mismatch = collectionPinMismatch(request, pins);
-    if (mismatch) throw new Error(`collection pin mismatch: ${mismatch.field}`);
+    if (mismatch) throw new CollectionAdmissionRefusal(`collection pin mismatch: ${mismatch.field}`);
     if (Object.hasOwn(readJson(entry.pins.file), "reviewDatasetDigest") || request.pins) {
-      if (canonical(request.pins) !== canonical(collectionPinsBinding(entry))) throw new Error("collection pin mismatch: pins");
-      if (!Object.hasOwn(request, "reviewDatasetVersion")) throw new Error("collection pin mismatch: reviewDatasetVersion");
+      if (canonical(request.pins) !== canonical(collectionPinsBinding(entry))) throw new CollectionAdmissionRefusal("collection pin mismatch: pins");
+      if (!Object.hasOwn(request, "reviewDatasetVersion")) throw new CollectionAdmissionRefusal("collection pin mismatch: reviewDatasetVersion");
     }
     if (request.collect !== false || request.head !== report.head || canonical(report.capsule.writable_roots) !== canonical(pins.workerWritableRoots))
-      throw new Error("collection head/grants/collect mismatch");
+      throw new CollectionAdmissionRefusal("collection head/grants/collect mismatch");
     const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins) };
     atomicJson(file, record); admitted.push(record);
   }
