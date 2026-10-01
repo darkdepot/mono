@@ -1503,14 +1503,16 @@ that disagree, paths outside `.agents/`, `..`, symbolic links (including parents
 and nonregular targets before application. A section without mandate or without
 --preapply refuses before spawn, without registering an attempt.
 
-Reuse spawn availability checks before application; refused pre-registration
-launches restore the owned commit and ledger entry. Stage approved ignored targets
+Hold `launch.lock` from spawn availability through application, start gates and
+attempt registration; refused pre-registration launches restore the owned commit
+and ledger entry under that lock. Stage approved ignored targets
 explicitly; transformed staged blobs refuse and restore files/index before commit.
 
 Commit `<KEY>: pre-applied .agents changes (orchestrator)` before start gates;
 render commit, paths and hashes in «Предприменённые изменения». Append a UTC
 `date -u` ledger entry `PREAPPLY <KEY> <sha> per mandate <url>`. Repeating the same
-manifest reuses its verified commit without another commit/entry. Pins, gate
+manifest reuses its verified commit only when current HEAD also contains every
+approved blob, without another commit/entry. Pins, gate
 requests/receipts and `gate.mjs start` stay unchanged; review against origin/main
 includes the pre-applied commit. Workers compare commit blobs to the dispatch
 and manifest at start, then leave these files unchanged.

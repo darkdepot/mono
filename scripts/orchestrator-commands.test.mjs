@@ -8,7 +8,7 @@ import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { extractSnapshot, references, section } from "./orchestrator/snapshot.mjs";
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
-import { applyPreapply } from "./orchestrator/preapply.mjs";
+import { applyPreapply, preapplyManifest } from "./orchestrator/preapply.mjs";
 import { digest, readJson, atomicJson, withLock } from "./runtime.mjs";
 import { publishPhase, validateConfirmation, confirmQueue } from "./delivery-state.mjs";
 import { expandedWrite, effectivePins, admitCollection, collectionPinsBinding } from "./orchestrator/command-state.mjs";
@@ -1247,6 +1247,18 @@ test("preapply AE12 named contracts on installed scratch", async t => {
       assert.notEqual(divergent.status, 0); assert.match(divergent.stderr, /materialized.*differs/u);
       assert.equal(git(worktree, "rev-parse", "HEAD"), head); assert.equal(fs.readFileSync(path.join(root, "attempts.json"), "utf8"), attempts);
     });
+    await t.test("preapply-launch-lock-covers-commit-through-registration", () => {
+      const gate = path.join(runtime, "gate.mjs"), original = fs.readFileSync(gate, "utf8"), backup = path.join(runtime, "gate-original.mjs"), probe = path.join(scratch, "competing-launch.json");
+      write(backup, original);
+      write(gate, `import fs from "node:fs"; import path from "node:path"; import {spawnSync,execFileSync} from "node:child_process"; import {isMain} from "./runtime.mjs"; export {startGate,reviewEnvironment} from "./gate-original.mjs";
+if(isMain(import.meta.url)){ const args=process.argv.slice(2), request=path.join(path.dirname(args[args.indexOf("--request")+1]),"spawn.json"); const other=spawnSync(process.execPath,[${JSON.stringify(path.join(runtime, "orchestrator/spawn.mjs"))},"--request",request],{encoding:"utf8"}); fs.writeFileSync(${JSON.stringify(probe)},JSON.stringify({status:other.status,stderr:other.stderr})); if(other.status===0)process.kill(JSON.parse(other.stdout).pid,"SIGTERM"); process.stdout.write(execFileSync(process.execPath,[${JSON.stringify(backup)},...args],{encoding:"utf8"})); }
+`);
+      try {
+        const launched = JSON.parse(pass(run(process.execPath, [...options, "--preapply"]))); pid = launched.pid;
+        const other = readJson(probe); assert.notEqual(other.status, 0); assert.match(other.stderr, /operation locked/u);
+        process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      } finally { write(gate, original); fs.rmSync(backup, { force: true }); }
+    });
     await t.test("preapply-issue-only-direct-section", () => {
       const ignored = ".agents/ignored.txt", ignoredBytes = "approved ignored target\n";
       const ignoredManifest = good.replace("| --- | --- |\n", `| --- | --- |\n| ${ignored} | ${hash(ignoredBytes)} |\n`)
@@ -1285,4 +1297,28 @@ test("preapply-literal-pathspec: only the literal approved filename enters the c
     assert.equal(fs.readFileSync(path.join(repo, extra), "utf8"), "outside manifest\n");
     assert.equal(applyPreapply(repo, "MONO-994", manifest).created, false);
   } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("preapply-current-head-missing-ignored-file: reapply instead of reusing ancestor", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "mono-preapply-head-"));
+  const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  try {
+    git("init", "-b", "main"); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
+    write(path.join(repo, ".gitignore"), ".agents/*\n"); git("add", ".gitignore"); git("commit", "-m", "fixture");
+    const name = ".agents/ignored.txt", bytes = "approved bytes\n", manifest = { entries: [{ path: name, bytes, sha256: createHash("sha256").update(bytes).digest("hex") }] };
+    const first = applyPreapply(repo, "MONO-993", manifest);
+    git("rm", "--cached", "--", name); git("commit", "-m", "remove from current revision");
+    assert.equal(fs.readFileSync(path.join(repo, name), "utf8"), bytes); assert.equal(git("status", "--porcelain"), "");
+    const reapplied = applyPreapply(repo, "MONO-993", manifest); assert.equal(reapplied.created, true); assert.notEqual(reapplied.commit, first.commit);
+    assert.equal(git("show", `HEAD:${name}`), bytes.trimEnd());
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("preapply-covered-unit-selection: unrelated approved units are not dispatch candidates", () => {
+  const bytes = "fixture\n", hash = createHash("sha256").update(bytes).digest("hex");
+  const manifest = `  - Предприменение:\n| path | sha256 |\n| --- | --- |\n| .agents/fixture | ${hash} |\n    - \`.agents/fixture\`\n\`\`\`text\n${bytes}\`\`\`\n`;
+  const issue = "# Покрытие PRD/Spec\nU7\n", prd = "## Кратко\nFixture\n";
+  assert.equal(preapplyManifest(issue, prd, `- U7. Current\n- U8. Other\n${manifest}`, false), null);
+  const selected = preapplyManifest(issue, prd, `- U7. Current\n${manifest}- U8. Other\n${manifest}`, false);
+  assert.deepEqual(selected.entries.map(entry => entry.path), [".agents/fixture"]);
 });

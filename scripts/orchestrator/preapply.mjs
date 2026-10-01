@@ -106,7 +106,11 @@ export function applyPreapply(worktree, issue, manifest) {
   }
   const title = `${issue}: pre-applied .agents changes (orchestrator)`;
   const identical = manifest.entries.every(entry => fs.existsSync(path.join(worktree, entry.path)) && hash(fs.readFileSync(path.join(worktree, entry.path))) === entry.sha256);
-  if (identical) {
+  const headMatches = identical && manifest.entries.every(entry => {
+    try { return hash(execFileSync("git", ["show", `HEAD:${entry.path}`], { cwd: worktree, stdio: ["ignore", "pipe", "pipe"] })) === entry.sha256; }
+    catch (error) { if (error.status !== 128) throw error; return false; }
+  });
+  if (headMatches) {
     for (const sha of git("log", "--format=%H", "--fixed-strings", `--grep=${title}`).trim().split("\n").filter(Boolean)) {
       if (git("log", "-1", "--format=%s", sha).trim() !== title) continue;
       const files = git("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", sha).split("\0").filter(Boolean).sort();

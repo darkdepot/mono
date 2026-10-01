@@ -11,7 +11,8 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
   idempotent retries. Materialize covered Tech Spec manifests through the U12
   tree; reject unsafe/malformed input before spawn. Verify staged bytes, support
   approved ignored targets as literal paths, and restore original ignored bytes
-  on pre-registration rollback. Workers verify and preserve
+  on pre-registration rollback. Reuse requires current-head blob proof; hold the
+  launch lock through application and registration. Workers verify and preserve
   these files; repair/renewal requires a new dispatch. Gate/receipt/pins and
   bounded artifact contracts stay unchanged; mandate bootstrap and live rollout
   remain separate orchestrator actions.

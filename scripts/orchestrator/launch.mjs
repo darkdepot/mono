@@ -166,45 +166,51 @@ export function checkSpawnAvailability(request) {
   if (used >= deliveryConfig(request.config).attemptCap) throw new Error("attempt cap reached");
   return { file, registry, attemptsFile, attempts, used };
 }
-export async function spawnWorker(request) {
+export async function spawnWorker(request, preparation = {}) {
   checkRequest(request);
   const launch = deliveryLaunch(request);
   const modelRoutes = resolveWorkerPins(request);
   guard(request.root);
   const launched = await withLock(path.join(request.root, "launch.lock"), async () => {
     const { file, registry, attemptsFile, attempts, used } = checkSpawnAvailability(request);
-    startGate(request);
-    if (!path.isAbsolute(request.dispatchFile ?? "")) throw new Error("absolute dispatch file required");
-    const prompt = fs.readFileSync(request.dispatchFile, "utf8");
-    const model_policy = { role: request.role, ...modelRoutes.roles[request.role] };
-    if (request.role === "worker-complex" && !request.modelReason?.trim()) throw new Error("complex worker selection requires a recorded reason");
-    if (!Array.isArray(request.writable_roots) || request.writable_roots.some(p => !path.isAbsolute(p))) throw new Error("explicit writable roots required");
-    fs.mkdirSync(path.join(request.root, "reports"), { recursive: true });
-    const roots = effectiveGrants(request, request.root);
-    const gates = request.gates ?? [];
-    if (!Array.isArray(gates) || gates.some(g => typeof g !== "string" || !g.trim()) || new Set(gates).size !== gates.length) throw new Error("invalid dispatched gate list");
-    if (!Array.isArray(request.lifecycle_moves) || (request.lifecycle_moves.length > 0 && gates.length === 0)) throw new Error("lifecycle moves require startup gates");
-    const attempt = used + 1;
-    const log = path.join(request.root, "logs", `${request.issue}-mono-deliver-a${attempt}.jsonl`);
-    fs.mkdirSync(path.dirname(log), { recursive: true });
-    const fd = fs.openSync(log, "wx", 0o600); fs.fsyncSync(fd); fs.closeSync(fd); syncDir(path.dirname(log));
-    const model_launch = { case: "codex-cli", model_parameter: model_policy.model, effort_parameter: model_policy.effort,
-      effort_source: "explicit", actual_model: null, evidence: "requested command parameters" };
-    const entry = { issue: request.issue, transport: "codex-cli", stage: "mono-deliver", attempt, ...launch,
-      thread_id: null, pid: null, worktree: request.worktree, branch: request.branch, product_name: request.product_name,
-      packVersion: request.packVersion, sourceCommit: request.sourceCommit, surfaceRevision: request.surfaceRevision,
-      lock: request.lock, spawned_at: new Date().toISOString(), last_activity_at: null, log,
-      modelRoutes, model_policy, model_launch, model: model_policy.model, effort: model_policy.effort,
-      writable_roots: roots, workerWritableRoots: roots, evidenceRoot: resolvedLocation(request.evidenceRoot), network_access: true, lifecycle_moves: request.lifecycle_moves,
-      confirmationTimeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
-      capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
-        open_queue: [], decisions: [], writable_roots: roots } };
-    if (gates.length) entry.gates = gates;
-    attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);
-    registry[request.issue] = entry; atomicJson(file, registry);
-    appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, modelRoutes, model_policy, model_launch,
-      model: entry.model, effort: entry.effort });
-    return { entry, ...await launchCodex(request.root, entry, prompt, false) };
+    try {
+      await preparation.beforeStart?.();
+      startGate(request);
+      if (!path.isAbsolute(request.dispatchFile ?? "")) throw new Error("absolute dispatch file required");
+      const prompt = fs.readFileSync(request.dispatchFile, "utf8");
+      const model_policy = { role: request.role, ...modelRoutes.roles[request.role] };
+      if (request.role === "worker-complex" && !request.modelReason?.trim()) throw new Error("complex worker selection requires a recorded reason");
+      if (!Array.isArray(request.writable_roots) || request.writable_roots.some(p => !path.isAbsolute(p))) throw new Error("explicit writable roots required");
+      fs.mkdirSync(path.join(request.root, "reports"), { recursive: true });
+      const roots = effectiveGrants(request, request.root);
+      const gates = request.gates ?? [];
+      if (!Array.isArray(gates) || gates.some(g => typeof g !== "string" || !g.trim()) || new Set(gates).size !== gates.length) throw new Error("invalid dispatched gate list");
+      if (!Array.isArray(request.lifecycle_moves) || (request.lifecycle_moves.length > 0 && gates.length === 0)) throw new Error("lifecycle moves require startup gates");
+      const attempt = used + 1;
+      const log = path.join(request.root, "logs", `${request.issue}-mono-deliver-a${attempt}.jsonl`);
+      fs.mkdirSync(path.dirname(log), { recursive: true });
+      const fd = fs.openSync(log, "wx", 0o600); fs.fsyncSync(fd); fs.closeSync(fd); syncDir(path.dirname(log));
+      const model_launch = { case: "codex-cli", model_parameter: model_policy.model, effort_parameter: model_policy.effort,
+        effort_source: "explicit", actual_model: null, evidence: "requested command parameters" };
+      const entry = { issue: request.issue, transport: "codex-cli", stage: "mono-deliver", attempt, ...launch,
+        thread_id: null, pid: null, worktree: request.worktree, branch: request.branch, product_name: request.product_name,
+        packVersion: request.packVersion, sourceCommit: request.sourceCommit, surfaceRevision: request.surfaceRevision,
+        lock: request.lock, spawned_at: new Date().toISOString(), last_activity_at: null, log,
+        modelRoutes, model_policy, model_launch, model: model_policy.model, effort: model_policy.effort,
+        writable_roots: roots, workerWritableRoots: roots, evidenceRoot: resolvedLocation(request.evidenceRoot), network_access: true, lifecycle_moves: request.lifecycle_moves,
+        confirmationTimeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
+        capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
+          open_queue: [], decisions: [], writable_roots: roots } };
+      if (gates.length) entry.gates = gates;
+      attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);
+      registry[request.issue] = entry; atomicJson(file, registry);
+      appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, modelRoutes, model_policy, model_launch,
+        model: entry.model, effort: entry.effort });
+      return { entry, ...await launchCodex(request.root, entry, prompt, false) };
+    } catch (error) {
+      await preparation.onRefusal?.();
+      throw error;
+    }
   });
   return { attempt: launched.entry.attempt, ...await waitForThread(request.root, launched.entry, launched.pid, launched.procStart) };
 }
