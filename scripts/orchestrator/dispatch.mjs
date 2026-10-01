@@ -175,6 +175,7 @@ async function prepareDispatch(args) {
       const used = fs.existsSync(attemptsFile) ? readJson(attemptsFile)[issue] ?? 0 : 0;
       if (used < attempt && git(worktree, "rev-parse", "HEAD") === preapplied.commit && !git(worktree, "status", "--porcelain", "--untracked-files=all")) {
         git(worktree, "reset", "--hard", originalHead);
+        preapplied.restoreFiles();
         if (fs.existsSync(ledgerFile)) fs.writeFileSync(ledgerFile, fs.readFileSync(ledgerFile, "utf8").split("\n").filter(line => !line.endsWith(` ${preapplyLine}`)).join("\n"));
       }
     });

@@ -8,6 +8,7 @@ import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { extractSnapshot, references, section } from "./orchestrator/snapshot.mjs";
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
+import { applyPreapply } from "./orchestrator/preapply.mjs";
 import { digest, readJson, atomicJson, withLock } from "./runtime.mjs";
 import { publishPhase, validateConfirmation, confirmQueue } from "./delivery-state.mjs";
 import { expandedWrite, effectivePins, admitCollection, collectionPinsBinding } from "./orchestrator/command-state.mjs";
@@ -1129,7 +1130,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     const bytes = rawConfig.replace('"projectName": "Mono Agent Workflow"', '"projectName": "AE12 applied"');
     const hash = value => createHash("sha256").update(value).digest("hex");
     const manifest = (filename, content, sha = hash(content)) => `| path | sha256 |\n| --- | --- |\n| ${filename} | ${sha} |\n\n    - \`${filename}\`\n\`\`\`text\n${content}\`\`\`\n`;
-    const target = ".agents/mono-workflow.config.json", opaquePath = ".agents/opaque.txt", opaqueBytes = fixture("preapply-opaque-bytes.txt");
+    const target = ".agents/mono-workflow.config.json", opaquePath = ".agents/opaque.txt", opaqueBytes = JSON.parse(fixture("preapply-opaque-bytes.json")).bytes;
     const good = manifest(target, bytes).replace(`| ${target} | ${hash(bytes)} |\n`, `| ${target} | ${hash(bytes)} |\n| ${opaquePath} | ${hash(opaqueBytes)} |\n`)
       + `    - \`${opaquePath}\`\n\`\`\`text\n${opaqueBytes}\`\`\`\n`;
     write(path.join(snapshot, "approval.md"), "Approved AE12; project Delivery."); write(path.join(snapshot, "project-brief.md"), "AE12"); write(path.join(snapshot, "prd.md"), "## Кратко\nAE12 scratch.\n");
@@ -1169,6 +1170,14 @@ test("preapply AE12 named contracts on installed scratch", async t => {
       setSpec(good); const log = path.join(root, "logs/MONO-997-mono-deliver-a1.jsonl"); write(log, "existing log fixture\n");
       try { refusal(/EEXIST/u); assert.equal(fs.readFileSync(path.join(root, "ledger.md"), "utf8").includes("PREAPPLY"), false); }
       finally { fs.unlinkSync(log); fs.rmSync(path.join(root, "ledger.md"), { force: true }); }
+    });
+    await t.test("preapply-late-refusal-preserves-existing-ignored-bytes", () => {
+      const name = ".agents/ignored.txt", original = "existing local ignored bytes\n", replacement = "approved replacement\n";
+      const value = good.replace("| --- | --- |\n", `| --- | --- |\n| ${name} | ${hash(replacement)} |\n`)
+        + `    - \`${name}\`\n\`\`\`text\n${replacement}\`\`\`\n`;
+      const file = path.join(worktree, name), log = path.join(root, "logs/MONO-997-mono-deliver-a1.jsonl"); write(file, original); write(log, "existing log fixture\n");
+      try { setSpec(value); refusal(/EEXIST/u); assert.equal(fs.readFileSync(file, "utf8"), original); }
+      finally { fs.unlinkSync(log); fs.rmSync(file, { force: true }); fs.rmSync(path.join(root, "ledger.md"), { force: true }); }
     });
     await t.test("preapply-transformed-staging-no-mutation", () => {
       const name = ".agents/filtered.txt", raw = "$Id: expanded-token $\n";
@@ -1237,4 +1246,22 @@ test("preapply AE12 named contracts on installed scratch", async t => {
       await assert.rejects(acceptAmend({ root, issue: "MONO-997", attempt: "1", preapply: true }), /new dispatch|новый запуск/u);
     });
   } finally { if (pid) { try { process.kill(pid, "SIGTERM"); } catch {} } fs.rmSync(scratch, { recursive: true, force: true }); }
+});
+
+
+test("preapply-literal-pathspec: only the literal approved filename enters the commit", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "mono-preapply-literal-"));
+  const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  try {
+    git("init", "-b", "main"); write(path.join(repo, ".gitignore"), ".agents/*\n");
+    git("add", ".gitignore"); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
+    git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
+    const name = ".agents/literal*", unicode = ".agents/байты.txt", bytes = "approved literal filename\n", extra = ".agents/literal-extra";
+    write(path.join(repo, extra), "outside manifest\n");
+    const manifest = { entries: [name, unicode].map(path => ({ path, bytes, sha256: createHash("sha256").update(bytes).digest("hex") })) };
+    const result = applyPreapply(repo, "MONO-994", manifest);
+    assert.deepEqual(git("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", result.commit).split("\0").filter(Boolean), [name, unicode]);
+    assert.equal(fs.readFileSync(path.join(repo, extra), "utf8"), "outside manifest\n");
+    assert.equal(applyPreapply(repo, "MONO-994", manifest).created, false);
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
 });
