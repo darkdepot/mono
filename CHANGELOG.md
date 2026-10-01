@@ -6,6 +6,25 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-95: install orchestrator dispatch/accept commands and the pack Linear
+  adapter. Dispatch renders the single template, pins launch identity, extracts
+  exact referenced snapshot definitions and refuses before registration on
+  gate/input failure. Accept validates ack before plans, binds dated read-backs,
+  reconciles report writes through fresh digest-bound sessions, and registers
+  amendments/admissions under one lock. Printed apply instructions never count
+  as success. Pins become current only after successful resume, empty queues
+  confirm after session setup, and extracts stop at any peer ID definition.
+  Interrupted amendment registration resumes from durable pending evidence
+  without launching the worker twice; failed launches restore undelivered grants.
+  Retain completed amendment evidence after pending cleanup, and rebuild refused
+  dispatch snapshots from the current inputs without superseded files.
+  Replacing an undelivered pending amendment preserves its original grant rollback.
+  Keep earlier completed amendment results across subsequent successful amendments.
+  Issue-only snapshots require a nonempty scope fingerprint before preparation.
+  Scripts never write to Linear. Add installed scratch command and
+  source-document extraction fixtures; retain worker corpus, core contracts and
+  existing spawn/resume/consume/delivery-state request shapes unchanged.
+
 - MONO-93: add bounded in-place gate-ack waiting, live-writer consumption,
   handshake/profile/pins registry fields, shared stall/ack clocks and finite
   post-consumption watcher continuation. Short tiny/standard deliveries may

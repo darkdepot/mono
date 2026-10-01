@@ -49,6 +49,11 @@ const RUNTIME_SCRIPTS = [
   "orchestrator/spawn.mjs",
   "orchestrator/resume.mjs",
   "orchestrator/consume-gate-ack.mjs",
+  "orchestrator/dispatch.mjs",
+  "orchestrator/accept.mjs",
+  "orchestrator/linear-adapter.mjs",
+  "orchestrator/snapshot.mjs",
+  "orchestrator/command-state.mjs",
 ];
 function usage() {
   console.error(

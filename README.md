@@ -64,6 +64,27 @@ Ship also requires recorded valid outcomes for pre-ship review, readiness, and d
 
 ### Write barriers and recovery
 
+Installed `orchestrator/dispatch.mjs` launches an approved Issue from snapshot
+bodies in one command: extracts for short, immutable pins/digest, rendered
+dispatch, start gate, spawn and a UTC ledger event. Refusals before spawn register
+no attempt; their retries rebuild the exact requested snapshot composition.
+`orchestrator/accept.mjs ack|report|amend` validates a move plan before
+connector writes, confirms report queues from fresh reconciliation sessions, and
+registers versioned amendments after successful resume and recovers interrupted
+registration from the pending amendment and registered resume. Failed launches
+restore undelivered registry grants, including when replacing an interrupted
+pending amendment. Empty queues confirm
+after their reconciliation session opens. Completed amendment retries return
+their saved result without launching again, including after later amendments.
+The pack `linear-adapter.mjs` only
+reads current-session observations; printing an apply instruction is never proof
+of a write. See [command inputs and snapshot composition](references/orchestration.md#orchestrator-dispatch-command)
+and [sessions/admissions](references/orchestration.md#delivery-write-barriers).
+New collection admissions bind the effective dataset version as well as its path;
+an omitted version denotes only the unversioned baseline (version 0).
+Scripts do not write to Linear; the orchestrator uses its connector. The collector
+and `.agents/` pre-application remain separate slices; --preapply refuses.
+
 The orchestrator is the single Linear writer. A worker uses its dispatched snapshot as its entire Linear context and queues every required comment, state change, link and certificate in its report. Publish the whole queue with the phase capsule; continue only after its durable confirmation. In-phase confirmation requests preserve drift-before-PR, ready-certificate-before-formal-review and In-Review-after-PR ordering. A queued write is not an applied write.
 
 After a lost response, the orchestrator reconciles every write against its durable result and external state, then applies only missing actions. Keep stable write IDs for reconciliation; changed payloads need new IDs. Resume the same context and phase from its capsule with the complete open queue, decisions, head and writable roots. Recheck pack identity on every resume. A head change never drops pending obligations.
@@ -170,6 +191,12 @@ node scripts/install-local.mjs --check
 The default is `--all-roots`: discover previously installed roots using `.mono-agent-workflow.lock.json` in `~/.codex/skills`, `~/.claude/skills` and recorded roots, then sync/check each root. A fresh machine falls back to `~/.codex/skills`. Migration also recognizes the previous-brand lock and generated `linear-*` files; remove only installer-owned legacy payloads.
 
 Each root receives generated `mono-*/SKILL.md`, adjacent `AGENTS.md`, references and templates, runtime scripts under `.mono-agent-workflow/scripts/`, this README at `.mono-agent-workflow/README.md`, and `.mono-agent-workflow.lock.json`. The lock records version, immutable source commit, surface revision, dirty flag and installed hashes, including `assets.readme`. Checks reject missing, edited, stale or unexpected payloads and invalid lock entries. Sync replaces the private runtime directory, removing retired files. Edit the upstream pack, never generated skills.
+
+The installed runtime includes `orchestrator/dispatch.mjs`, `accept.mjs` and
+`linear-adapter.mjs` plus their extraction/state modules. Run their --help from
+that installed directory. --skills-root is available for isolated scratch command
+tests. Commands and orchestrator documentation add no worker reading edges;
+the unchanged clean installed worker corpus is 99,756 bytes.
 
 For a breaking skill-surface revision:
 

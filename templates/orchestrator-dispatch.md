@@ -1,54 +1,56 @@
 # Worker Dispatch Prompt
 
+<!-- generator:start -->
 Generator instructions: fill every placeholder and emit one Issue delivery dispatch.
 Use Generated dispatch as audience adapter in `references/orchestration.md`:
 select configured `orchestration.workerAudience` (default `gpt-worker`), preserve
 its redundancy matrix and reading floor. Repeat rules only where that profile
 requires them; never soften/replace them. Both audiences get exact facts,
 protected paths/hashes, verification lines and the resolved identity command.
-Before rendering Codex dispatch, run installed `orchestrator/spawn.mjs --pins <request-json>`;
-Claude transports use installed `runtime.mjs --role worker-claude --worktree <repo> --base <commit>`.
+Before rendering Codex dispatch, run installed `orchestrator/spawn.mjs --pins {{spawn_request}}`;
+Claude transports use installed `runtime.mjs --role worker-claude --worktree {{worktree}} --base {{base}}`.
 Copy `modelRoutes` unchanged into launch and every preflight request. It
 resolves the selected worker and autoreview roles from immutable BASE config;
 the worker diff never selects its own reviewer.
 
+<!-- generator:end -->
+
 ## Assignment
 
-- Issue: <ISSUE-KEY> — <title>
+- Issue: {{issue}} — {{title}}
 - Delivery skill: mono-deliver
-- Attempt: <positive integer>
-- handshake: <wait | resume; default resume>
-- profile: <short | full; default full; short requires tiny/standard, critical null, afk true, openDecisions 0>
-- pins: <absolute dispatch pins file and SHA-256 digest; pinsVersion 0 at launch>
-- Gate request: <absolute start-gate JSON; lock/pins/worktree/branch/base>
-- Runtime scripts: <absolute installed scripts directory>
-- Product: <product slug>
-- evidenceRoot: <absolute ~/.mono-agent-workflow/evidence/<product>/ outside EVERY worker-writable root>
-- Model routes: <modelRoutes JSON: base, configDigest, roles with engine/model/effort or effortByRisk/provider/credentialEnv/fingerprint; variable names only>
-- Preflight pins: <installed skillsRoot, approved risk/critical, exact verification command/args, baseRef>
-- workerWritableRoots: <complete absolute grants, including temporary roots and the worktree-specific Git directory and the common Git directory, derived from the worktree; only <root>/reports within orchestrator root; copy to capsule.writable_roots>
+- Attempt: {{attempt}}
+- handshake: {{handshake}} (default resume)
+- profile: {{profile}} (default full; short requires tiny/standard, critical null, afk true, openDecisions 0)
+- pins: {{pins_file}} / {{pins_digest}}; pinsVersion: 0
+- Gate request: {{gate_request}} (lock/pins/worktree/branch/base)
+- Runtime scripts: {{runtime_scripts}}
+- Product: {{product}}
+- evidenceRoot: {{evidence_root}} (outside EVERY worker-writable root)
+- Model routes: {{model_routes}}
+- Preflight pins: {{preflight_pins}}
+- workerWritableRoots: {{writable_roots}} (complete grants including temporary and derived Git directories; only reports within orchestrator root; copy to capsule.writable_roots)
 - Collection: orchestrator collect:true outside worker sandboxes; worker collect:false only
-- Confirmation timeout: <configured seconds>
-- Worktree/branch: <path / branch>
-- Worker session name: `<ISSUE-KEY>: mono-deliver`
-- Chip title (user-visible, Russian): `<ISSUE-KEY>: <стадия по-русски>`
-- packVersion: `<installed lockfile packVersion>`
-- sourceCommit: `<installed lockfile sourceCommit>`
-- surfaceRevision: `<installed lockfile surfaceRevision>`
+- Confirmation timeout: {{confirmation_timeout}} seconds
+- Worktree/branch: {{worktree}} / {{branch}}
+- Worker session name: `{{issue}}: mono-deliver`
+- Chip title (user-visible, Russian): `{{issue}}: доставка`
+- packVersion: `{{pack_version}}`
+- sourceCommit: `{{source_commit}}`
+- surfaceRevision: `{{surface_revision}}`
 
 ## Goal Contract
 
-- Outcome: <durable end state>
-- Verification surface: <every Issue «Как проверить» line verbatim, in order;
-  runnable commands or judgment checks; maps 1:1 to `verification_items` under
-  `references/worker-contract.md`>
-- Constraints: <exact protected surfaces/hashes, contracts, statuses, gates>
+- Outcome: {{outcome}}
+- Verification surface: {{verification_items}}
+  Retain every line verbatim/in order as verification_items under references/worker-contract.md.
+- Constraints: {{constraints}}
 - Blocked protocol: follow the stage and worker contract; report failed/skipped
   verification, never wave it through.
-- Delivery budget: <monitoring guidance, not a gate>
+- Delivery budget: {{budget}} (guidance, not a gate)
 
 <!-- review-pilot:start -->
-## Review discipline for this task (experiment for project <PROJECT>)
+## Review discipline for this task (experiment for project {{review_project}})
 
 Generator: include this block only for the explicitly approved pilot Issues. It
 repeats and sharpens the stage owners' rules; it never replaces or relaxes them.
@@ -102,9 +104,9 @@ A diagnostic hint never supplies a certificate or waives a stage check.
 <!-- review-pilot:dataset -->
 ### Pinned materialized dataset
 
-- datasetVersion: <immutable version number>
-- datasetPath: <.orchestrator/review-dataset-<d8>.md>
-- datasetDigest: <SHA-256 of the pinned version>
+- datasetVersion: {{dataset_version}}
+- datasetPath: {{dataset_path}}
+- datasetDigest: {{dataset_digest}}
 
 The orchestrator materializes this ordinary, ignored file and verifies its
 digest before local review. Use it unchanged. A new version needs a fresh
@@ -116,43 +118,42 @@ end of the attempt. Missing matrix/checkpoint evidence causes a recorded
 
 ## Engine
 
-- Transport: <codex-cli | claude-code-desktop | fallback>
-- Delivery skill body: <absolute installed mono-deliver/SKILL.md path; read fully before
-  work for codex-cli; invoke installed skill for other transports>
+- Transport: {{transport}}
+- Delivery skill body: {{delivery_skill}}; read fully before work for codex-cli; invoke installed skill for other transports
 - Project config: `.agents/mono-workflow.config.json`
-- Pack identity gate: <fully resolved `verify-pack-state.mjs identity` command
-  from Pack identity gate invocation in `references/worker-contract.md`, all
-  four flags, absolute installed paths and dispatch pins; single-quote values,
-  escape embedded quotes as `'\''`; require exit 0 and
-  `pack-state: identity verified`. Do not substitute checkout SURFACE_REVISION>
-- Sandbox: <workspace-write, network, worktree, the worktree-specific Git directory and the common Git directory, derived from the worktree, and mailbox writable roots; phase authority still limits writes>
+- Pack identity gate: {{identity_command}}; all four pinned flags, single-quoted paths/values; require exit 0 and pack-state: identity verified; never substitute checkout SURFACE_REVISION
+- Sandbox: workspace-write, network ON, {{writable_roots}}; phase authority still limits writes
   codex 0.153.4 protects the metadata directory of an explicitly listed linked worktree.
-- Report delivery: <absolute mailbox path and worktree fallback>
+- Report delivery: {{mailbox}}; fallback {{fallback}}
 
 The codex-cli installed root is `~/.codex/skills/`. Emit this command with every placeholder resolved; it is invocation data, not a second gate definition:
 
 ```bash
-node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \
-  --lock '<installed-skills-root>/.mono-agent-workflow.lock.json' \
-  --pack-version '<packVersion above>' \
-  --source-commit '<sourceCommit above>' \
-  --surface-revision '<surfaceRevision above>'
+node '{{skills_root_quoted}}/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \
+  --lock '{{skills_root_quoted}}/.mono-agent-workflow.lock.json' \
+  --pack-version '{{pack_version}}' \
+  --source-commit '{{source_commit}}' \
+  --surface-revision '{{surface_revision}}'
 ```
 
 ## Context Snapshot
 
-- Project brief: <full text, or `n/a (issue-only)`>
-- PRD: <full text, the sections relevant to this Issue, or `n/a (issue-only)`>
-- Tech Spec: <full text, the contracts relevant to this Issue, or `n/a (issue-only)`>
-- Issue: <full Issue body, verbatim>
-- Issue-only marker: <current marker comment verbatim, or `n/a (project-first)`>
-- Verified label: <`issue-only`, or `n/a (project-first)`>
-- Scope fingerprint: <fresh whole-body SHA-256, or `n/a (project-first)`>
-- Issue-only config: <`enabled=true; ownerPrincipal=<stable Linear user ID>`, or `n/a (project-first)`>
-- Owner approval: <authenticated author plus approved fingerprint, or `n/a (project-first)`>
-- Context seam: <resolved 5-field JSON, or `n/a` when resolution is blocked>
-- Decisions so far: <user decisions and «Решил сам:» entries relevant to this
-  Issue, one line each>
+Snapshot composition: {{snapshot_note}}. Short includes Issue, approval, brief, referenced definitions and common PRD/Spec sections; full retains complete documents. Issue-only includes no Project documents.
+
+Approval record:
+{{approval}}
+
+- Project brief: {{project_brief}}
+- PRD: {{prd}}
+- Tech Spec: {{spec}}
+- Issue: {{issue_body}}
+- Issue-only marker: {{marker}}
+- Verified label: {{label}}
+- Scope fingerprint: {{fingerprint}}
+- Issue-only config: {{issue_only_config}}
+- Owner approval: {{owner_approval}}
+- Context seam: {{context_seam}}
+- Decisions so far: {{decisions}}
 
 ## Gate Phase
 
@@ -161,15 +162,10 @@ For a dispatch with no lifecycle move emit only:
 Otherwise resolve these facts; execute Two-Phase Dispatch Handshake in the
 worker contract without redefining it:
 
-- Lifecycle moves: <every move, still unapplied; snapshot deliberately pre-move>
-- Gates: <exact gate names from implement steps 1–4; issue-only adds delivery>
-- Gate-ack: <absolute reports/<ISSUE-KEY>-gate-ack-a<N>.json and fallback path>
-- Wait/resume: <codex-cli wait: after ack run installed delivery-state.mjs
-  wait-ack --root <root> --issue <KEY> --attempt <N> --ack <path> --moves <json-file>
-  --config <cfg>; deadline ack mtime + ackWaitSec; expiry parks write-unconfirmed
-  and exits. Valid own consumption read-backs amend state: post-move delivery
-  check, no identity rerun. Resume mode: stop/exit; amendment with every applied
-  move/read-back, then identity/check again. Blocked ack precedes terminal report>
+- Lifecycle moves: {{moves}}; still unapplied, snapshot deliberately pre-move
+- Gates: {{gates}}
+- Gate-ack: {{gate_ack}}; fallback {{fallback}}/{{issue}}-gate-ack-a{{attempt}}.json
+- Wait/resume: {{wait_or_resume}}; wait uses installed delivery-state.mjs wait-ack, resume requires the applied-move amendment.
 
 ## AFK Contract
 
@@ -183,15 +179,15 @@ queued comment.
 
 ## Mailbox
 
-- Exit report: <absolute orchestrator reports/<ISSUE-KEY>-mono-deliver.json>
-- Fallback on denied write: <absolute worktree/.orchestrator/<ISSUE-KEY>-mono-deliver.json>
+- Exit report: {{mailbox}}/{{issue}}-mono-deliver.json
+- Fallback on denied write: {{fallback}}/{{issue}}-mono-deliver.json
 - Shape: Worker Report in `references/worker-contract.md`.
 - Write on completion/blocker/other stop, except a passed gate-pause ack.
 - Never commit `.orchestrator/` or touch orchestrator-owned state.
 
 ## Authorization
 
-- Allowed: <one Issue delivery; push/PR only inside ship after its gates>
+- Allowed: this one Issue delivery; push/PR only inside ship after its gates
 - Not allowed: direct Linear writes, merge/deploy/Issue closeout, other Issues
   or orchestrator state. Stage rules win on rules; dispatch wins on facts.
 
@@ -199,6 +195,6 @@ queued comment.
 
 On interruption resume the same thread with the current snapshot amendment and the latest own phase capsule/confirmation paths. Re-run identity and continue that phase; do not generate a stage-specific dispatch or resume template. Require a confirmed whole queue before advancing.
 
-Set write.id=request.collectionId=preflight-collect:<head>:<n>; increment n per collection request on that head. Preserve the ID on lost-response reconciliation; a failed run is recorded, its retry gets a new ID.
+Set write.id=request.collectionId=preflight-collect:HEAD:n; increment n per collection request on that head. Preserve the ID on lost-response reconciliation; a failed run is recorded, its retry gets a new ID.
 
 Pass evidenceRoot and workerWritableRoots to spawn; any resume grant expansion requires this dispatch pin to be amended to the complete effective roots and supplied to resume.

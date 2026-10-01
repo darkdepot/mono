@@ -160,7 +160,13 @@ Workflow states:
      the product/worktree current directory.
      The upstream pack source remains `scripts/watch-workers.mjs` for
      development and fixtures.
-   - One Issue per worker. Spawn through the runtime transport with
+   - One Issue per worker. Use installed `scripts/orchestrator/dispatch.mjs`
+     with Issue, root, config, snapshot bodies and the explicit lifecycle moves,
+     open-decision count and verification command. It builds pins/digest, extracts,
+     start-gate and spawn requests, renders the single dispatch template, passes
+     start, launches through spawn.mjs and appends the UTC ledger event. Refusals
+     before spawn register no attempt; --preapply is reserved for I4 and refuses.
+     Spawn through the runtime transport with
      `templates/orchestrator-dispatch.md`: one delivery, full context snapshot, AFK
      contract, engine block, mailbox path, authorization. Include the
      no-sub-delegation rule in every dispatch prompt.
@@ -178,7 +184,11 @@ Workflow states:
      references/orchestration.md exactly: pre-move snapshot, validated ack,
      read-back of every move, verified writer, private record, ack rename,
      gates removal. Wait: consume live waiting writer without resume; resume:
-     same-thread registered writer. Use installed consume-gate-ack.mjs and,
+     same-thread registered writer. Use installed `scripts/orchestrator/accept.mjs ack`
+     to validate before printing a digest-bound move plan; apply via the connector
+     and supply --readback with planDigest and fresh observations. Identical
+     consumption completes recovery without another plan; conflicting records
+     refuse. It delegates to installed consume-gate-ack.mjs and,
      only for exit/resume recovery, resume.mjs. Missing/contradictory evidence never
      permits lifecycle replay; poll both mailbox and fallback.
    - Use active control for dispatch, draining for existing work only, idle only
@@ -192,7 +202,17 @@ Workflow states:
      ack waits for its correlated report before consumption; rejected attempt
      requires a new verified attempt, never same-attempt nudge.
    - Consume phase events AND poll phase files. Validate capsule and full queue;
-     apply Delivery Write Barriers with durable per-write results/reconciliation.
+     apply Delivery Write Barriers through installed
+     `scripts/orchestrator/accept.mjs report`: open a reconciliation session,
+     inspect expanded writes (reread first on retry), apply through the connector,
+     submit --session/--observe read-backs and confirm the full queue with the
+     pack `scripts/orchestrator/linear-adapter.mjs`. Old session observations
+     never authorize a new confirmation; printed apply instructions prove nothing.
+     Use `accept.mjs amend --text` for upward risk/critical, dataset-version or
+     complete-grant amendments and --full-snapshot when requested; it registers
+     pins.v<n>.json after resume.mjs succeeds, under the collection admission lock.
+     Refused resume leaves the current registry pins unchanged.
+     Keep durable per-write results/reconciliation.
      Grant workers reports/ only; publish confirmations/ outside their grants. Handle preflight-collect with sandboxed verification/review at the pinned evidenceRoot; recheck collect:false before ship.
      Publish whole-queue confirmation; never send a stage-resume prompt to a
      worker waiting on a file. Preserve certificate-before-review,
