@@ -729,3 +729,35 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     fs.rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+test("collector binds omitted dataset version to baseline zero during history recovery", async () => {
+  const { collectOnce } = await import("./orchestrator/collector.mjs");
+  const { createHmac, randomUUID } = await import("node:crypto");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-baseline-"));
+  const root = path.join(scratch, "root"), repo = path.join(scratch, "repo"), evidenceRoot = path.join(scratch, "evidence"), skillsRoot = path.join(scratch, "skills");
+  const issue = "MONO-999", head = "c".repeat(40), identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
+  try {
+    for (const dir of [repo, evidenceRoot, skillsRoot]) fs.mkdirSync(dir, { recursive: true });
+    const reviewDataset = path.join(evidenceRoot, "datasets/scope.md"); write(reviewDataset, "# baseline dataset\n");
+    const datasetDigest = createHash("sha256").update(fs.readFileSync(reviewDataset)).digest("hex");
+    const pins = { root, worktree: repo, product: "fixture", skillsRoot, evidenceRoot, reviewDataset, risk: "standard", critical: null, baseRef: "origin/main",
+      verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo] };
+    const pinsFile = path.join(scratch, "pins.json"); atomicJson(pinsFile, pins);
+    const entry = { ...identity, issue, stage: "mono-deliver", attempt: 1, worktree: repo, pinsVersion: 0,
+      pins: { file: pinsFile, digest: createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") }, spawned_at: new Date(Date.now() - 10000).toISOString() };
+    atomicJson(path.join(root, "workers.json"), { [issue]: entry });
+    const phase = (name, queue) => ({ ...identity, issue, stage: "mono-deliver", attempt: 1, phase: name, kind: "confirmation-request", sequence: 1, head,
+      publishedAt: new Date().toISOString(), linear_mutations_pending: queue, capsule: { phase: name, head, decisions: [], open_queue: queue, writable_roots: [repo] } });
+    atomicJson(path.join(root, "reports", `${issue}-phase-code.json`), phase("code", [])); await collectOnce({ root, issue, attempt: 1 });
+    const request = { ...pins, head, collectionId: `preflight-collect:${head}:1`, collect: false };
+    const queued = { id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } };
+    atomicJson(path.join(root, "reports", `${issue}-phase-preflight.json`), phase("preflight", [queued]));
+    const key = Buffer.alloc(32, 8); fs.writeFileSync(path.join(evidenceRoot, "receipt.key"), key);
+    const receipt = { ...pins, producer: "gate-autoreview-v2", runId: randomUUID(), head, base: head, collectionId: request.collectionId,
+      root: fs.realpathSync(root), worktree: fs.realpathSync(repo), evidenceRoot: fs.realpathSync(evidenceRoot), workerWritableRoots: [fs.realpathSync(repo)],
+      reviewDataset: { source: reviewDataset, digest: datasetDigest, copy: `.orchestrator/review-dataset-${datasetDigest.slice(0, 8)}.md`, version: 1 } };
+    atomicJson(path.join(evidenceRoot, "history", `${receipt.runId}.json`), { receipt, signature: createHmac("sha256", key).update((await import("./runtime.mjs")).canonical(receipt)).digest("hex") });
+    await assert.rejects(collectOnce({ root, issue, attempt: 1 }), /receipt binding mismatch: reviewDataset/u);
+    assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s1.confirmed.json`)), false);
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+});

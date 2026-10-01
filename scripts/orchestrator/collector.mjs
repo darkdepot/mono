@@ -27,7 +27,7 @@ function verifyReceipt(file, request) {
   if (request.reviewDataset) {
     if (receipt.reviewDataset?.source !== request.reviewDataset || receipt.reviewDataset.digest !== sha256File(request.reviewDataset) ||
         receipt.reviewDataset.copy !== `.orchestrator/review-dataset-${receipt.reviewDataset.digest.slice(0, 8)}.md` ||
-        (request.reviewDatasetVersion !== undefined && receipt.reviewDataset.version !== request.reviewDatasetVersion)) throw new Error("receipt binding mismatch: reviewDataset");
+        (receipt.reviewDataset.version ?? 0) !== (request.reviewDatasetVersion ?? 0)) throw new Error("receipt binding mismatch: reviewDataset");
   } else if (receipt.reviewDataset !== null) throw new Error("receipt binding mismatch: reviewDataset");
   return envelope;
 }
