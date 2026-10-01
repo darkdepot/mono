@@ -112,7 +112,6 @@ export function checkCollectionRequest(request) {
   const entries = named ? [registered[named[1]]].filter(entry => entry?.attempt === Number(named[2])) :
     Object.values(registered).filter(entry => entry.worktree === request.worktree && entry.stage === "mono-deliver");
   if (entries.length !== 1) {
-    if (!request.pins) return null; // An uncorrelated legacy caller keeps its prior path.
     requestMismatch("registry", "one registered attempt for worktree");
   }
   const entry = registryEntry(root, entries[0].issue, entries[0].attempt);
@@ -192,7 +191,7 @@ export function amendmentChange(args, inputs, supplied) {
   const reviewDataset = args["review-dataset"] ?? inputs.reviewDataset ?? null;
   return { risk: args.risk ?? inputs.risk, critical: args.critical ?? inputs.critical,
     reviewDataset,
-    reviewDatasetVersion: !reviewDataset && Object.hasOwn(inputs, "reviewDatasetDigest") ? 0 : Number(args["review-dataset-version"] ?? inputs.reviewDatasetVersion ?? 0),
+    reviewDatasetVersion: !reviewDataset && (inputs.reviewDatasetVersion ?? 0) === 0 && Object.hasOwn(inputs, "reviewDatasetDigest") ? 0 : Number(args["review-dataset-version"] ?? inputs.reviewDatasetVersion ?? 0),
     workerWritableRoots: supplied.roots ?? inputs.workerWritableRoots, text: args.text,
     fullSnapshot: args["full-snapshot"] ? { digest: digest(supplied.documents) } :
       (inputs.fullSnapshot ? { digest: inputs.fullSnapshot.digest } : null) };

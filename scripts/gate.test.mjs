@@ -409,11 +409,19 @@ process.exit(r.status===null?1:r.status);
       if (fixture.mode === "history") {
         const envelope = collect(request); envelope.receipt.collectionId = `preflight-collect:${head}:2`; seal(envelope); expectedStatus = 0;
       }
-      const registryBefore = fs.readFileSync(registryFile), receiptBefore = fs.existsSync(receiptFile) ? fs.readFileSync(receiptFile) : null;
+      if (fixture.mode === "unregistered-receipt") {
+        collect(request); fs.unlinkSync(registryFile); delete request.pins; expectedField = "pins"; expectedValue = binding;
+      }
+      if (fixture.mode === "unmatched-no-pins") {
+        entry.worktree = path.join(scratch, "another-worktree"); register(); delete request.pins;
+        expectedField = "registry"; expectedValue = "one registered attempt for worktree";
+      }
+      if (fixture.unregistered) fs.unlinkSync(registryFile);
+      const registryBefore = fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null, receiptBefore = fs.existsSync(receiptFile) ? fs.readFileSync(receiptFile) : null;
       const result = call(request);
       if (expectedField) { expectedStatus = 1; assert.equal(result.stdout.trim(), `gate preflight: fail: collection request mismatch: ${expectedField}; expected ${canonical(expectedValue)}`); }
       assert.equal(result.status, expectedStatus, result.stdout + result.stderr);
-      assert.deepEqual(fs.readFileSync(registryFile), registryBefore, "gate never writes the registry");
+      assert.deepEqual(fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null, registryBefore, "gate never writes the registry");
       assert.equal(fs.existsSync(path.join(root, "reports/MONO-999-phase-preflight.json")), false);
       if (expectedStatus === 2) {
         assert.deepEqual(result.stdout.trim().split("\n"), [`gate preflight: pending: ${request.collectionId}`, JSON.stringify({ publishRequest: request })]);

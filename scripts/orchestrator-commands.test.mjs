@@ -526,6 +526,28 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         assert.throws(() => process.kill(result.pid, 0), { code: "ESRCH" });
         const lock = path.join(root, "amend.lock"); assert.equal(readJson(lock).pid, result.pid); fs.unlinkSync(lock);
       };
+      await t.test("amend-legacy-no-dataset-nonzero-version: preserve version across unrelated amendments", () => isolatedPreparation(async ({ registryFile, before }) => {
+        const launchFile = before[ack.issue].pins.file, launchBytes = fs.readFileSync(launchFile);
+        try {
+          const legacy = readJson(launchFile); delete legacy.reviewDatasetDigest;
+          legacy.reviewDataset = null; legacy.reviewDatasetVersion = 7; atomicJson(launchFile, legacy);
+          const registry = readJson(registryFile), worker = registry[ack.issue];
+          worker.pins.digest = createHash("sha256").update(fs.readFileSync(launchFile)).digest("hex");
+          worker.pinsVersion = 0; delete worker.last_amendment; delete worker.completed_amendments; atomicJson(registryFile, registry);
+          for (const text of ["Legacy unrelated amendment one.", "Legacy unrelated amendment two."]) {
+            const result = JSON.parse(pass(run(process.execPath, amendArgs(text))));
+            assert.equal(effectivePins(readJson(registryFile)[ack.issue]).reviewDatasetVersion, 7);
+            assert.equal(readJson(path.join(path.dirname(launchFile), `pins.v${result.pinsVersion}.json`)).reviewDatasetVersion, 7);
+            process.kill(result.pid, "SIGTERM");
+            const deadline = Date.now() + 5000;
+            while (true) {
+              try { process.kill(result.pid, 0); } catch { break; }
+              assert.ok(Date.now() < deadline, "fixture worker must exit before its next amendment");
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+          }
+        } finally { fs.writeFileSync(launchFile, launchBytes); }
+      }));
       await t.test("amend-launch-failure-restores-grants: uncertain delivery preserves evidence and refuses restart", () => isolatedPreparation(({ registryFile, before }) => {
         const extra = path.join(scratch, "amend-grant"), grantsFile = path.join(scratch, "expanded-grants.json");
         fs.mkdirSync(extra); write(grantsFile, [...before[ack.issue].workerWritableRoots, extra]);

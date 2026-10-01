@@ -428,6 +428,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       requireThat(allowPending, "missing or stale autoreview artifact/head/base");
       return { publishRequest: { ...request, collect: false } };
     }
+    if (!request.pins && receipt.pins) throw new Error(`collection request mismatch: pins; expected ${canonical(receipt.pins)}`);
     for (const [key, value] of Object.entries(binding)) {
       // Legacy receipts predate pins; below, validate them and require both bases to be override-free.
       if (key === "modelRoutes" && receipt.route && receipt.route.engine === undefined && receipt.modelRoutes === undefined) continue;
