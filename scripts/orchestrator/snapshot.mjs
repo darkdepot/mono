@@ -16,7 +16,7 @@ export function references(text) {
 
 // Pass one builds source-backed sections and nested list definitions. Selection
 // never reinterprets raw Markdown, including the contents of opaque blocks.
-function parseDocument(text) {
+export function parseDocument(text) {
   const lines = text.split("\n");
   const root = { type: "document", start: 0, end: lines.length, children: [] };
   const headings = [], lists = [];

@@ -13,6 +13,10 @@ Copy `modelRoutes` unchanged into launch and every preflight request. It
 resolves the selected worker and autoreview roles from immutable BASE config;
 the worker diff never selects its own reviewer.
 
+For pre-application append a «Предприменённые изменения» block naming the
+verified orchestrator commit and its path/sha256 table before launch. The worker
+compares `git show <sha>` blobs to that block and the snapshot manifest at start.
+
 <!-- generator:end -->
 
 ## Assignment

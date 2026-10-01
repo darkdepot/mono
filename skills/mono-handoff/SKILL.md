@@ -310,3 +310,10 @@ Completion example:
 If implementation start was explicitly approved, the final response may replace the next-step options with the implementation-start checkpoint and the workflow that will run next.
 
 If handoff is `BLOCKED / INCOMPLETE`, include the current Project/PRD/Tech Spec links that exist, the missing approval or inspection step, and a clear statement that no Issue creation or implementation handoff happened.
+
+## Pre-application repair
+
+Keep Project-first manifests inside their Tech Spec implementation units. On a
+worker's blocked finding with exact replacement bytes, own repair under
+`references/repair-machine.md`, classified by meaning with all class effects.
+After approval/readiness require a NEW dispatch with --preapply, never resume.

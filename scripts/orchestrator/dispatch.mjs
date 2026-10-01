@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { atomicJson, readJson, isMain, deliveryConfig, RISK_KEYS, withLock } from "../runtime.mjs";
 import { commandFlags, allowedFlags, sha256File } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
+import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const q = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -37,7 +38,6 @@ export async function dispatch(args) {
 function prepareDispatch(args) {
   allowedFlags(args, ["issue", "root", "config", "snapshot", "risk", "critical", "profile", "handshake", "role", "reason", "full-snapshot", "preapply",
     "skills-root", "moves", "gates", "open-decisions", "verification", "review-dataset", "review-dataset-version", "review-pilot", "worker-writable-roots"]);
-  if (args.preapply) throw new Error("--preapply belongs to I4 and is not implemented; no attempt registered");
   const issue = args.issue;
   if (!/^[A-Z][A-Z0-9]*-\d+$/.test(issue)) throw new Error("valid --issue required");
   for (const key of ["root", "config", "snapshot"]) if (!path.isAbsolute(args[key] ?? "")) throw new Error(`absolute --${key} required`);
@@ -45,12 +45,17 @@ function prepareDispatch(args) {
   const repo = path.dirname(path.dirname(args.config));
   const skillsRoot = args["skills-root"] ?? path.resolve(directory, "../../..");
   const lock = path.join(skillsRoot, ".mono-agent-workflow.lock.json"), installed = readJson(lock);
-  const body = read(args.snapshot, `issue-${issue}.md`), approval = read(args.snapshot, "approval.md");
+  let body = read(args.snapshot, `issue-${issue}.md`), approval = read(args.snapshot, "approval.md");
   const issueOnly = fs.existsSync(path.join(args.snapshot, "issue-only.json"));
   const lane = issueOnly ? readJson(path.join(args.snapshot, "issue-only.json")) : null;
   const brief = issueOnly ? "n/a (issue-only)" : read(args.snapshot, "project-brief.md");
   const prd = issueOnly ? "n/a (issue-only)" : read(args.snapshot, "prd.md");
   const spec = issueOnly ? "n/a (issue-only)" : read(args.snapshot, "tech-spec.md");
+  const manifest = preapplyManifest(body, prd, spec, issueOnly), mandate = preapplyMandate(config);
+  if (manifest && !mandate) throw new Error("preapply section requires orchestration.preapply.mandate");
+  if (manifest && !args.preapply) throw new Error("preapply section requires --preapply before spawn");
+  if (args.preapply && !manifest) throw new Error("--preapply requires a preapply manifest");
+  if (manifest && !issueOnly) body = body.replace(/\n*$/u, "\n\n") + manifest.materialized;
   const risk = args.risk ?? settings.risk ?? /(?:Риск|risk_class)\s*[:=]\s*(tiny|standard|deep|risky)/u.exec(body)?.[1];
   const critical = args.critical ?? settings.critical ?? null;
   if (!RISK_KEYS.slice(0, 4).includes(risk) || (critical !== null && (risk !== "risky" || !critical.trim()))) throw new Error("approved risk/critical required");
@@ -108,6 +113,7 @@ function prepareDispatch(args) {
   const snapshot = path.join(output, "snapshot"), preparedSnapshot = fs.mkdtempSync(path.join(output, "snapshot-"));
   try {
     for (const name of [`issue-${issue}.md`, "approval.md", ...(issueOnly ? ["issue-only.json"] : ["project-brief.md", ...(profile === "full" ? ["prd.md", "tech-spec.md"] : [])])]) fs.copyFileSync(path.join(args.snapshot, name), path.join(preparedSnapshot, name));
+    fs.writeFileSync(path.join(preparedSnapshot, `issue-${issue}.md`), body);
     if (!issueOnly && profile === "short") { fs.writeFileSync(path.join(preparedSnapshot, "prd-extract.md"), extracts.prd); fs.writeFileSync(path.join(preparedSnapshot, "spec-extract.md"), extracts.spec); }
     // A refused attempt reuses its directory. Replace its complete composition
     // only after capturing inputs, which may themselves be the prior snapshot.
@@ -142,6 +148,15 @@ function prepareDispatch(args) {
   if (pilot) Object.assign(values, { review_project: pilot.project, dataset_version: pilot.version, dataset_path: pilot.path, dataset_digest: pilot.digest });
   const template = fs.readFileSync(path.join(skillsRoot, "mono-orchestrate/templates/orchestrator-dispatch.md"), "utf8");
   fs.writeFileSync(dispatchFile, renderDispatch(template, values, Boolean(pilot)));
+  const preapplied = manifest ? applyPreapply(worktree, issue, manifest) : null;
+  const preapplyLine = preapplied ? `PREAPPLY ${issue} ${preapplied.commit} per mandate ${mandate}` : null;
+  const ledgerFile = path.join(args.root, "ledger.md");
+  if (preapplied && (!fs.existsSync(ledgerFile) || !fs.readFileSync(ledgerFile, "utf8").split("\n").some(line => line.endsWith(` ${preapplyLine}`)))) {
+    const stamp = execFileSync("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"], { encoding: "utf8" }).trim();
+    const fd = fs.openSync(path.join(args.root, "ledger.md"), "a");
+    try { fs.writeSync(fd, `- ${stamp} ${preapplyLine}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  }
+  if (preapplied) fs.appendFileSync(dispatchFile, `\n## Предприменённые изменения\n\nКоммит: ${preapplied.commit}\n\n| path | sha256 |\n| --- | --- |\n${preapplied.files.map(file => `| ${file.path} | ${file.sha256} |`).join("\n")}\n`);
   const gateOutput = run("../gate.mjs", ["start", "--request", gateFile]);
   if (!gateOutput.includes("gate start: pass")) throw new Error(gateOutput.trim());
   const launched = JSON.parse(run("spawn.mjs", ["--request", spawnFile]));
@@ -154,7 +169,7 @@ function prepareDispatch(args) {
 if (isMain(import.meta.url)) {
   try {
     const args = commandFlags(process.argv.slice(2), ["preapply", "full-snapshot"]);
-    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex --reason TEXT] [--full-snapshot]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON] [--review-dataset FILE --review-dataset-version N] [--review-pilot JSON]. Facts may use orchestration.dispatch config defaults. --preapply refuses (I4). Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
+    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex --reason TEXT] [--preapply] [--full-snapshot]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON] [--review-dataset FILE --review-dataset-version N] [--review-pilot JSON]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
     else console.log(JSON.stringify(await dispatch(args)));
   } catch (error) { console.error(`dispatch: ${error.message}`); process.exitCode = 1; }
 }

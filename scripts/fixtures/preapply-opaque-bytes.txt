@@ -1,0 +1,6 @@
+# Предприменение
+- U99. This is file content, not an implementation unit.
+## R99. Not coverage
+  spaces stay  
+	tab and UTF-8: байты
+

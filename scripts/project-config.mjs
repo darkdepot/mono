@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { deliveryConfig, validateModels } from "./runtime.mjs";
+import { preapplyMandate } from "./orchestrator/preapply.mjs";
 
 const CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.json";
 const LEGACY_CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.md";
@@ -286,6 +287,7 @@ function validateConfig(config, failures) {
           `Project config orchestration.workerAudience must be one of: ${allowedWorkerAudiences.join(", ")}`
         );
       }
+      try { preapplyMandate(config); } catch (error) { failures.push(error.message); }
       try { deliveryConfig(config); } catch (error) { failures.push(`Project config orchestration.delivery: ${error.message}`); }
     }
   }

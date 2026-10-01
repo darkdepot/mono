@@ -41,3 +41,19 @@ Default sections:
 Rules:
 
 Apply `references/contracts/tech-spec.md`; preserve native literals. Trace HOW to R/AE or cross-cutting support; first ID per section adds Russian slug, bare key unchanged. Preserve U IDs after splits/reordering. Units: goal/coverage/dependencies/surfaces/approach/tests/verification. No-API/backend subsection omission requires reason; when unsure sample. Cover affected interfaces/errors/state risks/unchanged invariants. Code/test-dependent unknowns stay deferred. Directional diagrams/pseudocode only, no copy-paste code/shell choreography. Check HOW trace and no invented WHAT.
+
+Optional nested manifest: column-zero fences, raw UTF-8 with final LF;
+dispatch changes only its wrapper to `# Предприменение`.
+
+````markdown
+- U1. <единица; покрытие>
+  - Предприменение:
+| path | sha256 |
+| --- | --- |
+| .agents/mono-workflow.config.json | <sha256> |
+
+    - `.agents/mono-workflow.config.json`
+```text
+<точные байты файла с завершающим LF>
+```
+````

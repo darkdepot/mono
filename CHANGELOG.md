@@ -6,6 +6,14 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-101: apply approved `.agents/` manifests by recorded owner mandate before
+  dispatch start gates, with exact UTF-8 hashes, commit/ledger evidence and
+  idempotent retries. Materialize covered Tech Spec manifests through the U12
+  tree; reject unsafe/malformed input before spawn. Workers verify and preserve
+  these files; repair/renewal requires a new dispatch. Gate/receipt/pins and
+  bounded artifact contracts stay unchanged; mandate bootstrap and live rollout
+  remain separate orchestrator actions.
+
 - MONO-100: persist collector admission refusals once per report digest and
   current registry pins version in the attempt's attention file. Retry only
   when that pair changes; admission of the current collection-only preflight

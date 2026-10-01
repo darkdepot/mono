@@ -62,3 +62,20 @@ Rules:
 - Include risk classification, whether `mono-review` was required/advisory/skipped, verdict, review evidence or comment link, finding disposition, owner workflow, and next step.
 - Split only into vertical slices with dependencies when one PR is truly too large.
 - Keep the Issue durable: avoid line numbers, stale-prone edit choreography, and instructions that assume today's internal file layout will survive. File paths belong in read-first context only when they are stable surfaces.
+
+Optional pre-application section (issue-only; Project-first dispatch materializes
+it from the approved Tech Spec unit). Substitute raw content and its hash; the
+path item is immediately followed by a column-zero `text` fence. Hash the raw
+UTF-8 lines, each ending in LF, without trimming or adding indentation.
+
+````markdown
+# Предприменение
+| path | sha256 |
+| --- | --- |
+| .agents/mono-workflow.config.json | <sha256> |
+
+- `.agents/mono-workflow.config.json`
+```text
+<exact file bytes, ending with LF>
+```
+````

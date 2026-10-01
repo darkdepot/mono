@@ -291,8 +291,8 @@ Artifacts live in `dispatch/KEY-aN/`: pins.json, pins.sha256, start-gate.json,
 spawn.json, dispatch.md, moves.json and snapshot/. The command resolves modelRoutes
 from immutable BASE through spawn --pins, renders every named placeholder from
 `templates/orchestrator-dispatch.md`, runs gate start, then spawn and appends one
-`date -u` ledger line. No pre-spawn refusal registers an attempt. --preapply
-refuses until I4; --full-snapshot retains complete documents.
+`date -u` ledger line. No pre-spawn refusal registers an attempt.
+--full-snapshot retains complete documents.
 Retrying a refused attempt replaces the snapshot directory with exactly its
 current composition, after capturing all inputs; superseded files are removed.
 
@@ -1478,3 +1478,41 @@ gaps; "no discrepancies" is a valid result only after actively looking.
 The drill result feeds the PRD wave-1 success criteria. Before scheduling the drill, check the ledger and PRD for a completed-drill record and skip if one exists — it is one-time, not per-wave. Rationale: the
 wave-1 orchestrator session peaked at 92% of a 1M context window and a
 forced mid-wave resume has never been tested.
+
+## Pre-application by mandate
+
+`dispatch.mjs --preapply` applies only approved manifest bytes under `.agents/`
+before start gates and spawn, on a clean tree. The product config's
+`orchestration.preapply.mandate` is the URL of an owner comment covering both
+application and the repair procedure; absent/empty means no mandate. Establish
+that value in a separate orchestrator action before a live pre-application wave.
+Workers never bootstrap or change it.
+
+Issue-only uses `# Предприменение` in the approved Issue. Project-first keeps a
+nested `Предприменение:` list item within the covered Tech Spec implementation
+unit; dispatch reads the full approved Spec before extraction and materializes
+only its wrapper as the Issue section in the snapshot. Both use `| path | sha256 |`,
+a separator and rows, followed by a list item naming each path in backticks and
+immediately a `text` fence. Opening/closing fences start at column zero, even
+inside a nested unit; content lines have no added nesting indentation. SHA-256
+covers raw UTF-8 lines without trimming/dedenting, joined with `\n` and ending
+with `\n`. Fence contents are opaque to the exported U12 block parser.
+
+Reject multiple candidates, indented fences, unmatched path/fence pairs, hashes
+that disagree, paths outside `.agents/`, `..`, symbolic links (including parents)
+and nonregular targets before application. A section without mandate or without
+--preapply refuses before spawn, without registering an attempt.
+
+Commit `<KEY>: pre-applied .agents changes (orchestrator)` before start gates;
+render commit, paths and hashes in «Предприменённые изменения». Append a UTC
+`date -u` ledger entry `PREAPPLY <KEY> <sha> per mandate <url>`. Repeating the same
+manifest reuses its verified commit without another commit/entry. Pins, gate
+requests/receipts and `gate.mjs start` stay unchanged; review against origin/main
+includes the pre-applied commit. Workers compare commit blobs to the dispatch
+and manifest at start, then leave these files unchanged.
+
+A review finding on manifest files parks blocked with exact replacement bytes.
+Project-first: mono-handoff repairs the Spec under repair-machine classification
+by meaning, with every class effect; issue-only: mono-issue renews the Issue
+through create-then-approve. Dispatch the approved replacement as a NEW attempt
+with --preapply; `accept amend --preapply` always refuses and names that route.
