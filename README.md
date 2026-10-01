@@ -85,8 +85,11 @@ saved results for live or exited workers, including after later amendments,
 without reverting current pins or grants. Delivered retries finish registration
 without another launch. Before the launch marker, a prepared retry resumes the
 same version; proven nondelivery restores original grants before replacement.
-After the marker, missing correlated delivery is uncertain: evidence and grants
-are preserved, automatic restart and replacement refuse. Every amendment result
+A positively identified pre-spawn live-worker refusal in wait mode clears the
+marker only after launch.lock verifies unchanged attempt/thread, pins version,
+prior resume and wait record, restores grants and allows the prepared retry after
+worker exit. Other missing correlated delivery after the marker remains uncertain:
+evidence and grants are preserved, automatic restart and replacement refuse. Every amendment result
 names its version (or `null` before allocation), state and reason. `amend.lock`
 serializes completion; registry changes and collection admissions use `launch.lock`.
 Connector queues confirm after their reconciliation session opens; the collector
@@ -95,6 +98,10 @@ The pack `linear-adapter.mjs` only
 reads current-session observations; printing an apply instruction is never proof
 of a write. See [command inputs and snapshot composition](references/orchestration.md#orchestrator-dispatch-command)
 and [sessions/admissions](references/orchestration.md#delivery-write-barriers).
+New bound collection admissions derive the current version from pins.file and
+bind its full path/digest and effective fields; the phase report needs no version.
+A stale version refusal names the full expected file. Prior admissions recover
+before new-request checks; legacy admission and U14 attention keys are unchanged.
 New collection admissions bind the effective dataset version as well as its path;
 an omitted version denotes only the unversioned baseline (version 0).
 On the short path, gates check registered pins and dataset bytes before returning `pending` (exit 2); workers publish only its `publishRequest`, and a sealed matching receipt is still required to pass.

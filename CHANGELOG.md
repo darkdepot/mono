@@ -6,6 +6,13 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-105: admit amended collection requests by their pins.file version without
+  a phase-report version field; stale bound requests name the full expected path.
+  Clear the conservative launch marker only for the identified pre-spawn refusal
+  of a live wait worker after locked state checks, restore grants and allow the
+  same prepared retry after exit. Preserve uncertain-launch evidence, prior
+  admissions, legacy behavior, receipt contracts and U14 attention keys.
+
 - MONO-103: complete the first live `.agents/` pre-application check under the
   owner's mandate (AE12). The orchestrator committed this repository's delivery
   confirmation window change from 1800 to 1200 seconds before start gates; the

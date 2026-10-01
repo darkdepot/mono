@@ -157,11 +157,17 @@ export function admitUnderLock(root, report) {
       if (prior.collectionId !== write.id || prior.reportDigest !== reportDigest) throw new CollectionAdmissionRefusal("conflicting collection admission");
       admitted.push(prior); continue;
     }
-    if ((report.pinsVersion ?? 0) !== pins.pinsVersion) throw new CollectionAdmissionRefusal("new collection request uses stale pinsVersion");
     const request = write.payload.request;
+    const bound = Object.hasOwn(readJson(entry.pins.file), "reviewDatasetDigest") || request.pins;
+    if (bound) {
+      const name = path.basename(request.pins?.file ?? "");
+      const match = /^pins\.v([1-9][0-9]*)\.json$/u.exec(name);
+      const version = name === "pins.json" ? 0 : match ? Number(match[1]) : null;
+      if (version !== pins.pinsVersion) throw new CollectionAdmissionRefusal(`new collection request uses stale pinsVersion; expected ${collectionPinsBinding(entry).file}`);
+    } else if ((report.pinsVersion ?? 0) !== pins.pinsVersion) throw new CollectionAdmissionRefusal("new collection request uses stale pinsVersion");
     const mismatch = collectionPinMismatch(request, pins);
     if (mismatch) throw new CollectionAdmissionRefusal(`collection pin mismatch: ${mismatch.field}`);
-    if (Object.hasOwn(readJson(entry.pins.file), "reviewDatasetDigest") || request.pins) {
+    if (bound) {
       if (canonical(request.pins) !== canonical(collectionPinsBinding(entry))) throw new CollectionAdmissionRefusal("collection pin mismatch: pins");
       if (!Object.hasOwn(request, "reviewDatasetVersion")) throw new CollectionAdmissionRefusal("collection pin mismatch: reviewDatasetVersion");
     }

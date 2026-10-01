@@ -1075,8 +1075,12 @@ attempt/thread identity and the prior registered resume. An identical retry comp
 that record with the newly registered resume and finishes the pins update without
 launching again. Changed prepared bytes or a different amendment refuse while a
 delivered version awaits registration. Cleanup after registration is recoverable too.
-If launch fails without a new registered resume, restore the prior launch grants
-under launch.lock; a delivered resume recovers forward instead of rolling back.
+The launch-may-have-started marker is written before resume. Clear it only for
+this invocation's positively identified pre-spawn refusal for a live wait worker,
+after launch.lock verifies unchanged attempt/thread, current version, prior resume
+and wait record. Restore prior grants and keep the version prepared for retry
+after worker exit. Changed state, post-spawn refusal or ambiguous failure retains
+all evidence and refuses automatic restart; correlated delivery recovers forward.
 Risk/critical only escalate; dataset changes
 require a newer --review-dataset-version; --worker-writable-roots must be the
 complete effective grants; --full-snapshot --snapshot DIR includes the full docs
@@ -1096,9 +1100,13 @@ provisional grant expansion from an interrupted resume cannot become its baselin
 `command-state.mjs admitCollection` and amend use launch.lock. Admission layout:
 `consumed/KEY-aN/admissions/<collectionId>.json` contains exactly
 `{collectionId, reportDigest, pinsVersion, manifestDigest}`; manifestDigest is the
-canonical digest of launch pins overlaid with that amendment version. New requests
-must declare the current report pinsVersion and match its effective request/grant
-fields, including reviewDatasetVersion as well as the dataset path. Omitted
+canonical digest of launch pins overlaid with that amendment version. New bound requests
+derive their version from pins.file (pins.json = 0; pins.v<n>.json = n), require the
+current registry version, and match the full file path, digest and effective
+request/grant fields, including reviewDatasetVersion and dataset path. The stale
+version refusal names the full expected pins path; no report version is required.
+Previously admitted requests recover before new-request checks; legacy admission
+and the U14 report-digest/registry-version attention pair are unchanged. Omitted
 reviewDatasetVersion means version 0 only for an unversioned baseline; it cannot
 bypass a newer amendment. Identical previously admitted requests remain recoverable under their
 original version. MONO-96 owns receipt collection/recovery, not these commands.
