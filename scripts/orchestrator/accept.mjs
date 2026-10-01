@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { atomicJson, readJson, digest, canonical, withLock, isMain, validateEvidenceGrants } from "../runtime.mjs";
-import { registryEntry, effectivePins, correlatedPhase, expandedWrite, attemptDirectory, admitUnderLock, commandFlags, allowedFlags, sha256File, validateReportBarriers } from "./command-state.mjs";
+import { registryEntry, effectivePins, correlatedPhase, expandedWrite, attemptDirectory, admitUnderLock, commandFlags, allowedFlags, sha256File, validateReportBarriers, amendmentState, amendmentChange, amendmentDocuments, validateAmendment, restoreAmendmentGrants } from "./command-state.mjs";
 import { consumeAck } from "./consume-gate-ack.mjs";
 import { recordObservation, sessionContext, reconcile } from "./linear-adapter.mjs";
 
@@ -86,7 +86,8 @@ export async function acceptReport(args, print = value => console.log(JSON.strin
         const session = { sessionId: crypto.randomUUID(), openedAt: new Date().toISOString(), reportDigest };
         atomicJson(path.join(sessions, session.sessionId, "session.json"), session); atomicJson(activeFile, session);
         context = sessionContext(root, reportFile, session.sessionId);
-        print({ session, writes: report.capsule.open_queue.map(write => expandedWrite(write, report)) });
+        const writes = report.capsule.open_queue.map(write => expandedWrite(write, report));
+        print({ session, writes, writeDigests: Object.fromEntries(writes.map(write => [write.id, digest(write)])) });
       });
     });
   } else context = sessionContext(root, reportFile, args.session);
@@ -113,168 +114,146 @@ export async function acceptReport(args, print = value => console.log(JSON.strin
   });
 }
 
-function deliveredAmendment(entry, pending) {
-  const resumed = entry.last_resume;
-  if (!resumed || canonical(resumed) === canonical(pending.previousResume) || resumed.pid !== entry.pid ||
-      resumed.thread_id !== pending.threadId || entry.thread_id !== pending.threadId ||
-      !Number.isInteger(resumed.pid) || resumed.pid < 1 || !Number.isFinite(Date.parse(resumed.registeredAt)) ||
-      Date.parse(resumed.registeredAt) < Date.parse(pending.preparedAt) || Date.parse(resumed.registeredAt) > Date.now()) return null;
-  return { pid: resumed.pid, thread_id: resumed.thread_id, procStart: entry.procStart };
-}
-
 export async function acceptAmend(args) {
-  allowedFlags(args, ["root", "issue", "attempt", "risk", "critical", "review-dataset", "review-dataset-version", "worker-writable-roots", "text", "full-snapshot", "snapshot", "preapply"]);
-  if (args.preapply) throw new Error("--preapply belongs to I4 and is not implemented");
-  if (!args.text?.trim()) throw new Error("--text with the snapshot amendment and recovery instructions required");
-  const root = args.root, issue = args.issue, attempt = Number(args.attempt);
-  // Serialize complete amendments while resume takes launch.lock itself.
-  return withLock(path.join(root, "amend.lock"), async () => {
-    const prepared = await withLock(path.join(root, "launch.lock"), () => {
-      const entry = registryEntry(root, issue, attempt), current = effectivePins(entry);
-      const rank = ["tiny", "standard", "deep", "risky"], risk = args.risk ?? current.risk, critical = args.critical ?? current.critical;
-      if (!rank.includes(risk) || rank.indexOf(risk) < rank.indexOf(current.risk) || (current.critical && critical !== current.critical) || (critical !== null && (risk !== "risky" || !critical.trim()))) throw new Error("risk/critical amendments may only escalate; existing critical reason is retained");
-      if (current.profile === "short" && ["deep", "risky"].includes(risk) && current.packageKind !== "issue-only" && !args["full-snapshot"] && !current.fullSnapshot)
-        throw new Error("short risk escalation requires --full-snapshot");
-      const reviewDataset = args["review-dataset"] ?? current.reviewDataset;
-      const reviewDatasetVersion = Number(args["review-dataset-version"] ?? current.reviewDatasetVersion ?? 0);
-      if (!Number.isInteger(reviewDatasetVersion) || reviewDatasetVersion < (current.reviewDatasetVersion ?? 0) || (reviewDataset !== current.reviewDataset && reviewDatasetVersion <= (current.reviewDatasetVersion ?? 0))) throw new Error("dataset change requires a newer version");
-      if (reviewDataset && (!path.isAbsolute(reviewDataset) || !fs.statSync(reviewDataset).isFile())) throw new Error("absolute readable review dataset required");
-      const workerWritableRoots = args["worker-writable-roots"] ? readJson(args["worker-writable-roots"]) : current.workerWritableRoots;
-      if (!Array.isArray(workerWritableRoots) || workerWritableRoots.some(value => !path.isAbsolute(value)) || new Set(workerWritableRoots).size !== workerWritableRoots.length ||
-          current.workerWritableRoots.some(value => !workerWritableRoots.includes(value))) throw new Error("amendment must contain complete effective grants including all existing roots");
-      validateEvidenceGrants(current.evidenceRoot, [root, ...workerWritableRoots]); validateEvidenceGrants(current.skillsRoot, workerWritableRoots, "installed skillsRoot");
-      validateEvidenceGrants(path.join(current.skillsRoot, "autoreview/scripts/autoreview"), workerWritableRoots, "autoreview helper real path");
-      const controlRoot = fs.realpathSync(root), mailbox = path.join(controlRoot, "reports");
-      for (const grant of workerWritableRoots.map(value => fs.realpathSync(value))) {
-        const overlaps = grant === controlRoot || controlRoot.startsWith(grant + path.sep) || grant.startsWith(controlRoot + path.sep);
-        if (overlaps && grant !== mailbox && !grant.startsWith(mailbox + path.sep)) throw new Error("only reports may be worker-writable within orchestrator root");
-      }
-      if (args["full-snapshot"] && !path.isAbsolute(args.snapshot ?? "")) throw new Error("--full-snapshot requires --snapshot DIR containing complete documents");
-      // Capture the entire amendment before deciding whether a version is reusable.
-      // Same directory/arguments with changed document bytes are a new amendment.
-      const snapshotRoot = args["full-snapshot"] ? args.snapshot : current.fullSnapshot?.directory;
-      const documents = snapshotRoot ? Object.fromEntries(
-        [`issue-${issue}.md`, "approval.md", ...(current.packageKind === "issue-only" ? ["issue-only.json"] : ["project-brief.md", "prd.md", "tech-spec.md"])].map(name =>
-          [name, fs.readFileSync(path.join(snapshotRoot, name), "utf8")])) : null;
-      if (documents && !args["full-snapshot"] && digest(documents) !== current.fullSnapshot.digest) throw new Error("registered full snapshot content changed");
-      const output = path.dirname(entry.pins.file), change = { risk, critical, reviewDataset: reviewDataset ?? null, reviewDatasetVersion, workerWritableRoots, text: args.text,
-        fullSnapshot: documents ? { digest: digest(documents) } : null };
-      const pendingFile = path.join(output, "amendment.pending.json"), changeDigest = digest(change);
-      let previousLaunchGrants = { workerWritableRoots: entry.workerWritableRoots, writable_roots: entry.writable_roots,
-        capsuleRoots: entry.capsule.writable_roots, network_access: entry.network_access };
-      if (fs.existsSync(pendingFile)) {
-        const pending = readJson(pendingFile);
-        if (pending.issue !== issue || pending.attempt !== attempt || pending.launchPinsDigest !== entry.pins.digest ||
-            pending.threadId !== entry.thread_id || !Number.isInteger(pending.pinsVersion) ||
-            !Number.isFinite(Date.parse(pending.preparedAt)) || Date.parse(pending.preparedAt) > Date.now() ||
-            pending.pinsFile !== path.join(output, `pins.v${pending.pinsVersion}.json`) ||
-            pending.resumeFile !== path.join(output, `resume.v${pending.pinsVersion}.md`) ||
-            pending.resumeRequest !== path.join(output, `resume.v${pending.pinsVersion}.json`)) throw new Error("pending amendment identity mismatch");
-        const resumed = deliveredAmendment(entry, pending);
-        if (resumed || pending.changeDigest === changeDigest) {
-          if (pending.changeDigest !== changeDigest) throw new Error("delivered pending amendment requires an identical retry before a new amendment");
-          const alreadyRegistered = current.pinsVersion === pending.pinsVersion && entry.last_amendment?.changeDigest === changeDigest;
-          if (current.pinsVersion !== pending.currentVersion && !alreadyRegistered) throw new Error("pending amendment pinsVersion conflict");
-          for (const [file, hash] of [[pending.pinsFile, pending.pinsDigest], [pending.resumeFile, pending.resumeDigest], [pending.resumeRequest, pending.requestDigest]]) {
-            if (sha256File(file) !== hash) throw new Error("pending amendment content changed");
+  let version = null, state = null;
+  try {
+    allowedFlags(args, ["root", "issue", "attempt", "risk", "critical", "review-dataset", "review-dataset-version", "worker-writable-roots", "text", "full-snapshot", "snapshot", "preapply"]);
+    if (args.preapply) throw new Error("--preapply belongs to I4 and is not implemented");
+    if (!args.text?.trim()) throw new Error("--text with the snapshot amendment and recovery instructions required");
+    const root = args.root, issue = args.issue, attempt = Number(args.attempt);
+    return await withLock(path.join(root, "amend.lock"), async () => {
+      const prepared = await withLock(path.join(root, "launch.lock"), () => {
+        let entry = registryEntry(root, issue, attempt);
+        if (sha256File(entry.pins.file) !== entry.pins.digest) throw new Error("launch pins digest mismatch");
+        const output = path.dirname(entry.pins.file), pendingFile = path.join(output, "amendment.pending.json");
+        const pending = fs.existsSync(pendingFile) ? readJson(pendingFile) : null;
+        if (args.snapshot && !args["full-snapshot"]) throw new Error("--snapshot requires --full-snapshot");
+        if (args["full-snapshot"] && !path.isAbsolute(args.snapshot ?? "")) throw new Error("--full-snapshot requires --snapshot DIR containing complete documents");
+        const supplied = { roots: args["worker-writable-roots"] ? readJson(args["worker-writable-roots"]) : null,
+          documents: args["full-snapshot"] ? amendmentDocuments(args.snapshot, issue, readJson(entry.pins.file).packageKind) : null };
+        const records = new Map(Object.values(entry.completed_amendments ?? {}).map(record => [record.pinsVersion, record]));
+        if (entry.last_amendment) records.set(entry.last_amendment.pinsVersion, entry.last_amendment);
+        if (pending && !records.has(pending.pinsVersion)) records.set(pending.pinsVersion, pending);
+        const matches = [...records.values()].filter(record => record.effectiveInputs &&
+          digest(amendmentChange(args, record.effectiveInputs, supplied)) === record.changeDigest);
+        if (matches.length > 1) {
+          const error = new Error("ambiguous amendment request; supply distinguishing existing arguments");
+          error.candidates = matches.map(record => record.pinsVersion).sort((a, b) => a - b); throw error;
+        }
+        if (matches.length) {
+          const record = matches[0]; version = record.pinsVersion;
+          state = amendmentState(entry, record).state;
+          const verified = validateAmendment(entry, record);
+          if (state === "registered") {
+            if (pending?.pinsVersion === version) fs.unlinkSync(pendingFile);
+            return { record, ...verified, pendingFile };
           }
-          if (alreadyRegistered && !resumed) throw new Error("pending amendment has no correlated registered resume");
-          return { ...pending, pendingFile, currentVersion: current.pinsVersion, resumed };
+          if ((entry.pinsVersion ?? 0) !== record.currentVersion) throw new Error("pending amendment pinsVersion conflict");
+          if (state === "prepared") {
+            if (record.launchMayHaveStartedAt) throw new Error("launch may have started without correlated delivery; preserve evidence; automatic restart refused");
+            restoreAmendmentGrants(root, entry, record);
+          }
+          return { record, ...verified, pendingFile };
         }
-        if (canonical(entry.last_resume ?? null) !== canonical(pending.previousResume)) throw new Error("pending amendment resume changed; reconcile before replacement");
-        if (pending.currentVersion !== current.pinsVersion) throw new Error("pending amendment pinsVersion conflict");
-        previousLaunchGrants = pending.previousLaunchGrants;
-      }
-      const completed = entry.completed_amendments?.[changeDigest] ??
-        (entry.last_amendment?.changeDigest === changeDigest ? entry.last_amendment : null);
-      if (completed) {
-        if (completed.changeDigest !== changeDigest || !Number.isInteger(completed.pinsVersion) ||
-            completed.pinsVersion < 1 || completed.pinsVersion > current.pinsVersion || !completed.resumeResult ||
-            (completed.pinsVersion === current.pinsVersion && canonical(completed.registeredResume) !== canonical(entry.last_resume)) ||
-            completed.resumeResult.pid !== completed.registeredResume?.pid ||
-            completed.registeredResume?.thread_id !== entry.thread_id || completed.resumeResult.thread_id !== entry.thread_id ||
-            completed.resumeFile !== path.join(output, `resume.v${completed.pinsVersion}.md`) ||
-            completed.resumeRequest !== path.join(output, `resume.v${completed.pinsVersion}.json`)) throw new Error("completed amendment recovery evidence mismatch");
-        for (const [file, hash] of [[path.join(output, `pins.v${completed.pinsVersion}.json`), completed.pinsDigest],
-          [completed.resumeFile, completed.resumeDigest], [completed.resumeRequest, completed.requestDigest]]) {
-          if (sha256File(file) !== hash) throw new Error("completed amendment content changed");
+        if (pending) {
+          version = pending.pinsVersion; state = amendmentState(entry, pending).state;
+          // A different request cannot hide damaged files or an uncertain launch.
+          if (state === "registered") {
+            validateAmendment(entry, records.get(version)); fs.unlinkSync(pendingFile);
+          } else {
+            validateAmendment(entry, pending);
+            if (state === "delivered") throw new Error("delivered pending amendment requires an identical retry before a new amendment");
+            if (pending.launchMayHaveStartedAt) throw new Error("launch may have started without correlated delivery; preserve evidence; replacement refused");
+            restoreAmendmentGrants(root, entry, pending);
+            fs.unlinkSync(pendingFile);
+            entry = registryEntry(root, issue, attempt);
+          }
         }
-        return { pinsVersion: completed.pinsVersion, pinsFile: path.join(output, `pins.v${completed.pinsVersion}.json`),
-          resumeFile: completed.resumeFile, resumeRequest: completed.resumeRequest, resumed: completed.resumeResult, completed: true };
-      }
-      let version = current.pinsVersion + 1;
-      const file = path.join(output, `pins.v${version}.json`), resumeFile = path.join(output, `resume.v${version}.md`), resumeRequest = path.join(output, `resume.v${version}.json`);
-      let text = args.text;
-      let fullSnapshot = current.fullSnapshot ?? null;
-      if (documents) {
-        const target = path.join(output, `snapshot.v${version}`); fs.mkdirSync(target, { recursive: true });
-        for (const [name, body] of Object.entries(documents)) {
-          fs.writeFileSync(path.join(target, name), body);
-          text += `\n\n## ${name}\n${body}`;
+        version = null; state = null;
+        const current = effectivePins(entry), change = amendmentChange(args, current, supplied);
+        const { risk, critical, reviewDataset, reviewDatasetVersion, workerWritableRoots } = change;
+        const rank = ["tiny", "standard", "deep", "risky"];
+        if (!rank.includes(risk) || rank.indexOf(risk) < rank.indexOf(current.risk) || (current.critical && critical !== current.critical) ||
+            (critical !== null && (risk !== "risky" || !critical.trim()))) throw new Error("risk/critical amendments may only escalate; existing critical reason is retained");
+        if (current.profile === "short" && ["deep", "risky"].includes(risk) && current.packageKind !== "issue-only" && !change.fullSnapshot)
+          throw new Error("short risk escalation requires --full-snapshot");
+        if (!Number.isInteger(reviewDatasetVersion) || reviewDatasetVersion < (current.reviewDatasetVersion ?? 0) ||
+            (reviewDataset !== current.reviewDataset && reviewDatasetVersion <= (current.reviewDatasetVersion ?? 0))) throw new Error("dataset change requires a newer version");
+        if (reviewDataset && (!path.isAbsolute(reviewDataset) || !fs.statSync(reviewDataset).isFile())) throw new Error("absolute readable review dataset required");
+        if (!Array.isArray(workerWritableRoots) || workerWritableRoots.some(value => !path.isAbsolute(value)) || new Set(workerWritableRoots).size !== workerWritableRoots.length ||
+            current.workerWritableRoots.some(value => !workerWritableRoots.includes(value))) throw new Error("amendment must contain complete effective grants including all existing roots");
+        validateEvidenceGrants(current.evidenceRoot, [root, ...workerWritableRoots]); validateEvidenceGrants(current.skillsRoot, workerWritableRoots, "installed skillsRoot");
+        validateEvidenceGrants(path.join(current.skillsRoot, "autoreview/scripts/autoreview"), workerWritableRoots, "autoreview helper real path");
+        const controlRoot = fs.realpathSync(root), mailbox = path.join(controlRoot, "reports");
+        for (const grant of workerWritableRoots.map(value => fs.realpathSync(value))) {
+          const overlaps = grant === controlRoot || controlRoot.startsWith(grant + path.sep) || grant.startsWith(controlRoot + path.sep);
+          if (overlaps && grant !== mailbox && !grant.startsWith(mailbox + path.sep)) throw new Error("only reports may be worker-writable within orchestrator root");
         }
-        fullSnapshot = { directory: target, digest: digest(documents) };
-      }
-      atomicJson(file, { pinsVersion: version, risk, critical, reviewDataset: reviewDataset ?? null, reviewDatasetVersion, workerWritableRoots, fullSnapshot });
-      text += `\n\n## Effective attempt pins\npinsVersion: ${version}\npins file: ${file}\nSHA-256: ${sha256File(file)}\n${JSON.stringify({ ...current, ...readJson(file) }, null, 2)}\nPreserve the full queue and wait for its confirmation before advancing. Risk determines required local review even when the immutable launch profile was short.`;
-      fs.writeFileSync(resumeFile, text + "\n");
-      const previousRoots = new Set(previousLaunchGrants.workerWritableRoots.map(value => fs.realpathSync(value)));
-      const extraWritable = workerWritableRoots.filter(value => !previousRoots.has(fs.realpathSync(value)));
-      atomicJson(resumeRequest, { root, issue, resumeFile, extraWritable, workerWritableRoots });
-      const pending = { issue, attempt, launchPinsDigest: entry.pins.digest, threadId: entry.thread_id,
-        preparedAt: new Date().toISOString(), previousResume: entry.last_resume ?? null, pinsVersion: version,
-        previousLaunchGrants,
-        pinsFile: file, resumeFile, resumeRequest, currentVersion: current.pinsVersion, changeDigest,
-        pinsDigest: sha256File(file), resumeDigest: sha256File(resumeFile), requestDigest: sha256File(resumeRequest) };
-      atomicJson(pendingFile, pending);
-      return { ...pending, pendingFile, resumed: null };
-    });
-    if (prepared.completed) return { pinsVersion: prepared.pinsVersion, pinsFile: prepared.pinsFile,
-      resumeFile: prepared.resumeFile, resumeRequest: prepared.resumeRequest, ...prepared.resumed };
-    let resumed = prepared.resumed;
-    if (!resumed) {
-      try { resumed = JSON.parse(run("resume.mjs", ["--request", prepared.resumeRequest])); }
-      catch (error) {
-        try {
+        const documents = supplied.documents ?? (current.fullSnapshot ? amendmentDocuments(current.fullSnapshot.directory, issue, current.packageKind) : null);
+        if (documents && !supplied.documents && digest(documents) !== current.fullSnapshot.digest) throw new Error("registered full snapshot content changed");
+        // Never overwrite even an abandoned version's recorded payload.
+        version = Math.max(current.pinsVersion, ...fs.readdirSync(output).flatMap(name => /^pins\.v(\d+)\.json$/u.exec(name)?.slice(1).map(Number) ?? [])) + 1;
+        state = "prepared";
+        const pinsFile = path.join(output, `pins.v${version}.json`), resumeFile = path.join(output, `resume.v${version}.md`), resumeRequest = path.join(output, `resume.v${version}.json`);
+        let text = args.text, fullSnapshot = null;
+        if (documents) {
+          const target = path.join(output, `snapshot.v${version}`); fs.mkdirSync(target);
+          for (const [name, body] of Object.entries(documents)) { fs.writeFileSync(path.join(target, name), body); text += `\n\n## ${name}\n${body}`; }
+          fullSnapshot = { directory: target, digest: digest(documents) };
+        }
+        atomicJson(pinsFile, { pinsVersion: version, risk, critical, reviewDataset, reviewDatasetVersion, workerWritableRoots, fullSnapshot });
+        text += `\n\n## Effective attempt pins\npinsVersion: ${version}\npins file: ${pinsFile}\nSHA-256: ${sha256File(pinsFile)}\n${JSON.stringify({ ...current, ...readJson(pinsFile) }, null, 2)}\nPreserve the full queue and wait for its confirmation before advancing. Risk determines required local review even when the immutable launch profile was short.`;
+        fs.writeFileSync(resumeFile, text + "\n");
+        const previousLaunchGrants = { workerWritableRoots: entry.workerWritableRoots, writable_roots: entry.writable_roots,
+          capsuleRoots: entry.capsule.writable_roots, network_access: entry.network_access };
+        const previousRoots = new Set(previousLaunchGrants.workerWritableRoots.map(value => fs.realpathSync(value)));
+        atomicJson(resumeRequest, { root, issue, resumeFile, extraWritable: workerWritableRoots.filter(value => !previousRoots.has(fs.realpathSync(value))), workerWritableRoots });
+        const record = { issue, attempt, launchPinsDigest: entry.pins.digest, threadId: entry.thread_id, preparedAt: new Date().toISOString(),
+          previousResume: entry.last_resume ?? null, previousLaunchGrants, pinsVersion: version, pinsFile, resumeFile, resumeRequest,
+          currentVersion: current.pinsVersion, effectiveInputs: { ...current, ...readJson(pinsFile) }, change, changeDigest: digest(change),
+          pinsDigest: sha256File(pinsFile), resumeDigest: sha256File(resumeFile), requestDigest: sha256File(resumeRequest) };
+        atomicJson(pendingFile, record);
+        return { record, state, resumed: null, pendingFile };
+      });
+      let { record, resumed } = prepared;
+      if (prepared.state !== "registered") {
+        if (prepared.state === "prepared") {
           await withLock(path.join(root, "launch.lock"), () => {
-            const entry = registryEntry(root, issue, attempt);
-            // A registered delivery must recover forward. Before any delivery,
-            // resume's provisional grant update can safely be rolled back.
-            if (deliveredAmendment(entry, prepared)) return;
-            if (canonical(entry.last_resume ?? null) !== canonical(prepared.previousResume) ||
-                effectivePins(entry).pinsVersion !== prepared.currentVersion) throw new Error("resume state changed; reconcile grants before retrying");
-            const prior = prepared.previousLaunchGrants, present = { workerWritableRoots: entry.workerWritableRoots,
-              writable_roots: entry.writable_roots, capsuleRoots: entry.capsule.writable_roots, network_access: entry.network_access };
-            if (canonical(present) === canonical(prior)) return;
-            const registryFile = path.join(root, "workers.json"), registry = readJson(registryFile);
-            Object.assign(registry[issue], { workerWritableRoots: prior.workerWritableRoots,
-              writable_roots: prior.writable_roots, network_access: prior.network_access });
-            registry[issue].capsule.writable_roots = prior.capsuleRoots;
-            atomicJson(registryFile, registry);
+            const entry = registryEntry(root, issue, attempt); validateAmendment(entry, record);
+            if ((entry.pinsVersion ?? 0) !== record.currentVersion || canonical(entry.last_resume ?? null) !== canonical(record.previousResume))
+              throw new Error("resume state changed before launch; preserve amendment evidence");
+            record = { ...record, launchMayHaveStartedAt: new Date().toISOString() };
+            atomicJson(prepared.pendingFile, record);
           });
-        } catch (rollback) { throw new Error(`${error.message}\nGrant reconciliation failed: ${rollback.message}`); }
-        throw error;
+          try { run("resume.mjs", ["--request", record.resumeRequest]); }
+          catch (error) {
+            // Command exit status is not delivery evidence. A later identical
+            // retry can register a correlated delivery, but never relaunch blindly.
+            state = amendmentState(registryEntry(root, issue, attempt), record).state;
+            throw new Error(`${error.message}\n${state === "delivered" ? "correlated delivery awaits registration; retry identical request" : "launch may have started without correlated delivery; preserve evidence; automatic restart refused"}`);
+          }
+        }
+        await withLock(path.join(root, "launch.lock"), () => {
+          const entry = registryEntry(root, issue, attempt), verified = validateAmendment(entry, record);
+          state = verified.state; resumed = verified.resumed;
+          if (state !== "delivered") throw new Error("launch may have started without correlated delivery; preserve evidence; automatic restart refused");
+          if ((entry.pinsVersion ?? 0) !== record.currentVersion) throw new Error("effective pins changed during resume");
+          const registryFile = path.join(root, "workers.json"), registry = readJson(registryFile);
+          const completion = { ...record, registeredResume: entry.last_resume, resumeResult: resumed };
+          registry[issue].pinsVersion = record.pinsVersion;
+          registry[issue].completed_amendments = { ...entry.completed_amendments, [record.pinsVersion]: completion };
+          registry[issue].last_amendment = completion;
+          atomicJson(registryFile, registry); state = "registered";
+          fs.unlinkSync(prepared.pendingFile);
+        });
       }
-    }
-    await withLock(path.join(root, "launch.lock"), () => {
-      const entry = registryEntry(root, issue, attempt);
-      if (effectivePins(entry).pinsVersion !== prepared.currentVersion) throw new Error("effective pins changed during resume");
-      if (canonical(deliveredAmendment(entry, prepared)) !== canonical(resumed)) throw new Error("registered resume differs from amendment delivery");
-      const registryFile = path.join(root, "workers.json"), registry = readJson(registryFile);
-      registry[issue].pinsVersion = prepared.pinsVersion;
-      const completion = { changeDigest: prepared.changeDigest, pinsVersion: prepared.pinsVersion,
-        resumeFile: prepared.resumeFile, resumeRequest: prepared.resumeRequest, pinsDigest: prepared.pinsDigest,
-        resumeDigest: prepared.resumeDigest, requestDigest: prepared.requestDigest,
-        registeredResume: entry.last_resume, resumeResult: resumed };
-      registry[issue].completed_amendments = { ...entry.completed_amendments,
-        ...(entry.last_amendment ? { [entry.last_amendment.changeDigest]: entry.last_amendment } : {}),
-        [prepared.changeDigest]: completion };
-      registry[issue].last_amendment = completion;
-      atomicJson(registryFile, registry);
-      fs.unlinkSync(prepared.pendingFile);
+      return { version: record.pinsVersion, state: "registered", reason: "recorded amendment result", pinsVersion: record.pinsVersion,
+        pinsFile: record.pinsFile, resumeFile: record.resumeFile, resumeRequest: record.resumeRequest, ...resumed };
     });
-    return { pinsVersion: prepared.pinsVersion, pinsFile: prepared.pinsFile,
-      resumeFile: prepared.resumeFile, resumeRequest: prepared.resumeRequest, ...resumed };
-  });
+  } catch (error) {
+    error.amendment = { version, state, outcome: "refused", reason: error.message, ...(error.candidates ? { candidates: error.candidates } : {}) };
+    throw error;
+  }
 }
 
 if (isMain(import.meta.url)) {
@@ -285,5 +264,8 @@ if (isMain(import.meta.url)) {
     else if (command === "report") await acceptReport(args);
     else if (command === "amend") console.log(JSON.stringify(await acceptAmend(args)));
     else throw new Error("expected ack, report or amend");
-  } catch (error) { console.error(`accept: ${error.message}`); process.exitCode = 1; }
+  } catch (error) {
+    if (process.argv[2] === "amend") console.log(JSON.stringify(error.amendment ?? { version: null, state: null, outcome: "refused", reason: error.message }));
+    console.error(`accept: ${error.message}`); process.exitCode = 1;
+  }
 }
