@@ -1,0 +1,12 @@
+{
+  "coverage": "R1",
+  "prd": "- R1. Selected.\n  - Ordinary child.\n    * AE1. Nested definition.\n      Detail.\n- I1. Omitted boundary. Покрывает R99.\n",
+  "includes": [
+    "Ordinary child.",
+    "Nested definition.",
+    "Detail."
+  ],
+  "excludes": [
+    "Omitted boundary."
+  ]
+}

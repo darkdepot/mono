@@ -299,15 +299,53 @@ current composition, after capturing all inputs; superseded files are removed.
 Short snapshot: Issue, approval, brief, prd-extract.md and spec-extract.md. Extract
 exact A/F/R/AE/U keys with numeric IDs and optional prime/Cyrillic suffixes;
 expand ranges, follow “Покрывает …” and inline semicolon coverage transitively
-with cycle protection. Definitions start in list items or headings and end at
-the next heading or peer list definition of any known family, including I slice
-definitions; I remains outside PRD/Spec coverage lookup. Always retain PRD Кратко/Что не входит в MVP/Допущения and Spec
+with cycle protection. Boundaries and block opacity follow the [U12 snapshot markup contract](#snapshot-markup-contract-u12);
+I slice definitions are boundaries; I remains outside PRD/Spec coverage lookup. Always retain PRD Кратко/Что не входит в MVP/Допущения and Spec
 Кратко/Архитектура/Контракты и границы/Риски и защита/Что может сломаться и как
 защищаемся/Валидация/Релиз и откат; absent optional sections are skipped. Unknown
-keys refuse; duplicate definitions retain full docs with a note. Full deep/risky
+keys refuse before fallback; duplicate definitions or unclosed fences retain full docs with a note. Full deep/risky
 and explicitly full dispatches retain full documents; issue-only has no Project
 documents. --review-pilot JSON explicitly selects the template's optional review
 block with project/version/path/digest facts; it never changes stage rules.
+
+## Snapshot Markup Contract (U12)
+
+`scripts/orchestrator/snapshot.mjs` first parses each document into a source-backed
+block tree, then selects definitions and coverage from that tree. This is the
+extraction contract; other Markdown features do not extend it.
+
+- Headings have levels 1–6, with 0–3 leading ASCII spaces and whitespace or end
+  after the opening hashes. Empty headings and whitespace-separated closing
+  hashes are recognized. More-indented heading-like lines remain text.
+- List items use `- ` or `* ` at any indentation column. Tabs advance to the
+  next multiple of four. A selectable definition starts at the beginning of a
+  list item or level 2–3 heading, with an existing A/F/R/AE/U identifier followed
+  by `.`, `(`, whitespace or end. The identifier grammar and suffixes are unchanged.
+  `I<n>` is only a boundary, never a selectable identifier.
+- A list definition ends at the next heading of any level, or the next definition
+  of any boundary family at the same or smaller column. Nested items, fences and
+  text remain inside it. A heading definition ends at the next heading of any level.
+  Coverage in an unselected neighbouring definition does not enter the closure.
+- Backtick and tilde fences open with at least three matching characters and
+  0–3 leading ASCII spaces. A backtick opener's info contains no backticks.
+  Closing fences use the same character, at least the opener's length and no info.
+  Fence contents cannot define IDs, end definitions or supply coverage; their
+  source lines remain verbatim inside an included interval. Fenced example
+  definitions are not duplicates, and fenced-only IDs cannot satisfy coverage.
+  Other text markup (tables, HTML, footnotes and quotes) is opaque.
+- Selection expands the existing ranges and follows both `Покрывает …` and inline
+  semicolon coverage transitively, with cycle protection. An unknown ID reached
+  from Issue coverage or any reachable definition refuses dispatch (d-003),
+  including when duplicate definitions or an unclosed fence also exist.
+  Duplicates and unclosed fences otherwise retain full documents with `note`.
+- The always-included sections listed above stay unchanged; missing optional
+  sections are skipped. Overlapping source intervals appear once in source order.
+
+Named `scripts/fixtures/snapshot-u12-*.json` cases exercise each rule, including
+MONO-95's columns, indented headings, indented fences, empty/closed headings and
+nested items. Template and MONO-92 fixtures remain supported. The package-byte
+fixture records pre-change extracts; scratch dispatch compares its output bytes
+against that baseline. The delivery reading corpus does not grow.
 
 ## Two-Phase Dispatch Handshake
 

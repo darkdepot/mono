@@ -20,6 +20,32 @@ const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: t
 const pass = result => { assert.equal(result.status, 0, result.stderr + result.stdout); return result.stdout.trim(); };
 const issueFor = ids => `# Покрытие PRD/Spec\n${ids}\n`;
 
+test("snapshot U12 named contracts", async t => {
+  for (const name of fs.readdirSync(path.join(checkout, "scripts/fixtures")).filter(name => /^snapshot-u12-.*\.json$/u.test(name) && !name.endsWith("package-bytes.json"))) {
+    await t.test(name, () => {
+      const input = JSON.parse(fixture(name));
+      const run = () => extractSnapshot(input.issue ?? issueFor(input.coverage), input.prd ?? "", input.spec ?? "");
+      if (input.error) { assert.throws(run, error => error.message === input.error); return; }
+      const result = run();
+      assert.equal(result.full, input.full ?? false);
+      if (input.ids) assert.deepEqual(result.ids, input.ids);
+      if (input.note) assert.ok(result.note.includes(input.note));
+      for (const text of input.includes ?? []) assert.ok(result.prd.includes(text), text);
+      for (const text of input.specIncludes ?? []) assert.ok(result.spec.includes(text), text);
+      for (const text of input.once ?? []) assert.equal(result.prd.split(text).length - 1, 1, text);
+      for (const text of input.excludes ?? []) assert.ok(!result.prd.includes(text), text);
+      if (input.full) { assert.equal(result.prd, input.prd); assert.equal(result.spec, input.spec ?? ""); }
+    });
+  }
+});
+
+test("snapshot U12 package extracts retain baseline bytes", () => {
+  for (const expected of JSON.parse(fixture("snapshot-u12-package-bytes.json"))) {
+    assert.deepEqual(extractSnapshot(issueFor(expected.coverage), fixture("cheap-waves-prd.md"), fixture("cheap-waves-spec.md")),
+      { full: expected.full, note: expected.note, ids: expected.ids, prd: expected.prd, spec: expected.spec });
+  }
+});
+
 test("snapshot grammar: template sections, exact IDs, source fixtures, closure and ambiguity", () => {
   const templateBody = text => /```markdown\n([\s\S]*?)```/u.exec(text)[1];
   const prd = templateBody(fixture("prd-template.md")).replace("## Требования", "## Требования\n\n- R1. Requirement.").replace("## Примеры приемки", "## Примеры приемки\n\n- AE1. Покрывает R1. Example.");
@@ -275,6 +301,9 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.ok(rendered.includes(`--ack '${path.join(root, "reports/MONO-999-gate-ack-a1.json")}'`));
     assert.ok(rendered.includes(`--ack '${path.join(worktree, ".orchestrator/MONO-999-gate-ack-a1.json")}'`), "wait instructions use the actual fallback ack location");
     assert.ok(fs.existsSync(path.join(launched.snapshot, "prd-extract.md"))); assert.equal(fs.existsSync(path.join(launched.snapshot, "prd.md")), false);
+    const baseline = JSON.parse(fixture("snapshot-u12-package-bytes.json")).find(item => item.coverage === "R4, U5");
+    assert.equal(fs.readFileSync(path.join(launched.snapshot, "prd-extract.md"), "utf8"), baseline.prd, "scratch dispatch retains baseline PRD bytes");
+    assert.equal(fs.readFileSync(path.join(launched.snapshot, "spec-extract.md"), "utf8"), baseline.spec, "scratch dispatch retains baseline Spec bytes");
     const printed = [], ackArgs = { root, issue: "MONO-999", attempt: "1" };
     await assert.rejects(acceptAck(ackArgs, value => printed.push(value)), /ack absent/u); assert.equal(printed.length, 0);
     const ackFile = path.join(root, "reports/MONO-999-gate-ack-a1.json"), ack = { issue: "MONO-999", phase: "gate", status: "gates-passed", gates: entry.gates.map(gate => ({ gate, status: "pass", evidence: "fixture" })) };

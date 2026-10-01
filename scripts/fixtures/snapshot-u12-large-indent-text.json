@@ -1,0 +1,10 @@
+{
+  "coverage": "R1",
+  "prd": "- R1. Selected.\n    ### R2. Text.\n    ~~~\nStill text.\n",
+  "ids": [
+    "R1"
+  ],
+  "includes": [
+    "Still text."
+  ]
+}

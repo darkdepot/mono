@@ -1,0 +1,11 @@
+{
+  "coverage": "R1",
+  "prd": "- R1. Real definition.\n~~~md\nПокрывает R99.\n(example; R98; I1)\n~~~\nAfter fence.\n",
+  "ids": [
+    "R1"
+  ],
+  "includes": [
+    "Покрывает R99.",
+    "After fence."
+  ]
+}

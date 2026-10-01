@@ -1,0 +1,15 @@
+{
+  "coverage": "R1, R2",
+  "prd": "## Кратко ###\r\nBrief.\r\n- R1. Selected.\r\n```md\r\n- R99. Example.\r\n```\r\nAfter example.\r\n##\r\n### R2. Second selected. ###\r\nSecond detail.\r\n",
+  "ids": [
+    "R1",
+    "R2"
+  ],
+  "includes": [
+    "- R99. Example.\r\n```\r\nAfter example.",
+    "Second detail."
+  ],
+  "excludes": [
+    "##\r\n### R2"
+  ]
+}

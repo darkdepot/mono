@@ -1,0 +1,5 @@
+{
+  "coverage": "R1",
+  "prd": "~~~md\n- R1. Example only.\n~~~\n",
+  "error": "unknown snapshot identifier: R1"
+}

@@ -1,0 +1,5 @@
+{
+  "coverage": "R1",
+  "prd": "- R1. Покрывает R99.\n```\nexample\n",
+  "error": "unknown snapshot identifier: R99"
+}

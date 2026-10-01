@@ -1,0 +1,5 @@
+{
+  "coverage": "I1",
+  "prd": "- I1. Implementation slice.\n",
+  "error": "coverage has no identifiers; supply a full snapshot explicitly"
+}

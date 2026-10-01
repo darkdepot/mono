@@ -1,0 +1,11 @@
+{
+  "coverage": "R1",
+  "prd": "## Кратко ###\nCommon.\n## Требования\n### R1. Selected. ###\nBody.\n   ####\t### \t\nOmitted. Покрывает R99.\n",
+  "includes": [
+    "Common.",
+    "Body."
+  ],
+  "excludes": [
+    "Omitted."
+  ]
+}

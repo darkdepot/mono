@@ -1,0 +1,11 @@
+{
+  "coverage": "R1",
+  "prd": "## R1. Selected.\n- U1. Nested item.\nText.\n##### Boundary\nOmitted. Покрывает R99.\n",
+  "includes": [
+    "Nested item.",
+    "Text."
+  ],
+  "excludes": [
+    "Omitted."
+  ]
+}
