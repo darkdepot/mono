@@ -21,6 +21,39 @@ const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: t
 const pass = result => { assert.equal(result.status, 0, result.stderr + result.stdout); return result.stdout.trim(); };
 const issueFor = ids => `# Покрытие PRD/Spec\n${ids}\n`;
 
+test("amend collection pins-file contracts", async t => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-amend-admission-"));
+  const root = path.join(scratch, "root"), issue = "MONO-999", head = "a".repeat(40);
+  const file = path.join(root, "dispatch", `${issue}-a1`, "pins.json");
+  const pins = { product: "fixture", root, worktree: scratch, workerWritableRoots: [scratch], reviewDatasetDigest: null, reviewDatasetVersion: 0 };
+  const entry = { issue, attempt: 1, stage: "mono-deliver", packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4,
+    pins: { file, digest: null }, pinsVersion: 1 };
+  const reportFor = number => {
+    const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, collectionId: `preflight-collect:${head}:${number}` };
+    const queue = [{ id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } }];
+    return { ...entry, phase: "preflight", kind: "confirmation-request", sequence: number, head,
+      linear_mutations_pending: queue, capsule: { phase: "preflight", head, decisions: [], writable_roots: [scratch], open_queue: queue } };
+  };
+  try {
+    atomicJson(file, pins); entry.pins.digest = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+    atomicJson(path.join(path.dirname(file), "pins.v1.json"), { pinsVersion: 1 });
+    atomicJson(path.join(root, "workers.json"), { [issue]: entry });
+    const report = reportFor(1); delete report.pinsVersion;
+    let prior;
+    await t.test("amend-collection-admitted-by-pins-file", async () => {
+      prior = (await admitCollection(root, report))[0]; assert.equal(prior.pinsVersion, 1);
+    });
+    await t.test("amend-stale-pins-file-refused", async () => {
+      const stale = reportFor(2); delete stale.pinsVersion;
+      entry.pinsVersion = 2; atomicJson(path.join(path.dirname(file), "pins.v2.json"), { pinsVersion: 2 });
+      atomicJson(path.join(root, "workers.json"), { [issue]: entry });
+      await assert.rejects(admitCollection(root, stale), error => error.message === `new collection request uses stale pinsVersion; expected ${path.join(path.dirname(file), "pins.v2.json")}`);
+      assert.equal(fs.existsSync(path.join(root, "consumed", `${issue}-a1`, "admissions", `${stale.capsule.open_queue[0].id}.json`)), false);
+      assert.deepEqual((await admitCollection(root, report))[0], prior, "prior admission precedes new-version checks");
+    });
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+});
+
 test("snapshot U12 named contracts", async t => {
   for (const name of fs.readdirSync(path.join(checkout, "scripts/fixtures")).filter(name => /^snapshot-u12-.*\.json$/u.test(name) && !name.endsWith("package-bytes.json"))) {
     await t.test(name, () => {
@@ -417,8 +450,8 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       assert.equal(fs.readFileSync(registryFile, "utf8"), before, "undelivered pins cannot become effective");
       assert.ok(fs.existsSync(path.join(path.dirname(entry.pins.file), "pins.v1.json")), "prepare the version file before attempting resume");
       const pendingFile = path.join(path.dirname(entry.pins.file), "amendment.pending.json");
-      assert.ok(readJson(pendingFile).launchMayHaveStartedAt);
-      // Reset this isolated uncertain-delivery fixture, never production state.
+      assert.equal(readJson(pendingFile).launchMayHaveStartedAt, undefined);
+      // Reset this isolated prepared fixture, never production state.
       for (const name of ["amendment.pending.json", "pins.v1.json", "resume.v1.md", "resume.v1.json"]) fs.unlinkSync(path.join(path.dirname(entry.pins.file), name));
     });
     process.kill(livePid, "SIGTERM"); livePid = null;
@@ -548,6 +581,37 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
             }
           }
         } finally { fs.writeFileSync(launchFile, launchBytes); }
+      }));
+      await t.test("amend-live-wait-worker-proven-nondelivery", () => isolatedPreparation(async ({ registryFile, before }) => {
+        const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+        const exited = new Promise(resolve => child.once("exit", resolve));
+        const registry = readJson(registryFile); registry[ack.issue].pid = child.pid; atomicJson(registryFile, registry);
+        const extra = path.join(scratch, "live-wait-extra"), grantsFile = path.join(scratch, "live-wait-grants.json");
+        fs.mkdirSync(extra); write(grantsFile, [...effectivePins(before[ack.issue]).workerWritableRoots, extra]);
+        const args = [...amendArgs("Retry live wait refusal."), "--worker-writable-roots", grantsFile];
+        try {
+          const refused = run(process.execPath, args); assert.notEqual(refused.status, 0); assert.match(refused.stderr, /worker process is still live/u);
+          const pending = readJson(pendingFile); assert.equal(pending.launchMayHaveStartedAt, undefined);
+          assert.equal(JSON.parse(refused.stdout).state, "prepared");
+          assert.deepEqual(readJson(registryFile), registry, "prior grants restored without advancing pins");
+          child.kill("SIGTERM"); await exited;
+          const retried = JSON.parse(pass(run(process.execPath, args))); assert.equal(retried.version, pending.pinsVersion); assert.equal(retried.state, "registered");
+          assert.ok(readJson(registryFile)[ack.issue].workerWritableRoots.includes(fs.realpathSync(extra)));
+        } finally { child.kill("SIGTERM"); await exited; }
+      }));
+      await t.test("amend-mark-kept-on-changed-state", () => isolatedPreparation(({ registryFile, resumeScript, resumeSource }) => {
+        write(resumeScript, `import path from "node:path";import {readJson,atomicJson} from "../runtime.mjs";
+const request=readJson(process.argv[process.argv.indexOf("--request")+1]),file=path.join(request.root,"workers.json"),registry=readJson(file);
+registry[request.issue].last_wait={changed:true};atomicJson(file,registry);
+console.error("resume: worker process is still live; resume refused");process.exitCode=1;
+`);
+        const args = amendArgs("Changed wait state retains boundary.");
+        const failed = run(process.execPath, args); assert.notEqual(failed.status, 0);
+        assert.ok(readJson(pendingFile).launchMayHaveStartedAt);
+        const evidence = fs.readFileSync(pendingFile), registry = fs.readFileSync(registryFile);
+        write(resumeScript, resumeSource);
+        const retry = run(process.execPath, args); assert.notEqual(retry.status, 0); assert.match(retry.stderr, /automatic restart refused/u);
+        assert.deepEqual(fs.readFileSync(pendingFile), evidence); assert.deepEqual(fs.readFileSync(registryFile), registry);
       }));
       await t.test("amend-launch-failure-restores-grants: uncertain delivery preserves evidence and refuses restart", () => isolatedPreparation(({ registryFile, before }) => {
         const extra = path.join(scratch, "amend-grant"), grantsFile = path.join(scratch, "expanded-grants.json");

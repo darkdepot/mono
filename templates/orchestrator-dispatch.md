@@ -45,6 +45,8 @@ compares `git show <sha>` blobs to that block and the snapshot manifest at start
 
 ## Запрос сбора
 
+После поправки запрос сбора привязан к `pins.v<n>.json` из «Effective attempt pins» возобновления; отдельного поля версии в отчёте нет.
+
 Use this pinned preflight request; replace HEAD in head/collectionId with the
 committed SHA and increment the collection number on retry. Gate-side reads of
 registry/dispatch are allowed; the worker must not read those directories.

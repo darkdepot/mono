@@ -163,18 +163,15 @@ Confirm in-phase queues before dependent work: accepted drift before PR, ready
 certificate before formal review, In Review/PR chip after PR.
 
 Pin product/evidenceRoot/skillsRoot/risk/critical/verification/write grants.
-~/.mono-agent-workflow/evidence/<product>/ stays outside ALL grants, including
-worktree/orchestrator. Orchestrator collect:true outside worker sandboxes; worker
-collect:false. Readable keys grant no writes; hostile local operator is out of
-scope (one user/host).
+~/.mono-agent-workflow/evidence/<product>/ outside ALL grants, including
+worktree/orchestrator. Orchestrator collect:true only; worker collect:false.
+Keys grant no writes; hostile operator out of scope (one user/host).
 
-After commit run pinned collect:false; pending (exit 2) is not pass. Publish only
-publishRequest as payload.request in kind=confirmation-request with one write:
+After amend use resume's "Effective attempt pins" pins.v<n>.json for collection;
+no report version field. Commit; pinned collect:false exit 2 is pending, not pass. Publish only publishRequest in payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
-target=<head>, payload={request}. Adapter returns immutable receipt path/digest/gate
-answer even on failure; confirmation proves completion only. Verify collect:false.
-Findings: fix/recommit/request again. Transient failures: same head/route, increment
-n/sequence. Publish ready on pass.
+target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate, even on failure; confirmation proves completion only. Verify collect:false.
+Findings: fix/recommit/request; transient: same head/route, increment n/sequence. Ready on pass.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify the sealed
 head/merge-base receipt before judgment; strings cannot replace it.
