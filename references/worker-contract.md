@@ -2,26 +2,27 @@
 
 ## AFK Contract
 
-Use dispatched Issue/branch/worktree. No branch changes, sub-workers,
-session management, other-Issue edits or orchestrator state access (workers.json,
-ledger.md, control.json, dispatch, consumed, logs/other reports), except reading
-own consumed/<KEY>-gate-ack-a<N>.json. Never commit secrets/.orchestrator or ask
-users: mailbox question/recommendation, then stop. Only gates read registry/dispatch. Report before stops;
-passed pause emits only ack. Sequenced stops park; standalone keeps statuses.
+Use dispatch Issue/branch/worktree. No branch changes/sub-workers/session
+management/other-Issue edits or orchestrator state access (workers.json/ledger.md/
+control.json/dispatch/consumed/logs/other reports), except own
+consumed/<KEY>-gate-ack-a<N>.json reads. No secrets/.orchestrator commits or user
+questions: mailbox question/recommendation, stop. Only gates read registry/dispatch.
+Report before stops; passed pause ack only. Sequenced stops park; standalone
+keeps statuses.
 
 ## Orchestration Mode Precedence
 
-Snapshot replaces Linear/resolver. Skill owns rules; dispatch owns facts,
-pins/paths/constraints. Queue after gates; orchestrator applies/read-backs before
-progress. Disclose lag; never claim application or judge unapplied state. Name
-missing inputs and block, never infer/skip/defer checks. Confirm writes before
-progress; standalone parks needs-decision. Interactive keeps direct access and
-approval; lifecycle uses handshake.
+Snapshot replaces Linear/resolver; skill owns rules, dispatch facts/pins/paths.
+Queue after gates; confirm orchestrator application/read-back before progress.
+Disclose lag; no application claims or judgment of unapplied state. Missing inputs
+block; never infer/skip/defer checks. Standalone parks needs-decision; interactive
+keeps direct access/approval, lifecycle handshake.
 
 ## Pack identity gate invocation
 
-Before work/resume require the exact dispatch command to exit 0 with
-pack-state: identity verified; otherwise block.
+Require exact dispatch identity/all four pins before work/resume: exit 0 and
+pack-state: identity verified, else block. Installed runtime only;
+single-quote paths/pins (embedded quote: '\''); never checkout SURFACE_REVISION.
 
 ```bash
 node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \
@@ -31,17 +32,20 @@ node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs
   --surface-revision '<dispatch surfaceRevision>'
 ```
 
-Require identity/all four flags. Resolve ../.mono-agent-workflow from installed
-skill; lock beside skills. Single-quote paths/pins (embedded quote: '\'').
-Never reconstruct command or substitute checkout SURFACE_REVISION.
+## Pre-applied files
+
+At start match `git show <sha>` blobs to dispatch commit/files/sha256 and Issue
+manifest; never change those files.
+Review findings on them park `blocked` with exact replacement bytes; the artifact
+owner repairs the Tech Spec or renews the issue-only Issue, then starts a NEW
+dispatch. No amendment/resume can apply the repaired manifest.
 
 ## Two-Phase Dispatch Handshake
 
-Initial lifecycle moves only, including Issue activation in an already-Delivery
-Project. Pre-move snapshot is correct. Run implement steps 1–4 and issue-only
-pre-start delivery check before ack. On gate completion/blocker/other stop write
-one reports/<ISSUE-KEY>-gate-ack-a<N>.json; denied mailbox uses the same name in
-<worktree>/.orchestrator, never both.
+Initial moves only, including Issue activation in Delivery Project. Pre-move
+snapshot is correct. Before ack run implement 1–4/lane pre-start delivery check.
+On gate completion/blocker/stop write reports/<ISSUE-KEY>-gate-ack-a<N>.json;
+denial: same name in <worktree>/.orchestrator, never both.
 
 ```json
 {
@@ -52,79 +56,76 @@ one reports/<ISSUE-KEY>-gate-ack-a<N>.json; denied mailbox uses the same name in
 }
 ```
 
-Unique gate names (nonempty): gates-passed exact set/all pass; blocked nonempty
-subset/one blocked. Blocked: ack then report (missing: blocked; adverse: needs-human),
-no move. Passed: no code/move/queue/report yet. Codex wait: delivery-state.mjs
-wait-ack until ack mtime + ackWaitSec; expiry parks write-unconfirmed. Applied
-record read-backs amend state: check delivery, no identity rerun. Resume: Codex
-exits, desktop/fallback keeps session; require all move read-backs, rerun identity/
-checks. Never repeat moves. No-move retry: current snapshot, no ack/amendment.
-Consumption is not approval.
+Gate names unique/nonempty; gates-passed: exact set/all pass; blocked: nonempty
+subset/one blocked. Blocked ack precedes report (missing blocked; adverse
+needs-human), no move. Passed: no code/move/queue/report. Codex wait-ack deadline:
+ack mtime + ackWaitSec; expiry parks write-unconfirmed. Applied read-backs amend
+state: delivery check, no identity rerun. Resume: Codex exits, desktop/fallback
+keeps session; all move read-backs plus identity/check rerun. Never repeat moves.
+No-move retry: current snapshot, no ack/amendment. Consumption is not approval.
 
 ## Sandbox ladder
 
-Workspace-write/network: worktree; the worktree-specific Git directory and the common Git directory, derived from the worktree; mailbox <root>/reports (--add-dir spawn; writable_roots resume).
-codex 0.153.4 guards explicit linked-worktree metadata.
-Launch/resume: set capsule.writable_roots. Orchestrator root, confirmations,
-registry, control, consumed, logs: read-only.
-No early PR/push/unrelated network. Standalone implement: no network unless excepted;
-preflight network/.git; ship push. Exact hidden grants. Disabled sandbox: log in
-orchestrator ledger. Denied mailbox: same uncommitted JSON fallback.
+Workspace-write/network: worktree, derived worktree/common Git directories,
+<root>/reports (--add-dir spawn; writable_roots resume). codex 0.153.4 guards
+explicit linked-worktree metadata. Set capsule.writable_roots at launch/resume.
+Orchestrator root/confirmations/registry/control/consumed/logs: read-only.
+No early PR/push/unrelated network; standalone implement: no network unless
+excepted; preflight network/.git, ship push. Exact hidden grants. Disabled
+sandbox logs in orchestrator ledger; denied mailbox uses same uncommitted JSON
+fallback.
 
 ## Context seam
 
-Before lifecycle/scope gates resolve Issue/marker/config/verified label/authenticated
-approval and emit-fingerprint; dispatch uses snapshot. Whole-body SHA-256 only;
-no inferred oracle/lane/sixth field. Keep parent/marker/label/approval provenance
-for fallback. Project-first needs approved
-Project/PRD/Spec-or-exception/Issue; escaped candidate proves nothing. Follow
-`references/issue-only-lane.md` Context Contract/Resolver/fallback for issue-only,
-candidate/freeze/exit, including `approval_status=approved-fresh`, matching fingerprints/owner,
-eligible risk and oracle acceptance/verification. Never require absent Project
-docs for valid issue-only or downgrade broken markers. Implement integrity errors
-→ needs-human, missing Project prerequisites → park/restart; preflight candidate/
-missing docs/deep-risky escalation → drift-candidate/fallback with higher-risk
-review, never ready outside lane; ship bad approval stops gates/PR and routes
-no-promotion handoff.
+Before lifecycle/scope gates resolve Issue/marker/config/verified label/
+authenticated approval/emit-fingerprint from dispatch snapshot. Whole-body
+SHA-256 only; no inferred oracle/lane/sixth field. Retain parent/marker/label/
+approval provenance for fallback. Project-first requires approved
+Project/PRD/Spec-or-exception/Issue; escaped candidate proves nothing.
+Apply `references/issue-only-lane.md` Context Contract/Resolver/fallback,
+candidate/freeze/exit: `approval_status=approved-fresh`, matching fingerprints/
+owner, eligible risk, oracle acceptance/verification. Valid lane needs no Project
+docs; broken markers never downgrade. Implement integrity error → needs-human;
+missing Project prerequisites → park/restart. Preflight candidate/missing docs/
+deep-risky escalation → drift-candidate/fallback/higher-risk review, never ready
+outside lane. Ship bad approval stops gates/PR → no-promotion handoff.
 
 ## Delivery and pre-ship gates
 
-Check current readiness only; no findings/mutations/repairs/installation.
-PASS inspected/no blockers; FAIL hard violation; BLOCKED unavailable inputs.
-Return mode/meaning/boundary/smallest unblock; failure: FAIL - Linear <mode> not ready.
-Project delivery after move requires Delivery, current PRD, Spec/explicit exception,
-approved Issues, set/start approval, coherent risk/review; docs alone fail.
-Issue-only checks oracle/marker/label/fresh authenticated approval/review before
-activation; started/terminal states fail then. After read-back or no-move retry
-require configured started state, never terminal; no Project required or moved.
-Pre-ship: matching diff/Issue, current recoverable preflight, required review,
-current artifacts, accepted/synced drift, no obsolete PR chips/raw URLs; valid
-issue-only oracle/fingerprint substitutes docs. Bad approval stops before PR/gates.
-Reject wrong artifact roles, workflow mechanics/full copies/brittle edit scripts,
-premature code/Delivery or missing review. Fail-closed output cannot create a package.
+Readiness-only: no findings/mutations/repair/install. PASS inspected/no blockers;
+FAIL violation; BLOCKED inputs unavailable. Return mode/meaning/boundary/unblock;
+failure: FAIL - Linear <mode> not ready.
+Project delivery: Delivery/current PRD/Spec-or-exception/approved Issues/set and
+start approval/coherent risk-review; docs alone fail. Issue-only pre-activation:
+oracle/marker/label/fresh authenticated approval/review; started/terminal fails.
+After read-back/no-move retry: configured started state, never terminal; no Project.
+Pre-ship: diff/Issue match, recoverable current preflight/review/artifacts, synced
+accepted drift, no obsolete PR chips/raw URLs; lane oracle/fingerprint substitutes
+docs. Bad approval stops PR/gates. Reject wrong roles, workflow mechanics/full
+copies/brittle scripts, premature code/Delivery/missing review. No fail-closed
+package creation.
 
 ## Review contract
 
-Run/report named review on package/config and relevant branch/PR, report-only:
-no artifact/comment/Issue/PR/lifecycle/approval/worker writes. Outcomes ready,
-advisory-ready, needs-fixes, blocked. Apply artifact/execution quality plus
-coherence/feasibility/one-PR/durable AFK-HITL; add UI/security/data/ship/deep-risky
-architecture where applicable. Valid issue-only needs no Project/docs. Return
-verdict/meaning/mode/risk/gate-reason/inspected/boundary/next; group blocking,
-proposed-fix, decision, fyi with artifact/evidence/impact/recommendation/owner.
-Missing context/disposition blocks. Accepted repair routes handoff, issue renewal
-or ship drift, never review itself.
+Named package/config and branch/PR review is report-only: no artifact/comment/
+Issue/PR/lifecycle/approval/worker writes. Outcomes: ready, advisory-ready,
+needs-fixes, blocked. Apply artifact/execution quality, coherence/feasibility/
+one-PR/durable AFK-HITL and applicable UI/security/data/ship/deep-risky architecture.
+Valid lane needs no Project/docs. Return verdict/meaning/mode/risk/gate-reason/
+inspected/boundary/next; blocking/proposed-fix/decision/fyi each carry artifact/
+evidence/impact/recommendation/owner. Missing context/disposition blocks. Accepted
+repair routes handoff/issue renewal/ship drift, never review.
 
 ## Execution and artifact handling
 
 Apply `references/execution-quality.md`/`references/artifact-quality.md`.
 Intake: explicit paths → fresh Linear package/reviews → decisions → configured
-narrow roots → scoped gstack. No broad scans; absent roots unavailable. Newer
-approved Linear outranks scratch; stale evidence only explains compatible decisions.
-Missing/conflicting scope/proof/risk/slicing needs boundary or stop before
-writes; no stale contracts/certificates. Approval notes: read, unavailable,
-stale_or_ignored, conflicts, decisions_carried_forward, confidence_boundary (none
-when empty); one Russian chat sentence. Translate roles; never paste local bodies.
+narrow roots → scoped gstack. No broad scans; absent roots unavailable. Approved
+newer Linear outranks scratch; stale evidence explains compatible decisions only.
+Missing/conflicting scope/proof/risk/slicing: boundary or stop before writes; no
+stale contracts/certificates. Approval notes: read/unavailable/stale_or_ignored/
+conflicts/decisions_carried_forward/confidence_boundary (none if empty), one Russian
+chat sentence. Translate roles; never paste local bodies.
 
 ## Certificate recovery
 
@@ -134,36 +135,38 @@ Apply Machine Blocks In Linear Comments in
 
 ## Delivery Reports and Capsule
 
-Mono-deliver: one dispatch, green/parked terminal; ready/implemented-needs-preflight
-intermediate. Stops use parked reasons; no stage respawn. Standalone keeps
+Mono-deliver: one dispatch; terminal green/parked, intermediate ready/
+implemented-needs-preflight. Park stops; no stage respawn. Standalone retains
 statuses/certificates.
 
-Phase: reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json; denied mailbox uses
-worktree .orchestrator, same name, never both. Add phase, increasing positive
-sequence, kind (phase/confirmation-request), head, phase_result to final fields.
+Phase: reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json; denied mailbox:
+same name in worktree .orchestrator, never both. Add phase/positive increasing
+sequence/kind (phase/confirmation-request)/head/phase_result to final fields.
 Capsule phase/head match; open_queue = ordered linear_mutations_pending.
-Writes: stable id/operation/target/payload; new ID for changed payload, no lost
-obligations on new head. Certificate comments: append #/certificate, one copy.
-Short: confirm empty code queue; start facts in capsule.decisions and Russian
-ready-comment lead before unchanged machine core.
+Writes: stable id/operation/target/payload; changed payload needs new ID; preserve
+obligations across heads. Certificate: append #/certificate, one copy. Short:
+confirm empty code queue; start facts in capsule.decisions/Russian ready lead
+before unchanged machine core.
 
 Publish/wait through delivery-state.mjs. Confirmation path:
 confirmations/<ISSUE-KEY>-phase-<phase>-a<N>-s<sequence>.confirmed.json.
-Wait refuses paths within capsule.writable_roots copied from dispatch. It binds report digest, issue/attempt/phase/sequence and each verified write result. Orchestrator reconciles before apply: Linear writes against Linear, collection
-against its receipt. Apply only missing actions; fsync results under consumed/<ISSUE-KEY>-a<N>/, then
-confirms the entire queue. Unknown/conflicting/read-error blocks; reconcile lost responses, including comments. Empty queues also wait.
-Partial/stale/foreign confirmation blocks. Resume the capsule after
-break/compaction; timeout orchestration.delivery.confirmationTimeoutSec (default
-1800 seconds) parks write-unconfirmed (запись не подтверждена).
+Wait rejects paths inside dispatch-derived capsule.writable_roots; binds report
+digest/issue/attempt/phase/sequence and verified results. Reconcile Linear writes
+against Linear, collections against receipts; apply missing only, fsync results
+under consumed/<ISSUE-KEY>-a<N>/, confirm whole queue. Unknown/conflict/read-error
+or partial/stale/foreign confirmation blocks. Reconcile lost responses/comments;
+empty queues wait too. Resume capsule after break/compaction; timeout
+orchestration.delivery.confirmationTimeoutSec (default 1800 seconds) parks
+write-unconfirmed (запись не подтверждена).
 
 Confirm in-phase queues before dependent work: accepted drift before PR, ready
 certificate before formal review, In Review/PR chip after PR.
 
-Pin product/evidenceRoot, skillsRoot, risk/critical, verification/write grants.
-Evidence: ~/.mono-agent-workflow/evidence/<product>/ outside ALL worker grants
-(including worktree/orchestrator root). Orchestrator: collect:true outside worker
-sandboxes; worker: collect:false. Readable keys grant no writes. Hostile local
-operator attestation is out of scope (one user/host).
+Pin product/evidenceRoot/skillsRoot/risk/critical/verification/write grants.
+~/.mono-agent-workflow/evidence/<product>/ stays outside ALL grants, including
+worktree/orchestrator. Orchestrator collect:true outside worker sandboxes; worker
+collect:false. Readable keys grant no writes; hostile local operator is out of
+scope (one user/host).
 
 After commit run pinned collect:false; pending (exit 2) is not pass. Publish only
 publishRequest as payload.request in kind=confirmation-request with one write:
@@ -180,7 +183,8 @@ Orchestrator rechecks preflight before ship.
 ## Worker Report
 
 Path: ~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-mono-deliver.json;
-on denial: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON; verification items verbatim; obey AFK stops.
+denial: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON,
+verbatim verification, AFK stops.
 
 ```json
 {
@@ -209,6 +213,11 @@ on denial: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON;
 }
 ```
 
-Parked reasons: blocked, needs-decision, needs-human, drift-candidate, timed-out, scope-drift-needs-handoff, write-unconfirmed, evidence-limit (предел доказательств). Include exact question/recommendation for decisions. Orchestrator reflects parked in Linear in the same turn with read-back; green requires all queues confirmed/current-head gates passed.
+Parked reasons: blocked, needs-decision, needs-human, drift-candidate, timed-out,
+scope-drift-needs-handoff, write-unconfirmed, evidence-limit (предел доказательств).
+Decisions need exact question/recommendation. Orchestrator reflects parked in
+Linear this turn/read-back. Green: all queues confirmed/current-head gates pass.
 
-Keep every Issue «Как проверить» item verbatim/in order. Use pass/deferred/not-run; never pass unrun checks; name later-stage owner. Prefix judgment evidence judgment check: and inspected state. Repeat dispatch pins. Standalone: dispatched path/status; sequenced: intermediate results.
+Keep Issue «Как проверить» verbatim/in order; pass/deferred/not-run, never unrun
+pass; name later-stage owner. Judgment evidence: judgment check: + inspected
+state. Repeat pins. Standalone uses dispatched path/status; sequenced intermediate.

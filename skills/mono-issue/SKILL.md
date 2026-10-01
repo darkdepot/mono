@@ -107,3 +107,10 @@ The lane remains config-gated. It is usable only when the consuming repo explici
 - Confirm marker, label, and owner-approved fingerprint were bound only after read-back reconciliation and the Issue remains non-startable.
 - Confirm first-time intake or create-then-approve renewal used the canonical resolver and `mono-check issue` passed.
 - If any check fails, park the Issue and return `BLOCKED` or Project-first; never leave a half-opened lane.
+
+## Pre-application renewal
+
+An issue-only pre-application manifest lives in `# Предприменение` in the Issue.
+Any correction after a worker parks blocked with exact replacement bytes follows
+the create-then-approve renewal above, including fresh fingerprint/approval.
+The renewed manifest requires a NEW dispatch with --preapply, never amend/resume.

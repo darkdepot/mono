@@ -218,6 +218,12 @@ cut-over.
 
 ## Project Config
 
+Optional `orchestration.preapply.mandate` is a string URL to the owner's comment
+covering application and repair; absent/empty disables pre-application. Set it
+through a separate orchestrator action after installing support and before a
+live wave, never through the delivering worker.
+
+
 Create, migrate, or check a project config from this upstream checkout:
 
 ```bash

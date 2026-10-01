@@ -106,3 +106,14 @@ re-approval of the rebuilt package, and start Delivery again only through
 `mono-implement`.
 
 The order is safety-critical: stop workers -> supersede approvals -> invalidate dependants -> Delivery to Discovery -> rebuild -> review/check -> owner re-approval. Never keep Delivery active while a class 3 repair is pending.
+
+## Pre-application manifest repair
+
+The manifest is part of its Tech Spec implementation unit. A worker finding on
+pre-applied `.agents/` files parks blocked with exact replacement bytes;
+`mono-handoff` owns the stable-ID preview, review and repair. Classify by meaning:
+class 2 only when guarded R/AE/AC, non-goals, visible behavior, risk and Issue set
+are unchanged, with snapshot synchronization, fingerprint recomputation and
+certificate staleness; changed risk/scope selects class 3 with owner reapproval.
+After repair, require a NEW `dispatch.mjs --preapply` attempt, never amend/resume.
+Issue-only manifests live in the Issue and renew through `mono-issue`.

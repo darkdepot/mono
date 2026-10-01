@@ -8,6 +8,7 @@ import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { extractSnapshot, references, section } from "./orchestrator/snapshot.mjs";
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
+import { applyPreapply, preapplyManifest } from "./orchestrator/preapply.mjs";
 import { digest, readJson, atomicJson, withLock } from "./runtime.mjs";
 import { publishPhase, validateConfirmation, confirmQueue } from "./delivery-state.mjs";
 import { expandedWrite, effectivePins, admitCollection, collectionPinsBinding } from "./orchestrator/command-state.mjs";
@@ -1097,4 +1098,227 @@ test("collector startup timeout stops its detached child before reporting failur
     assert.ok(child.signalCode || child.exitCode !== null, "the child has exited before the rejection reaches the caller");
     assert.equal(fs.existsSync(lock), false, "no collector can acquire a late lock after failed startup");
   } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); fs.rmSync(scratch, { recursive: true, force: true }); }
+});
+
+
+test("preapply AE12 named contracts on installed scratch", async t => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-preapply-ae12-"));
+  const skills = path.join(scratch, "skills"), repo = path.join(scratch, "repo"), root = path.join(scratch, "orchestrator"), bin = path.join(scratch, "bin");
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, MONO_WORKFLOW_STATE_ROOT: path.join(scratch, "state"), MONO_WORKFLOW_KNOWN_ROOTS: skills,
+    GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid", GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid" };
+  const run = (cmd, args, cwd = checkout) => spawnSync(cmd, args, { cwd, env, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  const git = (cwd, ...args) => pass(run("git", args, cwd));
+  const input = JSON.parse(fixture("preapply-ae12.json"));
+  let pid;
+  try {
+    for (const dir of [repo, bin, path.join(root, "reports")]) fs.mkdirSync(dir, { recursive: true });
+    pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills]));
+    const runtime = path.join(skills, ".mono-agent-workflow/scripts");
+    write(path.join(bin, "codex"), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"ae12"}));setInterval(()=>{},1000);\n'); fs.chmodSync(path.join(bin, "codex"), 0o700);
+    atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); atomicJson(path.join(root, "workers.json"), {});
+    git(repo, "init", "-b", "main"); const origin = path.join(scratch, "origin.git"); git(scratch, "init", "--bare", origin); git(repo, "remote", "add", "origin", origin);
+    const config = path.join(repo, ".agents/mono-workflow.config.json"), policy = readJson(path.join(checkout, ".agents/mono-workflow.config.json"));
+    policy.orchestration.preapply = { mandate: input.mandate };
+    policy.orchestration.delivery = { ...policy.orchestration.delivery, attemptCap: 10 };
+    policy.orchestration.dispatch = { product: "ae12", evidenceRoot: path.join(scratch, "evidence"), openDecisions: 0, lifecycle_moves: [], verification: { command: "node", args: ["scripts/verify.mjs"] } };
+    write(config, JSON.stringify(policy, null, 2) + "\n"); write(path.join(repo, ".gitignore"), ".worktrees/\n.agents/ignored.txt\n"); write(path.join(repo, ".agents/directory/file"), "fixture\n"); write(path.join(repo, ".gitattributes"), ".agents/filtered.txt ident\n");
+    git(repo, "add", "."); git(repo, "commit", "-m", "AE12 mandate bootstrap"); git(repo, "push", "origin", "main");
+    const worktree = path.join(repo, ".worktrees/MONO-997"); git(repo, "worktree", "add", "-b", "mono/mono-997", worktree, "origin/main");
+    const base = git(worktree, "rev-parse", "HEAD"), snapshot = path.join(scratch, "snapshot");
+    const body = "# AE12\n# Что сделать\nPreapply.\n# Готовность агента\nAFK\n# Покрытие PRD/Spec\nU7\n# Как проверить\n1. AE12\n# Ключевые контракты\nMandate.\nРиск: standard\n";
+    const rawConfig = fs.readFileSync(config, "utf8");
+    const bytes = rawConfig.replace('"projectName": "Mono Agent Workflow"', '"projectName": "AE12 applied"');
+    const hash = value => createHash("sha256").update(value).digest("hex");
+    const manifest = (filename, content, sha = hash(content)) => `| path | sha256 |\n| --- | --- |\n| ${filename} | ${sha} |\n\n    - \`${filename}\`\n\`\`\`text\n${content}\`\`\`\n`;
+    const target = ".agents/mono-workflow.config.json", opaquePath = ".agents/opaque.txt", opaqueBytes = JSON.parse(fixture("preapply-opaque-bytes.json")).bytes;
+    const good = manifest(target, bytes).replace(`| ${target} | ${hash(bytes)} |\n`, `| ${target} | ${hash(bytes)} |\n| ${opaquePath} | ${hash(opaqueBytes)} |\n`)
+      + `    - \`${opaquePath}\`\n\`\`\`text\n${opaqueBytes}\`\`\`\n`;
+    write(path.join(snapshot, "approval.md"), "Approved AE12; project Delivery."); write(path.join(snapshot, "project-brief.md"), "AE12"); write(path.join(snapshot, "prd.md"), "## Кратко\nAE12 scratch.\n");
+    const setSpec = value => { write(path.join(snapshot, "issue-MONO-997.md"), body); write(path.join(snapshot, "tech-spec.md"), `- U7. AE12\n  - Предприменение:\n${value}- U8. Uncovered\n`); };
+    setSpec(good);
+    const writable = path.join(scratch, "writable.json"), temp = path.join(scratch, "worker-temp"); fs.mkdirSync(temp); write(writable, [temp]);
+    const options = [path.join(runtime, "orchestrator/dispatch.mjs"), "--issue", "MONO-997", "--root", root, "--config", config, "--snapshot", snapshot, "--worker-writable-roots", writable];
+    const refusal = (pattern, flags = ["--preapply"]) => {
+      const result = run(process.execPath, [...options, ...flags]); if (result.status === 0) { process.kill(JSON.parse(result.stdout).pid, "SIGTERM"); } assert.notEqual(result.status, 0, result.stdout); assert.match(result.stderr, pattern);
+      assert.equal(git(worktree, "rev-parse", "HEAD"), base); assert.equal(fs.existsSync(path.join(root, "attempts.json")), false); assert.deepEqual(readJson(path.join(root, "workers.json")), {});
+      assert.equal(fs.readFileSync(path.join(worktree, target), "utf8"), rawConfig);
+    };
+    await t.test("preapply-flag-required", () => { setSpec(good); refusal(/--preapply/u, []); });
+    await t.test("preapply-mandate-required", () => { delete policy.orchestration.preapply; write(config, policy); refusal(/mandate/u); policy.orchestration.preapply = { mandate: input.mandate }; write(config, policy); });
+    for (const [name, value, pattern] of [
+      ["preapply-outside-agents", manifest("other.json", bytes), /path/u],
+      ["preapply-parent-traversal", manifest(".agents/../outside", bytes), /path/u],
+      ["preapply-nonregular", manifest(".agents", bytes), /path|regular/u],
+      ["preapply-directory-target", manifest(".agents/directory", bytes), /regular/u],
+      ["preapply-hash-mismatch", manifest(target, bytes, "0".repeat(64)), /sha256/u],
+      ["preapply-fence-without-path", good.replace(`    - \`${target}\`\n`, ""), /path/u],
+      ["preapply-path-without-fence", manifest(target, bytes).replace(/```text\n[\s\S]*?```\n/u, ""), /fence/u],
+      ["preapply-indented-fence", good.replaceAll("```", " ```"), /column|indent/u],
+      ["preapply-four-space-fence", good.replaceAll("```", "    ```"), /column|indent/u],
+      ["preapply-multiple-candidates", good + "  - Предприменение:\n" + good, /multiple/u],
+    ]) await t.test(name, () => { setSpec(value); refusal(pattern); });
+    await t.test("preapply-dirty-tree", () => { setSpec(good); const dirty = path.join(worktree, "dirty"); write(dirty, "dirty"); refusal(/dirty/u); fs.unlinkSync(dirty); });
+    await t.test("preapply-conflicting-file-parent", () => {
+      const prefix = ".agents/new-file", child = prefix + "/child";
+      const value = good.replace("| --- | --- |\n", `| --- | --- |\n| ${prefix} | ${hash("one\n")} |\n| ${child} | ${hash("two\n")} |\n`)
+        + `    - \`${prefix}\`\n\`\`\`text\none\n\`\`\`\n    - \`${child}\`\n\`\`\`text\ntwo\n\`\`\`\n`;
+      setSpec(value); refusal(/regular|parent/u);
+      assert.equal(fs.existsSync(path.join(worktree, prefix)), false);
+    });
+    await t.test("preapply-paused-launch-no-commit", () => { setSpec(good); atomicJson(path.join(root, "control.json"), { state: "paused", halt: true }); try { refusal(/halt|paused/u); } finally { git(worktree, "reset", "--hard", base); atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); } });
+    await t.test("preapply-late-refusal-rolls-back-commit-and-ledger", () => {
+      setSpec(good); const log = path.join(root, "logs/MONO-997-mono-deliver-a1.jsonl"); write(log, "existing log fixture\n");
+      try { refusal(/EEXIST/u); assert.equal(fs.readFileSync(path.join(root, "ledger.md"), "utf8").includes("PREAPPLY"), false); }
+      finally { fs.unlinkSync(log); fs.rmSync(path.join(root, "ledger.md"), { force: true }); }
+    });
+    await t.test("preapply-late-refusal-preserves-existing-ignored-bytes", () => {
+      const name = ".agents/ignored.txt", original = "existing local ignored bytes\n", replacement = "approved replacement\n";
+      const value = good.replace("| --- | --- |\n", `| --- | --- |\n| ${name} | ${hash(replacement)} |\n`)
+        + `    - \`${name}\`\n\`\`\`text\n${replacement}\`\`\`\n`;
+      const file = path.join(worktree, name), log = path.join(root, "logs/MONO-997-mono-deliver-a1.jsonl"); write(file, original); write(log, "existing log fixture\n");
+      try { setSpec(value); refusal(/EEXIST/u); assert.equal(fs.readFileSync(file, "utf8"), original); }
+      finally { fs.unlinkSync(log); fs.rmSync(file, { force: true }); fs.rmSync(path.join(root, "ledger.md"), { force: true }); }
+    });
+    await t.test("preapply-transformed-staging-no-mutation", () => {
+      const name = ".agents/filtered.txt", raw = "$Id: expanded-token $\n";
+      const value = good.replace("| --- | --- |\n", `| --- | --- |\n| ${name} | ${hash(raw)} |\n`)
+        + `    - \`${name}\`\n\`\`\`text\n${raw}\`\`\`\n`;
+      try { setSpec(value); refusal(/staged|blob|transform/u);
+        assert.equal(fs.existsSync(path.join(worktree, name)), false); assert.equal(git(worktree, "status", "--porcelain"), "");
+      } finally { git(worktree, "reset", "--hard", base); atomicJson(path.join(root, "workers.json"), {}); }
+    });
+    await t.test("preapply-symlink", () => {
+      const link = path.join(worktree, ".agents/link"); fs.symlinkSync(config, link); git(worktree, "add", ".agents/link"); git(worktree, "commit", "-m", "link fixture");
+      const linkHead = git(worktree, "rev-parse", "HEAD"); setSpec(manifest(".agents/link", bytes));
+      const result = run(process.execPath, [...options, "--preapply"]); assert.notEqual(result.status, 0); assert.match(result.stderr, /symbolic|symlink/u); assert.equal(git(worktree, "rev-parse", "HEAD"), linkHead);
+      assert.equal(fs.existsSync(path.join(root, "attempts.json")), false); git(worktree, "reset", "--hard", base);
+    });
+    await t.test("preapply-AE12-commit-before-start-gate", () => {
+      setSpec(good); const launched = JSON.parse(pass(run(process.execPath, [...options, "--preapply"]))); pid = launched.pid;
+      const head = git(worktree, "rev-parse", "HEAD"); assert.notEqual(head, base);
+      assert.equal(git(worktree, "log", "-1", "--format=%s"), "MONO-997: pre-applied .agents changes (orchestrator)");
+      assert.equal(fs.readFileSync(path.join(worktree, target), "utf8"), bytes);
+      assert.equal(fs.readFileSync(path.join(worktree, opaquePath), "utf8"), opaqueBytes);
+      assert.match(pass(run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", launched.gateFile])), /gate start: pass/u);
+      assert.ok(fs.readFileSync(launched.dispatchFile, "utf8").includes(head)); assert.ok(fs.readFileSync(launched.dispatchFile, "utf8").includes(hash(bytes)));
+      assert.ok(fs.readFileSync(path.join(root, "ledger.md"), "utf8").includes(`PREAPPLY MONO-997 ${head} per mandate ${input.mandate}`));
+      assert.ok(fs.readFileSync(path.join(launched.snapshot, "issue-MONO-997.md"), "utf8").endsWith(`# Предприменение\n${good}`));
+      process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      // Idempotence is observed even when a later dispatch refusal prevents another worker.
+      atomicJson(path.join(root, "control.json"), { state: "paused", halt: true });
+      const retry = run(process.execPath, [...options, "--preapply"]); assert.notEqual(retry.status, 0); assert.equal(git(worktree, "rev-parse", "HEAD"), head);
+      assert.equal(fs.readFileSync(path.join(root, "ledger.md"), "utf8").split("PREAPPLY").length - 1, 1);
+      fs.writeFileSync(path.join(root, "ledger.md"), "");
+      atomicJson(path.join(root, "control.json"), { state: "active", halt: false });
+      const recovered = JSON.parse(pass(run(process.execPath, [...options, "--preapply"]))); pid = recovered.pid;
+      assert.equal(git(worktree, "rev-parse", "HEAD"), head);
+      assert.ok(fs.readFileSync(path.join(root, "ledger.md"), "utf8").includes(`PREAPPLY MONO-997 ${head} per mandate ${input.mandate}`));
+      process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
+    });
+    await t.test("preapply-repaired-manifest-new-commit", () => {
+      const previous = git(worktree, "rev-parse", "HEAD"), repairedBytes = bytes.replace("AE12 applied", "AE12 repaired");
+      const repaired = good.replace(hash(bytes), hash(repairedBytes)).replace(bytes, repairedBytes);
+      setSpec(repaired); const launched = JSON.parse(pass(run(process.execPath, [...options, "--preapply"]))); pid = launched.pid;
+      const repairedHead = git(worktree, "rev-parse", "HEAD"); assert.notEqual(repairedHead, previous);
+      assert.equal(fs.readFileSync(path.join(worktree, target), "utf8"), repairedBytes);
+      process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      const retry = JSON.parse(pass(run(process.execPath, [...options, "--preapply"]))); pid = retry.pid;
+      assert.equal(git(worktree, "rev-parse", "HEAD"), repairedHead);
+      process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
+    });
+    await t.test("preapply-full-materialized-snapshot-retry", () => {
+      const launched = JSON.parse(pass(run(process.execPath, [...options, "--preapply", "--full-snapshot"]))); pid = launched.pid;
+      const head = git(worktree, "rev-parse", "HEAD"), materialized = fs.readFileSync(path.join(launched.snapshot, "issue-MONO-997.md"), "utf8");
+      process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      const retryOptions = [...options]; retryOptions[retryOptions.indexOf("--snapshot") + 1] = launched.snapshot;
+      const retried = JSON.parse(pass(run(process.execPath, [...retryOptions, "--preapply", "--full-snapshot"]))); pid = retried.pid;
+      assert.equal(git(worktree, "rev-parse", "HEAD"), head);
+      assert.equal(fs.readFileSync(path.join(retried.snapshot, "issue-MONO-997.md"), "utf8"), materialized);
+      process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      const attempts = fs.readFileSync(path.join(root, "attempts.json"), "utf8");
+      write(path.join(retried.snapshot, "issue-MONO-997.md"), materialized.replace("AE12 repaired", "AE12 forged"));
+      retryOptions[retryOptions.indexOf("--snapshot") + 1] = retried.snapshot;
+      const refused = run(process.execPath, [...retryOptions, "--preapply", "--full-snapshot"]);
+      assert.notEqual(refused.status, 0); assert.match(refused.stderr, /sha256|materialized/u);
+      assert.equal(git(worktree, "rev-parse", "HEAD"), head); assert.equal(fs.readFileSync(path.join(root, "attempts.json"), "utf8"), attempts);
+      const approvedBytes = bytes.replace("AE12 applied", "AE12 repaired"), forgedBytes = approvedBytes.replace("AE12 repaired", "AE12 forged");
+      write(path.join(retried.snapshot, "issue-MONO-997.md"), materialized.replace(approvedBytes, forgedBytes).replace(hash(approvedBytes), hash(forgedBytes)));
+      const divergent = run(process.execPath, [...retryOptions, "--preapply", "--full-snapshot"]);
+      assert.notEqual(divergent.status, 0); assert.match(divergent.stderr, /materialized.*differs/u);
+      assert.equal(git(worktree, "rev-parse", "HEAD"), head); assert.equal(fs.readFileSync(path.join(root, "attempts.json"), "utf8"), attempts);
+    });
+    await t.test("preapply-launch-lock-covers-commit-through-registration", () => {
+      const gate = path.join(runtime, "gate.mjs"), original = fs.readFileSync(gate, "utf8"), backup = path.join(runtime, "gate-original.mjs"), probe = path.join(scratch, "competing-launch.json");
+      write(backup, original);
+      write(gate, `import fs from "node:fs"; import path from "node:path"; import {spawnSync,execFileSync} from "node:child_process"; import {isMain} from "./runtime.mjs"; export {startGate,reviewEnvironment} from "./gate-original.mjs";
+if(isMain(import.meta.url)){ const args=process.argv.slice(2), request=path.join(path.dirname(args[args.indexOf("--request")+1]),"spawn.json"); const other=spawnSync(process.execPath,[${JSON.stringify(path.join(runtime, "orchestrator/spawn.mjs"))},"--request",request],{encoding:"utf8"}); fs.writeFileSync(${JSON.stringify(probe)},JSON.stringify({status:other.status,stderr:other.stderr})); if(other.status===0)process.kill(JSON.parse(other.stdout).pid,"SIGTERM"); process.stdout.write(execFileSync(process.execPath,[${JSON.stringify(backup)},...args],{encoding:"utf8"})); }
+`);
+      try {
+        const launched = JSON.parse(pass(run(process.execPath, [...options, "--preapply"]))); pid = launched.pid;
+        const other = readJson(probe); assert.notEqual(other.status, 0); assert.match(other.stderr, /operation locked/u);
+        process.kill(pid, "SIGTERM"); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      } finally { write(gate, original); fs.rmSync(backup, { force: true }); }
+    });
+    await t.test("preapply-issue-only-direct-section", () => {
+      const ignored = ".agents/ignored.txt", ignoredBytes = "approved ignored target\n";
+      const ignoredManifest = good.replace("| --- | --- |\n", `| --- | --- |\n| ${ignored} | ${hash(ignoredBytes)} |\n`)
+        + `- \`${ignored}\`\n\`\`\`text\n${ignoredBytes}\`\`\`\n`;
+      const laneBody = body + "# Предприменение\n" + ignoredManifest;
+      write(path.join(snapshot, "issue-MONO-996.md"), laneBody);
+      write(path.join(snapshot, "issue-only.json"), { marker: "fixture", label: "issue-only", fingerprint: hash(laneBody), config: "fixture enabled", ownerApproval: "approved",
+        seam: { package_kind: "issue-only", lifecycle_state_entity: "issue", behavioral_oracle: "AE12", risk_class: "standard", approval_status: "approved-fresh" } });
+      atomicJson(path.join(root, "control.json"), { state: "active", halt: false });
+      const laneOptions = [...options]; laneOptions[laneOptions.indexOf("--issue") + 1] = "MONO-996";
+      const launched = JSON.parse(pass(run(process.execPath, [...laneOptions, "--preapply"]))); pid = launched.pid;
+      assert.equal(fs.readFileSync(path.join(launched.snapshot, "issue-MONO-996.md"), "utf8"), laneBody);
+      assert.equal(fs.readFileSync(path.join(repo, ".worktrees/MONO-996", target), "utf8"), bytes);
+      assert.equal(git(path.join(repo, ".worktrees/MONO-996"), "show", `HEAD:${ignored}`), ignoredBytes.trimEnd());
+      process.kill(pid, "SIGTERM"); pid = null;
+    });
+    await t.test("preapply-amend-requires-new-dispatch", async () => {
+      await assert.rejects(acceptAmend({ root, issue: "MONO-997", attempt: "1", preapply: true }), /new dispatch|новый запуск/u);
+    });
+  } finally { if (pid) { try { process.kill(pid, "SIGTERM"); } catch {} } fs.rmSync(scratch, { recursive: true, force: true }); }
+});
+
+
+test("preapply-literal-pathspec: only the literal approved filename enters the commit", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "mono-preapply-literal-"));
+  const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  try {
+    git("init", "-b", "main"); write(path.join(repo, ".gitignore"), ".agents/*\n");
+    git("add", ".gitignore"); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
+    git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
+    const name = ".agents/literal*", unicode = ".agents/байты.txt", bytes = "approved literal filename\n", extra = ".agents/literal-extra";
+    write(path.join(repo, extra), "outside manifest\n");
+    const manifest = { entries: [name, unicode].map(path => ({ path, bytes, sha256: createHash("sha256").update(bytes).digest("hex") })) };
+    const result = applyPreapply(repo, "MONO-994", manifest);
+    assert.deepEqual(git("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", result.commit).split("\0").filter(Boolean), [name, unicode]);
+    assert.equal(fs.readFileSync(path.join(repo, extra), "utf8"), "outside manifest\n");
+    assert.equal(applyPreapply(repo, "MONO-994", manifest).created, false);
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("preapply-current-head-missing-ignored-file: reapply instead of reusing ancestor", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "mono-preapply-head-"));
+  const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  try {
+    git("init", "-b", "main"); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
+    write(path.join(repo, ".gitignore"), ".agents/*\n"); git("add", ".gitignore"); git("commit", "-m", "fixture");
+    const name = ".agents/ignored.txt", bytes = "approved bytes\n", manifest = { entries: [{ path: name, bytes, sha256: createHash("sha256").update(bytes).digest("hex") }] };
+    const first = applyPreapply(repo, "MONO-993", manifest);
+    git("rm", "--cached", "--", name); git("commit", "-m", "remove from current revision");
+    assert.equal(fs.readFileSync(path.join(repo, name), "utf8"), bytes); assert.equal(git("status", "--porcelain"), "");
+    const reapplied = applyPreapply(repo, "MONO-993", manifest); assert.equal(reapplied.created, true); assert.notEqual(reapplied.commit, first.commit);
+    assert.equal(git("show", `HEAD:${name}`), bytes.trimEnd());
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
+test("preapply-covered-unit-selection: unrelated approved units are not dispatch candidates", () => {
+  const bytes = "fixture\n", hash = createHash("sha256").update(bytes).digest("hex");
+  const manifest = `  - Предприменение:\n| path | sha256 |\n| --- | --- |\n| .agents/fixture | ${hash} |\n    - \`.agents/fixture\`\n\`\`\`text\n${bytes}\`\`\`\n`;
+  const issue = "# Покрытие PRD/Spec\nU7\n", prd = "## Кратко\nFixture\n";
+  assert.equal(preapplyManifest(issue, prd, `- U7. Current\n- U8. Other\n${manifest}`, false), null);
+  const selected = preapplyManifest(issue, prd, `- U7. Current\n${manifest}- U8. Other\n${manifest}`, false);
+  assert.deepEqual(selected.entries.map(entry => entry.path), [".agents/fixture"]);
 });

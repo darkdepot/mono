@@ -54,6 +54,7 @@ const RUNTIME_SCRIPTS = [
   "orchestrator/collector.mjs",
   "orchestrator/linear-adapter.mjs",
   "orchestrator/snapshot.mjs",
+  "orchestrator/preapply.mjs",
   "orchestrator/command-state.mjs",
 ];
 function usage() {

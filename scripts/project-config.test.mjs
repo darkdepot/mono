@@ -147,3 +147,20 @@ test('non-model token settings remain valid through CLI and BASE role resolution
     assert.throws(() => runtime.resolveModelRoutes(root, git('rev-parse', 'HEAD'), 'worker-default'), /credential|fields/i);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('preapply mandate CLI accepts absent/empty/comment URL and rejects malformed policy', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-preapply-policy-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    const file = path.join(root, '.agents/mono-workflow.config.json');
+    for (const [preapply, valid] of [[undefined, true], [{}, true], [{mandate: ''}, true], [{mandate: 'https://linear.app/example/project/ae12#comment-owner'}, true],
+      [[], false], [null, false], [{mandate: 4}, false], [{mandate: 'not a URL'}, false]]) {
+      config.orchestration.preapply = preapply;
+      fs.writeFileSync(file, JSON.stringify(config));
+      const result = spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], {encoding: 'utf8'});
+      assert.equal(result.status, valid ? 0 : 1, result.stderr);
+      if (!valid) assert.match(result.stderr, /preapply\.mandate/u);
+    }
+  } finally { fs.rmSync(root, {recursive:true, force:true}); }
+});

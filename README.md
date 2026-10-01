@@ -99,7 +99,7 @@ New collection admissions bind the effective dataset version as well as its path
 an omitted version denotes only the unversioned baseline (version 0).
 On the short path, gates check registered pins and dataset bytes before returning `pending` (exit 2); workers publish only its `publishRequest`, and a sealed matching receipt is still required to pass.
 Scripts do not write to Linear; the orchestrator uses its connector. The installed collector handles empty/collection-only queues; `.agents/`
-pre-application remains a separate slice and --preapply refuses.
+pre-application uses `dispatch.mjs --preapply` under a recorded owner mandate, with a separate commit before start gates and artifact-owner repair before a new launch.
 
 The orchestrator is the single Linear writer. A worker uses its dispatched snapshot as its entire Linear context and queues every required comment, state change, link and certificate in its report. Publish the whole queue with the phase capsule; continue only after its durable confirmation. In-phase confirmation requests preserve drift-before-PR, ready-certificate-before-formal-review and In-Review-after-PR ordering. A queued write is not an applied write.
 
@@ -242,6 +242,9 @@ MONO_WORKFLOW_STATE_ROOT=/tmp/mono-test-state node scripts/install-local.mjs --s
 ```
 
 ## Project Config
+
+Optional `orchestration.preapply.mandate` names the owner comment URL; absent/empty means no pre-application mandate.
+
 
 Product repositories keep only `.agents/mono-workflow.config.json` for Mono. Do not vendor skill bodies, wrappers, locks, local workflow checkers, hooks or updater CI there.
 
