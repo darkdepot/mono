@@ -6,6 +6,43 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-03
+
+<!-- fragment: MONO-107 sha256:6a043c0974110d08f39cc16fd00982feb8e790b6ac6276fcb61a654406aa67ad -->
+- MONO-107: assemble task changelog records in key order during release, preserve
+  existing notes, preview without writes, and recover interrupted assembly using
+  per-record SHA-256 markers. Mono task branches now leave records in changelog.d;
+  CHANGELOG.md and VERSION are reserved for the orchestrator's release task.
+
+<!-- fragment: MONO-108 sha256:c530a0e86e3c275ef3bf041bde8e3f6d8f2eda06535fb7b685eebf8a5d6d23db -->
+- MONO-108: require successful validation of the exact landing commit before the next ordinary merge or installation; report pending and failed checks with a fixed deadline and record an explicit exception for a corrective Issue.
+
+<!-- fragment: MONO-109 sha256:83d6c3149270c08c1f6a44e400f47ad306153b206786090a5bc2627a1edb6321 -->
+- MONO-109: install the pack once at wave end, after all registered tasks have
+  landed and their workers stopped. Preserve merged-task records through failed
+  installation and close each task with proof its merge is in the installed version.
+
+<!-- fragment: MONO-110 sha256:d7ac0e1b51dc6ed4d78d23e55b2ea48240da9aae1ffab17ff8a2011b631dd870 -->
+- MONO-110: add an advisory landing observer, deduplicated PR head and force-push accounting, and shared scheduling rules for parallel task waves.
+
+<!-- fragment: MONO-111 sha256:1989c2826dd723074dcea89498afce0c228bc12bf26ea0a6a59d0b64da109fc7 -->
+- Clarify fresh-attempt liveness checks: verify the registry PID and process start time instead of searching process arguments for a transport thread ID.
+
+<!-- fragment: MONO-112 sha256:9f8673fc8a7ce4f5f2d10ca12e06a714f9950fb31dabb15c11bb3921685e8ef2 -->
+- Orchestrator command test fixtures track their own live worker PIDs, retire completed launches, and wait for process exit during cleanup, including resumed workers. Regression checks cover delayed termination and a child exiting before readiness.
+
+<!-- fragment: MONO-113 sha256:f33c5e935577a7631ed96d01b8e194df3326680103d9776023bdaa99b09217ff -->
+- MONO-113: document a timed landing-policy onboarding walkthrough, migration of
+  shared release edits, staged configuration and version choices for products
+  that release every merge.
+
+<!-- fragment: MONO-114 sha256:463df2c65dc2fea0654b1bfadbbeda3e557631a7cdab7d96d344eaad34e03669 -->
+- MONO-114: prepare release 0.22.0 from accumulated task records, preserve an
+  empty Unreleased section, and update the canonical pack version.
+
+<!-- fragment: MONO-116 sha256:ea25f9bdab96657ef8ddc2b0a967e3f36221787e256d71bf8e5897c69c064e3a -->
+Landing records now accept green ship certificates whose PR field contains a number (with optional `#`), GitHub URL, or matching number and URL, including slash, comma and Markdown-link forms. Conflicting numbers, repositories and unrelated text are refused without changing pending installation records or the landing ledger.
+
 - MONO-106: validate optional landing policy, reject task edits to shared paths
   before review using immutable base policy and merge-base diffs, and reserve a
   single pinned release task. Add dispatch landing facts, a config example and

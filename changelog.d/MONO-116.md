@@ -1,1 +1,0 @@
-Landing records now accept green ship certificates whose PR field contains a number (with optional `#`), GitHub URL, or matching number and URL, including slash, comma and Markdown-link forms. Conflicting numbers, repositories and unrelated text are refused without changing pending installation records or the landing ledger.

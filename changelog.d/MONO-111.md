@@ -1,1 +1,0 @@
-- Clarify fresh-attempt liveness checks: verify the registry PID and process start time instead of searching process arguments for a transport thread ID.
