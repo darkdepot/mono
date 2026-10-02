@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths } from "./runtime.mjs";
 import { checkCollectionRequest } from "./orchestrator/command-state.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -401,6 +401,18 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   requireThat(head === request.head, "head differs from collection/verification request");
   const baseTip = reviewBaseTip(repo, request.baseRef, live?.baseRefOid);
   const base = git(repo, "merge-base", head, baseTip);
+  const policyBase = pins?.base ?? base;
+  const landing = validateLanding(baseModelConfig(repo, policyBase));
+  if (landing?.serialPaths !== undefined) {
+    requireThat(pins && request.pins, "landing policy requires pinned dispatch");
+    requireThat(git(repo, "merge-base", base, policyBase) === policyBase, "landing policy base is not an ancestor of the review base");
+    if (pins.release !== true) {
+      const touched = changedPaths(repo, base, head).find(file => landing.serialPaths.some(serial =>
+        serial.endsWith("/") ? file.startsWith(serial) : file === serial));
+      const action = landing.changelog ? `write ${landing.changelog.fragmentDir.replace(/\/$/, "")}/<KEY>.md or dispatch a release task` : "dispatch a release task";
+      requireThat(!touched, `serial path touched: ${touched}; landing.serialPaths on ${policyBase}; ${action}`);
+    }
+  }
   const receiptFile = path.join(evidenceRoot, `${head}.json`);
   const dataset = reviewDatasetBinding(request, evidenceRoot);
   const binding = { ...dataset, ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,

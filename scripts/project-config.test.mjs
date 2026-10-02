@@ -7,6 +7,33 @@ import { spawnSync } from 'node:child_process';
 import * as runtime from './runtime.mjs';
 
 const risks = ['tiny', 'standard', 'deep', 'risky', 'riskyCritical'];
+test('landing U1 config: optional blocks, unknown keys, paths and install enumeration', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-landing-config-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    const file = path.join(root, '.agents/mono-workflow.config.json');
+    const check = landing => {
+      config.landing = landing;
+      fs.writeFileSync(file, JSON.stringify(config));
+      return spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+    };
+    for (const landing of [undefined, {}, { serialPaths: [] }, { serialPaths: ['CHANGELOG.md', 'shared/'] },
+      { changelog: { fragmentDir: 'changelog.d', target: 'CHANGELOG.md', heading: '## [Unreleased]' } },
+      { validation: { check: 'validate', timeoutSec: 1800 } }, { install: 'per-merge' }, { install: 'wave-drain' }]) {
+      const result = check(landing); assert.equal(result.status, 0, result.stderr);
+    }
+    for (const landing of [null, [], { unknown: true }, { serialPaths: 'CHANGELOG.md' },
+      ...['', '/absolute', '../file', 'dir/../file', 'C:\\absolute', 'a//b'].map(p => ({ serialPaths: [p] })),
+      { serialPaths: ['VERSION', 'VERSION'] }, { changelog: {} },
+      { changelog: { fragmentDir: '../fragments', target: 'CHANGELOG.md', heading: '## [Unreleased]' } },
+      { changelog: { fragmentDir: 'changelog.d', target: 'CHANGELOG.md', heading: '## [Unreleased]', unknown: true } },
+      { validation: { check: 'validate', timeoutSec: 0 } }, { validation: { check: '', timeoutSec: 20 } },
+      { validation: { check: 'validate', timeoutSec: 20, unknown: true } }, { install: 'unknown' }]) {
+      const result = check(landing); assert.equal(result.status, 1, JSON.stringify(landing)); assert.match(result.stderr, /landing/);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 const reviewer = (engine = 'claude') => ({ engine, model: 'example-reviewer',
   effortByRisk: Object.fromEntries(risks.map(risk => [risk, engine === 'kimi' ? 'on' : 'high'])),
   provider: { id: engine === 'pi' ? 'openai' : 'example', endpoint: 'https://models.example.invalid/v1', credentialEnv: 'REVIEW_CREDENTIAL' } });

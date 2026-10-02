@@ -5,6 +5,48 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 export const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+export function validateLanding(config) {
+  if (config.landing === undefined) return null;
+  const require = (condition, message) => { if (!condition) throw new Error(`landing: ${message}`); };
+  const object = (value, keys, label) => {
+    require(value && typeof value === "object" && !Array.isArray(value), `${label} must be an object`);
+    require(Object.keys(value).every(key => keys.includes(key)), `${label} contains unknown keys`);
+  };
+  const relative = (value, label, directory = false) => {
+    require(typeof value === "string" && value.trim() && !value.includes("\\") && !value.includes("\0") &&
+      !path.posix.isAbsolute(value) && !/^[A-Za-z]:/.test(value), `${label} must be a repository-relative path`);
+    const parts = (directory ? value.replace(/\/$/, "") : value).split("/");
+    require(parts.every(part => part && part !== "." && part !== ".."), `${label} has invalid path segments`);
+  };
+  const landing = config.landing;
+  object(landing, ["serialPaths", "changelog", "validation", "install"], "landing");
+  if (landing.serialPaths !== undefined) {
+    require(Array.isArray(landing.serialPaths), "serialPaths must be an array");
+    for (const entry of landing.serialPaths) relative(entry, "serialPaths entry", true);
+    require(new Set(landing.serialPaths).size === landing.serialPaths.length, "serialPaths contains duplicates");
+  }
+  if (landing.changelog !== undefined) {
+    object(landing.changelog, ["fragmentDir", "target", "heading"], "changelog");
+    relative(landing.changelog.fragmentDir, "changelog.fragmentDir", true);
+    relative(landing.changelog.target, "changelog.target");
+    require(typeof landing.changelog.heading === "string" && landing.changelog.heading.trim() &&
+      !/[\r\n]/.test(landing.changelog.heading), "changelog.heading must be a non-empty line");
+  }
+  if (landing.validation !== undefined) {
+    object(landing.validation, ["check", "timeoutSec"], "validation");
+    require(typeof landing.validation.check === "string" && landing.validation.check.trim(), "validation.check must be non-empty");
+    require(Number.isInteger(landing.validation.timeoutSec) && landing.validation.timeoutSec > 0, "validation.timeoutSec must be a positive integer");
+  }
+  if (landing.install !== undefined) require(["per-merge", "wave-drain"].includes(landing.install), "install must be per-merge or wave-drain");
+  return landing;
+}
+
+export function changedPaths(worktree, base, head) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")));
+  Object.assign(env, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_NO_REPLACE_OBJECTS: "1", GIT_GRAFT_FILE: "/dev/null", GIT_NO_LAZY_FETCH: "1" });
+  return execFileSync("git", ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "advice.graftFileDeprecated=false", "diff", "--no-renames", "--name-only", "-z", base, head, "--"],
+    { cwd: worktree, env, encoding: "utf8" }).split("\0").filter(Boolean);
+}
 export function resolvedLocation(file) {
   if (!path.isAbsolute(file ?? "")) throw new Error("absolute evidence/root/worktree paths required");
   if (fs.existsSync(file)) return fs.realpathSync(file);

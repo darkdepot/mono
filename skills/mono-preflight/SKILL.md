@@ -5,6 +5,8 @@ description: Use after implementation to verify local readiness with mandatory a
 
 # Mono Preflight
 
+[Landing](references/landing.md).
+
 No PR/merge/deploy/closeout/shipped claims or formal `mono-review pre-ship` / `mono-check pre-ship`.
 
 Read first:
@@ -21,9 +23,9 @@ Read when:
 
 - `references/issue-only-lane.md` — when lifecycle_state_entity=issue, or a lane freeze/follow-up/cancel decision is in play.
 
-Run dispatch identity before work/resume. Gather package/config/validation,
+Run dispatch identity before work/resume; inspect package/config/validation,
 git/diff/base and start comments/certificates. Apply worker snapshot/queue rules;
-confirm sequenced phase queues before ship.
+confirm phase queues before ship.
 
 ## Workflow
 

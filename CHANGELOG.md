@@ -6,6 +6,11 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+- MONO-106: validate optional landing policy, reject task edits to shared paths
+  before review using immutable base policy and merge-base diffs, and reserve a
+  single pinned release task. Add dispatch landing facts, a config example and
+  one canonical operator reference. Mono's own policy remains unconfigured.
+
 - MONO-105: admit amended collection requests by their pins.file version without
   a phase-report version field; stale bound requests name the full expected path.
   Clear the conservative launch marker only for the identified pre-spawn refusal
