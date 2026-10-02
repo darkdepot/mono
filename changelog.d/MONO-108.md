@@ -1,0 +1,1 @@
+- MONO-108: require successful validation of the exact landing commit before the next ordinary merge or installation; report pending and failed checks with a fixed deadline and record an explicit exception for a corrective Issue.

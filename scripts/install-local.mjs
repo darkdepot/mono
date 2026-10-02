@@ -46,6 +46,7 @@ const RUNTIME_SCRIPTS = [
   "gate.mjs",
   "runtime.mjs",
   "delivery-state.mjs",
+  "orchestrator/landing-guard.mjs",
   "orchestrator/launch.mjs",
   "orchestrator/spawn.mjs",
   "orchestrator/resume.mjs",
