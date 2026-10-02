@@ -196,8 +196,8 @@ subblock, these commands report `not configured`, return 0 and change nothing.
   green ship certificate for the current attempt, including its PR and head.
   The request repository defaults to the attempt worktree's GitHub `origin`;
   supply `--repo` when the PR targets another repository, such as upstream of a
-  fork. A full GitHub PR URL must name this repository; a bare PR number binds to
-  it. The merged GitHub PR must have that number, repository, head and the
+  fork. The certificate's `PR` field accepts GitHub PR URLs and numbers (with optional `#`), separated by whitespace, `/`, commas or Markdown-link brackets, only when every component names the same PR in the request repository; numbers without a URL bind to that repository.
+  The merged GitHub PR must have that number, repository, head and the
   landing branch from the attempt's pins. It appends
   `{repo, issue, attempt, pr, head, mergeSha, mergedAt, guard}` to
   `landing/pending-install.json` and a UTC-dated `LANDED` line to `ledger.md`.

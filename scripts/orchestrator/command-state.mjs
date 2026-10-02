@@ -110,13 +110,25 @@ export function landedShip(root, entry, repo) {
   if (field("Ship") !== "green" || field("Issue(s)") !== entry.issue || field("Head SHA") !== report.head)
     throw new Error("ship certificate issue/head mismatch");
   if (repo !== undefined && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("invalid record repository");
-  const value = field("PR"), url = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/.exec(value);
-  if (!url && !/^[1-9][0-9]*$/.test(value)) throw new Error("ship certificate PR must be a GitHub URL or bare number");
-  if (url && repo !== undefined && url[1] !== repo) throw new Error("ship certificate repository mismatch");
-  repo ??= url?.[1];
+  let remaining = field("PR"), pr, urlRepo;
+  const component = /^(?:https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)|#?([1-9][0-9]*))(?=$|[\s/,\[\]()])/;
+  while (remaining) {
+    remaining = remaining.replace(/^[\s/,\[\]()]+/, "");
+    if (!remaining) break;
+    const match = component.exec(remaining);
+    if (!match) throw new Error("ship certificate PR must contain only GitHub PR URLs and numbers");
+    const number = Number(match[2] ?? match[3]);
+    if (!Number.isSafeInteger(number)) throw new Error("invalid ship certificate PR number");
+    if (pr !== undefined && number !== pr) throw new Error("ship certificate PR numbers mismatch");
+    if (match[1] && urlRepo !== undefined && match[1] !== urlRepo) throw new Error("ship certificate URL repositories mismatch");
+    pr = number;
+    urlRepo ??= match[1];
+    remaining = remaining.slice(match[0].length);
+  }
+  if (pr === undefined) throw new Error("ship certificate PR requires a GitHub PR URL or number");
+  if (urlRepo && repo !== undefined && urlRepo !== repo) throw new Error("ship certificate repository mismatch");
+  repo ??= urlRepo;
   if (!repo) throw new Error("numeric ship certificate requires the record repository");
-  const pr = Number(url ? url[2] : value);
-  if (!Number.isSafeInteger(pr)) throw new Error("invalid ship certificate PR number");
   const pins = effectivePins(entry);
   const branch = pins.baseRef?.replace(/^refs\/remotes\//, "").replace(/^origin\//, "").replace(/^refs\/heads\//, "");
   if (!branch || branch.startsWith("-") || /[\s~^:?*\[\\]/.test(branch)) throw new Error("landing branch unavailable in pins");

@@ -305,6 +305,10 @@ Products can opt in to a landing policy for parallel task delivery. The rule and
 operator instructions live in [Landing](references/landing.md), with a complete
 [example config](examples/landing-config.json).
 
+Landing records accept existing green certificates with a PR number, GitHub URL,
+or matching number and URL, including slash, comma and Markdown-link forms;
+conflicting identities and unrelated text are refused.
+
 Mono enables this policy: ordinary tasks leave a non-empty Markdown record in
 `changelog.d/<ISSUE-KEY>.md`; `CHANGELOG.md` and `VERSION` belong to a separately
 approved release task dispatched by the orchestrator. The release task assembles

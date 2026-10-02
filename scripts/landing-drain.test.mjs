@@ -55,6 +55,77 @@ else { console.error('unexpected GitHub endpoint: '+e); process.exit(71); }
   return { scratch, root, repo, env, git, tip, mergeSha, head, issue, entry, workers, registry, report, reportFile, confirmFile, publish, record, pending, mock, github, run, args, config };
 }
 
+function prFieldFixture(t, value) {
+  const f = fixture(t);
+  f.report.certificate = f.report.certificate.replace("PR: https://github.com/owner/repo/pull/901", `PR: ${value}`);
+  f.record.pr = f.mock.pr.number = 121;
+  f.publish(); f.github();
+  return f;
+}
+
+function assertRecordRefused(f, args, reason, pr = "121") {
+  atomicJson(f.pending, [{ ...f.record, issue: "MONO-900", pr: 900 }]);
+  const ledger = path.join(f.root, "ledger.md"); fs.writeFileSync(ledger, "existing ledger\n");
+  const before = [fs.readFileSync(f.pending), fs.readFileSync(ledger)];
+  const r = f.run("record", ["--issue", f.issue, "--attempt", "1", "--pr", pr, ...args]);
+  assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stderr, reason);
+  assert.deepEqual(fs.readFileSync(f.pending), before[0], "refusal preserves pending records byte for byte");
+  assert.deepEqual(fs.readFileSync(ledger), before[1], "refusal preserves the ledger byte for byte");
+  assert.doesNotMatch(fs.readFileSync(ledger, "utf8"), / LANDED /);
+}
+
+const acceptedPrFields = [
+  ["bare-number", "121"],
+  ["hash-number", "#121"],
+  ["URL", "https://github.com/owner/repo/pull/121"],
+  ["number-and-URL", "121 https://github.com/owner/repo/pull/121"],
+  ["slash-separated", "121 / https://github.com/owner/repo/pull/121"],
+  ["Markdown-link", "[#121](https://github.com/owner/repo/pull/121)"],
+  ["comma-separated", "121, https://github.com/owner/repo/pull/121"]
+];
+for (const [name, value] of acceptedPrFields) {
+  test(`landing MONO-116 ${name} certificate records one PR`, t => {
+    const f = prFieldFixture(t, value);
+    const r = f.run("record", ["--issue", f.issue, "--attempt", "1", "--pr", "121"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const [record] = JSON.parse(fs.readFileSync(f.pending));
+    assert.equal(record.repo, "owner/repo"); assert.equal(record.pr, 121); assert.equal(record.head, f.head);
+    assert.equal(fs.readFileSync(path.join(f.root, "ledger.md"), "utf8").split(" LANDED ").length, 2);
+    assert.equal(f.run("status").status, 0, "accepted certificate also classifies a stopped attempt as landed");
+  });
+  for (const scenario of ["different-pr-same-head", "wrong-head", "another-attempt", "foreign-repo", "wrong-branch"]) {
+    test(`landing MONO-116 ${name} certificate rejects ${scenario} without writes`, t => {
+      const f = prFieldFixture(t, value); let pr = "121";
+      if (scenario === "different-pr-same-head") {
+        pr = "122"; f.mock.prs = { 122: { ...f.mock.pr, number: 122 } };
+      }
+      if (scenario === "wrong-head") f.mock.pr.head.sha = "b".repeat(40);
+      if (scenario === "another-attempt") f.report.attempt = 2;
+      if (scenario === "foreign-repo") f.mock.pr.base.repo.full_name = "other/repo";
+      if (scenario === "wrong-branch") f.mock.pr.base.ref = "other";
+      f.publish(); f.github();
+      assertRecordRefused(f, [], scenario === "different-pr-same-head" ? /PR does not match confirmed ship certificate/ : /mismatch|registry-correlated/, pr);
+    });
+  }
+}
+
+for (const [name, value, reason] of [
+  ["number-URL-disagreement", "121 https://github.com/owner/repo/pull/122", /PR numbers mismatch/],
+  ["different-URL-repositories", "https://github.com/owner/repo/pull/121 https://github.com/other/repo/pull/121", /URL repositories mismatch/],
+  ["foreign-URL-repository", "https://github.com/other/repo/pull/121", /repository mismatch/],
+  ["unrelated-text", "121 https://github.com/owner/repo/pull/121 extra", /PR must contain only/],
+  ["empty", "", /PR requires/],
+  ["different-bare-numbers", "121 / #122", /PR numbers mismatch/],
+  ["different-URL-numbers", "https://github.com/owner/repo/pull/121 https://github.com/owner/repo/pull/122", /PR numbers mismatch/],
+  ["missing-component-separator", "121#121", /PR must contain only/],
+  ["unsafe-number", "9007199254740992", /invalid.*PR number/],
+  ["separators-only", " / , []() ", /PR requires/]
+]) {
+  test(`landing MONO-116 rejects ${name} PR field without writes`, t => {
+    const f = prFieldFixture(t, value); assertRecordRefused(f, [], reason);
+  });
+}
+
 test("landing U7 attempt state: conservative order and stopped landed identity", t => {
   const f = fixture(t);
   const priorPath = process.env.PATH; process.env.PATH = f.env.PATH; t.after(() => { process.env.PATH = priorPath; });
