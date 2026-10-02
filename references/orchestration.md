@@ -772,6 +772,15 @@ retire the entry.
 State the chosen binding in the first status update, and never block on a
 transport feature the runtime lacks.
 
+## Deploy and closeout
+
+The orchestrator applies [Merge validation](landing.md#merge-validation): ordinary
+merge and installation require a green current landing branch tip, and every
+merge requires checking its exact GitHub merge SHA before continuing. A named
+corrective Issue needs the recorded `corrective` exception before its merge;
+the resulting commit must pass before ordinary delivery resumes. Deploy and
+closeout retain their existing phase ownership and approval requirements.
+
 ## Install Coordination
 
 Orchestrator startup and breaking installation share one exclusion boundary.

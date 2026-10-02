@@ -1089,6 +1089,22 @@ function validateLocalInstallBehavior() {
         fail("installed changelog assembler must match golden output and consume records");
     } finally { fs.rmSync(changelogFixture, { recursive: true, force: true }); }
 
+    // U6 installed layout: both commands run outside the source checkout with
+    // the installed import closure and a substituted GitHub boundary.
+    const guardFixture = fs.mkdtempSync(path.join(os.tmpdir(), "mono-installed-guard-"));
+    try {
+      const sha = "a".repeat(40), config = path.join(guardFixture, "config.json");
+      fs.writeFileSync(config, JSON.stringify({ landing: { validation: { check: "validate", timeoutSec: 1800 } } }));
+      fs.writeFileSync(path.join(guardFixture, "gh"), "#!/usr/bin/env node\nconsole.log(JSON.stringify({total_count:1,check_runs:[{id:1,name:'validate',head_sha:'" + sha + "',status:'completed',conclusion:'failure',completed_at:'2026-10-01T00:00:00Z'}]}));\n");
+      fs.chmodSync(path.join(guardFixture, "gh"), 0o755);
+      const installedGuard = path.join(skillsRoot, ".mono-agent-workflow/scripts/orchestrator/landing-guard.mjs");
+      const options = { cwd: guardFixture, encoding: "utf8", env: { ...process.env, PATH: guardFixture + path.delimiter + process.env.PATH } };
+      const check = spawnSync(process.execPath, [installedGuard, "check", "--repo", "owner/repo", "--sha", sha, "--root", guardFixture, "--config", config, "--json"], options);
+      if (check.status !== 1 || JSON.parse(check.stdout).reason !== "completed/failure") fail("installed landing guard must inspect the exact SHA");
+      const corrective = spawnSync(process.execPath, [installedGuard, "corrective", "--issue", "MONO-108", "--red-sha", sha, "--reason", "fixture repair", "--root", guardFixture], options);
+      if (corrective.status !== 0 || !fs.readFileSync(path.join(guardFixture, "ledger.md"), "utf8").includes("LANDING-CORRECTIVE")) fail("installed landing guard corrective must record authorization");
+    } finally { fs.rmSync(guardFixture, { recursive: true, force: true }); }
+
     // Named integration fixture: the installed wave-cost script must load its
     // sibling review-ledger module, never the upstream source-tree copy.
     const installedWaveCostFixtureRoot = path.join(skillsRoot, "installed-wave-cost-fixture");
@@ -7383,6 +7399,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "landing-guard.mjs", "LANDING-CORRECTIVE", "--repo", "--sha", "--root", "--json", "--issue", "--red-sha", "--reason", "filter=all",
   "changelog-assemble.mjs", "--worktree", "--config", "--check", "--test-concurrency=1",
   "<!-- fragment: <KEY> sha256:<digest> -->", "changelog.d/<ISSUE-KEY>.md",
   "landing", "serialPaths", "changelog", "fragmentDir", "target", "heading",
@@ -7982,7 +7999,7 @@ function validateLandingSurface() {
     requireMachineToken(target);
     if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one landing reference`);
   }
-  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly"])
+  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly", "Merge validation"])
     if (documentSection(read("references/landing.md"), heading) === null) fail(`landing reference: missing or duplicate section ${heading}`);
   if (documentSection(read("README.md"), "Landing") === null) fail("README: missing Landing section");
   for (const token of ["landing", "serialPaths", "changelog", "fragmentDir", "target", "heading", "validation", "check", "timeoutSec", "install", "per-merge", "wave-drain", "release", "--release", "--no-renames", "landing.serialPaths", "serial path touched: <path>", "landing policy requires pinned dispatch"])
@@ -7992,11 +8009,17 @@ function validateLandingSurface() {
   assertIncludes("README.md", "references/landing.md"); assertIncludes("README.md", "examples/landing-config.json");
   for (const token of ["changelog-assemble.mjs", "--worktree", "--config", "--check", "<!-- fragment: <KEY> sha256:<digest> -->"])
     assertIncludes("references/landing.md", token);
+  for (const token of ["landing-guard.mjs", "LANDING-CORRECTIVE", "--repo", "--sha", "--root", "--json", "--issue", "--red-sha", "--reason", "filter=all"])
+    assertIncludes("references/landing.md", token);
+  for (const [file, target] of [["skills/mono-deploy/SKILL.md", "references/landing.md#merge-validation"], ["references/orchestration.md", "landing.md#merge-validation"]]) {
+    if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one merge validation reference`);
+  }
+  if (documentSection(read("references/orchestration.md"), "Deploy and closeout") === null) fail("orchestration: missing Deploy and closeout section");
   if (documentSection(read("AGENTS.md"), "Change Discipline") === null) fail("AGENTS: missing Change Discipline section");
   assertIncludes("AGENTS.md", "changelog.d/<ISSUE-KEY>.md");
 }
 function validateLandingBehavior() {
-  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs", "scripts/changelog-assemble.test.mjs"]); }
+  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs"]); }
   catch (error) { fail(`landing named scratch fixtures: ${error.message}`); }
 }
 function validateCheckModeDeclaration() {
