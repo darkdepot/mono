@@ -81,7 +81,7 @@ test("landing U7 release slot is released only by stopped landed attempts", t =>
   assert.throws(() => checkSpawnAvailability(request), /release.*MONO-901/);
   atomicJson(f.pending, [f.record]);
   assert.doesNotThrow(() => checkSpawnAvailability(request));
-  f.entry.pid = process.pid; f.registry(); assert.throws(() => checkSpawnAvailability(request), /release.*MONO-901/);
+  f.entry.pid = process.pid; f.entry.procStart = processStart(process.pid); f.registry(); assert.throws(() => checkSpawnAvailability(request), /release.*MONO-901/);
 });
 
 test("landing U7 record authenticates merged PR and preserves first guard outcome", t => {
@@ -109,6 +109,49 @@ for (const scenario of ["foreign-repo", "different-pr-same-head", "wrong-branch"
     assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stderr, /mismatch|certificate|ENOENT/); assert.equal(fs.existsSync(f.pending), false);
   });
 }
+
+test("landing U7 numeric certificate records the right PR in the request repository", t => {
+  const f = fixture(t);
+  f.report.certificate = f.report.certificate.replace("https://github.com/owner/repo/pull/901", "901"); f.publish();
+  const r = f.run("record", ["--issue", f.issue, "--attempt", "1", "--pr", "901"]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const [record] = JSON.parse(fs.readFileSync(f.pending)), { guard, ...identity } = record;
+  const { guard: expectedGuard, ...expectedIdentity } = f.record;
+  assert.deepEqual(identity, expectedIdentity); assert.equal(guard.code, expectedGuard.code);
+  assert.equal(f.run("status").status, 0, "numeric certificate also classifies the stopped attempt as landed");
+  atomicJson(path.join(f.root, "control.json"), { state: "active", halt: true });
+  const verified = f.run("verify", ["--install-sha", f.tip]); assert.equal(verified.status, 0, verified.stdout + verified.stderr);
+});
+
+for (const scenario of ["different-pr-same-head", "wrong-head", "another-attempt", "wrong-branch", "foreign-repo"]) {
+  test(`landing U7 numeric certificate rejects ${scenario}`, t => {
+    const f = fixture(t); let pr = "901";
+    f.report.certificate = f.report.certificate.replace("https://github.com/owner/repo/pull/901", "901");
+    if (scenario === "different-pr-same-head") pr = "902";
+    if (scenario === "wrong-head") f.mock.pr.head.sha = "b".repeat(40);
+    if (scenario === "another-attempt") f.report.attempt = 2;
+    if (scenario === "wrong-branch") f.mock.pr.base.ref = "other";
+    if (scenario === "foreign-repo") f.mock.pr.base.repo.full_name = "other/repo";
+    f.publish(); f.github();
+    const r = f.run("record", ["--issue", f.issue, "--attempt", "1", "--pr", pr]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /mismatch|certificate|registry-correlated/); assert.equal(fs.existsSync(f.pending), false);
+  });
+}
+
+test("landing U7 URL certificate must name the explicit record repository", t => {
+  const f = fixture(t);
+  const r = f.run("record", ["--repo", "other/repo", "--issue", f.issue, "--attempt", "1", "--pr", "901"]);
+  assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stderr, /repository.*mismatch/);
+  assert.equal(fs.existsSync(f.pending), false);
+});
+
+test("landing U7 numeric certificate binds to an explicit repository with a fork origin", t => {
+  const f = fixture(t); f.git("remote", "set-url", "origin", "git@github.com:fork/repo.git");
+  f.report.certificate = f.report.certificate.replace("https://github.com/owner/repo/pull/901", "901"); f.publish();
+  const r = f.run("record", ["--repo", "owner/repo", "--issue", f.issue, "--attempt", "1", "--pr", "901"]);
+  assert.equal(r.status, 0, r.stdout + r.stderr); assert.equal(JSON.parse(fs.readFileSync(f.pending))[0].repo, "owner/repo");
+});
 
 test("landing U7 status lists every active attempt and excludes stopped landed", t => {
   const f = fixture(t); atomicJson(f.pending, [f.record]);

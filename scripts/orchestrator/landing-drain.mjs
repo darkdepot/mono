@@ -57,7 +57,15 @@ async function record(args) {
   const attempt = Number(args.attempt), pr = Number(args.pr);
   if (!Number.isInteger(pr) || pr < 1) throw new Error("positive --pr required");
   return locked(path.join(args.root, "dispatch.lock"), () => locked(path.join(args.root, "launch.lock"), () => locked(`${pendingFile(args.root)}.lock`, async () => {
-    const entry = registryEntry(args.root, args.issue, attempt), ship = landedShip(args.root, entry);
+    const entry = registryEntry(args.root, args.issue, attempt);
+    let repo = args.repo;
+    if (repo === undefined) {
+      const origin = execFileSync("git", ["-C", entry.worktree, "remote", "get-url", "origin"], { encoding: "utf8", timeout: 10_000,
+        maxBuffer: 64 * 1024, stdio: ["ignore", "pipe", "pipe"] }).trim();
+      repo = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/?$/.exec(origin)?.[1]?.replace(/\.git$/, "");
+      if (!repo) throw new Error("GitHub record repository unavailable; provide --repo OWNER/NAME");
+    }
+    const ship = landedShip(args.root, entry, repo);
     if (pr !== ship.pr) throw new Error("PR does not match confirmed ship certificate");
     const data = mergedPull(ship, pr);
     const value = { repo: ship.repo, issue: args.issue, attempt, pr, head: ship.head, mergeSha: data.merge_commit_sha, mergedAt: data.merged_at };
@@ -107,7 +115,7 @@ async function verify(args) {
     if (!records.length) throw new Error("no pending installation records");
     let repo, branch;
     for (const record of records) {
-      const ship = landedShip(args.root, registryEntry(args.root, record.issue, record.attempt));
+      const ship = landedShip(args.root, registryEntry(args.root, record.issue, record.attempt), record.repo);
       if (repo && (repo !== ship.repo || branch !== ship.branch)) throw new Error("batch contains different repositories/landing branches");
       repo = ship.repo; branch = ship.branch;
       if (ship.pr !== record.pr || ship.head !== record.head || ship.repo !== record.repo) throw new Error("pending record differs from confirmed certificate");
@@ -162,9 +170,9 @@ async function close(args) {
 if (isMain(import.meta.url)) {
   try {
     const [command, ...argv] = process.argv.slice(2), args = commandFlags(argv, ["json"]);
-    if (args.help || command === "--help") console.log("landing-drain.mjs record --root DIR --config FILE --issue KEY --attempt N --pr P [--json]\nlanding-drain.mjs status --root DIR --config FILE [--json]\nlanding-drain.mjs verify --root DIR --config FILE --install-sha T [--worktree DIR] [--json]\nlanding-drain.mjs close --root DIR --config FILE --install-sha T --evidence TEXT [--json]");
+    if (args.help || command === "--help") console.log("landing-drain.mjs record --root DIR --config FILE --issue KEY --attempt N --pr P [--repo OWNER/NAME] [--json]\nlanding-drain.mjs status --root DIR --config FILE [--json]\nlanding-drain.mjs verify --root DIR --config FILE --install-sha T [--worktree DIR] [--json]\nlanding-drain.mjs close --root DIR --config FILE --install-sha T --evidence TEXT [--json]");
     else {
-      const commands = { record: ["issue", "attempt", "pr"], status: [], verify: ["install-sha", "worktree"], close: ["install-sha", "evidence"] };
+      const commands = { record: ["issue", "attempt", "pr", "repo"], status: [], verify: ["install-sha", "worktree"], close: ["install-sha", "evidence"] };
       if (!Object.hasOwn(commands, command)) throw new Error("expected record, status, verify or close");
       allowedFlags(args, ["root", "config", "json", ...commands[command]]);
       if (!path.isAbsolute(args.root ?? "") || !args.config) throw new Error("absolute --root and --config required");

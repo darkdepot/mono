@@ -91,7 +91,7 @@ export function effectivePins(entry) {
 }
 
 // Consumes sealed ship evidence, never the open-PR gate: that PR may be merged.
-export function landedShip(root, entry) {
+export function landedShip(root, entry, repo) {
   const files = [path.join(root, "reports", `${entry.issue}-phase-ship.json`),
     path.join(entry.worktree, ".orchestrator", `${entry.issue}-phase-ship.json`)].filter(file => fs.existsSync(file));
   if (files.length !== 1) throw new Error("ship report absent or in both locations");
@@ -109,12 +109,18 @@ export function landedShip(root, entry) {
   };
   if (field("Ship") !== "green" || field("Issue(s)") !== entry.issue || field("Head SHA") !== report.head)
     throw new Error("ship certificate issue/head mismatch");
-  const urls = [...field("PR").matchAll(/https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)(?=$|[\s)])/g)];
-  if (urls.length !== 1) throw new Error("ship certificate must identify one GitHub repository/PR URL");
+  if (repo !== undefined && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("invalid record repository");
+  const value = field("PR"), url = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/.exec(value);
+  if (!url && !/^[1-9][0-9]*$/.test(value)) throw new Error("ship certificate PR must be a GitHub URL or bare number");
+  if (url && repo !== undefined && url[1] !== repo) throw new Error("ship certificate repository mismatch");
+  repo ??= url?.[1];
+  if (!repo) throw new Error("numeric ship certificate requires the record repository");
+  const pr = Number(url ? url[2] : value);
+  if (!Number.isSafeInteger(pr)) throw new Error("invalid ship certificate PR number");
   const pins = effectivePins(entry);
   const branch = pins.baseRef?.replace(/^refs\/remotes\//, "").replace(/^origin\//, "").replace(/^refs\/heads\//, "");
   if (!branch || branch.startsWith("-") || /[\s~^:?*\[\\]/.test(branch)) throw new Error("landing branch unavailable in pins");
-  return { repo: urls[0][1], pr: Number(urls[0][2]), head: report.head, branch };
+  return { repo, pr, head: report.head, branch };
 }
 
 export function landingRecords(root) {
@@ -143,9 +149,10 @@ export function attemptState(root, entry) {
       if (!start || !entry.procStart) return active("process start unavailable");
       if (start === entry.procStart) return active("worker process is live");
     }
-    const ship = landedShip(root, entry);
     const landed = landingRecords(root).filter(record => record.issue === entry.issue && record.attempt === entry.attempt);
-    if (landed.length !== 1 || ["repo", "pr", "head"].some(key => landed[0][key] !== ship[key]) ||
+    if (landed.length !== 1) return active("matching landing record absent, malformed or ambiguous");
+    const ship = landedShip(root, entry, landed[0].repo);
+    if (["repo", "pr", "head"].some(key => landed[0][key] !== ship[key]) ||
         !/^[a-f0-9]{40}$/.test(landed[0].mergeSha ?? "") || !Number.isFinite(Date.parse(landed[0].mergedAt)))
       return active("matching landing record absent, malformed or ambiguous");
     return { issue: entry.issue, attempt: entry.attempt, state: "landed", reason: "matching landing recorded and worker stopped" };
