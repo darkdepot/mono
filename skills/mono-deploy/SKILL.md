@@ -75,16 +75,24 @@ Deploy workflow config:
 
 Read `workflows.deploy` from `.agents/mono-workflow.config.json`. Missing/placeholder/None is blocked; `Land workflow` is not an alias. Never create/update PR outside configured Deploy workflow or run repo documentation here; ship owns docs-before-green.
 
+Wave installation:
+
+When `landing.install` is `wave-drain`, apply [Install](references/landing.md#install)
+after each merge and at wave end. Keep each Issue In Review until successful
+installation/read-back and batch `close`; include its per-task ancestry proof in
+Deploy verification before normal post-ship check, closeout and retirement.
+The linked rule owns halt, failure recovery and first application.
+
 Live QA gate:
 
-- Before sweep verify deployed version matches certified merged SHA via metadata/version marker/workflow evidence. Older content means unverified delivery: stop and resolve deploy before testing.
+- Before sweep verify deployed version matches certified merged SHA via metadata/version marker/workflow evidence; for wave installation verify the installed version contains the task merge using its batch proof. Older content means unverified delivery: stop and resolve deploy before testing.
 - Immediately before sweep re-read Issue/marker/verified label/authenticated approval, resolve seam and emit whole-body fingerprint. Issue-only must retain prepare's approved-fresh package, fingerprint and non-empty oracle; never infer oracle outside resolver.
 - On actual deployed app with real data walk shipped Issue's PRD acceptance and inspect console errors. Issue-only instead walks every oracle `acceptance_ids` AC1..ACn using `verify_steps`, recording pass/fail per ID; no missing IDs/nonexistent PRD substitutes.
 - Broken/stale marker, lost issue-only/approved-fresh, or changed oracle IDs/steps/fingerprint fails live QA and stops closeout; never label drift skipped.
 - Compare live design to approved UX-checkpoint prototype and repo standards, not personal taste. Without approved prototype skip design acceptance only; functional smoke remains required unless explicit permitted not-run reason.
 - On defect file/dispatch immediate out-of-queue hotfix Issue with acting-user `assignee: "me"` at creation; preserve existing assignments. Hotfix doesn't itself block original Done, but original still needs its own green live pass; hotfix gets live QA on shipment. Consult original preflight route: standard-reviewed defect triggers standard re-tier review under `references/autoreview-routing.md`.
 - Confirm on clean session/reload/transient state before classifying defect. Known flaky failure outside diff becomes separate tiny Issue, not gate failure.
-- Verify non-web artifacts where consumers use them; skill-pack live pass is `node scripts/install-local.mjs --check` against delivered version. Before installation require installing checkout `git rev-parse HEAD` equal expected merge SHA from PR merge record via `gh`, never locally-derived expectation. Mismatch is DEPLOY BLOCKER. Use guarded SHA→install→check pattern in `references/install.md`.
+- Verify non-web artifacts where consumers use them; skill-pack live pass is `node scripts/install-local.mjs --check` against delivered version. Before installing compare `git rev-parse HEAD` with the GitHub source under `references/install.md`: the PR merge SHA for per-merge, or landing tip T with every task's merge ancestry for wave-drain. Mismatch is DEPLOY BLOCKER.
 - Use configured `workflows.qa` or available browser automation when absent/null. Authenticate per `qaAuth` (`cookie-import`, `test-account`, `owner-session`); ask for owner-session, never assume it.
 - Record any not-run skip reason in closeout (e.g. no user-facing surface). Silent skip violates contract; failed sweep follows defect path, never converts to skip.
 

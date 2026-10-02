@@ -216,6 +216,31 @@ quiescence and run `node scripts/install-local.mjs --breaking`; that transaction
 performs its own all-root post-check. Restart open agent sessions after the
 cut-over.
 
+### Wave Installation Source
+
+For `landing.install: "wave-drain"`, the expected installation commit T comes
+from the current landing branch tip returned by GitHub. The installing checkout's
+HEAD must equal T. The deploy owner runs [Install](landing.md#install) verification
+under halt before installing, with the checkout as `--worktree`: it verifies the
+GitHub origin of every recorded merge against the confirmed certificate and
+pinned landing branch, and checks every merge SHA is an ancestor of T. Comparing
+only the local checkout with itself or only checking the last task's merge is
+insufficient. Fetch missing commits and inspect divergence before retrying.
+
+Keep halt through installation and all-root read-back. Confirm each installed
+lock's `sourceCommit` equals T and the product's installation check passes before
+`close`; include `{issue, attempt, pr, mergeSha, installSha}` in each task's
+closeout evidence. A skill-pack task's installed version must contain its merge
+commit; it need not be identical to that merge when later wave commits are in T.
+If GitHub advances before installation, verify the new T from its matching
+checkout before proceeding. Pending records survive failed installation.
+
+This mode uses the existing halt and launch lock within the product. It does not
+relax [Install Coordination](orchestration.md#install-coordination) or the
+idle-and-empty-registry requirement across products for breaking installation.
+The PR-merge source check and guarded pattern above remain unchanged for
+`per-merge` and products without this block.
+
 ## Project Config
 
 Optional `orchestration.preapply.mandate` is a string URL to the owner's comment

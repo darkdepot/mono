@@ -4,7 +4,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { atomicJson, readJson, identity, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart } from "../runtime.mjs";
 import { startGate, reviewEnvironment } from "../gate.mjs";
 import crypto from "node:crypto";
-import { effectivePins } from "./command-state.mjs";
+import { effectivePins, attemptState } from "./command-state.mjs";
 
 function releasePin(request) {
   if (!request.pins) return false;
@@ -165,14 +165,16 @@ async function waitForThread(root, entry, pid, launchedStart) {
   }
   throw new Error(`spawn-fail: no thread.started within 120 seconds; inspect retained attempt and pid ${pid}`);
 }
+function checkReleaseAvailability(root, registry, issue) {
+  const existing = Object.values(registry).find(entry => entry.issue !== issue && entry.pins &&
+    effectivePins(entry).release === true && attemptState(root, entry).state === "active");
+  if (existing) throw new Error(`release task already registered: ${existing.issue}; retire it before another release`);
+}
 export function checkSpawnAvailability(request) {
   guard(request.root);
   const file = path.join(request.root, "workers.json"), registry = readJson(file);
   if (registry[request.issue]) throw new Error("Issue already registered; reconcile and retire before another attempt");
-  if (releasePin(request)) {
-    const existing = Object.values(registry).find(entry => entry.pins && effectivePins(entry).release === true);
-    if (existing) throw new Error(`release task already registered: ${existing.issue}; retire it before another release`);
-  }
+  if (releasePin(request)) checkReleaseAvailability(request.root, registry, request.issue);
   const attemptsFile = path.join(request.root, "attempts.json");
   const attempts = fs.existsSync(attemptsFile) ? readJson(attemptsFile) : {};
   const used = attempts[request.issue] ?? 0;
@@ -238,6 +240,8 @@ export async function resumeWorker(request) {
       try { process.kill(entry.pid, 0); throw new Error("worker process is still live; resume refused"); }
       catch (error) { if (error.code !== "ESRCH") throw error; }
     }
+    if (entry.pins && effectivePins(entry).release === true)
+      checkReleaseAvailability(request.root, readJson(path.join(request.root, "workers.json")), entry.issue);
     if (!entry.model_launch?.model_parameter || !entry.model_launch?.effort_parameter) throw new Error("missing launch pins; never backfill a resume from current policy");
     const installed = readJson(entry.lock);
     if (["packVersion", "sourceCommit", "surfaceRevision"].some(key => installed[key] !== entry[key])) throw new Error("pack identity changed; resume refused");

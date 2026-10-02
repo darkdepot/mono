@@ -302,11 +302,16 @@ approved release task dispatched by the orchestrator. The release task assembles
 the records with `changelog-assemble.mjs`, then prepares the version section.
 See [assembly and recovery](references/landing.md#changelog-assembly) for the
 command, preview and retry behavior. Mono also enables `landing.validation` with
-`check: "validate"` and `timeoutSec: 1800`: merge, check the exact merge commit,
-then install and check the installed pack. Ordinary merges and installation wait
+`check: "validate"` and `timeoutSec: 1800`: merge and check the exact merge commit.
+Ordinary merges and installation wait
 for a green main tip; a repair uses the named corrective exception. See
 [merge validation](references/landing.md#merge-validation) for commands, result
-codes and first-rollout qualification. Wave installation remains a separate delivery.
+codes and first-rollout qualification. Mono selects `landing.install: "wave-drain"`:
+the orchestrator records each merged task and installs once after every registered
+worker is stopped and landed. Verification under halt fixes the batch, checks
+GitHub's installation tip and every merge's ancestry; close after installation
+read-back preserves per-task delivery proof. Failed installation retains pending
+tasks for correction. See [install and recovery](references/landing.md#install).
 
 ## Owner Rules
 

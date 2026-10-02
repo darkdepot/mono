@@ -213,7 +213,8 @@ Required:
 - Confirm the configured `Deploy workflow` exists and is not `None`.
 - Delegate merge/deploy to the configured Deploy workflow.
 - Capture merged SHA, deploy target, and deploy verification evidence.
-- Before the live sweep, verify the deployed version matches the certified merged SHA.
+- With `landing.install: "wave-drain"`, follow [Install](landing.md#install): keep the Issue In Review until `close`, with proof the installed version contains its merge commit.
+- Before the live sweep, verify the deployed version matches the certified merged SHA; for wave installation, verify T and the task's merge ancestry through its batch proof.
 - Run the live QA sweep on the deployed app for user-facing changes: functional smoke over the shipped Issue's PRD acceptance criteria plus design acceptance against the approved UX-checkpoint prototype (functional smoke alone when no prototype was approved).
 - Move a user-facing Issue to `Done` only after its own live pass is green.
 - On a live defect, file an immediate hotfix Issue out of queue and dispatch it (fix-forward); the defect Issue does not block the original Issue's `Done`.
