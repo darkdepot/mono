@@ -74,7 +74,7 @@ function loadState(file) {
   validateLanding({ landing: { validation: state.validation } });
   return state;
 }
-async function check(args) {
+export async function check(args) {
   const file = location(args.root, args.sha);
   repository(args.repo);
   if (!args.config) throw new Error("--config required");

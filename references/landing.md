@@ -28,8 +28,7 @@ invalid. There is no glob matching. `changelog` names the fragment directory,
 target file and exact heading line. `validation` names the merge-commit check and
 its positive integer timeout in seconds. `install` accepts `per-merge` (default)
 or `wave-drain`. Unknown keys in `landing` or its subblocks are config errors.
-Changelog assembly and merge validation use this policy; wave installation is a
-separate implementation unit.
+Changelog assembly, merge validation and installation use this policy.
 
 ## Task fragment
 
@@ -68,10 +67,11 @@ boolean `release` is immutable across amendments. The gate reads the exception
 only from admitted, verified dispatch pins; a request field cannot grant it.
 A release task may edit the shared paths and consume task fragments.
 
-At most one registered release attempt remains live: registration checks the
-verified pins under `launch.lock`, including direct spawn. A stopped or paused
-attempt remains registered and reserves the slot until the orchestrator explicitly
-retires it. Release assembly and product rollout remain with their phase owners.
+At most one release attempt is `active`: registration and resume check verified pins and
+the shared attempt state under `launch.lock`, including direct spawn. A paused
+or stopped attempt without a matching landing remains active until explicitly
+retired. A stopped `landed` attempt does not reserve the release slot. Release
+assembly and product rollout remain with their phase owners.
 
 ## Changelog assembly
 
@@ -173,3 +173,74 @@ observe a pending rerun after success and final success. Close the temporary PR
 without merging, install only after code 0 on this guard's own merge SHA, and
 record the live outcomes in the Issue comment. Fixtures cover a newer failure
 after success on the same SHA; they do not qualify GitHub's external behavior.
+
+## Install
+
+`landing.install: "wave-drain"` defers installation until every registered,
+unretired attempt is `landed`. The shared `attemptState` function in
+`orchestrator/command-state.mjs` also governs release uniqueness. It recognizes
+`landed` only with verified pins, a matching confirmed green ship report and
+landing record for that Issue/attempt, and a stopped worker: its pid is dead or
+its current process start differs from `procStart`. A live pid with a landing,
+unfinished start, pause, missing pins, foreign or unreadable report, or any
+uncertainty remains `active`. State readers name the reason; they never retire
+attempts. Installed archives retain the landing identity after pending removal.
+
+The orchestrator uses `landing-drain.mjs` from the checkout, or
+`<skills-root>/.mono-agent-workflow/scripts/orchestrator/landing-drain.mjs` once
+installed. All commands take `--root ORCHESTRATOR_ROOT --config PRODUCT_CONFIG`;
+`--json` returns structured output. With `per-merge` (default) or no install
+subblock, these commands report `not configured`, return 0 and change nothing.
+
+- `record --issue KEY --attempt N --pr P [--repo OWNER/NAME]` consumes the confirmed
+  green ship certificate for the current attempt, including its PR and head.
+  The request repository defaults to the attempt worktree's GitHub `origin`;
+  supply `--repo` when the PR targets another repository, such as upstream of a
+  fork. A full GitHub PR URL must name this repository; a bare PR number binds to
+  it. The merged GitHub PR must have that number, repository, head and the
+  landing branch from the attempt's pins. It appends
+  `{repo, issue, attempt, pr, head, mergeSha, mergedAt, guard}` to
+  `landing/pending-install.json` and a UTC-dated `LANDED` line to `ledger.md`.
+  `guard` preserves the check outcome at recording, including a red or pending
+  check: an actual merge must stay accounted for. An identical replay changes
+  nothing; conflicting Issue/attempt data refuses. Installed records cannot be
+  requeued. This consumes sealed evidence rather than rerunning open-PR gates.
+- `status` returns 0 with no active attempts, otherwise 2 with every blocking
+  Issue/attempt and reason. It reads under `launch.lock` so an in-flight resume
+  cannot expose an old stopped pid. Registered landed tasks do not block each other.
+- `verify --install-sha T [--worktree MAIN_CHECKOUT]` requires existing
+  `halt: true` in `control.json`. Set it before calling; keep it through install
+  and read-back. Verification waits for `launch.lock`, then rereads halt, registry
+  and processes under that lock before fixing the package composition. A launch
+  or resume begun before halt holds the lock through pid publication, so verify
+  sees that attempt as active. Spawn and resume already reject halt. Lock waits
+  retry for at most 120 seconds, then refuse without changing package records;
+  no lock is reclaimed or removed by a contender.
+  T must equal GitHub's current landing branch tip, and the installing checkout
+  (default: current directory) must have HEAD T. Each recorded merge is reread
+  from GitHub, matches its certificate and pinned landing branch, and is an
+  ancestor of T in that checkout. Every attempt must be landed and the check on
+  T must return 0. It prints the records and per-task proof
+  `{issue, attempt, pr, mergeSha, installSha}`, and atomically saves the immutable
+  composition in `landing/batch-<T>.json`. Repeating T checks the same composition.
+- `close --install-sha T --evidence TEXT` is an attestation by the deploy owner
+  after successful installation and product-specific read-back. It requires the
+  verified batch, archives its records and evidence in `landing/installed/<T>.json`,
+  removes only those records from pending and writes `DRAIN-CLOSE`. Archive-first
+  ordering recovers a crash before removal; identical close retries are harmless.
+  Changed evidence or batch refuses. The script performs no installation itself.
+
+Pending mutations use their own lock and atomic JSON replacement; registry-bound
+record/verify also serialize with launch. Ledger appends share `dispatch.lock`.
+After close, close each Issue with its individual proof, then retire its attempt.
+Until then it stays In Review. A failed install or red T leaves pending records
+intact: the orchestrator removes halt, starts a corrective task, and verifies a
+new T containing the earlier merges. Removing halt is always the orchestrator's
+action, after close or after installation failure. This does not change the
+cross-product quiescence rule for breaking installations or the installation
+source check for `per-merge`.
+
+First rollout of U7 uses the merged main checkout for record, status, halt,
+verify, install and read-back. Run close from the newly installed runtime, then
+remove halt. The deploy owner records this live proof; worker fixtures do not
+substitute for first application.

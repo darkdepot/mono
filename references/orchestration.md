@@ -781,6 +781,12 @@ corrective Issue needs the recorded `corrective` exception before its merge;
 the resulting commit must pass before ordinary delivery resumes. Deploy and
 closeout retain their existing phase ownership and approval requirements.
 
+With `landing.install: "wave-drain"`, use [Install](landing.md#install) for batch
+installation, shared attempt state, halt and recovery. The orchestrator records
+landings, retains Issues In Review until batch close, then closes and retires each
+task with its proof. It owns first rollout from merged main and removes halt after
+close or failed installation; worker stages never perform these actions.
+
 ## Install Coordination
 
 Orchestrator startup and breaking installation share one exclusion boundary.

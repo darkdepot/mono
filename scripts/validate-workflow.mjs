@@ -7399,6 +7399,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "landing-drain.mjs", "LANDED", "DRAIN-CLOSE", "--install-sha", "--evidence", "--attempt", "--pr",
   "landing-guard.mjs", "LANDING-CORRECTIVE", "--repo", "--sha", "--root", "--json", "--issue", "--red-sha", "--reason", "filter=all",
   "changelog-assemble.mjs", "--worktree", "--config", "--check", "--test-concurrency=1",
   "<!-- fragment: <KEY> sha256:<digest> -->", "changelog.d/<ISSUE-KEY>.md",
@@ -7999,7 +8000,7 @@ function validateLandingSurface() {
     requireMachineToken(target);
     if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one landing reference`);
   }
-  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly", "Merge validation"])
+  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly", "Merge validation", "Install"])
     if (documentSection(read("references/landing.md"), heading) === null) fail(`landing reference: missing or duplicate section ${heading}`);
   if (documentSection(read("README.md"), "Landing") === null) fail("README: missing Landing section");
   for (const token of ["landing", "serialPaths", "changelog", "fragmentDir", "target", "heading", "validation", "check", "timeoutSec", "install", "per-merge", "wave-drain", "release", "--release", "--no-renames", "landing.serialPaths", "serial path touched: <path>", "landing policy requires pinned dispatch"])
@@ -8011,6 +8012,8 @@ function validateLandingSurface() {
     assertIncludes("references/landing.md", token);
   for (const token of ["landing-guard.mjs", "LANDING-CORRECTIVE", "--repo", "--sha", "--root", "--json", "--issue", "--red-sha", "--reason", "filter=all"])
     assertIncludes("references/landing.md", token);
+  for (const token of ["landing-drain.mjs", "LANDED", "DRAIN-CLOSE", "--install-sha", "--evidence", "--attempt", "--pr"])
+    assertIncludes("references/landing.md", token);
   for (const [file, target] of [["skills/mono-deploy/SKILL.md", "references/landing.md#merge-validation"], ["references/orchestration.md", "landing.md#merge-validation"]]) {
     if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one merge validation reference`);
   }
@@ -8019,7 +8022,7 @@ function validateLandingSurface() {
   assertIncludes("AGENTS.md", "changelog.d/<ISSUE-KEY>.md");
 }
 function validateLandingBehavior() {
-  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs"]); }
+  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs", "scripts/landing-drain.test.mjs"]); }
   catch (error) { fail(`landing named scratch fixtures: ${error.message}`); }
 }
 function validateCheckModeDeclaration() {

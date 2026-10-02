@@ -12,7 +12,7 @@
     "ship": "gstack ship",
     "documentation": null,
     "reviewFeedback": "compound-engineering:ce-resolve-pr-feedback",
-    "deploy": "gh merge, then landing-guard check on the merge SHA, then node scripts/install-local.mjs --all-roots with --check (skill-pack delivery)"
+    "deploy": "gh merge, then landing-guard check on the merge SHA; install once per wave: landing-drain record/status/verify, node scripts/install-local.mjs --all-roots with --check, landing-drain close (skill-pack delivery)"
   },
   "deployApproval": "risky-only",
   "prerequisites": {
@@ -38,7 +38,8 @@
     "validation": {
       "check": "validate",
       "timeoutSec": 1800
-    }
+    },
+    "install": "wave-drain"
   },
   "issueOnlyLane": {
     "enabled": false
