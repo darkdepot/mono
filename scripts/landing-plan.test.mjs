@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 import { test } from "node:test";
 import { atomicJson, digest } from "./runtime.mjs";
 import { sha256File } from "./orchestrator/command-state.mjs";
@@ -126,6 +126,10 @@ if(args[1]==='graphql') {
 } else {
  if(m.checksError)process.exit(1);
  const sha=/commits\\/([a-f0-9]+)\\//.exec(args[1])[1];
+ if(process.env.PLAN_CHECK_BARRIER && sha==='${C}') {
+   const barrier=process.env.PLAN_CHECK_BARRIER;fs.writeFileSync(barrier+'.ready','ready');const end=Date.now()+10000;
+   while(!fs.existsSync(barrier+'.release')){if(Date.now()>end)process.exit(72);Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);}
+ }
  if(!args[1].includes('filter=all')||!args[1].includes('per_page=100'))process.exit(71);
  const page=Number(new URL('https://fixture/'+args[1]).searchParams.get('page'));
  const runs=m.checks??[{id:sha==='${B}'?110126331912:110126371646,name:'validate',head_sha:sha,started_at:'2026-09-30T22:27:23Z',completed_at:'2026-09-30T22:29:19Z'}];
@@ -134,7 +138,7 @@ if(args[1]==='graphql') {
 `); fs.chmodSync(path.join(f.bin, "gh"), 0o755);
   const env = { PLAN_MOCK: file, PLAN_CALLS: calls };
   const harvest = () => f.run(["harvest", "--issue", "MONO-901", "--attempt", "1", "--pr", "105", "--repo", "owner/repo"], env);
-  return { mock, file, calls, event, harvest, save: () => atomicJson(file, mock) };
+  return { mock, file, calls, event, harvest, env, save: () => atomicJson(file, mock) };
 }
 test("landing U9 harvest A→B→C with one C observation, exact checks and idempotent repeat", t => {
   const f = fixture(t), gh = githubFixture(f); assert.equal(f.run(observation()).status, 0);
@@ -200,4 +204,20 @@ test("landing U9 excludes only stopped landed attempts through shared classifica
   const r = f.run(); assert.equal(r.status, 0, r.stdout + r.stderr); assert.deepEqual(JSON.parse(r.stdout).candidates, []);
   fs.unlinkSync(path.join(f.root,'confirmations/MONO-901-phase-ship-a1-s1.confirmed.json'));
   const uncertain = f.run(); assert.equal(uncertain.status,0,uncertain.stdout+uncertain.stderr); assert.equal(JSON.parse(uncertain.stdout).candidates.length,1);
+});
+
+test('landing U9 harvest observes a concurrent head under the append lock', async t => {
+  const f = fixture(t), gh = githubFixture(f), barrier = path.join(f.scratch,'checks-barrier');
+  const child = spawn(process.execPath,[script,'harvest','--issue','MONO-901','--attempt','1','--pr','105','--repo','owner/repo','--root',f.root,'--config',f.config,'--json'],
+    {cwd:f.repo,env:{...f.env,...gh.env,PLAN_CHECK_BARRIER:barrier}});
+  let stdout='',stderr='';child.stdout.on('data',data=>{stdout+=data;});child.stderr.on('data',data=>{stderr+=data;});
+  const completed = new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',code=>resolve(code));});
+  const deadline=Date.now()+5000;
+  while(!fs.existsSync(barrier+'.ready')) {assert.ok(Date.now()<deadline,'harvest reached the new-head checks request');await new Promise(resolve=>setTimeout(resolve,20));}
+  try { const r=f.run(observation());assert.equal(r.status,0,r.stdout+r.stderr); }
+  finally {fs.writeFileSync(barrier+'.release','release');}
+  assert.equal(await completed,0,stdout+stderr);
+  const rows=f.rows('LANDING-REFRESH');assert.equal(rows.length,2);assert.equal(rows[0].reason,'unknown');
+  assert.equal(rows[1].reason,'sibling-merge');assert.equal(rows[1].sibling,'MONO-902');
+  assert.equal(JSON.parse(gh.harvest().stdout).added,0);
 });

@@ -203,10 +203,6 @@ async function harvest(args) {
   for (const event of events) {
     const value = { ...id, repo, pr, old: event.beforeCommit?.oid ?? null, new: event.afterCommit?.oid ?? null, createdAt: event.createdAt };
     if (existing.some(row => row.event === "LANDING-REFRESH" && sameRefresh(row.value, value)) || pending.some(row => sameRefresh(row, value))) continue;
-    const observation = value.old && value.new && existing.find(row => row.event === "LANDING-HEAD" && row.value.issue === id.issue &&
-      row.value.attempt === id.attempt && row.value.sha === value.new)?.value;
-    value.reason = observation?.reason ?? "unknown";
-    if (observation?.sibling && value.reason === "sibling-merge") value.sibling = observation.sibling;
     if (value.new && !fetched.has(value.new)) {
       try { fetched.set(value.new, checks(repo, value.new)); } catch { fetched.set(value.new, "unknown"); }
     }
@@ -214,10 +210,14 @@ async function harvest(args) {
     pending.push(value);
   }
   return locked(args.root, () => {
-    const rows = journal(args.root).filter(row => row.event === "LANDING-REFRESH").map(row => row.value);
+    const latest = journal(args.root), rows = latest.filter(row => row.event === "LANDING-REFRESH").map(row => row.value);
     let added = 0;
     for (const value of pending) {
       if (rows.some(row => sameRefresh(row, value))) continue;
+      const observation = value.old && value.new && latest.find(row => row.event === "LANDING-HEAD" && row.value.issue === id.issue &&
+        row.value.attempt === id.attempt && row.value.sha === value.new)?.value;
+      value.reason = observation?.reason ?? "unknown";
+      if (observation?.sibling && value.reason === "sibling-merge") value.sibling = observation.sibling;
       if (Array.isArray(value.checks)) {
         const counted = new Set(rows.filter(row => row.issue === id.issue && row.attempt === id.attempt && row.new === value.new)
           .flatMap(row => Array.isArray(row.checks) ? row.checks.map(run => run.id) : []));
