@@ -48,12 +48,13 @@ function assemble(args) {
   if (!policy) { console.log("changelog: not configured"); return; }
   const worktree = fs.realpathSync(path.resolve(args.worktree));
   const target = inside(worktree, policy.target), dir = inside(worktree, policy.fragmentDir);
-  if (target.startsWith(dir + path.sep) || target === dir) throw new Error("changelog target must be outside fragmentDir");
+  const realTarget = resolvedLocation(target), realDir = resolvedLocation(dir);
+  if (realTarget.startsWith(realDir + path.sep) || realTarget === realDir) throw new Error("changelog target must be outside fragmentDir");
   const decode = bytes => new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   const original = regularBytes(target), text = decode(original);
   const escaped = policy.heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const headings = [...text.matchAll(new RegExp(`^${escaped}(\\r?\\n|$)`, "gm"))];
-  if (headings.length !== 1) throw new Error(`expected exactly one heading: ${policy.heading}`);
+  const heading = new RegExp(`^${escaped}(\\r?\\n|$)`, "m").exec(text);
+  if (!heading) throw new Error(`missing heading: ${policy.heading}`);
   const markers = new Map();
   for (const match of text.matchAll(/^<!-- fragment: ([A-Z][A-Z0-9]*-\d+) sha256:([a-f0-9]{64}) -->\r?$/gm)) {
     const hashes = markers.get(match[1]) ?? new Set(); hashes.add(match[2]); markers.set(match[1], hashes);
@@ -68,11 +69,11 @@ function assemble(args) {
     if (known && (known.size !== 1 || !known.has(digest))) throw new Error(`fragment digest mismatch: ${key}`);
     return { key, prefix: match[1], number: BigInt(match[2]), file, body, digest, collected: !!known };
   }).sort((a, b) => a.prefix < b.prefix ? -1 : a.prefix > b.prefix ? 1 : a.number < b.number ? -1 : a.number > b.number ? 1 : a.key.localeCompare(b.key));
-  const newline = headings[0][1] || "\n";
+  const newline = heading[1] || "\n";
   const additions = fragments.filter(f => !f.collected).map(f =>
     `<!-- fragment: ${f.key} sha256:${f.digest} -->${newline}${f.body}${f.body.endsWith("\n") ? "" : newline}`).join(newline);
-  const offset = headings[0].index + headings[0][0].length;
-  const result = additions ? text.slice(0, offset) + (headings[0][1] ? "" : newline) + newline + additions + text.slice(offset) : text;
+  const offset = heading.index + heading[0].length;
+  const result = additions ? text.slice(0, offset) + (heading[1] ? "" : newline) + newline + additions + text.slice(offset) : text;
   if (args.check) { process.stdout.write(result); return; }
   if (additions) replaceAtomic(target, Buffer.from(result));
   for (const fragment of fragments) fs.unlinkSync(fragment.file);

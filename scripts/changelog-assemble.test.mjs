@@ -51,7 +51,7 @@ for (const scenario of ["empty", "missing-heading", "same-key-changed-content", 
     const before = f.snapshot();
     if (scenario === "unreadable") fs.symlinkSync("missing-file", path.join(f.root, "changelog.d/MONO-11.md"));
     const r = f.run(); assert.equal(r.status, 1, r.stdout + r.stderr);
-    const reason = { empty: "empty fragment: MONO-9", "missing-heading": "expected exactly one heading", "same-key-changed-content": "fragment digest mismatch: MONO-9", unreadable: "not a regular file" }[scenario];
+    const reason = { empty: "empty fragment: MONO-9", "missing-heading": "missing heading", "same-key-changed-content": "fragment digest mismatch: MONO-9", unreadable: "not a regular file" }[scenario];
     assert.ok(r.stderr.includes(reason), r.stderr);
     if (scenario === "unreadable") {
       assert.equal(fs.readlinkSync(path.join(f.root, "changelog.d/MONO-11.md")), "missing-file");
@@ -88,8 +88,35 @@ test("landing U4: replacement failure leaves target and records intact", t => {
   assert.equal(fs.readdirSync(f.root).some(name => name.endsWith(".tmp")), false);
 });
 
+test("landing U4 golden: a heading inside a fragment survives interruption and retry", t => {
+  const f = fixture(t);
+  const headingGolden = JSON.parse(fs.readFileSync(new URL("./fixtures/changelog-u4/heading-in-fragment.json", import.meta.url)));
+  for (const [name, body] of Object.entries(headingGolden.fragments)) fs.writeFileSync(path.join(f.root, "changelog.d", name), body);
+  const preload = path.join(f.root, "interrupt.cjs");
+  fs.writeFileSync(preload, 'const fs = require("node:fs"); const unlink = fs.unlinkSync; fs.unlinkSync = function(file) { if (String(file).endsWith(".md")) process.exit(73); return unlink.apply(this, arguments); };\n');
+  const first = f.run([], ["--require", preload]); assert.equal(first.status, 73, first.stderr);
+  assert.equal(fs.readFileSync(f.target, "utf8"), headingGolden.expected);
+  const retry = f.run(); assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(fs.readFileSync(f.target, "utf8"), headingGolden.expected);
+  assert.deepEqual(fs.readdirSync(path.join(f.root, "changelog.d")), []);
+});
+
 test("landing U4: absent policy is a no-op", t => {
   const f = fixture(t), before = f.snapshot(); fs.writeFileSync(f.config, "{}");
   const r = f.run(); assert.equal(r.status, 0, r.stderr);
   assert.ok(r.stdout.includes("not configured")); assert.deepEqual(f.snapshot(), before);
+});
+
+test("landing U4: a directory alias cannot make the target a consumed fragment", t => {
+  const f = fixture(t);
+  fs.symlinkSync("changelog.d", path.join(f.root, "alias"), "dir");
+  fs.writeFileSync(path.join(f.root, "changelog.d/MONO-9.md"), golden.initial);
+  fs.writeFileSync(f.config, JSON.stringify({ landing: { changelog: {
+    fragmentDir: "changelog.d", target: "alias/MONO-9.md", heading: "## [Unreleased]",
+  } } }));
+  const before = f.snapshot(), r = f.run();
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.ok(r.stderr.includes("target must be outside fragmentDir"));
+  assert.deepEqual(f.snapshot(), before);
+  assert.equal(fs.readlinkSync(path.join(f.root, "alias")), "changelog.d");
 });

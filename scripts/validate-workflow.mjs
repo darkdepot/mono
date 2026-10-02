@@ -7383,7 +7383,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
-  "changelog-assemble.mjs", "--worktree", "--config", "--check",
+  "changelog-assemble.mjs", "--worktree", "--config", "--check", "--test-concurrency=1",
   "<!-- fragment: <KEY> sha256:<digest> -->", "changelog.d/<ISSUE-KEY>.md",
   "landing", "serialPaths", "changelog", "fragmentDir", "target", "heading",
   "validation", "check", "timeoutSec", "install", "per-merge", "wave-drain",

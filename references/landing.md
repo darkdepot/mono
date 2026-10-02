@@ -89,7 +89,7 @@ target file and writes nothing. Without `landing.changelog`, the command reports
 `not configured` and exits successfully.
 
 The command orders records by key prefix, then numeric suffix (9 before 10).
-It inserts them immediately below the exact `heading` line, leaving all existing
+It inserts them immediately below the first exact `heading` line, leaving all existing
 text below them. Each record starts with
 `<!-- fragment: <KEY> sha256:<digest> -->`; the digest is SHA-256 of the fragment's
 original bytes. The target is replaced atomically before collected records are
@@ -101,8 +101,9 @@ A marker with the same key and a different digest, an empty or unreadable record
 or a missing heading refuses before changing any file. Correct the input and
 retry. If interruption occurs after replacement but before removal, rerun the
 same command with unchanged records: matching markers complete removal without
-duplicating the notes. The heading must occur exactly once; record filenames use
-an uppercase issue prefix and numeric suffix, such as `MONO-107.md`.
+duplicating the notes. The first matching heading stays the insertion point even
+when a record contains that heading too. Record filenames use an uppercase issue
+prefix and numeric suffix, such as `MONO-107.md`.
 
 After assembly, the release task moves the collected notes into the version's
 section and leaves an empty `## [Unreleased]` heading. It updates `VERSION`;

@@ -1,0 +1,9 @@
+{
+  "initial": "# Changelog\n\n## [Unreleased]\n\nExisting text stays here.\n\n## [0.1.0]\n\nOlder release.\n",
+  "fragments": {
+    "ZZ-1.md": "- Last prefix.\n",
+    "MONO-10.md": "- Tenth change.\n",
+    "MONO-9.md": "- Ninth change.\n\n## [Unreleased]\n\nA heading in a task record.\n"
+  },
+  "expected": "# Changelog\n\n## [Unreleased]\n\n<!-- fragment: MONO-9 sha256:d7bdbe08a0c80b259cc160f8d4b0b1a4e79d22dd675a3fc6ab46143c2dd617d9 -->\n- Ninth change.\n\n## [Unreleased]\n\nA heading in a task record.\n\n<!-- fragment: MONO-10 sha256:8566378468f8805776586b5d47e9d6710ff15e8f1145fb25fcfe1ab9dddd26af -->\n- Tenth change.\n\n<!-- fragment: ZZ-1 sha256:ad330eacda55a4421932b424981ee89c02d381f7052af40eb9198c1d930ffd51 -->\n- Last prefix.\n\nExisting text stays here.\n\n## [0.1.0]\n\nOlder release.\n"
+}

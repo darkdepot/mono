@@ -393,7 +393,7 @@ Run before completing a change:
 node scripts/verify.mjs
 ```
 
-The entry point includes `git diff --check`, syntax checks, artifact/workflow checks, scratch installation and runtime fixtures. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
+The entry point includes `git diff --check`, syntax checks, artifact/workflow checks, scratch installation and runtime fixtures. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
 Use focused checks while editing:
 
