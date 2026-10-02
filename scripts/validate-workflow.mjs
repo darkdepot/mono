@@ -7399,6 +7399,11 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "landing-plan.mjs", "LANDING-PLAN", "LANDING-HEAD", "LANDING-REFRESH", "--sibling",
+  "opened|sibling-merge|review-fix|docs|unknown", "HEAD_REF_FORCE_PUSHED_EVENT",
+  "clean", "conflicts-with-main", "conflicts-with:<KEY>", "unevaluable: <reason>",
+  "references/landing.md#scheduling", "references/landing.md#head-observations-and-refresh-history",
+  "Посадка:",
   "landing-drain.mjs", "LANDED", "DRAIN-CLOSE", "--install-sha", "--evidence", "--attempt", "--pr",
   "landing-guard.mjs", "LANDING-CORRECTIVE", "--repo", "--sha", "--root", "--json", "--issue", "--red-sha", "--reason", "filter=all",
   "changelog-assemble.mjs", "--worktree", "--config", "--check", "--test-concurrency=1",
@@ -8000,13 +8005,18 @@ function validateLandingSurface() {
     requireMachineToken(target);
     if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one landing reference`);
   }
-  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly", "Merge validation", "Install"])
+  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly", "Merge validation", "Install", "Scheduling", "Landing observer", "Head observations and refresh history", "Landing journal and queue decision"])
     if (documentSection(read("references/landing.md"), heading) === null) fail(`landing reference: missing or duplicate section ${heading}`);
   if (documentSection(read("README.md"), "Landing") === null) fail("README: missing Landing section");
   for (const token of ["landing", "serialPaths", "changelog", "fragmentDir", "target", "heading", "validation", "check", "timeoutSec", "install", "per-merge", "wave-drain", "release", "--release", "--no-renames", "landing.serialPaths", "serial path touched: <path>", "landing policy requires pinned dispatch"])
     assertIncludes("references/landing.md", token);
   for (const token of ["<!-- landing:start -->", "<!-- landing:end -->", "{{landing_paths}}", "{{landing_fragments}}", "{{landing_release}}"])
     assertIncludes("templates/orchestrator-dispatch.md", token);
+  for (const token of ["landing-plan.mjs", "LANDING-PLAN", "LANDING-HEAD", "LANDING-REFRESH", "--sibling", "opened|sibling-merge|review-fix|docs|unknown", "HEAD_REF_FORCE_PUSHED_EVENT", "clean", "conflicts-with-main", "conflicts-with:<KEY>", "unevaluable: <reason>"])
+    assertIncludes("references/landing.md", token);
+  assertIncludes("templates/orchestrator-brief.md", "Посадка:");
+  for (const [file, targets] of [["skills/mono-handoff/SKILL.md", ["references/landing.md#scheduling"]], ["skills/mono-orchestrate/SKILL.md", ["references/landing.md#scheduling", "references/landing.md#head-observations-and-refresh-history"]]])
+    for (const target of targets) { requireMachineToken(target); if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one landing rule reference`); }
   assertIncludes("README.md", "references/landing.md"); assertIncludes("README.md", "examples/landing-config.json");
   for (const token of ["changelog-assemble.mjs", "--worktree", "--config", "--check", "<!-- fragment: <KEY> sha256:<digest> -->"])
     assertIncludes("references/landing.md", token);
@@ -8022,7 +8032,7 @@ function validateLandingSurface() {
   assertIncludes("AGENTS.md", "changelog.d/<ISSUE-KEY>.md");
 }
 function validateLandingBehavior() {
-  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs", "scripts/landing-drain.test.mjs"]); }
+  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs", "scripts/landing-drain.test.mjs", "scripts/landing-plan.test.mjs"]); }
   catch (error) { fail(`landing named scratch fixtures: ${error.message}`); }
 }
 function validateCheckModeDeclaration() {

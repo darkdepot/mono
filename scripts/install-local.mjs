@@ -48,6 +48,7 @@ const RUNTIME_SCRIPTS = [
   "delivery-state.mjs",
   "orchestrator/landing-guard.mjs",
   "orchestrator/landing-drain.mjs",
+  "orchestrator/landing-plan.mjs",
   "orchestrator/launch.mjs",
   "orchestrator/spawn.mjs",
   "orchestrator/resume.mjs",

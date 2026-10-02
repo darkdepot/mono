@@ -292,6 +292,15 @@ Set `deployApproval` to `always` (default), `risky-only` (approval for standard/
 
 ## Landing
 
+The advisory `landing-plan.mjs` observer reports textual intersections among active
+committed branches and the fetched landing tip, without affecting gates. The
+owner status includes «Посадка». Handoff chains Issues that must edit the same file;
+the orchestrator consults the observer before expanding a wave. `head` records PR
+head observations; `harvest` records force-push events and their observable check
+durations once. Only those events count refreshes. A waiting-queue decision needs
+at least 30 landings and sibling-refresh cost exceeding estimated waiting;
+unknown history remains unknown. See [scheduling and accounting](references/landing.md#scheduling).
+
 Products can opt in to a landing policy for parallel task delivery. The rule and
 operator instructions live in [Landing](references/landing.md), with a complete
 [example config](examples/landing-config.json).

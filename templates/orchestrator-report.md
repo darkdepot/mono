@@ -138,6 +138,10 @@ The orchestrator owns this file beside `workers.json`. Its complete schema is:
 close, and `idle` means no live work remains. Quiescence requires both
 `state: idle` and an empty `workers.json`; neither signal is sufficient alone.
 
+## Landing status
+
+Use the single «Посадка» line in [Status Update](orchestrator-brief.md#статус-status-update), populated from the advisory observer under [Landing](../references/landing.md#landing-observer).
+
 ## Ledger Entry
 
 Path: `~/.mono-agent-workflow/orchestrator/<product>/ledger.md`

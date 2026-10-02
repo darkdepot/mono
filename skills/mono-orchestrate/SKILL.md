@@ -147,6 +147,7 @@ Workflow states:
      decision; record it explicitly (the bundled-approval rule from
      `mono-implement` applies).
 4. `dispatch`
+   - Apply [landing launch scheduling](references/landing.md#scheduling) before adding work to a running wave.
    - Acquire `~/.mono-agent-workflow/install.lock` using the shared Install
      Coordination protocol in `references/orchestration.md` before creating the product root
      or repairing its canonical state files, and before an `idle` → `active` transition.
@@ -195,6 +196,7 @@ Workflow states:
      with empty registry. halt refuses spawn/resume without stopping workers.
      Keep attempts.json when an entry retires; never reset the cap.
 5. `monitor`
+   - Record PR-opening and accepted ship heads with `head`, then collect force-push events with `harvest` after landing, per [landing accounting](references/landing.md#head-observations-and-refresh-history).
    - Apply Monitoring Protocol before every event/poll. Validate startup gates,
      ack status and current-attempt provenance before report routing. Private
      consumed records guide crash recovery; mailbox tombstones never authorize it.

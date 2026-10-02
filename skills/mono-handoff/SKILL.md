@@ -198,6 +198,7 @@ Execution-mode workflow:
    - PRD as product truth with requirement IDs and acceptance examples when useful.
    - PRD coverage check for actor, capability, benefit, and behavior-validation intent.
    - Tech Spec as implementation truth that traces HOW decisions back to PRD requirements.
+   - Apply [landing slicing](references/landing.md#scheduling) when forming Issue dependencies.
    - Proposed Issue slicing with one-PR default, `AFK`/`HITL` readiness, and explicit dependencies if split.
    - Risk classification and whether the review gate is required, advisory, skipped, or blocked.
    - Remaining assumptions, if any, that the user should see before Issue creation.
