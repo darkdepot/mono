@@ -30,6 +30,62 @@ its positive integer timeout in seconds. `install` accepts `per-merge` (default)
 or `wave-drain`. Unknown keys in `landing` or its subblocks are config errors.
 Changelog assembly, merge validation and installation use this policy.
 
+## Onboarding
+
+Prepare a clean product checkout without a `landing` block, an installed pack
+with the landing runtime, and a working orchestrator delivery setup. Have an
+approved ordinary Issue ready for the first task branch. Identify the shared
+release files, the existing changelog heading, and the successful check name on
+the landing branch before starting. Access to commit and land the configuration
+change and to dispatch and verify that first task must already work.
+
+For the timed walkthrough, start the clock when the operator opens this reference
+on that prepared product. Stop it at the first successful preflight gate result
+for a committed ordinary task branch containing its fragment, with dispatch pins
+based on the landed configuration. Record start/end times, elapsed seconds,
+configuration commit, task head and gate result. Pending collection is not
+acceptance. Less than 300 seconds is the onboarding proof target; an unmeasured
+or slower walkthrough does not establish it.
+
+1. Copy the `landing` block from [the complete example](../examples/landing-config.json)
+   into the product config. Adapt paths and the heading using
+   [Configuration](#configuration). Enable `serialPaths` and `changelog` together
+   first, so the shared-file restriction has a task-record destination.
+2. Migrate the current release workflow: preserve already published history in
+   the shared files, move unlanded task notes into separate
+   [task fragments](#task-fragment), and remove shared-file edits from ordinary
+   task branches. Assign changelog assembly and any committed version update to
+   the [release task](#release-task). Choose the version approach below before
+   enabling the restriction on a version file.
+3. Enable `validation` once its named check runs successfully on the landing
+   branch; follow [Merge validation](#merge-validation) for qualification and
+   results. Keep `install: "per-merge"` when each merge is released. Select
+   `wave-drain` only when the product intends one installation at the end of a
+   wave and its deploy workflow supports [Install](#install).
+4. Commit and land the configuration through the product's existing delivery
+   process before dispatching the first ordinary task. The introducing branch
+   cannot demonstrate the new restriction: its base does not contain the policy.
+5. Dispatch the approved task from that configured base. Write and commit its
+   fragment as described in [Task fragment](#task-fragment), then run its normal
+   preflight with those pins, including collection confirmation when required.
+   Check that the committed fragment is present and non-empty, since the gate
+   does not enforce its presence. The successful gate result ends the walkthrough;
+   PR creation, merging and installation are outside this measurement.
+
+For a product where every merge is a release, choose one version approach:
+
+- **Compute at build time.** Derive the released version from the landing commit
+  or build metadata in the product's build pipeline. Ordinary task branches need
+  no committed version bump; keep any existing version file as a stable input or
+  retire it through the configuration migration. Changelog assembly still follows
+  [Changelog assembly](#changelog-assembly).
+- **Keep the version in the release task.** Retain the version file as a shared
+  path and let the separately dispatched release task update it. If every ordinary
+  merge must have a distinct version, the product's release workflow must account
+  for each such merge; a single version bump at the end of a wave does not provide
+  that. Decide this product-specific cadence during onboarding, rather than
+  restoring version edits to ordinary task branches.
+
 ## Task fragment
 
 Write a non-empty Markdown fragment to `<fragmentDir>/<ISSUE-KEY>.md` for a
