@@ -103,28 +103,30 @@ async function corrective(args) {
   return withLock(`${file}.lock`, () => {
     if (!fs.existsSync(file)) throw new Error("corrective requires check observation for red SHA");
     const state = loadState(file), authorization = { issue: args.issue, redSha: state.sha, reason: args.reason };
-    const ledger = path.join(args.root, "ledger.md");
-    const journal = fs.existsSync(ledger) ? fs.readFileSync(ledger, "utf8").split("\n").flatMap(row => {
-      const match = /^- \S+ LANDING-CORRECTIVE (.+)$/.exec(row);
-      return match ? [JSON.parse(match[1])] : [];
-    }).filter(entry => entry.redSha === state.sha) : [];
-    if (journal.some(entry => canonical(entry) !== canonical(authorization)))
-      throw new Error("corrective journal authorization conflict for red SHA");
     if (state.corrective && canonical(state.corrective) !== canonical(authorization))
       throw new Error("corrective authorization already belongs to another issue/reason");
     const result = decide(state);
     if (result.code !== 1) throw new Error(`corrective requires check code 1; got ${result.code}: ${result.reason}`);
-    if (state.corrective) return { code: 0, outcome: "corrective", reason: "already authorized", ...authorization };
-    const line = `LANDING-CORRECTIVE ${JSON.stringify(authorization)}`;
-    // Reconcile a crash after ledger append, before the authorization is saved.
-    if (!journal.length) {
-      const stamp = execFileSync("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"], { encoding: "utf8" }).trim();
-      const fd = fs.openSync(ledger, "a");
-      try { fs.writeSync(fd, `- ${stamp} ${line}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-      syncDir(args.root);
-    }
-    atomicJson(file, { ...state, lastResult: result, corrective: authorization });
-    return { code: 0, outcome: "corrective", reason: "one corrective merge authorized", ...authorization };
+    // Dispatch rollback rewrites the ledger under this same lock.
+    return withLock(path.join(args.root, "dispatch.lock"), () => {
+      const ledger = path.join(args.root, "ledger.md");
+      const journal = fs.existsSync(ledger) ? fs.readFileSync(ledger, "utf8").split("\n").flatMap(row => {
+        const match = /^- \S+ LANDING-CORRECTIVE (.+)$/.exec(row);
+        return match ? [JSON.parse(match[1])] : [];
+      }).filter(entry => entry.redSha === state.sha) : [];
+      if (journal.some(entry => canonical(entry) !== canonical(authorization)))
+        throw new Error("corrective journal authorization conflict for red SHA");
+      // Reconcile either side of an interrupted ledger/state write.
+      if (!journal.length) {
+        const stamp = execFileSync("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"], { encoding: "utf8" }).trim();
+        const fd = fs.openSync(ledger, "a");
+        try { fs.writeSync(fd, `- ${stamp} LANDING-CORRECTIVE ${JSON.stringify(authorization)}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+        syncDir(args.root);
+      }
+      if (state.corrective) return { code: 0, outcome: "corrective", reason: "already authorized", ...authorization };
+      atomicJson(file, { ...state, lastResult: result, corrective: authorization });
+      return { code: 0, outcome: "corrective", reason: "one corrective merge authorized", ...authorization };
+    });
   });
 }
 if (isMain(import.meta.url)) {

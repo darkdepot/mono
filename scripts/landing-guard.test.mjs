@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
+import { withLock } from "./runtime.mjs";
 
 const script = path.resolve("scripts/orchestrator/landing-guard.mjs");
 const sha = "a".repeat(40);
@@ -176,4 +177,27 @@ test("landing U6 interruption recovery rejects conflicting journal authorization
   const state = fs.readFileSync(f.state, "utf8"), r = f.corrective("different repair");
   assert.equal(r.status, 1); assert.ok(r.stderr.includes("journal authorization conflict"));
   assert.equal(fs.readFileSync(f.state, "utf8"), state); assert.equal(fs.readFileSync(path.join(f.root, "ledger.md"), "utf8"), ledger);
+});
+
+test("landing U6 corrective serializes audit writes with dispatch rollback", async t => {
+  const f = fixture(t, [runCheck({ conclusion: "failure" })]); assert.equal(f.run().status, 1);
+  await withLock(path.join(f.root, "dispatch.lock"), () => {
+    const state = fs.readFileSync(f.state, "utf8"), r = f.corrective();
+    assert.equal(r.status, 1, r.stdout + r.stderr); assert.ok(r.stderr.includes("operation locked"));
+    assert.equal(fs.readFileSync(f.state, "utf8"), state);
+    assert.equal(fs.existsSync(path.join(f.root, "ledger.md")), false);
+  });
+  assert.equal(f.corrective().status, 0);
+  assert.equal(fs.readFileSync(path.join(f.root, "ledger.md"), "utf8").trim().split("\n").length, 1);
+});
+
+test("landing U6 corrective restores a missing audit record without changing authorization", t => {
+  const f = fixture(t, [runCheck({ conclusion: "failure" })]); assert.equal(f.run().status, 1);
+  assert.equal(f.corrective().status, 0);
+  const state = fs.readFileSync(f.state, "utf8"), ledger = path.join(f.root, "ledger.md");
+  fs.writeFileSync(ledger, "- existing unrelated entry\n");
+  assert.equal(f.corrective().status, 0); assert.equal(fs.readFileSync(f.state, "utf8"), state);
+  const restored = fs.readFileSync(ledger, "utf8");
+  assert.ok(restored.startsWith("- existing unrelated entry\n")); assert.ok(restored.includes("LANDING-CORRECTIVE"));
+  assert.equal(f.corrective().status, 0); assert.equal(fs.readFileSync(ledger, "utf8"), restored);
 });
