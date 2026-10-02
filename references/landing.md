@@ -276,6 +276,10 @@ from verified effective pins and each head from its worktree. Missing pins,
 no commits beyond base, a dirty tree (including untracked files), unavailable
 main or another calculation failure yields `unevaluable: <reason>`.
 
+Main refresh is independent of candidate evaluation, including an empty registry.
+Invoke the command from the product checkout: without usable candidate pins, it
+uses that checkout and its origin default-branch ref (or `origin/main` when absent).
+An unavailable tip is `main: null` with an explicit `mainError`.
 Before calculation it fetches the pinned landing branch from origin into a
 disposable bare repository using the existing object store as an alternate. It checks
 main against each evaluable head, then evaluable heads pairwise using

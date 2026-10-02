@@ -87,7 +87,13 @@ for (const scenario of ["dirty worktree", "no commits beyond base", "pins", "mer
   assert.equal(f.rows("LANDING-PLAN").length, 1);
 });
 test("landing U9 empty registry records one empty plan; absent landing block does nothing", t => {
-  const f = fixture(t), r = f.run(); assert.equal(r.status, 0, r.stdout + r.stderr);
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.repo, "next"), "next\n"); f.git(f.repo, "add", "."); f.git(f.repo, "commit", "-m", "new main");
+  const tip = f.git(f.repo, "rev-parse", "HEAD"), metadata = filesBelow(path.join(f.repo, ".git"));
+  const r = f.run(); assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(JSON.parse(r.stdout).main, tip, "main is fetched and recorded even without candidates");
+  assert.equal(f.rows("LANDING-PLAN")[0].main, tip);
+  assert.deepEqual(filesBelow(path.join(f.repo, ".git")), metadata);
   assert.deepEqual(JSON.parse(r.stdout).candidates, []); assert.equal(f.rows("LANDING-PLAN").length, 1);
   const prior = fs.readFileSync(path.join(f.root, "ledger.md")); atomicJson(f.config, {});
   assert.equal(JSON.parse(f.run().stdout).outcome, "not configured"); assert.deepEqual(fs.readFileSync(path.join(f.root, "ledger.md")), prior);

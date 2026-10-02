@@ -66,6 +66,31 @@ async function calculate(args, scratch) {
   const entries = Object.entries(registry).filter(([, entry]) => attemptState(args.root, entry).state === "active")
     .sort(([a, x], [b, y]) => String(x?.spawned_at ?? "").localeCompare(String(y?.spawned_at ?? "")) || a.localeCompare(b));
   const tips = new Map(), candidates = [], repositories = new Map();
+  function refresh(worktree, baseRef) {
+    try {
+      const ref = /^origin\/([^\s~^:?*\[\\]+)$/.exec(baseRef ?? "")?.[1];
+      if (!ref || ref.startsWith("-")) throw new Error("landing branch unavailable in pins");
+      const common = gitText(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"), key = `${common}:${ref}`;
+      if (!tips.has(key)) {
+        const calculation = path.join(scratch, String(tips.size));
+        try {
+          gitText(scratch, "clone", "--bare", "--shared", common, calculation);
+          gitText(calculation, "remote", "set-url", "origin", gitText(worktree, "remote", "get-url", "origin"));
+          gitText(calculation, "fetch", "--no-write-fetch-head", "--no-auto-maintenance", "origin", `+refs/heads/${ref}:refs/remotes/origin/${ref}`);
+          tips.set(key, { sha: gitText(calculation, "rev-parse", `refs/remotes/origin/${ref}`), calculation });
+        } catch { tips.set(key, { error: "main fetch failed" }); }
+      }
+      return tips.get(key);
+    } catch (error) { return { error: error.message }; }
+  }
+  let context = { worktree: process.cwd(), baseRef: git(process.cwd(), "symbolic-ref", "--short", "refs/remotes/origin/HEAD").stdout?.trim() || "origin/main" };
+  for (const [, entry] of entries) {
+    try {
+      const pins = effectivePins(entry);
+      if (pins.worktree === entry.worktree) { context = { worktree: entry.worktree, baseRef: pins.baseRef }; break; }
+    } catch { /* Candidate evaluation reports unavailable pins below. */ }
+  }
+  const primary = refresh(context.worktree, context.baseRef);
   for (const [issue, entry] of entries) {
     const candidate = { issue, attempt: entry?.attempt ?? null, base: null, head: null, main: null, verdicts: [] };
     candidates.push(candidate);
@@ -76,19 +101,7 @@ async function calculate(args, scratch) {
       const pins = effectivePins(entry);
       if (!SHA.test(pins.base ?? "") || pins.worktree !== entry.worktree) throw new Error("pinned base/worktree unavailable");
       candidate.base = pins.base;
-      const ref = /^origin\/([^\s~^:?*\[\\]+)$/.exec(pins.baseRef ?? "")?.[1];
-      if (!ref || ref.startsWith("-")) throw new Error("landing branch unavailable in pins");
-      const common = gitText(entry.worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"), key = `${common}:${ref}`;
-      if (!tips.has(key)) {
-        const calculation = path.join(scratch, String(tips.size));
-        try {
-          gitText(scratch, "clone", "--bare", "--shared", common, calculation);
-          gitText(calculation, "remote", "set-url", "origin", gitText(entry.worktree, "remote", "get-url", "origin"));
-          gitText(calculation, "fetch", "--no-write-fetch-head", "--no-auto-maintenance", "origin", `+refs/heads/${ref}:refs/remotes/origin/${ref}`);
-          tips.set(key, { sha: gitText(calculation, "rev-parse", `refs/remotes/origin/${ref}`), calculation });
-        } catch { tips.set(key, { error: "main fetch failed" }); }
-      }
-      const tip = tips.get(key);
+      const tip = refresh(entry.worktree, pins.baseRef);
       if (tip.error) throw new Error(tip.error);
       candidate.main = tip.sha;
       repositories.set(issue, tip.calculation);
@@ -115,8 +128,8 @@ async function calculate(args, scratch) {
     else if (merge.status !== 0) { a.verdicts.push("unevaluable: merge-tree error"); b.verdicts.push("unevaluable: merge-tree error"); }
   }
   for (const row of candidates) if (!row.verdicts.length) row.verdicts.push("clean");
-  const mains = [...new Set(candidates.map(row => row.main).filter(Boolean))];
-  const value = { main: mains.length === 1 ? mains[0] : null, candidates };
+  const value = { main: primary.sha ?? null, candidates,
+    ...(primary.error ? { mainError: `unevaluable: ${primary.error}` } : {}) };
   await locked(args.root, () => append(args.root, "LANDING-PLAN", value));
   return { code: 0, outcome: "advisory", ...value };
 }
