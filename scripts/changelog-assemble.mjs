@@ -32,8 +32,9 @@ function regularBytes(file) {
 function replaceAtomic(target, bytes) {
   const temp = `${target}.${crypto.randomUUID()}.tmp`;
   try {
-    const fd = fs.openSync(temp, "wx", fs.statSync(target).mode & 0o777);
-    try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); }
+    const mode = fs.statSync(target).mode & 0o7777;
+    const fd = fs.openSync(temp, "wx", mode);
+    try { fs.writeFileSync(fd, bytes); fs.fchmodSync(fd, mode); fs.fsyncSync(fd); }
     finally { fs.closeSync(fd); }
     fs.renameSync(temp, target);
     syncDir(path.dirname(target));

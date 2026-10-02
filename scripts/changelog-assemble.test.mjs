@@ -120,3 +120,12 @@ test("landing U4: a directory alias cannot make the target a consumed fragment",
   assert.deepEqual(f.snapshot(), before);
   assert.equal(fs.readlinkSync(path.join(f.root, "alias")), "changelog.d");
 });
+
+test("landing U4: atomic replacement preserves target permissions despite umask", t => {
+  const f = fixture(t), preload = path.join(f.root, "restrictive-umask.cjs");
+  fs.chmodSync(f.target, 0o664);
+  fs.writeFileSync(preload, 'process.umask(0o077);\n');
+  const r = f.run([], ["--require", preload]); assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.statSync(f.target).mode & 0o7777, 0o664);
+  assert.equal(fs.readFileSync(f.target, "utf8"), golden.expected);
+});
