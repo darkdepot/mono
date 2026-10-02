@@ -902,6 +902,11 @@ with ack is a producer contract error; reconcile/retire and create a verified ne
 attempt with correct gates, never same-attempt nudge. After consumption, gates
 must be absent. Finish private journal recovery before phase routing.
 
+For a fresh attempt, do not infer death from a process search for its transport
+thread ID: only resumed attempts carry that ID in their process arguments. Verify
+liveness using the current attempt's registry PID and matching process start time
+(`procStart`); a live PID with a different start time is not that attempt.
+
 Read ack status before any report. Applied/rejected/blocked private records bind
 only the current attempt. Rejected is terminal: reconcile, then new attempt within
 cap, never nudge. Blocked ack without report waits for same-attempt report recovery;
