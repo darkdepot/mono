@@ -110,6 +110,7 @@ test("landing U2 installed dispatch validates release and reserves a single rele
     atomicJson(path.join(root, "control.json"), { state: "active" }); atomicJson(path.join(root, "workers.json"), {});
     git("init", "-b", "main"); const origin = path.join(scratch, "origin.git"); pass(run("git", ["init", "--bare", origin])); git("remote", "add", "origin", origin);
     const config = JSON.parse(fs.readFileSync(".agents/mono-workflow.config.json"));
+    delete config.landing;
     config.orchestration.dispatch = { product: "landing", evidenceRoot: path.join(scratch, "evidence"), openDecisions: 0, lifecycle_moves: [], verification: { command: "node", args: ["scripts/verify.mjs"] } };
     const configFile = path.join(repo, ".agents/mono-workflow.config.json"); write(configFile, JSON.stringify(config)); write(path.join(repo, ".gitignore"), ".worktrees/\n");
     git("add", "."); git("commit", "-m", "base"); git("push", "origin", "main");
