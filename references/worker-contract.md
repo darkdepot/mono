@@ -1,5 +1,7 @@
 # Delivery Worker Contract
 
+[Landing](landing.md).
+
 ## AFK Contract
 
 Use dispatch Issue/branch/worktree. No branch changes/sub-workers/session

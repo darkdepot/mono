@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, canonical, digest, readJson, identity, withLock } from "../runtime.mjs";
+import { atomicJson, canonical, digest, readJson, identity, withLock, baseModelConfig, validateLanding } from "../runtime.mjs";
 import { validatePhase, confirmQueue } from "../delivery-state.mjs";
 
 export const sha256File = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -85,6 +85,8 @@ export function effectivePins(entry) {
   if (!Number.isInteger(version) || version < 0) throw new Error("invalid pinsVersion");
   const amendment = version ? readJson(path.join(path.dirname(entry.pins.file), `pins.v${version}.json`)) : {};
   if (version && amendment.pinsVersion !== version) throw new Error("amendment version mismatch");
+  if (base.release !== undefined && typeof base.release !== "boolean") throw new Error("release pin must be boolean");
+  if (amendment.release !== undefined && amendment.release !== (base.release ?? false)) throw new Error("release pin is immutable");
   return { ...base, ...amendment, pinsVersion: version };
 }
 
@@ -117,6 +119,9 @@ export function checkCollectionRequest(request) {
   const entry = registryEntry(root, entries[0].issue, entries[0].attempt);
   if (!entry.pins && !request.pins) return null;
   const launch = effectivePins({ ...entry, pinsVersion: 0 });
+  if (!request.pins && /^[a-f0-9]{40}$/.test(launch.base ?? "") &&
+      validateLanding(baseModelConfig(request.worktree, launch.base))?.serialPaths !== undefined)
+    throw new Error("landing policy requires pinned dispatch");
   const u13 = Object.hasOwn(launch, "reviewDatasetDigest");
   if (!u13 && !request.pins) return null;
   if (!/^preflight-collect:[a-f0-9]{40}:[1-9][0-9]*$/u.test(request.collectionId ?? "")) requestMismatch("collectionId", "preflight-collect:<head>:<n>");

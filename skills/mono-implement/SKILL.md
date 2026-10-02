@@ -5,8 +5,10 @@ description: Use when starting or running implementation from approved Linear Is
 
 # Mono Implement
 
+[Landing](references/landing.md).
+
 Own Delivery Start/code, then preflight. Ship owns PR; deploy owns closeout.
-Read project `.agents/mono-workflow.config.json` for team/language/roots/workflows.
+Config: `.agents/mono-workflow.config.json`.
 
 Read first:
 

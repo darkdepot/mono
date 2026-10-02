@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "projectName": "Пример посадки",
+  "linearTeam": "Пример",
+  "languages": {
+    "linear": "Russian",
+    "repo": "English"
+  },
+  "artifactRoots": [],
+  "workflows": {
+    "implementation": null,
+    "ship": null,
+    "documentation": null,
+    "reviewFeedback": null,
+    "deploy": null
+  },
+  "prerequisites": {
+    "autoreviewHelper": true
+  },
+  "deployApproval": "always",
+  "landing": {
+    "serialPaths": [
+      "CHANGELOG.md",
+      "VERSION",
+      "shared/"
+    ],
+    "changelog": {
+      "fragmentDir": "changelog.d",
+      "target": "CHANGELOG.md",
+      "heading": "## [Unreleased]"
+    },
+    "validation": {
+      "check": "validate",
+      "timeoutSec": 1800
+    },
+    "install": "per-merge"
+  }
+}

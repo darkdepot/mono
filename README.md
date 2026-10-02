@@ -290,6 +290,12 @@ in config, dispatch, registry or receipts. Resumes keep their original pins.
 
 Set `deployApproval` to `always` (default), `risky-only` (approval for standard/deep/risky and unknown risk; only tiny proceeds without asking), or `never`. Approval binds the exact PR/head. Configure `orchestration.transport` and `maxParallelWorkers` (default 3) when needed. Delivery settings default to a 900-second confirmation timeout, 120-second quiet interval, 2,400-second evidence limit, 10-second polling and three attempts. This pack keeps its own issue-only lane disabled and stores no owner ID in the repository; consumers enable the lane explicitly with `issueOnlyLane.enabled` and the canonical approving `ownerPrincipal`. See [Project Policy](references/install.md#project-policy) for the full config contract.
 
+## Landing
+
+Products can opt in to a landing policy for parallel task delivery. The rule and
+operator instructions live in [Landing](references/landing.md), with a complete
+[example config](examples/landing-config.json).
+
 ## Owner Rules
 
 The following 34 numbered entries are the sole owner-rule index, transferred from the former constitution. Each line states the obligation, its reason and the executable source; it is not a second full copy of the source text. Rule numbers preserve traceability. Link validation proves that a file and section are addressable; pack checks and same-PR README freshness preserve truth. Change rules through a Linear Issue and the orchestrator.

@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { atomicJson, readJson, isMain, deliveryConfig, RISK_KEYS, withLock } from "../runtime.mjs";
+import { atomicJson, readJson, isMain, deliveryConfig, RISK_KEYS, withLock, baseModelConfig, validateLanding } from "../runtime.mjs";
 import { commandFlags, allowedFlags, sha256File } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
 import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
@@ -21,6 +21,7 @@ const read = (dir, name) => fs.readFileSync(path.join(dir, name), "utf8");
 
 export function renderDispatch(template, values, pilot = false) {
   let source = template.replace(/<!-- generator:start -->[\s\S]*?<!-- generator:end -->\s*/u, "");
+  if (values.landing_paths === undefined) source = source.replace(/<!-- landing:start -->[\s\S]*?<!-- landing:end -->\s*/u, "");
   if (!pilot) source = source.replace(/<!-- review-pilot:start -->[\s\S]*?<!-- review-pilot:end -->\s*/u, "");
   const rendered = source.replace(/\{\{([^{}]+)\}\}/gu, (_, key) => {
     if (!Object.hasOwn(values, key) || values[key] === undefined || values[key] === null || String(values[key]).trim() === "")
@@ -38,7 +39,9 @@ export async function dispatch(args) {
 
 async function prepareDispatch(args) {
   allowedFlags(args, ["issue", "root", "config", "snapshot", "risk", "critical", "profile", "handshake", "role", "reason", "full-snapshot", "preapply",
-    "skills-root", "moves", "gates", "open-decisions", "verification", "review-dataset", "review-dataset-version", "review-pilot", "worker-writable-roots"]);
+    "skills-root", "moves", "gates", "open-decisions", "verification", "review-dataset", "review-dataset-version", "review-pilot", "worker-writable-roots", "release"]);
+  if (args.release !== undefined && !["true", "false"].includes(args.release)) throw new Error("--release must be true or false");
+  const release = args.release === "true";
   const issue = args.issue;
   if (!/^[A-Z][A-Z0-9]*-\d+$/.test(issue)) throw new Error("valid --issue required");
   for (const key of ["root", "config", "snapshot"]) if (!path.isAbsolute(args[key] ?? "")) throw new Error(`absolute --${key} required`);
@@ -87,6 +90,7 @@ async function prepareDispatch(args) {
   const worktree = path.join(repo, ".worktrees", issue), branch = `mono/${issue.toLowerCase()}`;
   git(repo, "fetch", "origin", "main");
   const base = git(repo, "rev-parse", "origin/main");
+  const landing = validateLanding(baseModelConfig(repo, base));
   if (!fs.existsSync(worktree)) git(repo, "worktree", "add", "-b", branch, worktree, base);
   const actualBranch = git(worktree, "branch", "--show-current");
   if (actualBranch !== branch) throw new Error("existing dispatch worktree has another branch");
@@ -103,7 +107,7 @@ async function prepareDispatch(args) {
   const gate = { worktree, branch, base, lock, packVersion: installed.packVersion, sourceCommit: installed.sourceCommit, surfaceRevision: installed.surfaceRevision };
   const modelFile = path.join(output, "model-request.json"); atomicJson(modelFile, { ...gate, role });
   const modelRoutes = JSON.parse(run("spawn.mjs", ["--pins", modelFile]));
-  const pins = { ...gate, modelRoutes, product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
+  const pins = { ...gate, release, modelRoutes, product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
     risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind,
     reviewDataset: args["review-dataset"] ?? settings.reviewDataset ?? null, reviewDatasetVersion: Number(args["review-dataset-version"] ?? settings.reviewDatasetVersion ?? 0) };
   pins.reviewDatasetDigest = pins.reviewDataset ? sha256File(pins.reviewDataset) : null;
@@ -145,6 +149,8 @@ async function prepareDispatch(args) {
     context_seam: JSON.stringify(seam), decisions: approval, moves: JSON.stringify(moves), gates: JSON.stringify(gates), gate_ack: ack,
     wait_or_resume: moves.length ? handshake === "wait" ? `After writing ack run exactly one matching blocking shell command. If you wrote the mailbox ack: ${waitCommand(ack)}. If mailbox writing was denied and you wrote the fallback ack: ${waitCommand(fallbackAck)}. Use the actual file you wrote; never create both. Do no other work while it runs. Deadline ack mtime + ackWaitSec; expiry parks write-unconfirmed and exits. Valid own consumption read-backs amend state: post-move delivery check, no identity rerun. Blocked ack precedes terminal report.` : "Stop/exit after ack; resume amendment must contain every applied move/read-back; rerun identity/check. Blocked ack precedes terminal report." : "Gate phase: not applicable — this dispatch carries no lifecycle move.",
     snapshot_note: extracts.note ?? "Referenced definitions with transitive coverage and always-included common sections", spawn_request: spawnFile, base };
+  if (landing) Object.assign(values, { landing_paths: landing.serialPaths?.length ? landing.serialPaths.map(p => `\`${p}\``).join(", ") : "не заданы",
+    landing_fragments: landing.changelog?.fragmentDir ?? "не задан", landing_release: String(release) });
   const pilot = args["review-pilot"] ? readJson(args["review-pilot"]) : null;
   if (pilot) Object.assign(values, { review_project: pilot.project, dataset_version: pilot.version, dataset_path: pilot.path, dataset_digest: pilot.digest });
   const template = fs.readFileSync(path.join(skillsRoot, "mono-orchestrate/templates/orchestrator-dispatch.md"), "utf8");
@@ -183,7 +189,7 @@ async function prepareDispatch(args) {
 if (isMain(import.meta.url)) {
   try {
     const args = commandFlags(process.argv.slice(2), ["preapply", "full-snapshot"]);
-    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex --reason TEXT] [--preapply] [--full-snapshot]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON] [--review-dataset FILE --review-dataset-version N] [--review-pilot JSON]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
+    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex --reason TEXT] [--preapply] [--full-snapshot] [--release true|false]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON] [--review-dataset FILE --review-dataset-version N] [--review-pilot JSON]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
     else console.log(JSON.stringify(await dispatch(args)));
   } catch (error) { console.error(`dispatch: ${error.message}`); process.exitCode = 1; }
 }

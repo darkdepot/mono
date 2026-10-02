@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { deliveryConfig, validateModels } from "./runtime.mjs";
+import { deliveryConfig, validateModels, validateLanding } from "./runtime.mjs";
 import { preapplyMandate } from "./orchestrator/preapply.mjs";
 
 const CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.json";
@@ -295,6 +295,7 @@ function validateConfig(config, failures) {
     failures.push("Project config contains unresolved <...> placeholder");
   }
   try { validateModels(config); } catch (error) { failures.push(error.message); }
+  try { validateLanding(config); } catch (error) { failures.push(error.message); }
   if ("landWorkflow" in config || config.workflows?.land) {
     failures.push("Project config must use workflows.deploy, not Land workflow compatibility fields");
   }

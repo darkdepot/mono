@@ -7366,6 +7366,13 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "landing", "serialPaths", "changelog", "fragmentDir", "target", "heading",
+  "validation", "check", "timeoutSec", "install", "per-merge", "wave-drain",
+  "release", "--release", "--no-renames", "landing.serialPaths",
+  "serial path touched: <path>", "landing policy requires pinned dispatch",
+  "references/landing.md", "landing.md", "examples/landing-config.json",
+  "<!-- landing:start -->", "<!-- landing:end -->",
+  "{{landing_paths}}", "{{landing_fragments}}", "{{landing_release}}",
   "# Предприменение", "Предприменение:", "sha256 `", "```text",
   // MONO-95: named placeholders, command paths and session/admission dictionary.
   "{{approval}}",
@@ -7950,6 +7957,25 @@ function validateDocumentSkeleton() {
   console.log(`Prose-pin counter = ${rejectedStringPins}; machine-token list self-check ${rejectedStringPins ? "red" : "green"}.`);
 }
 // Mode declarations are a machine dictionary, separate from explanatory prose.
+function validateLandingSurface() {
+  for (const file of ["references/worker-contract.md", "skills/mono-implement/SKILL.md", "skills/mono-preflight/SKILL.md", "skills/mono-ship/SKILL.md"]) {
+    const target = file.startsWith("references/") ? "landing.md" : "references/landing.md";
+    requireMachineToken(target);
+    if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one landing reference`);
+  }
+  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task"])
+    if (documentSection(read("references/landing.md"), heading) === null) fail(`landing reference: missing or duplicate section ${heading}`);
+  if (documentSection(read("README.md"), "Landing") === null) fail("README: missing Landing section");
+  for (const token of ["landing", "serialPaths", "changelog", "fragmentDir", "target", "heading", "validation", "check", "timeoutSec", "install", "per-merge", "wave-drain", "release", "--release", "--no-renames", "landing.serialPaths", "serial path touched: <path>", "landing policy requires pinned dispatch"])
+    assertIncludes("references/landing.md", token);
+  for (const token of ["<!-- landing:start -->", "<!-- landing:end -->", "{{landing_paths}}", "{{landing_fragments}}", "{{landing_release}}"])
+    assertIncludes("templates/orchestrator-dispatch.md", token);
+  assertIncludes("README.md", "references/landing.md"); assertIncludes("README.md", "examples/landing-config.json");
+}
+function validateLandingBehavior() {
+  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs"]); }
+  catch (error) { fail(`landing named scratch fixtures: ${error.message}`); }
+}
 function validateCheckModeDeclaration() {
   requireMachineToken("Modes:"); requireMachineToken("repair");
   const lines = documentSection(read("skills/mono-check/SKILL.md"), "Mono Check") || [];
@@ -8199,6 +8225,7 @@ if (process.argv.includes("--model-policy-only") || process.argv.includes("--mod
   process.exit(0);
 }
 
+validateLandingSurface();
 validateDocumentSkeleton();
 validateCheckModeDeclaration();
 validateDocumentBoundaries();
@@ -8244,6 +8271,7 @@ validatePackIdentityAndQuiescenceBehavior();
 validateLocalInstallBehavior();
 validateMultiRootInstallBehavior();
 validateBreakingInstallBehavior();
+validateLandingBehavior();
 validateProjectConfigBehavior();
 validateIssueOnlyLaneBehavior();
 validateWatcherContaminationBehavior();

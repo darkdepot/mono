@@ -4,6 +4,16 @@ import { spawn, execFileSync } from "node:child_process";
 import { atomicJson, readJson, identity, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart } from "../runtime.mjs";
 import { startGate, reviewEnvironment } from "../gate.mjs";
 import crypto from "node:crypto";
+import { effectivePins } from "./command-state.mjs";
+
+function releasePin(request) {
+  if (!request.pins) return false;
+  const bytes = fs.readFileSync(request.pins.file);
+  if (crypto.createHash("sha256").update(bytes).digest("hex") !== request.pins.digest) throw new Error("dispatch pins digest mismatch");
+  const release = JSON.parse(bytes).release;
+  if (release !== undefined && typeof release !== "boolean") throw new Error("release pin must be boolean");
+  return release ?? false;
+}
 
 export function guard(root, resume = false) {
   const control = readJson(path.join(root, "control.json"));
@@ -159,6 +169,10 @@ export function checkSpawnAvailability(request) {
   guard(request.root);
   const file = path.join(request.root, "workers.json"), registry = readJson(file);
   if (registry[request.issue]) throw new Error("Issue already registered; reconcile and retire before another attempt");
+  if (releasePin(request)) {
+    const existing = Object.values(registry).find(entry => entry.pins && effectivePins(entry).release === true);
+    if (existing) throw new Error(`release task already registered: ${existing.issue}; retire it before another release`);
+  }
   const attemptsFile = path.join(request.root, "attempts.json");
   const attempts = fs.existsSync(attemptsFile) ? readJson(attemptsFile) : {};
   const used = attempts[request.issue] ?? 0;

@@ -43,6 +43,15 @@ compares `git show <sha>` blobs to that block and the snapshot manifest at start
 - sourceCommit: `{{source_commit}}`
 - surfaceRevision: `{{surface_revision}}`
 
+<!-- landing:start -->
+## Посадка
+
+- Общие пути: {{landing_paths}}
+- Каталог записей: {{landing_fragments}}
+- Задача-релиз: {{landing_release}}
+
+<!-- landing:end -->
+
 ## Запрос сбора
 
 После поправки запрос сбора привязан к `pins.v<n>.json` из «Effective attempt pins» возобновления; отдельного поля версии в отчёте нет.
