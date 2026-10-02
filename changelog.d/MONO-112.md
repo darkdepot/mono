@@ -1,1 +1,1 @@
-- Orchestrator command test fixtures track their own worker PIDs and wait for process exit during cleanup, including resumed workers. A delayed-exit regression checks that sending a signal alone is insufficient.
+- Orchestrator command test fixtures track their own live worker PIDs, retire completed launches, and wait for process exit during cleanup, including resumed workers. Regression checks cover delayed termination and a child exiting before readiness.

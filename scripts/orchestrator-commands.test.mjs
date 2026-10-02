@@ -37,17 +37,42 @@ const stopFixtureProcess = async pid => {
   assert.equal(fixtureProcessExists(pid), false, `fixture pid ${pid} must no longer exist`);
 };
 const fixtureProcesses = () => {
-  const pids = new Set();
+  const pids = new Set(), registrations = new Map(), retired = new Set();
   const track = pid => { if (pid) pids.add(pid); return pid; };
-  const registry = file => { if (fs.existsSync(file)) for (const worker of Object.values(readJson(file))) track(worker.pid); };
+  const registry = file => {
+    if (fs.existsSync(file)) for (const worker of Object.values(readJson(file))) {
+      const registration = JSON.stringify([file, worker.pid, worker.spawned_at, worker.last_resume?.registeredAt]);
+      if (retired.has(registration)) continue;
+      track(worker.pid);
+      if (!registrations.has(worker.pid)) registrations.set(worker.pid, new Set());
+      registrations.get(worker.pid).add(registration);
+    }
+  };
+  const stop = async pid => {
+    if (!pids.has(pid)) return;
+    await stopFixtureProcess(pid);
+    pids.delete(pid);
+    for (const registration of registrations.get(pid) ?? []) retired.add(registration);
+  };
   const cleanup = async () => {
-    const results = await Promise.allSettled([...pids].map(stopFixtureProcess));
+    const results = await Promise.allSettled([...pids].map(stop));
     const failures = results.filter(result => result.status === "rejected").map(result => result.reason);
     if (failures.length) throw new AggregateError(failures, "fixture process cleanup failed");
-    for (const pid of pids) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, `fixture pid ${pid} must no longer exist`);
+    assert.equal(pids.size, 0, "all tracked fixture processes have exited");
   };
-  return { track, registry, cleanup };
+  return { track, registry, stop, cleanup };
 };
+
+const fixtureReady = child => new Promise((resolve, reject) => {
+  const finished = error => {
+    child.off("message", ready); child.off("error", failed); child.off("close", closed);
+    if (error) reject(error); else resolve();
+  };
+  const ready = () => finished();
+  const failed = error => finished(error);
+  const closed = () => finished(new Error("fixture child exited before readiness"));
+  child.once("message", ready); child.once("error", failed); child.once("close", closed);
+});
 
 test("fixture cleanup waits for its own delayed child to exit", async () => {
   const child = spawn(process.execPath, ["-e", `
@@ -55,12 +80,19 @@ process.on("SIGTERM", () => setTimeout(() => process.exit(0), 200));
 setInterval(() => {}, 1000);
 process.send("ready");
 `], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
-  const exited = new Promise(resolve => child.once("exit", resolve));
+  const exited = new Promise(resolve => child.once("close", resolve));
   try {
-    await new Promise((resolve, reject) => { child.once("message", resolve); child.once("error", reject); });
+    await fixtureReady(child);
     await stopFixtureProcess(child.pid);
     assert.throws(() => process.kill(child.pid, 0), { code: "ESRCH" }, `fixture pid ${child.pid} must no longer exist`);
   } finally { child.kill("SIGKILL"); await exited; }
+});
+
+test("fixture readiness rejects a child that exits before ready", async () => {
+  const child = spawn(process.execPath, ["-e", "process.exit(1)"], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
+  const exited = new Promise(resolve => child.once("close", resolve));
+  try { await assert.rejects(fixtureReady(child), /exited before readiness/u); }
+  finally { child.kill("SIGKILL"); await exited; }
 });
 
 test("amend collection pins-file contracts", async t => {
@@ -376,7 +408,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     const laneRendered = fs.readFileSync(laneLaunch.dispatchFile, "utf8");
     assert.ok(laneRendered.includes(fingerprint));
     assert.equal(fs.existsSync(path.join(laneLaunch.snapshot, "prd.md")), false); assert.equal(fs.existsSync(path.join(laneLaunch.snapshot, "tech-spec.md")), false);
-    await stopFixtureProcess(livePid); livePid = undefined;
+    await processes.stop(livePid); livePid = undefined;
     const launched = JSON.parse(pass(run(process.execPath, [command, ...options]))); livePid = processes.track(launched.pid);
     const registry = readJson(path.join(root, "workers.json")), entry = registry["MONO-999"];
     assert.equal(entry.attempt, 1); assert.equal(entry.pinsVersion, 0); assert.equal(entry.profile, "short"); assert.equal(entry.handshake, "wait");
@@ -502,19 +534,19 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       // Reset this isolated prepared fixture, never production state.
       for (const name of ["amendment.pending.json", "pins.v1.json", "resume.v1.md", "resume.v1.json"]) fs.unlinkSync(path.join(path.dirname(entry.pins.file), name));
     });
-    await stopFixtureProcess(livePid); livePid = null;
+    await processes.stop(livePid); livePid = null;
     const oldPath = process.env.PATH; process.env.PATH = env.PATH;
     try {
       const amended = await acceptAmend({ root, issue: ack.issue, attempt: "1", risk: "deep", text: "Raise risk to deep; approved full snapshot follows.", "full-snapshot": true, snapshot }); livePid = processes.track(amended.pid);
       assert.equal(amended.pinsVersion, 1); assert.match(amended.pinsFile, /pins\.v1\.json$/u); assert.equal(readJson(path.join(root, "workers.json"))[ack.issue].pinsVersion, 1);
       assert.match(fs.readFileSync(amended.resumeFile, "utf8"), /## prd\.md/u);
       const originalResume = fs.readFileSync(amended.resumeFile, "utf8");
-      await stopFixtureProcess(livePid); livePid = null;
+      await processes.stop(livePid); livePid = null;
       fs.appendFileSync(path.join(snapshot, "prd.md"), "\nAdditional approved snapshot context.\n");
       const changedSnapshot = await acceptAmend({ root, issue: ack.issue, attempt: "1", risk: "deep", text: "Raise risk to deep; approved full snapshot follows.", "full-snapshot": true, snapshot }); livePid = processes.track(changedSnapshot.pid);
       assert.equal(changedSnapshot.pinsVersion, 2, "same snapshot path with changed bytes creates a new version");
       assert.equal(fs.readFileSync(amended.resumeFile, "utf8"), originalResume, "the already registered version is immutable");
-      await stopFixtureProcess(livePid); livePid = null;
+      await processes.stop(livePid); livePid = null;
       const dataset = path.join(scratch, "evidence/datasets/fixture.md"); write(dataset, "Approved review decisions.");
       const laterAmendment = await acceptAmend({ root, issue: ack.issue, attempt: "1", text: "Resume after an independent dataset clarification.", "review-dataset": dataset, "review-dataset-version": "1" }); livePid = processes.track(laterAmendment.pid);
       assert.equal(readJson(laterAmendment.pinsFile).reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(dataset)).digest("hex"));
@@ -535,7 +567,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       assert.equal((await admitCollection(root, datasetVersionReport(5, 1)))[0].manifestDigest, digest(currentPins));
       assert.deepEqual((await admitCollection(root, collectReport))[0], admission, "prior admission is recoverable under its original version");
       await t.test("amend-resume-registration-recovery: finish a delivered amendment without a second launch", async () => {
-        await stopFixtureProcess(livePid); livePid = null;
+        await processes.stop(livePid); livePid = null;
         const resumeScript = path.join(runtime, "orchestrator/resume.mjs"), actualResume = path.join(runtime, "orchestrator/resume.actual.mjs");
         const source = fs.readFileSync(resumeScript, "utf8"); write(actualResume, source);
         write(resumeScript, `import {execFileSync} from "node:child_process";\nconst output=execFileSync(process.execPath,[${JSON.stringify(actualResume)},...process.argv.slice(2)],{encoding:"utf8"});\nprocess.stdout.write(output);process.stderr.write("fixture interruption after successful resume\\n");process.exitCode=1;\n`);
@@ -578,7 +610,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
           fs.appendFileSync(resumeFile, "Changed completed context.\n");
           const changed = run(process.execPath, args); assert.notEqual(changed.status, 0); assert.match(changed.stderr, /completed amendment content changed/u);
           write(resumeFile, originalText); assert.deepEqual(readJson(path.join(root, "workers.json")), before);
-          await stopFixtureProcess(livePid); livePid = null;
+          await processes.stop(livePid); livePid = null;
           assert.equal(JSON.parse(pass(run(process.execPath, args))).pid, originalPid, "an exited delivered worker is not launched again");
           assert.deepEqual(readJson(path.join(root, "workers.json")), before);
           assert.equal(fs.readFileSync(resumeFile, "utf8"), originalText);
@@ -586,7 +618,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       });
       const pendingFile = path.join(path.dirname(entry.pins.file), "amendment.pending.json");
       const isolatedPreparation = async callback => {
-        if (livePid) { await stopFixtureProcess(livePid); livePid = null; }
+        if (livePid) { await processes.stop(livePid); livePid = null; }
         const registryFile = path.join(root, "workers.json"), before = readJson(registryFile), output = path.dirname(entry.pins.file);
         const names = new Set(fs.readdirSync(output));
         const resumeScript = path.join(runtime, "orchestrator/resume.mjs"), resumeSource = fs.readFileSync(resumeScript, "utf8");
@@ -594,7 +626,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         try { await callback({ registryFile, before, output, resumeScript, resumeSource, acceptScript, acceptSource }); }
         finally {
           const pid = readJson(registryFile)[ack.issue].pid;
-          if (pid !== before[ack.issue].pid) await stopFixtureProcess(processes.track(pid));
+          if (pid !== before[ack.issue].pid) await processes.stop(processes.track(pid));
           livePid = null; atomicJson(registryFile, before);
           write(resumeScript, resumeSource); write(acceptScript, acceptSource);
           for (const name of fs.readdirSync(output)) if (!names.has(name)) fs.rmSync(path.join(output, name), { recursive: true, force: true });
@@ -619,7 +651,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
             const result = JSON.parse(pass(run(process.execPath, amendArgs(text))));
             assert.equal(effectivePins(readJson(registryFile)[ack.issue]).reviewDatasetVersion, 7);
             assert.equal(readJson(path.join(path.dirname(launchFile), `pins.v${result.pinsVersion}.json`)).reviewDatasetVersion, 7);
-            await stopFixtureProcess(processes.track(result.pid));
+            await processes.stop(processes.track(result.pid));
           }
         } finally { fs.writeFileSync(launchFile, launchBytes); }
       }));
@@ -638,7 +670,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
           child.kill("SIGTERM"); await exited;
           const retried = JSON.parse(pass(run(process.execPath, args))); assert.equal(retried.version, pending.pinsVersion); assert.equal(retried.state, "registered");
           assert.ok(readJson(registryFile)[ack.issue].workerWritableRoots.includes(fs.realpathSync(extra)));
-        } finally { child.kill("SIGTERM"); await exited; }
+        } finally { child.kill("SIGTERM"); await exited; await processes.stop(child.pid); }
       }));
       await t.test("amend-mark-kept-on-changed-state", () => isolatedPreparation(({ registryFile, resumeScript, resumeSource }) => {
         write(resumeScript, `import path from "node:path";import {readJson,atomicJson} from "../runtime.mjs";
@@ -738,11 +770,11 @@ entry.workerWritableRoots=roots;entry.writable_roots=roots;entry.capsule.writabl
         assert.equal(fs.existsSync(path.join(output, `pins.v${version}.json`)), false);
       }));
       await t.test("amend-earlier-completed-retry: later amendments preserve prior delivery results", async () => {
-        if (livePid) await stopFixtureProcess(livePid); livePid = null;
+        if (livePid) await processes.stop(livePid); livePid = null;
         const command = path.join(runtime, "orchestrator/accept.mjs"), args = [command, "amend", "--root", root, "--issue", ack.issue, "--attempt", "1", "--text"];
         const first = JSON.parse(pass(run(process.execPath, [...args, "First historical amendment."]))); livePid = processes.track(first.pid);
         const firstFiles = [first.pinsFile, first.resumeFile, first.resumeRequest].map(file => [file, fs.readFileSync(file, "utf8")]);
-        await stopFixtureProcess(livePid); livePid = null;
+        await processes.stop(livePid); livePid = null;
         const second = JSON.parse(pass(run(process.execPath, [...args, "Later independent amendment."]))); livePid = processes.track(second.pid);
         assert.equal(second.pinsVersion, first.pinsVersion + 1);
         const registryFile = path.join(root, "workers.json"), before = readJson(registryFile);
@@ -756,7 +788,7 @@ entry.workerWritableRoots=roots;entry.writable_roots=roots;entry.capsule.writabl
           const changed = run(process.execPath, [...args, "First historical amendment."]);
           assert.notEqual(changed.status, 0); assert.match(changed.stderr, /completed amendment content changed/u);
           write(first.resumeFile, firstFiles.find(([file]) => file === first.resumeFile)[1]);
-          await stopFixtureProcess(livePid); livePid = null;
+          await processes.stop(livePid); livePid = null;
           assert.deepEqual(JSON.parse(pass(run(process.execPath, [...args, "First historical amendment."]))), first);
           assert.deepEqual(readJson(registryFile), before);
           for (const [file, bytes] of firstFiles) assert.equal(fs.readFileSync(file, "utf8"), bytes);
@@ -765,7 +797,7 @@ entry.workerWritableRoots=roots;entry.writable_roots=roots;entry.capsule.writabl
       await t.test("amend-historical-omitted-pins-and-snapshot-ambiguity: candidates require distinguishing arguments", async () => {
         const text = "Identical text with different saved effective inputs.", args = amendArgs(text);
         const first = JSON.parse(pass(run(process.execPath, args))); livePid = processes.track(first.pid);
-        await stopFixtureProcess(livePid); livePid = null;
+        await processes.stop(livePid); livePid = null;
         const evolved = path.join(scratch, "evolved-snapshot"); fs.mkdirSync(evolved);
         for (const name of [`issue-${ack.issue}.md`, "approval.md", "project-brief.md", "prd.md", "tech-spec.md"]) fs.copyFileSync(path.join(snapshot, name), path.join(evolved, name));
         fs.appendFileSync(path.join(evolved, "prd.md"), "\nA later approved snapshot.\n");
@@ -779,7 +811,7 @@ entry.workerWritableRoots=roots;entry.writable_roots=roots;entry.capsule.writabl
         assert.deepEqual(fs.readFileSync(registryFile), registry); assert.deepEqual(fs.readdirSync(output), names);
         assert.deepEqual(JSON.parse(pass(run(process.execPath, [...args, "--review-dataset-version", "1"]))), first, "resolve omissions using each candidate, even though current dataset is newer");
         assert.deepEqual(JSON.parse(pass(run(process.execPath, secondArgs))), second);
-        await stopFixtureProcess(livePid); livePid = null;
+        await processes.stop(livePid); livePid = null;
       });
       await t.test("amend-snapshot-replay-uses-recorded-bytes: omitted snapshot ignores changed external inputs", async () => {
         const args = [...amendArgs("Replay saved full documents."), "--full-snapshot", "--snapshot", snapshot];
@@ -797,7 +829,7 @@ entry.workerWritableRoots=roots;entry.writable_roots=roots;entry.capsule.writabl
           assert.equal(JSON.parse(failed.stdout).version, first.version); assert.equal(JSON.parse(failed.stdout).state, "registered");
           fs.writeFileSync(file, original); assert.deepEqual(fs.readFileSync(registryFile), registry);
         }
-        await stopFixtureProcess(livePid); livePid = null;
+        await processes.stop(livePid); livePid = null;
       });
       await t.test("amend-new-request-refusal-before-version-allocation: null version and explicit reason", async () => {
         const registryFile = path.join(root, "workers.json"), bytes = fs.readFileSync(registryFile);
@@ -1061,6 +1093,7 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     const report = phase("preflight", 1, [queued]), reportFile = path.join(root, "reports", `${issue}-phase-preflight.json`);
     atomicJson(modeFile, { crash: true }); atomicJson(reportFile, report);
     await waitUntil(() => fs.existsSync(path.join(evidence, "history")) && fs.readdirSync(path.join(evidence, "history")).length === 1 && collectorStatus(options).status === "stale");
+    await processes.stop(started.pid);
     assert.equal(fs.existsSync(lock), true); assert.equal(fs.existsSync(headLock), true); assert.equal(fs.existsSync(path.join(evidence, `${head}.json`)), false);
     const admissionFile = path.join(root, "consumed", `${issue}-a1/admissions`, `${queued.id}.json`);
     assert.equal(readJson(admissionFile).pinsVersion, 0);
@@ -1069,17 +1102,18 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
     await waitUntil(() => fs.existsSync(validationFile)); validatorPid = processes.track(readJson(validationFile).pid);
     const recoveryPid = started.pid; process.kill(recoveryPid, "SIGKILL"); started = null;
     await waitUntil(() => { try { process.kill(recoveryPid, 0); return false; } catch { return true; } });
+    await processes.stop(recoveryPid);
     const { reclaimLock: reclaimHead } = await import("./runtime.mjs");
     assert.throws(() => reclaimHead(headLock), /locked/u, "a live detached validation gate protects the head lock after collector death");
     await assert.rejects(collectorStart(options), /locked/u);
     atomicJson(modeFile, { crash: false });
-    await waitUntil(() => collectorStatus(options).status === "stale"); validatorPid = null;
+    await waitUntil(() => collectorStatus(options).status === "stale"); await processes.stop(validatorPid); validatorPid = null;
     started = await collectorStart(options); processes.track(started.pid);
     const confirmed = path.join(root, "confirmations", `${issue}-phase-preflight-a1-s1.confirmed.json`);
     await waitUntil(() => fs.existsSync(confirmed)); validateConfirmation(report, readJson(confirmed));
     assert.equal(readJson(countFile).collections, 1, "history recovery never repeats review");
     assert.equal(fs.existsSync(headLock), false); assert.deepEqual(readJson(path.join(evidence, `${head}.json`)), readJson(readJson(confirmed).results[0].evidence.receipt));
-    collectorStop(options); await waitUntil(() => !fs.existsSync(lock)); started = null;
+    collectorStop(options); await waitUntil(() => !fs.existsSync(lock)); await processes.stop(started.pid); started = null;
     assert.equal(collectorStatus(options).status, "stopped");
     await t.test("dead holder cannot reclaim a live orphan descendant", async () => {
       const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { detached: true, stdio: "ignore" });
@@ -1324,7 +1358,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
       assert.ok(fs.readFileSync(launched.dispatchFile, "utf8").includes(head)); assert.ok(fs.readFileSync(launched.dispatchFile, "utf8").includes(hash(bytes)));
       assert.ok(fs.readFileSync(path.join(root, "ledger.md"), "utf8").includes(`PREAPPLY MONO-997 ${head} per mandate ${input.mandate}`));
       assert.ok(fs.readFileSync(path.join(launched.snapshot, "issue-MONO-997.md"), "utf8").endsWith(`# Предприменение\n${good}`));
-      await stopFixtureProcess(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      await processes.stop(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
       // Idempotence is observed even when a later dispatch refusal prevents another worker.
       atomicJson(path.join(root, "control.json"), { state: "paused", halt: true });
       const retry = run(process.execPath, [...options, "--preapply"]); assert.notEqual(retry.status, 0); assert.equal(git(worktree, "rev-parse", "HEAD"), head);
@@ -1334,7 +1368,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
       const recovered = JSON.parse(pass(run(process.execPath, [...options, "--preapply"]))); pid = processes.track(recovered.pid);
       assert.equal(git(worktree, "rev-parse", "HEAD"), head);
       assert.ok(fs.readFileSync(path.join(root, "ledger.md"), "utf8").includes(`PREAPPLY MONO-997 ${head} per mandate ${input.mandate}`));
-      await stopFixtureProcess(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      await processes.stop(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
     });
     await t.test("preapply-repaired-manifest-new-commit", async () => {
       const previous = git(worktree, "rev-parse", "HEAD"), repairedBytes = bytes.replace("AE12 applied", "AE12 repaired");
@@ -1342,20 +1376,20 @@ test("preapply AE12 named contracts on installed scratch", async t => {
       setSpec(repaired); const launched = JSON.parse(pass(run(process.execPath, [...options, "--preapply"]))); pid = processes.track(launched.pid);
       const repairedHead = git(worktree, "rev-parse", "HEAD"); assert.notEqual(repairedHead, previous);
       assert.equal(fs.readFileSync(path.join(worktree, target), "utf8"), repairedBytes);
-      await stopFixtureProcess(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      await processes.stop(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
       const retry = JSON.parse(pass(run(process.execPath, [...options, "--preapply"]))); pid = processes.track(retry.pid);
       assert.equal(git(worktree, "rev-parse", "HEAD"), repairedHead);
-      await stopFixtureProcess(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      await processes.stop(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
     });
     await t.test("preapply-full-materialized-snapshot-retry", async () => {
       const launched = JSON.parse(pass(run(process.execPath, [...options, "--preapply", "--full-snapshot"]))); pid = processes.track(launched.pid);
       const head = git(worktree, "rev-parse", "HEAD"), materialized = fs.readFileSync(path.join(launched.snapshot, "issue-MONO-997.md"), "utf8");
-      await stopFixtureProcess(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      await processes.stop(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
       const retryOptions = [...options]; retryOptions[retryOptions.indexOf("--snapshot") + 1] = launched.snapshot;
       const retried = JSON.parse(pass(run(process.execPath, [...retryOptions, "--preapply", "--full-snapshot"]))); pid = processes.track(retried.pid);
       assert.equal(git(worktree, "rev-parse", "HEAD"), head);
       assert.equal(fs.readFileSync(path.join(retried.snapshot, "issue-MONO-997.md"), "utf8"), materialized);
-      await stopFixtureProcess(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
+      await processes.stop(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
       const attempts = fs.readFileSync(path.join(root, "attempts.json"), "utf8");
       write(path.join(retried.snapshot, "issue-MONO-997.md"), materialized.replace("AE12 repaired", "AE12 forged"));
       retryOptions[retryOptions.indexOf("--snapshot") + 1] = retried.snapshot;
@@ -1377,7 +1411,7 @@ if(isMain(import.meta.url)){ const args=process.argv.slice(2), request=path.join
       try {
         const launched = JSON.parse(pass(run(process.execPath, [...options, "--preapply"]))); pid = processes.track(launched.pid);
         const other = readJson(probe); assert.notEqual(other.status, 0); assert.match(other.stderr, /operation locked/u);
-        await stopFixtureProcess(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
+        await processes.stop(pid); pid = null; atomicJson(path.join(root, "workers.json"), {});
       } finally { write(gate, original); fs.rmSync(backup, { force: true }); }
     });
     await t.test("preapply-issue-only-direct-section", async () => {
@@ -1393,7 +1427,7 @@ if(isMain(import.meta.url)){ const args=process.argv.slice(2), request=path.join
       assert.equal(fs.readFileSync(path.join(launched.snapshot, "issue-MONO-996.md"), "utf8"), laneBody);
       assert.equal(fs.readFileSync(path.join(repo, ".worktrees/MONO-996", target), "utf8"), bytes);
       assert.equal(git(path.join(repo, ".worktrees/MONO-996"), "show", `HEAD:${ignored}`), ignoredBytes.trimEnd());
-      await stopFixtureProcess(pid); pid = null;
+      await processes.stop(pid); pid = null;
     });
     await t.test("preapply-amend-requires-new-dispatch", async () => {
       await assert.rejects(acceptAmend({ root, issue: "MONO-997", attempt: "1", preapply: true }), /new dispatch|новый запуск/u);
