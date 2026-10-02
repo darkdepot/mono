@@ -33,7 +33,8 @@ Project repos keep only `.agents/mono-workflow.config.json`; never install/gener
 
 ## Change Discipline
 
-Start every pack change with a Linear Issue before the first edit. Route pack rule changes through the orchestrator. Update README.md in the same PR as any Issue changing behavior it describes.
+Open a Linear Issue before edits. Rules go through the orchestrator; update README in same PR.
+Task notes: `changelog.d/<ISSUE-KEY>.md`; releases: [Landing](references/landing.md#changelog-assembly).
 
 ## Validation
 

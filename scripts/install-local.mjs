@@ -33,6 +33,7 @@ const INSTALL_LOCK_TOKEN_PATTERN = /^[A-Za-z0-9-]{1,128}$/;
 // launch; watch-workers → delivery-state. Keep every relative import here so
 // the whole executable pack contract is installed together.
 const RUNTIME_SCRIPTS = [
+  "changelog-assemble.mjs",
   "resolve-issue-context.mjs",
   "verify-pack-state.mjs",
   "wave-cost.mjs",

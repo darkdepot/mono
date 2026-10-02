@@ -296,6 +296,14 @@ Products can opt in to a landing policy for parallel task delivery. The rule and
 operator instructions live in [Landing](references/landing.md), with a complete
 [example config](examples/landing-config.json).
 
+Mono enables this policy: ordinary tasks leave a non-empty Markdown record in
+`changelog.d/<ISSUE-KEY>.md`; `CHANGELOG.md` and `VERSION` belong to a separately
+approved release task dispatched by the orchestrator. The release task assembles
+the records with `changelog-assemble.mjs`, then prepares the version section.
+See [assembly and recovery](references/landing.md#changelog-assembly) for the
+command, preview and retry behavior. Merge checks and wave installation remain
+separate deliveries.
+
 ## Owner Rules
 
 The following 34 numbered entries are the sole owner-rule index, transferred from the former constitution. Each line states the obligation, its reason and the executable source; it is not a second full copy of the source text. Rule numbers preserve traceability. Link validation proves that a file and section are addressable; pack checks and same-PR README freshness preserve truth. Change rules through a Linear Issue and the orchestrator.
@@ -385,7 +393,7 @@ Run before completing a change:
 node scripts/verify.mjs
 ```
 
-The entry point includes `git diff --check`, syntax checks, artifact/workflow checks, scratch installation and runtime fixtures. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
+The entry point includes `git diff --check`, syntax checks, artifact/workflow checks, scratch installation and runtime fixtures. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
 Use focused checks while editing:
 

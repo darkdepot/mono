@@ -1072,6 +1072,23 @@ function validateLocalInstallBehavior() {
 
     runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]);
 
+    // U4: invoke the installed assembler away from the checkout; its import
+    // closure and output must match the checked-in golden bytes.
+    const changelogFixture = fs.mkdtempSync(path.join(os.tmpdir(), "mono-installed-changelog-"));
+    try {
+      const golden = JSON.parse(read("scripts/fixtures/changelog-u4/ordered.json"));
+      fs.mkdirSync(path.join(changelogFixture, "changelog.d"));
+      fs.writeFileSync(path.join(changelogFixture, "CHANGELOG.md"), golden.initial);
+      fs.writeFileSync(path.join(changelogFixture, "config.json"), JSON.stringify({ landing: { changelog: {
+        fragmentDir: "changelog.d", target: "CHANGELOG.md", heading: "## [Unreleased]",
+      } } }));
+      for (const [name, text] of Object.entries(golden.fragments)) fs.writeFileSync(path.join(changelogFixture, "changelog.d", name), text);
+      execFileSync(process.execPath, [path.join(skillsRoot, ".mono-agent-workflow/scripts/changelog-assemble.mjs"),
+        "--worktree", changelogFixture, "--config", path.join(changelogFixture, "config.json")], { cwd: changelogFixture });
+      if (fs.readFileSync(path.join(changelogFixture, "CHANGELOG.md"), "utf8") !== golden.expected || fs.readdirSync(path.join(changelogFixture, "changelog.d")).length)
+        fail("installed changelog assembler must match golden output and consume records");
+    } finally { fs.rmSync(changelogFixture, { recursive: true, force: true }); }
+
     // Named integration fixture: the installed wave-cost script must load its
     // sibling review-ledger module, never the upstream source-tree copy.
     const installedWaveCostFixtureRoot = path.join(skillsRoot, "installed-wave-cost-fixture");
@@ -7366,6 +7383,8 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "changelog-assemble.mjs", "--worktree", "--config", "--check", "--test-concurrency=1",
+  "<!-- fragment: <KEY> sha256:<digest> -->", "changelog.d/<ISSUE-KEY>.md",
   "landing", "serialPaths", "changelog", "fragmentDir", "target", "heading",
   "validation", "check", "timeoutSec", "install", "per-merge", "wave-drain",
   "release", "--release", "--no-renames", "landing.serialPaths",
@@ -7963,7 +7982,7 @@ function validateLandingSurface() {
     requireMachineToken(target);
     if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one landing reference`);
   }
-  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task"])
+  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly"])
     if (documentSection(read("references/landing.md"), heading) === null) fail(`landing reference: missing or duplicate section ${heading}`);
   if (documentSection(read("README.md"), "Landing") === null) fail("README: missing Landing section");
   for (const token of ["landing", "serialPaths", "changelog", "fragmentDir", "target", "heading", "validation", "check", "timeoutSec", "install", "per-merge", "wave-drain", "release", "--release", "--no-renames", "landing.serialPaths", "serial path touched: <path>", "landing policy requires pinned dispatch"])
@@ -7971,9 +7990,13 @@ function validateLandingSurface() {
   for (const token of ["<!-- landing:start -->", "<!-- landing:end -->", "{{landing_paths}}", "{{landing_fragments}}", "{{landing_release}}"])
     assertIncludes("templates/orchestrator-dispatch.md", token);
   assertIncludes("README.md", "references/landing.md"); assertIncludes("README.md", "examples/landing-config.json");
+  for (const token of ["changelog-assemble.mjs", "--worktree", "--config", "--check", "<!-- fragment: <KEY> sha256:<digest> -->"])
+    assertIncludes("references/landing.md", token);
+  if (documentSection(read("AGENTS.md"), "Change Discipline") === null) fail("AGENTS: missing Change Discipline section");
+  assertIncludes("AGENTS.md", "changelog.d/<ISSUE-KEY>.md");
 }
 function validateLandingBehavior() {
-  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs"]); }
+  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs", "scripts/changelog-assemble.test.mjs"]); }
   catch (error) { fail(`landing named scratch fixtures: ${error.message}`); }
 }
 function validateCheckModeDeclaration() {
