@@ -244,3 +244,128 @@ First rollout of U7 uses the merged main checkout for record, status, halt,
 verify, install and read-back. Run close from the newly installed runtime, then
 remove halt. The deploy owner records this live proof; worker fixtures do not
 substitute for first application.
+
+## Scheduling
+
+At handoff, put Issues from the same set that must edit the same file in an
+explicit dependency chain. Keep independent work parallel. This is a slicing
+judgment reviewed with the package, not a script gate; shared release paths stay
+with the release Issue under the rules above.
+
+Before dispatching another approved Issue into a running wave, the orchestrator
+runs the observer and considers the reported intersections together with that
+Issue's intended files and dependencies. Resolve a real overlap through the
+Issue's worker or scheduling decision. The observer evaluates only registered
+active attempts with committed work; it cannot evaluate an unlaunched Issue,
+rebase a worker, impose waiting, or change a gate or lifecycle state.
+
+## Landing observer
+
+From the checkout, the orchestrator runs:
+
+```bash
+node scripts/orchestrator/landing-plan.mjs --root ORCHESTRATOR_ROOT --config PRODUCT_CONFIG --json
+```
+
+Installed location:
+`<skills-root>/.mono-agent-workflow/scripts/orchestrator/landing-plan.mjs`.
+Without `landing`, all three commands report `not configured` and change nothing.
+The observer uses the shared `attemptState` classifier and includes every `active`
+registry entry, ordered by `spawned_at`, then Issue key. It obtains each base
+from verified effective pins and each head from its worktree. Missing pins,
+no commits beyond base, a dirty tree (including untracked files), unavailable
+main or another calculation failure yields `unevaluable: <reason>`.
+
+Main refresh is independent of candidate evaluation, including an empty registry.
+Invoke the command from the product checkout: without usable candidate pins, it
+uses that checkout and its origin default-branch ref (or `origin/main` when absent).
+An unavailable tip is `main: null` with an explicit `mainError`.
+Before calculation it fetches the pinned landing branch from origin into a
+disposable bare repository using the existing object store as an alternate. It checks
+main against each evaluable head, then evaluable heads pairwise using
+`git merge-tree --write-tree`. Exit 0 alone means clean; exit 1 means conflict;
+any other exit means `unevaluable: merge-tree error`. Output uses a list of
+verdicts: `clean`, `conflicts-with-main`, `conflicts-with:<KEY>` or
+`unevaluable: <reason>`. Multiple conflicts can coexist. Every invocation appends
+one `LANDING-PLAN` record with main, candidate bases, heads and verdicts, including
+an empty registry. No gate reads this output. Worker files, branches, indexes,
+registry, Git metadata and task states remain unchanged; fetched refs and
+merge-tree objects live only in the temporary repository, which is removed on
+exit. The sole durable observer result is its ledger line. Do not infer semantic compatibility from a clean textual merge.
+
+The owner status has one «Посадка» line: name observed intersections or a clean
+result, and disclose branches that could not be evaluated and why.
+
+## Head observations and refresh history
+
+The orchestrator records the PR-opening head and every newly accepted ship-report
+head, choosing an evidence-supported reason and recording the sibling when known:
+
+```bash
+node scripts/orchestrator/landing-plan.mjs head --root ORCHESTRATOR_ROOT --config PRODUCT_CONFIG --issue KEY --attempt N --sha FULL_SHA --reason opened --json
+node scripts/orchestrator/landing-plan.mjs head --root ORCHESTRATOR_ROOT --config PRODUCT_CONFIG --issue KEY --attempt N --sha FULL_SHA --reason sibling-merge --sibling SIBLING_KEY --json
+node scripts/orchestrator/landing-plan.mjs harvest --root ORCHESTRATOR_ROOT --config PRODUCT_CONFIG --issue KEY --attempt N --pr P --repo OWNER/NAME --json
+```
+
+`head` requires a full 40-character SHA. Reasons are
+`opened|sibling-merge|review-fix|docs|unknown`; `sibling-merge` requires another
+Issue's key, and other reasons have no sibling. An identical
+`{issue, attempt, sha}` adds nothing, preserving the original observation even
+if a later caller supplies another reason. `LANDING-HEAD` is an observation,
+never a counted refresh. Unknown cause remains `unknown`.
+
+After landing, `harvest` reads GitHub GraphQL
+`HEAD_REF_FORCE_PUSHED_EVENT` history page by page. `--repo` defaults to the
+current checkout's GitHub origin; use it explicitly for an upstream PR on a fork.
+Each event produces one `LANDING-REFRESH` identified by
+`{issue, attempt, old, new}`. Its reason and sibling come from the `LANDING-HEAD`
+whose SHA equals `new`, otherwise `unknown`. For A→B→C with only an observation
+of C, A→B stays unknown and B→C takes C's reason. Ordinary appended commits have
+no force-push event and produce no refresh.
+
+A missing event side is stored as `null` and its reason is `unknown`; `createdAt`
+distinguishes incomplete events that would otherwise share the same identity.
+Check-runs on `new` are read with `filter=all` and pagination and stored as
+`{id, name, durationSec}`; an unobservable duration is `null`. Each run on each
+new head is counted once per Issue/attempt, including repeated events pointing
+to that head. Unavailable checks or a missing new head record `checks: "unknown"`.
+Unavailable or incomplete history reads append one `history: "unavailable"`
+record per repository/PR/Issue/attempt; its refresh count remains unknown. A later
+successful harvest can add events but does not erase that evidence limit.
+A repeated harvest adds nothing for already recorded events, including incomplete
+ones. Reads are bounded to 100 pages and a 30-second budget per history/head, with
+at most 10 seconds per request; no command polls. Ledger appends and replay
+checks serialize under `dispatch.lock`, with each line fsynced before proceeding.
+
+Before installing U9, the orchestrator runs harvest from the merged main checkout
+on PR 105: five events must match the Tech Spec sample, and a second run must add
+none. Worker fixtures validate the implementation; that live check qualifies the
+external history contract and belongs to the deploy owner.
+
+## Landing journal and queue decision
+
+All landing entries use the existing `ledger.md` and a UTC stamp from `date -u`:
+
+```text
+- <UTC> LANDING-PLAN {"main":"<sha>","candidates":[{"issue":"<KEY>","attempt":1,"base":"<sha>","head":"<sha>","main":"<sha>","verdicts":["conflicts-with:<KEY>"]}]}
+- <UTC> LANDING-HEAD {"issue":"<KEY>","attempt":1,"sha":"<sha>","reason":"sibling-merge","sibling":"<KEY>"}
+- <UTC> LANDING-REFRESH {"issue":"<KEY>","attempt":1,"repo":"<OWNER/NAME>","pr":105,"old":"<sha>","new":"<sha>","createdAt":"<UTC>","reason":"unknown","checks":[{"id":1,"name":"validate","durationSec":116}]}
+```
+
+`LANDED` carries PR, merge SHA, merge time and the check outcome on that merge;
+`LANDING-CORRECTIVE` carries its red tip, corrective Issue and reason;
+`DRAIN-CLOSE` carries the installed composition and evidence, as defined above.
+Only `LANDING-REFRESH` counts branch history rewrites; never count observations or
+ordinary added commits. Missing history, checks or durations are unknown costs,
+not zero. Count sibling-caused events only when their recorded reason is
+`sibling-merge`; do not guess from temporal proximity.
+
+Decide on a mandatory waiting queue only after at least 30 landings, and only
+when time and checks spent on sibling-caused refreshes exceed estimated waiting.
+Waiting is the interval from the first `LANDING-PLAN` predicting
+`conflicts-with:<KEY>` to that sibling's `LANDED` timestamp. Preserve the Issue/
+attempt association; compare measured refresh effort and check durations with
+those waiting intervals, exposing unknown data and the cost-estimation assumptions.
+Until that decision is supported, the observer advises and work stays parallel
+under the dependency/scheduling rules. No waiting queue or new cost model is
+introduced here.
