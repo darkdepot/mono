@@ -28,6 +28,14 @@
       "mandate": "https://linear.app/darkdepot/project/deshyovye-volny-melkaya-zadacha-prohodit-pak-bez-lishnih-krugov-7568245cece3#comment-bffb2598-8fc2-4c90-8ac7-51d61442efdb"
     }
   },
+  "landing": {
+    "serialPaths": ["CHANGELOG.md", "VERSION"],
+    "changelog": {
+      "fragmentDir": "changelog.d",
+      "target": "CHANGELOG.md",
+      "heading": "## [Unreleased]"
+    }
+  },
   "issueOnlyLane": {
     "enabled": false
   },
