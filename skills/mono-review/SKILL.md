@@ -5,6 +5,8 @@ description: Use when reviewing Linear Project, PRD, Tech Spec, Issue, a propose
 
 # Mono Review
 
+Find shared files here or at the pack root.
+
 Use this skill to review the quality of Mono workflow artifacts before handoff, delivery, issue creation, or ship.
 
 `mono-review` is report-only. It finds drift, gaps, and decisions. It must not create, update, delete, or silently repair Project, PRD, Tech Spec, Issue, or PR state.

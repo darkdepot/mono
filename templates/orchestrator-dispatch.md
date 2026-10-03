@@ -28,6 +28,7 @@ compares `git show <sha>` blobs to that block and the snapshot manifest at start
 - profile: {{profile}} (default full; short requires tiny/standard, critical null, afk true, openDecisions 0)
 - pins: {{pins_file}} / {{pins_digest}}; pinsVersion: 0
 - Gate request: {{gate_request}} (lock/pins/worktree/branch/base)
+- Pack root: {{pack_root}}
 - Runtime scripts: {{runtime_scripts}}
 - Product: {{product}}
 - evidenceRoot: {{evidence_root}} (outside EVERY worker-writable root)
@@ -149,19 +150,15 @@ end of the attempt. Missing matrix/checkpoint evidence causes a recorded
 - Transport: {{transport}}
 - Delivery skill body: {{delivery_skill}}; read fully before work for codex-cli; invoke installed skill for other transports
 - Project config: `.agents/mono-workflow.config.json`
-- Pack identity gate: {{identity_command}}; all four pinned flags, single-quoted paths/values; require exit 0 and pack-state: identity verified; never substitute checkout SURFACE_REVISION
+- Pack identity gate: {{identity_command}}; all present identity pins, single-quoted paths/values; require exit 0 and pack-state: identity verified; never substitute checkout SURFACE_REVISION
 - Sandbox: workspace-write, network ON, {{writable_roots}}; phase authority still limits writes
   codex 0.153.4 protects the metadata directory of an explicitly listed linked worktree.
 - Report delivery: {{mailbox}}; fallback {{fallback}}
 
-The codex-cli installed root is `~/.codex/skills/`. Emit this command with every placeholder resolved; it is invocation data, not a second gate definition:
+Emit the resolved command below; it is invocation data, not a second gate definition:
 
 ```bash
-node '{{skills_root_quoted}}/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \
-  --lock '{{skills_root_quoted}}/.mono-agent-workflow.lock.json' \
-  --pack-version '{{pack_version}}' \
-  --source-commit '{{source_commit}}' \
-  --surface-revision '{{surface_revision}}'
+{{identity_command}}
 ```
 
 ## Context Snapshot

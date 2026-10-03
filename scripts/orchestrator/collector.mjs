@@ -4,7 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants } from "../runtime.mjs";
+import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants, packLayout } from "../runtime.mjs";
 import { confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
 import { commandFlags, allowedFlags, registryEntry, correlatedPhase, validateReportBarriers, admitCollection, CollectionAdmissionRefusal, effectivePins, sha256File } from "./command-state.mjs";
 
@@ -19,7 +19,7 @@ function verifyReceipt(file, request) {
   if (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink() || key.length !== 32 || envelope.signature !== signature ||
       receipt?.producer !== "gate-autoreview-v2" || !/^[a-f0-9-]{36}$/.test(receipt.runId ?? "") ||
       fs.realpathSync(file) !== path.join(fs.realpathSync(request.evidenceRoot), "history", `${receipt.runId}.json`)) throw new Error("invalid signed history receipt");
-  const expected = { collectionId: request.collectionId, head: request.head, product: request.product, skillsRoot: request.skillsRoot,
+  const expected = { ...(request.packRoot ? { packRoot: request.packRoot } : {}), collectionId: request.collectionId, head: request.head, product: request.product, skillsRoot: request.skillsRoot,
     ...(request.pins ? { pins: request.pins } : {}),
     root: fs.realpathSync(request.root), worktree: fs.realpathSync(request.worktree), evidenceRoot: fs.realpathSync(request.evidenceRoot),
     risk: request.risk, critical: request.critical, workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort(),
@@ -43,7 +43,7 @@ function historyReceipt(request) {
 async function runGate(options, request, heldLock = null) {
   const file = path.join(options.root, "reports", `${options.issue}-collector-a${options.attempt}-request.json`);
   atomicJson(file, request);
-  const script = path.join(request.skillsRoot, ".mono-agent-workflow", "scripts", "gate.mjs");
+  const script = packLayout(request.packRoot ?? request.skillsRoot).script("gate.mjs");
   // Release the isolated gate only after its incarnation is durably registered.
   // Parent death before release closes stdin, so no unregistered gate can run.
   const runner = `let token=""; for await (const chunk of process.stdin) token += chunk;

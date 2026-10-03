@@ -176,7 +176,7 @@ export function collectionPinsBinding(entry, version = entry.pinsVersion ?? 0) {
   return { file, digest: sha256File(file) };
 }
 export function collectionPinMismatch(request, pins) {
-  for (const key of ["product", "root", "worktree", "skillsRoot", "baseRef", "evidenceRoot", "modelRoutes", "verification", "risk", "critical", "reviewDataset", "reviewDatasetVersion", "workerWritableRoots"]) {
+  for (const key of ["product", "root", "worktree", "packRoot", "skillsRoot", "baseRef", "evidenceRoot", "modelRoutes", "verification", "risk", "critical", "reviewDataset", "reviewDatasetVersion", "workerWritableRoots"]) {
     const fallback = key === "reviewDatasetVersion" ? 0 : null;
     if (canonical(request[key] ?? fallback) !== canonical(pins[key] ?? fallback)) return { field: key, expected: pins[key] ?? fallback };
   }

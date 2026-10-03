@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkPlugin } from "./validate-plugin.mjs";
 import { measureReadBudget, readingPaths, READ_BUDGET_MAX_BYTES, DELIVERY_SKILLS } from "./read-budget.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -383,6 +384,7 @@ function validateReadBudgetFixtures() {
         write(`${skill}/references/nested.md`, "Read `references/shared.md`.\n");
       }
       fs.renameSync(path.join(scratch, "skills"), path.join(scratch, "source-skills"));
+      write(".mono-agent-workflow/scripts/runtime.mjs", read("scripts/runtime.mjs"));
       write(".mono-agent-workflow/scripts/read-budget.mjs", read("scripts/read-budget.mjs"));
       const result = spawnSync(process.execPath, [path.join(scratch, ".mono-agent-workflow/scripts/read-budget.mjs"), "--json"], { cwd: os.tmpdir(), encoding: "utf8" });
       require(result.status === 0, result.stderr);
@@ -1391,11 +1393,11 @@ function validatePackIdentityAndQuiescenceBehavior() {
       );
     }
 
-    const surfaceRevisionMatch = read("scripts/install-local.mjs").match(
+    const surfaceRevisionMatch = read("scripts/runtime.mjs").match(
       /const SURFACE_REVISION = (\d+);/
     );
     if (!surfaceRevisionMatch) {
-      fail("install-local must declare the canonical numeric SURFACE_REVISION");
+      fail("runtime must declare the canonical numeric SURFACE_REVISION");
     } else {
       // The report and registry examples must never hand a worker a concrete
       // revision to copy: during a surface cut-over the code constant and the
@@ -6859,7 +6861,7 @@ const STRING_PINS = [
   ["templates/orchestrator-dispatch.md","{{project_brief}}"],
   ["templates/orchestrator-dispatch.md","{{review_project}}"],
   ["templates/orchestrator-dispatch.md","{{runtime_scripts}}"],
-  ["templates/orchestrator-dispatch.md","{{skills_root_quoted}}"],
+  ["templates/orchestrator-dispatch.md","{{pack_root}}"],
   ["templates/orchestrator-dispatch.md","{{snapshot_note}}"],
   ["templates/orchestrator-dispatch.md","{{source_commit}}"],
   ["templates/orchestrator-dispatch.md","{{spawn_request}}"],
@@ -6899,7 +6901,6 @@ const STRING_PINS = [
   ["templates/check-output.md","Следующий unblock:"],
   ["templates/check-output.md","Нарушение контракта:"],
   ["templates/check-output.md","Как починить:"],
-  ["templates/orchestrator-dispatch.md","~/.codex/skills/"],
   ["templates/orchestrator-dispatch.md",".orchestrator/"],
   ["templates/orchestrator-brief.md","Что решаем:"],
   ["templates/orchestrator-brief.md","Почему сейчас:"],
@@ -6970,7 +6971,7 @@ const STRING_PINS = [
   ["references/issue-only-lane.md","scripts/resolve-issue-context.mjs"],
   ["references/issue-only-lane.md","issueOnlyLane.enabled: true"],
   ["references/issue-only-lane.md","ownerPrincipal"],
-  ["references/issue-only-lane.md",".mono-agent-workflow/scripts/resolve-issue-context.mjs"],
+  ["references/issue-only-lane.md","scripts/resolve-issue-context.mjs"],
   ["skills/mono-implement/SKILL.md","lifecycle_state_entity=issue"],
   ["references/worker-contract.md","approval_status=approved-fresh"],
   ["references/issue-only-lane.md","Approval: superseded"],
@@ -6987,7 +6988,7 @@ const STRING_PINS = [
   ["skills/mono-issue/SKILL.md","--issue <issue-body> --emit-fingerprint"],
   ["skills/mono-issue/SKILL.md","--issue <live-issue-body> --emit-fingerprint"],
   ["skills/mono-issue/SKILL.md","--approval-verified"],
-  ["skills/mono-issue/SKILL.md",".mono-agent-workflow/scripts/resolve-issue-context.mjs"],
+  ["skills/mono-issue/SKILL.md","scripts/resolve-issue-context.mjs"],
   ["skills/mono-issue/SKILL.md","issueOnlyLane.ownerPrincipal"],
   ["skills/mono-issue/SKILL.md","route_revision"],
   ["skills/mono-idea/SKILL.md","mono-issue"],
@@ -7041,10 +7042,10 @@ const STRING_PINS = [
   ["references/orchestration.md","EVENT:"],
   ["references/orchestration.md","model_reasoning_effort"],
   ["skills/mono-orchestrate/SKILL.md","watch-workers.mjs"],
-  ["skills/mono-orchestrate/SKILL.md","../.mono-agent-workflow/scripts/watch-workers.mjs"],
-  ["references/orchestration.md","node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>"],
-  ["references/install.md",".mono-agent-workflow/scripts/watch-workers.mjs"],
-  ["references/versioning.md",".mono-agent-workflow/scripts/watch-workers.mjs"],
+  ["skills/mono-orchestrate/SKILL.md","scripts/watch-workers.mjs"],
+  ["references/orchestration.md","node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>"],
+  ["references/install.md","scripts/watch-workers.mjs"],
+  ["references/versioning.md","scripts/watch-workers.mjs"],
   ["references/orchestration.md","recorded-late"],
   ["references/orchestration.md","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"],
   ["references/orchestration.md","compaction-safe"],
@@ -7074,10 +7075,10 @@ const STRING_PINS = [
   ["references/worker-contract.md","pass | deferred | not-run"],
   ["templates/orchestrator-dispatch.md","references/orchestration.md"],
   ["skills/mono-implement/SKILL.md","references/worker-contract.md"],
-  ["references/worker-contract.md","node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity"],
-  ["references/worker-contract.md","--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'"],
+  ["references/worker-contract.md","node '<pack-root>/scripts/verify-pack-state.mjs' identity"],
+  ["references/worker-contract.md","--pack-root '<pack-root>'"],
   ["references/worker-contract.md","--pack-version '<dispatch packVersion>'"],
-  ["references/worker-contract.md","--source-commit '<dispatch sourceCommit>'"],
+  ["references/worker-contract.md","--source-commit"],
   ["references/worker-contract.md","--surface-revision '<dispatch surfaceRevision>'"],
   ["references/ship-feedback-loop.md","gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[] | select(.state==\"PENDING\")'"],
   ["templates/orchestrator-brief.md","Изменилось после твоего одобрения:"],
@@ -7451,7 +7452,7 @@ const MACHINE_TOKENS = new Set([
   "{{project_brief}}",
   "{{review_project}}",
   "{{runtime_scripts}}",
-  "{{skills_root_quoted}}",
+  "{{pack_root}}",
   "{{snapshot_note}}",
   "{{source_commit}}",
   "{{spawn_request}}",
@@ -7516,20 +7517,20 @@ const MACHINE_TOKENS = new Set([
   "--emit-fingerprint",
   "--issue <issue-body> --emit-fingerprint",
   "--issue <live-issue-body> --emit-fingerprint",
-  "--lock '<installed-skills-root>/.mono-agent-workflow.lock.json'",
+  "--pack-root '<pack-root>'",
   "--pack-version '<dispatch packVersion>'",
   "--pack-version '<packVersion above>'",
-  "--source-commit '<dispatch sourceCommit>'",
+  "--source-commit",
   "--source-commit '<sourceCommit above>'",
   "--surface-revision '<dispatch surfaceRevision>'",
   "--surface-revision '<surfaceRevision above>'",
-  "../.mono-agent-workflow/scripts/watch-workers.mjs",
-  "../.mono-agent-workflow/scripts/wave-cost.mjs",
+  "scripts/watch-workers.mjs",
+  "scripts/wave-cost.mjs",
   ".agents/mono-workflow.config.json",
   ".claude/settings.json",
   ".mono-agent-workflow.lock.json",
-  ".mono-agent-workflow/scripts/resolve-issue-context.mjs",
-  ".mono-agent-workflow/scripts/watch-workers.mjs",
+  "scripts/resolve-issue-context.mjs",
+  "scripts/watch-workers.mjs",
   ".orchestrator/",
   "< /dev/null",
   "AGENTS.md",
@@ -7712,8 +7713,8 @@ const MACHINE_TOKENS = new Set([
   "needs-fixes",
   "needs-human",
   "next",
-  "node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>",
-  "node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity",
+  "node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>",
+  "node '<pack-root>/scripts/verify-pack-state.mjs' identity",
   "node scripts/install-local.mjs",
   "node scripts/project-config.mjs",
   "none",
@@ -7828,7 +7829,6 @@ const MACHINE_TOKENS = new Set([
   "workflows.qa",
   "} while (args.once && oneShotNeedsRescan)",
   "~/.claude/skills",
-  "~/.codex/skills/",
   "Блокирующие замечания:",
   "В работе сейчас:",
   "Дальше по очереди:",
@@ -8132,7 +8132,7 @@ function validateAe6Fixtures() {
     if (failures.length === before) console.log(`PASS AE6 ${label}: red, restored green`);
   }
   try {
-    for (const name of ["skills", "references", "templates", "scripts", "AGENTS.md", "README.md", "CHANGELOG.md", "examples"]) {
+    for (const name of ["skills", "references", "templates", "scripts", "AGENTS.md", "README.md", "CHANGELOG.md", "examples", "VERSION", ".claude-plugin", ".codex-plugin"]) {
       fs.cpSync(path.join(root, name), file(name), { recursive: true });
     }
     check();
@@ -8218,7 +8218,7 @@ function validateCostCommandStructure() {
   const status = read("skills/mono-orchestrate/SKILL.md");
   for (const [label, text, field] of [["deploy cost step", deploy, "Cost:"], ["orchestrator status", status, "Цена волны:"]]) {
     if (text === null) { fail(`${label}: missing or duplicate named step`); continue; }
-    for (const token of ["../.mono-agent-workflow/scripts/wave-cost.mjs", field, "unavailable: <reason>"]) {
+    for (const token of ["scripts/wave-cost.mjs", field, "unavailable: <reason>"]) {
       requireMachineToken(token);
       if (!text.includes(token)) fail(`${label}: missing command operand ${token}`);
     }
@@ -8277,6 +8277,7 @@ if (process.argv.includes("--model-policy-only") || process.argv.includes("--mod
   process.exit(0);
 }
 
+failures.push(...checkPlugin(root));
 validateLandingSurface();
 validateDocumentSkeleton();
 validateCheckModeDeclaration();

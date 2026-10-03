@@ -5,6 +5,8 @@ description: Use when checking Linear Project, PRD, Tech Spec, Issue, artifact r
 
 # Mono Check
 
+Find shared files here or at the pack root.
+
 Use this skill as a report-only, best-effort transition gate. It inspects Linear context and reports whether the workflow can move forward. It does not provide deterministic proof and must not rewrite artifacts silently.
 
 Read first:

@@ -235,12 +235,12 @@ seam. It mirrors the deterministic-config-script structure of
 - **Installed location (runtime):** the intake transaction runs the resolver from
   an installed environment, so `scripts/install-local.mjs` publishes it — per
   skills root — at the canonical pack-private path
-  `<skills-root>/.mono-agent-workflow/scripts/resolve-issue-context.mjs`,
+  `<pack-root>/scripts/resolve-issue-context.mjs`,
   recorded in the lockfile's `runtimeScripts` (see `references/install.md`). The
   create-then-approve intake transaction invokes it there; because the
   pack-private directory is one level up from any installed `mono-*` skill
   directory, a skill reaches it at
-  `../.mono-agent-workflow/scripts/resolve-issue-context.mjs`. Product repos
+  `scripts/resolve-issue-context.mjs`. Product repos
   never vendor the script — the installer owns the copy. In this upstream
   checkout the same script is `scripts/resolve-issue-context.mjs`.
 

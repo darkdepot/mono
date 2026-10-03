@@ -149,6 +149,11 @@ checks fail. When the field is present but the helper is unavailable in the
 agent runtime, `mono-preflight` stops `blocked` instead of replacing the
 review gate.
 
+Plugins pin absolute `packRoot` for their gate/model policy. Identity: `VERSION`,
+runtime `SURFACE_REVISION`, optional `sourceCommit`. Strict report/task equality.
+Missing folder: new attempt. External `autoreview`: separate `skillsRoot`.
+Protect both roots/helper real path; legacy uses lock.
+
 The helper remains external and independently updateable. Model selection is
 therefore owned by this workflow: `mono-preflight` passes the explicit
 model resolved from [role:autoreview](model-policy.md#roles) and reasoning effort defined in

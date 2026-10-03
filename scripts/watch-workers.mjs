@@ -46,7 +46,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { validatePhase, validateConfirmation, confirmationPath, correlatedDeliveryReport } from "./delivery-state.mjs";
-import { deliveryConfig, processStart, IDENTITY_FIELDS } from "./runtime.mjs";
+import { deliveryConfig, processStart, IDENTITY_FIELDS, identity } from "./runtime.mjs";
 
 const DEFAULT_STALL_SEC = 120;
 const MIN_STALL_SEC = 90;
@@ -681,16 +681,7 @@ function readGateAck(reportsDir, log, registryEntry) {
   return ack;
 }
 
-function hasPackIdentity(value) {
-  return (
-    typeof value?.packVersion === "string" &&
-    value.packVersion.length > 0 &&
-    typeof value.sourceCommit === "string" &&
-    /^[0-9a-f]{40}$/.test(value.sourceCommit) &&
-    Number.isInteger(value.surfaceRevision) &&
-    value.surfaceRevision > 0
-  );
-}
+function hasPackIdentity(value) { return identity(value); }
 
 // Shared correlation surface for the two delivery events: only a codex-cli
 // worker whose registry entry names this exact log, this stage, and a full

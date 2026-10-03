@@ -5,6 +5,8 @@ description: Use after mono-ship reports green to merge/deploy through the confi
 
 # Mono Deploy
 
+Find shared files here or at the pack root.
+
 Use this skill after `mono-ship` has created a deploy-ready PR and recorded a `mono-ship green certificate`.
 
 `mono-deploy` owns merge/deploy delegation, deploy evidence, post-ship Linear closeout, and durable operational learning capture. It must not create the PR, run local branch preflight, or perform initial implementation.
@@ -56,7 +58,7 @@ Record approval as `Деплой одобрен: <кем/когда>; PR #<n>, h
 8. `post-ship`: run/report `mono-check post-ship` after evidence exists.
 9. `mono-closeout`: set Issue Done only after verified deploy (or recorded policy accepting merge as delivery), plus green live QA for user-facing changes or explicit permitted not-run reason. Failed live QA is never excused as skipped.
 10. `project-update`: execute the update procedure below.
-11. `cost`: run installed `../.mono-agent-workflow/scripts/wave-cost.mjs <ISSUE-KEY>` from this skill directory after closeout evidence. Copy exact final Russian line into closeout/report `Cost:`. Unmeasurable script/component = `unavailable: <reason>`; telemetry never blocks/delays closeout.
+11. `cost`: run `node '<pack-root>/scripts/wave-cost.mjs' <ISSUE-KEY>` after closeout evidence. Copy exact final Russian line into closeout/report `Cost:`. Unmeasurable script/component = `unavailable: <reason>`; telemetry never blocks/delays closeout.
 12. `learn`: record new durable operational discoveries via `gstack-learnings-log`.
 13. `retire`: after verified delivery and Linear closeout, synchronously remove Issue from `workers.json` in this orchestrator session before terminal closeout. No worker ack/intermediate status; keep reports/logs. Never retire blocked/needs-human/failed/timed-out work or leave a deployed worker active.
 14. Return `templates/deploy-output.md`.

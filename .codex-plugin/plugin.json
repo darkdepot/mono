@@ -1,0 +1,8 @@
+{
+  "name": "mono",
+  "version": "0.22.0",
+  "description": "Linear-backed delivery from an idea to a reviewed PR.",
+  "author": { "name": "Mono" },
+  "skills": "./skills/",
+  "interface": { "displayName": "Mono", "shortDescription": "Deliver approved Linear Issues to reviewed PRs." }
+}

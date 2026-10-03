@@ -214,6 +214,59 @@ including failed collections. Incarnation/group checks refuse live or unverified
 locks. This removes manual confirmation work; measured time/token savings still
 require comparable completed waves under the cost protocol.
 
+## Plugin Installation
+
+Clone [darkdepot/mono](https://github.com/darkdepot/mono) and register the local marketplace:
+
+```bash
+git clone https://github.com/darkdepot/mono.git
+cd mono
+claude plugin marketplace add "$PWD"
+claude plugin install mono@mono-marketplace
+codex plugin marketplace add "$PWD"
+codex plugin add mono@mono-marketplace
+```
+
+Restart sessions after installation. The external `autoreview` helper remains a
+separate prerequisite in your tool's skills directory; pass that directory as
+`--skills-root` when dispatching. The plugin contains one copy of shared files:
+`skills/`, `references/`, `templates/` and `scripts/` have the repository layout.
+Skills retain their current names until the later rename release.
+
+Do not enable automatic updates for Mono. Update deliberately after a release.
+Before any install/update that replaces a plugin folder, have each affected
+product orchestrator pause new dispatch. Keep dispatch paused through the check
+and replacement. Check the folder against attempts of every product, including
+paused attempts:
+
+```bash
+node /path/to/current/mono/scripts/verify-pack-state.mjs before-update --folder /path/to/replaced/mono
+```
+
+A refusal names the product, Issue and attempt; wait for completion or retire the
+attempt through its orchestrator. This check reads registries only. A new sibling
+folder does not replace the old folder. Attempts retain their original absolute
+`packRoot`; compatible newer scripts can resume them while that folder exists.
+Missing folders require a new attempt. Worker sandboxes protect both the pack
+folder and the external helper directory.
+
+For isolated installation verification, set `CLAUDE_CONFIG_DIR` to an empty
+temporary directory for Claude, and use a separate empty Codex home through
+`CODEX_HOME`, then run the same marketplace/install commands. Locate the installed
+folder using `claude plugin list --json` or `codex plugin add --json`, and run:
+
+```bash
+node /path/to/installed/mono/scripts/verify-pack-state.mjs version
+```
+
+To try the checkout without installing, launch Claude from the repository with
+`claude --plugin-dir "$PWD"`. Launch `codex --cd "$PWD"` and open
+`skills/<skill>/SKILL.md` directly; shared files resolve from that repository.
+These sessions do not change the installed pack.
+See [Claude's manifest reference](https://code.claude.com/docs/en/plugins-reference)
+and [OpenAI's package documentation](https://developers.openai.com/plugins/build/plugins).
+The existing installer below remains supported until the machine migration.
+
 ## Install Locally
 
 Prerequisites: a checkout of this repository, Node.js for its scripts, Git, the relevant agent runtime and Linear access for the orchestrator/interactive owner stages, GitHub access through `gh`, and an installed external `autoreview` skill/helper. Mono does not vendor that helper; missing mandatory review support blocks readiness. Use the policy model and [canonical effort routes](references/autoreview-routing.md#canonical-routes).

@@ -5,6 +5,8 @@ description: Use for accepted pre-ship drift, PR creation, documentation and rev
 
 # Mono Ship
 
+Find shared files here or at the pack root.
+
 [Landing](references/landing.md).
 
 Own PR/docs/review through green, never merge/deploy/closeout. Route code/hygiene to implement/preflight. Require approved Linear Issue; discovery/docs/GitHub Issues cannot substitute.

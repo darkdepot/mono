@@ -139,7 +139,7 @@ node scripts/changelog-assemble.mjs --worktree . --config .agents/mono-workflow.
 ```
 
 From an installed pack, use
-`<skills-root>/.mono-agent-workflow/scripts/changelog-assemble.mjs` with the same
+`<pack-root>/scripts/changelog-assemble.mjs` with the same
 flags and the product's worktree and config paths. `--check` prints the resulting
 target file and writes nothing. Without `landing.changelog`, the command reports
 `not configured` and exits successfully.
@@ -182,7 +182,7 @@ node scripts/orchestrator/landing-guard.mjs check --repo OWNER/NAME --sha FULL_S
 ```
 
 Installed location:
-`<skills-root>/.mono-agent-workflow/scripts/orchestrator/landing-guard.mjs`.
+`<pack-root>/scripts/orchestrator/landing-guard.mjs`.
 `--sha` accepts only a full 40-character SHA. Without `landing.validation`, `check`
 reports `not configured`, returns 0 and makes no observation or GitHub request.
 
@@ -243,7 +243,7 @@ uncertainty remains `active`. State readers name the reason; they never retire
 attempts. Installed archives retain the landing identity after pending removal.
 
 The orchestrator uses `landing-drain.mjs` from the checkout, or
-`<skills-root>/.mono-agent-workflow/scripts/orchestrator/landing-drain.mjs` once
+`<pack-root>/scripts/orchestrator/landing-drain.mjs` once
 installed. All commands take `--root ORCHESTRATOR_ROOT --config PRODUCT_CONFIG`;
 `--json` returns structured output. With `per-merge` (default) or no install
 subblock, these commands report `not configured`, return 0 and change nothing.
@@ -324,7 +324,7 @@ node scripts/orchestrator/landing-plan.mjs --root ORCHESTRATOR_ROOT --config PRO
 ```
 
 Installed location:
-`<skills-root>/.mono-agent-workflow/scripts/orchestrator/landing-plan.mjs`.
+`<pack-root>/scripts/orchestrator/landing-plan.mjs`.
 Without `landing`, all three commands report `not configured` and change nothing.
 The observer uses the shared `attemptState` classifier and includes every `active`
 registry entry, ordered by `spawned_at`, then Issue key. It obtains each base

@@ -5,6 +5,8 @@ description: Use after excluding a raw idea when a request is unmistakably one-P
 
 # Mono Issue
 
+Find shared files here or at the pack root.
+
 Use this skill as the front door for genuinely one-PR, projectless work that qualifies for the issue-only lane. It collapses idea → discovery → handoff → issue into a single gate: a self-contained Linear Issue, an owner-approved scope fingerprint, and the `issue-only` label — no Project, PRD, or Tech Spec.
 
 `mono-issue` owns first-time issue-only intake and create-then-approve renewal for an existing issue-only Issue. It is a front door, not a redirect or an internal atomic adapter. It grants the lane only when every eligibility condition holds.
@@ -73,9 +75,9 @@ Approval binds to the full whole-body SHA-256 of the Issue contract. Run these s
 
 1. Create or update a non-startable Issue in the intake-authorized draft mode. Author the self-contained body by applying `references/contracts/issue.md` directly, especially `IS-005` through `IS-018` and `IS-028` through `IS-034`; do not call or read another Issue-writing SKILL.md. Leave the state type in `triage`, `backlog`, or `unstarted`. Set the assignee to the acting user (`assignee: "me"` on the Linear connector) when creating the Issue; a renewal leaves the existing assignee untouched. Assignment is Linear metadata rather than body content, so it changes no part of the whole-body fingerprint the owner approves below. Author the theme-project line `templates/issue.md` requires in `Связи`: name in `Тематический проект: <имя>` the project whose theme this work continues — an already completed project is a valid choice — or write `Тематический проект: нет — <почему>` when no project's theme fits. It is body content, so it is inside the fingerprint the owner approves. Do not write the marker or label yet.
 2. Run the mandatory review gate on the drafted body. `standard` requires `mono-review issue-only` to reach `ready`; `tiny` may use an explicitly recorded advisory exception. Record the disposition before fingerprinting.
-3. Compute the fingerprint only with the installer-published resolver: `node ../.mono-agent-workflow/scripts/resolve-issue-context.mjs --issue <issue-body> --emit-fingerprint`. Pass the reviewed Issue body explicitly. Do not add a second hashing path or concatenate sections.
+3. Fingerprint only with `node '<pack-root>/scripts/resolve-issue-context.mjs' --issue <issue-body> --emit-fingerprint`. Pass the reviewed Issue body explicitly. Do not add a second hashing path or concatenate sections.
 4. Present the reviewed body and exact fingerprint and wait for an explicit owner decision. Never self-approve or manufacture approval through the owner's connector. After the owner explicitly approves, record that decision as a Linear approval comment naming the exact fingerprint, made by or on the explicit instruction of the owner principal, and capture the comment author's stable Linear user ID for read-back. A connector comment without the preceding explicit decision carries no authority.
-5. Read back the live body and approval comment. Recompute with `node ../.mono-agent-workflow/scripts/resolve-issue-context.mjs --issue <live-issue-body> --emit-fingerprint`; require both fingerprint equality and the owner principal's stable Linear user ID as author.
+5. Read back the live body and approval comment. Use `node '<pack-root>/scripts/resolve-issue-context.mjs' --issue <live-issue-body> --emit-fingerprint`; require both fingerprint equality and the owner principal's stable Linear user ID as author.
 6. Bind label first, marker last. Set `issue-only`, then write the `mono-issue-only marker` with exactly `Marker version`, `Scope fingerprint`, `Acceptance IDs`, `Risk class`, and `Approval`. On any error, roll back the partial state. The marker must not contain `route_revision`, `assurance_vector`, `required_artifacts`, or a sixth field: маркер ≠ route-record.
 7. Run the readiness check before activation: `mono-check issue` in issue-only mode must return `PASS`. Otherwise remove the marker and label and return `BLOCKED`.
 8. Leave a prepared, approved, non-startable package. Intake never moves the Issue to started; `mono-implement` owns activation after resolver and delivery-check read-back.
@@ -96,7 +98,7 @@ The lane remains config-gated. It is usable only when the consuming repo explici
 
 - Never create Project, PRD, or Tech Spec artifacts or their chips/resources in issue-only.
 - Never infer issue-only from marker text alone; marker, verified label, authenticated explicit approval, config opt-in, and eligible risk must all agree.
-- Reuse the installer-published resolver for every fingerprint and resolution; protocol strings and its five-field output are byte-stable.
+- Reuse the resolver for every fingerprint and resolution; protocol strings and its five-field output are byte-stable.
 - Write Linear-facing content in the project config language; default to Russian. Repo instructions remain English.
 - Follow the machine-block convention: a short human lead precedes the unchanged marker block.
 

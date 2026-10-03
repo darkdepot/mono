@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { atomicJson, readJson, isMain, deliveryConfig, RISK_KEYS, withLock, baseModelConfig, validateLanding } from "../runtime.mjs";
+import { atomicJson, readJson, isMain, deliveryConfig, RISK_KEYS, withLock, baseModelConfig, validateLanding, packLayout, runtimePackRoot } from "../runtime.mjs";
 import { commandFlags, allowedFlags, sha256File } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
 import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
@@ -47,8 +47,9 @@ async function prepareDispatch(args) {
   for (const key of ["root", "config", "snapshot"]) if (!path.isAbsolute(args[key] ?? "")) throw new Error(`absolute --${key} required`);
   const config = readJson(args.config), settings = config.orchestration?.dispatch ?? {};
   const repo = path.dirname(path.dirname(args.config));
-  const skillsRoot = args["skills-root"] ?? path.resolve(directory, "../../..");
-  const lock = path.join(skillsRoot, ".mono-agent-workflow.lock.json"), installed = readJson(lock);
+  const layout = packLayout(runtimePackRoot()), packRoot = layout.root;
+  const skillsRoot = args["skills-root"] ?? (layout.legacy ? packRoot : path.join(os.homedir(), '.codex/skills'));
+  const lock = layout.lock, installed = layout.identity();
   let body = read(args.snapshot, `issue-${issue}.md`), approval = read(args.snapshot, "approval.md");
   const issueOnly = fs.existsSync(path.join(args.snapshot, "issue-only.json"));
   const lane = issueOnly ? readJson(path.join(args.snapshot, "issue-only.json")) : null;
@@ -104,7 +105,7 @@ async function prepareDispatch(args) {
   const output = path.join(args.root, "dispatch", `${issue}-a${attempt}`);
   fs.mkdirSync(output, { recursive: true });
   const gateFile = path.join(output, "start-gate.json"), spawnFile = path.join(output, "spawn.json"), pinsFile = path.join(output, "pins.json"), dispatchFile = path.join(output, "dispatch.md"), movesFile = path.join(output, "moves.json");
-  const gate = { worktree, branch, base, lock, packVersion: installed.packVersion, sourceCommit: installed.sourceCommit, surfaceRevision: installed.surfaceRevision };
+  const gate = { worktree, branch, base, packRoot, skillsRoot, ...(lock ? { lock } : {}), packVersion: installed.packVersion, sourceCommit: installed.sourceCommit, surfaceRevision: installed.surfaceRevision };
   const modelFile = path.join(output, "model-request.json"); atomicJson(modelFile, { ...gate, role });
   const modelRoutes = JSON.parse(run("spawn.mjs", ["--pins", modelFile]));
   const pins = { ...gate, release, modelRoutes, product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
@@ -128,11 +129,11 @@ async function prepareDispatch(args) {
     writable_roots: extras, workerWritableRoots: roots, gates, lifecycle_moves: moves, config: args.config, product_name: product, handshake, profile,
     pins: { file: pinsFile, digest: pinsDigest }, pinsVersion: 0, risk, critical, afk, openDecisions };
   atomicJson(spawnFile, request);
-  const identityCommand = `node ${q(path.join(directory, "../verify-pack-state.mjs"))} identity --lock ${q(lock)} --pack-version ${q(installed.packVersion)} --source-commit ${q(installed.sourceCommit)} --surface-revision ${q(installed.surfaceRevision)}`;
+  const identityCommand = `node ${q(path.join(directory, "../verify-pack-state.mjs"))} identity ${lock ? `--lock ${q(lock)}` : `--pack-root ${q(packRoot)}`} --pack-version ${q(installed.packVersion)}${installed.sourceCommit ? ` --source-commit ${q(installed.sourceCommit)}` : ""} --surface-revision ${q(installed.surfaceRevision)}`;
   const ack = path.join(args.root, "reports", `${issue}-gate-ack-a${attempt}.json`);
   const fallbackAck = path.join(worktree, ".orchestrator", `${issue}-gate-ack-a${attempt}.json`);
   const waitCommand = location => `node ${q(path.join(directory, "../delivery-state.mjs"))} wait-ack --root ${q(args.root)} --issue ${q(issue)} --attempt ${q(attempt)} --ack ${q(location)} --moves ${q(movesFile)} --config ${q(args.config)}`;
-  const collectionRequest = { product, root: pins.root, worktree, head: "HEAD", collectionId: "preflight-collect:HEAD:1", skillsRoot,
+  const collectionRequest = { product, root: pins.root, worktree, head: "HEAD", collectionId: "preflight-collect:HEAD:1", packRoot, skillsRoot,
     baseRef: pins.baseRef, evidenceRoot, modelRoutes: pins.modelRoutes, verification: pins.verification, risk: pins.risk, critical: pins.critical,
     workerWritableRoots: pins.workerWritableRoots, ...(pins.reviewDataset ? { reviewDataset: pins.reviewDataset } : {}),
     reviewDatasetVersion: pins.reviewDatasetVersion, pins: { file: pinsFile, digest: pinsDigest }, collect: false };
@@ -140,10 +141,10 @@ async function prepareDispatch(args) {
     collection_request: JSON.stringify(collectionRequest, null, 2),
     gate_request: gateFile, runtime_scripts: path.resolve(directory, ".."), product, evidence_root: evidenceRoot, model_routes: JSON.stringify(modelRoutes),
     preflight_pins: JSON.stringify(pins), writable_roots: JSON.stringify(roots), confirmation_timeout: deliveryConfig(config).confirmationTimeoutSec,
-    worktree, branch, pack_version: installed.packVersion, source_commit: installed.sourceCommit, surface_revision: installed.surfaceRevision,
+    worktree, branch, pack_version: installed.packVersion, source_commit: installed.sourceCommit ?? "not provided (plugin)", pack_root: packRoot, surface_revision: installed.surfaceRevision,
     outcome: section(body, "Что сделать", true), verification_items: section(body, "Как проверить", true), constraints: section(body, "Ключевые контракты") || section(body, "Что не входит", true),
-    budget: settings.budget ?? "~4 hours", transport: "codex-cli", delivery_skill: path.join(skillsRoot, "mono-deliver/SKILL.md"), identity_command: identityCommand,
-    mailbox: path.join(args.root, "reports"), fallback: path.join(worktree, ".orchestrator"), skills_root_quoted: skillsRoot.replaceAll("'", "'\\''"),
+    budget: settings.budget ?? "~4 hours", transport: "codex-cli", delivery_skill: layout.skill("mono-deliver"), identity_command: identityCommand,
+    mailbox: path.join(args.root, "reports"), fallback: path.join(worktree, ".orchestrator"),
     project_brief: brief, prd: extracts.prd, spec: extracts.spec, issue_body: body, approval, marker: lane?.marker ?? "n/a (project-first)", label: lane?.label ?? "n/a (project-first)",
     fingerprint: issueOnly ? lane.fingerprint : "n/a (project-first)", issue_only_config: lane?.config ?? "n/a (project-first)", owner_approval: lane?.ownerApproval ?? "n/a (project-first)",
     context_seam: JSON.stringify(seam), decisions: approval, moves: JSON.stringify(moves), gates: JSON.stringify(gates), gate_ack: ack,
@@ -153,7 +154,7 @@ async function prepareDispatch(args) {
     landing_fragments: landing.changelog?.fragmentDir ?? "не задан", landing_release: String(release) });
   const pilot = args["review-pilot"] ? readJson(args["review-pilot"]) : null;
   if (pilot) Object.assign(values, { review_project: pilot.project, dataset_version: pilot.version, dataset_path: pilot.path, dataset_digest: pilot.digest });
-  const template = fs.readFileSync(path.join(skillsRoot, "mono-orchestrate/templates/orchestrator-dispatch.md"), "utf8");
+  const template = fs.readFileSync(layout.template("orchestrator-dispatch.md"), "utf8");
   fs.writeFileSync(dispatchFile, renderDispatch(template, values, Boolean(pilot)));
   let originalHead, preapplied = null, preapplyLine = null;
   const ledgerFile = path.join(args.root, "ledger.md");

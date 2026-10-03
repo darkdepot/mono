@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { packLayout, runtimePackRoot } from './runtime.mjs';
 
 // Validator ceiling for the union, in bytes. Tokens are only bytes / 4.
 export const READ_BUDGET_MAX_BYTES = 99_882;
@@ -59,10 +60,8 @@ export function readingPaths(text) {
 
 export function measureReadBudget(root) {
   root = fs.realpathSync(root);
-  const installed = !fs.existsSync(path.join(root, "skills/mono-implement/SKILL.md"));
-  const fileFor = (name) => path.join(root, installed
-    ? name.startsWith("skills/") ? name.slice(7) : `mono-implement/${name}`
-    : name);
+  const layout = packLayout(root), installed = layout.legacy;
+  const fileFor = name => layout.file(name);
   const normalize = (reference, from) => {
     if (/^mono-[^/]+\/SKILL\.md$/.test(reference)) reference = `skills/${reference}`;
     if (/^(?:https?:|\/)/.test(reference) || /[<>*]/.test(reference)) return null;
@@ -102,8 +101,7 @@ export function measureReadBudget(root) {
 const self = fileURLToPath(import.meta.url);
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(self)) {
   try {
-    let root = path.resolve(path.dirname(self), "..");
-    if (path.basename(root) === ".mono-agent-workflow") root = path.dirname(root);
+    let root = runtimePackRoot();
     let json = false;
     for (let i = 2; i < process.argv.length; i++) {
       const arg = process.argv[i];
