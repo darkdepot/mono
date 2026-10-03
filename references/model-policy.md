@@ -56,8 +56,8 @@ unmeasured model remains an assumption.
 `resolveRole(role, config)` reads table → override and fingerprints the canonical
 route plus config digest. Resolve from the immutable BASE config at launch;
 record `modelRoutes{base,configDigest,roles}` in dispatch/request/registry.
-Config diffs cannot change pinned routes. New settings govern new launches. Resumes retain pins, never backfill unknowns; changed pack identity
-still forbids resume.
+Keep launch routes on resume; never backfill. Config changes affect new launches
+only. [Pack compatibility](versioning.md#local-lockfile).
 
 ## Orchestrator self-check
 

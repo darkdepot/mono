@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, canonical, digest, readJson, identity, withLock, baseModelConfig, validateLanding, processStart } from "../runtime.mjs";
+import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, baseModelConfig, validateLanding, processStart } from "../runtime.mjs";
 import { validatePhase, confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
 
 export const sha256File = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -37,7 +37,7 @@ export function correlatedPhase(root, file) {
   const candidates = [path.join(root, "reports", `${report.issue}-phase-${report.phase}.json`),
     path.join(entry.worktree, ".orchestrator", `${report.issue}-phase-${report.phase}.json`)].filter(name => fs.existsSync(name));
   if (candidates.length !== 1 || fs.realpathSync(file) !== fs.realpathSync(candidates[0])) throw new Error("phase report absent, misplaced or in both locations");
-  if (["packVersion", "sourceCommit", "surfaceRevision"].some(key => entry[key] !== report[key])) throw new Error("phase pack identity mismatch");
+  if (IDENTITY_FIELDS.some(key => entry[key] !== report[key])) throw new Error("phase pack identity mismatch");
   const published = Date.parse(report.publishedAt);
   if (!Number.isFinite(published) || published > Date.now() || published < Date.parse(entry.spawned_at)) throw new Error("phase publication time invalid");
   return { report, entry };

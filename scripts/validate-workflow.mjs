@@ -1329,26 +1329,19 @@ function validatePackIdentityAndQuiescenceBehavior() {
       String(identity.surfaceRevision),
     ]);
 
-    // AC2: either immutable source commit or surface revision drift is a hard
-    // stage block. Both fields are changed in one probe so the error must name
-    // both mismatches rather than short-circuiting after the first.
-    expectCommandFailure(
-      "pack identity mismatch fixture",
-      () =>
-        runNode([
-          script,
-          "identity",
-          "--lock",
-          lockPath,
-          "--pack-version",
-          identity.packVersion,
-          "--source-commit",
-          "b".repeat(40),
-          "--surface-revision",
-          "3",
-        ]),
-      "sourceCommit expected"
-    );
+    // Compatible pack update: version and source commit are descriptive pins.
+    runNode([
+      script,
+      "identity",
+      "--lock",
+      lockPath,
+      "--pack-version",
+      "99.0.0",
+      "--source-commit",
+      "b".repeat(40),
+      "--surface-revision",
+      String(identity.surfaceRevision),
+    ]);
     expectCommandFailure(
       "pack surface revision mismatch fixture",
       () =>
@@ -1364,7 +1357,7 @@ function validatePackIdentityAndQuiescenceBehavior() {
           "--surface-revision",
           "3",
         ]),
-      "surfaceRevision expected 3 but installed 1"
+      "surfaceRevision expected 3 but installed 1; start a new attempt"
     );
 
     // AC3: breaking-install quiescence is exactly idle + empty registry.
@@ -7172,7 +7165,7 @@ const STRING_PINS = [
   ["references/review-rubric.md","`advisory-ready`"],
   ["references/review-rubric.md","`needs-fixes`"],
   ["references/review-rubric.md","`blocked`"],
-  ["references/orchestration.md","EVENT:<stall|dead|spawn-fail|report|phase|gate-ack|halt|idle>"],
+  ["references/orchestration.md","EVENT:<stall|dead|spawn-fail|report|phase|phase-rejected|gate-ack|halt|idle>"],
   ["references/orchestration.md","`recorded-late`"],
 ];
 const REQUIRED_HEADINGS = [
@@ -7562,7 +7555,7 @@ const MACHINE_TOKENS = new Set([
   "Documentation workflow",
   "Drift candidate:",
   "EVENT:",
-  "EVENT:<stall|dead|spawn-fail|report|phase|gate-ack|halt|idle>",
+  "EVENT:<stall|dead|spawn-fail|report|phase|phase-rejected|gate-ack|halt|idle>",
   "Exit disposition:",
   "Expansion destination:",
   "Frozen slice disposition:",

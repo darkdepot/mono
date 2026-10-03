@@ -4,7 +4,7 @@
 // "## Heartbeat"). Watches one orchestrator mailbox root and prints one
 // stable line per worker liveness event to stdout:
 //
-//   <ISO time> EVENT:<stall|dead|spawn-fail|report|gate-ack|idle> <ISSUE-KEY|-> <detail>
+//   <ISO time> EVENT:<stall|dead|spawn-fail|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>
 //
 // Checks per scan (log checks apply only to Issues present in workers.json,
 // the active registry; logs of retired Issues are history and are skipped
@@ -46,7 +46,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { validatePhase, validateConfirmation, confirmationPath, correlatedDeliveryReport } from "./delivery-state.mjs";
-import { deliveryConfig, processStart } from "./runtime.mjs";
+import { deliveryConfig, processStart, IDENTITY_FIELDS } from "./runtime.mjs";
 
 const DEFAULT_STALL_SEC = 120;
 const MIN_STALL_SEC = 90;
@@ -86,7 +86,7 @@ function usage(exitCode = 2) {
   console.error("");
   console.error("Watch an orchestrator mailbox root (logs/, reports/, workers.json) and");
   console.error("print one line per worker liveness event to stdout:");
-  console.error("  <ISO time> EVENT:<stall|dead|spawn-fail|report|gate-ack|idle> <ISSUE-KEY|-> <detail>");
+  console.error("  <ISO time> EVENT:<stall|dead|spawn-fail|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>");
   console.error("");
   console.error("Options:");
   console.error("  --root <dir>        Orchestrator root, e.g. ~/.mono-agent-workflow/orchestrator/<product> (required)");
@@ -179,6 +179,7 @@ if (!fs.existsSync(args.root) || !fs.statSync(args.root).isDirectory()) {
 
 const emittedAt = new Map();
 const emittedReportVersions = new Map();
+const emittedRejectedPhaseVersions = new Map();
 const emittedGateAckVersions = new Map();
 const logInspectionStates = new Map();
 const warnedOnce = new Set();
@@ -806,7 +807,7 @@ function correlatedReport(log, reportsDir, registryEntry) {
   if (!isFreshForLog(reportStat, log)) return null;
 
   if (report?.issue !== log.issue || report?.stage !== log.stage || !hasPackIdentity(report)) return null;
-  for (const field of ["packVersion", "sourceCommit", "surfaceRevision"]) {
+  for (const field of IDENTITY_FIELDS) {
     if (report[field] !== registryEntry[field]) return null;
   }
   if (report.stage === "mono-deliver" && (report.attempt !== log.attempt ||
@@ -1104,7 +1105,15 @@ function checkPhase(log, entry, nowMs) {
       const file = present[0], stat = fs.statSync(file);
       if (stat.size > 4 * 1024 * 1024 || stat.mtimeMs > nowMs + FS_TIMESTAMP_SLACK_MS) continue;
       const report = validatePhase(JSON.parse(fs.readFileSync(file, "utf8")));
-      if (report.issue !== log.issue || report.attempt !== log.attempt || ["packVersion", "sourceCommit", "surfaceRevision"].some(key => report[key] !== entry[key])) continue;
+      const mismatches = ["issue", "attempt", ...IDENTITY_FIELDS].filter(key => report[key] !== entry[key]);
+      if (mismatches.length) {
+        const version = `${stat.mtimeMs}:${stat.size}:${mismatches.join(",")}`;
+        if (emittedRejectedPhaseVersions.get(file) !== version) {
+          emittedRejectedPhaseVersions.set(file, version);
+          emitEvent("phase-rejected", log.issue, `phase report ${path.basename(file)} rejected for attempt ${entry.attempt}: identity mismatch (${mismatches.join(", ")})`, `phase-rejected:${file}:${version}`, nowMs);
+        }
+        continue;
+      }
       const publishedAtMs = Date.parse(report.publishedAt);
       if (!Number.isFinite(publishedAtMs) || publishedAtMs > nowMs + FS_TIMESTAMP_SLACK_MS) continue;
       phases.push({ file, stat, report, publishedAtMs });

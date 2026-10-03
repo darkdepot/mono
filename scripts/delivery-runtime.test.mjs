@@ -55,6 +55,13 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     pass(run("git", ["config", "core.fsmonitor", fsmonitor], repo, env));
     const gateRequest = path.join(root, "gate.json"); write(gateRequest, baseRequest);
     pass(run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, env));
+    write(lock, { ...pins, packVersion: "99.0.0", sourceCommit: "b".repeat(40) });
+    pass(run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, env));
+    write(lock, { ...pins, surfaceRevision: pins.surfaceRevision + 1 });
+    const incompatibleStart = run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, env);
+    assert.equal(incompatibleStart.status, 1);
+    assert.match(incompatibleStart.stdout + incompatibleStart.stderr, /surfaceRevision.*new attempt/);
+    write(lock, pins);
     const globalConfig = path.join(root, "global-gitconfig"), globalIgnore = path.join(root, "global-ignore");
     write(globalIgnore, "global-only.tmp\n");
     write(globalConfig, `[core]\nexcludesFile = ${JSON.stringify(globalIgnore)}\nfsmonitor = ${JSON.stringify(fsmonitor)}\n`);
@@ -711,6 +718,16 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     const phaseWatch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
     assert.match(phaseWatch.stdout, /EVENT:phase.*MONO-999/);
     assert.doesNotMatch(phaseWatch.stdout, /EVENT:(dead|stall)/);
+    const codeReportPath = path.join(state, "reports/MONO-999-phase-code.json");
+    for (const [field, value] of [["packVersion", "99.0.0"], ["sourceCommit", "b".repeat(40)], ["surfaceRevision", pins.surfaceRevision + 1]]) {
+      write(codeReportPath, { ...report, [field]: value });
+      const rejectedPhase = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
+      assert.match(rejectedPhase.stdout, /EVENT:phase-rejected MONO-999/);
+      assert.match(rejectedPhase.stdout, /attempt 1: identity mismatch/);
+      assert.ok(rejectedPhase.stdout.includes(field), rejectedPhase.stdout);
+      assert.doesNotMatch(rejectedPhase.stdout, /EVENT:phase MONO-999/);
+    }
+    write(codeReportPath, report);
     await confirmQueue(report, state, () => { throw new Error("empty queue must not invoke adapter"); });
     const preflightReport = publishPhase({ ...report, phase: "preflight", capsule: { ...report.capsule, phase: "preflight" } }, path.join(state, "reports/MONO-999-phase-preflight.json"));
     const laterPhaseWatch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
@@ -824,9 +841,9 @@ console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
       assert.equal(starts().length, 1);
     }
     write(lock, { ...pins, surfaceRevision: pins.surfaceRevision + 1 });
-    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [root] }), /pack identity changed/);
+    await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [root] }), /surfaceRevision.*new attempt/);
     assert.equal(starts().length, 1);
-    write(lock, pins);
+    write(lock, { ...pins, packVersion: "99.0.0", sourceCommit: "b".repeat(40) });
     const beforeResume = json(path.join(state, "workers.json"));
     beforeResume[request.issue].writable_roots = [];
     write(path.join(state, "workers.json"), beforeResume);
@@ -836,6 +853,8 @@ console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
     assert.deepEqual(argsRoots(starts().at(-1).args), canonicalExpected);
     assert.deepEqual(starts().at(-1).credentialDigests, credentialDigests);
     const resumed = json(path.join(state, "workers.json"))[request.issue];
+    assert.equal(resumed.packVersion, pins.packVersion);
+    assert.equal(resumed.sourceCommit, pins.sourceCommit);
     for (const actual of [resumed.writable_roots, resumed.workerWritableRoots, resumed.capsule.writable_roots]) assert.deepEqual(actual, canonicalExpected);
     assert.equal(starts().at(-1).gitDir, path.join(second, ".git"));
     assert.equal(process.env.GIT_DIR, path.join(second, ".git"));

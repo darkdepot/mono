@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, identity, isMain, flags, withLock, deliveryConfig, validateEvidenceGrants } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, isMain, flags, withLock, deliveryConfig, validateEvidenceGrants } from "./runtime.mjs";
 
 import { validateEntry } from "./decisions.mjs";
 
@@ -12,7 +12,7 @@ export const PARKED_REASONS = ["blocked", "needs-decision", "needs-human", "drif
 export function correlatedDeliveryReport(report, stat, entry, logStat, stallSec = 120) {
   return entry?.transport === "codex-cli" && entry.stage === "mono-deliver" && identity(entry) && identity(report) &&
     report.issue === entry.issue && report.stage === entry.stage && report.attempt === entry.attempt &&
-    ["packVersion", "sourceCommit", "surfaceRevision"].every(field => report[field] === entry[field]) &&
+    IDENTITY_FIELDS.every(field => report[field] === entry[field]) &&
     ["green", "parked"].includes(report.status) && (report.status !== "parked" ||
       (PARKED_REASONS.includes(report.reason) && typeof report.text === "string" && report.text.trim().length > 0)) &&
     stat.isFile() && logStat.isFile() && stat.mtimeMs >= logStat.birthtimeMs &&
@@ -107,7 +107,7 @@ export function validateConfirmation(report, confirmation) {
 }
 function requirePredecessors(report, root, reportsDir, action) {
   const sameAttempt = candidate => candidate.issue === report.issue && candidate.attempt === report.attempt &&
-    ["packVersion", "sourceCommit", "surfaceRevision"].every(field => candidate[field] === report[field]);
+    IDENTITY_FIELDS.every(field => candidate[field] === report[field]);
   function confirmed(phase, sequence, published) {
     const label = `phase ${phase} sequence ${sequence}`;
     const file = confirmationPath({ ...report, phase, sequence }, root);

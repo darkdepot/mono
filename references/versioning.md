@@ -96,9 +96,15 @@ Example shape:
 `upstreamVersion`, generated body hashes, and copied asset hashes as the
 meaningful release metadata.
 
-Before starting or resuming a worker stage, compare its dispatch triplet to the
-installed lock with `verify-pack-state.mjs identity`. Any `packVersion`,
-`sourceCommit`, or `surfaceRevision` mismatch blocks the stage. The helper's
+Before starting or resuming a worker stage, run `verify-pack-state.mjs identity`
+with the dispatch triplet and installed lock. Compatibility between the installed
+pack and the task requires equal `surfaceRevision` only. Different `packVersion`
+or `sourceCommit` values do not block start or resume; both remain descriptive
+metadata in dispatches, task records and reports. A different `surfaceRevision`
+blocks with an instruction to start a new attempt. Report-to-task correlation
+still requires strict equality of all identity fields; compatibility never relaxes
+that comparison. The shared `IDENTITY_FIELDS` constant in `scripts/runtime.mjs`
+defines those fields. The helper's
 `quiescence` mode accepts only `control.json` in `idle` state plus an empty
 `workers.json`; A5 publishes this probe without adding the breaking installer
 mode owned by A6.

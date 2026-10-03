@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
-import { atomicJson, readJson, identity, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart } from "../runtime.mjs";
+import { atomicJson, readJson, identity, requireCompatiblePack, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart } from "../runtime.mjs";
 import { startGate, reviewEnvironment } from "../gate.mjs";
 import crypto from "node:crypto";
 import { effectivePins, attemptState } from "./command-state.mjs";
@@ -244,7 +244,7 @@ export async function resumeWorker(request) {
       checkReleaseAvailability(request.root, readJson(path.join(request.root, "workers.json")), entry.issue);
     if (!entry.model_launch?.model_parameter || !entry.model_launch?.effort_parameter) throw new Error("missing launch pins; never backfill a resume from current policy");
     const installed = readJson(entry.lock);
-    if (["packVersion", "sourceCommit", "surfaceRevision"].some(key => installed[key] !== entry[key])) throw new Error("pack identity changed; resume refused");
+    requireCompatiblePack(installed, entry);
     const prompt = fs.readFileSync(request.resumeFile, "utf8");
     if (request.network_access !== undefined && typeof request.network_access !== "boolean") throw new Error("network_access override must be boolean");
     const roots = effectiveGrants(entry, request.root, request.extraWritable ?? [], request.workerWritableRoots ?? entry.workerWritableRoots);
