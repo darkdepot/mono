@@ -216,7 +216,11 @@ require comparable completed waves under the cost protocol.
 
 ## Plugin Installation
 
-Clone [darkdepot/mono](https://github.com/darkdepot/mono) and register the local marketplace:
+Clone [darkdepot/mono](https://github.com/darkdepot/mono) and register the local marketplace.
+Use the released version at the verified landing tip; follow
+[source verification and update conditions](references/install.md#plugin-updates)
+immediately before each installation command. Existing local-installer users
+first follow [the migration procedure](#migrate-from-the-local-installer).
 
 ```bash
 git clone https://github.com/darkdepot/mono.git
@@ -243,18 +247,21 @@ paused attempts:
 node /path/to/current/mono/scripts/verify-pack-state.mjs before-update --folder /path/to/replaced/mono
 ```
 
-A refusal names the product, Issue and attempt; wait for completion or retire the
-attempt through its orchestrator. This check reads registries only.
-Entries without a pack root are listed as unknown and do not block the update.
+A refusal names the product, Issue and attempt; wait for those attempts to finish
+and become landed and stopped. Do not remove their records to bypass the check.
+This check reads registries only. Entries without a pack root are listed as
+unknown and do not block the update.
 A new sibling folder does not replace the old folder. Attempts retain their
 original absolute `packRoot`; compatible newer scripts can resume them while that folder exists.
-Missing folders require a new attempt. Worker sandboxes protect both the pack
+If a task outlives the tool's retention of its version and the folder is gone,
+start a new attempt. Worker sandboxes protect both the pack
 folder and the external helper directory.
 
 For isolated installation verification, set `CLAUDE_CONFIG_DIR` to an empty
 temporary directory for Claude, and use a separate empty Codex home through
 `CODEX_HOME`, then run the same marketplace/install commands. Locate the installed
-folder using `claude plugin list --json` or `codex plugin add --json`, and run:
+folder using `claude plugin list --json` or the JSON output captured during
+Codex installation (`codex plugin add --json mono@mono-marketplace`), and run:
 
 ```bash
 node /path/to/installed/mono/scripts/verify-pack-state.mjs version
@@ -267,6 +274,106 @@ These sessions do not change the installed pack.
 See [Claude's manifest reference](https://code.claude.com/docs/en/plugins-reference)
 and [OpenAI's package documentation](https://developers.openai.com/plugins/build/plugins).
 The existing installer below remains supported until the machine migration.
+
+## Migrate From the Local Installer
+
+Migration is one machine-wide installation shared by all products. The product
+performing it installs a wave that ends with the approved migration release;
+the owner authorizes the migration in that release task. The legacy installer
+remains in that release for rollback. Do not install intervening pack changes
+between this migration and the project's final release.
+
+1. **Halt launches in every product.** Each product's own orchestrator pauses
+   dispatch/resume and keeps it paused through migration and installation
+   verification. The installing orchestrator does not edit another product's
+   configuration, control files or registry.
+2. **Check each product's conditions.** In the installing product, all attempts
+   in the wave must be landed and stopped under
+   [wave installation](references/landing.md#install); retain their records until
+   the wave is closed. Each **other** product's orchestrator confirms its current
+   quiescence: `control.state` is `idle` and `workers.json` is empty. That
+   orchestrator runs the existing read-only check and reports its result:
+
+   ```bash
+   node /path/to/current/mono/scripts/verify-pack-state.mjs quiescence --root /path/to/own/product-state
+   ```
+
+   A paused or unfinished attempt in another product prevents migration. Its
+   own orchestrator finishes it or resolves it before confirming quiescence.
+3. **Verify the released landing tip T.** From the main repository checkout,
+   complete `landing-drain record/status/verify` under halt. The release task
+   must have landed; HEAD must equal GitHub's current landing tip T, all recorded
+   merges must be ancestors of T, and T's validation must pass. Confirm the tag
+   `v<VERSION>` points to T. Immediately before each installation command,
+   compare all files the tool will copy with T: no changed, missing or additional
+   bytes, including Git-ignored files. Empty Git status is necessary but
+   insufficient; use [the complete source-check rule](references/install.md#plugin-updates).
+4. **Remove the exact legacy footprint and install the plugin in both tools.**
+   In each skills root (`~/.claude/skills`, `~/.codex/skills`, and any additional
+   root recorded by the legacy installation), remove only these eleven
+   directories and two private paths:
+
+   ```text
+   mono-idea/        mono-handoff/    mono-issue/      mono-implement/
+   mono-preflight/   mono-ship/       mono-deploy/     mono-orchestrate/
+   mono-deliver/     mono-check/      mono-review/
+   .mono-agent-workflow/
+   .mono-agent-workflow.lock.json
+   ```
+
+   Preserve other skills, including the external `autoreview` helper, and all
+   product state. Do not use a wildcard deletion to remove an unexplained
+   lookalike. Register the local marketplace and install using
+   [Plugin Installation](#plugin-installation), from the verified main checkout.
+   Before any command that replaces a version folder, run `before-update` against
+   that actual folder across **all** products, even for a same-version reinstall;
+   keep launches halted and wait for any named attempts. For later releases,
+   use `claude plugin update mono@mono-marketplace` and
+   `codex plugin add mono@mono-marketplace` under the same rules.
+5. **Verify installation before closing the wave.** Check every legacy skills
+   root for any name beginning with `mono-`, plus the private directory and
+   lockfile. The following read-only check fails and prints every remaining
+   path; include all additional roots from step 4 in its arguments:
+
+   ```bash
+   python3 - "$HOME/.claude/skills" "$HOME/.codex/skills" <<'PY'
+   import sys
+   from pathlib import Path
+   remaining = []
+   for root in map(Path, sys.argv[1:]):
+       if root.exists():
+           remaining.extend(str(p) for p in root.iterdir()
+                            if p.name.startswith('mono-') or p.name in
+                            {'.mono-agent-workflow', '.mono-agent-workflow.lock.json'})
+   for item in sorted(remaining):
+       print(item)
+   raise SystemExit(1 if remaining else 0)
+   PY
+   ```
+
+   Locate both installed plugin folders with `claude plugin list --json` and
+   the JSON output captured during the guarded Codex installation (add `--json`
+   to its installation command). Run each installed folder's
+   `scripts/verify-pack-state.mjs version`: both versions must equal `VERSION`
+   at T, and the version tag must resolve to T. A leftover copy or mismatch
+   blocks wave close. Restart the orchestrator sessions and their collector and
+   watcher from the plugin, preserving the launch halts; each other product's
+   own orchestrator reads this section, confirms its plugin paths and unchanged
+   product policy/state, and starts a skill from the plugin. Start a plugin skill
+   in each tool. Skill names retain `mono-*` until the later rename release.
+6. **Close the wave, then resume launches.** The installing orchestrator runs
+   `landing-drain close` from the installed plugin only after both tools' proof
+   and the no-old-copies check pass. It records each task's delivery proof,
+   closes its Issues and retires its attempts through the deploy owner. Each
+   product's own orchestrator then removes its launch halt; other products'
+   state is never edited by the installing orchestrator.
+
+If migration stops after removing legacy copies, keep launches halted. The
+release's rollback is to reinstall with the legacy installer from the **first
+migration release commit**, where it still exists, and restore the previous
+`workflows.deploy` value through its config owner. Restart sessions and verify
+that installation before resuming. The other product's config and state remain
+its own orchestrator's responsibility.
 
 ## Install Locally
 
@@ -376,11 +483,15 @@ Ordinary merges and installation wait
 for a green main tip; a repair uses the named corrective exception. See
 [merge validation](references/landing.md#merge-validation) for commands, result
 codes and first-rollout qualification. Mono selects `landing.install: "wave-drain"`:
-the orchestrator records each merged task and installs once after every registered
-worker is stopped and landed. Verification under halt fixes the batch, checks
+the orchestrator records each merged task and updates the plugin once after the
+release task and after every registered worker is stopped and landed.
+Verification under halt fixes the batch, checks
 GitHub's installation tip and every merge's ancestry; close after installation
 read-back preserves per-task delivery proof. Failed installation retains pending
-tasks for correction. See [install and recovery](references/landing.md#install).
+tasks for correction. Installed versions in both tools must equal `VERSION` at
+the landing tip, and its version tag must point to that tip. See
+[install and recovery](references/landing.md#install) and
+[one-time migration](#migrate-from-the-local-installer).
 
 ## Owner Rules
 

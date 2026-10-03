@@ -1,6 +1,9 @@
 # Install Guide
 
-Install this workflow as a local skill pack. Project repos must not contain
+Install this workflow as a plugin using the [README commands](../README.md#plugin-installation).
+The legacy local skill pack remains available until the one-time
+[machine migration](../README.md#migrate-from-the-local-installer).
+Project repos must not contain
 workflow skill bodies, generated wrappers, workflow lockfiles, local workflow
 checkers, or updater CI.
 
@@ -225,19 +228,90 @@ pinned landing branch, and checks every merge SHA is an ancestor of T. Comparing
 only the local checkout with itself or only checking the last task's merge is
 insufficient. Fetch missing commits and inspect divergence before retrying.
 
-Keep halt through installation and all-root read-back. Confirm each installed
-lock's `sourceCommit` equals T and the product's installation check passes before
-`close`; include `{issue, attempt, pr, mergeSha, installSha}` in each task's
-closeout evidence. A skill-pack task's installed version must contain its merge
-commit; it need not be identical to that merge when later wave commits are in T.
-If GitHub advances before installation, verify the new T from its matching
-checkout before proceeding. Pending records survive failed installation.
+For Mono, the wave ends with a release task. Install or update the plugin only
+after that task has landed, from the main repository checkout at the verified T.
+Immediately before each installation command, apply [Plugin Updates](#plugin-updates),
+including the source-byte check. Keep halt through installation and read-back.
 
-This mode uses the existing halt and launch lock within the product. It does not
-relax [Install Coordination](orchestration.md#install-coordination) or the
-idle-and-empty-registry requirement across products for breaking installation.
-The PR-merge source check and guarded pattern above remain unchanged for
-`per-merge` and products without this block.
+The installation proof is the installed plugin version in **each tool** equal
+to `VERSION` at T, with the repository tag `v<VERSION>` resolving to T. Read the
+version using the script in each installed plugin folder, not the checkout:
+
+```bash
+node /path/to/installed/mono/scripts/verify-pack-state.mjs version
+git show "$T:VERSION"
+git rev-parse "v$(git show "$T:VERSION")^{commit}"
+```
+
+Require the first two versions to match and the last result to equal T. Record
+the installed folder and version for both tools, tag target and T, plus
+`{issue, attempt, pr, mergeSha, installSha}` for each task, before `close`.
+The existing landing verification proves each merge is an ancestor of T; the
+plugin proof does not use a lockfile commit. A wave without a release must not
+be installed: unchanged version metadata cannot prove that its new bytes were
+released. If GitHub advances before installation, verify the new T from its
+matching checkout and repeat the byte check. Pending records survive failure.
+
+The one-time migration uses [the migration conditions](../README.md#migrate-from-the-local-installer):
+this product retains its landed, stopped attempts until wave close; each other
+product confirms idle state and an empty registry through its own orchestrator.
+This is distinct from the legacy installer's breaking transaction above.
+The PR-merge source check and guarded pattern remain for legacy `per-merge`
+installation and products without this block. Landing scripts are unchanged.
+
+### Plugin Updates
+
+Install or update deliberately after the release task, from the main checkout
+at T. Disable automatic updates for Mono. Claude Code uses
+`claude plugin update mono@mono-marketplace`; Codex uses
+`codex plugin add mono@mono-marketplace`, including a repeat installation of the
+same version. Initial installation uses the [README marketplace commands](../README.md#plugin-installation).
+
+Immediately before **every** command that deletes or overwrites a plugin version
+folder, pause dispatch in every affected product and run the update condition
+against all products on the machine, using the actual folder the operation
+would replace:
+
+```bash
+node /path/to/current/mono/scripts/verify-pack-state.mjs before-update --folder /path/to/replaced/mono
+```
+
+Keep dispatch paused through the check and replacement. A refusal names the
+product, Issue and attempt: wait for those attempts, including paused attempts,
+to finish and become landed and stopped. Do not remove a registry entry to
+evade the condition. The check only reads registries; each product's orchestrator
+owns its state. Entries without a pack root are reported as unknown and do not
+block the update; attempts identified as using the replaced folder remain blocking.
+
+Claude Code places a new version beside the previous one and does not copy when
+the version is unchanged. Codex replaces the previous version folder, and a
+repeat installation of the same version overwrites that folder with current
+checkout bytes. Codex therefore requires this check even for a same-version
+reinstall. A task keeps its saved absolute pack folder while the tool retains
+it. A task older than the tool's retention of that version needs a new attempt
+if the folder is gone; do not redirect it to newer files. Claude Code retention
+was observed at about 14 days, not a guarantee. See [version compatibility](versioning.md#local-lockfile).
+
+Immediately before **each** installation or update command, also verify that
+the main checkout contains exactly the files of T that the tool will copy.
+Require `git rev-parse HEAD` to equal T and an empty
+`git status --porcelain --untracked-files=all`, but do not stop at Git status:
+inventory the complete copy source, including Git-ignored files, and compare
+file contents, types, executable modes and symlink targets against T's tree.
+There must be no modified, missing or additional copied files. Exclude only
+paths that the tool is demonstrably known not to copy; `.gitignore` alone is
+not an exclusion. These commands expose additional files, including ignored
+ones, but are only part of the full comparison:
+
+```bash
+git ls-files --others --exclude-standard
+git ls-files --others --ignored --exclude-standard
+git ls-tree -r "$T"
+```
+
+The tools copy bytes from disk, not from the version tag. Stop on a mismatch,
+inspect it and restore the exact source before retrying; never install from a
+worker worktree or treat a tag and clean Git status as sufficient source proof.
 
 ## Project Config
 

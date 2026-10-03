@@ -301,6 +301,37 @@ verify, install and read-back. Run close from the newly installed runtime, then
 remove halt. The deploy owner records this live proof; worker fixtures do not
 substitute for first application.
 
+### Plugin installation proof
+
+For Mono, installation happens once at the end of a wave, after its release task
+lands. Use the main repository checkout at the verified landing tip T. Keep the
+launch halt and the landed, stopped attempt records until installation is
+verified and `close` succeeds; do not require this product's registry to be empty
+before installing the wave.
+
+Before each plugin installation/update command, follow
+[Plugin Updates](install.md#plugin-updates): check all products for attempts
+using any folder the tool deletes or overwrites, wait for the named attempts,
+and immediately verify that all copied bytes equal T, with no additional files,
+including Git-ignored files. Empty Git status alone is insufficient.
+
+Prove installation by reading each tool's installed plugin version: it must equal
+`VERSION` at T, and `v<VERSION>` must resolve to T. Record both installed folders,
+versions and the tag target alongside the existing per-task ancestry proof
+before `close`. Do not use a commit from the legacy lockfile as plugin proof.
+Without the release task, the wave is not ready for plugin installation.
+The tip, ancestry, branch and batch verification performed by landing scripts
+stays unchanged.
+
+The first plugin installation is the
+[one-time machine migration](../README.md#migrate-from-the-local-installer).
+Each other product's own orchestrator confirms idle state and an empty registry
+and keeps its launches paused through migration; this product follows wave
+installation conditions above. The sequence is halt launches, check conditions,
+verify T, migrate, verify installation, close the wave, then release the halts.
+Do not install other pack changes between migration and the project's final
+release. A missing retained version folder requires a new task attempt.
+
 ## Scheduling
 
 At handoff, put Issues from the same set that must edit the same file in an

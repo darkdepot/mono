@@ -1,0 +1,1 @@
+- Prepare the one-time migration from the local installer to plugins in Claude Code and Codex. Document per-product migration conditions, exact legacy cleanup, release-tip source checks, updates that wait for attempts using replaced folders, and installation proof by version and tag before wave close.
