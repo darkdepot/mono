@@ -714,9 +714,9 @@ before launch. Record the role, policy values, parameters actually set and
 transport case in dispatch and registry per `templates/orchestrator-report.md`. On resume preserve the
 recorded launch pins; do not resolve new policy values for an existing thread.
 
-- `codex-cli`: use installed scripts/orchestrator/spawn.mjs --request <json>
-  and resume.mjs --request <json>; paths are relative to the installed
-  ../.mono-agent-workflow/ runtime, never a product checkout or session helper.
+- `codex-cli`: use node '<pack-root>/scripts/orchestrator/spawn.mjs' --request <json>
+  and node '<pack-root>/scripts/orchestrator/resume.mjs' --request <json>,
+  never a product checkout or session helper.
   Run --help for request fields. Spawn enforces start gate, control halt/state,
   attempt cap, durable empty-log pre-registration and explicit model/effort.
   It persists launch metadata in the attempt log before execution, preserving

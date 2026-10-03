@@ -158,9 +158,8 @@ Workflow states:
      `node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>`
      via the runtime Monitor primitive (Heartbeat in
      `references/orchestration.md`); no worker spawns until it is running.
-     Substitute `<installed-mono-orchestrate-dir>` with the absolute directory
-     containing this loaded `SKILL.md`; never resolve the `../` segment against
-     the product/worktree current directory.
+     Substitute `<pack-root>` with the loaded pack root;
+     never use the product/worktree current directory.
      The upstream pack source remains `scripts/watch-workers.mjs` for
      development and fixtures.
    - One Issue per worker. Use `scripts/orchestrator/dispatch.mjs`
@@ -366,8 +365,8 @@ what did not make it and why, and what it taught — between «Где мы к
   recorded, and «Контекст: ~N%» — orchestrator session context usage per
   the Context Budget policy in `references/orchestration.md`.
   Cost telemetry lives in this tail too. Before emitting a status, run the
-  `scripts/wave-cost.mjs
-  <ISSUE-KEY>` from this installed skill directory for each Issue with logs,
+  `node '<pack-root>/scripts/wave-cost.mjs'
+  <ISSUE-KEY>` for each Issue with logs,
   and copy its final Russian line verbatim after the `Цена волны:` label. If
   collection fails, write `unavailable: <reason>` instead of estimating. The
   final wave report carries the same lines in its «Цена волны» block, per the

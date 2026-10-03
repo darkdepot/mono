@@ -54,6 +54,22 @@ test('legacy installation rewrites pack script paths in skills and shared refere
     assert.ok(issue.includes('node ../.mono-agent-workflow/scripts/resolve-issue-context.mjs'));
     const contract = fs.readFileSync(path.join(skills, 'mono-deliver/references/worker-contract.md'), 'utf8');
     assert.ok(contract.includes("node '<skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity"));
+    const orchestration = fs.readFileSync(path.join(skills, 'mono-orchestrate/references/orchestration.md'), 'utf8');
+    for (const name of ['spawn', 'resume']) {
+      const operand = orchestration.match(new RegExp(`node '([^']+/orchestrator/${name}\\.mjs)'`))?.[1];
+      assert.ok(operand, `installed ${name} command has an explicit root`);
+      const script = operand.replace('<skills-root>', skills);
+      assert.ok(path.isAbsolute(script));
+      const result = spawnSync(process.execPath, [script, '--help'], { cwd: os.tmpdir(), env, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /Usage:/);
+    }
+    for (const skill of ['mono-deploy', 'mono-orchestrate']) {
+      const text = fs.readFileSync(path.join(skills, skill, 'SKILL.md'), 'utf8');
+      const operand = text.match(/node '([^']+\/wave-cost\.mjs)'/)?.[1];
+      assert.ok(operand, `installed ${skill} cost command has an explicit root`);
+      assert.ok(fs.statSync(operand.replace('<skills-root>', skills)).isFile());
+    }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
