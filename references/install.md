@@ -44,7 +44,7 @@ For each installed skills root the command writes:
 - `<skills-root>/mono-*/AGENTS.md`
 - `<skills-root>/mono-*/references/*`
 - `<skills-root>/mono-*/templates/*`
-- `<skills-root>/.mono-agent-workflow/scripts/*` (pack-private workflow runtime scripts)
+- `<pack-root>/scripts/*` (pack-private workflow runtime scripts)
 - `<skills-root>/.mono-agent-workflow/README.md` (complete pack description)
 - `<skills-root>/.mono-agent-workflow.lock.json`
 
@@ -60,16 +60,14 @@ Markdown. The installer owns their copy so product repos never hand-vendor
 workflow scripts. They are published, per installed root, into a pack-private
 directory beside the lockfile:
 
-- **Canonical path:** `<skills-root>/.mono-agent-workflow/scripts/<script>.mjs`
-- **Discovery from an installed skill:** the pack-private directory is one level
-  up from any installed `mono-*` skill directory, so a skill at
-  `<skills-root>/mono-<name>/` reaches it at
-  `../.mono-agent-workflow/scripts/<script>.mjs`.
+- **Canonical path:** `<pack-root>/scripts/<script>.mjs`
+- **Discovery:** resolve paths from the pack root. The legacy installer rewrites
+  runtime paths to its pack-private directory beside the lockfile.
 
 The runtime scripts are the issue-only lane resolver
-`.mono-agent-workflow/scripts/resolve-issue-context.mjs`, the pack guard
-`.mono-agent-workflow/scripts/verify-pack-state.mjs`, and the orchestration
-heartbeat watcher `.mono-agent-workflow/scripts/watch-workers.mjs`. Workers use
+`scripts/resolve-issue-context.mjs`, the pack guard
+`scripts/verify-pack-state.mjs`, and the orchestration
+heartbeat watcher `scripts/watch-workers.mjs`. Workers use
 the pack guard to compare their dispatch identity with the installed lock at
 every stage start or resume; future breaking installs use its quiescence probe.
 The orchestrator launches the watcher from the installed pack-private copy, so

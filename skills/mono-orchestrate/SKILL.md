@@ -5,6 +5,8 @@ description: Use when running a long-lived product orchestrator session that dri
 
 # Mono Orchestrate
 
+Find shared files here or at the pack root.
+
 Use this skill to run the control plane for one product: drive Linear
 projects and Issues through the existing workflow skills with delegated
 workers, answer technical questions autonomously, and escalate only product
@@ -116,7 +118,7 @@ Workflow states:
      registry + live session list before any action (Resume procedure in
      `references/orchestration.md`).
    - Rebind to surviving `codex-cli` workers by thread id instead of
-     respawning them only when the registry and installed `surfaceRevision`
+     respawning them only when the registry and `surfaceRevision`
      match; never rebind a thread from another surface revision.
    - Apply queued Linear mutations from worker reports that were never
      applied.
@@ -153,7 +155,7 @@ Workflow states:
      or repairing its canonical state files, and before an `idle` → `active` transition.
      Do not create or mutate orchestrator state when the installer owns the lock.
    - Start the heartbeat watcher before the first spawn of a wave:
-     `node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>`
+     `node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>`
      via the runtime Monitor primitive (Heartbeat in
      `references/orchestration.md`); no worker spawns until it is running.
      Substitute `<installed-mono-orchestrate-dir>` with the absolute directory
@@ -161,7 +163,7 @@ Workflow states:
      the product/worktree current directory.
      The upstream pack source remains `scripts/watch-workers.mjs` for
      development and fixtures.
-   - One Issue per worker. Use installed `scripts/orchestrator/dispatch.mjs`
+   - One Issue per worker. Use `scripts/orchestrator/dispatch.mjs`
      with Issue, root, config, snapshot bodies and the explicit lifecycle moves,
      open-decision count and verification command. It builds pins/digest, extracts,
      start-gate and spawn requests, renders the single dispatch template, passes
@@ -185,7 +187,7 @@ Workflow states:
      references/orchestration.md exactly: pre-move snapshot, validated ack,
      read-back of every move, verified writer, private record, ack rename,
      gates removal. Wait: consume live waiting writer without resume; resume:
-     same-thread registered writer. Use installed `scripts/orchestrator/accept.mjs ack`
+     same-thread registered writer. Use `scripts/orchestrator/accept.mjs ack`
      to validate before printing a digest-bound move plan; apply via the connector
      and supply --readback with planDigest and fresh observations. Identical
      consumption completes recovery without another plan; conflicting records
@@ -204,7 +206,7 @@ Workflow states:
      ack waits for its correlated report before consumption; rejected attempt
      requires a new verified attempt, never same-attempt nudge.
    - Consume phase events AND poll phase files. Validate capsule and full queue;
-     start installed `scripts/orchestrator/collector.mjs start --root DIR --issue KEY
+     start `scripts/orchestrator/collector.mjs start --root DIR --issue KEY
      --attempt N` outside worker sandboxes for empty/collection-only queues; inspect
      `status` and its reports log, and `stop` at attempt end. Connector queues still
      apply Delivery Write Barriers through installed
@@ -299,9 +301,8 @@ Rules:
   `scope-drift-needs-handoff` routes through `mono-handoff` with the user.
 - A stuck or dead worker is respawned from Linear plus the last mailbox
   report; continue the stage, do not restart the Issue.
-- The heartbeat watcher (`../.mono-agent-workflow/scripts/watch-workers.mjs`
-  relative to this installed skill directory; upstream source
-  `scripts/watch-workers.mjs`) is started before the first spawn and runs for
+- The heartbeat watcher (`scripts/watch-workers.mjs` from the pack root)
+  is started before the first spawn and runs for
   the whole wave; running a wave without it is a degradation recorded in the
   ledger (Heartbeat in
   `references/orchestration.md`).
@@ -365,7 +366,7 @@ what did not make it and why, and what it taught — between «Где мы к
   recorded, and «Контекст: ~N%» — orchestrator session context usage per
   the Context Budget policy in `references/orchestration.md`.
   Cost telemetry lives in this tail too. Before emitting a status, run the
-  installer-published `../.mono-agent-workflow/scripts/wave-cost.mjs
+  `scripts/wave-cost.mjs
   <ISSUE-KEY>` from this installed skill directory for each Issue with logs,
   and copy its final Russian line verbatim after the `Цена волны:` label. If
   collection fails, write `unavailable: <reason>` instead of estimating. The

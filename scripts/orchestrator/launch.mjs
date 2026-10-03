@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
-import { atomicJson, readJson, identity, requireCompatiblePack, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart } from "../runtime.mjs";
+import { atomicJson, readJson, identity, requireCompatiblePack, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart, packLayout, runtimePackRoot } from "../runtime.mjs";
 import { startGate, reviewEnvironment } from "../gate.mjs";
 import crypto from "node:crypto";
 import { effectivePins, attemptState } from "./command-state.mjs";
@@ -42,7 +42,7 @@ export function resolveWorkerPins(request) {
   const transport = config.orchestration?.transport ?? 'codex-cli';
   if (request.transport !== undefined && request.transport !== transport) throw new Error('request transport conflicts with immutable BASE config');
   if (transport !== 'codex-cli' || !['worker-default', 'worker-complex'].includes(request.role)) throw new Error('unsupported worker role/transport for codex-cli launch');
-  const modelRoutes = resolveModelRoutes(request.worktree, request.base, request.role, { skillsRoot: request.lock ? path.dirname(request.lock) : undefined });
+  const modelRoutes = resolveModelRoutes(request.worktree, request.base, request.role, { packRoot: request.packRoot ?? (request.lock ? path.dirname(request.lock) : undefined) });
   if (request.modelRoutes && canonical(request.modelRoutes) !== canonical(modelRoutes)) throw new Error('dispatch model route fingerprint mismatch');
   return modelRoutes;
 }
@@ -77,7 +77,9 @@ function effectiveGrants(entry, root, extraWritable = [], pins = entry.workerWri
     const overlaps = grant === controlRoot || controlRoot.startsWith(grant + path.sep) || grant.startsWith(controlRoot + path.sep);
     if (overlaps && grant !== mailbox && !grant.startsWith(mailbox + path.sep)) throw new Error("only reports may be worker-writable within orchestrator root");
   }
-  const skills = path.dirname(entry.lock);
+  const packRoot = entry.packRoot ?? path.dirname(entry.lock);
+  const skills = entry.skillsRoot ?? path.dirname(entry.lock);
+  validateEvidenceGrants(packRoot, roots, packRoot !== skills ? "packRoot" : "installed skillsRoot");
   validateEvidenceGrants(skills, roots, "installed skillsRoot");
   validateEvidenceGrants(path.join(skills, "autoreview/scripts/autoreview"), roots, "autoreview helper real path");
   if (canonical(roots) !== canonical(normalize(pins))) throw new Error("effective write grants differ from dispatch workerWritableRoots");
@@ -211,7 +213,8 @@ export async function spawnWorker(request, preparation = {}) {
       const entry = { issue: request.issue, transport: "codex-cli", stage: "mono-deliver", attempt, ...launch,
         thread_id: null, pid: null, worktree: request.worktree, branch: request.branch, product_name: request.product_name,
         packVersion: request.packVersion, sourceCommit: request.sourceCommit, surfaceRevision: request.surfaceRevision,
-        lock: request.lock, spawned_at: new Date().toISOString(), last_activity_at: null, log,
+        ...(request.lock ? { lock: request.lock } : {}), packRoot: request.packRoot ?? path.dirname(request.lock),
+        skillsRoot: request.skillsRoot ?? path.dirname(request.lock), spawned_at: new Date().toISOString(), last_activity_at: null, log,
         modelRoutes, model_policy, model_launch, model: model_policy.model, effort: model_policy.effort,
         writable_roots: roots, workerWritableRoots: roots, evidenceRoot: resolvedLocation(request.evidenceRoot), network_access: true, lifecycle_moves: request.lifecycle_moves,
         confirmationTimeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
@@ -243,7 +246,8 @@ export async function resumeWorker(request) {
     if (entry.pins && effectivePins(entry).release === true)
       checkReleaseAvailability(request.root, readJson(path.join(request.root, "workers.json")), entry.issue);
     if (!entry.model_launch?.model_parameter || !entry.model_launch?.effort_parameter) throw new Error("missing launch pins; never backfill a resume from current policy");
-    const installed = readJson(entry.lock);
+    packLayout(entry.packRoot ?? path.dirname(entry.lock));
+    const installed = entry.packRoot ? packLayout(runtimePackRoot()).identity() : readJson(entry.lock);
     requireCompatiblePack(installed, entry);
     const prompt = fs.readFileSync(request.resumeFile, "utf8");
     if (request.network_access !== undefined && typeof request.network_access !== "boolean") throw new Error("network_access override must be boolean");

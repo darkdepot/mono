@@ -1,0 +1,8 @@
+{
+  "name": "mono-marketplace",
+  "owner": { "name": "Mono" },
+  "metadata": { "description": "Mono workflow skills for Claude Code." },
+  "plugins": [
+    { "name": "mono", "source": "./", "description": "Linear-backed delivery from an idea to a reviewed PR." }
+  ]
+}

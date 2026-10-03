@@ -7,8 +7,26 @@ import { test } from "node:test";
 import { atomicJson, digest, processStart, withLock } from "./runtime.mjs";
 import * as state from "./orchestrator/command-state.mjs";
 import { checkSpawnAvailability, resumeWorker } from "./orchestrator/launch.mjs";
+import { updateBlockers } from './verify-pack-state.mjs';
 
 const script = path.resolve("scripts/orchestrator/landing-drain.mjs");
+test('plugin update checks all products, including paused attempts, without changing registries', t => {
+  const f = fixture(t), folder = path.join(f.scratch, 'plugin');
+  fs.mkdirSync(folder); f.entry.packRoot = folder;
+  atomicJson(f.pending, [f.record]); f.registry();
+  const foreign = path.join(f.scratch, 'other-product'); fs.mkdirSync(foreign);
+  const active = { ...f.entry, issue: 'MONO-902', pid: process.pid, pins: undefined, procStart: null };
+  const paused = { ...active, issue: 'MONO-903', pid: null, packRoot: path.join(folder, 'older') };
+  const unrelated = { ...active, issue: 'MONO-904', packRoot: path.join(f.scratch, 'elsewhere') };
+  atomicJson(path.join(foreign, 'workers.json'), { active, paused, unrelated });
+  const files = [path.join(f.root, 'workers.json'), path.join(foreign, 'workers.json')];
+  const before = files.map(file => fs.readFileSync(file));
+  const result = spawnSync(process.execPath, [path.resolve('scripts/verify-pack-state.mjs'), 'before-update', '--folder', folder, '--products-root', f.scratch], { env: f.env, encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /other-product\/MONO-902/); assert.match(result.stderr, /other-product\/MONO-903/);
+  assert.doesNotMatch(result.stderr, /MONO-901|MONO-904/);
+  files.forEach((file, index) => assert.deepEqual(fs.readFileSync(file), before[index]));
+});
 function fixture(t, commandScript = script) {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-drain-"));
   t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));

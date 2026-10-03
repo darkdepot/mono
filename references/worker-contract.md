@@ -22,16 +22,14 @@ keeps direct access/approval, lifecycle handshake.
 
 ## Pack identity gate invocation
 
-Before work/resume: all four dispatch pins, exit 0 and pack-state: identity
-verified, else block. [Compatibility](versioning.md#local-lockfile).
-Installed runtime only; single-quote paths/pins (embedded: '\''); never checkout
-SURFACE_REVISION.
+Before work/resume: all present dispatch identity pins, exit 0 and
+pack-state: identity verified, else block. [Compatibility](versioning.md#local-lockfile).
+Use the dispatched pack root, never the checkout; single-quote paths/pins.
+Legacy: --lock instead of --pack-root, plus --source-commit when pinned.
 
 ```bash
-node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \
-  --lock '<installed-skills-root>/.mono-agent-workflow.lock.json' \
-  --pack-version '<dispatch packVersion>' \
-  --source-commit '<dispatch sourceCommit>' \
+node '<pack-root>/scripts/verify-pack-state.mjs' identity \
+  --pack-root '<pack-root>' --pack-version '<dispatch packVersion>' \
   --surface-revision '<dispatch surfaceRevision>'
 ```
 
@@ -165,7 +163,7 @@ write-unconfirmed (запись не подтверждена).
 Confirm in-phase queues before dependent work: accepted drift before PR, ready
 certificate before formal review, In Review/PR chip after PR.
 
-Pin product/evidenceRoot/skillsRoot/risk/critical/verification/write grants.
+Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
 ~/.mono-agent-workflow/evidence/<product>/ outside ALL grants, including
 worktree/orchestrator. Orchestrator collect:true only; worker collect:false.
 Keys grant no writes; hostile operator out of scope (one user/host).
@@ -195,7 +193,7 @@ verbatim verification, AFK stops.
   "reason": "<dictionary reason for parked; null for green>",
   "text": "<outcome, evidence, next action and owner>",
   "packVersion": "<dispatch packVersion>",
-  "sourceCommit": "<dispatch sourceCommit>",
+  "sourceCommit": "<dispatch sourceCommit, omit when absent>",
   "surfaceRevision": <repeat the dispatch pin, integer>,
   "branch": "<branch>",
   "changed_files": [],
@@ -220,4 +218,4 @@ Linear this turn/read-back. Green: all queues confirmed/current-head gates pass.
 
 Keep Issue «Как проверить» verbatim/in order; pass/deferred/not-run, never unrun
 pass; name later-stage owner. Judgment evidence: judgment check: + inspected
-state. Repeat pins. Standalone uses dispatched path/status; sequenced intermediate.
+state. Repeat present pins. Standalone uses dispatched path/status; sequenced intermediate.

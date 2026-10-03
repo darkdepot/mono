@@ -3,7 +3,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { requireCompatiblePack } from "./runtime.mjs";
+import os from "node:os";
+import { attemptState } from "./orchestrator/command-state.mjs";
+import { requireCompatiblePack, packLayout, isMain, resolvedLocation } from "./runtime.mjs";
 const CONTROL_STATES = new Set(["active", "draining", "idle"]);
 
 function fail(message) {
@@ -25,7 +27,7 @@ function validateIdentity(identity, label) {
   if (typeof identity.packVersion !== "string" || identity.packVersion.length === 0) {
     fail(`${label}.packVersion must be a non-empty string`);
   }
-  if (typeof identity.sourceCommit !== "string" || !/^[0-9a-f]{40}$/.test(identity.sourceCommit)) {
+  if (identity.sourceCommit !== undefined && (typeof identity.sourceCommit !== "string" || !/^[0-9a-f]{40}$/.test(identity.sourceCommit))) {
     fail(`${label}.sourceCommit must be a lowercase 40-hex commit SHA`);
   }
   if (!Number.isInteger(identity.surfaceRevision) || identity.surfaceRevision < 1) {
@@ -78,15 +80,44 @@ export function verifyQuiescence(control, workers) {
   if (blockers.length > 0) fail(`not quiescent: ${blockers.join("; ")}`);
 }
 
+export function updateBlockers(folder, productsRoot = path.join(os.homedir(), '.mono-agent-workflow/orchestrator')) {
+  const replaced = resolvedLocation(folder), blockers = [];
+  if (!fs.existsSync(productsRoot)) return blockers;
+  for (const product of fs.readdirSync(productsRoot, { withFileTypes: true }).filter(entry => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+    const root = path.join(productsRoot, product.name), registry = path.join(root, 'workers.json');
+    if (!fs.existsSync(registry)) continue;
+    const workers = readJson(registry, 'workers.json');
+    if (!workers || typeof workers !== 'object' || Array.isArray(workers)) fail(`invalid registry: ${registry}`);
+    for (const [key, entry] of Object.entries(workers)) {
+      const packRoot = entry.packRoot ?? (entry.lock ? path.dirname(entry.lock) : entry.skillsRoot);
+      if (!path.isAbsolute(packRoot ?? '')) fail(`packRoot unavailable: ${product.name}/${key}`);
+      const saved = resolvedLocation(packRoot);
+      if ((saved === replaced || saved.startsWith(replaced + path.sep)) && attemptState(root, entry).state !== 'landed')
+        blockers.push({ product: product.name, issue: entry.issue ?? key, attempt: entry.attempt, packRoot: saved });
+    }
+  }
+  return blockers;
+}
+
 function run(argv) {
   const command = argv[0];
   const options = parseOptions(argv.slice(1));
+  if (command === 'version') {
+    const value = packLayout(options['pack-root'] ? path.resolve(options['pack-root']) : undefined).identity();
+    validateIdentity(value, 'installed identity'); console.log(value.packVersion); return;
+  }
+  if (command === 'before-update') {
+    if (!options.folder) fail('before-update requires --folder');
+    const blockers = updateBlockers(path.resolve(options.folder), options['products-root'] ? path.resolve(options['products-root']) : undefined);
+    if (blockers.length) fail(`update blocked: ${blockers.map(item => `${item.product}/${item.issue} attempt ${item.attempt}: ${item.packRoot}`).join('; ')}`);
+    console.log('pack-state: update allowed'); return;
+  }
   if (command === "identity") {
-    if (!options.lock) fail("identity requires --lock");
-    const installed = readJson(path.resolve(options.lock), "lockfile");
+    if (!options.lock && !options["pack-root"]) fail("identity requires --lock or --pack-root");
+    const installed = options["pack-root"] ? packLayout(path.resolve(options["pack-root"])).identity() : readJson(path.resolve(options.lock), "lockfile");
     const expected = {
       packVersion: options["pack-version"],
-      sourceCommit: options["source-commit"],
+      ...(options["source-commit"] ? { sourceCommit: options["source-commit"] } : {}),
       surfaceRevision: Number(options["surface-revision"]),
     };
     verifyIdentity(installed, expected);
@@ -102,10 +133,10 @@ function run(argv) {
     console.log("pack-state: quiescent");
     return;
   }
-  fail("usage: verify-pack-state.mjs <identity|quiescence> [options]");
+  fail("usage: verify-pack-state.mjs <identity|version|before-update|quiescence> [options]");
 }
 
-try {
+if (isMain(import.meta.url)) try {
   run(process.argv.slice(2));
 } catch (error) {
   console.error(error.message);

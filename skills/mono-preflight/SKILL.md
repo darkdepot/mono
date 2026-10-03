@@ -5,6 +5,8 @@ description: Use after implementation to verify local readiness with mandatory a
 
 # Mono Preflight
 
+Find shared files here or at the pack root.
+
 [Landing](references/landing.md).
 
 No PR/merge/deploy/closeout/shipped claims or formal `mono-review pre-ship` / `mono-check pre-ship`.

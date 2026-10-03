@@ -7,13 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { SURFACE_REVISION } from './runtime.mjs';
 
 const UPSTREAM_REPO = "darkdepot/mono";
 const LOCKFILE_NAME = ".mono-agent-workflow.lock.json";
 const LEGACY_LOCKFILE_NAME = ".linear-agent-workflow.lock.json";
 const GENERATED_MARKER = "Installed by Mono Agent Workflow";
 const LEGACY_GENERATED_MARKER = "Installed from darkdepot/linear-agent-workflow";
-const SURFACE_REVISION = 4;
 
 // Pack-private shared directory at the skills root (a sibling of LOCKFILE_NAME).
 // It holds workflow runtime scripts the installed skills invoke at delivery time
@@ -244,10 +244,15 @@ function listFilesRecursive(rootDir) {
   return files.sort();
 }
 
+function legacyText(text) {
+  return text.replaceAll('<pack-root>/scripts/', '<skills-root>/.mono-agent-workflow/scripts/')
+    .replace(/(?<![\w/.-])scripts\/([\w./-]+\.mjs)/g, (match, file) =>
+      RUNTIME_SCRIPTS.includes(file) ? `../.mono-agent-workflow/scripts/${file}` : match);
+}
 function directoryManifest(rootDir) {
   return listFilesRecursive(rootDir).map((relativePath) => ({
     path: relativePath,
-    sha256: sha256(fs.readFileSync(path.join(rootDir, relativePath))),
+    sha256: sha256(legacyText(fs.readFileSync(path.join(rootDir, relativePath), "utf8"))),
   }));
 }
 
@@ -260,7 +265,7 @@ function copyDirectory(source, destination) {
     if (entry.isDirectory()) {
       copyDirectory(sourcePath, destinationPath);
     } else if (entry.isFile()) {
-      fs.copyFileSync(sourcePath, destinationPath);
+      fs.writeFileSync(destinationPath, legacyText(fs.readFileSync(sourcePath, "utf8")));
     }
   }
 }
@@ -268,21 +273,11 @@ function copyDirectory(source, destination) {
 function installedSkillBody(sourceText, commit, dirty) {
   const marker = dirty ? `${commit} dirty` : commit;
   const metadata = `<!-- ${GENERATED_MARKER} @ ${marker}. Do not edit manually. -->`;
-  let body = sourceText.replace(/`skills\/(mono-[^`]+\/SKILL\.md)`/g, "`../$1`");
+  let body = legacyText(sourceText).replace(/`skills\/(mono-[^`]+\/SKILL\.md)`/g, "`../$1`");
 
-  const lines = body.split("\n");
-  const h1Index = lines.findIndex((line) => line.startsWith("# "));
-  if (h1Index >= 0) {
-    lines.splice(
-      h1Index + 1,
-      0,
-      "",
-      "Installed local note: read the active project's `.agents/mono-workflow.config.json` when present for Linear team, language, artifact roots, and workflow policy. Shared `references/` and `templates/` are copied into this skill directory."
-    );
-    body = lines.join("\n");
-  }
-
-  const trimmedBody = body.trimEnd();
+  const lines = body.split("\n"), heading = lines.findIndex(line => line.startsWith("# "));
+  if (heading >= 0) lines.splice(heading + 1, 0, "", "Read `.agents/mono-workflow.config.json` for project policy when present.");
+  const trimmedBody = lines.join("\n").trimEnd();
   const frontmatter = trimmedBody.match(/^(---\n[\s\S]*?\n---\n?)([\s\S]*)$/);
   if (frontmatter) {
     return `${frontmatter[1].trimEnd()}\n\n${metadata}\n${frontmatter[2].trimStart().trimEnd()}\n`;

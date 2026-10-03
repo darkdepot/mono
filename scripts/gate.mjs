@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout } from "./runtime.mjs";
 import { checkCollectionRequest } from "./orchestrator/command-state.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -69,8 +69,9 @@ const cleanTree = (cwd) => requireThat(git(cwd, "status", "--porcelain", "--untr
 
 export function startGate(request) {
   requireThat(identity(request), "missing pack identity");
-  const output = execFileSync(process.execPath, [path.join(scriptDir, "verify-pack-state.mjs"), "identity", "--lock", request.lock,
-    "--pack-version", request.packVersion, "--source-commit", request.sourceCommit, "--surface-revision", String(request.surfaceRevision)], { encoding: "utf8" });
+  const output = execFileSync(process.execPath, [path.join(scriptDir, "verify-pack-state.mjs"), "identity",
+    ...(request.packRoot ? ["--pack-root", request.packRoot] : ["--lock", request.lock]),
+    "--pack-version", request.packVersion, ...(request.sourceCommit ? ["--source-commit", request.sourceCommit] : []), "--surface-revision", String(request.surfaceRevision)], { encoding: "utf8" });
   requireThat(output.trim() === "pack-state: identity verified", "pack identity not verified");
   requireThat(git(request.worktree, "branch", "--show-current") === request.branch && !["main", "master", ""].includes(request.branch), "wrong delivery branch");
   const base = git(request.worktree, "rev-parse", "--verify", `${request.base}^{commit}`);
@@ -95,9 +96,9 @@ export function pinnedReviewRoute(request, base) {
   if (pins) {
     requireThat(git(request.worktree, 'merge-base', base, pins.base) === pins.base, 'model route base is not an ancestor of the review base');
     requireThat(pins.configDigest === digest(config) && pins.roles?.autoreview, 'model route config fingerprint mismatch');
-    for (const [role, route] of Object.entries(pins.roles)) requireThat(canonical(route) === canonical(resolveRole(role, config, { skillsRoot: request.skillsRoot })), `model route fingerprint mismatch: ${role}`);
+    for (const [role, route] of Object.entries(pins.roles)) requireThat(canonical(route) === canonical(resolveRole(role, config, { packRoot: request.packRoot, skillsRoot: request.skillsRoot })), `model route fingerprint mismatch: ${role}`);
   } else requireThat(config.models === undefined, 'modelRoutes launch pins required for product model overrides');
-  return reviewRoute(request.skillsRoot, request.risk, request.critical, config);
+  return reviewRoute(request.packRoot ?? request.skillsRoot, request.risk, request.critical, config);
 }
 export function reviewEnvironment(route, source = process.env) {
   const providerVariable = /^(?:ANTHROPIC_|CLAUDE_CODE_|OPENAI_|CODEX_API_|KIMI_|PI_|AWS_|AZURE_|GOOGLE_|GEMINI_|CLOUD_ML_|AUTOREVIEW_.*FALLBACK)|(?:API_KEY|ACCESS_KEY|SECRET_ACCESS_KEY|AUTH_TOKEN|ACCESS_TOKEN|API_TOKEN|TOKEN|PAT|BASE_URL|ENDPOINT|CREDENTIALS)$/;
@@ -385,6 +386,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   requireThat(new RegExp(`^preflight-collect:${request.head}:[1-9][0-9]*$`).test(request.collectionId ?? ""), "collectionId must be preflight-collect:<head>:<n>");
   requireThat(path.isAbsolute(request.skillsRoot ?? ""), "absolute installed skillsRoot required");
   requireThat(Array.isArray(request.workerWritableRoots), "dispatch workerWritableRoots required");
+  if (request.packRoot) packLayout(request.packRoot);
   requireThat(request.verification && Object.keys(request.verification).sort().join(",") === "args,command" &&
     typeof request.verification.command === "string" && request.verification.command.trim() &&
     Array.isArray(request.verification.args) && request.verification.args.every(arg => typeof arg === "string"),
@@ -392,6 +394,9 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   requireThat(request.critical === null || (typeof request.critical === "string" && request.critical.trim()), "dispatch critical must be null or an escalation reason");
   requireThat(/^[a-f0-9]{40}$/.test(request.head), "dispatch head required");
   const evidenceRoot = preflightEvidenceRoot(request);
+  validateEvidenceGrants(request.packRoot ?? request.skillsRoot, request.workerWritableRoots, 'packRoot');
+  validateEvidenceGrants(request.skillsRoot, request.workerWritableRoots, 'autoreview skillsRoot');
+  validateEvidenceGrants(path.join(request.skillsRoot, 'autoreview/scripts/autoreview'), request.workerWritableRoots, 'autoreview helper real path');
   const repo = fs.realpathSync(request.worktree);
   cleanTree(repo);
   const head = git(repo, "rev-parse", "HEAD");
@@ -415,7 +420,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   }
   const receiptFile = path.join(evidenceRoot, `${head}.json`);
   const dataset = reviewDatasetBinding(request, evidenceRoot);
-  const binding = { ...dataset, ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
+  const binding = { ...dataset, ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
   let receipt, verifiedReceiptFile = receiptFile;

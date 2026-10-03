@@ -1195,10 +1195,8 @@ never a hidden stop. No report → recovery, never implicit green.
 
 The Monitoring Protocol defines when to intervene; the heartbeat is the
 external pulse that notices dying workers without spending orchestrator
-turns. The installed runtime is
-`../.mono-agent-workflow/scripts/watch-workers.mjs`, resolved relative to the
-installed `mono-orchestrate` skill directory; `scripts/watch-workers.mjs` is
-the upstream repository source used for pack development and fixtures. It is
+turns. The runtime is `scripts/watch-workers.mjs`, resolved from the dispatched
+pack root; the same source serves development and fixtures. It is
 a zero-dependency, read-only watcher over the orchestrator root: it reads
 `logs/`, `reports/`, `workers.json`, and `control.json`, writes nothing, and
 emits one stable line per watcher event to stdout —
@@ -1211,11 +1209,10 @@ directory's history; retired Issues' logs are outside its scope.
 
 - At wave start — before the first worker spawn — the orchestrator must
   start the watcher against the mailbox root:
-  `node '<installed-mono-orchestrate-dir>/../.mono-agent-workflow/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product> --config <cfg>`.
+  `node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product> --config <cfg>`.
   Use the absolute product config path so watcher and worker share delivery clocks.
-  Substitute `<installed-mono-orchestrate-dir>` with the absolute directory
-  containing the loaded `mono-orchestrate/SKILL.md`; never resolve the `../`
-  segment against the product/worktree current directory.
+  Substitute `<pack-root>` with the dispatch pin or loaded plugin root;
+  never use the product/worktree current directory.
   Run it through the runtime's monitor primitive (Claude Code: the Monitor
   tool with `persistent: true`); a runtime without one falls back to a
   background process plus a periodic wakeup that reads its stdout. Record

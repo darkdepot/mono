@@ -5,6 +5,8 @@ description: Use when starting or running implementation from approved Linear Is
 
 # Mono Implement
 
+Find shared files here or at the pack root.
+
 [Landing](references/landing.md).
 
 Own Delivery Start/code, then preflight. Ship owns PR; deploy owns closeout.
@@ -21,7 +23,7 @@ Read now:
 Read when:
 - `references/questioning.md` — asking interactive questions.
 - `references/issue-only-lane.md` — `lifecycle_state_entity=issue` or lane park/freeze/exit.
-- `../mono-preflight/SKILL.md` — exiting implemented-needs-preflight.
+- `skills/mono-preflight/SKILL.md` — exiting implemented-needs-preflight.
 
 Gather package/resources/comments, approvals/review/checks, config/validation
 and git/base. Run dispatch identity before work/resume; no discovery/chat-only

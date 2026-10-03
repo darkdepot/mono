@@ -5,6 +5,8 @@ description: Use for an existing Project or shaped discovery to create the Proje
 
 # Mono Handoff
 
+Find shared files here or at the pack root.
+
 Use this skill after discovery and reviews to turn shaped work into a Linear-backed execution package.
 
 `mono-handoff` is the primary bridge from thinking to execution. It packages discovery output into Linear source-of-truth artifacts, gets user approval, creates Issue contracts, and only then hands off to implementation.

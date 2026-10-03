@@ -5,6 +5,8 @@ description: Use only when the user brings a raw idea; mono-idea owns that route
 
 # Mono Idea
 
+Find shared files here or at the pack root.
+
 Use this skill to turn a raw idea into a strengthened Linear Project in `Idea`.
 
 `mono-idea` is the intake gate. It is not a planning skill and it never starts delivery.

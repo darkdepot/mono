@@ -893,13 +893,13 @@ test("collector confirms an empty phase and leaves connector queues and terminal
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 
-async function collectorAttentionFixture(runFixture) {
+async function collectorAttentionFixture(runFixture, plugin = false) {
   const { collectOnce } = await import("./orchestrator/collector.mjs");
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-attention-"));
   const root = path.join(scratch, "root"), repo = path.join(scratch, "repo"), skillsRoot = path.join(scratch, "skills"), evidenceRoot = path.join(scratch, "evidence");
   const issue = "MONO-999", head = "d".repeat(40), options = { root, issue, attempt: 1 };
   const identity = { packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4 };
-  const pins = { product: "fixture", root, worktree: repo, skillsRoot, evidenceRoot, baseRef: "origin/main", risk: "standard", critical: null,
+  const pins = { ...(plugin ? { packRoot: path.join(scratch, "task-plugin") } : {}), product: "fixture", root, worktree: repo, skillsRoot, evidenceRoot, baseRef: "origin/main", risk: "standard", critical: null,
     verification: { command: "node", args: ["verify.mjs"] }, workerWritableRoots: [repo], reviewDatasetVersion: 0 };
   const pinsFile = path.join(scratch, "pins.json");
   const attention = path.join(root, "reports", `${issue}-collect-attention-a1.json`), log = path.join(root, "reports", `${issue}-collector-a1.log`);
@@ -924,7 +924,8 @@ async function collectorAttentionFixture(runFixture) {
     const bin = path.join(scratch, "bin");
     write(path.join(bin, "ps"), "#!/usr/bin/env node\nconsole.log('fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
     process.env.PATH = `${bin}:${oldPath}`;
-    write(path.join(skillsRoot, ".mono-agent-workflow/scripts/gate.mjs"), "console.log('gate preflight: pass: fixture admission');\n");
+    if (plugin) write(path.join(pins.packRoot, 'VERSION'), '0.22.0\n');
+    write(plugin ? path.join(pins.packRoot, 'scripts/gate.mjs') : path.join(skillsRoot, ".mono-agent-workflow/scripts/gate.mjs"), "console.log('gate preflight: pass: fixture admission');\n");
     const signedHistory = async value => {
       const { createHmac, randomUUID } = await import("node:crypto"), { canonical } = await import("./runtime.mjs");
       const key = Buffer.alloc(32, 9); fs.writeFileSync(path.join(evidenceRoot, "receipt.key"), key);
@@ -938,6 +939,17 @@ async function collectorAttentionFixture(runFixture) {
     await runFixture({ poll, lines, attention, reportFile, registry, entry, phase, report, request, signedHistory, options, scratch });
   } finally { process.env.PATH = oldPath; fs.rmSync(scratch, { recursive: true, force: true }); }
 }
+
+test("plugin collector executes the task folder gate with a separate helper root", async () => {
+  await collectorAttentionFixture(async f => {
+    const report = f.report(1); atomicJson(f.reportFile, report);
+    await f.signedHistory(f.request(1)); await f.poll();
+    const confirmed = readJson(path.join(f.options.root, 'confirmations', 'MONO-999-phase-preflight-a1-s1.confirmed.json'));
+    assert.equal(confirmed.status, 'confirmed');
+    assert.equal(confirmed.results[0].evidence.gate, 'gate preflight: pass: fixture admission');
+    assert.notEqual(f.request(1).packRoot, f.request(1).skillsRoot);
+  }, true);
+});
 
 test("collector admission refusal writes exactly one attention line and durable pair", async () => {
   await collectorAttentionFixture(async f => {

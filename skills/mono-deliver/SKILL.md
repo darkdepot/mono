@@ -5,6 +5,8 @@ description: Use to deliver one approved Issue from code to a green PR in one wo
 
 # Mono Deliver
 
+Find shared files here or at the pack root.
+
 One Issue/context/worktree; implement/preflight/ship own phases. Deploy is outside.
 
 Read first:
@@ -18,12 +20,12 @@ Read when:
 - `skills/mono-preflight/SKILL.md` — entering readiness or rechecking code changes.
 - `skills/mono-ship/SKILL.md` — entering/resuming PR work.
 
-Resolve ../.mono-agent-workflow/scripts from this installed skill, never the checkout. Use --help/dispatch pins.
+Resolve scripts from the dispatched pack root.
 
 ## Sequence and Recovery
 
-Before work/resume/restart/compaction run identity and read latest own
-phase capsule/confirmation; copy launch writable_roots into the capsule. Read PR facts through gh; continue that phase.
+On work/resume/restart/compaction: identity, latest own capsule/confirmation
+and launch writable_roots. Read PR facts via gh; continue that phase.
 Park missing/conflicting inputs. New heads stale proof, never queues.
 Start: gate.mjs start --request <file>; implement handshake; wait mode runs wait-ack after ack.
 

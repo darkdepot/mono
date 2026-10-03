@@ -191,7 +191,8 @@ export async function acceptAmend(args) {
         if (reviewDataset && (!path.isAbsolute(reviewDataset) || !fs.statSync(reviewDataset).isFile())) throw new Error("absolute readable review dataset required");
         if (!Array.isArray(workerWritableRoots) || workerWritableRoots.some(value => !path.isAbsolute(value)) || new Set(workerWritableRoots).size !== workerWritableRoots.length ||
             current.workerWritableRoots.some(value => !workerWritableRoots.includes(value))) throw new Error("amendment must contain complete effective grants including all existing roots");
-        validateEvidenceGrants(current.evidenceRoot, [root, ...workerWritableRoots]); validateEvidenceGrants(current.skillsRoot, workerWritableRoots, "installed skillsRoot");
+        validateEvidenceGrants(current.evidenceRoot, [root, ...workerWritableRoots]);
+        validateEvidenceGrants(current.packRoot ?? current.skillsRoot, workerWritableRoots, "packRoot"); validateEvidenceGrants(current.skillsRoot, workerWritableRoots, "installed skillsRoot");
         validateEvidenceGrants(path.join(current.skillsRoot, "autoreview/scripts/autoreview"), workerWritableRoots, "autoreview helper real path");
         const controlRoot = fs.realpathSync(root), mailbox = path.join(controlRoot, "reports");
         for (const grant of workerWritableRoots.map(value => fs.realpathSync(value))) {

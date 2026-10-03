@@ -5,6 +5,32 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 export const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+export const SURFACE_REVISION = 4;
+export function runtimePackRoot() {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  return path.basename(root) === '.mono-agent-workflow' ? path.dirname(root) : root;
+}
+export function packLayout(root = runtimePackRoot()) {
+  if (!path.isAbsolute(root ?? '')) throw new Error('absolute packRoot required');
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory())
+    throw new Error(`pack folder missing: ${root}; start a new attempt`);
+  root = fs.realpathSync(root);
+  const legacy = !fs.existsSync(path.join(root, 'VERSION')) && !fs.existsSync(path.join(root, 'skills'));
+  return {
+    root, legacy,
+    lock: legacy ? path.join(root, '.mono-agent-workflow.lock.json') : null,
+    identity() {
+      if (!legacy) return { packVersion: fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim(), surfaceRevision: SURFACE_REVISION };
+      const value = readJson(this.lock);
+      return Object.fromEntries(IDENTITY_FIELDS.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]]));
+    },
+    skill: name => path.join(root, legacy ? name : `skills/${name}`, 'SKILL.md'),
+    template: name => path.join(root, legacy ? 'mono-orchestrate/templates' : 'templates', name),
+    file: name => path.join(root, legacy ? name.startsWith('skills/') ? name.slice(7) : `mono-implement/${name}` : name),
+    policyDirectory: path.join(root, legacy ? 'mono-implement/references' : 'references'),
+    script: name => path.join(root, legacy ? '.mono-agent-workflow/scripts' : 'scripts', name),
+  };
+}
 export function validateLanding(config) {
   if (config.landing === undefined) return null;
   const require = (condition, message) => { if (!condition) throw new Error(`landing: ${message}`); };
@@ -163,7 +189,8 @@ export function flags(args) {
   return result;
 }
 export function identity(value) {
-  return typeof value?.packVersion === "string" && value.packVersion.length > 0 && /^[a-f0-9]{40}$/.test(value.sourceCommit) && Number.isInteger(value.surfaceRevision) && value.surfaceRevision > 0;
+  return typeof value?.packVersion === "string" && value.packVersion.length > 0 &&
+    (value.sourceCommit === undefined || (typeof value.sourceCommit === 'string' && /^[a-f0-9]{40}$/.test(value.sourceCommit))) && Number.isInteger(value.surfaceRevision) && value.surfaceRevision > 0;
 }
 export const IDENTITY_FIELDS = Object.freeze(["packVersion", "sourceCommit", "surfaceRevision"]);
 export function requireCompatiblePack(installed, expected) {
@@ -221,14 +248,8 @@ function fields(value, allowed, label) {
 function token(value, label) {
   need(typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/:\[\]-]{0,199}$/.test(value) && !/^sk[-_]/i.test(value), `${label} must be a non-secret identifier`);
 }
-function policyDirectory(skillsRoot) {
-  if (skillsRoot) return path.join(skillsRoot, 'mono-implement/references');
-  const dir = path.dirname(fileURLToPath(import.meta.url));
-  const source = path.join(dir, '../references');
-  return fs.existsSync(path.join(source, 'model-policy.md')) ? source : path.join(dir, '../../mono-implement/references');
-}
 export function roleDefaults(skillsRoot) {
-  const directory = policyDirectory(skillsRoot);
+  const directory = packLayout(skillsRoot).policyDirectory;
   const policy = fs.readFileSync(path.join(directory, 'model-policy.md'), 'utf8');
   const defaults = {};
   for (const [role, engines] of Object.entries(ROLE_ENGINES)) {
@@ -331,11 +352,11 @@ function changedPairs(state) {
   return ['worker-default', 'worker-complex', 'worker-claude'].filter(role =>
     canonical(pairFor(role, state.roles)) !== canonical(pairFor(role, state.defaults))).map(role => pairFor(role, state.roles));
 }
-export function requiredPairings(config, { skillsRoot } = {}) {
-  return changedPairs(modelState(config, skillsRoot));
+export function requiredPairings(config, { packRoot, skillsRoot } = {}) {
+  return changedPairs(modelState(config, packRoot ?? skillsRoot));
 }
-export function validateModels(config, { skillsRoot } = {}) {
-  const state = modelState(config, skillsRoot);
+export function validateModels(config, { packRoot, skillsRoot } = {}) {
+  const state = modelState(config, packRoot ?? skillsRoot);
   for (const record of state.records) {
     fields(record, ['producer', 'reviewer', 'riskClasses', 'linearDecision', 'by', 'date'], 'pairingAccepted record');
     need(typeof record.linearDecision === 'string' && /^https:\/\/linear\.app\/[^\s]+/.test(record.linearDecision), 'pairingAccepted.linearDecision must reference a Linear decision');
