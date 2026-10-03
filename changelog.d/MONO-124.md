@@ -1,0 +1,1 @@
+- List registry entries without a pack root as unknown before plugin updates, continue checking other products, and retain refusals for blocking attempts or invalid registry data.

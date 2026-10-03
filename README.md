@@ -244,9 +244,10 @@ node /path/to/current/mono/scripts/verify-pack-state.mjs before-update --folder 
 ```
 
 A refusal names the product, Issue and attempt; wait for completion or retire the
-attempt through its orchestrator. This check reads registries only. A new sibling
-folder does not replace the old folder. Attempts retain their original absolute
-`packRoot`; compatible newer scripts can resume them while that folder exists.
+attempt through its orchestrator. This check reads registries only.
+Entries without a pack root are listed as unknown and do not block the update.
+A new sibling folder does not replace the old folder. Attempts retain their
+original absolute `packRoot`; compatible newer scripts can resume them while that folder exists.
 Missing folders require a new attempt. Worker sandboxes protect both the pack
 folder and the external helper directory.
 
