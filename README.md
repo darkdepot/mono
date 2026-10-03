@@ -234,8 +234,10 @@ separate prerequisite in your tool's skills directory; pass that directory as
 Skills retain their current names until the later rename release.
 
 Do not enable automatic updates for Mono. Update deliberately after a release.
-Before any install/update that replaces a plugin folder, check it against attempts
-of every product, including paused attempts:
+Before any install/update that replaces a plugin folder, have each affected
+product orchestrator pause new dispatch. Keep dispatch paused through the check
+and replacement. Check the folder against attempts of every product, including
+paused attempts:
 
 ```bash
 node /path/to/current/mono/scripts/verify-pack-state.mjs before-update --folder /path/to/replaced/mono

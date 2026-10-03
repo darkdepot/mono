@@ -51,7 +51,19 @@ test('legacy installation rewrites pack script paths in skills and shared refere
       assert.equal(result.status, 0, result.stderr + result.stdout);
     }
     const issue = fs.readFileSync(path.join(skills, 'mono-issue/SKILL.md'), 'utf8');
-    assert.ok(issue.includes('node ../.mono-agent-workflow/scripts/resolve-issue-context.mjs'));
+    const body = path.join(root, 'issue.md'); fs.writeFileSync(body, '# Fixture\nApproved body\n');
+    for (const [text, prefix, directory] of [[issue, '<skills-root>/.mono-agent-workflow', skills],
+      [fs.readFileSync(path.join(checkout, 'skills/mono-issue/SKILL.md'), 'utf8'), '<pack-root>', checkout]]) {
+      const operands = [...text.matchAll(/node '([^']+\/resolve-issue-context\.mjs)'/g)].map(match => match[1]);
+      assert.equal(operands.length, 2);
+      for (const operand of operands) {
+        assert.ok(operand.startsWith(prefix));
+        const script = operand.replace(prefix, prefix === '<pack-root>' ? directory : path.join(directory, '.mono-agent-workflow'));
+        const result = spawnSync(process.execPath, [script, '--issue', body, '--emit-fingerprint'], { cwd: root, env, encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout.trim(), /^[a-f0-9]{64}$/);
+      }
+    }
     const contract = fs.readFileSync(path.join(skills, 'mono-deliver/references/worker-contract.md'), 'utf8');
     assert.ok(contract.includes("node '<skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity"));
     const orchestration = fs.readFileSync(path.join(skills, 'mono-orchestrate/references/orchestration.md'), 'utf8');
