@@ -216,20 +216,33 @@ require comparable completed waves under the cost protocol.
 
 ## Plugin Installation
 
-Clone [darkdepot/mono](https://github.com/darkdepot/mono) and register the local marketplace.
-Use the released version at the verified landing tip; follow
+Register [darkdepot/mono](https://github.com/darkdepot/mono) as the GitHub marketplace;
+no repository clone is needed to install. Replace `<VERSION>` below with the
+released `VERSION` whose tag points to the verified landing tip T. Claude Code
+uses the repository's main branch; Codex pins the marketplace to that version tag.
+Follow
 [source verification and update conditions](references/install.md#plugin-updates)
-immediately before each installation command. Existing local-installer users
+for each installation. Existing local-installer users
 first follow [the migration procedure](#migrate-from-the-local-installer).
 
 ```bash
-git clone https://github.com/darkdepot/mono.git
-cd mono
-claude plugin marketplace add "$PWD"
+claude plugin marketplace add darkdepot/mono
 claude plugin install mono@mono-marketplace
-codex plugin marketplace add "$PWD"
+codex plugin marketplace add darkdepot/mono --ref v<VERSION>
 codex plugin add mono@mono-marketplace
 ```
+
+Do not register a local folder as the marketplace: Claude Code reads such a
+plugin in place without pinning its version, and both tools copy the entire
+local folder, including unrelated files.
+Immediately after each installation or update, compare each tool's version
+cache folder with T's Git tree: paths, types, executable modes, object hashes
+of contents and symlink targets must match, with no changed, missing or additional
+files; only Codex's copied administrative `.git` directory may be additional.
+If either comparison differs, do not close the wave, release launch halts or
+start tasks from the new installation. The installing orchestrator records
+the mismatch, corrects the source and repeats the full verification of both tools.
+Only the installing orchestrator registers or updates the shared marketplaces.
 
 Restart sessions after installation. The external `autoreview` helper remains a
 separate prerequisite in your tool's skills directory; pass that directory as
@@ -259,7 +272,8 @@ folder and the external helper directory.
 
 For isolated installation verification, set `CLAUDE_CONFIG_DIR` to an empty
 temporary directory for Claude, and use a separate empty Codex home through
-`CODEX_HOME`, then run the same marketplace/install commands. Locate the installed
+`CODEX_HOME`, then run the same GitHub marketplace/install commands and cache-tree
+comparison. Locate the installed
 folder using `claude plugin list --json` or the JSON output captured during
 Codex installation (`codex plugin add --json mono@mono-marketplace`), and run:
 
@@ -304,10 +318,8 @@ between this migration and the project's final release.
    complete `landing-drain record/status/verify` under halt. The release task
    must have landed; HEAD must equal GitHub's current landing tip T, all recorded
    merges must be ancestors of T, and T's validation must pass. Confirm the tag
-   `v<VERSION>` points to T. Immediately before each installation command,
-   compare all files the tool will copy with T: no changed, missing or additional
-   bytes, including Git-ignored files. Empty Git status is necessary but
-   insufficient; use [the complete source-check rule](references/install.md#plugin-updates).
+   `v<VERSION>` points to T. The main checkout verifies the tip and ancestry;
+   the plugin installation source is the GitHub marketplace repository.
 4. **Remove the exact legacy footprint and install the plugin in both tools.**
    In each skills root (`~/.claude/skills`, `~/.codex/skills`, and any additional
    root recorded by the legacy installation), remove only these eleven
@@ -323,13 +335,17 @@ between this migration and the project's final release.
 
    Preserve other skills, including the external `autoreview` helper, and all
    product state. Do not use a wildcard deletion to remove an unexplained
-   lookalike. Register the local marketplace and install using
-   [Plugin Installation](#plugin-installation), from the verified main checkout.
+   lookalike. The installing orchestrator registers the GitHub repository as
+   the marketplace in both tools and installs using
+   [Plugin Installation](#plugin-installation), with Codex pinned to `v<VERSION>`.
    Before any command that replaces a version folder, run `before-update` against
    that actual folder across **all** products, even for a same-version reinstall;
-   keep launches halted and wait for any named attempts. For later releases,
-   use `claude plugin update mono@mono-marketplace` and
-   `codex plugin add mono@mono-marketplace` under the same rules.
+   keep launches halted and wait for any named attempts. Immediately after
+   installation, compare each tool's version cache folder with T's Git tree
+   by path, type, executable mode, content object hash and symlink target:
+   no changed, missing or additional files, except Codex's administrative `.git`
+   directory copied from the marketplace clone. Follow
+   [Plugin Updates](references/install.md#plugin-updates) for later releases.
 5. **Verify installation before closing the wave.** Check every legacy skills
    root for any name beginning with `mono-`, plus the private directory and
    lockfile. The following read-only check fails and prints every remaining
@@ -355,8 +371,12 @@ between this migration and the project's final release.
    the JSON output captured during the guarded Codex installation (add `--json`
    to its installation command). Run each installed folder's
    `scripts/verify-pack-state.mjs version`: both versions must equal `VERSION`
-   at T, and the version tag must resolve to T. A leftover copy or mismatch
-   blocks wave close. Restart the orchestrator sessions and their collector and
+   at T, and the version tag must resolve to T. Accept that proof only with
+   matching cache-tree comparisons from step 4. A leftover copy or mismatch
+   blocks wave close, releasing launch halts and starting tasks from the new
+   installation. The installing orchestrator records any mismatch, corrects
+   the source and repeats the full verification of both tools before continuing.
+   Restart the orchestrator sessions and their collector and
    watcher from the plugin, preserving the launch halts; each other product's
    own orchestrator reads this section, confirms its plugin paths and unchanged
    product policy/state, and starts a skill from the plugin. Start a plugin skill
@@ -369,8 +389,10 @@ between this migration and the project's final release.
    state is never edited by the installing orchestrator.
 
 If migration stops after removing legacy copies, keep launches halted. The
-release's rollback is to reinstall with the legacy installer from the **first
-migration release commit**, where it still exists, and restore the previous
+release's rollback is to reinstall with the legacy installer from the main
+repository checkout set to the **first migration release commit**, where it
+still exists: the installer requires a Git checkout, so do not run it from the
+plugin cache. Restore the previous
 `workflows.deploy` value through its config owner. Restart sessions and verify
 that installation before resuming. The other product's config and state remain
 its own orchestrator's responsibility.

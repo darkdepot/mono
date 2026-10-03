@@ -304,7 +304,10 @@ substitute for first application.
 ### Plugin installation proof
 
 For Mono, installation happens once at the end of a wave, after its release task
-lands. Use the main repository checkout at the verified landing tip T. Keep the
+lands. Install from the GitHub marketplace repository `darkdepot/mono` when its
+main branch tip equals the verified T: Claude Code refreshes the marketplace
+then the plugin; Codex re-registers the marketplace on `v<VERSION>` before
+installing. Keep the
 launch halt and the landed, stopped attempt records until installation is
 verified and `close` succeeds; do not require this product's registry to be empty
 before installing the wave.
@@ -312,13 +315,19 @@ before installing the wave.
 Before each plugin installation/update command, follow
 [Plugin Updates](install.md#plugin-updates): check all products for attempts
 using any folder the tool deletes or overwrites, wait for the named attempts,
-and immediately verify that all copied bytes equal T, with no additional files,
-including Git-ignored files. Empty Git status alone is insufficient.
+then immediately after installation/update compare each tool's version cache
+with T's Git tree by path, type, executable mode, content object hash and symlink
+target, with no changed, missing or additional files except Codex's administrative
+`.git` directory. Do not register a local folder as a marketplace. On any mismatch,
+do not close the wave, release launch halts or start tasks from the new installation;
+the installing orchestrator records it, corrects the source and repeats the full
+verification of both tools. Only that orchestrator registers or updates the marketplace.
 
 Prove installation by reading each tool's installed plugin version: it must equal
 `VERSION` at T, and `v<VERSION>` must resolve to T. Record both installed folders,
 versions and the tag target alongside the existing per-task ancestry proof
-before `close`. Do not use a commit from the legacy lockfile as plugin proof.
+before `close`; accept the proof only with matching cache-tree comparisons.
+Do not use a commit from the legacy lockfile as plugin proof.
 Without the release task, the wave is not ready for plugin installation.
 The tip, ancestry, branch and batch verification performed by landing scripts
 stays unchanged.

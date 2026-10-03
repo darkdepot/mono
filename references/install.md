@@ -229,9 +229,12 @@ only the local checkout with itself or only checking the last task's merge is
 insufficient. Fetch missing commits and inspect divergence before retrying.
 
 For Mono, the wave ends with a release task. Install or update the plugin only
-after that task has landed, from the main repository checkout at the verified T.
-Immediately before each installation command, apply [Plugin Updates](#plugin-updates),
-including the source-byte check. Keep halt through installation and read-back.
+after that task has landed and GitHub's main branch tip equals the verified T,
+from the GitHub marketplace repository `darkdepot/mono`, not a local folder.
+The main checkout still verifies T and ancestry; it is not the plugin copy source.
+Apply [Plugin Updates](#plugin-updates), including the update condition before
+each command that replaces a version folder and the cache-tree comparison
+immediately after installation or update. Keep halt through installation and read-back.
 
 The installation proof is the installed plugin version in **each tool** equal
 to `VERSION` at T, with the repository tag `v<VERSION>` resolving to T. Read the
@@ -250,7 +253,9 @@ The existing landing verification proves each merge is an ancestor of T; the
 plugin proof does not use a lockfile commit. A wave without a release must not
 be installed: unchanged version metadata cannot prove that its new bytes were
 released. If GitHub advances before installation, verify the new T from its
-matching checkout and repeat the byte check. Pending records survive failure.
+matching checkout and repeat the complete installation verification for both
+tools. Accept version/tag proof only together with matching cache-tree
+comparisons. Pending records survive failure.
 
 The one-time migration uses [the migration conditions](../README.md#migrate-from-the-local-installer):
 this product retains its landed, stopped attempts until wave close; each other
@@ -261,11 +266,37 @@ installation and products without this block. Landing scripts are unchanged.
 
 ### Plugin Updates
 
-Install or update deliberately after the release task, from the main checkout
-at T. Disable automatic updates for Mono. Claude Code uses
-`claude plugin update mono@mono-marketplace`; Codex uses
-`codex plugin add mono@mono-marketplace`, including a repeat installation of the
-same version. Initial installation uses the [README marketplace commands](../README.md#plugin-installation).
+Install or update deliberately after the release task has landed, when GitHub's
+main branch tip equals the verified T. Disable automatic updates for Mono.
+Only the installing orchestrator registers and updates the shared GitHub
+marketplace `darkdepot/mono`; another product's orchestrator does not edit that
+state. Initial installation uses the
+[README marketplace commands](../README.md#plugin-installation).
+
+In Claude Code, keep the marketplace registered on the repository's main branch.
+Refresh the marketplace first, then update the plugin:
+
+```bash
+claude plugin marketplace update mono-marketplace
+claude plugin update mono@mono-marketplace
+```
+
+In Codex, first check the update condition below for the actual cache version
+folder the installation will delete or overwrite. Remove the marketplace (this
+deletes only its clone; the plugin cache remains), register the repository on
+the new release tag, then install. Replace `<VERSION>` with `VERSION` at T:
+
+```bash
+codex plugin marketplace remove mono-marketplace
+codex plugin marketplace add darkdepot/mono --ref v<VERSION>
+codex plugin add mono@mono-marketplace
+```
+
+The initial check does not replace the check immediately before the installation
+command. Do not register a local folder as the marketplace: Claude Code reads
+that plugin in place, without pinning its version, and both tools copy the
+entire local folder, including unrelated files. The version cache folder is
+the task's pack root; the marketplace clone is not.
 
 Immediately before **every** command that deletes or overwrites a plugin version
 folder, pause dispatch in every affected product and run the update condition
@@ -286,32 +317,29 @@ block the update; attempts identified as using the replaced folder remain blocki
 Claude Code places a new version beside the previous one and does not copy when
 the version is unchanged. Codex replaces the previous version folder, and a
 repeat installation of the same version overwrites that folder with current
-checkout bytes. Codex therefore requires this check even for a same-version
+marketplace clone bytes. Codex therefore requires this check even for a same-version
 reinstall. A task keeps its saved absolute pack folder while the tool retains
 it. A task older than the tool's retention of that version needs a new attempt
 if the folder is gone; do not redirect it to newer files. Claude Code retention
 was observed at about 14 days, not a guarantee. See [version compatibility](versioning.md#local-lockfile).
 
-Immediately before **each** installation or update command, also verify that
-the main checkout contains exactly the files of T that the tool will copy.
-Require `git rev-parse HEAD` to equal T and an empty
-`git status --porcelain --untracked-files=all`, but do not stop at Git status:
-inventory the complete copy source, including Git-ignored files, and compare
-file contents, types, executable modes and symlink targets against T's tree.
-There must be no modified, missing or additional copied files. Exclude only
-paths that the tool is demonstrably known not to copy; `.gitignore` alone is
-not an exclusion. These commands expose additional files, including ignored
-ones, but are only part of the full comparison:
+Immediately after **each** installation or update, locate the installed version
+cache folder in each tool and compare it file by file with the Git tree at T,
+using the main checkout's Git objects as the reference. Compare paths, types,
+executable modes, content by Git object hash and symlink targets. There must be
+no changed, missing or additional files. The only permitted addition is the
+administrative `.git` directory Codex copies from the marketplace clone; the
+pack does not read it. Do not use the clone as evidence for the cache contents.
 
-```bash
-git ls-files --others --exclude-standard
-git ls-files --others --ignored --exclude-standard
-git ls-tree -r "$T"
-```
+If either tool's cache differs, do not close the wave, release launch halts or
+start any task from the new installation. The installing orchestrator records
+the mismatch and corrects the source, then repeats the full verification of
+**both** tools. The version/tag installation proof is accepted only together
+with matching cache-tree comparisons.
 
-The tools copy bytes from disk, not from the version tag. Stop on a mismatch,
-inspect it and restore the exact source before retrying; never install from a
-worker worktree or treat a tag and clean Git status as sufficient source proof.
+For verification in an empty temporary home, use the same GitHub marketplace
+repository and version tag as above, then perform the same cache-tree comparison
+and installed-version proof. This does not change the active installation.
 
 ## Project Config
 
