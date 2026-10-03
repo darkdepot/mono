@@ -1,1 +1,0 @@
-- Package Mono as a Claude Code and Codex plugin alongside the legacy installer. Pin each attempt to its pack folder, separate external review helpers, and check all products before an update replaces a folder in use.
