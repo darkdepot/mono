@@ -22,9 +22,10 @@ keeps direct access/approval, lifecycle handshake.
 
 ## Pack identity gate invocation
 
-Require exact dispatch identity/all four pins before work/resume: exit 0 and
-pack-state: identity verified, else block. Installed runtime only;
-single-quote paths/pins (embedded quote: '\''); never checkout SURFACE_REVISION.
+Before work/resume: all four dispatch pins, exit 0 and pack-state: identity
+verified, else block. [Compatibility](versioning.md#local-lockfile).
+Installed runtime only; single-quote paths/pins (embedded: '\''); never checkout
+SURFACE_REVISION.
 
 ```bash
 node '<installed-skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity \

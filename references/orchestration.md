@@ -676,8 +676,10 @@ Every transport is pinned to the installed pack identity. Before dispatch,
 read `packVersion`, `sourceCommit`, and `surfaceRevision` from the installed
 `.mono-agent-workflow.lock.json` and copy them verbatim into the dispatch
 snapshot and the new `workers.json` entry. At the first start and every stage
-resume the worker runs `verify-pack-state.mjs identity`; any identity mismatch
-is a `blocked` report and the stage does not continue.
+resume the worker runs `verify-pack-state.mjs identity` under the compatibility
+rule in [Versioning](versioning.md#local-lockfile). Retain the task's original
+identity after a compatible update; reports must still match the task record
+strictly. Incompatible surfaces block with a named recovery: a new attempt.
 
 ### Pack identity gate invocation
 
@@ -726,7 +728,7 @@ recorded launch pins; do not resolve new policy values for an existing thread.
   Keep startup gate list while waiting or same-attempt recovery; new attempts
   provide a fresh list. The watcher bounds incomplete startup independently.
   Resume preserves launch pins and appends the same log, refuses a live writer
-  and changed identity, uses cwd plus sandbox/network writable-root overrides (sandbox_workspace_write.network_access).
+  and incompatible surface revisions, uses cwd plus sandbox/network writable-root overrides (sandbox_workspace_write.network_access).
   Reconcile a crash before another resume; never silently retry a possibly live
   detached process. A launch.lock left by a crashed caller requires process and
   registry reconciliation before removal. No phase dispatches/resume templates.
@@ -1200,7 +1202,10 @@ the upstream repository source used for pack development and fixtures. It is
 a zero-dependency, read-only watcher over the orchestrator root: it reads
 `logs/`, `reports/`, `workers.json`, and `control.json`, writes nothing, and
 emits one stable line per watcher event to stdout —
-`<ISO time> EVENT:<stall|dead|spawn-fail|report|phase|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
+`<ISO time> EVENT:<stall|dead|spawn-fail|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
+`phase-rejected` names the task and mismatched identity fields when a phase
+report fails strict report-to-task correlation. It never accepts the report or
+suppresses liveness on its strength.
 The watcher observes the active registry (`workers.json`), not the
 directory's history; retired Issues' logs are outside its scope.
 
@@ -1490,7 +1495,7 @@ A fresh orchestrator session rebuilds state without loss:
    with its own correct list before the ordinary no-ack ladder can run.
    Compare each entry's `surfaceRevision` with the currently installed
    lockfile before using its thread id. When surfaceRevision differs, do not rebind
-   or resume that thread; report it blocked for a fresh compatible dispatch.
+   or resume that thread; report it blocked and start a new attempt.
    Otherwise rebind to surviving `codex-cli` workers by thread id
    through installed scripts/orchestrator/resume.mjs instead of respawning them.
 6. Output the rebuilt status table before taking any new action.

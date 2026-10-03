@@ -3,8 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-
-const IDENTITY_FIELDS = ["packVersion", "sourceCommit", "surfaceRevision"];
+import { requireCompatiblePack } from "./runtime.mjs";
 const CONTROL_STATES = new Set(["active", "draining", "idle"]);
 
 function fail(message) {
@@ -51,12 +50,8 @@ function parseOptions(argv) {
 export function verifyIdentity(installed, expected) {
   validateIdentity(installed, "installed identity");
   validateIdentity(expected, "dispatch identity");
-  const mismatches = IDENTITY_FIELDS.flatMap((field) =>
-    installed[field] === expected[field]
-      ? []
-      : [`${field} expected ${expected[field]} but installed ${installed[field]}`]
-  );
-  if (mismatches.length > 0) fail(`identity mismatch: ${mismatches.join("; ")}`);
+  try { requireCompatiblePack(installed, expected); }
+  catch (error) { fail(error.message); }
 }
 
 export function verifyQuiescence(control, workers) {

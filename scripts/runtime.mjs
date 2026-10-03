@@ -165,6 +165,11 @@ export function flags(args) {
 export function identity(value) {
   return typeof value?.packVersion === "string" && value.packVersion.length > 0 && /^[a-f0-9]{40}$/.test(value.sourceCommit) && Number.isInteger(value.surfaceRevision) && value.surfaceRevision > 0;
 }
+export const IDENTITY_FIELDS = Object.freeze(["packVersion", "sourceCommit", "surfaceRevision"]);
+export function requireCompatiblePack(installed, expected) {
+  if (installed.surfaceRevision !== expected.surfaceRevision)
+    throw new Error(`surfaceRevision expected ${expected.surfaceRevision} but installed ${installed.surfaceRevision}; start a new attempt`);
+}
 export const isMain = (url) => process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(url));
 export function positive(value, fallback, name) {
   value = value ?? fallback;
