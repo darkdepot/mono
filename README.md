@@ -250,7 +250,7 @@ node /path/to/current/mono/scripts/verify-pack-state.mjs before-update --folder 
 A refusal names the product, Issue and attempt; wait for those attempts to finish
 and become landed and stopped. Do not remove their records to bypass the check.
 This check reads registries only. Entries without a pack root are listed as
-unknown; resolve their folder ownership before declaring the update safe.
+unknown and do not block the update.
 A new sibling folder does not replace the old folder. Attempts retain their
 original absolute `packRoot`; compatible newer scripts can resume them while that folder exists.
 If a task outlives the tool's retention of its version and the folder is gone,

@@ -280,8 +280,8 @@ Keep dispatch paused through the check and replacement. A refusal names the
 product, Issue and attempt: wait for those attempts, including paused attempts,
 to finish and become landed and stopped. Do not remove a registry entry to
 evade the condition. The check only reads registries; each product's orchestrator
-owns its state. Unknown entries are reported by the command; resolve their
-folder ownership before claiming the update is safe.
+owns its state. Entries without a pack root are reported as unknown and do not
+block the update; attempts identified as using the replaced folder remain blocking.
 
 Claude Code places a new version beside the previous one and does not copy when
 the version is unchanged. Codex replaces the previous version folder, and a
