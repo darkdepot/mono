@@ -81,22 +81,29 @@ export function verifyQuiescence(control, workers) {
 }
 
 export function updateBlockers(folder, productsRoot = path.join(os.homedir(), '.mono-agent-workflow/orchestrator')) {
-  const replaced = resolvedLocation(folder), blockers = [];
-  if (!fs.existsSync(productsRoot)) return blockers;
+  const replaced = resolvedLocation(folder), blockers = [], unknown = [];
+  if (!fs.existsSync(productsRoot)) return { blockers, unknown };
   for (const product of fs.readdirSync(productsRoot, { withFileTypes: true }).filter(entry => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
     const root = path.join(productsRoot, product.name), registry = path.join(root, 'workers.json');
     if (!fs.existsSync(registry)) continue;
     const workers = readJson(registry, 'workers.json');
     if (!workers || typeof workers !== 'object' || Array.isArray(workers)) fail(`invalid registry: ${registry}`);
     for (const [key, entry] of Object.entries(workers)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) fail(`invalid registry entry: ${product.name}/${key}`);
+      const sources = ['packRoot', 'lock', 'skillsRoot'].filter(field => Object.hasOwn(entry, field));
+      if (!sources.length) {
+        unknown.push({ product: product.name, key });
+        continue;
+      }
+      if (sources.some(field => typeof entry[field] !== 'string' || !path.isAbsolute(entry[field])))
+        fail(`packRoot unavailable: ${product.name}/${key}`);
       const packRoot = entry.packRoot ?? (entry.lock ? path.dirname(entry.lock) : entry.skillsRoot);
-      if (!path.isAbsolute(packRoot ?? '')) fail(`packRoot unavailable: ${product.name}/${key}`);
       const saved = resolvedLocation(packRoot);
       if ((saved === replaced || saved.startsWith(replaced + path.sep)) && attemptState(root, entry).state !== 'landed')
         blockers.push({ product: product.name, issue: entry.issue ?? key, attempt: entry.attempt, packRoot: saved });
     }
   }
-  return blockers;
+  return { blockers, unknown };
 }
 
 function run(argv) {
@@ -108,7 +115,8 @@ function run(argv) {
   }
   if (command === 'before-update') {
     if (!options.folder) fail('before-update requires --folder');
-    const blockers = updateBlockers(path.resolve(options.folder), options['products-root'] ? path.resolve(options['products-root']) : undefined);
+    const { blockers, unknown } = updateBlockers(path.resolve(options.folder), options['products-root'] ? path.resolve(options['products-root']) : undefined);
+    if (unknown.length) console.log(`pack-state: unknown entries: ${unknown.map(item => `${item.product}/${item.key}`).join('; ')}`);
     if (blockers.length) fail(`update blocked: ${blockers.map(item => `${item.product}/${item.issue} attempt ${item.attempt}: ${item.packRoot}`).join('; ')}`);
     console.log('pack-state: update allowed'); return;
   }

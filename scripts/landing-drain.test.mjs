@@ -27,6 +27,48 @@ test('plugin update checks all products, including paused attempts, without chan
   assert.doesNotMatch(result.stderr, /MONO-901|MONO-904/);
   files.forEach((file, index) => assert.deepEqual(fs.readFileSync(file), before[index]));
 });
+
+test('plugin update lists unknown entries and still checks later products', t => {
+  const products = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-update-'));
+  t.after(() => fs.rmSync(products, { recursive: true, force: true }));
+  const folder = path.join(products, 'plugin');
+  const first = path.join(products, 'a-product'), second = path.join(products, 'z-product');
+  for (const dir of [folder, first, second]) fs.mkdirSync(dir);
+  const unknownFile = path.join(first, 'workers.json'), knownFile = path.join(second, 'workers.json');
+  atomicJson(unknownFile, { foreign: { issue: 'X-1', attempt: 1, stage: 'mono-deploy' } });
+  const paused = { issue: 'MONO-902', attempt: 1, stage: 'mono-deliver', pid: null, packRoot: path.join(folder, 'older') };
+  const run = () => spawnSync(process.execPath, [path.resolve('scripts/verify-pack-state.mjs'), 'before-update', '--folder', folder, '--products-root', products], { encoding: 'utf8' });
+  for (const blocking of [true, false]) {
+    atomicJson(knownFile, { paused: { ...paused, packRoot: blocking ? paused.packRoot : path.join(products, 'elsewhere') } });
+    const before = [unknownFile, knownFile].map(file => fs.readFileSync(file));
+    const result = run();
+    assert.equal(result.status, blocking ? 1 : 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /^pack-state: unknown entries: a-product\/foreign$/m);
+    if (blocking) assert.match(result.stderr, /update blocked: z-product\/MONO-902 attempt 1/);
+    else {
+      assert.match(result.stdout, /pack-state: update allowed/);
+      assert.equal(result.stderr, '');
+    }
+    assert.deepEqual(updateBlockers(folder, products).unknown, [{ product: 'a-product', key: 'foreign' }]);
+    [unknownFile, knownFile].forEach((file, index) => assert.deepEqual(fs.readFileSync(file), before[index]));
+  }
+  for (const field of ['packRoot', 'lock', 'skillsRoot']) {
+    for (const value of ['relative/path', '', null, 42]) {
+      atomicJson(unknownFile, { foreign: { [field]: value } });
+      const result = run();
+      assert.equal(result.status, 1, `${field}=${value}: ${result.stdout + result.stderr}`);
+      assert.match(result.stderr, /packRoot unavailable: a-product\/foreign/);
+    }
+  }
+  for (const contents of ['{', '[]']) {
+    fs.writeFileSync(unknownFile, contents);
+    const result = run();
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /cannot read workers.json|invalid registry/);
+  }
+  fs.rmSync(unknownFile); fs.mkdirSync(unknownFile);
+  assert.equal(run().status, 1, 'unreadable registry still refuses the update');
+});
 function fixture(t, commandScript = script) {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-drain-"));
   t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
