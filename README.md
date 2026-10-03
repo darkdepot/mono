@@ -296,6 +296,7 @@ performing it installs a wave that ends with the approved migration release;
 the owner authorizes the migration in that release task. The legacy installer
 remains in that release for rollback. Do not install intervening pack changes
 between this migration and the project's final release.
+After migration, the pack's deploy live pass uses [plugin installation proof](references/landing.md#plugin-installation-proof) rather than the legacy installer check.
 
 1. **Halt launches in every product.** Each product's own orchestrator pauses
    dispatch/resume and keeps it paused through migration and installation
