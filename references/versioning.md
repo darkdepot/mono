@@ -62,11 +62,11 @@ Example shape:
 ```json
 {
   "schemaVersion": 3,
-  "packVersion": "0.20.1",
+  "packVersion": "0.23.0",
   "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
   "surfaceRevision": 4,
   "upstreamRepo": "darkdepot/mono",
-  "upstreamVersion": "0.20.1",
+  "upstreamVersion": "0.23.0",
   "upstreamCommit": "0123456789abcdef0123456789abcdef01234567",
   "upstreamDirty": false,
   "installedAt": "2026-06-10T00:00:00.000Z",

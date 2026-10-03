@@ -6,6 +6,30 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-03
+
+<!-- fragment: MONO-117 sha256:e0905d65c4ffb9fe830bbe911f5968ce8ae22d80dbfe9d4a66155049bf9151af -->
+- Allow worker resume and start gates after compatible pack updates by comparing only `surfaceRevision`; incompatible surfaces name a new attempt as recovery.
+- Emit `phase-rejected` watcher events for foreign phase-report identity while preserving strict report-to-task matching through a shared identity-field constant.
+
+<!-- fragment: MONO-118 sha256:ec7bae64df40330fed34a000df8ffc4f9c2935f6aebd9226627a3bf0dfa56d14 -->
+- Package Mono as a Claude Code and Codex plugin alongside the legacy installer. Pin each attempt to its pack folder, separate external review helpers, and check all products before an update replaces a folder in use.
+
+<!-- fragment: MONO-119 sha256:02a09593e95d8bf79f81c7010f076eae3661d2fbcc42bd53ee4e6350cb6c43de -->
+- Prepare the one-time migration from the local installer to plugins in Claude Code and Codex. Document per-product migration conditions, exact legacy cleanup, release-tip source checks, updates that wait for attempts using replaced folders, and installation proof by version and tag before wave close.
+
+<!-- fragment: MONO-120 sha256:d00b78036364c944f49b73aa71dff43049ce614b95712b7c2e7f50069f83a2c2 -->
+- MONO-120: prepare release 0.23.0 for the first plugin installation and machine migration, assemble accumulated task records, preserve an empty Unreleased section, and align pack and plugin versions.
+
+<!-- fragment: MONO-124 sha256:55817bb51b251b51c4f25d56b5a8561663d3cc72e8d2058c7df8230b6ef06a33 -->
+- List registry entries without a pack root as unknown before plugin updates, continue checking other products, and retain refusals for blocking attempts or invalid registry data.
+
+<!-- fragment: MONO-125 sha256:dc259df4fc5c9ddd288947030726d5ca715db094c7a6a932b74cb0d76d96e007 -->
+- Install and update Mono from the GitHub marketplace repository: Claude Code refreshes the marketplace and plugin, while Codex pins each release tag through re-registration. Verify each installed version cache against the landing tip's Git tree before closing the wave or resuming tasks; document migration rollback from a Git checkout at the first migration release.
+
+<!-- fragment: MONO-126 sha256:210f698d799796439c97025a11dd6379a297e611498bdf977358e9a06087f5ac -->
+- Select the skill-pack deploy live pass by machine installation state: check the legacy installer before migration, use plugin installation proof after both tools migrate with clean recorded skills roots, and block closeout for incomplete migration.
+
 ## [0.22.0] - 2026-10-03
 
 <!-- fragment: MONO-107 sha256:6a043c0974110d08f39cc16fd00982feb8e790b6ac6276fcb61a654406aa67ad -->

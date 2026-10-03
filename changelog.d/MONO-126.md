@@ -1,1 +1,0 @@
-- Select the skill-pack deploy live pass by machine installation state: check the legacy installer before migration, use plugin installation proof after both tools migrate with clean recorded skills roots, and block closeout for incomplete migration.
