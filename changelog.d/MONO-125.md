@@ -1,1 +1,0 @@
-- Install and update Mono from the GitHub marketplace repository: Claude Code refreshes the marketplace and plugin, while Codex pins each release tag through re-registration. Verify each installed version cache against the landing tip's Git tree before closing the wave or resuming tasks; document migration rollback from a Git checkout at the first migration release.

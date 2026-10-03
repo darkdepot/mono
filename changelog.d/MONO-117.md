@@ -1,2 +1,0 @@
-- Allow worker resume and start gates after compatible pack updates by comparing only `surfaceRevision`; incompatible surfaces name a new attempt as recovery.
-- Emit `phase-rejected` watcher events for foreign phase-report identity while preserving strict report-to-task matching through a shared identity-field constant.
