@@ -1,5 +1,5 @@
 ---
-name: mono-orchestrate
+name: orchestrate
 description: Use when running a long-lived product orchestrator session that drives Linear projects and Issues through the workflow with delegated worker sessions.
 ---
 
@@ -12,10 +12,10 @@ projects and Issues through the existing workflow skills with delegated
 workers, answer technical questions autonomously, and escalate only product
 decisions to the user.
 
-`mono-orchestrate` never does stage work itself. It inspects, delegates,
+`mono:orchestrate` never does stage work itself. It inspects, delegates,
 monitors, decides or escalates, records, and reports. Stage ownership is
-unchanged: `mono-implement` owns Delivery Start, `mono-preflight` owns
-local readiness, `mono-ship` owns the PR lifecycle, `mono-deploy` owns
+unchanged: `mono:implement` owns Delivery Start, `mono:preflight` owns
+local readiness, `mono:ship` owns the PR lifecycle, `mono:deploy` owns
 merge/deploy and closeout.
 
 Read first:
@@ -126,7 +126,7 @@ Workflow states:
      `templates/orchestrator-brief.md` with its «Техника» table) before
      taking new actions.
 2. `intake-and-discovery`
-   - Run `mono-idea` per idea in this session; with several ideas, queue
+   - Run `mono:idea` per idea in this session; with several ideas, queue
      them and run discovery one project at a time (Director Discovery in
      `references/orchestration.md`) while dispatched work continues.
    - Run the recommended discovery route and review skills through the
@@ -143,11 +143,11 @@ Workflow states:
      user's decisions — exercised at checkpoints with prepared variants,
      per the Always-ask list.
 3. `handoff`
-   - Run `mono-handoff` in this session. Bring the user one
+   - Run `mono:handoff` in this session. Bring the user one
      package-approval decision brief per `templates/orchestrator-brief.md`.
    - After package approval, implementation start is the orchestrator's own
      decision; record it explicitly (the bundled-approval rule from
-     `mono-implement` applies).
+     `mono:implement` applies).
 4. `dispatch`
    - Apply [landing launch scheduling](references/landing.md#scheduling) before adding work to a running wave.
    - Before incompatible plugin updates require machine-wide quiescence per
@@ -170,7 +170,7 @@ Workflow states:
      `templates/orchestrator-dispatch.md`: one delivery, full context snapshot, AFK
      contract, engine block, mailbox path, authorization. Include the
      no-sub-delegation rule in every dispatch prompt.
-   - Dispatch mono-deliver once per approved Issue with the full snapshot,
+   - Dispatch mono:deliver once per approved Issue with the full snapshot,
      exact identity command, start-gate request and required phase capabilities.
      Pin request handshake=wait|resume (default resume), profile=short|full
      (default full), pins {file,digest}, pinsVersion=0; short only tiny/standard,
@@ -243,9 +243,9 @@ Workflow states:
      brief. Design questions require prepared visual variants first.
 7. `deploy-and-closeout`
    - When a worker reports `green` (mono-ship green certificate), run
-     `mono-deploy` from this session per the configured Deploy workflow
+     `mono:deploy` from this session per the configured Deploy workflow
      and `deployApproval` policy, including its mandatory Live QA gate
-     (`skills/mono-deploy/SKILL.md`). The live sweep runs
+     (`skills/deploy/SKILL.md`). The live sweep runs
      orchestrator-side — workers have no browser.
    - On a live defect, file an immediate hotfix Issue and dispatch it
      out of queue ahead of queued work (fix-forward); the shipped Issue
@@ -295,7 +295,7 @@ Rules:
 - One Issue per worker; the worker keeps its session and worktree across
   stages to preserve context.
 - On material drift, stop the worker and escalate:
-  `scope-drift-needs-handoff` routes through `mono-handoff` with the user.
+  `scope-drift-needs-handoff` routes through `mono:handoff` with the user.
 - A stuck or dead worker is respawned from Linear plus the last mailbox
   report; continue the stage, do not restart the Issue.
 - The heartbeat watcher (`scripts/watch-workers.mjs` from the pack root)

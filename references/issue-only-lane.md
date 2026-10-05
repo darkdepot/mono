@@ -108,7 +108,7 @@ reintroduce project-first ceremony.
 ## Trust boundary
 
 Intake remains non-activating: it leaves a prepared Issue in a pre-start state,
-and `mono-implement` owns the later delivery check and Issue lifecycle move.
+and `mono:implement` owns the later delivery check and Issue lifecycle move.
 Activation is config-gated per repository by explicit
 `issueOnlyLane.enabled: true` plus a non-empty `ownerPrincipal`; no workflow may
 write or infer that opt-in. This upstream pack keeps its own lane disabled and
@@ -240,7 +240,7 @@ An issue-only Issue names its theme project in the `Связи` line
 `Тематический проект: <name>`, or says `Тематический проект: нет — <причина>`
 when no project's theme fits. The line exists for one reason: so a delivered
 result is visible in a project's feed, which is where the owner reads what
-shipped. `mono-deploy` publishes the closeout update on that project.
+shipped. `mono:deploy` publishes the closeout update on that project.
 
 It is not part of the lane's contract. It is not a marker field, it is not a
 sixth seam field, the resolver never parses it, and it is not a Project
@@ -269,7 +269,7 @@ Before any implementation code exists:
 
 1. Park the original Issue in a non-startable state and record why the issue-only envelope was left.
 2. Supersede the authoritative marker without editing the approved Issue contract: write a newest exact five-field marker whose fingerprint, acceptance IDs, and risk still match the live body, but whose receipt is `Approval: superseded`; remove the `issue-only` label. The resolver then returns the exact project-first seam. The original approval is annulled and can never authorize the restart.
-3. Restart through `mono-idea` → discovery/handoff as a new Project-first package with new approval. Do not add a Project, PRD, Tech Spec, or Project relationship to the parked Issue. The other allowed outcome is cancellation.
+3. Restart through `mono:idea` → discovery/handoff as a new Project-first package with new approval. Do not add a Project, PRD, Tech Spec, or Project relationship to the parked Issue. The other allowed outcome is cancellation.
 
 ### Post-`ready` exit
 
@@ -277,6 +277,6 @@ Frozen slice disposition: ship-unchanged-or-cancel
 
 Expansion destination: separate-follow-up-project
 
-After a `mono-preflight` certificate already says `ready`, freeze the independently shippable Issue slice and its current PR scope. A frozen approval remains valid only while the whole-body fingerprint matches: do not edit the Issue body, acceptance IDs, marker fingerprint, or frozen implementation scope. Ship and deploy only that frozen slice as-is, and put every expanded outcome into a separate follow-up Project with its own PRD, Tech Spec, Issue, review, and approval. Set that follow-up Project's lead to the acting user (`lead: "me"` on the Linear connector) and the assignee of every Issue created in it to the same acting user (`assignee: "me"`) at creation, and never overwrite an assignment that already exists. If the current slice cannot remain independently shippable or its fingerprint no longer matches, cancel it instead; do not repair it by promotion.
+After a `mono:preflight` certificate already says `ready`, freeze the independently shippable Issue slice and its current PR scope. A frozen approval remains valid only while the whole-body fingerprint matches: do not edit the Issue body, acceptance IDs, marker fingerprint, or frozen implementation scope. Ship and deploy only that frozen slice as-is, and put every expanded outcome into a separate follow-up Project with its own PRD, Tech Spec, Issue, review, and approval. Set that follow-up Project's lead to the acting user (`lead: "me"` on the Linear connector) and the assignee of every Issue created in it to the same acting user (`assignee: "me"`) at creation, and never overwrite an assignment that already exists. If the current slice cannot remain independently shippable or its fingerprint no longer matches, cancel it instead; do not repair it by promotion.
 
 An escalation discovered after code exists but before `ready` exits preflight as `drift-candidate`. Because there is no ready independently shippable slice to freeze, the safe choices are to cancel the issue-only attempt and restart Project-first, or stop for the orchestrator's risk decision. In every timing case, in-place promotion is forbidden.

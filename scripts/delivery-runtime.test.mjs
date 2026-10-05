@@ -38,10 +38,10 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     for (const script of ["gate.mjs", "delivery-state.mjs", "orchestrator/spawn.mjs", "orchestrator/resume.mjs", "orchestrator/consume-gate-ack.mjs"]) {
       pass(run(process.execPath, [path.join(runtime, script), "--help"], root, env));
     }
-    assert.ok(fs.existsSync(path.join(skills, "skills/mono-deliver/SKILL.md")));
+    assert.ok(fs.existsSync(path.join(skills, "skills/deliver/SKILL.md")));
     const budget = jsonFromRun(pass(run(process.execPath, [path.join(runtime, "read-budget.mjs"), "--json"], root, env)));
     assert.ok(budget.within_ceiling && budget.ceiling_bytes === 99_882);
-    assert.ok(budget.files.some(file => file.path === "skills/mono-deliver/SKILL.md"));
+    assert.ok(budget.files.some(file => file.path === "skills/deliver/SKILL.md"));
     assert.ok(budget.files.some(file => file.path === "references/worker-contract.md"));
     fs.mkdirSync(repo); pass(run("git", ["init", "-b", "delivery"], repo, env));
     write(path.join(repo, "tracked.txt"), "tracked\n"); pass(run("git", ["add", "tracked.txt"], repo, env));

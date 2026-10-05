@@ -2,7 +2,7 @@
 
 ## Idea
 
-Capture a strengthened idea without premature delivery artifacts. `mono-idea` is an intake gate, not a planning skill.
+Capture a strengthened idea without premature delivery artifacts. `mono:idea` is an intake gate, not a planning skill.
 
 Required:
 
@@ -19,7 +19,7 @@ Forbidden:
 - Implementation plan.
 - Code changes.
 
-Gate: `mono-check idea`.
+Gate: `mono:check idea`.
 
 ## Discovery
 
@@ -27,11 +27,11 @@ Use Plan Mode discovery and review skills to shape the idea.
 
 Required:
 
-- Project from `mono-idea`.
+- Project from `mono:idea`.
 - `/office-hours` or `/brainstorming` output when product shape is unclear.
 - `/plan-design-review` when UI or product surface needs design review.
 - `/plan-eng-review` when architecture is ready to review.
-- Handoff to `mono-handoff` instead of direct implementation approval.
+- Handoff to `mono:handoff` instead of direct implementation approval.
 - PRD and Tech Spec may exist while the Project remains in Discovery.
 
 Forbidden:
@@ -41,7 +41,7 @@ Forbidden:
 - Starting implementation from a raw discovery or review plan.
 - Moving the Project to Delivery merely because PRD or Tech Spec exists.
 
-Gate: `mono-check discovery`, then `mono-handoff`.
+Gate: `mono:check discovery`, then `mono:handoff`.
 
 ## Handoff
 
@@ -55,7 +55,7 @@ Required:
 - Current Tech Spec.
 - Package approval recorded as a Linear comment.
 - Risk classification and review-gate policy.
-- `mono-review handoff` when required by `references/readiness-gates.md`.
+- `mono:review handoff` when required by `references/readiness-gates.md`.
 - User approval recorded as a Linear comment.
 - Proposed Issue slicing.
 
@@ -65,20 +65,20 @@ Forbidden:
 - PR creation during handoff.
 - Implementation before approved Issue(s) exist.
 - Moving the Project to Delivery before approved execution Issue(s) exist.
-- Moving the Project to Delivery from `mono-handoff`; Delivery Start belongs to `mono-implement`.
+- Moving the Project to Delivery from `mono:handoff`; Delivery Start belongs to `mono:implement`.
 
-Gate: `mono-review handoff` when required or advisory, then `mono-check handoff`.
+Gate: `mono:review handoff` when required or advisory, then `mono:check handoff`.
 
 ## Artifact Repair
 
-Repair an existing Project-first package through `mono-handoff` and
+Repair an existing Project-first package through `mono:handoff` and
 `references/repair-machine.md` without reopening ordinary package creation.
 
 Required:
 
 - Exact before/after preview grouped by stable ID and a proposed class with
   evidence.
-- `mono-review artifact` report-only classification review.
+- `mono:review artifact` report-only classification review.
 - Class 1 preserves approval and Issues.
 - Class 2 stops or quiesces every affected active worker before any repair
   mutation, then synchronizes affected implementation-critical Issue snapshots,
@@ -86,19 +86,19 @@ Required:
   repair.
 - Class 3 stops workers, supersedes approvals, invalidates dependent artifacts,
   moves a Delivery Project back to Discovery, and requires owner re-approval.
-- `mono-check repair` reports readiness after all class effects are recorded.
+- `mono:check repair` reports readiness after all class effects are recorded.
 
 Forbidden:
 
 - Downgrading ambiguity or risk growth below class 3.
 - Using handoff repair for issue-only body renewal; that belongs to
-  `mono-issue` and its create-then-approve transaction.
+  `mono:issue` and its create-then-approve transaction.
 - Using handoff repair for accepted pre-ship drift; that remains owned by
-  `mono-ship`.
+  `mono:ship`.
 - Letting a stale-contract worker continue or shipping on a pre-repair
   preflight certificate.
 
-Gate: `mono-review artifact`, repair transaction, then `mono-check repair`.
+Gate: `mono:review artifact`, repair transaction, then `mono:check repair`.
 
 ## Issue
 
@@ -124,11 +124,11 @@ Forbidden:
 - Raw document URLs when Linear chips can represent the entities.
 - Code changes before the Issue is sufficient for another agent.
 
-Gate: `mono-check issue`.
+Gate: `mono:check issue`.
 
 ## Delivery
 
-Prepare and run implementation from approved Linear Issue(s). Delivery starts through `mono-implement` only after execution Issue(s) exist and implementation is ready to begin.
+Prepare and run implementation from approved Linear Issue(s). Delivery starts through `mono:implement` only after execution Issue(s) exist and implementation is ready to begin.
 
 Required:
 
@@ -139,8 +139,8 @@ Required:
 - Approval covers the current Issue set and explicitly allows implementation start.
 - Required review findings resolved, accepted, or explicitly deferred.
 - Implementation starts from the approved Issue(s), not from raw discovery output.
-- `mono-implement` verifies or obtains implementation-start approval, moves the Project to Delivery, runs or reports `mono-check delivery`, records the start comment, and selects the implementation engine.
-- `mono-implement` exits as `implemented-needs-preflight`, `blocked`, `scope-drift-needs-handoff`, or `needs-human`.
+- `mono:implement` verifies or obtains implementation-start approval, moves the Project to Delivery, runs or reports `mono:check delivery`, records the start comment, and selects the implementation engine.
+- `mono:implement` exits as `implemented-needs-preflight`, `blocked`, `scope-drift-needs-handoff`, or `needs-human`.
 - Prior operational learnings consulted through `gstack-learnings-search` when the helper is available, advisory only.
 
 Forbidden:
@@ -148,9 +148,9 @@ Forbidden:
 - Passing delivery readiness with only PRD and Tech Spec.
 - Moving to Delivery when package approval did not authorize implementation start.
 - Starting implementation from a raw `/office-hours`, `/brainstorming`, or review plan.
-- Creating PRs, running pre-ship review/check, deploy, or closeout from `mono-implement`.
+- Creating PRs, running pre-ship review/check, deploy, or closeout from `mono:implement`.
 
-Gate: `mono-check delivery`.
+Gate: `mono:check delivery`.
 
 ## Preflight
 
@@ -168,13 +168,13 @@ Required:
 
 Forbidden:
 
-- Running or claiming `mono-review pre-ship`.
-- Running or claiming `mono-check pre-ship`.
+- Running or claiming `mono:review pre-ship`.
+- Running or claiming `mono:check pre-ship`.
 - Creating the final PR.
 - Merging, deploying, or closing Linear Issues.
 - Replacing `autoreview` with Compound `ce-code-review`, built-in `/review`, ad hoc review, or a hand-written self-review.
 
-Gate: `mono-preflight` certificate, then `mono-ship`.
+Gate: `mono:preflight` certificate, then `mono:ship`.
 
 ## Ship
 
@@ -182,16 +182,16 @@ Create, document, and stabilize a PR without losing Linear source of truth.
 
 Required:
 
-- Read the `mono-preflight` certificate when present. If no recoverable certificate exists, route to `mono-preflight` before continuing.
-- `mono-review pre-ship` when risk is standard, deep, risky, or implementation materially drifted from Linear artifacts.
-- `mono-check pre-ship`.
+- Read the `mono:preflight` certificate when present. If no recoverable certificate exists, route to `mono:preflight` before continuing.
+- `mono:review pre-ship` when risk is standard, deep, risky, or implementation materially drifted from Linear artifacts.
+- `mono:check pre-ship`.
 - Delegate PR creation to configured ship workflow.
 - Issue moves to `In Review` after PR creation.
 - Run the configured Documentation workflow before final green when configured.
 - If documentation changes the PR head, rerun review/check stabilization on the new head.
 - If configured, delegate review feedback stabilization to the configured resolver.
 - Run installed gate.mjs ship on live checks, reviews, threads and Greptile until current-head evidence passes its configured pause or the hard deadline parks the delivery.
-- Record `mono-ship green certificate` with PR URL, head SHA, CI, Greptile, unresolved feedback count, merge state, checked/not-checked boundary, and next `mono-deploy`.
+- Record `mono-ship green certificate` with PR URL, head SHA, CI, Greptile, unresolved feedback count, merge state, checked/not-checked boundary, and next `mono:deploy`.
 
 Forbidden:
 
@@ -200,7 +200,7 @@ Forbidden:
 - Running post-ship check.
 - Recording deploy evidence or operational learnings.
 
-Gate: `mono-ship green certificate`, then `mono-deploy`.
+Gate: `mono-ship green certificate`, then `mono:deploy`.
 
 ## Deploy
 
@@ -218,10 +218,10 @@ Required:
 - Run the live QA sweep on the deployed app for user-facing changes: functional smoke over the shipped Issue's PRD acceptance criteria plus design acceptance against the approved UX-checkpoint prototype (functional smoke alone when no prototype was approved).
 - Move a user-facing Issue to `Done` only after its own live pass is green.
 - On a live defect, file an immediate hotfix Issue out of queue and dispatch it (fix-forward); the defect Issue does not block the original Issue's `Done`.
-- Run or report `mono-check post-ship` after deploy evidence is known.
+- Run or report `mono:check post-ship` after deploy evidence is known.
 - Move the Linear Issue to `Done` only after verified deploy or an explicit accepted delivery policy says merge is delivery for this repo.
 - Publish one project update per deployed Issue, out of that Issue's closeout, in the form and language of `templates/project-update.md`. On the Project-first path the update goes to the Issue's own project; on the issue-only path it goes to the theme project the Issue names in its `Тематический проект:` line, when it names one.
-- Complete the project when this delivery was its last, on the Project-first path only: an issue-only shipment publishes on a theme project it does not own and never writes a project status, so it completes no project. A project is complete when every Issue attached to it has a status whose TYPE is `completed`, `canceled`, or `duplicate`; any other type — `backlog`, `unstarted`, `started`, `triage`, and anything Linear adds later — blocks completion. The rule is judged by status type, never by status name, and `mono-deploy` owns the transition.
+- Complete the project when this delivery was its last, on the Project-first path only: an issue-only shipment publishes on a theme project it does not own and never writes a project status, so it completes no project. A project is complete when every Issue attached to it has a status whose TYPE is `completed`, `canceled`, or `duplicate`; any other type — `backlog`, `unstarted`, `started`, `triage`, and anything Linear adds later — blocks completion. The rule is judged by status type, never by status name, and `mono:deploy` owns the transition.
 - Keep the completion order: write the project's `Completed` status and confirm it by read-back FIRST, then publish the final update. The final form of the update is allowed only when this closeout performed and confirmed that transition.
 - Consult prior operational learnings through `gstack-learnings-search` before delegating merge/deploy, advisory only.
 - Record durable operational learnings through `gstack-learnings-log` when they would save future time.
@@ -238,15 +238,15 @@ Forbidden:
 
 ## Orchestration
 
-Optional mode: `mono-orchestrate` runs one control-plane session per
+Optional mode: `mono:orchestrate` runs one control-plane session per
 product and sequences the stages above through delegated workers.
 
 Required:
 
 - Gate ordering of this lifecycle preserved verbatim.
-- `mono-idea`, discovery, `mono-handoff`, and `mono-deploy` run in the
-  orchestrator session; `mono-implement`, `mono-preflight`, and
-  `mono-ship` run in one worker session per Issue.
+- `mono:idea`, discovery, `mono:handoff`, and `mono:deploy` run in the
+  orchestrator session; `mono:implement`, `mono:preflight`, and
+  `mono:ship` run in one worker session per Issue.
 - All Linear mutations during orchestration flow through the orchestrator
   (single writer); workers never write to Linear and queue stage-required
   mutations in mailbox reports.
@@ -267,12 +267,12 @@ Forbidden:
 - Skipping or weakening any gate above because an orchestrator is present.
 - The orchestrator performing implement/preflight/ship work itself.
 - Workers orchestrating: spawning sub-workers or managing other sessions.
-- Moving stage ownership: Delivery Start stays with `mono-implement`, PR
-  lifecycle with `mono-ship`, merge/deploy and closeout with
-  `mono-deploy`.
+- Moving stage ownership: Delivery Start stays with `mono:implement`, PR
+  lifecycle with `mono:ship`, merge/deploy and closeout with
+  `mono:deploy`.
 - Relaying discovery-skill question streams to the user one by one, or
   presenting an unreviewed first-draft prototype at the UX checkpoint.
 
 ## One Delivery Context
 
-For orchestrated work dispatch mono-deliver once. Its code, preflight and ship phases retain the owners and order above. Each phase publishes its full write queue and capsule; only confirmation after durable per-write read-back permits progression. In-phase barriers preserve drift-before-PR, certificate-before-formal-review and In-Review-after-PR ordering. Recover the same phase after interruption; final status is green or parked with a dictionary reason, reflected in Linear in the same orchestrator turn.
+For orchestrated work dispatch mono:deliver once. Its code, preflight and ship phases retain the owners and order above. Each phase publishes its full write queue and capsule; only confirmation after durable per-write read-back permits progression. In-phase barriers preserve drift-before-PR, certificate-before-formal-review and In-Review-after-PR ordering. Recover the same phase after interruption; final status is green or parked with a dictionary reason, reflected in Linear in the same orchestrator turn.

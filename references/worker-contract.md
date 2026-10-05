@@ -207,7 +207,7 @@ verbatim verification, AFK stops.
   "capsule": { "phase": "<code | preflight | ship>", "head": "<sha>", "open_queue": [], "decisions": [], "writable_roots": ["<dispatch grant>"] },
   "certificate": "<certificate text or null>",
   "notes": "<runtime facts or null>",
-  "next": "<mono-deploy | named recovery owner>"
+  "next": "<mono:deploy | named recovery owner>"
 }
 ```
 

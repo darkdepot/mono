@@ -1,6 +1,6 @@
 ---
-name: mono-idea
-description: Use only when the user brings a raw idea; mono-idea owns that route. Accepted pre-ship drift routes to mono-ship, unmistakable one-PR projectless work to mono-issue, and existing-Project handoff or artifact repair to mono-handoff.
+name: idea
+description: Use only when the user brings a raw idea; mono:idea owns that route. Accepted pre-ship drift routes to mono:ship, unmistakable one-PR projectless work to mono:issue, and existing-Project handoff or artifact repair to mono:handoff.
 ---
 
 # Mono Idea
@@ -9,9 +9,9 @@ Find shared files here or at the pack root.
 
 Use this skill to turn a raw idea into a strengthened Linear Project in `Idea`.
 
-`mono-idea` is the intake gate. It is not a planning skill and it never starts delivery.
+`mono:idea` is the intake gate. It is not a planning skill and it never starts delivery.
 
-Issue-only front door: before treating a request as a Project idea, check its shape. When it is unmistakably one-PR, projectless, issue-only work — one independently-acceptable outcome, exactly one PR, no product-surface or scope ambiguity — the correct front door is `mono-issue`. The lane is live only when `issueOnlyLane.enabled: true` and `ownerPrincipal` are configured in that consuming repo; without both, fail closed to Project-first. Intake deliberately leaves the approved Issue non-startable, and `mono-implement` later owns the delivery check plus Issue lifecycle move. Never enable the lane or infer consent on the owner's behalf. `mono-idea` itself stays at Idea and never resolves an entity or a lane; it only names the correct front door. Any ambiguity keeps the default Project-first intake below, where Project creation stays mandatory. On the issue-only route, `mono-idea` does not run the project-first `mono-check idea` gate — there is no Project to check, and `mono-check` is issue-only-aware; the intake front door owns issue-only readiness.
+Issue-only front door: before treating a request as a Project idea, check its shape. When it is unmistakably one-PR, projectless, issue-only work — one independently-acceptable outcome, exactly one PR, no product-surface or scope ambiguity — the correct front door is `mono:issue`. The lane is live only when `issueOnlyLane.enabled: true` and `ownerPrincipal` are configured in that consuming repo; without both, fail closed to Project-first. Intake deliberately leaves the approved Issue non-startable, and `mono:implement` later owns the delivery check plus Issue lifecycle move. Never enable the lane or infer consent on the owner's behalf. `mono:idea` itself stays at Idea and never resolves an entity or a lane; it only names the correct front door. Any ambiguity keeps the default Project-first intake below, where Project creation stays mandatory. On the issue-only route, `mono:idea` does not run the project-first `mono:check idea` gate — there is no Project to check, and `mono:check` is issue-only-aware; the intake front door owns issue-only readiness.
 
 Read first:
 
@@ -25,7 +25,7 @@ Read now — every run of this stage loads all of these:
 Read when — load the file only when its condition is true for this run:
 
 - `references/lifecycle.md` — when this run creates or queues a Linear entity, or changes or queues its lifecycle state.
-- `skills/mono-check/SKILL.md` — when a `mono-check` verdict has to be run or reported from this stage.
+- `skills/check/SKILL.md` — when a `mono:check` verdict has to be run or reported from this stage.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
@@ -40,7 +40,7 @@ Workflow:
 7. Apply `references/contracts/project.md` in full to create or update a Project in `Idea`. When creating the Project, set its lead to the acting user — the Linear account the agent writes under, `lead: "me"` on the Linear connector — so the Project is the owner's from the moment it exists. An existing Project keeps the lead it already has — this rule only ever sets lead at creation.
 8. Recommend `/office-hours` or `/brainstorming` and explain why.
 9. Record a short Russian comment on the Linear Project (not just in chat) that includes the chosen discovery route (`/office-hours` или `/brainstorming`) and a one-line reason — so the route survives the chat session and the operator can recover the recommended next step from Linear alone.
-10. Run or report `mono-check idea`.
+10. Run or report `mono:check idea`.
 11. Stop immediately.
 
 User-facing narration:
@@ -59,9 +59,9 @@ Good first update shape:
 
 Hard terminal contract:
 
-- Scope: this terminal contract and the Project-centric final response below govern the Project-first path. When the front-door check above routes unmistakable one-PR issue-only work to `mono-issue`, `mono-idea` completes by naming that front door — no Project is created, and the absence of a Project link is expected, not an incompletion. Any ambiguity stays Project-first, where the rules below are mandatory.
+- Scope: this terminal contract and the Project-centric final response below govern the Project-first path. When the front-door check above routes unmistakable one-PR issue-only work to `mono:issue`, `mono:idea` completes by naming that front door — no Project is created, and the absence of a Project link is expected, not an incompletion. Any ambiguity stays Project-first, where the rules below are mandatory.
 - Project creation or update in Linear status `Idea` is mandatory.
-- No Linear Project link or id means `mono-idea` is not complete.
+- No Linear Project link or id means `mono:idea` is not complete.
 - After the Project is created or updated, stop. Do not continue into discovery, planning, or delivery.
 - Final response must be one human message, not a compliance checklist. It must include:
   - Linear Project link.
@@ -95,14 +95,14 @@ Do not include raw gate logs, internal command transcripts, or repeated lifecycl
 
 Plan Mode and permission boundary:
 
-- `mono-idea` normally runs outside Plan Mode or in a mutation-capable execution mode.
+- `mono:idea` normally runs outside Plan Mode or in a mutation-capable execution mode.
 - Do not rely on Plan Mode for required Linear mutations. Host behavior differs across Codex, Claude Code, and other agents.
 - If Plan Mode or permissions block Linear mutation, stop early as `BLOCKED / INCOMPLETE`.
 - In that blocked case, do not ask the full question set, do not produce an implementation plan, and do not pretend intake completed.
 - Use this blocked wording:
 
 ```text
-BLOCKED / INCOMPLETE - mono-idea cannot complete because creating/updating a Linear Project in Idea is mandatory, and this runtime/mode did not allow the Linear mutation.
+BLOCKED / INCOMPLETE - mono:idea cannot complete because creating/updating a Linear Project in Idea is mandatory, and this runtime/mode did not allow the Linear mutation.
 
 Работа не завершена. Project в Linear не создан.
 
@@ -110,7 +110,7 @@ BLOCKED / INCOMPLETE - mono-idea cannot complete because creating/updating a Lin
 - Ничего. Никаких артефактов создано не было.
 
 Следующий unblock:
-- Выйди из Plan Mode (или перезапусти /mono-idea в обычном режиме) — я создам Project в статусе Idea.
+- Выйди из Plan Mode (или перезапусти /mono:idea в обычном режиме) — я создам Project в статусе Idea.
 ```
 
 Context inspection guidance:
@@ -134,7 +134,7 @@ Forbidden during Idea:
 
 Rules:
 
-- Route unmistakably one-PR, projectless issue-only work to the `mono-issue` front door when the consuming repo has enabled the lane (`issueOnlyLane.enabled: true` plus a non-empty `ownerPrincipal`); keep Project-first intake as the working default for everything else and for any ambiguity.
+- Route unmistakably one-PR, projectless issue-only work to the `mono:issue` front door when the consuming repo has enabled the lane (`issueOnlyLane.enabled: true` plus a non-empty `ownerPrincipal`); keep Project-first intake as the working default for everything else and for any ambiguity.
 - Do not create PRD, Tech Spec, or Issue during Idea.
 - Do not start implementation.
 - Do not treat the raw idea as shaped requirements.

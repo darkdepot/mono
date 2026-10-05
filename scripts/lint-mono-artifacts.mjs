@@ -56,7 +56,7 @@ function sectionBetween(content, startHeading, endHeading) {
 
 for (const [file, snippets] of [
   [
-    "skills/mono-handoff/SKILL.md",
+    "skills/handoff/SKILL.md",
     [
       "Do not rely on lint scripts to make artifacts good.",
       "Run a content-shape review on the package",
@@ -110,7 +110,7 @@ for (const [file, snippets] of [
     ],
   ],
   [
-    "skills/mono-check/SKILL.md",
+    "skills/check/SKILL.md",
     [
       "Judge artifact shape by semantics before exact heading spelling",
       "Do fail when a document has the wrong responsibility",
@@ -188,8 +188,8 @@ if (!/<project id="project-profile-workbench">[^<]+<\/project>/.test(profileExam
 
 for (const [file, snippets] of [
   ["templates/project.md", ["# Lifecycle", "# Документы", "# План задач", "# Текущий статус"]],
-  ["templates/tech-spec.md", ["## Skill contracts", "## mono-check design"]],
-  ["references/contracts/tech-spec.md", ["mono-check delivery"]],
+  ["templates/tech-spec.md", ["## Skill contracts", "## mono:check design"]],
+  ["references/contracts/tech-spec.md", ["mono:check delivery"]],
 ]) {
   for (const snippet of snippets) {
     mustExclude(file, snippet);

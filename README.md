@@ -16,19 +16,19 @@ A **wave** is the work dispatched for an Issue, including retries, review, and i
 
 ```text
 raw idea → Project in Idea → discovery → reviewed and approved package
-→ approved Issue → start handshake → one mono-deliver worker
+→ approved Issue → start handshake → one mono:deliver worker
     code → confirmed write queue → local readiness → confirmed certificate
     → PR → reviews and checks → confirmed green certificate
-→ mono-deploy → verification → Linear closeout and project update
+→ mono:deploy → verification → Linear closeout and project update
 ```
 
-1. **Capture.** Bring a raw idea to `mono-idea`, outside Plan Mode. Create a strengthened Project in Idea, assigned to the owner, without PRD, Tech Spec, Issues, or code. An unmistakable one-PR request may instead enter `mono-issue` under its eligibility rules.
+1. **Capture.** Bring a raw idea to `mono:idea`, outside Plan Mode. Create a strengthened Project in Idea, assigned to the owner, without PRD, Tech Spec, Issues, or code. An unmistakable one-PR request may instead enter `mono:issue` under its eligibility rules.
 2. **Discover.** Shape the problem through `/office-hours` or `/brainstorming`; review a product/UI surface with `/plan-design-review` and an implementation architecture with `/plan-eng-review`. These outputs are inputs to handoff, not permission to code. In orchestrated discovery, a Second Voice challenges the draft, the orchestrator answers technical questions, and the owner sees reviewed prototypes and prepared decisions at checkpoints.
-3. **Package.** Run `mono-handoff`. Inspect supplied artifacts and scoped sources, draft the Project/PRD/Tech Spec and Issue slicing, review before the first durable package write, and obtain package approval. Persist the approved package in Linear and apply accepted fixes through its owner. Keep the Project pre-delivery until implementation start is explicitly authorized; documents alone never authorize Delivery.
-4. **Start.** `mono-implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
-5. **Implement and prepare.** `mono-deliver` sequences `mono-implement`, `mono-preflight`, and `mono-ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The pack collector auto-confirms empty and collection-only queues; connector queues require the orchestrator. Start facts lead the Russian ready-certificate comment before its unchanged machine block. Full and final deep/risky work retain the local loop. Preserve phase ownership.
+3. **Package.** Run `mono:handoff`. Inspect supplied artifacts and scoped sources, draft the Project/PRD/Tech Spec and Issue slicing, review before the first durable package write, and obtain package approval. Persist the approved package in Linear and apply accepted fixes through its owner. Keep the Project pre-delivery until implementation start is explicitly authorized; documents alone never authorize Delivery.
+4. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
+5. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The pack collector auto-confirms empty and collection-only queues; connector queues require the orchestrator. Start facts lead the Russian ready-certificate comment before its unchanged machine block. Full and final deep/risky work retain the local loop. Preserve phase ownership.
 6. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
-7. **Deploy and close.** `mono-deploy` verifies that the current PR head matches the green certificate, applies the configured approval policy, and delegates the configured deploy workflow. Verify delivery and run live acceptance where users consume the result. Close the Issue only after its delivery requirements pass; publish the informational project update, report cost, record useful learnings, and retire the worker. Only the shipment of the last open Project Issue may complete that Project.
+7. **Deploy and close.** `mono:deploy` verifies that the current PR head matches the green certificate, applies the configured approval policy, and delegates the configured deploy workflow. Verify delivery and run live acceptance where users consume the result. Close the Issue only after its delivery requirements pass; publish the informational project update, report cost, record useful learnings, and retire the worker. Only the shipment of the last open Project Issue may complete that Project.
 
 ### Artifacts and truth
 
@@ -46,13 +46,13 @@ Keep whole PRD and Tech Spec bodies out of Issues. Link them through Project res
 
 ### Issue-only work and repair
 
-Use `mono-issue` only when [all nine eligibility conditions](skills/mono-issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) hold: an enabled lane, a genuinely one-PR self-contained request, eligible risk, and authenticated owner approval are essential parts of that boundary. Create the non-startable Issue first, then approve its exact whole-body fingerprint. The five-field seam selects the lane; a marker is an approval receipt, never a routing shortcut. Missing, broken or stale trust evidence fails closed. Renew an edited issue-only body through `mono-issue`; park and restart Project-first when required, without inventing Project documents inside the lane.
+Use `mono:issue` only when [all nine eligibility conditions](skills/issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) hold: an enabled lane, a genuinely one-PR self-contained request, eligible risk, and authenticated owner approval are essential parts of that boundary. Create the non-startable Issue first, then approve its exact whole-body fingerprint. The five-field seam selects the lane; a marker is an approval receipt, never a routing shortcut. Missing, broken or stale trust evidence fails closed. Renew an edited issue-only body through `mono:issue`; park and restart Project-first when required, without inventing Project documents inside the lane.
 
-Use `mono-handoff` for [Project-first repair](references/repair-machine.md#classification-table): classify the exact proposed change, obtain report-only review, apply the class-specific worker, snapshot, approval and lifecycle effects, then check readiness. Risk growth or ambiguity raises the class. Review never repairs; `mono-check` never mutates. Accepted pre-ship drift belongs to `mono-ship`.
+Use `mono:handoff` for [Project-first repair](references/repair-machine.md#classification-table): classify the exact proposed change, obtain report-only review, apply the class-specific worker, snapshot, approval and lifecycle effects, then check readiness. Risk growth or ambiguity raises the class. Review never repairs; `mono:check` never mutates. Accepted pre-ship drift belongs to `mono:ship`.
 
 ## Gates
 
-A gate proves only its stated boundary. `mono-review` returns quality/risk findings (`ready`, `advisory-ready`, `needs-fixes`, `blocked`); `mono-check` reports inspected readiness (`PASS`, `FAIL`, `BLOCKED`). Neither silently changes an artifact. Their judgments supplement executable checks.
+A gate proves only its stated boundary. `mono:review` returns quality/risk findings (`ready`, `advisory-ready`, `needs-fixes`, `blocked`); `mono:check` reports inspected readiness (`PASS`, `FAIL`, `BLOCKED`). Neither silently changes an artifact. Their judgments supplement executable checks.
 
 | Gate | What it proves |
 | --- | --- |
@@ -507,8 +507,8 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-17.** Have an independent cross-vendor Second Voice review the package draft before its first Linear write, so author and reviewer do not share the same blind spots — [Second Voice](references/orchestration.md#second-voice).
 - **K-18.** Decide repository-, Linear- and config-derived implementation details, document structure and risk classification autonomously, but ask about scope, slicing, risk acceptance and design, so routine questions do not consume owner time or seize owner authority — [Autonomy Defaults](references/questioning.md#autonomy-defaults).
 - **K-19.** Apply the project's deploy-approval policy (always, all except tiny, or never) to the exact code head, so yesterday's approval cannot authorize different code — [Project Config](README.md#project-config).
-- **K-20.** Grant issue-only delivery only when all nine conditions hold and the owner approves the exact Issue fingerprint, falling back to Project-first on doubt, so the shortcut cannot bypass its boundary — [Nine eligibility conditions](skills/mono-issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) and [Trust boundary](references/issue-only-lane.md#trust-boundary).
-- **K-21.** Invalidate approval whenever an approved issue-only body changes and obtain new review and fingerprint approval, so the approved text remains the executed contract — [Renewal recovery](skills/mono-issue/SKILL.md#renewal-recovery).
+- **K-20.** Grant issue-only delivery only when all nine conditions hold and the owner approves the exact Issue fingerprint, falling back to Project-first on doubt, so the shortcut cannot bypass its boundary — [Nine eligibility conditions](skills/issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) and [Trust boundary](references/issue-only-lane.md#trust-boundary).
+- **K-21.** Invalidate approval whenever an approved issue-only body changes and obtain new review and fingerprint approval, so the approved text remains the executed contract — [Renewal recovery](skills/issue/SKILL.md#renewal-recovery).
 - **K-22.** Run code autoreview at every risk class using the policy's autoreview model and class-routed effort from low through the highest escalated route, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Canonical Routes](references/autoreview-routing.md#canonical-routes).
 - **K-23.** Classify work as tiny, standard, deep or risky to set artifact requirements and review depth, treating money, data, access, production and public interfaces as risky domains, so dangerous work cannot pass through a light process — [Risk Classification](references/readiness-gates.md#risk-classification).
 - **K-24.** Require package review before writing and formal pre-ship review for standard, deep and risky work, permitting only a recorded tiny advisory exception, so review can challenge decisions before they become accepted artifacts — [Review Gate Policy](references/readiness-gates.md#review-gate-policy).
@@ -525,19 +525,23 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 
 ## Skills
 
+Invoke pack skills with the plugin namespace: `/mono:idea`, `/mono:handoff`,
+and the names below. Short `/ship` and `/review` may belong to other skills;
+this pack uses `/mono:ship` and `/mono:review`.
+
 | Skill | Use it for |
 | --- | --- |
-| [mono-idea](skills/mono-idea/SKILL.md) | Raw idea intake and strengthened Idea Project |
-| [mono-issue](skills/mono-issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
-| [mono-handoff](skills/mono-handoff/SKILL.md) | Project-first packaging, slicing and reviewed artifact repair |
-| [mono-review](skills/mono-review/SKILL.md) | Report-only quality/risk review |
-| [mono-check](skills/mono-check/SKILL.md) | Readiness-only transition assessment |
-| [mono-deliver](skills/mono-deliver/SKILL.md) | One delivery context sequencing its three phase owners |
-| [mono-implement](skills/mono-implement/SKILL.md) | Delivery Start and approved code execution |
-| [mono-preflight](skills/mono-preflight/SKILL.md) | Local verification, independent autoreview, commit and ready certificate |
-| [mono-ship](skills/mono-ship/SKILL.md) | Accepted pre-ship drift, PR, docs, feedback and green certificate |
-| [mono-deploy](skills/mono-deploy/SKILL.md) | Merge/deploy delegation, verification, closeout and learnings |
-| [mono-orchestrate](skills/mono-orchestrate/SKILL.md) | Product control plane: dispatch, monitoring, decisions and Linear writes |
+| [mono:idea](skills/idea/SKILL.md) | Raw idea intake and strengthened Idea Project |
+| [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
+| [mono:handoff](skills/handoff/SKILL.md) | Project-first packaging, slicing and reviewed artifact repair |
+| [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |
+| [mono:check](skills/check/SKILL.md) | Readiness-only transition assessment |
+| [mono:deliver](skills/deliver/SKILL.md) | One delivery context sequencing its three phase owners |
+| [mono:implement](skills/implement/SKILL.md) | Delivery Start and approved code execution |
+| [mono:preflight](skills/preflight/SKILL.md) | Local verification, independent autoreview, commit and ready certificate |
+| [mono:ship](skills/ship/SKILL.md) | Accepted pre-ship drift, PR, docs, feedback and green certificate |
+| [mono:deploy](skills/deploy/SKILL.md) | Merge/deploy delegation, verification, closeout and learnings |
+| [mono:orchestrate](skills/orchestrate/SKILL.md) | Product control plane: dispatch, monitoring, decisions and Linear writes |
 
 ## Documentation Map
 

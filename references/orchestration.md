@@ -1,6 +1,6 @@
 # Orchestration Policy
 
-Control-plane policy for `mono-orchestrate`. The orchestrator inspects,
+Control-plane policy for `mono:orchestrate`. The orchestrator inspects,
 delegates, monitors, decides or escalates, records, and reports. It never
 implements stage work itself.
 
@@ -11,7 +11,7 @@ implements stage work itself.
 - Orchestrator: one session per product; owns worker dispatch, monitoring, all
   Linear mutations during orchestration, technical decisions, deploy
   delegation, and the ledger.
-- Workers: one Issue each; run `mono-deliver`, whose implement/preflight/ship phases keep their owners in one session and worktree under the AFK
+- Workers: one Issue each; run `mono:deliver`, whose implement/preflight/ship phases keep their owners in one session and worktree under the AFK
   contract from `templates/orchestrator-dispatch.md`; they never write to
   Linear directly.
 
@@ -19,10 +19,10 @@ implements stage work itself.
 
 | Stage | Runs in |
 | --- | --- |
-| `mono-idea`, discovery | orchestrator session (Director Discovery) |
-| `mono-handoff` | orchestrator session |
-| `mono-implement`, `mono-preflight`, `mono-ship` | worker session |
-| `mono-deploy` | orchestrator session |
+| `mono:idea`, discovery | orchestrator session (Director Discovery) |
+| `mono:handoff` | orchestrator session |
+| `mono:implement`, `mono:preflight`, `mono:ship` | worker session |
+| `mono:deploy` | orchestrator session |
 
 Gate ordering from `references/lifecycle.md` is preserved verbatim. The
 orchestrator sequences gates; it never skips, weakens, or replaces them, and
@@ -50,7 +50,7 @@ under «Решил сам:» with a one-line reason:
 
 - All technical and implementation questions from workers.
 - Implementation start after package approval (recorded explicitly; the
-  bundled-approval rule from `mono-implement` applies).
+  bundled-approval rule from `mono:implement` applies).
 - Technical review-finding acceptance, CI repair, and PR stabilization
   routing.
 - Merge/deploy for risk classes the configured `deployApproval` allows (all
@@ -96,7 +96,7 @@ discovery-skill question stream to the user.
 
 Checkpoints — the only moments that touch the user:
 
-1. Intake direction questions: 1-3 per idea per `mono-idea`; zero when
+1. Intake direction questions: 1-3 per idea per `mono:idea`; zero when
    the idea is already clear.
 2. UX checkpoint (user-facing surface only): one brief per
    `templates/orchestrator-brief.md` with a reviewed near-production
@@ -114,7 +114,7 @@ choice exists, and a design-lens Second Voice pass already applied
 never a first draft.
 
 Multi-idea intake: the user may bring several ideas in one session. Run
-`mono-idea` per idea, queue discovery, and run Director Discovery one
+`mono:idea` per idea, queue discovery, and run Director Discovery one
 project at a time while dispatched delivery work continues in parallel;
 show the discovery queue in the status table.
 
@@ -199,7 +199,7 @@ owner conversation, or any authority over workers.
 
 ### Pre-write package review
 
-The orchestrator's `mono-handoff` state has one mandatory Second Voice run
+The orchestrator's `mono:handoff` state has one mandatory Second Voice run
 that is not discovery: the drafted handoff package — draft Project brief,
 draft PRD, draft Tech Spec, and proposed Issue slicing — goes to an
 independent reviewer BEFORE the orchestrator writes any of it to Linear.
@@ -221,7 +221,7 @@ put it to the owner with the verdict already attached, and only then write.
   reviewer as surrounding context; what is absent is the drafted content, not
   necessarily the container. That absence is expected and is never reported as
   a missing artifact, per the pre-write `handoff` mode in
-  `skills/mono-review/SKILL.md`.
+  `skills/review/SKILL.md`.
 - Workers never run this review. They cannot spawn agents, and a worker is
   not independent of the package it was dispatched from.
 - The package-approval checkpoint stays a single owner touch, because the
@@ -351,7 +351,7 @@ against that baseline. The delivery reading corpus does not grow.
 
 **No dispatch-moment lifecycle move is applied before the worker's gate-ack.**
 This section is the single home of that rule and of the protocol that carries
-it; the dispatch template, `mono-implement`, and `mono-orchestrate` point here
+it; the dispatch template, `mono:implement`, and `mono:orchestrate` point here
 instead of restating it. The only exception is an explicit owner mandate
 naming the move, recorded in `ledger.md` as a deviation with that mandate
 quoted — and it is NOT available under «Решил сам:», so the orchestrator can
@@ -361,7 +361,7 @@ Dispatch-moment lifecycle moves are the moves a dispatch itself carries: the
 Project → Delivery move of a project's first delivery dispatch, and
 the Issue-to-started move that activates an issue-only Issue. Applicability
 follows from that: only a dispatch carrying such a move runs the handshake.
-Preflight and ship are internal phases, with no new dispatch or lifecycle gate pause. The startup dispatch is mono-deliver, including activation of a Project-first Issue while its Project is already Delivery.
+Preflight and ship are internal phases, with no new dispatch or lifecycle gate pause. The startup dispatch is mono:deliver, including activation of a Project-first Issue while its Project is already Delivery.
 
 Order, and it is the whole protocol:
 
@@ -377,8 +377,8 @@ Order, and it is the whole protocol:
    `thread.started`, update the same entry with verified live identity while
    preserving `log` and `gates`.
 2. Worker gate phase. The worker runs steps 1-4 of the orchestration branch of
-   `start-checkpoint` in `skills/mono-implement/SKILL.md`: pack identity gate,
-   snapshot package context, approval plus `mono-review handoff` findings, and
+   `start-checkpoint` in `skills/implement/SKILL.md`: pack identity gate,
+   snapshot package context, approval plus `mono:review handoff` findings, and
    the 5-field context seam. On the issue-only lane it also evaluates the
    delivery check there, because that check gates the move this dispatch
    carries. This is the stage's own opening, not a separate pre-stage: the
@@ -584,7 +584,7 @@ Order, and it is the whole protocol:
    In legacy resume mode, the orchestrator resumes the same worker with a
    resume signal that names each applied move together with its read-back
    result, explicitly as an amendment of the dispatch snapshot. Every
-   post-resume check — including `mono-check delivery` — is evaluated against
+   post-resume check — including `mono:check delivery` — is evaluated against
    that amended post-move state. The pack identity gate runs again after the
    resume, unchanged: resuming is a stage resume, so the gate is mandatory.
 
@@ -690,7 +690,7 @@ in full for both audiences. Never substitute a checkout's `SURFACE_REVISION`.
 
 ### Sandbox ladder
 
-A mono-deliver process needs the union of phase capabilities from launch:
+A mono:deliver process needs the union of phase capabilities from launch:
 workspace-write, network, writable worktree, the worktree-specific Git directory and the common Git directory, derived from the worktree, and only <root>/reports as mailbox.
 codex 0.153.4 protects the metadata directory of an explicitly listed linked worktree.
 Keep <root>/confirmations, workers.json, attempts.json, control.json, consumed/,
@@ -824,7 +824,7 @@ close or failed installation; worker stages never perform these actions.
   `surfaceRevision`, plus the optional `product_name` — the product-language
   name this Issue is called by in owner-facing statuses — and optional
   attempt-scoped `gates` only for the current
-  gate-carrying `mono-deliver` attempt (shape and validity in
+  gate-carrying `mono:deliver` attempt (shape and validity in
   `templates/orchestrator-report.md`). Updated on
   every verified spawn, resume, session rotation, phase transition, and respawn
   under the immediate-update rule in Worker Transports; workers never touch it.
@@ -1515,7 +1515,7 @@ includes the pre-applied commit. Workers compare commit blobs to the dispatch
 and manifest at start, then leave these files unchanged.
 
 A review finding on manifest files parks blocked with exact replacement bytes.
-Project-first: mono-handoff repairs the Spec under repair-machine classification
-by meaning, with every class effect; issue-only: mono-issue renews the Issue
+Project-first: mono:handoff repairs the Spec under repair-machine classification
+by meaning, with every class effect; issue-only: mono:issue renews the Issue
 through create-then-approve. Dispatch the approved replacement as a NEW attempt
 with --preapply; `accept amend --preapply` always refuses and names that route.

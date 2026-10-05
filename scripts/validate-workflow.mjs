@@ -18,17 +18,17 @@ process.on("exit", () => {
 });
 const failures = [];
 const EXPECTED_SKILLS = [
-  "mono-check",
-  "mono-deploy",
-  "mono-deliver",
-  "mono-handoff",
-  "mono-idea",
-  "mono-implement",
-  "mono-issue",
-  "mono-orchestrate",
-  "mono-preflight",
-  "mono-review",
-  "mono-ship",
+  "check",
+  "deploy",
+  "deliver",
+  "handoff",
+  "idea",
+  "implement",
+  "issue",
+  "orchestrate",
+  "preflight",
+  "review",
+  "ship",
 ];
 
 function read(relativePath) {
@@ -68,7 +68,7 @@ function validateReadBudget() {
     if (!budget.within_ceiling) fail("Delivery reading corpus exceeds the byte ceiling");
     if (budget.files.some((entry) => entry.path.startsWith("references/rationale/"))) fail("Rationale entered delivery reading corpus");
   } catch (error) { fail(`Read budget: ${error.message}`); }
-  for (const skill of [...DELIVERY_SKILLS, "mono-deploy"]) {
+  for (const skill of [...DELIVERY_SKILLS, "deploy"]) {
     if (/orchestration\.md/.test(read(`skills/${skill}/SKILL.md`))) fail(`${skill}: phase names orchestrator reference`);
   }
 }
@@ -106,12 +106,12 @@ function validateReadBudgetFixtures() {
       ["plain-path", base + "\nFollow references/large.md.\n"],
       ["inline-tier", base + "\nRead when: `references/large.md` — condition.\n"],
     ]) fixture(`${label} addition is red with composition`, () => {
-      write("skills/mono-ship/SKILL.md", text);
+      write("skills/ship/SKILL.md", text);
       const result = spawnSync(process.execPath, [path.join(root, "scripts/read-budget.mjs"), "--root", scratch, "--json"], { encoding: "utf8" });
       require(result.status === 1, `expected red, got ${result.status}: ${result.stderr}`);
       const budget = JSON.parse(result.stdout);
       require(!budget.within_ceiling && budget.files.some((entry) => entry.path === "references/large.md"), "red output omitted composition");
-      write("skills/mono-ship/SKILL.md", base);
+      write("skills/ship/SKILL.md", base);
     });
     fixture("nested conditional addition is red", () => {
       write("references/nested.md", "Read when:\n- `references/large.md` — conditional.\n");
@@ -124,10 +124,10 @@ function validateReadBudgetFixtures() {
       write("references/nested.md", "Read `references/shared.md`.\n");
     });
     fixture("bare filename in a reading list is counted", () => {
-      write("skills/mono-ship/large.md", "x".repeat(READ_BUDGET_MAX_BYTES));
-      write("skills/mono-ship/SKILL.md", base + "- `large.md` — conditional.\n");
+      write("skills/ship/large.md", "x".repeat(READ_BUDGET_MAX_BYTES));
+      write("skills/ship/SKILL.md", base + "- `large.md` — conditional.\n");
       require(!measureReadBudget(scratch).within_ceiling, "bare list entry omitted");
-      write("skills/mono-ship/SKILL.md", base);
+      write("skills/ship/SKILL.md", base);
     });
     fixture("missing reading input fails closed", () => {
       write("references/nested.md", "Read `references/missing.md`.\n");
@@ -161,7 +161,7 @@ function artifactContractPinError(pin) {
 function listSkillNames() {
   return fs
     .readdirSync(path.join(root, "skills"), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith("mono-"))
+    .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
 }
@@ -448,10 +448,10 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "2f7764d7b156d77daa51358db7be4dc77963f5522033237a889fb6b91785fa24",
+      contractFingerprint: "795496ca9bd70ed61b2c27886e2d3b4ca68f41a18e85ea9f4f2fa35afe358d9f",
       contractConsumers: [
-        "skills/mono-idea/SKILL.md",
-        "skills/mono-handoff/SKILL.md",
+        "skills/idea/SKILL.md",
+        "skills/handoff/SKILL.md",
       ],
     },
     prd: {
@@ -459,10 +459,10 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/prd.md",
       ledgerSourcePath: "references/contracts/prd.md",
       templatePath: "templates/prd.md",
-      contractFingerprint: "26b9abe56f353541ff3f39af271b394b3292fd63056efcca689d98e07b8ba234",
+      contractFingerprint: "47eb271b57b398e9a8004abcd5664942f9b6ebcad3783e0791a4bb1ed7c51389",
       contractConsumers: [
-        "skills/mono-handoff/SKILL.md",
-        "skills/mono-ship/SKILL.md",
+        "skills/handoff/SKILL.md",
+        "skills/ship/SKILL.md",
       ],
     },
     "tech-spec": {
@@ -470,10 +470,10 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/tech-spec.md",
       ledgerSourcePath: "references/contracts/tech-spec.md",
       templatePath: "templates/tech-spec.md",
-      contractFingerprint: "80eeaac564a09e28de1c92996115fd09fc2463ebc2073cb4c73597bc3135522f",
+      contractFingerprint: "547967678d727dfc3795d14f2621d1ff8845fcd09f99cd996ccb725d3cdd2a56",
       contractConsumers: [
-        "skills/mono-handoff/SKILL.md",
-        "skills/mono-ship/SKILL.md",
+        "skills/handoff/SKILL.md",
+        "skills/ship/SKILL.md",
       ],
     },
     issue: {
@@ -481,8 +481,8 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/issue.md",
       ledgerSourcePath: "references/contracts/issue.md",
       templatePath: "templates/issue.md",
-      contractFingerprint: "685fc2e574a114dca4e76bba3ce0fee2592748d948b7a7db663fa5b53a103ebe",
-      contractConsumers: ["skills/mono-issue/SKILL.md"],
+      contractFingerprint: "929162d760fd79536c94a5fccf15cd904eaba54d377035d61095b48fe0456901",
+      contractConsumers: ["skills/issue/SKILL.md"],
     },
   };
 
@@ -649,9 +649,9 @@ function validateRepairAndRoutingContract() {
   }
 
   const routingOverlapFixtures = [
-    ["existing-project-pre-ship-drift", "mono-ship"],
-    ["issue-only-body-edit", "mono-issue"],
-    ["existing-project-targeted-repair", "mono-handoff repair"],
+    ["existing-project-pre-ship-drift", "mono:ship"],
+    ["issue-only-body-edit", "mono:issue"],
+    ["existing-project-targeted-repair", "mono:handoff repair"],
   ];
   for (const [fixture, expectedOwner] of routingOverlapFixtures) {
     const rowPattern = new RegExp(
@@ -4825,16 +4825,16 @@ function boundedSlice(relativePath, text, startMarker, endMarker, label) {
 }
 
 function validateProjectUpdateSurface() {
-  const { paths } = extractReadFirstEntries(read("skills/mono-deploy/SKILL.md"));
+  const { paths } = extractReadFirstEntries(read("skills/deploy/SKILL.md"));
   if (!paths.includes("templates/project-update.md")) {
-    fail("skills/mono-deploy/SKILL.md must read templates/project-update.md as its project-update source");
+    fail("skills/deploy/SKILL.md must read templates/project-update.md as its project-update source");
   }
 
   // The orchestrator publishes project updates too, so the template must sit in
   // its deferred read ladder. extractReadFirstEntries parses tier-1 entries
   // only, so this is a substring check on the tier-2 slice between the
   // "Read when" heading and the tier rule.
-  const orchestrateSurface = "skills/mono-orchestrate/SKILL.md";
+  const orchestrateSurface = "skills/orchestrate/SKILL.md";
   const orchestrateText = read(orchestrateSurface);
   const tierRange = readTierBounds(orchestrateText);
   const tierTwoStart = tierRange?.start ?? -1;
@@ -5049,11 +5049,11 @@ function checkModelPolicy(base) {
     if (routeRows(text).length !== allowedRows.length) errors.push(`${file}: route rows outside Canonical Routes`);
   }
   for (const [file, section] of NORMATIVE_MODEL_SECTIONS) binding(file, modelSection(body(file), section), ["autoreview"]);
-  const preflightFile = "skills/mono-preflight/SKILL.md";
+  const preflightFile = "skills/preflight/SKILL.md";
   const preflight = body(preflightFile);
   const reviewStep = namedWorkflowStep(preflight, "autoreview") ?? "";
   binding(preflightFile, reviewStep, ["autoreview"]);
-  binding("skills/mono-orchestrate/SKILL.md", body("skills/mono-orchestrate/SKILL.md"), ["orchestrator"]);
+  binding("skills/orchestrate/SKILL.md", body("skills/orchestrate/SKILL.md"), ["orchestrator"]);
   const certificate = preflight.split("Autoreview route:")[1]?.split("\n")[0] || "";
   for (const field of ["risk", "source", "critical", "model", "effort", "reclassified"]) {
     if (!new RegExp(`(?:^|;)\\s*${field}=<[^>]+>`).test(certificate)) errors.push(`${preflightFile}: certificate routing field missing: ${field}`);
@@ -5081,7 +5081,7 @@ function checkModelPolicy(base) {
     } catch (error) { errors.push(`${orchestrationFile}: ${error.message}`); }
   }
   // Worker and Second Voice efforts cannot be copied into their consumers.
-  for (const file of [orchestrationFile, "skills/mono-orchestrate/SKILL.md", "templates/orchestrator-brief.md", "templates/orchestrator-report.md"]) {
+  for (const file of [orchestrationFile, "skills/orchestrate/SKILL.md", "templates/orchestrator-brief.md", "templates/orchestrator-report.md"]) {
     const literalEffort = /(?:model_reasoning_effort\s*=\s*["']?|--effort\s+|(?:at|both sides at)\s+)(?:low|medium|high|xhigh)\b/i;
     if (literalEffort.test(body(file))) errors.push(`${file}: worker/Second Voice effort literal outside policy`);
   }
@@ -5128,7 +5128,7 @@ function checkModelPolicy(base) {
       for (const error of modelRecordErrors(record)) errors.push(`${registryFile}: ${transport} template provenance: ${error}`);
     }
   } catch (error) { errors.push(`${registryFile}: invalid registry model shape: ${error.message}`); }
-  for (const file of ["skills/mono-orchestrate/SKILL.md", "templates/orchestrator-brief.md"]) {
+  for (const file of ["skills/orchestrate/SKILL.md", "templates/orchestrator-brief.md"]) {
     const text = body(file).replace(/\s+/g, " ");
     const status = /Модель оркестратора: ([^\n]*?не удалось проверить)/.exec(text)?.[1] || "";
     if (status !== "по политике | не по политике | не удалось проверить") errors.push(`${file}: missing three-outcome orchestrator status field`);
@@ -5201,9 +5201,9 @@ function validateModelPolicyFixtures() {
     }
     negative("AE2 stale literal", () => {
       change(MODEL_POLICY_PATH, (text) => cell(text, "worker-default", 1, fabricated("gpt", "b")));
-      change("skills/mono-preflight/SKILL.md", (text) => text + `\n${roles.get("worker-default").model}\n`);
-    }, "skills/mono-preflight/SKILL.md: executable model id outside policy");
-    negative("AE3 wrong existing role", () => change("skills/mono-preflight/SKILL.md", (text) => text.replace(marker("autoreview"), marker("worker-default"))), "role binding must be autoreview");
+      change("skills/preflight/SKILL.md", (text) => text + `\n${roles.get("worker-default").model}\n`);
+    }, "skills/preflight/SKILL.md: executable model id outside policy");
+    negative("AE3 wrong existing role", () => change("skills/preflight/SKILL.md", (text) => text.replace(marker("autoreview"), marker("worker-default"))), "role binding must be autoreview");
     negative("AE4 duplicate role", () => change(MODEL_POLICY_PATH, (text) => row(text, "worker-default", (line) => `${line}\n${line}`)), "duplicate role worker-default");
     negative("AE4 unknown role", () => change("README.md", (text) => text + `\n${link("unknown-reviewer")}\n`), "unknown role unknown-reviewer");
     negative("AE4 changed class effort", () => change("references/autoreview-routing.md", (text) => cell(text, "standard", 2, "high")), "route set must be exactly");
@@ -5342,14 +5342,14 @@ const STRING_PINS = [
   ["templates/orchestrator-dispatch.md","{{worktree}}"],
   ["templates/orchestrator-dispatch.md","{{writable_roots}}"],
 
-  ["skills/mono-ship/SKILL.md","templates/ship-status-ux.md"],
+  ["skills/ship/SKILL.md","templates/ship-status-ux.md"],
   ["templates/ship-output.md","Статус ревью:"],
   ["templates/ship-status-ux.md","Review timeline:"],
   ["references/orchestration.md","orchestration.workerAudience"],
-  ["skills/mono-deploy/SKILL.md","Project update:"],
+  ["skills/deploy/SKILL.md","Project update:"],
   ["templates/deploy-output.md","Project update:"],
-  ["skills/mono-deploy/SKILL.md","Тематический проект:"],
-  ["skills/mono-issue/SKILL.md","Тематический проект:"],
+  ["skills/deploy/SKILL.md","Тематический проект:"],
+  ["skills/issue/SKILL.md","Тематический проект:"],
   ["templates/issue.md","Тематический проект:"],
   ["templates/project-update.md","Тематический проект:"],
   ["templates/review-output.md","Ревью Linear:"],
@@ -5388,12 +5388,12 @@ const STRING_PINS = [
   ["references/worker-contract.md","needs-human"],
   ["references/worker-contract.md","drift-candidate"],
   ["templates/orchestrator-report.md","workers.json"],
-  ["skills/mono-handoff/SKILL.md","references/repair-machine.md"],
-  ["skills/mono-handoff/SKILL.md","mono-review artifact"],
-  ["skills/mono-review/SKILL.md","references/repair-machine.md"],
-  ["skills/mono-review/SKILL.md","- `artifact`"],
-  ["skills/mono-check/SKILL.md","references/repair-machine.md"],
-  ["skills/mono-check/SKILL.md","repair"],
+  ["skills/handoff/SKILL.md","references/repair-machine.md"],
+  ["skills/handoff/SKILL.md","mono:review artifact"],
+  ["skills/review/SKILL.md","references/repair-machine.md"],
+  ["skills/review/SKILL.md","- `artifact`"],
+  ["skills/check/SKILL.md","references/repair-machine.md"],
+  ["skills/check/SKILL.md","repair"],
   ["templates/orchestrator-dispatch.md","packVersion"],
   ["templates/orchestrator-dispatch.md","sourceCommit"],
   ["templates/orchestrator-dispatch.md","surfaceRevision"],
@@ -5410,16 +5410,16 @@ const STRING_PINS = [
   ["references/install.md","sourceCommit"],
   ["references/install.md","surfaceRevision"],
   ["references/install.md","verify-pack-state.mjs"],
-  ["skills/mono-implement/SKILL.md","blocked"],
-  ["skills/mono-preflight/SKILL.md","blocked"],
-  ["skills/mono-ship/SKILL.md","blocked"],
+  ["skills/implement/SKILL.md","blocked"],
+  ["skills/preflight/SKILL.md","blocked"],
+  ["skills/ship/SKILL.md","blocked"],
   ["references/orchestration.md","control.json"],
   ["references/orchestration.md","verify-pack-state.mjs identity"],
-  ["skills/mono-orchestrate/SKILL.md","control.json"],
-  ["skills/mono-orchestrate/SKILL.md","active"],
-  ["skills/mono-orchestrate/SKILL.md","draining"],
-  ["skills/mono-orchestrate/SKILL.md","idle"],
-  ["skills/mono-orchestrate/SKILL.md","surfaceRevision"],
+  ["skills/orchestrate/SKILL.md","control.json"],
+  ["skills/orchestrate/SKILL.md","active"],
+  ["skills/orchestrate/SKILL.md","draining"],
+  ["skills/orchestrate/SKILL.md","idle"],
+  ["skills/orchestrate/SKILL.md","surfaceRevision"],
   ["references/issue-only-lane.md","mono-issue-only marker"],
   ["references/issue-only-lane.md","Marker version: 1"],
   ["references/issue-only-lane.md","Scope fingerprint"],
@@ -5439,7 +5439,7 @@ const STRING_PINS = [
   ["references/issue-only-lane.md","issueOnlyLane.enabled: true"],
   ["references/issue-only-lane.md","ownerPrincipal"],
   ["references/issue-only-lane.md","scripts/resolve-issue-context.mjs"],
-  ["skills/mono-implement/SKILL.md","lifecycle_state_entity=issue"],
+  ["skills/implement/SKILL.md","lifecycle_state_entity=issue"],
   ["references/worker-contract.md","approval_status=approved-fresh"],
   ["references/issue-only-lane.md","Approval: superseded"],
   ["templates/orchestrator-dispatch.md","PRD:"],
@@ -5450,20 +5450,20 @@ const STRING_PINS = [
   ["templates/orchestrator-dispatch.md","Issue-only config:"],
   ["templates/orchestrator-dispatch.md","Owner approval:"],
   ["templates/orchestrator-dispatch.md","Context seam:"],
-  ["skills/mono-issue/SKILL.md","scripts/resolve-issue-context.mjs"],
-  ["skills/mono-issue/SKILL.md","--emit-fingerprint"],
-  ["skills/mono-issue/SKILL.md","--issue <issue-body> --emit-fingerprint"],
-  ["skills/mono-issue/SKILL.md","--issue <live-issue-body> --emit-fingerprint"],
-  ["skills/mono-issue/SKILL.md","--approval-verified"],
-  ["skills/mono-issue/SKILL.md","scripts/resolve-issue-context.mjs"],
-  ["skills/mono-issue/SKILL.md","issueOnlyLane.ownerPrincipal"],
-  ["skills/mono-issue/SKILL.md","route_revision"],
-  ["skills/mono-idea/SKILL.md","mono-issue"],
-  ["skills/mono-issue/SKILL.md","references/contracts/issue.md"],
+  ["skills/issue/SKILL.md","scripts/resolve-issue-context.mjs"],
+  ["skills/issue/SKILL.md","--emit-fingerprint"],
+  ["skills/issue/SKILL.md","--issue <issue-body> --emit-fingerprint"],
+  ["skills/issue/SKILL.md","--issue <live-issue-body> --emit-fingerprint"],
+  ["skills/issue/SKILL.md","--approval-verified"],
+  ["skills/issue/SKILL.md","scripts/resolve-issue-context.mjs"],
+  ["skills/issue/SKILL.md","issueOnlyLane.ownerPrincipal"],
+  ["skills/issue/SKILL.md","route_revision"],
+  ["skills/idea/SKILL.md","mono:issue"],
+  ["skills/issue/SKILL.md","references/contracts/issue.md"],
   ["templates/review-output.md","issue-only"],
-  ["README.md","mono-implement"],
-  ["README.md","mono-preflight"],
-  ["README.md","mono-deploy"],
+  ["README.md","mono:implement"],
+  ["README.md","mono:preflight"],
+  ["README.md","mono:deploy"],
   ["README.md","autoreview"],
   ["README.md","node scripts/project-config.mjs"],
   ["README.md","~/.claude/skills"],
@@ -5502,8 +5502,8 @@ const STRING_PINS = [
   ["references/orchestration.md","watch-workers.mjs"],
   ["references/orchestration.md","EVENT:"],
   ["references/orchestration.md","model_reasoning_effort"],
-  ["skills/mono-orchestrate/SKILL.md","watch-workers.mjs"],
-  ["skills/mono-orchestrate/SKILL.md","scripts/watch-workers.mjs"],
+  ["skills/orchestrate/SKILL.md","watch-workers.mjs"],
+  ["skills/orchestrate/SKILL.md","scripts/watch-workers.mjs"],
   ["references/orchestration.md","node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>"],
   ["references/orchestration.md","recorded-late"],
   ["references/orchestration.md","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"],
@@ -5518,14 +5518,14 @@ const STRING_PINS = [
   ["templates/orchestrator-compaction-hook.sh","stat -f %m"],
   ["templates/orchestrator-compaction-hook.sh","stat -c %Y"],
   ["templates/compact-instructions.md","workers.json"],
-  ["skills/mono-orchestrate/SKILL.md","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"],
-  ["skills/mono-orchestrate/SKILL.md","\"75\""],
-  ["skills/mono-orchestrate/SKILL.md","\"PreCompact\""],
-  ["skills/mono-orchestrate/SKILL.md","\"matcher\": \"auto\""],
-  ["skills/mono-orchestrate/SKILL.md","templates/orchestrator-compaction-hook.sh"],
-  ["skills/mono-orchestrate/SKILL.md",".claude/settings.json"],
-  ["skills/mono-deploy/SKILL.md","workflows.qa"],
-  ["skills/mono-deploy/SKILL.md","qaAuth"],
+  ["skills/orchestrate/SKILL.md","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"],
+  ["skills/orchestrate/SKILL.md","\"75\""],
+  ["skills/orchestrate/SKILL.md","\"PreCompact\""],
+  ["skills/orchestrate/SKILL.md","\"matcher\": \"auto\""],
+  ["skills/orchestrate/SKILL.md","templates/orchestrator-compaction-hook.sh"],
+  ["skills/orchestrate/SKILL.md",".claude/settings.json"],
+  ["skills/deploy/SKILL.md","workflows.qa"],
+  ["skills/deploy/SKILL.md","qaAuth"],
   ["README.md","\"qa\""],
   ["README.md","cookie-import"],
   ["README.md","test-account"],
@@ -5533,7 +5533,7 @@ const STRING_PINS = [
   ["templates/deploy-output.md","Live QA:"],
   ["references/worker-contract.md","pass | deferred | not-run"],
   ["templates/orchestrator-dispatch.md","references/orchestration.md"],
-  ["skills/mono-implement/SKILL.md","references/worker-contract.md"],
+  ["skills/implement/SKILL.md","references/worker-contract.md"],
   ["references/worker-contract.md","node '<pack-root>/scripts/verify-pack-state.mjs' identity"],
   ["references/worker-contract.md","--pack-root '<pack-root>'"],
   ["references/worker-contract.md","--pack-version '<dispatch packVersion>'"],
@@ -5551,65 +5551,65 @@ const STRING_PINS = [
   ["templates/orchestrator-brief.md","Следующий контакт:"],
   ["templates/orchestrator-brief.md","Техника (можно не читать):"],
   ["templates/compact-instructions.md","product_name"],
-  ["skills/mono-deploy/SKILL.md","git rev-parse HEAD"],
+  ["skills/deploy/SKILL.md","git rev-parse HEAD"],
   ["references/install.md","git show"],
-  ["skills/mono-handoff/SKILL.md","references/artifact-intake.md"],
-  ["skills/mono-handoff/SKILL.md","read"],
-  ["skills/mono-handoff/SKILL.md","unavailable"],
-  ["skills/mono-handoff/SKILL.md","stale_or_ignored"],
-  ["skills/mono-handoff/SKILL.md","conflicts"],
-  ["skills/mono-handoff/SKILL.md","decisions_carried_forward"],
-  ["skills/mono-handoff/SKILL.md","confidence_boundary"],
-  ["skills/mono-implement/SKILL.md","Implementation workflow"],
-  ["skills/mono-implement/SKILL.md","implemented-needs-preflight"],
-  ["skills/mono-implement/SKILL.md","scope-drift-needs-handoff"],
-  ["skills/mono-implement/SKILL.md","gstack-learnings-search"],
-  ["skills/mono-preflight/SKILL.md","mono-preflight certificate"],
-  ["skills/mono-preflight/SKILL.md","Issue(s):"],
-  ["skills/mono-preflight/SKILL.md","Branch:"],
-  ["skills/mono-preflight/SKILL.md","Changed files:"],
-  ["skills/mono-preflight/SKILL.md","Local verification:"],
-  ["skills/mono-preflight/SKILL.md","Autoreview:"],
-  ["skills/mono-preflight/SKILL.md","Autoreview loop:"],
-  ["skills/mono-preflight/SKILL.md","Drift candidate:"],
-  ["skills/mono-preflight/SKILL.md","Not checked:"],
-  ["skills/mono-preflight/SKILL.md","Next:"],
-  ["skills/mono-preflight/SKILL.md","Decision needed:"],
-  ["skills/mono-ship/SKILL.md","Documentation workflow"],
-  ["skills/mono-ship/SKILL.md","mono-ship green certificate"],
-  ["skills/mono-ship/SKILL.md","Next: mono-deploy"],
-  ["skills/mono-deploy/SKILL.md","Deploy workflow"],
-  ["skills/mono-deploy/SKILL.md","mono-check post-ship"],
-  ["skills/mono-deploy/SKILL.md","gstack-learnings-log"],
-  ["skills/mono-deploy/SKILL.md","gstack-learnings-search"],
-  ["skills/mono-deploy/SKILL.md","Learnings consulted:"],
-  ["skills/mono-deploy/SKILL.md","deployApproval"],
+  ["skills/handoff/SKILL.md","references/artifact-intake.md"],
+  ["skills/handoff/SKILL.md","read"],
+  ["skills/handoff/SKILL.md","unavailable"],
+  ["skills/handoff/SKILL.md","stale_or_ignored"],
+  ["skills/handoff/SKILL.md","conflicts"],
+  ["skills/handoff/SKILL.md","decisions_carried_forward"],
+  ["skills/handoff/SKILL.md","confidence_boundary"],
+  ["skills/implement/SKILL.md","Implementation workflow"],
+  ["skills/implement/SKILL.md","implemented-needs-preflight"],
+  ["skills/implement/SKILL.md","scope-drift-needs-handoff"],
+  ["skills/implement/SKILL.md","gstack-learnings-search"],
+  ["skills/preflight/SKILL.md","mono-preflight certificate"],
+  ["skills/preflight/SKILL.md","Issue(s):"],
+  ["skills/preflight/SKILL.md","Branch:"],
+  ["skills/preflight/SKILL.md","Changed files:"],
+  ["skills/preflight/SKILL.md","Local verification:"],
+  ["skills/preflight/SKILL.md","Autoreview:"],
+  ["skills/preflight/SKILL.md","Autoreview loop:"],
+  ["skills/preflight/SKILL.md","Drift candidate:"],
+  ["skills/preflight/SKILL.md","Not checked:"],
+  ["skills/preflight/SKILL.md","Next:"],
+  ["skills/preflight/SKILL.md","Decision needed:"],
+  ["skills/ship/SKILL.md","Documentation workflow"],
+  ["skills/ship/SKILL.md","mono-ship green certificate"],
+  ["skills/ship/SKILL.md","Next: mono:deploy"],
+  ["skills/deploy/SKILL.md","Deploy workflow"],
+  ["skills/deploy/SKILL.md","mono:check post-ship"],
+  ["skills/deploy/SKILL.md","gstack-learnings-log"],
+  ["skills/deploy/SKILL.md","gstack-learnings-search"],
+  ["skills/deploy/SKILL.md","Learnings consulted:"],
+  ["skills/deploy/SKILL.md","deployApproval"],
   ["templates/ship-output.md","mono-ship green certificate"],
   ["templates/ship-output.md","Documentation workflow"],
   ["templates/ship-output.md","Next:"],
   ["templates/deploy-output.md","Deploy workflow"],
   ["templates/deploy-output.md","Learnings recorded"],
-  ["skills/mono-check/SKILL.md","project-config"],
-  ["skills/mono-orchestrate/SKILL.md","scope-drift-needs-handoff"],
-  ["skills/mono-orchestrate/SKILL.md","references/orchestration.md"],
-  ["skills/mono-orchestrate/SKILL.md","templates/orchestrator-dispatch.md"],
-  ["skills/mono-orchestrate/SKILL.md","templates/orchestrator-brief.md"],
-  ["skills/mono-orchestrate/SKILL.md","templates/orchestrator-report.md"],
-  ["skills/mono-orchestrate/SKILL.md","deployApproval"],
-  ["skills/mono-orchestrate/SKILL.md","Session verdicts:"],
-  ["skills/mono-orchestrate/SKILL.md","codex-cli"],
-  ["skills/mono-orchestrate/SKILL.md","workers.json"],
-  ["skills/mono-orchestrate/SKILL.md","orchestration.transport"],
-  ["skills/mono-orchestrate/SKILL.md","maxParallelWorkers"],
+  ["skills/check/SKILL.md","project-config"],
+  ["skills/orchestrate/SKILL.md","scope-drift-needs-handoff"],
+  ["skills/orchestrate/SKILL.md","references/orchestration.md"],
+  ["skills/orchestrate/SKILL.md","templates/orchestrator-dispatch.md"],
+  ["skills/orchestrate/SKILL.md","templates/orchestrator-brief.md"],
+  ["skills/orchestrate/SKILL.md","templates/orchestrator-report.md"],
+  ["skills/orchestrate/SKILL.md","deployApproval"],
+  ["skills/orchestrate/SKILL.md","Session verdicts:"],
+  ["skills/orchestrate/SKILL.md","codex-cli"],
+  ["skills/orchestrate/SKILL.md","workers.json"],
+  ["skills/orchestrate/SKILL.md","orchestration.transport"],
+  ["skills/orchestrate/SKILL.md","maxParallelWorkers"],
   ["templates/review-output.md","Ревью Linear: <ready|advisory-ready|needs-fixes|blocked>"],
   ["templates/ship-output.md","Preflight: <ready/blocked/drift-candidate/needs-human/not run>"],
   ["templates/ship-output.md","Bug/perf proof: <not applicable or original symptom/baseline + fix proof + regression proof/gap>"],
   ["templates/deploy-output.md","Ship certificate: <found/missing/stale>"],
-  ["skills/mono-handoff/SKILL.md","`mono-review artifact`"],
-  ["skills/mono-check/SKILL.md","`repair`"],
-  ["skills/mono-implement/SKILL.md","`lifecycle_state_entity=issue`"],
+  ["skills/handoff/SKILL.md","`mono:review artifact`"],
+  ["skills/check/SKILL.md","`repair`"],
+  ["skills/implement/SKILL.md","`lifecycle_state_entity=issue`"],
   ["references/worker-contract.md","`approval_status=approved-fresh`"],
-  ["skills/mono-idea/SKILL.md","`mono-issue`"],
+  ["skills/idea/SKILL.md","`mono:issue`"],
   ["references/artifact-intake.md","`read`"],
   ["references/artifact-intake.md","`unavailable`"],
   ["references/artifact-intake.md","`stale_or_ignored`"],
@@ -5632,9 +5632,9 @@ const REQUIRED_HEADINGS = [
   ["references/worker-contract.md", "Two-Phase Dispatch Handshake"],
   ["references/worker-contract.md", "Delivery Reports and Capsule"],
   ["references/autoreview-routing.md", "Certificate Evidence"],
-  ["skills/mono-implement/SKILL.md", "Engine and Start Comment"],
-  ["skills/mono-preflight/SKILL.md", "Workflow"],
-  ["skills/mono-deliver/SKILL.md", "Sequence and Recovery"],
+  ["skills/implement/SKILL.md", "Engine and Start Comment"],
+  ["skills/preflight/SKILL.md", "Workflow"],
+  ["skills/deliver/SKILL.md", "Sequence and Recovery"],
   ["references/repair-machine.md","Class 2 effect fixture: snapshot-sync"],
   ["references/repair-machine.md","Class 2 effect fixture: stale-preflight-cert"],
   ["references/repair-machine.md","Class 2 effect fixture: stale-worker-stop"],
@@ -5693,7 +5693,7 @@ const REQUIRED_HEADINGS = [
   ["references/lifecycle.md","Artifact Repair"],
   ["references/issue-only-lane.md","Pre-code exit"],
   ["references/issue-only-lane.md","Post-`ready` exit"],
-  ["skills/mono-issue/SKILL.md","Phase-1 go-live boundary"],
+  ["skills/issue/SKILL.md","Phase-1 go-live boundary"],
   ["references/contracts/issue.md","IS-005 — Issue-only branch"],
   ["references/contracts/issue.md","IS-008 — Project-first sources"],
   ["references/contracts/issue.md","IS-019 — Project-first chips"],
@@ -5747,7 +5747,7 @@ const REQUIRED_HEADINGS = [
   ["references/contracts/tech-spec.md","TS-016 — Unreachable backend fallback"],
   ["references/orchestration.md","Orchestration Mode Precedence"],
   ["references/orchestration.md","Pack identity gate invocation"],
-  ["skills/mono-implement/SKILL.md","Orchestration branch of `start-checkpoint`"],
+  ["skills/implement/SKILL.md","Orchestration branch of `start-checkpoint`"],
   ["templates/orchestrator-dispatch.md","Gate Phase"],
   ["references/orchestration.md","Cost Telemetry"],
   ["templates/orchestrator-brief.md","Цена волны (Wave Cost Summary)"],
@@ -5755,18 +5755,18 @@ const REQUIRED_HEADINGS = [
   ["templates/orchestrator-brief.md","Статус (Status Update)"],
   ["templates/orchestrator-brief.md","Итог волны (Wave Report)"],
   ["references/human-friendly-output.md","Product Language For The Owner"],
-  ["skills/mono-check/SKILL.md","Mono Check"],
-  ["skills/mono-deploy/SKILL.md","Mono Deploy"],
-  ["skills/mono-handoff/SKILL.md","Mono Handoff"],
-  ["skills/mono-idea/SKILL.md","Mono Idea"],
-  ["skills/mono-implement/SKILL.md","Mono Implement"],
-  ["skills/mono-issue/SKILL.md","Mono Issue"],
-  ["skills/mono-orchestrate/SKILL.md","Mono Orchestrate"],
-  ["skills/mono-preflight/SKILL.md","Mono Preflight"],
-  ["skills/mono-review/SKILL.md","Mono Review"],
-  ["skills/mono-ship/SKILL.md","Mono Ship"],
+  ["skills/check/SKILL.md","Mono Check"],
+  ["skills/deploy/SKILL.md","Mono Deploy"],
+  ["skills/handoff/SKILL.md","Mono Handoff"],
+  ["skills/idea/SKILL.md","Mono Idea"],
+  ["skills/implement/SKILL.md","Mono Implement"],
+  ["skills/issue/SKILL.md","Mono Issue"],
+  ["skills/orchestrate/SKILL.md","Mono Orchestrate"],
+  ["skills/preflight/SKILL.md","Mono Preflight"],
+  ["skills/review/SKILL.md","Mono Review"],
+  ["skills/ship/SKILL.md","Mono Ship"],
   ["templates/ship-status-ux.md","Ship status UX (interactive mode)"],
-  ["skills/mono-implement/SKILL.md","Context-seam branch at Delivery Start"],
+  ["skills/implement/SKILL.md","Context-seam branch at Delivery Start"],
   ["references/readiness-gates.md","Review Gate Policy"],
   ["references/orchestration.md","Unavailable route"],
   ["templates/prd.md","PRD Template"],
@@ -5783,13 +5783,13 @@ const REQUIRED_HEADINGS = [
   ["references/issue-only-lane.md","The Resolver"],
   ["references/issue-only-lane.md","Trust boundary"],
   ["references/issue-only-lane.md","Deterministic Project-first fallback"],
-  ["skills/mono-issue/SKILL.md","Create-then-approve intake and renewal transaction"],
+  ["skills/issue/SKILL.md","Create-then-approve intake and renewal transaction"],
   ["references/artifact-rules.md","Linear Artifact Rules"],
-  ["skills/mono-issue/SKILL.md","When issue-only is granted — the nine eligibility conditions"],
-  ["skills/mono-issue/SKILL.md","Prequalification — judge on the raw request, before creating anything"],
-  ["skills/mono-issue/SKILL.md","Established by the transaction, enforced by the resolver"],
-  ["skills/mono-issue/SKILL.md","Renewal recovery"],
-  ["skills/mono-issue/SKILL.md","Routing and fail-closed proof"],
+  ["skills/issue/SKILL.md","When issue-only is granted — the nine eligibility conditions"],
+  ["skills/issue/SKILL.md","Prequalification — judge on the raw request, before creating anything"],
+  ["skills/issue/SKILL.md","Established by the transaction, enforced by the resolver"],
+  ["skills/issue/SKILL.md","Renewal recovery"],
+  ["skills/issue/SKILL.md","Routing and fail-closed proof"],
   ["references/contracts/issue.md","IS-001 — Issue routing"],
   ["references/contracts/issue.md","IS-003 — Internal helper boundary"],
   ["references/contracts/issue.md","IS-004 — Targeted-use eligibility"],
@@ -5811,7 +5811,7 @@ const REQUIRED_HEADINGS = [
 
   ["references/orchestration.md","Two-Phase Dispatch Handshake"],
   ["references/orchestration.md","Registry gate-list lifecycle"],
-  ["skills/mono-orchestrate/SKILL.md","Local compaction wiring"],
+  ["skills/orchestrate/SKILL.md","Local compaction wiring"],
   ["references/lifecycle.md","Deploy"],
   ["references/install.md","Project Policy"],
   ["references/worker-contract.md","Worker Report"],
@@ -6033,7 +6033,7 @@ const MACHINE_TOKENS = new Set([
   "MONO_ORCHESTRATOR_ROOT",
   "Marker version: 1",
   "Next:",
-  "Next: mono-deploy",
+  "Next: mono:deploy",
   "Not checked:",
   "Owner approval:",
   "Owner approval: <authenticated author plus approved fingerprint, or `n/a (project-first)`>",
@@ -6065,8 +6065,8 @@ const MACHINE_TOKENS = new Set([
   "`decisions_carried_forward`",
   "`deep`:",
   "`lifecycle_state_entity=issue`",
-  "`mono-issue`",
-  "`mono-review artifact`",
+  "`mono:issue`",
+  "`mono:review artifact`",
   "`needs-fixes`",
   "`read`",
   "`ready`",
@@ -6150,19 +6150,19 @@ const MACHINE_TOKENS = new Set([
   "maxParallelWorkers",
   "model",
   "model_reasoning_effort",
-  "mono-check post-ship",
-  "mono-deploy",
-  "mono-handoff",
-  "mono-handoff repair",
-  "mono-idea",
-  "mono-implement",
-  "mono-issue",
+  "mono:check post-ship",
+  "mono:deploy",
+  "mono:handoff",
+  "mono:handoff repair",
+  "mono:idea",
+  "mono:implement",
+  "mono:issue",
   "mono-issue-only marker",
-  "mono-preflight",
+  "mono:preflight",
   "mono-preflight certificate",
   "mono-preflight certificate\nPreflight: <ready|blocked|drift-candidate|needs-human>",
-  "mono-review artifact",
-  "mono-ship",
+  "mono:review artifact",
+  "mono:ship",
   "mono-ship green certificate",
   "needs-decision",
   "needs-fixes",
@@ -6232,16 +6232,16 @@ const MACHINE_TOKENS = new Set([
   "second-voice",
   "separate-follow-up-project",
   "ship-unchanged-or-cancel",
-  "skills/mono-check/SKILL.md",
-  "skills/mono-deploy/SKILL.md",
-  "skills/mono-handoff/SKILL.md",
-  "skills/mono-idea/SKILL.md",
-  "skills/mono-implement/SKILL.md",
-  "skills/mono-issue/SKILL.md",
-  "skills/mono-orchestrate/SKILL.md",
-  "skills/mono-preflight/SKILL.md",
-  "skills/mono-review/SKILL.md",
-  "skills/mono-ship/SKILL.md",
+  "skills/check/SKILL.md",
+  "skills/deploy/SKILL.md",
+  "skills/handoff/SKILL.md",
+  "skills/idea/SKILL.md",
+  "skills/implement/SKILL.md",
+  "skills/issue/SKILL.md",
+  "skills/orchestrate/SKILL.md",
+  "skills/preflight/SKILL.md",
+  "skills/review/SKILL.md",
+  "skills/ship/SKILL.md",
   "source",
   "sourceCommit",
   "stage",
@@ -6418,9 +6418,9 @@ function validateDocumentSkeleton() {
 
   // Agent rules remain prose/review; verify only changed section step skeletons.
   for (const [file, section, count] of [
-    ["skills/mono-implement/SKILL.md", "Orchestration branch of `start-checkpoint`", 7],
-    ["skills/mono-preflight/SKILL.md", "Workflow", 7],
-    ["skills/mono-deliver/SKILL.md", "Sequence and Recovery", 3],
+    ["skills/implement/SKILL.md", "Orchestration branch of `start-checkpoint`", 7],
+    ["skills/preflight/SKILL.md", "Workflow", 7],
+    ["skills/deliver/SKILL.md", "Sequence and Recovery", 3],
   ]) {
     const steps = (documentSection(read(file), section) ?? []).flatMap(line => {
       const step = /^(\d+)\. /.exec(line); return step ? [Number(step[1])] : [];
@@ -6445,7 +6445,7 @@ function validateDocumentSkeleton() {
 }
 // Mode declarations are a machine dictionary, separate from explanatory prose.
 function validateLandingSurface() {
-  for (const file of ["references/worker-contract.md", "skills/mono-implement/SKILL.md", "skills/mono-preflight/SKILL.md", "skills/mono-ship/SKILL.md"]) {
+  for (const file of ["references/worker-contract.md", "skills/implement/SKILL.md", "skills/preflight/SKILL.md", "skills/ship/SKILL.md"]) {
     const target = file.startsWith("references/") ? "landing.md" : "references/landing.md";
     requireMachineToken(target);
     if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one landing reference`);
@@ -6460,7 +6460,7 @@ function validateLandingSurface() {
   for (const token of ["landing-plan.mjs", "LANDING-PLAN", "LANDING-HEAD", "LANDING-REFRESH", "--sibling", "opened|sibling-merge|review-fix|docs|unknown", "HEAD_REF_FORCE_PUSHED_EVENT", "clean", "conflicts-with-main", "conflicts-with:<KEY>", "unevaluable: <reason>"])
     assertIncludes("references/landing.md", token);
   assertIncludes("templates/orchestrator-brief.md", "Посадка:");
-  for (const [file, targets] of [["skills/mono-handoff/SKILL.md", ["references/landing.md#scheduling"]], ["skills/mono-orchestrate/SKILL.md", ["references/landing.md#scheduling", "references/landing.md#head-observations-and-refresh-history"]]])
+  for (const [file, targets] of [["skills/handoff/SKILL.md", ["references/landing.md#scheduling"]], ["skills/orchestrate/SKILL.md", ["references/landing.md#scheduling", "references/landing.md#head-observations-and-refresh-history"]]])
     for (const target of targets) { requireMachineToken(target); if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one landing rule reference`); }
   assertIncludes("README.md", "references/landing.md"); assertIncludes("README.md", "examples/landing-config.json");
   for (const token of ["changelog-assemble.mjs", "--worktree", "--config", "--check", "<!-- fragment: <KEY> sha256:<digest> -->"])
@@ -6469,7 +6469,7 @@ function validateLandingSurface() {
     assertIncludes("references/landing.md", token);
   for (const token of ["landing-drain.mjs", "LANDED", "DRAIN-CLOSE", "--install-sha", "--evidence", "--attempt", "--pr"])
     assertIncludes("references/landing.md", token);
-  for (const [file, target] of [["skills/mono-deploy/SKILL.md", "references/landing.md#merge-validation"], ["references/orchestration.md", "landing.md#merge-validation"]]) {
+  for (const [file, target] of [["skills/deploy/SKILL.md", "references/landing.md#merge-validation"], ["references/orchestration.md", "landing.md#merge-validation"]]) {
     if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one merge validation reference`);
   }
   if (documentSection(read("references/orchestration.md"), "Deploy and closeout") === null) fail("orchestration: missing Deploy and closeout section");
@@ -6482,7 +6482,7 @@ function validateLandingBehavior() {
 }
 function validateCheckModeDeclaration() {
   requireMachineToken("Modes:"); requireMachineToken("repair");
-  const lines = documentSection(read("skills/mono-check/SKILL.md"), "Mono Check") || [];
+  const lines = documentSection(read("skills/check/SKILL.md"), "Mono Check") || [];
   const starts = lines.flatMap((line, index) => line === "Modes:" ? [index] : []);
   const modes = [];
   if (starts.length === 1) for (const line of lines.slice(starts[0] + 1)) {
@@ -6491,7 +6491,7 @@ function validateCheckModeDeclaration() {
     if (!entry) break;
     modes.push(entry[1]);
   }
-  if (modes.filter((mode) => mode === "repair").length !== 1) fail("mono-check Modes: missing or duplicate repair declaration");
+  if (modes.filter((mode) => mode === "repair").length !== 1) fail("mono:check Modes: missing or duplicate repair declaration");
 }
 function readTierBounds(text) {
   const now = /^Read now(?:\s|:|$).*$/m.exec(text);
@@ -6523,27 +6523,27 @@ function validateReadFirstTierContract() {
   const misplaced = tiered.replace("2. `references/lifecycle.md`", "2. `references/lifecycle.md` — fixture `lifecycle_state_entity=issue`");
   if (!extractReadFirstEntries(misplaced).paths.includes("lifecycle_state_entity=issue") || validateReadFirstPath("lifecycle_state_entity=issue")) fail("read-tier fixture: eager condition must fail path validation");
   for (const field of ["Статус ревью:", "Review timeline:"]) {
-    if (read("skills/mono-ship/SKILL.md").includes(field)) fail(`mono-ship re-inlines ${field}`);
+    if (read("skills/ship/SKILL.md").includes(field)) fail(`mono:ship re-inlines ${field}`);
   }
   const certificate = "mono-preflight certificate\nPreflight: <ready|blocked|drift-candidate|needs-human>";
   requireMachineToken(certificate);
-  if (read("skills/mono-preflight/SKILL.md").split(certificate).length !== 2) fail("mono-preflight certificate must appear exactly once");
+  if (read("skills/preflight/SKILL.md").split(certificate).length !== 2) fail("mono-preflight certificate must appear exactly once");
 }
 function validateDocumentBoundaries() {
-  const check = read("skills/mono-check/SKILL.md");
+  const check = read("skills/check/SKILL.md");
   for (const token of ["templates/review-output.md", "Linear review:", "Ревью Linear:"]) {
     requireMachineToken(token);
-    if (check.includes(token)) fail(`mono-check must not carry review output ${token}`);
+    if (check.includes(token)) fail(`mono:check must not carry review output ${token}`);
   }
   const bannedHeadings = {
     "templates/project.md": ["Lifecycle", "Документы", "План задач", "Ревью-гейт", "Текущий статус"],
-    "templates/tech-spec.md": ["Skill contracts", "mono-check design", "Дизайн mono-check", "Дизайн mono-review"],
+    "templates/tech-spec.md": ["Skill contracts", "mono:check design", "Дизайн mono:check", "Дизайн mono:review"],
   };
   for (const [file, headings] of Object.entries(bannedHeadings)) for (const heading of headings) {
     if (read(file).split("\n").some((line) => /^#{1,6}\s+/.test(line) && line.replace(/^#{1,6}\s+/, "").trim() === heading)) fail(`${file}: forbidden workflow heading ${heading}`);
   }
-  for (const file of ["skills/mono-ship/SKILL.md", "templates/ship-output.md"]) if (read(file).includes("pr-created")) fail(`${file}: retired terminal status pr-created`);
-  for (const file of ["skills/mono-preflight/SKILL.md", "README.md", "CHANGELOG.md", "examples/consumer-dogfood.md"]) if (read(file).includes("`tiny` ->")) fail(`${file}: duplicate canonical autoreview route`);
+  for (const file of ["skills/ship/SKILL.md", "templates/ship-output.md"]) if (read(file).includes("pr-created")) fail(`${file}: retired terminal status pr-created`);
+  for (const file of ["skills/preflight/SKILL.md", "README.md", "CHANGELOG.md", "examples/consumer-dogfood.md"]) if (read(file).includes("`tiny` ->")) fail(`${file}: duplicate canonical autoreview route`);
   const dispatch = read("templates/orchestrator-dispatch.md");
   if (dispatch.includes("pass | deferred | not-run")) fail("dispatch duplicates the report's verification status dictionary");
   const report = read("templates/orchestrator-report.md") + read("references/worker-contract.md");
@@ -6592,7 +6592,7 @@ function validateAe6Fixtures() {
     // Prefixing contextual wording preserves the rule and works after a prior
     // editorial rewrite too; no baseline sentence is required by the fixture.
     for (const [name, heading] of [
-      ["skills/mono-implement/SKILL.md", "Mono Implement"],
+      ["skills/implement/SKILL.md", "Mono Implement"],
       ["references/issue-only-lane.md", "Post-`ready` exit"],
       ["references/orchestration.md", "Cost Telemetry"],
     ]) change(name, (text) => {
@@ -6644,9 +6644,9 @@ function validateAe6Fixtures() {
       "# Что\n", "# Lifecycle\n\n# Что\n")), "forbidden workflow heading Lifecycle");
     negative("report field removed", () => change("references/worker-contract.md", (text) => text.replace(
       '  "question": "<question text, or null>",\n', "")), "missing mandatory machine field");
-    negative("repair mode declaration removed with prose intact", () => change("skills/mono-check/SKILL.md", (text) => text.replace(
+    negative("repair mode declaration removed with prose intact", () => change("skills/check/SKILL.md", (text) => text.replace(
       "- `repair`\n", "")), "Modes: missing or duplicate repair declaration");
-    change("skills/mono-deploy/SKILL.md", (text) => text.replace(/^(\d+)(\. `cost`:)/m, (_, ordinal, suffix) => `${ordinal === "99" ? "98" : "99"}${suffix}`));
+    change("skills/deploy/SKILL.md", (text) => text.replace(/^(\d+)(\. `cost`:)/m, (_, ordinal, suffix) => `${ordinal === "99" ? "98" : "99"}${suffix}`));
     check(); restore(); check();
     console.log("PASS AE6 cost step renumbering: green");
   } catch (error) {
@@ -6666,8 +6666,8 @@ function namedWorkflowStep(text, id) {
   return count === 1 ? lines.slice(start, end).join("\n") : null;
 }
 function validateCostCommandStructure() {
-  const deploy = namedWorkflowStep(read("skills/mono-deploy/SKILL.md"), "cost");
-  const status = read("skills/mono-orchestrate/SKILL.md");
+  const deploy = namedWorkflowStep(read("skills/deploy/SKILL.md"), "cost");
+  const status = read("skills/orchestrate/SKILL.md");
   for (const [label, text, field] of [["deploy cost step", deploy, "Cost:"], ["orchestrator status", status, "Цена волны:"]]) {
     if (text === null) { fail(`${label}: missing or duplicate named step`); continue; }
     for (const token of ["scripts/wave-cost.mjs", field, "unavailable: <reason>"]) {

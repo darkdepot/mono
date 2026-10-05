@@ -27,7 +27,7 @@ Linear Issue: `<key>` - <status>
 - <comments/resources/status writes>.
 
 Что дальше:
-1. <recommended next step/consequence; green normally mono-deploy>.
+1. <recommended next step/consequence; green normally mono:deploy>.
 2. <useful alternative/consequence>.
 ```
 
@@ -51,7 +51,7 @@ Fixes applied: <none or concise list with commit SHA>
 Merge state: <clean/blocked/conflict/unknown>
 Unresolved feedback:
 mono-ship green certificate: <recorded/not recorded + reason>
-Next: <mono-deploy | needs-human | blocked>
+Next: <mono:deploy | needs-human | blocked>
 Notes:
 ```
 

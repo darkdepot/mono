@@ -1,17 +1,17 @@
 ---
-name: mono-deploy
-description: Use after mono-ship reports green to merge/deploy through the configured deploy workflow, verify delivery, close Linear, and record durable learnings.
+name: deploy
+description: Use after mono:ship reports green to merge/deploy through the configured deploy workflow, verify delivery, close Linear, and record durable learnings.
 ---
 
 # Mono Deploy
 
 Find shared files here or at the pack root.
 
-Use this skill after `mono-ship` has created a deploy-ready PR and recorded a `mono-ship green certificate`.
+Use this skill after `mono:ship` has created a deploy-ready PR and recorded a `mono-ship green certificate`.
 
-`mono-deploy` owns merge/deploy delegation, deploy evidence, post-ship Linear closeout, and durable operational learning capture. It must not create the PR, run local branch preflight, or perform initial implementation.
+`mono:deploy` owns merge/deploy delegation, deploy evidence, post-ship Linear closeout, and durable operational learning capture. It must not create the PR, run local branch preflight, or perform initial implementation.
 
-`mono-deploy` is an orchestrator-owned stage, not a worker stage. The worker pack-identity gate applies to `mono-implement`, `mono-preflight`, and `mono-ship`; deploy consumes the accepted green certificate and the orchestrator retires the registry entry in this same session.
+`mono:deploy` is an orchestrator-owned stage, not a worker stage. The worker pack-identity gate applies to `mono:implement`, `mono:preflight`, and `mono:ship`; deploy consumes the accepted green certificate and the orchestrator retires the registry entry in this same session.
 
 Requires `mono-ship green certificate` before any merge or deploy action.
 
@@ -29,8 +29,8 @@ Read when — load the file only when its condition is true for this run:
 
 - `references/install.md` — when the deployed change is a skill-pack delivery that installs or cuts over the pack.
 - `references/issue-only-lane.md` — when the resolved seam is `lifecycle_state_entity=issue`, or when a lane closeout decision is in play.
-- `skills/mono-ship/SKILL.md` — when the recovered green certificate is missing, superseded, or not `green`.
-- `skills/mono-check/SKILL.md` — when `mono-check post-ship` is run or reported from this stage.
+- `skills/ship/SKILL.md` — when the recovered green certificate is missing, superseded, or not `green`.
+- `skills/check/SKILL.md` — when `mono:check post-ship` is run or reported from this stage.
 - `references/execution-quality.md` — when this run performs live verification against the Issue's acceptance IDs.
 - `references/artifact-rules.md` — when this run must decide where a Linear record belongs or which stage owns it.
 
@@ -55,7 +55,7 @@ Record approval as `Деплой одобрен: <кем/когда>; PR #<n>, h
 5. `deploy`: apply [Merge validation](references/landing.md#merge-validation) before ordinary merge/install and on merge SHA; corrective requires its recorded exception. Delegate configured Deploy workflow; never invent a path or bypass the current green certificate/head match.
 6. `verify`: capture merged SHA, target URL/environment, deploy status/evidence.
 7. `live-qa`: execute the Live QA gate below after deploy verification and before closeout.
-8. `post-ship`: run/report `mono-check post-ship` after evidence exists.
+8. `post-ship`: run/report `mono:check post-ship` after evidence exists.
 9. `mono-closeout`: set Issue Done only after verified deploy (or recorded policy accepting merge as delivery), plus green live QA for user-facing changes or explicit permitted not-run reason. Failed live QA is never excused as skipped.
 10. `project-update`: execute the update procedure below.
 11. `cost`: run `node '<pack-root>/scripts/wave-cost.mjs' <ISSUE-KEY>` after closeout evidence. Copy exact final Russian line into closeout/report `Cost:`. Unmeasurable script/component = `unavailable: <reason>`; telemetry never blocks/delays closeout.

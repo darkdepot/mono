@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// External heartbeat for `mono-orchestrate` (references/orchestration.md,
+// External heartbeat for `mono:orchestrate` (references/orchestration.md,
 // "## Heartbeat"). Watches one orchestrator mailbox root and prints one
 // stable line per worker liveness event to stdout:
 //

@@ -13,19 +13,19 @@ Write skills in English; Linear templates/examples in Russian.
 - Project entity: shaped outcome, lifecycle and relationships in metadata/resources/comments/handoff; body: only what/why/outcome/in/out.
 - PRD: WHAT (problem/operator/workflow/scenarios/requirements/acceptance). Tech Spec: HOW (architecture/contracts/failures/validation). Issue: one-PR contract with snapshot.
 - GitHub: branch/PR/review/CI/deploy/merge history only.
-- `mono-handoff`: persists Project-first package/slicing before implementation; owns reviewed class 1–3 repair.
-- `mono-issue`: issue-only create-then-approve intake/body renewal; never handoff repair.
-- `mono-implement`: Delivery Start/code from approved Issues.
-- `mono-preflight`: local readiness/targeted verification/commit/certificate; mandatory clean `autoreview`, model from [role:autoreview](references/model-policy.md#roles), effort by risk.
-- `mono-ship`: accepted pre-ship drift, formal review/check, PR/docs-before-green/feedback/certificate.
-- `mono-deploy`: deploy delegation/evidence/post-ship/closeout/durable learnings.
-- `mono-orchestrate`: product control plane, dispatch/monitor/decisions and sole orchestrated Linear writer; never stage work.
+- `mono:handoff`: persists Project-first package/slicing before implementation; owns reviewed class 1–3 repair.
+- `mono:issue`: issue-only create-then-approve intake/body renewal; never handoff repair.
+- `mono:implement`: Delivery Start/code from approved Issues.
+- `mono:preflight`: local readiness/targeted verification/commit/certificate; mandatory clean `autoreview`, model from [role:autoreview](references/model-policy.md#roles), effort by risk.
+- `mono:ship`: accepted pre-ship drift, formal review/check, PR/docs-before-green/feedback/certificate.
+- `mono:deploy`: deploy delegation/evidence/post-ship/closeout/durable learnings.
+- `mono:orchestrate`: product control plane, dispatch/monitor/decisions and sole orchestrated Linear writer; never stage work.
 
 ## Skill Design Rules
 
-Use SKILL descriptions for routing, atomics for one artifact, wrappers for orchestration. Read `references/`/`templates/` progressively; never inline long templates. Keep handoff/implement/preflight/ship/deploy owners separate. `mono-deliver` sequences three phases in one context; rules stay with phase owners, never in a monolith. Orchestrator only dispatches, confirms writes and monitors; never implements stages.
+Use SKILL descriptions for routing, atomics for one artifact, wrappers for orchestration. Read `references/`/`templates/` progressively; never inline long templates. Keep handoff/implement/preflight/ship/deploy owners separate. `mono:deliver` sequences three phases in one context; rules stay with phase owners, never in a monolith. Orchestrator only dispatches, confirms writes and monitors; never implements stages.
 
-Review only reports quality/risk; check only reports readiness. Repair: handoff mutates Project-first, `mono-review artifact` judges classification, `mono-check repair` reports readiness, issue renews issue-only, ship owns accepted pre-ship drift. Apply accepted fixes only through these owners or explicit atomics.
+Review only reports quality/risk; check only reports readiness. Repair: handoff mutates Project-first, `mono:review artifact` judges classification, `mono:check repair` reports readiness, issue renews issue-only, ship owns accepted pre-ship drift. Apply accepted fixes only through these owners or explicit atomics.
 
 Pin autoreview model by policy role and effort by risk, never helper defaults. Project Updates inform deploy closeout; never gate any stage. Record user acceptance in Linear comments.
 

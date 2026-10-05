@@ -1,6 +1,6 @@
 # Ship Feedback Loop
 
-Own PR stabilization in `mono-ship`; delegate configured ship/docs/resolvers. Leave merge/deploy/post-ship/closeout/learnings to deploy.
+Own PR stabilization in `mono:ship`; delegate configured ship/docs/resolvers. Leave merge/deploy/post-ship/closeout/learnings to deploy.
 
 ## Inputs
 
@@ -58,7 +58,7 @@ until deadline; evidence-limit parks, waiving nothing.
 
 ## Green Certificate
 
-Store full `mono-ship green certificate` from `skills/mono-ship/SKILL.md`
+Store full `mono-ship green certificate` from `skills/ship/SKILL.md`
 in Linear for deploy recovery: convergence deferrals/published replies included.
 
 ## Review Status Reporting

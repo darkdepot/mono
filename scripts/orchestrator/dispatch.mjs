@@ -75,7 +75,7 @@ async function prepareDispatch(args) {
   if (args["full-snapshot"] || extracts.full) profile = "full";
   const moves = args.moves ? readJson(args.moves) : settings.lifecycle_moves;
   if (!Array.isArray(moves)) throw new Error("--moves or orchestration.dispatch.lifecycle_moves required (empty array for no moves)");
-  const defaultGates = ["pack identity gate", "snapshot package context", "approval plus mono-review handoff findings", "5-field context seam"];
+  const defaultGates = ["pack identity gate", "snapshot package context", "approval plus mono:review handoff findings", "5-field context seam"];
   const gates = args.gates ? readJson(args.gates) : moves.length ? [...defaultGates, ...(issueOnly ? ["delivery check"] : [])] : [];
   if (!Array.isArray(gates) || new Set(gates).size !== gates.length || gates.some(gate => typeof gate !== "string" || !gate.trim())) throw new Error("invalid gates");
   const verification = args.verification ? readJson(args.verification) : settings.verification;
@@ -143,7 +143,7 @@ async function prepareDispatch(args) {
     preflight_pins: JSON.stringify(pins), writable_roots: JSON.stringify(roots), confirmation_timeout: deliveryConfig(config).confirmationTimeoutSec,
     worktree, branch, pack_version: installed.packVersion, source_commit: installed.sourceCommit ?? "not provided (plugin)", pack_root: packRoot, surface_revision: installed.surfaceRevision,
     outcome: section(body, "Что сделать", true), verification_items: section(body, "Как проверить", true), constraints: section(body, "Ключевые контракты") || section(body, "Что не входит", true),
-    budget: settings.budget ?? "~4 hours", transport: "codex-cli", delivery_skill: layout.skill("mono-deliver"), identity_command: identityCommand,
+    budget: settings.budget ?? "~4 hours", transport: "codex-cli", delivery_skill: layout.skill("deliver"), identity_command: identityCommand,
     mailbox: path.join(args.root, "reports"), fallback: path.join(worktree, ".orchestrator"),
     project_brief: brief, prd: extracts.prd, spec: extracts.spec, issue_body: body, approval, marker: lane?.marker ?? "n/a (project-first)", label: lane?.label ?? "n/a (project-first)",
     fingerprint: issueOnly ? lane.fingerprint : "n/a (project-first)", issue_only_config: lane?.config ?? "n/a (project-first)", owner_approval: lane?.ownerApproval ?? "n/a (project-first)",

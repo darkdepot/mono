@@ -4,7 +4,7 @@ Interactive composition only; AFK uses report/certificate. Observed gh/check/Lin
 
 ## Verdict copy
 
-- green: «PR готов к `mono-deploy`; `mono-ship` не мержил и не деплоил.»
+- green: «PR готов к `mono:deploy`; `mono:ship` не мержил и не деплоил.»
 - needs-human only for explicit deploy approval, review/CI green: «PR готов к деплою, жду твоего подтверждения.» No blocker framing; deploy approval never gates ship.
 - needs-human for unresolved feedback: «Нужно решение по ревью-фидбеку» plus exact unresolved points.
 - blocked: missing prerequisite/exact unblock. timed-out: unsettled state and known/unknown PR safety.

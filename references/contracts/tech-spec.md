@@ -1,8 +1,8 @@
 # Tech Spec artifact contract
 
 This bounded contract is the normative source for Tech Spec artifact behavior.
-`mono-handoff` consumes it for Project-first package creation and repair;
-`mono-ship` consumes it for accepted pre-ship drift. Use the shared
+`mono:handoff` consumes it for Project-first package creation and repair;
+`mono:ship` consumes it for accepted pre-ship drift. Use the shared
 [artifact rules](../artifact-rules.md), [artifact quality](../artifact-quality.md),
 [readiness gates](../readiness-gates.md), and
 [execution quality](../execution-quality.md) for cross-artifact policy. Render
@@ -21,13 +21,13 @@ The Tech Spec records HOW the approved PRD will be built.
 ## TS-003 — Internal helper boundary
 
 Tech Spec writing is owned by lifecycle stages rather than exposed as a direct
-artifact door. The normal post-discovery and repair workflow is `mono-handoff`;
-accepted pre-ship drift belongs to `mono-ship`.
+artifact door. The normal post-discovery and repair workflow is `mono:handoff`;
+accepted pre-ship drift belongs to `mono:ship`.
 
 ## TS-004 — Targeted-use eligibility
 
-A direct request to write or repair a Tech Spec must route to `mono-handoff`
-repair. Accepted pre-ship drift routes to `mono-ship`; no other workflow mutates
+A direct request to write or repair a Tech Spec must route to `mono:handoff`
+repair. Accepted pre-ship drift routes to `mono:ship`; no other workflow mutates
 the Tech Spec directly.
 
 ## TS-005 — Linear-facing language
@@ -93,7 +93,7 @@ it.
 
 For standard, deep, risky, or review-sensitive packages, make requirement
 trace, validation, rollback, and failure modes concrete enough for
-`mono-review artifact`, without adding review-workflow sections to the body.
+`mono:review artifact`, without adding review-workflow sections to the body.
 
 ## TS-018 — Narrow no-spec exception
 
@@ -132,12 +132,12 @@ Do not write historical repair language or transcript archaeology.
 
 ## TS-025 — No workflow mechanics
 
-Keep `mono-check`, lifecycle, readiness criteria, and agent-contract
+Keep `mono:check`, lifecycle, readiness criteria, and agent-contract
 instructions out of the Linear Tech Spec body.
 
 ## TS-026 — No Delivery transition
 
-Tech Spec creation belongs to Discovery or Handoff. Only `mono-implement` owns
+Tech Spec creation belongs to Discovery or Handoff. Only `mono:implement` owns
 Delivery Start.
 
 ## TS-027 — No PR creation
@@ -178,5 +178,5 @@ instructions.
 
 ## TS-035 — Transition check
 
-For standalone use run or report `mono-check discovery`; inside `mono-handoff`,
-run or report `mono-check handoff`.
+For standalone use run or report `mono:check discovery`; inside `mono:handoff`,
+run or report `mono:check handoff`.

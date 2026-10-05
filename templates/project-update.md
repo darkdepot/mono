@@ -1,7 +1,7 @@
 # Project Update Template
 
 The single home of the project-update form and its text rules, for EVERY
-writer: `mono-deploy` at closeout, and the orchestrator when it publishes a
+writer: `mono:deploy` at closeout, and the orchestrator when it publishes a
 project sweep, a hand completion, or a retro note. An update written from any
 other form — a status register, a ledger, a wave digest — is a defect, whoever
 wrote it.
@@ -14,11 +14,11 @@ language requirement. The rules around them stay English like the rest of the
 repo: the file is mixed by design.
 
 Publication mechanics — when the update is posted, how project completion is
-decided, what the closeout records — live in `skills/mono-deploy/SKILL.md`. This
+decided, what the closeout records — live in `skills/deploy/SKILL.md`. This
 file governs the text only.
 
 Two forms, and only two. «Выкладка» reports a result that shipped, and it is the
-form of every `mono-deploy` closeout. «Состояние» reports where a project stands
+form of every `mono:deploy` closeout. «Состояние» reports where a project stands
 when nothing shipped in this pass; it belongs to the orchestrator and has its
 own section below.
 
@@ -127,7 +127,7 @@ and it changes no project status.
 «Состояние» — the form of an update with no shipment behind it: a sweep over a
 project in flight, a completion by hand with no last delivery, a «до завершения
 осталось …» note. The orchestrator writes it; the `project-update` step of
-`mono-deploy` never does.
+`mono:deploy` never does.
 
 ```text
 **<Заголовок: одна фраза о том, что сейчас верно про продукт>**
@@ -151,7 +151,7 @@ The same three parts as «Выкладка», with three differences:
 Запрещены в этой форме: даты, проценты, перечисление срезов и «до Completed
 остаётся <ключ>». «Состояние» never opens with the completion prefix and never
 moves a project to `Completed`: a project is completed by a shipment, and that
-path lives in `skills/mono-deploy/SKILL.md`, while a project left without open
+path lives in `skills/deploy/SKILL.md`, while a project left without open
 Issues by cancellation or by a hand-closed tail stays the owner's to complete.
 The update about such a project is written in this form, never with the
 completion prefix. Invariants 12 and 13 are the two this form does not carry;

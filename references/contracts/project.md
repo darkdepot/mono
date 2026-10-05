@@ -1,8 +1,8 @@
 # Project artifact contract
 
 This bounded contract is the normative source for Project artifact behavior.
-Lifecycle owners consume it directly: `mono-idea` creates or strengthens an
-Idea Project, while `mono-handoff` creates or repairs the Project-first package.
+Lifecycle owners consume it directly: `mono:idea` creates or strengthens an
+Idea Project, while `mono:handoff` creates or repairs the Project-first package.
 It defines artifact behavior, not lifecycle orchestration. Use the shared [artifact rules](../artifact-rules.md),
 [readiness gates](../readiness-gates.md), and [lifecycle](../lifecycle.md) for
 cross-artifact policy. Render the body with
@@ -13,8 +13,8 @@ single source for presentation shape.
 
 Use this contract when creating or updating the Linear Project that serves as
 the workflow source of truth. A raw request to write a Project routes to
-`mono-idea`; an existing Project or shaped-discovery repair routes to
-`mono-handoff`.
+`mono:idea`; an existing Project or shaped-discovery repair routes to
+`mono:handoff`.
 
 ## PC-002 — Concise product brief
 
@@ -76,7 +76,7 @@ exist yet.
 ## PC-014 — Discovery state
 
 In Discovery, the Project coexists with discovery output. Durable PRD and Tech
-Spec may exist and are normally created by `mono-handoff`.
+Spec may exist and are normally created by `mono:handoff`.
 
 ## PC-015 — Handoff readiness state
 
@@ -86,16 +86,16 @@ Record readiness in comments or check output, not in the Project body.
 
 ## PC-016 — Delivery state
 
-Delivery begins only after `mono-implement` verifies the Project, current PRD,
+Delivery begins only after `mono:implement` verifies the Project, current PRD,
 Tech Spec or explicit no-spec exception, approved execution Issue set, explicit
 implementation-start approval, and readiness to start from those Issues.
 
 ## PC-017 — Ship state ownership
 
-`mono-ship` synchronizes Issue and PR state. Project Updates are not the ship
+`mono:ship` synchronizes Issue and PR state. Project Updates are not the ship
 state mechanism.
 
 ## PC-018 — Transition check
 
-Before finishing a Project mutation, run or report `mono-check <mode>` for the
+Before finishing a Project mutation, run or report `mono:check <mode>` for the
 transition being supported.

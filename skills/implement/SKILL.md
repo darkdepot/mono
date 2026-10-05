@@ -1,5 +1,5 @@
 ---
-name: mono-implement
+name: implement
 description: Use when starting or running implementation from approved Linear Issue(s) after handoff.
 ---
 
@@ -23,7 +23,7 @@ Read now:
 Read when:
 - `references/questioning.md` — asking interactive questions.
 - `references/issue-only-lane.md` — `lifecycle_state_entity=issue` or lane park/freeze/exit.
-- `skills/mono-preflight/SKILL.md` — exiting implemented-needs-preflight.
+- `skills/preflight/SKILL.md` — exiting implemented-needs-preflight.
 
 Gather package/resources/comments, approvals/review/checks, config/validation
 and git/base. Run dispatch identity before work/resume; no discovery/chat-only
@@ -66,7 +66,7 @@ Never create PR or run/claim formal pre-ship review/check.
 ## Context-seam branch at Delivery Start
 
 Apply worker-contract Context seam. Project-first: obtain start approval, move
-Project to Delivery, run/report mono-check delivery, record start comment.
+Project to Delivery, run/report mono:check delivery, record start comment.
 Missing prerequisites park/restart; integrity errors → needs-human.
 Issue-only: fresh authenticated fingerprint approval authorizes start without
 another approval. Require pre-start delivery PASS, move only Issue to configured
