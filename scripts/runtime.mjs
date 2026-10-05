@@ -310,7 +310,7 @@ function modelState(config, skillsRoot) {
     fields(override, ['engine', 'transport', 'model', 'effort', 'effortByRisk', 'provider'], role);
     need(Object.values(override).every(value => value !== null), `${role}: null override field`);
     need(!(Object.hasOwn(override, 'engine') && Object.hasOwn(override, 'transport')), `${role}: choose engine or transport`);
-    const transportEngine = { 'codex-cli': 'codex', 'claude-code-desktop': 'claude', fallback: 'claude', codex: 'codex', claude: 'claude', kimi: 'kimi', pi: 'pi' };
+    const transportEngine = { 'codex-cli': 'codex', 'claude-cli': 'claude', 'claude-code-desktop': 'claude', fallback: 'claude', codex: 'codex', claude: 'claude', kimi: 'kimi', pi: 'pi' };
     const engine = override.transport === undefined ? override.engine ?? defaults[role].engine : transportEngine[override.transport];
     need(ROLE_ENGINES[role].includes(engine), `${role}: unsupported engine/transport`);
     need(engine === defaults[role].engine || typeof override.model === 'string', `${role}: changing engine requires model`);

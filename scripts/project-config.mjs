@@ -266,7 +266,7 @@ function validateConfig(config, failures) {
     if (!orchestration || typeof orchestration !== "object" || Array.isArray(orchestration)) {
       failures.push("Project config orchestration must be an object");
     } else {
-      const allowedTransports = ["codex-cli", "claude-code-desktop", "fallback"];
+      const allowedTransports = ["codex-cli", "claude-cli", "claude-code-desktop", "fallback"];
       if ("transport" in orchestration && orchestration.transport !== null && !allowedTransports.includes(orchestration.transport)) {
         failures.push(`Project config orchestration.transport must be one of: ${allowedTransports.join(", ")}`);
       }

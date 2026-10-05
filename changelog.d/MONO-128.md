@@ -1,0 +1,1 @@
+- Add managed Claude Code launch and resume with pinned sessions, subscription-login checks, canonical write grants, closed settings and connector sources, restricted network tools, credential-safe logs, and explicit startup refusals. Existing Codex delivery remains the default; full Claude delivery follows separately.

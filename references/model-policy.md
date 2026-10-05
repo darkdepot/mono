@@ -34,7 +34,9 @@ credentialEnv may be null for native authentication. Unknown fields are refused.
 Matrix: `worker-default|worker-complex` → codex; `worker-claude` → claude;
 `autoreview` → claude|kimi|pi|codex; `second-voice` → native Codex for the Claude
 orchestrator (cross-vendor). `orchestrator` and `second-voice-alt` overrides are
-refused. No new worker transports: the CLI launcher accepts only Codex workers.
+refused. Managed CLI transports: `codex-cli` accepts `worker-default|worker-complex`;
+`claude-cli` accepts `worker-claude`, native Anthropic subscription only, without
+endpoint overrides or credential references.
 Claude/Codex efforts: low|medium|high|xhigh|max; Kimi: on|off; Pi:
 off|minimal|low|medium|high|xhigh, subject to model compatibility. Autoreview uses
 `effortByRisk` with tiny, standard, deep, risky, riskyCritical; all are required.
@@ -74,5 +76,6 @@ Codex reports requested parameters, not the actual served identity.
 | Transport case | Model parameter | Effort parameter | Actual served model |
 | --- | --- | --- | --- |
 | `codex-cli` | Resolved id pinned. | Resolved effort pinned. | Unknown; parameters are evidence. |
+| `claude-cli` | Resolved id pinned; startup must match. | Requested explicitly; unobserved. | Init identity plus first successful response; subscription login checked separately. |
 | `fallback` | `model` alias; record alias-to-id assumption. | Runtime default, not policy effort. | Unknown. |
 | `claude-code-desktop` | Owner selects manually. | Unverified. | Unverified. |

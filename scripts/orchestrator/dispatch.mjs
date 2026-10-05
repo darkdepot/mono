@@ -81,9 +81,6 @@ async function prepareDispatch(args) {
   if (!Array.isArray(gates) || new Set(gates).size !== gates.length || gates.some(gate => typeof gate !== "string" || !gate.trim())) throw new Error("invalid gates");
   const verification = args.verification ? readJson(args.verification) : settings.verification;
   if (typeof verification?.command !== "string" || !verification.command.trim() || !Array.isArray(verification.args) || verification.args.some(arg => typeof arg !== "string")) throw new Error("explicit verification command/args required");
-  const role = args.role ?? "worker-default", reason = args.reason ?? null;
-  const transport = workerTransport("codex-cli");
-  if (!transport.workerRoles.includes(role) || (role === transport.complexRole && !reason?.trim())) throw new Error("complex worker requires --reason");
   if (!approval.trim()) throw new Error("nonempty approval record required");
   const seam = lane?.seam ?? { package_kind: "project-first", lifecycle_state_entity: "project", behavioral_oracle: null, risk_class: risk,
     approval_status: /approval_status\s*=\s*(approved|pending|rejected)/u.exec(body + "\n" + approval)?.[1] ?? "approved" };
@@ -93,7 +90,13 @@ async function prepareDispatch(args) {
   const worktree = path.join(repo, ".worktrees", issue), branch = `mono/${issue.toLowerCase()}`;
   git(repo, "fetch", "origin", "main");
   const base = git(repo, "rev-parse", "origin/main");
-  const landing = validateLanding(baseModelConfig(repo, base));
+  const baseConfig = baseModelConfig(repo, base);
+  const landing = validateLanding(baseConfig);
+  const transport = workerTransport(baseConfig.orchestration?.transport ?? "codex-cli");
+  const role = args.role ?? transport?.workerRoles[0], reason = args.reason ?? null;
+  if (!transport?.workerRoles.includes(role)) throw new Error("unsupported managed worker role/transport on BASE");
+  if (role === transport.complexRole && !reason?.trim()) throw new Error("complex worker requires --reason");
+  if (!transport.handshakeModes.includes(handshake)) throw new Error(transport.transport + " requires handshake " + transport.handshakeModes.join(" or "));
   if (!fs.existsSync(worktree)) git(repo, "worktree", "add", "-b", branch, worktree, base);
   const actualBranch = git(worktree, "branch", "--show-current");
   if (actualBranch !== branch) throw new Error("existing dispatch worktree has another branch");
@@ -127,7 +130,7 @@ async function prepareDispatch(args) {
     // only after capturing inputs, which may themselves be the prior snapshot.
     fs.rmSync(snapshot, { recursive: true, force: true }); fs.renameSync(preparedSnapshot, snapshot);
   } finally { fs.rmSync(preparedSnapshot, { recursive: true, force: true }); }
-  const request = { ...gate, root: args.root, issue, role, modelRoutes, modelReason: reason, transport: "codex-cli", dispatchFile, evidenceRoot,
+  const request = { ...gate, root: args.root, issue, role, modelRoutes, modelReason: reason, transport: transport.transport, dispatchFile, evidenceRoot,
     writable_roots: extras, workerWritableRoots: roots, gates, lifecycle_moves: moves, config: args.config, product_name: product, handshake, profile,
     pins: { file: pinsFile, digest: pinsDigest }, pinsVersion: 0, risk, critical, afk, openDecisions };
   atomicJson(spawnFile, request);
@@ -145,7 +148,7 @@ async function prepareDispatch(args) {
     preflight_pins: JSON.stringify(pins), writable_roots: JSON.stringify(roots), confirmation_timeout: deliveryConfig(config).confirmationTimeoutSec,
     worktree, branch, pack_version: installed.packVersion, source_commit: installed.sourceCommit ?? "not provided (plugin)", pack_root: packRoot, surface_revision: installed.surfaceRevision,
     outcome: section(body, "Что сделать", true), verification_items: section(body, "Как проверить", true), constraints: section(body, "Ключевые контракты") || section(body, "Что не входит", true),
-    budget: settings.budget ?? "~4 hours", transport: "codex-cli", delivery_skill: layout.skill("deliver"), identity_command: identityCommand,
+    budget: settings.budget ?? "~4 hours", transport: transport.transport, delivery_skill: layout.skill("deliver"), identity_command: identityCommand,
     mailbox: path.join(args.root, "reports"), fallback: path.join(worktree, ".orchestrator"),
     project_brief: brief, prd: extracts.prd, spec: extracts.spec, issue_body: body, approval, marker: lane?.marker ?? "n/a (project-first)", label: lane?.label ?? "n/a (project-first)",
     fingerprint: issueOnly ? lane.fingerprint : "n/a (project-first)", issue_only_config: lane?.config ?? "n/a (project-first)", owner_approval: lane?.ownerApproval ?? "n/a (project-first)",
@@ -192,7 +195,7 @@ async function prepareDispatch(args) {
 if (isMain(import.meta.url)) {
   try {
     const args = commandFlags(process.argv.slice(2), ["preapply", "full-snapshot"]);
-    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex --reason TEXT] [--preapply] [--full-snapshot] [--release true|false]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON] [--review-dataset FILE --review-dataset-version N] [--review-pilot JSON]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
+    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex|worker-claude --reason TEXT] [--preapply] [--full-snapshot] [--release true|false]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON] [--review-dataset FILE --review-dataset-version N] [--review-pilot JSON]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
     else console.log(JSON.stringify(await dispatch(args)));
   } catch (error) { console.error(`dispatch: ${error.message}`); process.exitCode = 1; }
 }

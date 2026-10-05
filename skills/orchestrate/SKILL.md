@@ -117,7 +117,7 @@ Workflow states:
    - Rebuild the full picture from Linear + ledger + mailbox + worker
      registry + live session list before any action (Resume procedure in
      `references/orchestration.md`).
-   - Rebind to surviving `codex-cli` workers by thread id instead of
+   - Find surviving `codex-cli` and `claude-cli` workers by thread id instead of
      respawning them only when the registry and `surfaceRevision`
      match; never rebind a thread from another surface revision.
    - Apply queued Linear mutations from worker reports that were never
@@ -165,7 +165,7 @@ Workflow states:
      open-decision count and verification command. It builds pins/digest, extracts,
      start-gate and spawn requests, renders the single dispatch template, passes
      start, launches through spawn.mjs and appends the UTC ledger event. Refusals
-     before spawn register no attempt; --preapply is reserved for I4 and refuses.
+     before spawn register no attempt; --preapply requires the approved manifest and mandate.
      Spawn through the runtime transport with
      `templates/orchestrator-dispatch.md`: one delivery, full context snapshot, AFK
      contract, engine block, mailbox path, authorization. Include the
