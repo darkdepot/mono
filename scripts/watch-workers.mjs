@@ -48,6 +48,8 @@ import process from "node:process";
 import { validatePhase, validateConfirmation, confirmationPath, correlatedDeliveryReport } from "./delivery-state.mjs";
 import { deliveryConfig, processStart, IDENTITY_FIELDS, identity } from "./runtime.mjs";
 
+import { workerTransport } from "./worker-transport.mjs";
+
 const DEFAULT_STALL_SEC = 120;
 const MIN_STALL_SEC = 90;
 const DEFAULT_REPEAT_SEC = 300;
@@ -220,15 +222,7 @@ function isJsonEventLine(line) {
   return parseJsonEventLine(line) !== null;
 }
 
-function isThreadStartedEvent(event) {
-  return (
-    event?.type === "thread.started" &&
-    typeof event.thread_id === "string" &&
-    event.thread_id.length > 0
-  );
-}
-
-function inspectLog(filePath) {
+function inspectLog(filePath, transport) {
   let descriptor;
   try {
     descriptor = fs.openSync(filePath, "r");
@@ -300,7 +294,7 @@ function inspectLog(filePath) {
         if (event !== null) {
           state.hasJsonEvent = true;
         }
-        if (isThreadStartedEvent(event)) {
+        if (event !== null && transport.startIdentity(event) !== null) {
           state.hasThreadStarted = true;
           break;
         }
@@ -320,7 +314,7 @@ function inspectLog(filePath) {
       if (event !== null) {
         state.hasJsonEvent = true;
       }
-      if (isThreadStartedEvent(event)) {
+      if (event !== null && transport.startIdentity(event) !== null) {
         state.hasThreadStarted = true;
       }
     }
@@ -690,7 +684,7 @@ function isCorrelatedDeliveryLog(log, registryEntry) {
   // Desktop and fallback transports deliberately have no JSONL correlation
   // surface. Their deliveries remain under the orchestrator's polling
   // contract.
-  if (registryEntry?.transport !== "codex-cli") return false;
+  if (!workerTransport(registryEntry?.transport)?.correlatesReports) return false;
   if (registryEntry.stage !== log.stage) return false;
   const registryLogPath =
     typeof registryEntry.log === "string" ? path.resolve(expandHome(registryEntry.log)) : null;
@@ -712,7 +706,7 @@ const GATE_PHASE_STAGE = "mono-implement";
 // log drives the pre-existing liveness checks: it can only ever add a
 // suppression, never an event.
 function registryGateAckLog(issueKey, registryEntry) {
-  if (registryEntry?.transport !== "codex-cli") return null;
+  if (!workerTransport(registryEntry?.transport)?.correlatesReports) return null;
   if (![GATE_PHASE_STAGE, "mono-deliver"].includes(registryEntry.stage)) return null;
   if (!hasPackIdentity(registryEntry)) return null;
   const filePath =
@@ -843,10 +837,11 @@ function waitingContinuation(log, entry, nowMs) {
 }
 
 function checkLog(log, gateAck, report, registry, nowMs) {
-  const inspection = inspectLog(log.filePath);
-  const { firstLine, hasJsonEvent } = inspection;
-  const ageSec = Math.round((nowMs - log.stat.mtimeMs) / 1000);
   const registryEntry = registry[log.issue];
+  const transport = workerTransport(registryEntry?.transport) ?? workerTransport("codex-cli");
+  const inspection = inspectLog(log.filePath, transport);
+  const { firstLine, hasJsonEvent } = inspection;
+  const ageSec = Math.round((nowMs - transport.activityTime(log.stat)) / 1000);
   const inactiveSpawn = inactiveGateSpawnState(log, registryEntry, nowMs);
 
   // The producer barrier intentionally exposes an inactive registry entry
@@ -1044,7 +1039,7 @@ function checkRegistry(registry, nowMs) {
     // Log-based liveness only applies to codex-cli workers: desktop and
     // fallback transports have no JSONL log by design and are monitored
     // through their own runtime signals.
-    if (entry?.transport && entry.transport !== "codex-cli") continue;
+    if (entry?.transport && !workerTransport(entry.transport)?.logLiveness) continue;
     const logPath = entry && typeof entry.log === "string" ? path.resolve(expandHome(entry.log)) : null;
     let hasReadableLog = false;
     if (logPath !== null) {

@@ -1,0 +1,2 @@
+- Extract the worker transport seam with one `codex-cli` implementation for launch/resume, startup identity, waiting-command proof, liveness and usage. Keep Codex delivery behavior and existing attempt records unchanged.
+- Report missing worker usage as unavailable and interrupted attempts as incomplete; mark their wave totals incomplete instead of treating absent usage as a measured zero.

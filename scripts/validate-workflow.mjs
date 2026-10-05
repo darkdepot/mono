@@ -4637,7 +4637,7 @@ function validateWaveCostBehavior() {
       "wave-cost.mjs"
     );
     fs.mkdirSync(path.dirname(installedScript), { recursive: true });
-    fs.copyFileSync(scriptPath, installedScript);
+    fs.cpSync(path.join(root, "scripts"), path.dirname(installedScript), { recursive: true });
     const installedOutput = execFileSync(
       process.execPath,
       [installedScript, "MONO-999", "--root", fixtureRoot],

@@ -2,30 +2,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { flags, readJson, atomicJson, withLock, digest, syncDir, durableDirectory, isMain, processStart } from "../runtime.mjs";
+import { workerTransport } from "../worker-transport.mjs";
 import { correlatedDeliveryReport } from "../delivery-state.mjs";
 
 function waitingWriter(entry, issue, attempt) {
   if (entry.handshake !== "wait" || !entry.thread_id || !entry.procStart || !Number.isInteger(entry.pid) || entry.pid <= 0) return false;
   try { process.kill(entry.pid, 0); } catch (error) { if (error.code !== "EPERM") return false; }
   if (processStart(entry.pid) !== entry.procStart) return false;
-  let currentThread = null;
-  const outstanding = new Set();
-  try {
-    for (const line of fs.readFileSync(entry.log, "utf8").split("\n")) {
-      let event; try { event = JSON.parse(line); } catch { continue; }
-      if (event.type === "thread.started") { currentThread = event.thread_id; outstanding.clear(); continue; }
-      if (currentThread !== entry.thread_id) continue;
-      const item = event.item;
-      if (event.type === "item.completed") outstanding.delete(item?.id);
-      if (event.type !== "item.started" || item?.type !== "command_execution" || typeof item.id !== "string" || !item.id) continue;
-      const command = item.command ?? "";
-      const flag = name => [...command.matchAll(new RegExp(`--${name}\\s+["']?([A-Za-z0-9-]+)(?=[\\s"']|$)`, "g"))].map(match => match[1]);
-      const issues = flag("issue"), attempts = flag("attempt");
-      if (/delivery-state\.mjs["']?\s+wait-ack(?=\s|$)/.test(command) &&
-          issues.length === 1 && issues[0] === issue && attempts.length === 1 && attempts[0] === String(attempt)) outstanding.add(item.id);
-    }
-  } catch { return false; }
-  return currentThread === entry.thread_id && outstanding.size > 0;
+  const transport = workerTransport(entry.transport) ?? workerTransport("codex-cli");
+  return transport.waitingCommand(entry, issue, attempt);
 }
 
 export async function consumeAck({ root, issue, attempt, outcome, readback, stallSec = 120 }) {
