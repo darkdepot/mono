@@ -149,6 +149,7 @@ async function launchTransport(root, entry, prompt, resume, prepared) {
   child.unref();
   const registry = readRegistry();
   registry[entry.issue].pid = child.pid; registry[entry.issue].last_activity_at = new Date().toISOString();
+  if (transport.assertStopped) registry[entry.issue].processGroup = child.pid;
   const procStart = processStart(child.pid);
   if (resume) registry[entry.issue].procStart = procStart;
   if (resume) registry[entry.issue].last_resume = { pid: child.pid, thread_id: entry.thread_id,
@@ -269,7 +270,7 @@ export async function spawnWorker(request, preparation = {}) {
       try {
         prepared = transport.prepare?.(model_policy, { cwd: request.worktree,
           timeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
-          tempDir: temporaryDirectory(transport, request, roots) });
+          roots, tempDir: temporaryDirectory(transport, request, roots) });
       } catch (error) {
         atomicJson(path.join(request.root, "launch-refusals", request.issue + "-a" + (used + 1) + ".json"),
           { issue: request.issue, status: "refused", action: error.message, attempt_registered: false });
@@ -298,6 +299,7 @@ export async function spawnWorker(request, preparation = {}) {
           open_queue: [], decisions: [], writable_roots: roots } };
       if (gates.length) entry.gates = gates;
       if (prepared?.credentialPaths) entry.githubCredentialPaths = prepared.credentialPaths;
+      if (prepared?.githubConfigDir) entry.githubConfigDir = prepared.githubConfigDir;
       managedSettings(entry, request.root, roots, transport);
       attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);
       registry[request.issue] = entry; atomicJson(file, registry);
@@ -331,10 +333,14 @@ export async function resumeWorker(request) {
     if (request.network_access !== undefined && typeof request.network_access !== "boolean") throw new Error("network_access override must be boolean");
     const roots = effectiveGrants(entry, request.root, request.extraWritable ?? [], request.workerWritableRoots ?? entry.workerWritableRoots);
     const transport = workerTransport(entry.transport) ?? workerTransport("codex-cli");
+    transport.assertStopped?.(entry);
     if (transport.startupEvent && !transport.workerRoles.includes(entry.model_policy.role)) throw new Error("registered worker role/transport mismatch");
+    if (transport.prepare && !path.isAbsolute(entry.githubConfigDir ?? ""))
+      throw new Error("GitHub private configuration directory missing; reconcile the pinned attempt before resume");
     transport.validateRoute?.(entry.modelRoutes?.roles[entry.model_policy.role]);
     const prepared = transport.prepare?.(entry.modelRoutes.roles[entry.model_policy.role], { cwd: entry.worktree,
-      timeoutSec: entry.confirmationTimeoutSec, tempDir: temporaryDirectory(transport, entry, roots) });
+      timeoutSec: entry.confirmationTimeoutSec, roots, tempDir: temporaryDirectory(transport, entry, roots),
+      githubConfigDir: entry.githubConfigDir, previousCredentialPaths: entry.githubCredentialPaths });
     const updated = { ...entry, capsule: { ...entry.capsule, writable_roots: roots }, writable_roots: roots, workerWritableRoots: roots, network_access: request.network_access ?? entry.network_access };
     if (prepared?.credentialPaths) updated.githubCredentialPaths = [...new Set([...(entry.githubCredentialPaths ?? []), ...prepared.credentialPaths])];
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;

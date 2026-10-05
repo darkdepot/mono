@@ -753,8 +753,9 @@ separate from the policy target:
   positively confirm `claude auth status` under a closed environment allowlist
   with `USER` and without provider key/address variables; do not check CLI versions.
   Fetch GitHub login with `gh auth token` outside the worker sandbox and pass it
-  only in the process environment. Mask it in sandboxed commands and inject it only
-  to GitHub through TLS termination; redact stdout/stderr before storing either stream.
+  only as a real process environment variable. Prepare a private, owner-only
+  GH_CONFIG_DIR inside the grants, reuse it on resume, and keep stored credential
+  sources unreadable. Redact stdout/stderr before storing either stream.
   Submit the task on stdin with print/stream-json, pinned session/model/effort.
   Success requires matching init session/model, dontAsk, no key source or
   connectors, only tools with an explicit policy, and a first successful assistant

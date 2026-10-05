@@ -31,7 +31,15 @@ function validateRoute(route) {
     throw new Error("claude-cli requires the native Anthropic subscription route without endpoint or credentialEnv; repair worker-claude on BASE");
 }
 
-function environment(route, source = process.env, { githubToken, timeoutSec = 1800, tempDir } = {}) {
+function assertStopped(entry) {
+  const group = entry.processGroup ?? entry.pid;
+  if (!Number.isSafeInteger(group) || group <= 0) throw new Error("Claude process group missing; reconcile the previous worker before resume");
+  try { process.kill(-group, 0); }
+  catch (error) { if (error.code === "ESRCH") return; throw error; }
+  throw new Error("Claude worker process group is still live; stop the previous worker and its commands before resume");
+}
+
+function environment(route, source = process.env, { githubToken, githubConfigDir, timeoutSec = 1800, tempDir } = {}) {
   validateRoute(route);
   const env = Object.fromEntries(environmentKeys.filter(key => typeof source[key] === "string").map(key => [key, source[key]]));
   env.USER ||= os.userInfo().username;
@@ -44,6 +52,7 @@ function environment(route, source = process.env, { githubToken, timeoutSec = 18
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   env.CLAUDE_CODE_DISABLE_CLAUDE_AI_MCP = "1";
   if (githubToken) env.GH_TOKEN = githubToken;
+  if (githubConfigDir) env.GH_CONFIG_DIR = githubConfigDir;
   return env;
 }
 
@@ -60,8 +69,29 @@ function githubCredentialPaths(source = process.env, cwd = process.cwd()) {
   return paths;
 }
 
-function prepare(route, { cwd, timeoutSec, tempDir }) {
-  const credentialPaths = githubCredentialPaths(process.env, cwd);
+function githubConfiguration(roots, tempDir, credentialPaths, existing) {
+  let directory = existing;
+  const allowed = value => roots.some(root => value === root || value.startsWith(root + path.sep));
+  const overlaps = (a, b) => a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+  try {
+    const parent = resolvedLocation(directory ? path.dirname(directory) : tempDir);
+    if (!allowed(parent) || credentialPaths.some(value => parent === value || parent.startsWith(value + path.sep)))
+      throw new Error("ungranted configuration parent");
+    if (!directory) directory = fs.mkdtempSync(path.join(parent, "mono-gh-"));
+    const actual = resolvedLocation(directory);
+    if (!allowed(actual) || credentialPaths.some(value => overlaps(actual, value))) throw new Error("credential source overlap");
+    const stat = fs.lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() ||
+        (process.getuid && stat.uid !== process.getuid())) throw new Error("configuration directory is not private");
+    fs.chmodSync(directory, 0o700);
+    fs.accessSync(directory, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
+    return actual;
+  } catch { throw new Error("GitHub private configuration directory unavailable within pinned grants; repair the attempt configuration path and retry"); }
+}
+
+function prepare(route, { cwd, timeoutSec, tempDir, roots, githubConfigDir, previousCredentialPaths = [] }) {
+  const credentialPaths = [...new Set([...previousCredentialPaths, ...githubCredentialPaths(process.env, cwd)])];
+  githubConfigDir = githubConfiguration(roots, tempDir, credentialPaths, githubConfigDir);
   const env = environment(route, process.env, { timeoutSec, tempDir });
   // Claude appends this directory and implicitly permits sandbox writes there.
   // Prepare it before launch so an unusable path cannot trigger an outside fallback.
@@ -89,7 +119,7 @@ function prepare(route, { cwd, timeoutSec, tempDir }) {
       { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 }).trim();
   } catch { throw new Error("GitHub login unavailable outside the worker sandbox; run gh auth login and retry"); }
   if (!githubToken) throw new Error("GitHub login unavailable; run gh auth login and retry");
-  return { githubToken, credentialPaths, auth: { requested: "subscription", observed: auth.authMethod, positive: true } };
+  return { githubToken, githubConfigDir, credentialPaths, auth: { requested: "subscription", observed: auth.authMethod, positive: true } };
 }
 
 function settings(roots, protectedPaths, credentialPaths) {
@@ -116,8 +146,7 @@ function settings(roots, protectedPaths, credentialPaths) {
     sandbox: {
       enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false,
       filesystem: { allowWrite: roots, denyWrite: denied, denyRead: credentialPaths },
-      credentials: { envVars: [{ name: "GH_TOKEN", mode: "mask", injectHosts: githubDomains }] },
-      network: { allowedDomains: githubDomains, tlsTerminate: {},
+      network: { allowedDomains: githubDomains,
         strictAllowlist: true, allowAllUnixSockets: false, allowUnixSockets: [], allowLocalBinding: false,
         allowMachLookup: ["com.apple.trustd", "com.apple.trustd.agent"] },
     },
@@ -171,5 +200,5 @@ export const claudeCli = Object.freeze({
   handshakeModes: Object.freeze(["resume"]), correlatesReports: false, logLiveness: false,
   journalRunner: "scripts/transports/claude-runner.mjs",
   startupTimeoutMs: 120_000,
-  validateRoute, validateGrants, temporaryDirectory, githubCredentialPaths, environment, prepare, settings, invocation, startIdentity, startupEvent,
+  validateRoute, assertStopped, validateGrants, temporaryDirectory, githubCredentialPaths, environment, prepare, settings, invocation, startIdentity, startupEvent,
 });

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { copyPluginFixture } from "./plugin-fixture.mjs";
@@ -50,6 +50,8 @@ process.stdin.on("end", () => {
   const session = value("--session-id") || value("--resume");
   fs.writeFileSync(path.join(process.cwd(), "observed.json"), JSON.stringify({args, input, envKeys: Object.keys(process.env),
     tmpdir:process.env.TMPDIR, claudeTmpdir:process.env.CLAUDE_CODE_TMPDIR,
+    githubConfigDir:process.env.GH_CONFIG_DIR, githubConfigMode:fs.statSync(process.env.GH_CONFIG_DIR).mode & 0o777,
+    githubConfigEntries:fs.readdirSync(process.env.GH_CONFIG_DIR),
     tempPrepared:fs.statSync(path.join(process.env.CLAUDE_CODE_TMPDIR, "claude-" + process.getuid())).isDirectory()}));
   const emit = event => console.log(JSON.stringify(event));
   const run = () => {
@@ -161,9 +163,8 @@ test("managed Claude launch and resume use pinned identity, rights, and credenti
     assert.equal(settings.sandbox.enabled, true);
     assert.equal(settings.sandbox.failIfUnavailable, true);
     assert.equal(settings.sandbox.network.strictAllowlist, true);
-    assert.deepEqual(settings.sandbox.network.tlsTerminate, {});
-    assert.deepEqual(settings.sandbox.credentials.envVars, [{ name: "GH_TOKEN", mode: "mask",
-      injectHosts: settings.sandbox.network.allowedDomains }]);
+    assert.equal("tlsTerminate" in settings.sandbox.network, false);
+    assert.equal("credentials" in settings.sandbox, false);
     const credentialPaths = [...entry.githubCredentialPaths];
     assert.ok(credentialPaths.includes(process.env.GH_CONFIG_DIR));
     assert.ok(credentialPaths.includes(path.join(process.env.XDG_CONFIG_HOME, "gh")));
@@ -180,12 +181,19 @@ test("managed Claude launch and resume use pinned identity, rights, and credenti
     assert.ok(settings.sandbox.network.allowedDomains.every(domain => !domain.includes("linear")));
     const observed = JSON.parse(fs.readFileSync(path.join(repo, "observed.json")));
     assert.ok(observed.envKeys.includes("USER"));
+    assert.ok(observed.envKeys.includes("GH_TOKEN"));
+    assert.equal(observed.githubConfigDir, entry.githubConfigDir);
+    assert.equal(observed.githubConfigMode, 0o700);
+    assert.deepEqual(observed.githubConfigEntries, []);
+    assert.ok(entry.workerWritableRoots.some(value => observed.githubConfigDir.startsWith(value + path.sep)));
+    for (const value of credentialPaths) assert.equal(observed.githubConfigDir === value || observed.githubConfigDir.startsWith(value + path.sep), false);
+    assert.equal(entry.processGroup, entry.pid);
     assert.equal(observed.tmpdir, repo);
     assert.equal(observed.claudeTmpdir, repo);
     assert.equal(observed.tempPrepared, true);
     assert.ok(entry.workerWritableRoots.includes(fs.realpathSync(observed.claudeTmpdir)));
     assert.ok(fs.statSync(path.join(repo, "claude-" + process.getuid())).isDirectory());
-    for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FIXTURE_GH_INPUT", "GH_CONFIG_DIR", "XDG_CONFIG_HOME"])
+    for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FIXTURE_GH_INPUT", "XDG_CONFIG_HOME"])
       assert.equal(observed.envKeys.includes(key), false, key);
     // Let the detached fixture exit and release its process before resume.
     while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
@@ -198,6 +206,9 @@ test("managed Claude launch and resume use pinned identity, rights, and credenti
     entry = registry()["MONO-999"];
     const resumed = JSON.parse(fs.readFileSync(path.join(repo, "observed.json")));
     assert.equal(resumed.tempPrepared, true);
+    assert.equal(resumed.githubConfigDir, observed.githubConfigDir);
+    assert.equal(resumed.githubConfigMode, 0o700);
+    assert.deepEqual(resumed.githubConfigEntries, []);
     assert.equal(resumed.claudeTmpdir, repo);
     assert.ok(resumed.args.includes("--resume"));
     assert.ok(resumed.args.includes(launched.thread_id));
@@ -399,5 +410,51 @@ test("Claude resume refuses a live writer and changed pinned grants", async () =
     await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile,
       extraWritable: [extra], workerWritableRoots: [...entry.workerWritableRoots, extra] }), /immutable attempt pins/);
     assert.deepEqual(registry()["MONO-999"].workerWritableRoots, entry.workerWritableRoots);
+  });
+});
+
+
+test("Claude refuses a GitHub configuration directory overlapping stored sources before registration", async () => {
+  await fixture(async ({ start, repo, registry, root }) => {
+    process.env.GH_CONFIG_DIR = repo;
+    await assert.rejects(start("success"), /GitHub private configuration directory unavailable.*repair the attempt configuration path/);
+    assert.deepEqual(registry(), {});
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "launch-refusals/MONO-999-a1.json"))).attempt_registered, false);
+  });
+});
+
+for (const mode of ["file", "escape"]) test("Claude resume refuses an unusable private GitHub directory: " + mode, async () => {
+  await fixture(async ({ start, registry, root, runtime, request, scratch }) => {
+    await start("success");
+    const entry = registry()["MONO-999"];
+    while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
+    fs.rmSync(entry.githubConfigDir, { recursive: true });
+    if (mode === "file") fs.writeFileSync(entry.githubConfigDir, "");
+    else fs.symlinkSync(scratch, entry.githubConfigDir);
+    const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"success"}');
+    await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile }), /GitHub private configuration directory unavailable/);
+    assert.equal(registry()["MONO-999"].pid, entry.pid);
+  });
+});
+
+test("Claude resume refuses surviving commands after its journal owner exits", async () => {
+  await fixture(async ({ start, registry, root, runtime, request }) => {
+    await start("success");
+    const entry = registry()["MONO-999"];
+    while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
+    const leader = spawn(process.execPath, ["-e", `const {spawn}=require("node:child_process");
+      const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});
+      child.unref();`], { detached: true, stdio: "ignore" });
+    try {
+      await new Promise(resolve => leader.once("exit", resolve));
+      assert.throws(() => process.kill(leader.pid, 0), { code: "ESRCH" });
+      process.kill(-leader.pid, 0);
+      const entries = registry(); entries["MONO-999"].pid = leader.pid;
+      entries["MONO-999"].processGroup = leader.pid;
+      write(path.join(root, "workers.json"), entries);
+      const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"success"}');
+      await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile }), /process group is still live/);
+      assert.equal(registry()["MONO-999"].pid, leader.pid);
+    } finally { process.kill(-leader.pid, "SIGKILL"); }
   });
 });
