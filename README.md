@@ -248,7 +248,7 @@ Restart sessions after installation. The external `autoreview` helper remains a
 separate prerequisite in your tool's skills directory; pass that directory as
 `--skills-root` when dispatching. The plugin contains one copy of shared files:
 `skills/`, `references/`, `templates/` and `scripts/` have the repository layout.
-Skills retain their current names until the later rename release.
+Invoke skills as `/mono:idea`, `/mono:handoff`, and so on.
 
 Do not enable automatic updates for Mono. Update deliberately after a release.
 Before any install/update that replaces a plugin folder, have each affected
@@ -379,7 +379,7 @@ After migration, the pack's deploy live pass uses [plugin installation proof](re
    watcher from the plugin, preserving the launch halts; each other product's
    own orchestrator reads this section, confirms its plugin paths and unchanged
    product policy/state, and starts a skill from the plugin. Start a plugin skill
-   in each tool. Skill names retain `mono-*` until the later rename release.
+   in each tool using a call such as `/mono:idea`.
 6. **Close the wave, then resume launches.** The installing orchestrator runs
    `landing-drain close` from the installed plugin only after both tools' proof
    and the no-old-copies check pass. It records each task's delivery proof,
