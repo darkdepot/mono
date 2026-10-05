@@ -85,8 +85,8 @@ function effectiveGrants(entry, root, extraWritable = [], pins = entry.workerWri
   validateEvidenceGrants(skills, roots, "installed skillsRoot");
   validateEvidenceGrants(path.join(skills, "autoreview/scripts/autoreview"), roots, "autoreview helper real path");
   if (canonical(roots) !== canonical(normalize(pins))) throw new Error("effective write grants differ from dispatch workerWritableRoots");
-  if (entry.transport === "claude-cli" && entry.pins &&
-      canonical(roots) !== canonical(normalize(effectivePins(entry).workerWritableRoots)))
+  if (entry.transport === "claude-cli" &&
+      canonical(roots) !== canonical(normalize(entry.pins ? effectivePins(entry).workerWritableRoots : entry.workerWritableRoots)))
     throw new Error("effective write grants differ from immutable attempt pins");
   workerTransport(entry.transport)?.validateGrants?.(roots);
   return roots;
@@ -108,7 +108,7 @@ function managedSettings(entry, root, roots, transport) {
   const protectedPaths = [entry.packRoot, entry.skillsRoot, entry.evidenceRoot,
     path.join(os.homedir(), ".claude"), path.join(os.homedir(), ".claude.json"),
     ...fs.readdirSync(root).filter(name => name !== "reports").map(name => path.join(root, name)), directory];
-  atomicJson(entry.settingsFile, transport.settings(roots, [...new Set(protectedPaths.map(resolvedLocation))]));
+  atomicJson(entry.settingsFile, transport.settings(roots, [...new Set(protectedPaths.map(resolvedLocation))], entry.githubCredentialPaths));
 }
 function temporaryDirectory(transport, entry, roots) {
   return transport.temporaryDirectory?.(roots) ?? roots.find(root => root === resolvedLocation(os.tmpdir())) ?? entry.worktree;
@@ -297,6 +297,7 @@ export async function spawnWorker(request, preparation = {}) {
         capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
           open_queue: [], decisions: [], writable_roots: roots } };
       if (gates.length) entry.gates = gates;
+      if (prepared?.credentialPaths) entry.githubCredentialPaths = prepared.credentialPaths;
       managedSettings(entry, request.root, roots, transport);
       attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);
       registry[request.issue] = entry; atomicJson(file, registry);
@@ -335,6 +336,7 @@ export async function resumeWorker(request) {
     const prepared = transport.prepare?.(entry.modelRoutes.roles[entry.model_policy.role], { cwd: entry.worktree,
       timeoutSec: entry.confirmationTimeoutSec, tempDir: temporaryDirectory(transport, entry, roots) });
     const updated = { ...entry, capsule: { ...entry.capsule, writable_roots: roots }, writable_roots: roots, workerWritableRoots: roots, network_access: request.network_access ?? entry.network_access };
+    if (prepared?.credentialPaths) updated.githubCredentialPaths = [...new Set([...(entry.githubCredentialPaths ?? []), ...prepared.credentialPaths])];
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;
     atomicJson(path.join(request.root, "workers.json"), registry);
     return { entry: updated, ...await launchTransport(request.root, updated, prompt, true, prepared) };

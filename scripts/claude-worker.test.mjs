@@ -119,6 +119,7 @@ async function fixture(run, { auth, config, missingTool = false, shortWindow = f
     const secret = crypto.randomBytes(30).toString("hex");
     for (const [name, target] of [["node", process.execPath], ["git", "/usr/bin/git"], ["ps", "/bin/ps"], ["date", "/bin/date"]]) fs.symlinkSync(target, path.join(bin, name));
     Object.assign(process.env, { PATH: bin, FIXTURE_GH_INPUT: secret,
+      GH_CONFIG_DIR: path.join(scratch, "github-config"), XDG_CONFIG_HOME: path.join(scratch, "xdg"),
       ANTHROPIC_API_KEY: secret, ANTHROPIC_BASE_URL: "https://provider.example.invalid",
       OPENAI_API_KEY: secret, CLAUDE_CODE_OAUTH_TOKEN: secret });
     const roots = [repo, path.join(repo, ".git"), path.join(root, "reports"), temp].sort();
@@ -163,6 +164,14 @@ test("managed Claude launch and resume use pinned identity, rights, and credenti
     assert.deepEqual(settings.sandbox.network.tlsTerminate, {});
     assert.deepEqual(settings.sandbox.credentials.envVars, [{ name: "GH_TOKEN", mode: "mask",
       injectHosts: settings.sandbox.network.allowedDomains }]);
+    const credentialPaths = [...entry.githubCredentialPaths];
+    assert.ok(credentialPaths.includes(process.env.GH_CONFIG_DIR));
+    assert.ok(credentialPaths.includes(path.join(process.env.XDG_CONFIG_HOME, "gh")));
+    for (const value of credentialPaths) {
+      assert.ok(settings.sandbox.filesystem.denyRead.includes(value));
+      assert.ok(settings.permissions.deny.includes("Read(/" + value + ")"));
+      assert.ok(settings.permissions.deny.includes("Read(/" + value + "/**)"));
+    }
     assert.ok(settings.sandbox.filesystem.denyWrite.includes(fs.realpathSync("/tmp") + "/claude-" + process.getuid()));
     for (const directory of [fs.realpathSync("/tmp") + "/claude", path.join(os.homedir(), ".npm/_logs"), path.join(os.homedir(), ".claude/debug")])
       assert.ok(settings.sandbox.filesystem.denyWrite.includes(directory));
@@ -176,13 +185,14 @@ test("managed Claude launch and resume use pinned identity, rights, and credenti
     assert.equal(observed.tempPrepared, true);
     assert.ok(entry.workerWritableRoots.includes(fs.realpathSync(observed.claudeTmpdir)));
     assert.ok(fs.statSync(path.join(repo, "claude-" + process.getuid())).isDirectory());
-    for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FIXTURE_GH_INPUT"])
+    for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FIXTURE_GH_INPUT", "GH_CONFIG_DIR", "XDG_CONFIG_HOME"])
       assert.equal(observed.envKeys.includes(key), false, key);
     // Let the detached fixture exit and release its process before resume.
     while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
     fs.writeFileSync(entry.settingsFile, "{}");
     fs.rmSync(path.join(repo, "claude-" + process.getuid()), { recursive: true });
     write(request.config, { orchestration: { transport: "codex-cli" } });
+    process.env.GH_CONFIG_DIR = path.join(root, "new-github-config");
     const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"success"}');
     await runtime.resumeWorker({ root, issue: request.issue, resumeFile });
     entry = registry()["MONO-999"];
@@ -193,6 +203,13 @@ test("managed Claude launch and resume use pinned identity, rights, and credenti
     assert.ok(resumed.args.includes(launched.thread_id));
     assert.ok(resumed.args.includes(entry.model_launch.model_parameter));
     assert.deepEqual(JSON.parse(fs.readFileSync(entry.settingsFile)).sandbox.filesystem.allowWrite, entry.workerWritableRoots);
+    const resumedSettings = JSON.parse(fs.readFileSync(entry.settingsFile));
+    assert.ok(resumedSettings.sandbox.filesystem.denyRead.includes(process.env.GH_CONFIG_DIR));
+    for (const value of credentialPaths) {
+      assert.ok(entry.githubCredentialPaths.includes(value));
+      assert.ok(resumedSettings.sandbox.filesystem.denyRead.includes(value));
+      assert.ok(resumedSettings.permissions.deny.includes("Read(/" + value + ")"));
+    }
     const files = [path.join(root, "workers.json"), entry.log, entry.log.replace(/\.jsonl$/, ".stderr.log"),
       request.dispatchFile, entry.settingsFile, path.join(repo, "observed.json")];
     for (const file of files) assert.equal(fs.readFileSync(file, "utf8").includes(secret), false, file);
@@ -215,9 +232,35 @@ test("Claude refuses long and multibyte temporary paths before an unpinned fallb
 test("Claude refuses write paths that the shell sandbox would interpret as globs", () => {
   const adapter = workerTransport("claude-cli");
   for (const root of ["/fixture/run[12]", "/fixture/run?", "/fixture/run*"])
-    assert.throws(() => adapter.settings([root], []), /glob characters/);
-  assert.throws(() => adapter.settings(["/fixture/work"], ["/fixture/control[12]"]), /glob characters/);
-  assert.doesNotThrow(() => adapter.settings(["/fixture/work"], ["/fixture/control"]));
+    assert.throws(() => adapter.settings([root], [], ["/fixture/github"]), /glob characters/);
+  assert.throws(() => adapter.settings(["/fixture/work"], ["/fixture/control[12]"], ["/fixture/github"]), /glob characters/);
+  assert.doesNotThrow(() => adapter.settings(["/fixture/work"], ["/fixture/control"], ["/fixture/github"]));
+});
+
+test("GitHub source restrictions cover default, overridden and symlinked credential paths", () => {
+  const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gh-source-")));
+  try {
+    const home = path.join(scratch, "home"), config = path.join(scratch, "custom"),
+      xdg = path.join(scratch, "xdg"), target = path.join(scratch, "empty-source");
+    fs.mkdirSync(config); fs.writeFileSync(target, "");
+    fs.symlinkSync(target, path.join(config, "hosts.yml"));
+    const adapter = workerTransport("claude-cli");
+    const paths = adapter.githubCredentialPaths({ HOME: home, GH_CONFIG_DIR: config, XDG_CONFIG_HOME: xdg });
+    const policy = adapter.settings([path.join(scratch, "work")], [], paths);
+    for (const value of [path.join(home, ".config/gh"), config, path.join(xdg, "gh"), target]) {
+      assert.ok(paths.includes(value));
+      assert.ok(policy.sandbox.filesystem.denyRead.includes(value));
+      assert.ok(policy.sandbox.filesystem.denyWrite.includes(value));
+      assert.ok(policy.permissions.deny.includes("Read(/" + value + ")"));
+      assert.ok(policy.permissions.deny.includes("Edit(/" + value + ")"));
+    }
+    assert.throws(() => adapter.settings(["/fixture/work"], []), /credential source protections missing/);
+    assert.throws(() => adapter.githubCredentialPaths({ HOME: home, GH_CONFIG_DIR: config + "[*]" }), /glob characters/);
+    const relative = adapter.githubCredentialPaths({ HOME: home, GH_CONFIG_DIR: "custom", XDG_CONFIG_HOME: "xdg" }, scratch);
+    for (const value of [config, path.join(xdg, "gh"), target]) assert.ok(relative.includes(value));
+    const escaped = adapter.settings(["/fixture/work"], [], ["/fixture/github\\config"]);
+    assert.ok(escaped.permissions.deny.includes("Read(//fixture/github\\\\config)"));
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 
 test("Claude internal temporary directory cannot follow a symlink outside pinned grants", async () => {
@@ -344,7 +387,7 @@ test("installed dispatch selects Claude role and transport from immutable BASE",
 });
 
 test("Claude resume refuses a live writer and changed pinned grants", async () => {
-  await fixture(async ({ start, registry, root, request, runtime }) => {
+  await fixture(async ({ start, registry, root, request, runtime, scratch }) => {
     await start("live");
     const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"success"}');
     await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile }), /still live/);
@@ -352,5 +395,9 @@ test("Claude resume refuses a live writer and changed pinned grants", async () =
     process.kill(entry.pid, "SIGTERM");
     while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
     await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile, workerWritableRoots: [request.worktree] }), /grants/);
+    const extra = path.join(scratch, "expanded-grant");
+    await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile,
+      extraWritable: [extra], workerWritableRoots: [...entry.workerWritableRoots, extra] }), /immutable attempt pins/);
+    assert.deepEqual(registry()["MONO-999"].workerWritableRoots, entry.workerWritableRoots);
   });
 });

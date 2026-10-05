@@ -47,7 +47,21 @@ function environment(route, source = process.env, { githubToken, timeoutSec = 18
   return env;
 }
 
+function githubCredentialPaths(source = process.env, cwd = process.cwd()) {
+  // gh may keep its token in hosts.yml rather than the system credential store.
+  // Protect every applicable config source, including a symlinked token file.
+  const directories = [path.resolve(cwd, source.HOME || os.homedir(), ".config/gh")];
+  if (source.GH_CONFIG_DIR) directories.push(path.resolve(cwd, source.GH_CONFIG_DIR));
+  if (source.XDG_CONFIG_HOME) directories.push(path.resolve(cwd, source.XDG_CONFIG_HOME, "gh"));
+  if (process.platform === "win32" && source.AppData) directories.push(path.resolve(cwd, source.AppData, "GitHub CLI"));
+  const paths = [...new Set(directories.flatMap(directory => [directory, path.join(directory, "hosts.yml")])
+    .flatMap(value => [value, resolvedLocation(value)]))];
+  validateGrants(paths);
+  return paths;
+}
+
 function prepare(route, { cwd, timeoutSec, tempDir }) {
+  const credentialPaths = githubCredentialPaths(process.env, cwd);
   const env = environment(route, process.env, { timeoutSec, tempDir });
   // Claude appends this directory and implicitly permits sandbox writes there.
   // Prepare it before launch so an unusable path cannot trigger an outside fallback.
@@ -75,28 +89,33 @@ function prepare(route, { cwd, timeoutSec, tempDir }) {
       { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 }).trim();
   } catch { throw new Error("GitHub login unavailable outside the worker sandbox; run gh auth login and retry"); }
   if (!githubToken) throw new Error("GitHub login unavailable; run gh auth login and retry");
-  return { githubToken, auth: { requested: "subscription", observed: auth.authMethod, positive: true } };
+  return { githubToken, credentialPaths, auth: { requested: "subscription", observed: auth.authMethod, positive: true } };
 }
 
-function settings(roots, protectedPaths) {
-  validateGrants([...roots, ...protectedPaths]);
+function settings(roots, protectedPaths, credentialPaths) {
+  if (!Array.isArray(credentialPaths) || !credentialPaths.length)
+    throw new Error("GitHub credential source protections missing; prepare subscription launch again");
+  validateGrants([...roots, ...protectedPaths, ...credentialPaths]);
   // Edit rules govern every built-in file writer, including Write and NotebookEdit.
-  const pattern = value => "/" + value.replace(/[\\*?[\]]/g, "\\$&") + "/**";
+  const absolute = value => "/" + value.replace(/[\\*?[\]]/g, "\\$&");
+  const pattern = value => absolute(value) + "/**";
   const fallbacks = [path.join("/tmp", temporaryName()), path.join(os.tmpdir(), temporaryName()),
     "/tmp/claude", "/private/tmp/claude", path.join(os.homedir(), ".npm/_logs"),
     path.join(os.homedir(), ".claude/debug")].map(resolvedLocation);
-  const denied = [...new Set([...protectedPaths, ...fallbacks.filter(directory =>
+  const denied = [...new Set([...protectedPaths, ...credentialPaths, ...fallbacks.filter(directory =>
     !roots.some(root => directory === root || directory.startsWith(root + path.sep)))])];
   return {
     permissions: {
       defaultMode: "dontAsk",
       disableBypassPermissionsMode: "disable",
       allow: roots.map(root => "Edit(" + pattern(root) + ")"),
-      deny: ["WebFetch", "WebSearch", ...denied.map(root => "Edit(" + pattern(root) + ")")],
+      deny: ["WebFetch", "WebSearch", ...denied.map(root => "Edit(" + pattern(root) + ")"),
+        ...credentialPaths.flatMap(value => ["Read(" + absolute(value) + ")", "Read(" + pattern(value) + ")",
+          "Edit(" + absolute(value) + ")"])],
     },
     sandbox: {
       enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false,
-      filesystem: { allowWrite: roots, denyWrite: denied },
+      filesystem: { allowWrite: roots, denyWrite: denied, denyRead: credentialPaths },
       credentials: { envVars: [{ name: "GH_TOKEN", mode: "mask", injectHosts: githubDomains }] },
       network: { allowedDomains: githubDomains, tlsTerminate: {},
         strictAllowlist: true, allowAllUnixSockets: false, allowUnixSockets: [], allowLocalBinding: false,
@@ -152,5 +171,5 @@ export const claudeCli = Object.freeze({
   handshakeModes: Object.freeze(["resume"]), correlatesReports: false, logLiveness: false,
   journalRunner: "scripts/transports/claude-runner.mjs",
   startupTimeoutMs: 120_000,
-  validateRoute, validateGrants, temporaryDirectory, environment, prepare, settings, invocation, startIdentity, startupEvent,
+  validateRoute, validateGrants, temporaryDirectory, githubCredentialPaths, environment, prepare, settings, invocation, startIdentity, startupEvent,
 });
