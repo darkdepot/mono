@@ -19,4 +19,3 @@ export function finalizeUsage(usage) {
     non_overlapping_total_tokens: usage.input_tokens + usage.output_tokens,
   };
 }
-
