@@ -667,7 +667,7 @@ Both transports, because the pause and the resume differ in mechanism only:
 
 Three transport operations: spawn worker, continue worker, read worker
 reports. Transport selection: `orchestration.transport` from the project
-config wins when present (`codex-cli` | `claude-code-desktop` | `fallback`);
+config wins when present (`codex-cli` | `claude-cli` | `claude-code-desktop` | `fallback`);
 without config, prefer `codex-cli` when the `codex` CLI is installed and
 authenticated, then `claude-code-desktop` when running in Claude Code
 Desktop, then `fallback`. Per-runtime bindings:
@@ -740,12 +740,41 @@ recorded launch pins; do not resolve new policy values for an existing thread.
 
 ### Claude worker transports
 
-Both Claude worker transports select [role:worker-claude](model-policy.md#roles).
+Claude worker transports select [role:worker-claude](model-policy.md#roles).
 Resolve its modelRoutes with installed runtime.mjs --role worker-claude from
 immutable BASE config. They share policy intent, but launch guarantees differ. Record the case
 in every generated dispatch and registry entry, with unknown values kept
 separate from the policy target:
 
+- `claude-cli`: managed launch and resume through installed spawn/resume scripts.
+  The immutable BASE selects this transport and role; incompatible role, pairing,
+  provider endpoint or credential reference refuses before attempt registration.
+  Only native Anthropic subscription login is supported. Before each launch,
+  positively confirm `claude auth status` under a closed environment allowlist
+  with `USER` and without provider key/address variables; do not check CLI versions.
+  Fetch GitHub login with `gh auth token` outside the worker sandbox and pass it
+  only as a real process environment variable. Prepare a private, owner-only
+  GH_CONFIG_DIR inside the grants, reuse it on resume, and keep stored credential
+  sources unreadable. Redact stdout/stderr before storing either stream.
+  The CLI's own native session storage is owner-only and lies outside this journal-redaction boundary.
+  Submit the task on stdin with print/stream-json, pinned session/model/effort.
+  Success requires matching init session/model, dontAsk, no key source or
+  connectors, only tools with an explicit policy, and a first successful assistant
+  response within 120 seconds. Retain refused attempts/logs and name the action.
+  Record requested effort separately from observed model and subscription login.
+  Generate managed-settings/<KEY>-a<N>.json inside orchestrator control from the
+  same canonical grants check used at launch/resume. File-tool Edit permissions
+  and Bash sandbox writes use that set; protected control/evidence/pack paths
+  remain denied through symlinks. Require sandbox availability, forbid unsandboxed
+  commands, allow only GitHub domains and the system certificate service, and deny
+  WebFetch/WebSearch. Bind internal temp storage to a short granted root; refuse
+  long paths and deny ungranted system fallbacks. Strict empty MCP, no Chrome, closed built-in tools, no user,
+  project or local setting sources. The Bash timeout exceeds phase confirmation.
+  Resume regenerates settings from attempt pins, keeps the same session/model and
+  refuses a live writer. Never adopt current project settings. Launch/resume only:
+  phase waits, watcher/report correlation and usage support are the next delivery
+  unit. Start handshake wait is refused; resume is the supported mode. Full delivery
+  also needs external committed-head review because nested sandboxes cannot run.
 - `claude-code-desktop`: spawn via task chip with a self-contained dispatch
   prompt (one user click; the platform provides the worktree). Continue or
   steer via session message with user confirmation. Workers stay visible as
@@ -761,7 +790,7 @@ separate from the policy target:
   cannot represent that model, report the unavailable route rather than
   silently select another row.
 
-Worktree provisioning: for `codex-cli` and `fallback` the orchestrator
+Worktree provisioning: for `codex-cli`, `claude-cli` and `fallback` the orchestrator
 creates the worker's worktree before spawn
 (`git worktree add <repo>/.worktrees/<ISSUE-KEY> -b <branch>`), keeps it
 across stages, and removes it only after deploy closeout. Deploy retirement is
@@ -1455,7 +1484,8 @@ A fresh orchestrator session rebuilds state without loss:
    Compare each entry's `surfaceRevision` with the currently installed
    plugin identity before using its thread id. When surfaceRevision differs, do not rebind
    or resume that thread; report it blocked and start a new attempt.
-   Otherwise rebind to surviving `codex-cli` workers by thread id
+   Otherwise find surviving `codex-cli` and `claude-cli` workers by thread id;
+   keep a live writer, and resume only a cleanly stopped one
    through installed scripts/orchestrator/resume.mjs instead of respawning them.
 6. Output the rebuilt status table before taking any new action.
 

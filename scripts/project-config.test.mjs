@@ -7,6 +7,20 @@ import { spawnSync } from 'node:child_process';
 import * as runtime from './runtime.mjs';
 
 const risks = ['tiny', 'standard', 'deep', 'risky', 'riskyCritical'];
+test('managed worker config accepts Claude CLI and rejects unknown transports', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-claude-config-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    for (const transport of ['claude-cli', 'unknown-cli']) {
+      config.orchestration.transport = transport;
+      fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify(config));
+      const result = spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+      assert.equal(result.status, transport === 'claude-cli' ? 0 : 1, result.stderr);
+    }
+    assert.doesNotThrow(() => runtime.requiredPairings({ models: { roles: { 'worker-claude': { transport: 'claude-cli' } } } }));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 test('landing U1 config: optional blocks, unknown keys, paths and install enumeration', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-landing-config-'));
   try {
