@@ -2,7 +2,7 @@
 
 Artifact intake makes discovery evidence visible before it becomes durable Linear truth.
 
-Use this reference from `mono-handoff` and any workflow that needs to explain
+Use this reference from `mono:handoff` and any workflow that needs to explain
 which upstream discovery, review, or implementation artifacts were inspected.
 
 ## Source Precedence

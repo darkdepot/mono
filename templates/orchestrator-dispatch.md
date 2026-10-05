@@ -22,7 +22,7 @@ compares `git show <sha>` blobs to that block and the snapshot manifest at start
 ## Assignment
 
 - Issue: {{issue}} — {{title}}
-- Delivery skill: mono-deliver
+- Delivery skill: mono:deliver
 - Attempt: {{attempt}}
 - handshake: {{handshake}} (default resume)
 - profile: {{profile}} (default full; short requires tiny/standard, critical null, afk true, openDecisions 0)

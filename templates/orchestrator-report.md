@@ -1,6 +1,6 @@
 # Worker Report And Ledger Shapes
 
-Machine-facing shapes for the `mono-orchestrate` mailbox. The worker report
+Machine-facing shapes for the `mono:orchestrate` mailbox. The worker report
 JSON is English only, except `verification_items[].item`, which carries the
 Issue's «Как проверить» lines verbatim in their original language. Ledger
 entries are English except the fixed domain term
@@ -85,7 +85,7 @@ provenance, not a runtime audit or permission to change a running model.
 
 `gates` is optional. When present it is a non-empty array of unique,
 non-empty strings, permitted only on the registry entry for a gate-carrying
-`mono-deliver` dispatch. It is scoped to the current attempt identified by
+`mono:deliver` dispatch. It is scoped to the current attempt identified by
 `log`: a verified new gate attempt replaces it with that attempt's exact list,
 and it never survives handshake consumption or another attempt.
 When an ack exists, an absent or malformed `gates` value makes the ack

@@ -272,10 +272,11 @@ test('delivery configuration shares stall and ack clocks and rejects incompatibl
     assert.throws(() => deliveryConfig({ orchestration: { delivery: { [field]: value } } }), /invalid/);
 });
 
-test('short confirms empty code queue and expands a Russian ready lead without changing machine core', async () => {
+test('pre-rename stage and certificate fixture confirms and expands without changing machine core', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-short-certificate-'));
   const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const ready = JSON.parse(fs.readFileSync(path.join(checkout, 'scripts/fixtures/short-ready-report.json'), 'utf8'));
+  assert.equal(ready.stage, 'mono-deliver');
   const reports = path.join(root, 'reports');
   ready.capsule.writable_roots = [reports]; ready.capsule.open_queue = ready.linear_mutations_pending;
   const code = JSON.parse(fs.readFileSync(path.join(checkout, 'scripts/fixtures/short-code-report.json'), 'utf8'));

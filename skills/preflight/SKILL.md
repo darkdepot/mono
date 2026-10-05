@@ -1,5 +1,5 @@
 ---
-name: mono-preflight
+name: preflight
 description: Use after implementation to verify local readiness with mandatory autoreview before ship.
 ---
 
@@ -9,7 +9,7 @@ Find shared files here or at the pack root.
 
 [Landing](references/landing.md).
 
-No PR/merge/deploy/closeout/shipped claims or formal `mono-review pre-ship` / `mono-check pre-ship`.
+No PR/merge/deploy/closeout/shipped claims or formal `mono:review pre-ship` / `mono:check pre-ship`.
 
 Read first:
 
@@ -60,8 +60,8 @@ confirm phase queues before ship.
    runs/dispositions. Gate iterations come from receipt; narrative may say
    Autoreview loop: 0 local passes + N collections on short.
 7. Commit through ce-commit or repo convention only when safe; otherwise report
-   exact remaining action. Record the full certificate with mono-preflight
-   certificate in Linear; dispatch queues append #/certificate (single text copy).
+   exact remaining action. Record the full certificate with
+   `mono-preflight certificate` in Linear; dispatch queues append #/certificate (single text copy).
    Enumerate every Issue verification line and obey worker recovery/lead rules.
 
 Statuses: ready, blocked, drift-candidate, needs-human. Unconfirmed drift goes to
@@ -86,7 +86,7 @@ Autoreview loop: <iterations>; accepted findings fixed: <none/list>; residual ac
 Drift candidate: <none/summary>
 Decision needed: <none | точное решение по-русски>
 Not checked: <manual QA/browser/mobile/deploy/etc.>
-Next: <mono-ship | mono-handoff | needs-human>
+Next: <mono:ship | mono:handoff | needs-human>
 ```
 
 Apply worker Certificate recovery/lead and Tiny Output Profile. Decision needed

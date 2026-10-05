@@ -1,31 +1,31 @@
 # Artifact Repair Machine
 
 Use this contract for targeted repair of an existing **Project-first** package.
-`mono-handoff` owns the mutation, `mono-review artifact` checks the proposed
-classification report-only, and `mono-check repair` reports whether the repair
+`mono:handoff` owns the mutation, `mono:review artifact` checks the proposed
+classification report-only, and `mono:check repair` reports whether the repair
 effects are complete. This mode is additive: ordinary handoff creation and every
 existing lifecycle route keep their current behavior.
 
 ## Routing boundary
 
-Evaluate stage-specific ownership before the general front-door order. Accepted pre-ship drift is a terminal ownership override evaluated before the general existing-Project route. An edit to an existing issue-only Issue body is also a terminal override and routes to the create-then-approve renewal transaction in `mono-issue`, never to handoff repair.
+Evaluate stage-specific ownership before the general front-door order. Accepted pre-ship drift is a terminal ownership override evaluated before the general existing-Project route. An edit to an existing issue-only Issue body is also a terminal override and routes to the create-then-approve renewal transaction in `mono:issue`, never to handoff repair.
 
 | Fixture | Evidence | Owner | Result |
 | --- | --- | --- | --- |
-| `existing-project-pre-ship-drift` | An existing Project has drift accepted during pre-ship. | `mono-ship` | Run accepted drift sync in ship; do not enter handoff repair. |
-| `issue-only-body-edit` | An existing issue-only Issue body needs any edit. | `mono-issue` | Run create-then-approve renewal; do not enter handoff repair. |
-| `existing-project-targeted-repair` | An existing Project has a targeted PRD or Tech Spec repair request before pre-ship. | `mono-handoff repair` | Enter the stable-ID classification and class transaction; do not run ordinary package creation. |
+| `existing-project-pre-ship-drift` | An existing Project has drift accepted during pre-ship. | `mono:ship` | Run accepted drift sync in ship; do not enter handoff repair. |
+| `issue-only-body-edit` | An existing issue-only Issue body needs any edit. | `mono:issue` | Run create-then-approve renewal; do not enter handoff repair. |
+| `existing-project-targeted-repair` | An existing Project has a targeted PRD or Tech Spec repair request before pre-ship. | `mono:handoff repair` | Enter the stable-ID classification and class transaction; do not run ordinary package creation. |
 
 Only when neither override matches, apply the front-door order:
 
-1. A raw idea routes to `mono-idea`.
-2. An unmistakably one-PR projectless request routes to `mono-issue`.
+1. A raw idea routes to `mono:idea`.
+2. An unmistakably one-PR projectless request routes to `mono:issue`.
 3. A targeted PRD or Tech Spec repair in a Project-first package routes to
-   `mono-handoff` repair mode.
+   `mono:handoff` repair mode.
 4. Existing Project or shaped discovery context that is not a targeted repair
-   routes to ordinary `mono-handoff` package creation.
+   routes to ordinary `mono:handoff` package creation.
 
-Any route ambiguity fails closed to the Project-first `mono-handoff` path;
+Any route ambiguity fails closed to the Project-first `mono:handoff` path;
 ambiguity inside a proposed repair fails closed to class 3.
 
 ## Stable-ID diff preview
@@ -39,7 +39,7 @@ anchored unambiguously, classify the repair as class 3.
 
 The preview includes classification evidence, not only the proposed class. It
 states which semantic surfaces changed and explicitly proves unchanged R/AE/AC, non-goals, risk class, and Issue set whenever class 1 or class 2 is proposed.
-`mono-review artifact` inspects this preview before `mono-handoff` applies it.
+`mono:review artifact` inspects this preview before `mono:handoff` applies it.
 
 ## Classification table
 
@@ -48,7 +48,7 @@ The highest matching class wins. Risk growth always selects class 3. Ambiguity i
 | Fixture | Evidence | Class | Required result |
 | --- | --- | --- | --- |
 | `typo-or-format` | Only formatting, spelling, or a link correction to the same intended target changes; semantics and all guarded surfaces are unchanged. | `1` | Keep approval valid and do not touch Issues. |
-| `how-only` | HOW, architecture, implementation seam, or validation changes while R/AE/AC, non-goals, visible behavior, risk, and Issue set are unchanged. | `2` | No owner approval; require `mono-review artifact` and all class 2 effects. |
+| `how-only` | HOW, architecture, implementation seam, or validation changes while R/AE/AC, non-goals, visible behavior, risk, and Issue set are unchanged. | `2` | No owner approval; require `mono:review artifact` and all class 2 effects. |
 | `requirement` | A requirement is added, removed, or semantically changed. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `acceptance` | An acceptance example or acceptance criterion is added, removed, or semantically changed. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `non-goal` | A non-goal or scope boundary changes. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
@@ -59,13 +59,13 @@ The highest matching class wins. Risk growth always selects class 3. Ambiguity i
 
 ## Class 1 execution
 
-After a ready `mono-review artifact` report, `mono-handoff` may apply the exact
+After a ready `mono:review artifact` report, `mono:handoff` may apply the exact
 previewed non-semantic edit. Class 1 keeps package and implementation-start approvals valid. It must not update Issue bodies, Issue snapshots, fingerprints, certificates, worker dispatches, Issue slicing, or Project lifecycle state.
 
 ## Class 2 execution
 
 Class 2 needs no owner touch, but it is never silent. Require a ready
-`mono-review artifact` report that confirms the stable-ID diff and guarded
+`mono:review artifact` report that confirms the stable-ID diff and guarded
 surfaces. Before mutation, identify affected Issues, preflight certificates, and
 active workers. Class 2 stops or quiesces every affected active worker before
 any repair mutation, as defined by the stale-worker-stop fixture. Only after all
@@ -83,11 +83,11 @@ copied from the repaired artifact while leaving unrelated Issue scope untouched.
 Then re-derive each affected Issue snapshot fingerprint from the complete updated
 snapshot using the package's canonical fingerprint procedure. Record the old and
 new fingerprints as repair evidence. A body edit to an issue-only Issue is not
-this effect; it requires `mono-issue` renewal.
+this effect; it requires `mono:issue` renewal.
 
 ## Class 2 effect fixture: stale-preflight-cert
 
-The authoritative `mono-preflight certificate` is stale when it was issued before the repair mutation. Mark it stale in repair evidence: the affected branch must rerun `mono-preflight`; an older green or ready result cannot authorize
+The authoritative `mono-preflight certificate` is stale when it was issued before the repair mutation. Mark it stale in repair evidence: the affected branch must rerun `mono:preflight`; an older green or ready result cannot authorize
 ship after the repair. A certificate issued after the repair against the current
 Issue snapshot fingerprint remains eligible.
 
@@ -103,7 +103,7 @@ thread memory or an in-place verbal update is not a substitute.
 
 Class 3 cannot mutate product scope under an old approval. First stop affected workers before rollback. Then supersede the package approval and supersede the implementation-start approval, invalidate dependent Tech Spec, Issue snapshots, certificates, and Issue slicing, and move a Delivery Project back to Discovery. Preserve the proposed stable-ID diff as evidence, obtain owner
 re-approval of the rebuilt package, and start Delivery again only through
-`mono-implement`.
+`mono:implement`.
 
 The order is safety-critical: stop workers -> supersede approvals -> invalidate dependants -> Delivery to Discovery -> rebuild -> review/check -> owner re-approval. Never keep Delivery active while a class 3 repair is pending.
 
@@ -111,9 +111,9 @@ The order is safety-critical: stop workers -> supersede approvals -> invalidate 
 
 The manifest is part of its Tech Spec implementation unit. A worker finding on
 pre-applied `.agents/` files parks blocked with exact replacement bytes;
-`mono-handoff` owns the stable-ID preview, review and repair. Classify by meaning:
+`mono:handoff` owns the stable-ID preview, review and repair. Classify by meaning:
 class 2 only when guarded R/AE/AC, non-goals, visible behavior, risk and Issue set
 are unchanged, with snapshot synchronization, fingerprint recomputation and
 certificate staleness; changed risk/scope selects class 3 with owner reapproval.
 After repair, require a NEW `dispatch.mjs --preapply` attempt, never amend/resume.
-Issue-only manifests live in the Issue and renew through `mono-issue`.
+Issue-only manifests live in the Issue and renew through `mono:issue`.

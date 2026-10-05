@@ -14,8 +14,8 @@ Works/in-production requires latest live proof. Human pass: «проверил �
 
 Render:
 
-- mono-implement: «пишется код»; mono-preflight: «локальная проверка перед PR».
-- mono-ship: «PR, авто-ревью и проверки»; mono-deploy: «выкладка в прод».
+- mono:implement: «пишется код»; mono:preflight: «локальная проверка перед PR».
+- mono:ship: «PR, авто-ревью и проверки»; mono:deploy: «выкладка в прод».
 - closeout: «закрытие задачи в Linear»; certificate: «отметка, что этап пройден»; squash-merge: «влито в main».
 - worktree/registry/thread/nohup/setsid: technical tail only.
 

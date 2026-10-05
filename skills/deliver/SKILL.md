@@ -1,5 +1,5 @@
 ---
-name: mono-deliver
+name: deliver
 description: Use to deliver one approved Issue from code to a green PR in one worker context.
 ---
 
@@ -16,9 +16,9 @@ Read now:
 2. `references/worker-contract.md`
 
 Read when:
-- `skills/mono-implement/SKILL.md` — entering code.
-- `skills/mono-preflight/SKILL.md` — entering readiness or rechecking code changes.
-- `skills/mono-ship/SKILL.md` — entering/resuming PR work.
+- `skills/implement/SKILL.md` — entering code.
+- `skills/preflight/SKILL.md` — entering readiness or rechecking code changes.
+- `skills/ship/SKILL.md` — entering/resuming PR work.
 
 Resolve scripts from the dispatched pack root.
 

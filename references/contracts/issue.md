@@ -1,9 +1,9 @@
 # Issue artifact contract
 
 This bounded contract is the normative source for the Issue lifecycle writers:
-Project-first package creation and repair owned by `mono-handoff`, projectless
-issue-only intake and renewal owned by `mono-issue`, and accepted pre-ship drift
-owned by `mono-ship`. Use the shared
+Project-first package creation and repair owned by `mono:handoff`, projectless
+issue-only intake and renewal owned by `mono:issue`, and accepted pre-ship drift
+owned by `mono:ship`. Use the shared
 [artifact rules](../artifact-rules.md), [artifact quality](../artifact-quality.md),
 [readiness gates](../readiness-gates.md), and
 [execution quality](../execution-quality.md) for cross-artifact policy. Render
@@ -12,10 +12,10 @@ duplicate the template here.
 
 ## IS-001 — Issue routing
 
-Use this contract to create or update a one-PR Linear Issue. `mono-handoff`
+Use this contract to create or update a one-PR Linear Issue. `mono:handoff`
 owns the Project-first branch from Project, PRD, and Tech Spec context;
-`mono-issue` owns only unmistakable projectless issue-only intake and renewal;
-`mono-ship` owns accepted pre-ship drift sync.
+`mono:issue` owns only unmistakable projectless issue-only intake and renewal;
+`mono:ship` owns accepted pre-ship drift sync.
 
 ## IS-002 — Execution contract
 
@@ -23,23 +23,23 @@ The Issue is the one-PR execution contract.
 
 ## IS-003 — Internal helper boundary
 
-Issue writing stays behind its lifecycle owner. `mono-handoff` writes and
-repairs the Project-first package before pre-ship; `mono-issue` is the issue-only
+Issue writing stays behind its lifecycle owner. `mono:handoff` writes and
+repairs the Project-first package before pre-ship; `mono:issue` is the issue-only
 front door and must refuse Project relations or Project, PRD, or Tech Spec
-chips; `mono-ship` applies accepted pre-ship drift.
+chips; `mono:ship` applies accepted pre-ship drift.
 
 ## IS-004 — Targeted-use eligibility
 
 Route Project-first Issue creation and repair before pre-ship through
-`mono-handoff`, including reviewer-feedback updates or maintenance. Accepted
-pre-ship drift is the terminal override and belongs to `mono-ship`. An existing
-issue-only Issue body may change only through `mono-issue` renewal using the
+`mono:handoff`, including reviewer-feedback updates or maintenance. Accepted
+pre-ship drift is the terminal override and belongs to `mono:ship`. An existing
+issue-only Issue body may change only through `mono:issue` renewal using the
 full create-then-approve transaction. No other direct Issue mutation route is
 eligible.
 
 ## IS-005 — Issue-only branch
 
-In the `mono-issue` branch, apply the
+In the `mono:issue` branch, apply the
 [issue-only lane contract](../issue-only-lane.md) in full for its authoring
 modes, mutation limits, renewal path, routing exception, absent Project
 artifacts, and project-first fallback. The protocol is incorporated by
@@ -56,9 +56,9 @@ Create one Issue by default.
 
 ## IS-008 — Project-first sources
 
-In the `mono-handoff` branch, build a project-first Issue from Project, PRD, and
+In the `mono:handoff` branch, build a project-first Issue from Project, PRD, and
 Tech Spec, or an explicit no-spec exception. These sources make the package
-ineligible for `mono-issue`.
+ineligible for `mono:issue`.
 
 ## IS-009 — Read-first context
 
@@ -113,8 +113,8 @@ Include concrete validation, acceptance criteria, and non-goals.
 
 ## IS-019 — Project-first chips
 
-Use Project, PRD, and Tech Spec chips only in the `mono-handoff` Project-first
-branch. Their presence makes `mono-issue` refuse the request.
+Use Project, PRD, and Tech Spec chips only in the `mono:handoff` Project-first
+branch. Their presence makes `mono:issue` refuse the request.
 
 ## IS-020 — Document resources
 
@@ -132,9 +132,9 @@ Do not attach PRD or Tech Spec documents to the Issue.
 
 ## IS-023 — Vertical slicing
 
-Only `mono-handoff` may split work when one PR is truly too large, and it must
+Only `mono:handoff` may split work when one PR is truly too large, and it must
 split into vertical slices with explicit dependencies. A request for slicing is
-ineligible for `mono-issue`.
+ineligible for `mono:issue`.
 
 ## IS-024 — Ready before coding
 
@@ -151,7 +151,7 @@ and Tech Spec are current.
 
 ## IS-027 — No Delivery transition
 
-`mono-issue` never moves the Project to Delivery. `mono-implement` owns Delivery
+`mono:issue` never moves the Project to Delivery. `mono:implement` owns Delivery
 Start after approval to execute from the Issue.
 
 ## IS-028 — Durable instructions
@@ -180,11 +180,11 @@ Verify acceptance criteria are concrete enough to check after the PR.
 ## IS-033 — Scope-drift self-review
 
 If a Project-first Issue introduces scope absent from PRD or Tech Spec before
-pre-ship, return to handoff approval. At pre-ship, `mono-ship` applies accepted
+pre-ship, return to handoff approval. At pre-ship, `mono:ship` applies accepted
 drift and routes unaccepted scope change back through handoff approval. If
 issue-only scope grows beyond its approved one-PR envelope, fail closed to
 Project-first instead of renewing it in place.
 
 ## IS-034 — Issue check
 
-Before finishing, run or report `mono-check issue`.
+Before finishing, run or report `mono:check issue`.

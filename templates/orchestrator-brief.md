@@ -1,6 +1,6 @@
 # Шаблоны оркестратора: бриф и статус
 
-User-facing shapes for `mono-orchestrate`. User-visible text is Russian per
+User-facing shapes for `mono:orchestrate`. User-visible text is Russian per
 project config (`languages.linear`).
 
 ## Бриф решения (Decision Brief)
@@ -21,7 +21,7 @@ project config (`languages.linear`).
 
 Package-approval briefs: include an option that explicitly bundles
 implementation start («это одновременно approval на старт кода») so the
-bundled-approval rule from `mono-implement` applies and the orchestrator
+bundled-approval rule from `mono:implement` applies and the orchestrator
 does not re-ask before dispatching workers.
 
 Design questions: prepare side-by-side variants first (`/design-html` when the
@@ -181,7 +181,7 @@ Rules that bind every status:
   `references/model-policy.md`; missing authoritative environment data means
   «не удалось проверить». Do not infer a match from the prompt.
 - «Можешь потрогать:» appears only when there is something to touch — the
-  same condition as in `skills/mono-orchestrate/SKILL.md`. With nothing
+  same condition as in `skills/orchestrate/SKILL.md`. With nothing
   the owner can open yet, the line is omitted, never filled with a
   placeholder.
 - No placeholders in sent text: `<ISSUE-KEY>`, `~N`, and `3xx` never leave

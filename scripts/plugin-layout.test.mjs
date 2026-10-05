@@ -14,7 +14,7 @@ test('plugin layout shares the repository paths and reads VERSION identity', () 
     fs.writeFileSync(path.join(root, 'VERSION'), '0.22.0\n');
     const layout = packLayout(root);
     assert.deepEqual(layout.identity(), { packVersion: '0.22.0', surfaceRevision: 4 });
-    assert.equal(layout.skill('mono-deliver'), path.join(root, 'skills/mono-deliver/SKILL.md'));
+    assert.equal(layout.skill('deliver'), path.join(root, 'skills/deliver/SKILL.md'));
     assert.equal(layout.template('orchestrator-dispatch.md'), path.join(root, 'templates/orchestrator-dispatch.md'));
     assert.equal(layout.policyDirectory, path.join(root, 'references'));
     assert.equal(layout.script('gate.mjs'), path.join(root, 'scripts/gate.mjs'));
@@ -119,7 +119,7 @@ test('dispatch pins the plugin script folder and refuses resume when that folder
     const saved = JSON.parse(fs.readFileSync(path.join(root, 'workers.json')))['MONO-999'];
     assert.equal(saved.packRoot, pack); assert.equal(saved.skillsRoot, helper); assert.equal(saved.sourceCommit, undefined);
     const pins = JSON.parse(fs.readFileSync(launched.pins.file)); assert.equal(pins.packRoot, pack); assert.equal(pins.surfaceRevision, 4);
-    const rendered = fs.readFileSync(launched.dispatchFile, 'utf8'); assert.ok(rendered.includes(path.join(pack, 'skills/mono-deliver/SKILL.md')));
+    const rendered = fs.readFileSync(launched.dispatchFile, 'utf8'); assert.ok(rendered.includes(path.join(pack, 'skills/deliver/SKILL.md')));
     assert.ok(rendered.includes(`--pack-root '${pack}'`)); assert.ok(!rendered.includes('--source-commit'));
     const spawnRequest = JSON.parse(fs.readFileSync(launched.spawnFile));
     for (const [folder, reason] of [[pack, /packRoot must be outside/], [helper, /installed skillsRoot must be outside/]]) {

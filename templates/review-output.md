@@ -48,7 +48,7 @@ Use Russian for Linear-facing review comments or summaries when no project confi
 Rules:
 
 - Do not use `PASS`, `FAIL`, or `BLOCKED` as the review status.
-- Do not mutate Linear artifacts from `mono-review`.
+- Do not mutate Linear artifacts from `mono:review`.
 - Translate the review status into the `Коротко` line before listing findings.
 - Include `Не проверено` so the user can distinguish review confidence from manual QA or deploy confidence.
 - When review is required and blocking findings remain, verdict is `needs-fixes`.

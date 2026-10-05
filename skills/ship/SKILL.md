@@ -1,5 +1,5 @@
 ---
-name: mono-ship
+name: ship
 description: Use for accepted pre-ship drift, PR creation, documentation and review through green; earlier repair belongs to handoff.
 ---
 
@@ -27,11 +27,11 @@ Read now:
 Read when:
 
 - `references/issue-only-lane.md` — when `lifecycle_state_entity=issue`, or the parentless ship gate routes a candidate.
-- `skills/mono-preflight/SKILL.md` — when the recovered preflight certificate is missing, superseded or not `ready`.
+- `skills/preflight/SKILL.md` — when the recovered preflight certificate is missing, superseded or not `ready`.
 - `templates/ship-status-ux.md` — when composing interactive status for a user.
 
 Run exact dispatch identity before work/resume. Apply worker snapshot/queue rules.
-Under mono-deliver return phase results, confirm full queues and use gate.mjs ship;
+Under mono:deliver return phase results, confirm full queues and use gate.mjs ship;
 never dispatch another stage. Preserve the following order.
 
 ## Workflow
@@ -42,12 +42,12 @@ never dispatch another stage. Preserve the following order.
    fail-closed context stops formal gates/PR; use deterministic no-promotion fallback.
 2. Recover latest mono-preflight certificate. Missing/superseded → preflight;
    drift-candidate → formal review/check. Compare scope/risk/diff with artifacts.
-3. Run/report required mono-review pre-ship under readiness policy and worker
+3. Run/report required mono:review pre-ship under readiness policy and worker
    contract; unresolved decisions/artifacts/blocking findings → needs-human.
 4. Apply/request accepted pre-ship Linear sync before PR creation; record user
    acceptance. Confirm its writes under the sequencer. Earlier Project-first
    repair belongs to handoff; issue-only renewal to issue intake.
-5. Run/report mono-check pre-ship, readiness-only, no repairs.
+5. Run/report mono:check pre-ship, readiness-only, no repairs.
 6. Delegate PR creation to configured Ship workflow, with package/preflight
    context. Record number/URL/head; queue In Review and PR chip after creation,
    then confirm them before further dependent progression.
@@ -90,7 +90,7 @@ Unresolved review threads: <0/count/unknown>
 Merge state: <clean/blocked/conflict/unknown>
 Checked: <states inspected>
 Not checked: <manual/browser/mobile/prod/deploy surfaces not inspected>
-Next: mono-deploy
+Next: mono:deploy
 ```
 
 Apply worker Certificate recovery, Tiny Output Profile and Linear Exit Comments

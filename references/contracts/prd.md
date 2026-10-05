@@ -1,8 +1,8 @@
 # PRD artifact contract
 
 This bounded contract is the normative source for PRD artifact behavior.
-`mono-handoff` consumes it for Project-first package creation and repair;
-`mono-ship` consumes it for accepted pre-ship drift. Use the shared
+`mono:handoff` consumes it for Project-first package creation and repair;
+`mono:ship` consumes it for accepted pre-ship drift. Use the shared
 [artifact rules](../artifact-rules.md), [artifact quality](../artifact-quality.md),
 [execution quality](../execution-quality.md), and
 [questioning policy](../questioning.md) for cross-artifact policy. Render the
@@ -21,13 +21,13 @@ The PRD records WHAT the workflow achieves and how the user experiences it.
 ## PR-003 — Internal helper boundary
 
 PRD writing is owned by lifecycle stages rather than exposed as a direct
-artifact door. The normal post-discovery and repair workflow is `mono-handoff`;
-accepted pre-ship drift belongs to `mono-ship`.
+artifact door. The normal post-discovery and repair workflow is `mono:handoff`;
+accepted pre-ship drift belongs to `mono:ship`.
 
 ## PR-004 — Targeted-use eligibility
 
-A direct request to write or repair a PRD must route to `mono-handoff` repair.
-Accepted pre-ship drift routes to `mono-ship`; no other workflow mutates the
+A direct request to write or repair a PRD must route to `mono:handoff` repair.
+Accepted pre-ship drift routes to `mono:ship`; no other workflow mutates the
 PRD directly.
 
 ## PR-005 — Linear-facing language
@@ -163,4 +163,4 @@ Verify all implementation details remain deferred to Tech Spec.
 
 ## PR-032 — Discovery check
 
-Before finishing, run or report `mono-check discovery`.
+Before finishing, run or report `mono:check discovery`.
