@@ -8,6 +8,7 @@ import { atomicJson, readJson, isMain, deliveryConfig, RISK_KEYS, withLock, base
 import { commandFlags, allowedFlags, sha256File } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
 import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
+import { workerTransport } from "../worker-transport.mjs";
 import { spawnWorker } from "./launch.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -81,7 +82,8 @@ async function prepareDispatch(args) {
   const verification = args.verification ? readJson(args.verification) : settings.verification;
   if (typeof verification?.command !== "string" || !verification.command.trim() || !Array.isArray(verification.args) || verification.args.some(arg => typeof arg !== "string")) throw new Error("explicit verification command/args required");
   const role = args.role ?? "worker-default", reason = args.reason ?? null;
-  if (!["worker-default", "worker-complex"].includes(role) || (role === "worker-complex" && !reason?.trim())) throw new Error("complex worker requires --reason");
+  const transport = workerTransport("codex-cli");
+  if (!transport.workerRoles.includes(role) || (role === transport.complexRole && !reason?.trim())) throw new Error("complex worker requires --reason");
   if (!approval.trim()) throw new Error("nonempty approval record required");
   const seam = lane?.seam ?? { package_kind: "project-first", lifecycle_state_entity: "project", behavioral_oracle: null, risk_class: risk,
     approval_status: /approval_status\s*=\s*(approved|pending|rejected)/u.exec(body + "\n" + approval)?.[1] ?? "approved" };

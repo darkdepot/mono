@@ -2,8 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { atomicJson, readJson, identity, requireCompatiblePack, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart, packLayout, runtimePackRoot } from "../runtime.mjs";
-import { startGate, reviewEnvironment } from "../gate.mjs";
+import { startGate } from "../gate.mjs";
 import crypto from "node:crypto";
+import { workerTransport } from "../worker-transport.mjs";
 import { effectivePins, attemptState } from "./command-state.mjs";
 
 function releasePin(request) {
@@ -26,7 +27,7 @@ function checkRequest(request) {
 }
 function deliveryLaunch(request) {
   const handshake = request.handshake ?? "resume", profile = request.profile ?? "full";
-  if (!["wait", "resume"].includes(handshake)) throw new Error("invalid handshake");
+  if (!workerTransport("codex-cli").handshakeModes.includes(handshake)) throw new Error("invalid handshake");
   if (!["short", "full"].includes(profile)) throw new Error("invalid profile");
   if (profile === "short" && (!["tiny", "standard"].includes(request.risk) || request.critical !== null ||
       request.afk !== true || request.openDecisions !== 0)) throw new Error("short requires tiny/standard, critical null, afk true and openDecisions 0");
@@ -41,20 +42,14 @@ export function resolveWorkerPins(request) {
   const config = baseModelConfig(request.worktree, request.base);
   const transport = config.orchestration?.transport ?? 'codex-cli';
   if (request.transport !== undefined && request.transport !== transport) throw new Error('request transport conflicts with immutable BASE config');
-  if (transport !== 'codex-cli' || !['worker-default', 'worker-complex'].includes(request.role)) throw new Error('unsupported worker role/transport for codex-cli launch');
+  if (!workerTransport(transport)?.workerRoles.includes(request.role)) throw new Error('unsupported worker role/transport for codex-cli launch');
   const modelRoutes = resolveModelRoutes(request.worktree, request.base, request.role, { packRoot: request.packRoot });
   if (request.modelRoutes && canonical(request.modelRoutes) !== canonical(modelRoutes)) throw new Error('dispatch model route fingerprint mismatch');
   return modelRoutes;
 }
 
 export function workerEnvironment(route, source = process.env) {
-  const env = { ...source };
-  if (route?.credentialEnv || route?.provider.endpoint) {
-    for (const key of ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY']) delete env[key];
-    const credential = route.credentialEnv ? { [route.credentialEnv]: source[route.credentialEnv] } : {};
-    Object.assign(env, reviewEnvironment(route, credential));
-  }
-  return env;
+  return workerTransport("codex-cli").environment(route, source);
 }
 
 function appendLog(file, event) {
@@ -94,10 +89,9 @@ function worktreeGit(worktree, args) {
     throw new Error(`Cannot read worktree Git ${args.join(" ")}: ${error.message}`);
   }
 }
-async function launchCodex(root, entry, prompt, resume) {
+async function launchTransport(root, entry, prompt, resume) {
   const registryPath = path.join(root, "workers.json");
   const readRegistry = () => readJson(registryPath);
-  const model = entry.model_launch.model_parameter, effort = entry.model_launch.effort_parameter;
   const roots = effectiveGrants(entry, root);
   let gateAckDigest = null;
   if (resume && entry.gates?.length) {
@@ -106,18 +100,14 @@ async function launchCodex(root, entry, prompt, resume) {
     if (candidates.length > 1) throw new Error("gate ack present in both locations");
     if (candidates.length === 1) gateAckDigest = digest(readJson(candidates[0]));
   }
-  const args = resume ? ["exec", "resume", entry.thread_id, "--json"] : ["exec", "--json", "--cd", entry.worktree];
-  if (!resume) args.push("--add-dir", path.join(root, "reports"));
-  args.push("-c", `model=${JSON.stringify(model)}`, "-c", `model_reasoning_effort=${JSON.stringify(effort)}`,
-    "-c", 'sandbox_mode="workspace-write"', "-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(roots)}`,
-    "-c", `sandbox_workspace_write.network_access=${entry.network_access === true}`, prompt);
+  const transport = workerTransport(entry.transport) ?? workerTransport("codex-cli");
+  const invocation = transport.invocation(entry, { reportsDir: path.join(root, "reports"), roots, prompt, resume });
   guard(root, resume);
   const stdout = fs.openSync(entry.log, "a"), stderr = fs.openSync(entry.log.replace(/\.jsonl$/, ".stderr.log"), "a", 0o600);
   let child;
   try {
-    const route = entry.modelRoutes?.roles[entry.model_policy.role];
-    child = spawn("codex", args, { cwd: entry.worktree, detached: true, stdio: ["ignore", stdout, stderr],
-      env: workerEnvironment(route) });
+    child = spawn(invocation.command, invocation.args, { cwd: entry.worktree, detached: true, stdio: ["ignore", stdout, stderr],
+      env: transport.environment(entry.modelRoutes?.roles[entry.model_policy.role]) });
     await new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
   } finally { fs.closeSync(stdout); fs.closeSync(stderr); }
   child.unref();
@@ -145,7 +135,8 @@ async function waitForThread(root, entry, pid, launchedStart) {
     while ((newline = pending.indexOf(10)) !== -1) {
       const line = pending.subarray(0, newline).toString("utf8"); pending = pending.subarray(newline + 1);
       let event; try { event = JSON.parse(line); } catch { continue; }
-      if (event.type === "thread.started" && typeof event.thread_id === "string" && event.thread_id) threadId = event.thread_id;
+      const observed = workerTransport(entry.transport).startIdentity(event);
+      if (observed) threadId = observed.thread_id;
     }
     if (threadId) {
       try {
@@ -225,7 +216,7 @@ export async function spawnWorker(request, preparation = {}) {
       registry[request.issue] = entry; atomicJson(file, registry);
       appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, modelRoutes, model_policy, model_launch,
         model: entry.model, effort: entry.effort });
-      return { entry, ...await launchCodex(request.root, entry, prompt, false) };
+      return { entry, ...await launchTransport(request.root, entry, prompt, false) };
     } catch (error) {
       await preparation.onRefusal?.();
       throw error;
@@ -255,6 +246,6 @@ export async function resumeWorker(request) {
     const updated = { ...entry, capsule: { ...entry.capsule, writable_roots: roots }, writable_roots: roots, workerWritableRoots: roots, network_access: request.network_access ?? entry.network_access };
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;
     atomicJson(path.join(request.root, "workers.json"), registry);
-    return launchCodex(request.root, updated, prompt, true);
+    return launchTransport(request.root, updated, prompt, true);
   });
 }

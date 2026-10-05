@@ -7,10 +7,12 @@ import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, isM
 
 import { validateEntry } from "./decisions.mjs";
 
+import { workerTransport } from "./worker-transport.mjs";
+
 export const PHASES = ["code", "preflight", "ship"];
 export const PARKED_REASONS = ["blocked", "needs-decision", "needs-human", "drift-candidate", "timed-out", "scope-drift-needs-handoff", "write-unconfirmed", "evidence-limit"];
 export function correlatedDeliveryReport(report, stat, entry, logStat, stallSec = 120) {
-  return entry?.transport === "codex-cli" && entry.stage === "mono-deliver" && identity(entry) && identity(report) &&
+  return workerTransport(entry?.transport)?.correlatesReports === true && entry.stage === "mono-deliver" && identity(entry) && identity(report) &&
     report.issue === entry.issue && report.stage === entry.stage && report.attempt === entry.attempt &&
     IDENTITY_FIELDS.every(field => report[field] === entry[field]) &&
     ["green", "parked"].includes(report.status) && (report.status !== "parked" ||

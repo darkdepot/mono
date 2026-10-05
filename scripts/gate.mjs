@@ -8,6 +8,9 @@ import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout } from "./runtime.mjs";
 import { checkCollectionRequest } from "./orchestrator/command-state.mjs";
 
+import { reviewEnvironment } from "./model-environment.mjs";
+export { reviewEnvironment } from "./model-environment.mjs";
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const safeGitArgs = ["--no-pager", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat", "-c", "advice.graftFileDeprecated=false"];
 function safeGitEnv() {
@@ -99,21 +102,6 @@ export function pinnedReviewRoute(request, base) {
     for (const [role, route] of Object.entries(pins.roles)) requireThat(canonical(route) === canonical(resolveRole(role, config, { packRoot: request.packRoot, skillsRoot: request.skillsRoot })), `model route fingerprint mismatch: ${role}`);
   } else requireThat(config.models === undefined, 'modelRoutes launch pins required for product model overrides');
   return reviewRoute(request.packRoot ?? request.skillsRoot, request.risk, request.critical, config);
-}
-export function reviewEnvironment(route, source = process.env) {
-  const providerVariable = /^(?:ANTHROPIC_|CLAUDE_CODE_|OPENAI_|CODEX_API_|KIMI_|PI_|AWS_|AZURE_|GOOGLE_|GEMINI_|CLOUD_ML_|AUTOREVIEW_.*FALLBACK)|(?:API_KEY|ACCESS_KEY|SECRET_ACCESS_KEY|AUTH_TOKEN|ACCESS_TOKEN|API_TOKEN|TOKEN|PAT|BASE_URL|ENDPOINT|CREDENTIALS)$/;
-  const env = Object.fromEntries(Object.entries(source).filter(([key]) => !providerVariable.test(key) && key !== route.credentialEnv));
-  const { engine, provider, credentialEnv } = route;
-  if (credentialEnv) {
-    requireThat(typeof source[credentialEnv] === 'string' && source[credentialEnv].length > 0, `missing route credential variable ${credentialEnv}`);
-    let target = 'OPENAI_API_KEY';
-    if (engine === 'claude') target = credentialEnv === 'ANTHROPIC_API_KEY' ? 'ANTHROPIC_API_KEY' : 'ANTHROPIC_AUTH_TOKEN';
-    if (engine === 'kimi') target = 'KIMI_API_KEY';
-    if (engine === 'pi') target = { openai: 'OPENAI_API_KEY', xai: 'XAI_API_KEY', google: 'GEMINI_API_KEY', minimax: 'MINIMAX_API_KEY' }[provider.id];
-    requireThat(target, 'unsupported provider credential mapping'); env[target] = source[credentialEnv];
-  }
-  if (provider.endpoint) env[engine === 'claude' ? 'ANTHROPIC_BASE_URL' : engine === 'kimi' ? 'KIMI_BASE_URL' : 'OPENAI_BASE_URL'] = provider.endpoint;
-  return env;
 }
 export function reviewInvocation(route, base) {
   return ['--mode', 'branch', '--base', base, '--engine', route.engine ?? 'claude', '--model', route.model, '--thinking', route.effort, '--max-priority', 'P2'];

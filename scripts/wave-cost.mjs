@@ -5,6 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
+import { workerTransport } from "./worker-transport.mjs";
+import { zeroUsage, addUsage, finalizeUsage } from "./token-usage.mjs";
+
 const PHASE_USAGE_NOTE = "по фазам недоступно";
 
 function usage(exitCode = 2) {
@@ -98,81 +101,6 @@ function containsIssueKey(value, issue) {
   return new RegExp(`(^|[^A-Z0-9])${escaped}(?![A-Z0-9])`, "i").test(String(value));
 }
 
-function issueKeysIn(value, issue) {
-  const prefix = issue.slice(0, issue.lastIndexOf("-"));
-  const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(
-    `(^|[^A-Z0-9])(${escapedPrefix}-[1-9][0-9]*)(?![A-Z0-9])`,
-    "g"
-  );
-  return new Set([...String(value).matchAll(pattern)].map((match) => match[2]));
-}
-
-function safeJsonLines(filename) {
-  const events = [];
-  const errors = [];
-  const text = fs.readFileSync(filename, "utf8");
-  for (const [index, line] of text.split("\n").entries()) {
-    if (!line.trim()) continue;
-    try {
-      events.push({ value: JSON.parse(line), line: index + 1 });
-    } catch (error) {
-      errors.push(`line ${index + 1}: ${error.message}`);
-    }
-  }
-  return { events, errors };
-}
-
-function zeroUsage() {
-  return {
-    input_tokens: 0,
-    cached_input_tokens: 0,
-    cache_write_input_tokens: 0,
-    output_tokens: 0,
-    reasoning_output_tokens: 0,
-  };
-}
-
-function normalizedUsage(raw, source, errors) {
-  const required = ["input_tokens", "cached_input_tokens", "output_tokens"];
-  for (const field of required) {
-    if (!Number.isSafeInteger(raw?.[field]) || raw[field] < 0) {
-      errors.push(`${source}: missing or invalid ${field}`);
-      return null;
-    }
-  }
-  const usage = zeroUsage();
-  for (const field of Object.keys(usage)) {
-    const value = raw[field] ?? 0;
-    if (!Number.isSafeInteger(value) || value < 0) {
-      errors.push(`${source}: invalid ${field}`);
-      return null;
-    }
-    usage[field] = value;
-  }
-  if (usage.cached_input_tokens > usage.input_tokens) {
-    errors.push(`${source}: cached_input_tokens exceeds input_tokens`);
-    return null;
-  }
-  if (usage.reasoning_output_tokens > usage.output_tokens) {
-    errors.push(`${source}: reasoning_output_tokens exceeds output_tokens`);
-    return null;
-  }
-  return usage;
-}
-
-function addUsage(target, usage) {
-  for (const field of Object.keys(target)) target[field] += usage[field];
-}
-
-function finalizeUsage(usage) {
-  return {
-    ...usage,
-    uncached_input_tokens: usage.input_tokens - usage.cached_input_tokens,
-    non_overlapping_total_tokens: usage.input_tokens + usage.output_tokens,
-  };
-}
-
 function attemptLogFiles(root, issue) {
   const logsDir = path.join(root, "logs");
   const escapedIssue = issue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -213,33 +141,14 @@ function candidatePaths(text) {
   return matches.map((candidate) => candidate.replace(/[:),\]}]+$/, ""));
 }
 
-function isReadEvent(event) {
-  const item = event?.item ?? event;
-  const readIdentifiers = [item?.type, item?.name, item?.tool_name, item?.tool].map((value) =>
-    String(value || "").replace(/[.-]/g, "_")
-  );
-  if (readIdentifiers.some((value) => /^(?:read|read_file|file_read|readfile)$/i.test(value))) {
-    return true;
-  }
-  if (item?.type !== "command_execution") return false;
-  return /(?:^|[^A-Za-z0-9_-])(?:cat|head|tail|sed|rg|grep)(?:\s|$)/.test(
-    String(item.command || "")
-  );
-}
-
-function readInputs(event) {
-  const item = event?.item ?? event;
-  if (item?.type === "command_execution") return [String(item.command || "")];
-  return stringsIn(item?.arguments ?? item?.input ?? item);
-}
-
 function collectPackReading(logResults) {
   const readCounts = new Map();
   for (const log of logResults) {
     for (const { value } of log.events) {
-      if (!isReadEvent(value)) continue;
+      const inputs = log.transport.readingInputs(value);
+      if (inputs === null) continue;
       const pathsInCommand = new Set();
-      for (const text of readInputs(value)) {
+      for (const text of inputs) {
         for (const candidate of candidatePaths(text)) {
           if (!looksLikeInstalledPackFile(candidate)) continue;
           let canonical;
@@ -283,51 +192,39 @@ function collectWorker(root, logs) {
   const logResults = [];
 
   for (const log of logs) {
-    const parsed = safeJsonLines(log.filename);
-    const attemptUsage = zeroUsage();
-    let lastUsage = null;
-    let attemptTurns = 0;
-    for (const event of parsed.events) {
-      if (event.value?.type !== "turn.completed") continue;
-      const usage = normalizedUsage(
-        event.value.usage,
-        `${log.name}:${event.line}`,
-        errors
-      );
-      if (!usage) continue;
-      addUsage(total, usage);
-      addUsage(attemptUsage, usage);
-      lastUsage = usage;
-      turns += 1;
-      attemptTurns += 1;
-    }
-    if (lastUsage) addUsage(oldRule, lastUsage);
-    errors.push(...parsed.errors.map((error) => `${log.name}:${error}`));
+    const transport = workerTransport("codex-cli");
+    const parsed = transport.readLog(log.filename);
+    const measured = transport.attemptUsage(parsed, log.name);
+    if (measured.usage) addUsage(total, measured.usage);
+    if (measured.lastUsage) addUsage(oldRule, measured.lastUsage);
+    errors.push(...measured.errors);
+    turns += measured.turns;
     attempts.push({
-      log: path.relative(root, log.filename),
-      stage: log.stage,
-      attempt: log.attempt,
-      turns: attemptTurns,
-      usage: finalizeUsage(attemptUsage),
+      log: path.relative(root, log.filename), stage: log.stage, attempt: log.attempt,
+      turns: measured.turns, usage: measured.usage, usage_status: measured.status,
     });
-    logResults.push({ ...log, ...parsed });
+    logResults.push({ ...log, ...parsed, transport });
   }
 
-  const complete = errors.length === 0;
+  const complete = turns > 0 && attempts.every(attempt => attempt.usage_status === "measured");
+  const usageStatus = errors.length
+    ? unavailable("worker logs contain malformed JSON or invalid turn usage")
+    : complete ? "measured"
+    : attempts.some(attempt => attempt.usage_status.startsWith("incomplete:"))
+      ? "incomplete: attempt interrupted before final usage"
+      : unavailable("worker log contains no usage events");
   return {
     worker: {
       subtotal_kind: "diagnostic worker subtotal; not the full PR cost",
       attempt_count: logs.length,
       turns,
-      usage: finalizeUsage(total),
-      usage_status: complete
-        ? "measured"
-        : unavailable("worker logs contain malformed JSON or invalid turn usage"),
+      usage: turns ? finalizeUsage(total) : null,
+      usage_status: usageStatus,
       attempts,
       complete,
       errors,
     },
-    oldRule: finalizeUsage(oldRule),
+    oldRule: turns ? finalizeUsage(oldRule) : null,
     logResults,
   };
 }
@@ -364,9 +261,8 @@ function collectAutoreview(logResults) {
   let usageEvents = 0;
   for (const log of logResults) {
     for (const { value } of log.events) {
-      const item = value?.item;
-      if (value?.type !== "item.completed" || item?.type !== "command_execution") continue;
-      const output = String(item.aggregated_output || "");
+      const output = log.transport.commandOutput(value);
+      if (output === null) continue;
       if (!output.includes("autoreview target:") || !output.includes("review passes:")) continue;
       outputs += 1;
       const passMatch = /review passes:\s*([0-9]+)/.exec(output);
@@ -398,35 +294,8 @@ function parseTranscriptUsage(filename, issue) {
   if (!filename) return unavailable("orchestrator session transcript path was not provided");
   const resolved = path.resolve(filename);
   if (!fs.existsSync(resolved)) return unavailable(`orchestrator transcript does not exist: ${resolved}`);
-  const parsed = safeJsonLines(resolved);
-  const total = zeroUsage();
-  const errors = [...parsed.errors];
-  let turnIssueKeys = new Set();
-  let ambiguousTurns = 0;
-  let turns = 0;
-  for (const { value, line } of parsed.events) {
-    const eventIssueKeys = issueKeysIn(JSON.stringify(value), issue);
-    if (value?.type === "turn.started") turnIssueKeys = eventIssueKeys;
-    else for (const key of eventIssueKeys) turnIssueKeys.add(key);
-    if (value?.type !== "turn.completed") continue;
-    const belongsToIssue = turnIssueKeys.has(issue.toUpperCase());
-    const isAmbiguous = belongsToIssue && turnIssueKeys.size > 1;
-    turnIssueKeys = new Set();
-    if (!belongsToIssue) continue;
-    if (isAmbiguous) {
-      ambiguousTurns += 1;
-      continue;
-    }
-    const usage = normalizedUsage(value.usage, `${path.basename(resolved)}:${line}`, errors);
-    if (!usage) continue;
-    addUsage(total, usage);
-    turns += 1;
-  }
-  if (ambiguousTurns > 0) {
-    return unavailable(`orchestrator transcript has a multi-Issue turn mentioning ${issue}`);
-  }
-  if (turns === 0) return unavailable(`no orchestrator turns mentioning ${issue} found in transcript`);
-  return { transcript: resolved, turns, usage: finalizeUsage(total), complete: errors.length === 0, errors };
+  const transport = workerTransport("codex-cli");
+  return transport.transcriptUsage(transport.readLog(resolved), issue, resolved);
 }
 
 function ledgerEntryIssue(line) {
@@ -599,16 +468,8 @@ function collectModel(root, issue, logResults) {
   }
   for (const log of logResults) {
     for (const { value } of log.events) {
-      if (!["thread.started", "mono.launch"].includes(value?.type)) continue;
-      const model = value.model ?? value.usage?.model;
-      const effort = value.effort ?? value.model_reasoning_effort ?? value.usage?.effort;
-      if (model || effort) {
-        return {
-          model: model ?? unavailable("thread.started metadata has no model"),
-          effort: effort ?? unavailable("thread.started metadata has no effort"),
-          source: log.name,
-        };
-      }
+      const metadata = log.transport.modelMetadata(value, log.name);
+      if (metadata) return metadata;
     }
   }
   return {
@@ -666,6 +527,7 @@ function formatDuration(milliseconds) {
 }
 
 function shortUnavailable(value) {
+  if (String(value).startsWith("incomplete:")) return "неполно (попытка прервана)";
   const reason = String(value).replace(/^unavailable:\s*/, "").toLowerCase();
   if (reason.includes("autoreview helper output does not report token usage")) {
     return "н/д (помощник не сообщает учёт)";
@@ -719,10 +581,10 @@ function russianLine(result) {
   const measured = totalIsMeasured
     ? formatTokenCount(result.measurable_total.non_overlapping_total_tokens)
     : shortUnavailable(result.measurable_total_status);
-  const measuredInput = formatTokenCount(result.measurable_total.input_tokens);
-  const measuredOutput = formatTokenCount(result.measurable_total.output_tokens);
+  const measuredInput = totalIsMeasured ? formatTokenCount(result.measurable_total.input_tokens) : null;
+  const measuredOutput = totalIsMeasured ? formatTokenCount(result.measurable_total.output_tokens) : null;
   const cachedPercent =
-    result.measurable_total.input_tokens === 0
+    !totalIsMeasured || result.measurable_total.input_tokens === 0
       ? 0
       : Math.round(
           (result.measurable_total.cached_input_tokens / result.measurable_total.input_tokens) * 100
@@ -746,7 +608,7 @@ function russianLine(result) {
   const model = compactModel(result.model);
   const measuredClause = totalIsMeasured
     ? `${measured} токенов измеримо (вход ${measuredInput}, из кэша ${cachedPercent}%, выход ${measuredOutput})`
-    : measured;
+    : `${measured}; итог неполный`;
   return `Цена волны ${result.issue}: ${measuredClause}; исполнитель ${worker}, ${autoreview}, оркестратор ${orchestrator}; чтение пака ~${formatTokenCount(result.pack_reading.approx_tokens)} токенов; до зелёного PR ${green}, до слияния ${merge}; круги ревью ${rounds}${result.autoreview.ledger ? "" : `; проходов авто-ревью ${typeof result.autoreview.passes === "number" ? result.autoreview.passes : shortUnavailable(result.autoreview.passes)}`}; модель/усилие ${model}; ${PHASE_USAGE_NOTE}.`;
 }
 
@@ -779,7 +641,7 @@ async function main() {
     usage: orchestratorUsage,
   };
   const measuredUsage = zeroUsage();
-  addUsage(measuredUsage, worker.usage);
+  if (worker.usage) addUsage(measuredUsage, worker.usage);
   if (typeof autoreview.usage !== "string") addUsage(measuredUsage, autoreview.usage);
   if (typeof orchestratorUsage !== "string") addUsage(measuredUsage, orchestratorUsage.usage);
   const shipReport = latestStageReport(reports, "mono-ship", args.issue);
@@ -799,16 +661,15 @@ async function main() {
     accounting_comparison: {
       old_last_event_rule: oldRule,
       corrected_all_turns: worker.usage,
-      input_delta_tokens: worker.usage.input_tokens - oldRule.input_tokens,
+      input_delta_tokens: worker.usage ? worker.usage.input_tokens - oldRule.input_tokens : null,
       explanation:
         "The retired hand-count rule kept only the last turn.completed event of each attempt. These logs report per-turn, not cumulative, usage, so the corrected sum is larger whenever an attempt has more than one completed turn.",
     },
     autoreview,
     orchestrator,
-    measurable_total: finalizeUsage(measuredUsage),
-    measurable_total_status: worker.complete
-      ? "measured"
-      : unavailable("worker logs contain malformed JSON or invalid turn usage"),
+    measurable_total: worker.usage || typeof autoreview.usage !== "string" || typeof orchestratorUsage !== "string"
+      ? finalizeUsage(measuredUsage) : null,
+    measurable_total_status: worker.usage_status,
     pack_reading: collectPackReading(logResults),
     intervals: collectIntervals(ledger, reports, args.issue),
     review_rounds: reviewRounds,
