@@ -9,6 +9,7 @@ const networkPolicy = Object.freeze({ Bash: "sandbox-allowlist", WebFetch: "deny
 const environmentKeys = ["HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM"];
 const githubDomains = Object.freeze(["github.com", "api.github.com", "uploads.github.com", "raw.githubusercontent.com"]);
 const temporaryName = () => process.platform === "win32" ? "claude" : "claude-" + process.getuid();
+const maximumTemporaryPathBytes = 44;
 
 function validateGrants(roots) {
   if (roots.some(root => /[*?\[\]]/.test(root)))
@@ -17,8 +18,8 @@ function validateGrants(roots) {
 
 function temporaryDirectory(roots) {
   // The observed Unix backend switches Bash to a system-temp fallback above
-  // 44 characters. Refuse when no granted root avoids that implicit expansion.
-  const candidates = roots.filter(root => process.platform === "win32" || Buffer.byteLength(path.join(root, temporaryName())) <= 44);
+  // 44 bytes. Refuse when no granted root avoids that implicit expansion.
+  const candidates = roots.filter(root => process.platform === "win32" || Buffer.byteLength(path.join(root, temporaryName())) <= maximumTemporaryPathBytes);
   candidates.sort((a, b) => a.length - b.length);
   if (!candidates.length) throw new Error("Claude requires a short pinned temporary directory; grant a short scratch path and retry");
   return candidates[0];

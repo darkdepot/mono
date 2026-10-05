@@ -49,7 +49,8 @@ process.stdin.on("end", () => {
   const mode = input.startsWith("{") ? JSON.parse(input).mode : "success";
   const session = value("--session-id") || value("--resume");
   fs.writeFileSync(path.join(process.cwd(), "observed.json"), JSON.stringify({args, input, envKeys: Object.keys(process.env),
-    tmpdir:process.env.TMPDIR, claudeTmpdir:process.env.CLAUDE_CODE_TMPDIR}));
+    tmpdir:process.env.TMPDIR, claudeTmpdir:process.env.CLAUDE_CODE_TMPDIR,
+    tempPrepared:fs.statSync(path.join(process.env.CLAUDE_CODE_TMPDIR, "claude-" + process.getuid())).isDirectory()}));
   const emit = event => console.log(JSON.stringify(event));
   const run = () => {
   const init = {type:"system",subtype:"init",session_id:session,model:value("--model"),permissionMode:"dontAsk",
@@ -81,7 +82,7 @@ process.stdin.on("end", () => {
 `;
 
 async function fixture(run, { auth, config, missingTool = false, shortWindow = false } = {}) {
-  const scratch = fs.realpathSync(fs.mkdtempSync(path.join("/tmp", "cw-")));
+  const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "cw-")));
   const repo = path.join(scratch, "repo"), root = path.join(scratch, "control"), pack = path.join(scratch, "pack"),
     skills = path.join(scratch, "skills"), bin = path.join(scratch, "bin"), temp = path.join(scratch, "temp");
   const savedEnv = { ...process.env };
@@ -89,6 +90,14 @@ async function fixture(run, { auth, config, missingTool = false, shortWindow = f
   try {
     for (const dir of [repo, root, skills, bin, temp]) fs.mkdirSync(dir);
     copyPluginFixture(pack);
+    // The stub has no Unix socket path limit. Only its copied pack relaxes that
+    // named constant; pure cases below exercise the real production bound.
+    const adapterFile = path.join(pack, "scripts/transports/claude-cli.mjs");
+    const adapterSource = fs.readFileSync(adapterFile, "utf8");
+    const nativeLimit = "const maximumTemporaryPathBytes = 44;";
+    assert.ok(adapterSource.includes(nativeLimit));
+    fs.writeFileSync(adapterFile, adapterSource.replace(nativeLimit,
+      "const maximumTemporaryPathBytes = Number.MAX_SAFE_INTEGER;"));
     if (shortWindow) {
       const file = path.join(pack, "scripts/transports/claude-cli.mjs");
       fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("startupTimeoutMs: 120_000", "startupTimeoutMs: 250"));
@@ -164,19 +173,22 @@ test("managed Claude launch and resume use pinned identity, rights, and credenti
     assert.ok(observed.envKeys.includes("USER"));
     assert.equal(observed.tmpdir, repo);
     assert.equal(observed.claudeTmpdir, repo);
+    assert.equal(observed.tempPrepared, true);
     assert.ok(entry.workerWritableRoots.includes(fs.realpathSync(observed.claudeTmpdir)));
-    assert.ok(Buffer.byteLength(path.join(observed.claudeTmpdir, "claude-" + process.getuid())) <= 44);
     assert.ok(fs.statSync(path.join(repo, "claude-" + process.getuid())).isDirectory());
     for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FIXTURE_GH_INPUT"])
       assert.equal(observed.envKeys.includes(key), false, key);
     // Let the detached fixture exit and release its process before resume.
     while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
     fs.writeFileSync(entry.settingsFile, "{}");
+    fs.rmSync(path.join(repo, "claude-" + process.getuid()), { recursive: true });
     write(request.config, { orchestration: { transport: "codex-cli" } });
     const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"success"}');
     await runtime.resumeWorker({ root, issue: request.issue, resumeFile });
     entry = registry()["MONO-999"];
     const resumed = JSON.parse(fs.readFileSync(path.join(repo, "observed.json")));
+    assert.equal(resumed.tempPrepared, true);
+    assert.equal(resumed.claudeTmpdir, repo);
     assert.ok(resumed.args.includes("--resume"));
     assert.ok(resumed.args.includes(launched.thread_id));
     assert.ok(resumed.args.includes(entry.model_launch.model_parameter));
@@ -192,6 +204,12 @@ test("Claude refuses long and multibyte temporary paths before an unpinned fallb
   assert.throws(() => adapter.temporaryDirectory(["/fixture/" + "x".repeat(60)]), /short pinned temporary/);
   assert.throws(() => adapter.temporaryDirectory(["/fixture/" + "é".repeat(20)]), /short pinned temporary/);
   assert.equal(adapter.temporaryDirectory(["/fixture/" + "x".repeat(60), "/fixture/temp"]), "/fixture/temp");
+  assert.equal(adapter.temporaryDirectory(["/fixture/temp", "/fit", "/fixture/short"]), "/fit");
+  const name = "claude-" + process.getuid();
+  const boundary = "/" + "x".repeat(44 - Buffer.byteLength("/" + name) - 1);
+  assert.equal(Buffer.byteLength(path.join(boundary, name)), 44);
+  assert.equal(adapter.temporaryDirectory([boundary]), boundary);
+  assert.throws(() => adapter.temporaryDirectory([boundary + "x"]), /grant a short scratch path and retry/);
 });
 
 test("Claude refuses write paths that the shell sandbox would interpret as globs", () => {
@@ -208,6 +226,17 @@ test("Claude internal temporary directory cannot follow a symlink outside pinned
     fs.symlinkSync(request.evidenceRoot, path.join(repo, "claude-" + process.getuid()));
     git("add", ".");
     git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "temporary symlink fixture");
+    request.base = git("rev-parse", "HEAD");
+    await assert.rejects(start("success"), /internal temporary directory/);
+    assert.deepEqual(registry(), {});
+  });
+});
+
+test("Claude refuses an unusable internal temporary path before launch", async () => {
+  await fixture(async ({ start, registry, repo, git, request }) => {
+    fs.writeFileSync(path.join(repo, "claude-" + process.getuid()), "occupied");
+    git("add", ".");
+    git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "unusable temporary fixture");
     request.base = git("rev-parse", "HEAD");
     await assert.rejects(start("success"), /internal temporary directory/);
     assert.deepEqual(registry(), {});
