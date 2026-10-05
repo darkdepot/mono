@@ -60,7 +60,7 @@ export function readingPaths(text) {
 
 export function measureReadBudget(root) {
   root = fs.realpathSync(root);
-  const layout = packLayout(root), installed = layout.legacy;
+  const layout = packLayout(root);
   const fileFor = name => layout.file(name);
   const normalize = (reference, from) => {
     if (/^mono-[^/]+\/SKILL\.md$/.test(reference)) reference = `skills/${reference}`;
@@ -74,9 +74,7 @@ export function measureReadBudget(root) {
       const actual = fs.realpathSync(absolute);
       if (actual !== root && !actual.startsWith(root + path.sep)) throw new Error(`${from}: reading input escapes root: ${reference}`);
       const canonical = path.relative(root, actual).split(path.sep).join("/");
-      if (!installed) return canonical;
-      if (canonical.endsWith("/SKILL.md")) return `skills/${canonical}`;
-      return canonical.replace(/^mono-implement\//, "");
+      return canonical;
     }
     throw new Error(`${from}: reading input escapes corpus: ${reference}`);
   };
@@ -108,7 +106,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(self
       if (arg === "--root" && process.argv[i + 1]) root = path.resolve(process.argv[++i]);
       else if (arg === "--json") json = true;
       else if (arg === "--help" || arg === "-h") {
-        console.log("Usage: node scripts/read-budget.mjs [--root <checkout-or-installed-skills-root>] [--json]");
+        console.log("Usage: node scripts/read-budget.mjs [--root <pack-root>] [--json]");
         process.exit(0);
       } else throw new Error(`Unknown or incomplete argument: ${arg}`);
     }

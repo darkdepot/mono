@@ -48,8 +48,8 @@ async function prepareDispatch(args) {
   const config = readJson(args.config), settings = config.orchestration?.dispatch ?? {};
   const repo = path.dirname(path.dirname(args.config));
   const layout = packLayout(runtimePackRoot()), packRoot = layout.root;
-  const skillsRoot = args["skills-root"] ?? (layout.legacy ? packRoot : path.join(os.homedir(), '.codex/skills'));
-  const lock = layout.lock, installed = layout.identity();
+  const skillsRoot = args["skills-root"] ?? path.join(os.homedir(), '.codex/skills');
+  const installed = layout.identity();
   let body = read(args.snapshot, `issue-${issue}.md`), approval = read(args.snapshot, "approval.md");
   const issueOnly = fs.existsSync(path.join(args.snapshot, "issue-only.json"));
   const lane = issueOnly ? readJson(path.join(args.snapshot, "issue-only.json")) : null;
@@ -105,7 +105,7 @@ async function prepareDispatch(args) {
   const output = path.join(args.root, "dispatch", `${issue}-a${attempt}`);
   fs.mkdirSync(output, { recursive: true });
   const gateFile = path.join(output, "start-gate.json"), spawnFile = path.join(output, "spawn.json"), pinsFile = path.join(output, "pins.json"), dispatchFile = path.join(output, "dispatch.md"), movesFile = path.join(output, "moves.json");
-  const gate = { worktree, branch, base, packRoot, skillsRoot, ...(lock ? { lock } : {}), packVersion: installed.packVersion, sourceCommit: installed.sourceCommit, surfaceRevision: installed.surfaceRevision };
+  const gate = { worktree, branch, base, packRoot, skillsRoot, packVersion: installed.packVersion, sourceCommit: installed.sourceCommit, surfaceRevision: installed.surfaceRevision };
   const modelFile = path.join(output, "model-request.json"); atomicJson(modelFile, { ...gate, role });
   const modelRoutes = JSON.parse(run("spawn.mjs", ["--pins", modelFile]));
   const pins = { ...gate, release, modelRoutes, product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
@@ -129,7 +129,7 @@ async function prepareDispatch(args) {
     writable_roots: extras, workerWritableRoots: roots, gates, lifecycle_moves: moves, config: args.config, product_name: product, handshake, profile,
     pins: { file: pinsFile, digest: pinsDigest }, pinsVersion: 0, risk, critical, afk, openDecisions };
   atomicJson(spawnFile, request);
-  const identityCommand = `node ${q(path.join(directory, "../verify-pack-state.mjs"))} identity ${lock ? `--lock ${q(lock)}` : `--pack-root ${q(packRoot)}`} --pack-version ${q(installed.packVersion)}${installed.sourceCommit ? ` --source-commit ${q(installed.sourceCommit)}` : ""} --surface-revision ${q(installed.surfaceRevision)}`;
+  const identityCommand = `node ${q(path.join(directory, "../verify-pack-state.mjs"))} identity --pack-root ${q(packRoot)} --pack-version ${q(installed.packVersion)}${installed.sourceCommit ? ` --source-commit ${q(installed.sourceCommit)}` : ""} --surface-revision ${q(installed.surfaceRevision)}`;
   const ack = path.join(args.root, "reports", `${issue}-gate-ack-a${attempt}.json`);
   const fallbackAck = path.join(worktree, ".orchestrator", `${issue}-gate-ack-a${attempt}.json`);
   const waitCommand = location => `node ${q(path.join(directory, "../delivery-state.mjs"))} wait-ack --root ${q(args.root)} --issue ${q(issue)} --attempt ${q(attempt)} --ack ${q(location)} --moves ${q(movesFile)} --config ${q(args.config)}`;

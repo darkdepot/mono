@@ -8,33 +8,25 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function usage(exitCode = 2) {
-  console.error(
-    "Usage: node scripts/verify.mjs [--install-check] [--help|-h]"
-  );
+  console.error("Usage: node scripts/verify.mjs [--help|-h]");
   console.error("");
   console.error("Options:");
-  console.error("  --install-check  Also run node scripts/install-local.mjs --check");
-  console.error("                   (machine-specific; only valid on maintainer machine)");
   console.error("  --help, -h       Show this help and exit");
   process.exit(exitCode);
 }
 
 function parseArgs(argv) {
-  const args = { installCheck: false };
   for (const arg of argv) {
-    if (arg === "--install-check") {
-      args.installCheck = true;
-    } else if (arg === "--help" || arg === "-h") {
+    if (arg === "--help" || arg === "-h") {
       usage(0);
     } else {
       console.error(`Unknown argument: ${arg}`);
       usage();
     }
   }
-  return args;
 }
 
-const args = parseArgs(process.argv.slice(2));
+parseArgs(process.argv.slice(2));
 
 // In CI (GITHUB_BASE_REF set, base ref fetched) the working tree is clean, so a
 // bare `git diff --check` is a no-op; check the committed PR range instead.
@@ -54,7 +46,6 @@ function whitespaceCheckArgs() {
 const whitespaceArgs = whitespaceCheckArgs();
 const steps = [
   { label: `git ${whitespaceArgs.join(" ")}`, cmd: "git", cmdArgs: whitespaceArgs },
-  { label: "node --check scripts/install-local.mjs", cmd: "node", cmdArgs: ["--check", "scripts/install-local.mjs"] },
   { label: "node --check scripts/project-config.mjs", cmd: "node", cmdArgs: ["--check", "scripts/project-config.mjs"] },
   { label: "node --check scripts/lint-mono-artifacts.mjs", cmd: "node", cmdArgs: ["--check", "scripts/lint-mono-artifacts.mjs"] },
   { label: "node --check scripts/validate-workflow.mjs", cmd: "node", cmdArgs: ["--check", "scripts/validate-workflow.mjs"] },
@@ -65,10 +56,6 @@ const steps = [
   { label: "node --test delivery runtime fixtures", cmd: "node", cmdArgs: ["--test", "--test-concurrency=1", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs", "scripts/landing-drain.test.mjs", "scripts/landing-plan.test.mjs", "scripts/project-config.test.mjs", "scripts/gate.test.mjs", "scripts/landing.test.mjs", "scripts/delivery-state.test.mjs", "scripts/delivery-runtime.test.mjs", "scripts/orchestrator-commands.test.mjs", "scripts/decisions.test.mjs", "scripts/sandbox-contract.test.mjs", "scripts/plugin-layout.test.mjs"] },
   { label: "node scripts/validate-workflow.mjs", cmd: "node", cmdArgs: ["scripts/validate-workflow.mjs"] },
 ];
-
-if (args.installCheck) {
-  steps.push({ label: "node scripts/install-local.mjs --check", cmd: "node", cmdArgs: ["scripts/install-local.mjs", "--check"] });
-}
 
 const failures = [];
 

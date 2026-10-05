@@ -57,7 +57,7 @@ A gate proves only its stated boundary. `mono-review` returns quality/risk findi
 | Gate | What it proves |
 | --- | --- |
 | Package review and approval | The draft was reviewed at the required risk level before writing, and the owner accepted the package; implementation still needs start authorization |
-| Pack identity / `gate.mjs start` | Installed pack is compatible under [the versioning rule](references/versioning.md#local-lockfile); branch, base and clean worktree match the start request |
+| Pack identity / `gate.mjs start` | Installed pack is compatible under [the versioning rule](references/install.md#compatibility); branch, base and clean worktree match the start request |
 | Start handshake / delivery check | The worker checked snapshot, approvals, resolved findings and context seam; the orchestrator applied/read back lifecycle changes; the amended package is ready for code |
 | `gate.mjs preflight` | Current committed head/merge-base has successful verification and authentic clean review evidence on the required model/effort route; missing, stale, fabricated or incomplete evidence fails |
 | Pre-ship review and check | Diff matches the Issue, readiness is recoverable, required review is complete, artifacts are current and accepted drift is synchronized |
@@ -135,7 +135,7 @@ Mono pilots product `models` overrides in [config](.agents/mono-workflow.config.
 
 In orchestrated mode, use the configured transport or documented runtime detection. Codex CLI supports one resumable worker thread per Issue. The registry, mailbox and append-only ledger support recovery; write only observed events with their actual recording times. The installed watcher reports liveness and phase events. `control.json.halt` stops new launches/resumes without interrupting running workers; persistent attempt limits bound retries. Keep compaction wiring outside product repos and carry exact next action, pending obligations and decisions through compaction.
 
-Launch and resume derive the worktree-specific and common Git directories from the requested worktree, canonicalize them, and require the complete effective grant set to match the dispatch pin exactly. A regular checkout contributes one Git directory. Git environment overrides cannot redirect these reads or the capsule HEAD; worker environment settings remain intact. The evidence, installed skills, autoreview helper and orchestrator paths remain guarded. Missing or extra pinned roots refuse launch. Compatible pack updates allow resume under [the versioning rule](references/versioning.md#local-lockfile); incompatible updates require a new attempt. Reports retain the task's original identity, and the watcher emits `phase-rejected` with the task and reason when a phase report differs.
+Launch and resume derive the worktree-specific and common Git directories from the requested worktree, canonicalize them, and require the complete effective grant set to match the dispatch pin exactly. A regular checkout contributes one Git directory. Git environment overrides cannot redirect these reads or the capsule HEAD; worker environment settings remain intact. The evidence, installed skills, autoreview helper and orchestrator paths remain guarded. Missing or extra pinned roots refuse launch. Compatible pack updates allow resume under [the versioning rule](references/install.md#compatibility); incompatible updates require a new attempt. Reports retain the task's original identity, and the watcher emits `phase-rejected` with the task and reason when a phase report differs.
 
 Run `node --test scripts/worktree-sandbox.test.mjs` on the orchestrator host at deploy for the paired Git permission proof. It reports `deferred` inside a nested sandbox; outside one, missing Codex or sandbox startup failure fails the probe. This host check runs separately from the portable `verify.mjs` suite.
 
@@ -196,7 +196,7 @@ Collections retain validation and usage lines in bounded streaming output before
 Sum non-overlapping per-turn usage across every attempt. Cached input is part of input, not another amount to add. The static worker reading budget is a separate measure: one union of mandatory, conditional and nested readings, shared files counted once, bounded at **99,882 bytes** with bytes/4 shown as an approximation. README is outside the worker reading list. Explanatory rationale stays outside that list and adds no gates.
 
 ```bash
-node '<skills-root>/.mono-agent-workflow/scripts/wave-cost.mjs' <ISSUE-KEY>
+node '<pack-root>/scripts/wave-cost.mjs' <ISSUE-KEY>
 node scripts/read-budget.mjs
 ```
 
@@ -222,8 +222,8 @@ released `VERSION` whose tag points to the verified landing tip T. Claude Code
 uses the repository's main branch; Codex pins the marketplace to that version tag.
 Follow
 [source verification and update conditions](references/install.md#plugin-updates)
-for each installation. Existing local-installer users
-first follow [the migration procedure](#migrate-from-the-local-installer).
+for each installation. For machines moving to plugins, follow
+[the migration procedure](#migrate-from-the-local-installer).
 
 ```bash
 claude plugin marketplace add darkdepot/mono
@@ -287,16 +287,14 @@ To try the checkout without installing, launch Claude from the repository with
 These sessions do not change the installed pack.
 See [Claude's manifest reference](https://code.claude.com/docs/en/plugins-reference)
 and [OpenAI's package documentation](https://developers.openai.com/plugins/build/plugins).
-The existing installer below remains supported until the machine migration.
 
 ## Migrate From the Local Installer
 
 Migration is one machine-wide installation shared by all products. The product
 performing it installs a wave that ends with the approved migration release;
-the owner authorizes the migration in that release task. The legacy installer
-remains in that release for rollback. Do not install intervening pack changes
+the owner authorizes the migration in that release task. The first migration release `v0.23.0` contains the former installer for rollback. Do not install intervening pack changes
 between this migration and the project's final release.
-After migration, the pack's deploy live pass uses [plugin installation proof](references/landing.md#plugin-installation-proof) rather than the legacy installer check.
+After migration, the pack's deploy live pass uses [plugin installation proof](references/landing.md#plugin-installation-proof) and any other machine state blocks closeout.
 
 1. **Halt launches in every product.** Each product's own orchestrator pauses
    dispatch/resume and keeps it paused through migration and installation
@@ -391,48 +389,12 @@ After migration, the pack's deploy live pass uses [plugin installation proof](re
 
 If migration stops after removing legacy copies, keep launches halted. The
 release's rollback is to reinstall with the legacy installer from the main
-repository checkout set to the **first migration release commit**, where it
+repository checkout set to the **first migration release commit**, resolved from tag `v0.23.0`, where it
 still exists: the installer requires a Git checkout, so do not run it from the
 plugin cache. Restore the previous
 `workflows.deploy` value through its config owner. Restart sessions and verify
 that installation before resuming. The other product's config and state remain
 its own orchestrator's responsibility.
-
-## Install Locally
-
-Prerequisites: a checkout of this repository, Node.js for its scripts, Git, the relevant agent runtime and Linear access for the orchestrator/interactive owner stages, GitHub access through `gh`, and an installed external `autoreview` skill/helper. Mono does not vendor that helper; missing mandatory review support blocks readiness. Use the policy model and [canonical effort routes](references/autoreview-routing.md#canonical-routes).
-
-Install or update from the upstream checkout:
-
-```bash
-node scripts/install-local.mjs --remove-stale
-node scripts/install-local.mjs --check
-```
-
-The default is `--all-roots`: discover previously installed roots using `.mono-agent-workflow.lock.json` in `~/.codex/skills`, `~/.claude/skills` and recorded roots, then sync/check each root. A fresh machine falls back to `~/.codex/skills`. Migration also recognizes the previous-brand lock and generated `linear-*` files; remove only installer-owned legacy payloads.
-
-Each root receives generated `mono-*/SKILL.md`, adjacent `AGENTS.md`, references and templates, runtime scripts under `.mono-agent-workflow/scripts/`, this README at `.mono-agent-workflow/README.md`, and `.mono-agent-workflow.lock.json`. The lock records version, immutable source commit, surface revision, dirty flag and installed hashes, including `assets.readme`. Checks reject missing, edited, stale or unexpected payloads and invalid lock entries. Sync replaces the private runtime directory, removing retired files. Edit the upstream pack, never generated skills.
-
-The installed runtime includes `orchestrator/dispatch.mjs`, `accept.mjs` and
-`linear-adapter.mjs` plus their extraction/state modules. Run their --help from
-that installed directory. --skills-root is available for isolated scratch command
-tests. Commands and orchestrator documentation add no worker reading edges;
-the unchanged clean installed worker corpus is 99,756 bytes.
-
-For a breaking skill-surface revision:
-
-```bash
-node scripts/install-local.mjs --breaking
-```
-
-Breaking install requires idle orchestrator state and empty worker registries. It coordinates roots under the global install lock, freezes the orchestrator tree, stages and checks all roots transactionally, rolls back on failure, and retains recovery data on incomplete recovery. Restart open agent sessions after cut-over. Verify the installing checkout HEAD equals the merge SHA from the PR record before a deploy install; an old or divergent checkout is a deploy blocker. See [installation](references/install.md#breaking-surface-changes) and [versioning](references/versioning.md#local-lockfile).
-
-Use an explicit root and isolated state only for scratch tests or an alternate runtime; never point a test at real installed roots:
-
-```bash
-MONO_WORKFLOW_STATE_ROOT=/tmp/mono-test-state node scripts/install-local.mjs --skills-root /tmp/mono-test-skills
-MONO_WORKFLOW_STATE_ROOT=/tmp/mono-test-state node scripts/install-local.mjs --skills-root /tmp/mono-test-skills --check
-```
 
 ## Project Config
 
@@ -474,7 +436,13 @@ builds provider environment from the route and keeps the existing two invocation
 sealed-head requirement and all certification checks. No provider key value belongs
 in config, dispatch, registry or receipts. Resumes keep their original pins.
 
-Set `deployApproval` to `always` (default), `risky-only` (approval for standard/deep/risky and unknown risk; only tiny proceeds without asking), or `never`. Approval binds the exact PR/head. Configure `orchestration.transport` and `maxParallelWorkers` (default 3) when needed. Delivery settings default to a 900-second confirmation timeout, 120-second quiet interval, 2,400-second evidence limit, 10-second polling and three attempts. This pack keeps its own issue-only lane disabled and stores no owner ID in the repository; consumers enable the lane explicitly with `issueOnlyLane.enabled` and the canonical approving `ownerPrincipal`. See [Project Policy](references/install.md#project-policy) for the full config contract.
+Set `deployApproval` to `always` (default), `risky-only` (approval for standard/deep/risky and unknown risk; only tiny proceeds without asking), or `never`. Approval binds the exact PR/head. Configure `orchestration.transport` and `maxParallelWorkers` (default 3) when needed. Delivery settings default to a 900-second confirmation timeout, 120-second quiet interval, 2,400-second evidence limit, 10-second polling and three attempts. This pack keeps its own issue-only lane disabled and stores no owner ID in the repository; consumers enable the lane explicitly with `issueOnlyLane.enabled` and the canonical approving `ownerPrincipal`. Plugin compatibility and helper policy: [guide](references/install.md).
+
+The optional `workflows."qa"` setting selects live-sweep browser automation;
+absent or null uses the available runtime tool. `qaAuth` accepts `cookie-import`,
+`test-account` or `owner-session`; the latter requires explicit owner involvement.
+Absent authentication covers unauthenticated surfaces only. Keep all product
+config fields in the Project Config section above.
 
 ## Landing
 
@@ -538,7 +506,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-16.** Present the Project brief, PRD, Tech Spec and Issue slicing as one package with a completed review verdict, so one decision does not become a stream of questions — [Pre-write package review](references/orchestration.md#pre-write-package-review).
 - **K-17.** Have an independent cross-vendor Second Voice review the package draft before its first Linear write, so author and reviewer do not share the same blind spots — [Second Voice](references/orchestration.md#second-voice).
 - **K-18.** Decide repository-, Linear- and config-derived implementation details, document structure and risk classification autonomously, but ask about scope, slicing, risk acceptance and design, so routine questions do not consume owner time or seize owner authority — [Autonomy Defaults](references/questioning.md#autonomy-defaults).
-- **K-19.** Apply the project's deploy-approval policy (always, all except tiny, or never) to the exact code head, so yesterday's approval cannot authorize different code — [Project Policy](references/install.md#project-policy).
+- **K-19.** Apply the project's deploy-approval policy (always, all except tiny, or never) to the exact code head, so yesterday's approval cannot authorize different code — [Project Config](README.md#project-config).
 - **K-20.** Grant issue-only delivery only when all nine conditions hold and the owner approves the exact Issue fingerprint, falling back to Project-first on doubt, so the shortcut cannot bypass its boundary — [Nine eligibility conditions](skills/mono-issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) and [Trust boundary](references/issue-only-lane.md#trust-boundary).
 - **K-21.** Invalidate approval whenever an approved issue-only body changes and obtain new review and fingerprint approval, so the approved text remains the executed contract — [Renewal recovery](skills/mono-issue/SKILL.md#renewal-recovery).
 - **K-22.** Run code autoreview at every risk class using the policy's autoreview model and class-routed effort from low through the highest escalated route, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Canonical Routes](references/autoreview-routing.md#canonical-routes).
@@ -583,7 +551,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 | Runtime and worker recovery | [Orchestration](references/orchestration.md), [worker contract](references/worker-contract.md), [dispatch](templates/orchestrator-dispatch.md), [report](templates/orchestrator-report.md), [compaction](templates/compact-instructions.md) |
 | Linear artifact templates | [Project](templates/project.md), [PRD](templates/prd.md), [Tech Spec](templates/tech-spec.md), [Issue](templates/issue.md), [project updates](templates/project-update.md); templates define form, contracts define obligations |
 | Review, check and delivery output | [Review](templates/review-output.md), [check](templates/check-output.md), [ship](templates/ship-output.md), [interactive ship status](templates/ship-status-ux.md), [deploy](templates/deploy-output.md); examples are placeholders, not evidence |
-| Installation and policy | [Install](references/install.md), [versioning](references/versioning.md), [models](references/model-policy.md), [autoreview routing](references/autoreview-routing.md) |
+| Installation and policy | [Install](references/install.md), [versioning](references/install.md), [models](references/model-policy.md), [autoreview routing](references/autoreview-routing.md) |
 | Rationale outside worker reading | [Audience](references/rationale/audience.md), [review](references/rationale/review.md), [output](references/rationale/output.md), [delivery](references/rationale/delivery.md); explanation adds no obligations |
 | Worked examples and history | [Consumer dogfood](examples/consumer-dogfood.md), [profile regression](examples/profile-workbench-regression.md), [CHANGELOG](CHANGELOG.md) |
 
@@ -605,7 +573,7 @@ Run before completing a change:
 node scripts/verify.mjs
 ```
 
-The entry point includes `git diff --check`, syntax checks, artifact/workflow checks, scratch installation and runtime fixtures. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
+The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
 Use focused checks while editing:
 
@@ -616,4 +584,4 @@ node scripts/read-budget.mjs
 node scripts/lint-mono-artifacts.mjs
 ```
 
-On a maintainer machine only, `node scripts/verify.mjs --install-check` additionally checks real installed roots. Runtime tests use scratch roots; the real sandbox-boundary test runs outside a worker sandbox and reports an explicit skip when nested sandboxing prevents it. Installation, live production QA, deploy and owner acceptance are separate evidence boundaries, never implied by a local green check.
+Runtime tests use scratch plugin folders; the real sandbox-boundary test runs outside a worker sandbox and reports an explicit skip when nested sandboxing prevents it. Installation, live production QA, deploy and owner acceptance are separate evidence boundaries, never implied by a local green check.

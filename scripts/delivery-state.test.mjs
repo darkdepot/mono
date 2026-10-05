@@ -1,3 +1,4 @@
+import { copyPluginFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -305,15 +306,15 @@ test('scratch wait-ack CLI scenario refuses foreign digest, accepts own read-bac
   const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const skills = path.join(root, 'skills'), state = path.join(root, 'state');
   const put = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(value)); };
-  const env = { ...process.env, MONO_WORKFLOW_STATE_ROOT: path.join(root, 'install-state'), MONO_WORKFLOW_KNOWN_ROOTS: skills };
+  const env = { ...process.env, };
   const run = args => spawnSync(process.execPath, args, { cwd: checkout, env, encoding: 'utf8' });
   try {
-    const installed = run(['scripts/install-local.mjs', '--skills-root', skills]); assert.equal(installed.status, 0, installed.stderr + installed.stdout);
+    copyPluginFixture(skills);
     const issue = 'MONO-993', ack = path.join(state, 'reports', `${issue}-gate-ack-a1.json`), config = path.join(root, 'config.json'), moves = path.join(root, 'moves.json');
     const own = { issue, phase: 'gate', status: 'gates-passed', gates: [{ gate: 'identity', status: 'pass', evidence: 'fixture' }] };
     put(ack, own); put(moves, []); put(config, { orchestration: { delivery: { ackWaitSec: 0.3, pollSec: 0.01 } } });
     const consumed = path.join(state, 'consumed', `${issue}-gate-ack-a1.json`);
-    const command = [path.join(skills, '.mono-agent-workflow/scripts/delivery-state.mjs'), 'wait-ack', '--root', state, '--issue', issue, '--attempt', '1', '--ack', ack, '--moves', moves, '--config', config];
+    const command = [path.join(skills, 'scripts/delivery-state.mjs'), 'wait-ack', '--root', state, '--issue', issue, '--attempt', '1', '--ack', ack, '--moves', moves, '--config', config];
     const canonical = value => value && typeof value === 'object' ? Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : `{${Object.keys(value).sort().map(k=>`${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}` : JSON.stringify(value);
     const digest = value => createHash('sha256').update(canonical(value)).digest('hex');
     put(consumed, { issue, attempt: 1, outcome: 'applied', ackDigest: '0'.repeat(64), readback: [] });

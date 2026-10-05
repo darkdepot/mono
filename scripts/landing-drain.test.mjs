@@ -1,3 +1,4 @@
+import { copyPluginFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -52,7 +53,7 @@ test('plugin update lists unknown entries and still checks later products', t =>
     assert.deepEqual(updateBlockers(folder, products).unknown, [{ product: 'a-product', key: 'foreign' }]);
     [unknownFile, knownFile].forEach((file, index) => assert.deepEqual(fs.readFileSync(file), before[index]));
   }
-  for (const field of ['packRoot', 'lock', 'skillsRoot']) {
+  for (const field of ['packRoot']) {
     for (const value of ['relative/path', '', null, 42]) {
       atomicJson(unknownFile, { foreign: { [field]: value } });
       const result = run();
@@ -449,8 +450,8 @@ test("landing U7 resuming a landed release cannot bypass another active release"
   const f = fixture(t), priorPath = process.env.PATH; process.env.PATH = f.env.PATH;
   t.after(() => { process.env.PATH = priorPath; });
   const skills = path.join(f.scratch, "skills"); fs.mkdirSync(skills); fs.mkdirSync(path.join(f.scratch, "evidence"));
-  f.entry.lock = path.join(skills, "pack.json"); atomicJson(f.entry.lock, f.entry);
-  f.entry.model_launch = { model_parameter: "fixture", effort_parameter: "high" }; f.entry.model_policy = { role: "worker-default" };
+  copyPluginFixture(skills); f.entry.packRoot = skills; f.entry.skillsRoot = skills;
+  f.entry.surfaceRevision = 4; f.entry.model_launch = { model_parameter: "fixture", effort_parameter: "high" }; f.entry.model_policy = { role: "worker-default" };
   f.entry.log = path.join(f.root, "logs/fixture.jsonl"); fs.mkdirSync(path.dirname(f.entry.log)); fs.writeFileSync(f.entry.log, "");
   f.entry.capsule = f.report.capsule;
   f.entry.writable_roots = [f.repo, path.join(f.repo, ".git"), path.join(f.root, "reports")].sort(); f.entry.workerWritableRoots = f.entry.writable_roots;
@@ -465,13 +466,11 @@ test("landing U7 resuming a landed release cannot bypass another active release"
   launched = await resumeWorker({ root: f.root, issue: f.issue, resumeFile: prompt }); assert.ok(launched.pid > 0); process.kill(launched.pid, 0);
 });
 
-test("landing U7 installed layout runs record, status, verify and close outside source checkout", t => {
+test("landing U7 plugin layout runs record, status, verify and close outside source checkout", t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-drain-install-")); t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
-  const skills = path.join(scratch, "skills"), installed = path.join(skills, ".mono-agent-workflow/scripts/orchestrator/landing-drain.mjs");
-  const install = spawnSync(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills], { encoding: "utf8",
-    env: { ...process.env, MONO_WORKFLOW_STATE_ROOT: path.join(scratch, "state"), MONO_WORKFLOW_KNOWN_ROOTS: skills } });
-  assert.equal(install.status, 0, install.stdout + install.stderr);
-  assert.equal(fs.existsSync(installed), true, "installer must register drain and its imports");
+  const skills = path.join(scratch, "skills"), installed = path.join(skills, "scripts/orchestrator/landing-drain.mjs");
+  copyPluginFixture(skills);
+  assert.equal(fs.existsSync(installed), true, "plugin contains drain and its imports");
   const f = fixture(t, installed);
   let r = f.run("record", ["--issue", f.issue, "--attempt", "1", "--pr", "901"]); assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(f.run("status").status, 0);

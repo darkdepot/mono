@@ -1,3 +1,5 @@
+import { packLayout } from './runtime.mjs';
+import { copyPluginFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import crypto from "node:crypto";
@@ -27,17 +29,16 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-delivery-installed-"));
   const skills = path.join(root, "skills"), state = path.join(root, "orchestrator"), repo = path.join(root, "repo"), bin = path.join(root, "bin");
   const mailbox = path.join(state, "reports");
-  const env = { ...process.env, MONO_WORKFLOW_STATE_ROOT: path.join(root, "install-state"), MONO_WORKFLOW_KNOWN_ROOTS: skills, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
   let livePid;
   const oldPath = process.env.PATH;
   try {
-    pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills], checkout, env));
-    pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills, "--check"], checkout, env));
-    const runtime = path.join(skills, ".mono-agent-workflow/scripts");
+    copyPluginFixture(skills);
+    const runtime = path.join(skills, "scripts");
     for (const script of ["gate.mjs", "delivery-state.mjs", "orchestrator/spawn.mjs", "orchestrator/resume.mjs", "orchestrator/consume-gate-ack.mjs"]) {
       pass(run(process.execPath, [path.join(runtime, script), "--help"], root, env));
     }
-    assert.ok(fs.existsSync(path.join(skills, "mono-deliver/SKILL.md")));
+    assert.ok(fs.existsSync(path.join(skills, "skills/mono-deliver/SKILL.md")));
     const budget = jsonFromRun(pass(run(process.execPath, [path.join(runtime, "read-budget.mjs"), "--json"], root, env)));
     assert.ok(budget.within_ceiling && budget.ceiling_bytes === 99_882);
     assert.ok(budget.files.some(file => file.path === "skills/mono-deliver/SKILL.md"));
@@ -46,22 +47,22 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     write(path.join(repo, "tracked.txt"), "tracked\n"); pass(run("git", ["add", "tracked.txt"], repo, env));
     pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture"], repo, env));
     const head = pass(run("git", ["rev-parse", "HEAD"], repo, env)).stdout.trim();
-    const lock = path.join(skills, ".mono-agent-workflow.lock.json"), pins = json(lock);
-    const baseRequest = { root: state, issue: "MONO-999", worktree: repo, branch: "delivery", base: head, lock,
-      packVersion: pins.packVersion, sourceCommit: pins.sourceCommit, surfaceRevision: pins.surfaceRevision };
+    const pins = packLayout(skills).identity();
+    const baseRequest = { root: state, issue: "MONO-999", worktree: repo, branch: "delivery", base: head, packRoot: skills, skillsRoot: skills,
+      packVersion: pins.packVersion, ...(pins.sourceCommit ? { sourceCommit: pins.sourceCommit } : {}), surfaceRevision: pins.surfaceRevision };
     const fsmonitor = path.join(root, "fsmonitor"), monitorMarker = path.join(root, "fsmonitor-ran");
     write(fsmonitor, `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(monitorMarker)},'unsafe git invocation');`);
     fs.chmodSync(fsmonitor, 0o700);
     pass(run("git", ["config", "core.fsmonitor", fsmonitor], repo, env));
     const gateRequest = path.join(root, "gate.json"); write(gateRequest, baseRequest);
     pass(run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, env));
-    write(lock, { ...pins, packVersion: "99.0.0", sourceCommit: "b".repeat(40) });
+    write(path.join(skills, "VERSION"), "99.0.0\n");
     pass(run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, env));
-    write(lock, { ...pins, surfaceRevision: pins.surfaceRevision + 1 });
+    write(gateRequest, { ...baseRequest, surfaceRevision: pins.surfaceRevision + 1 });
     const incompatibleStart = run(process.execPath, [path.join(runtime, "gate.mjs"), "start", "--request", gateRequest], root, env);
     assert.equal(incompatibleStart.status, 1);
     assert.match(incompatibleStart.stdout + incompatibleStart.stderr, /surfaceRevision.*new attempt/);
-    write(lock, pins);
+    write(gateRequest, baseRequest);
     const globalConfig = path.join(root, "global-gitconfig"), globalIgnore = path.join(root, "global-ignore");
     write(globalIgnore, "global-only.tmp\n");
     write(globalConfig, `[core]\nexcludesFile = ${JSON.stringify(globalIgnore)}\nfsmonitor = ${JSON.stringify(fsmonitor)}\n`);
@@ -653,7 +654,7 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     const request = { ...baseRequest, evidenceRoot: preflight.evidenceRoot, workerWritableRoots: [repo, mailbox, path.join(repo, ".git")], role: "worker-default", dispatchFile, writable_roots: [repo], gates: ["identity", "context"], lifecycle_moves: [] };
     process.env.PATH = env.PATH;
     const { spawnWorker, resumeWorker } = await import(pathToFileURL(path.join(runtime, "orchestrator/launch.mjs")));
-    const policyFile = path.join(skills, "mono-implement/references/model-policy.md");
+    const policyFile = path.join(skills, "references/model-policy.md");
     const originalPolicy = fs.readFileSync(policyFile, "utf8");
     write(policyFile, originalPolicy.replace(/(\| `worker-default` \| )`[^`]+` \| `[^`]+`/, '$1`fixture-model` | `medium`'));
     await assert.rejects(spawnWorker({ ...request, writable_roots: [root], workerWritableRoots: [root, repo, mailbox] }), /evidenceRoot must be outside/);
@@ -782,15 +783,15 @@ test("launch and resume derive exact Git grants from the requested worktree", as
   const skills = path.join(root, "skills"), state = path.join(root, "state"), main = path.join(root, "main");
   const worktree = path.join(root, "linked"), mailbox = path.join(state, "reports"), bin = path.join(root, "bin");
   const common = path.join(main, ".git"), metadata = path.join(common, "worktrees/linked");
-  const env = { ...process.env, MONO_WORKFLOW_STATE_ROOT: path.join(root, "install-state"), MONO_WORKFLOW_KNOWN_ROOTS: skills };
+  const env = { ...process.env, };
   const oldEnv = { ...process.env };
   try {
-    pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills], checkout, env));
+    copyPluginFixture(skills);
     fs.mkdirSync(main); pass(run("git", ["init", "-b", "delivery"], main, env));
     pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", "base"], main, env));
     const head = pass(run("git", ["rev-parse", "HEAD"], main, env)).stdout.trim();
     pass(run("git", ["worktree", "add", "-b", "linked", worktree], main, env));
-    const lock = path.join(skills, ".mono-agent-workflow.lock.json"), pins = json(lock);
+    const pins = packLayout(skills).identity();
     const dispatchFile = path.join(root, "prompt.md"), capture = path.join(root, "starts.jsonl");
     write(dispatchFile, "fixture"); write(path.join(state, "control.json"), { state: "active", halt: false });
     write(path.join(state, "workers.json"), {}); fs.mkdirSync(mailbox);
@@ -799,10 +800,10 @@ const fs=require('node:fs');fs.appendFileSync(${JSON.stringify(capture)},JSON.st
 console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
 `); fs.chmodSync(path.join(bin, "codex"), 0o700);
     process.env.PATH = `${bin}:${process.env.PATH}`;
-    const { spawnWorker, resumeWorker } = await import(pathToFileURL(path.join(skills, ".mono-agent-workflow/scripts/orchestrator/launch.mjs")));
+    const { spawnWorker, resumeWorker } = await import(pathToFileURL(path.join(skills, "scripts/orchestrator/launch.mjs")));
     const expected = [worktree, mailbox, common, metadata].sort();
-    const request = { root: state, issue: "MONO-997", worktree, branch: "linked", base: head, lock,
-      packVersion: pins.packVersion, sourceCommit: pins.sourceCommit, surfaceRevision: pins.surfaceRevision,
+    const request = { root: state, issue: "MONO-997", worktree, branch: "linked", base: head, packRoot: skills, skillsRoot: skills,
+      packVersion: pins.packVersion, ...(pins.sourceCommit ? { sourceCommit: pins.sourceCommit } : {}), surfaceRevision: pins.surfaceRevision,
       evidenceRoot: path.join(root, "evidence"), workerWritableRoots: expected, writable_roots: [],
       role: "worker-default", dispatchFile, lifecycle_moves: [] };
     const starts = () => fs.existsSync(capture) ? fs.readFileSync(capture, "utf8").trim().split("\n").map(JSON.parse) : [];
@@ -840,11 +841,12 @@ console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
       await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, workerWritableRoots: badPin }), /effective write grants differ/);
       assert.equal(starts().length, 1);
     }
-    write(lock, { ...pins, surfaceRevision: pins.surfaceRevision + 1 });
+    const incompatible = json(path.join(state, "workers.json")); incompatible[request.issue].surfaceRevision += 1; write(path.join(state, "workers.json"), incompatible);
     await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [root] }), /surfaceRevision.*new attempt/);
     assert.equal(starts().length, 1);
-    write(lock, { ...pins, packVersion: "99.0.0", sourceCommit: "b".repeat(40) });
+    write(path.join(skills, "VERSION"), "99.0.0\n");
     const beforeResume = json(path.join(state, "workers.json"));
+    beforeResume[request.issue].surfaceRevision = pins.surfaceRevision;
     beforeResume[request.issue].writable_roots = [];
     write(path.join(state, "workers.json"), beforeResume);
     await resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile });
@@ -1165,8 +1167,8 @@ test('installed collectors seal configured engines and consume the same BASE rou
   const env={...process.env,MONO_WORKFLOW_STATE_ROOT:path.join(root,'install-state'),MONO_WORKFLOW_KNOWN_ROOTS:skills,
     PATH:bin+path.delimiter+process.env.PATH,GIT_AUTHOR_NAME:'Fixture',GIT_AUTHOR_EMAIL:'fixture@example.invalid',GIT_COMMITTER_NAME:'Fixture',GIT_COMMITTER_EMAIL:'fixture@example.invalid'};
   try {
-    pass(run(process.execPath,['scripts/install-local.mjs','--skills-root',skills],checkout,env));
-    const runtime=path.join(skills,'.mono-agent-workflow/scripts');
+    copyPluginFixture(skills);
+    const runtime=path.join(skills,'scripts');
     const {requiredPairings,resolveModelRoutes,canonical}=await import(pathToFileURL(path.join(runtime,'runtime.mjs')));
     write(path.join(bin,'codex'),`#!/usr/bin/env node
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path'),a=process.argv.slice(2);
@@ -1260,7 +1262,7 @@ test('wait-mode consumption verifies the live writer incarnation and outstanding
   const ack = { issue, phase: 'gate', status: 'gates-passed', gates: [{ gate: 'identity', status: 'pass', evidence: 'fixture' }] };
   const entry = { issue, stage: 'mono-deliver', attempt: 1, handshake: 'wait', pid: process.pid, procStart, thread_id: 'fixture-thread', log,
     worktree: path.join(root, 'repo'), gates: ['identity'], lifecycle_moves: [{ entity: 'issue', key: issue, from: 'Backlog', to: 'In Progress' }] };
-  const started = { type: 'item.started', item: { id: 'item_18', type: 'command_execution', command: `/bin/zsh -lc 'node /fixture/skills/.mono-agent-workflow/scripts/delivery-state.mjs wait-ack --root /fixture/state --issue ${issue} --attempt 1 --ack /fixture/ack.json --moves /fixture/moves.json'`, aggregated_output: '', exit_code: null, status: 'in_progress' } };
+  const started = { type: 'item.started', item: { id: 'item_18', type: 'command_execution', command: `/bin/zsh -lc 'node /fixture/skills/scripts/delivery-state.mjs wait-ack --root /fixture/state --issue ${issue} --attempt 1 --ack /fixture/ack.json --moves /fixture/moves.json'`, aggregated_output: '', exit_code: null, status: 'in_progress' } };
   const events = [{ type: 'thread.started', thread_id: entry.thread_id }, started, { type: 'item.completed', item: { id: 'item_19', type: 'agent_message', text: 'Waiting for gate-ack consumption.' } }];
   const setLog = list => write(log, list.map(e => JSON.stringify(e)).join('\n') + '\n');
   const request = { root, issue, attempt: 1, outcome: 'applied', readback: [{ moveDigest: digest(entry.lifecycle_moves[0]), evidence: { state: 'In Progress' } }] };
@@ -1303,14 +1305,14 @@ test('scratch short launch pins profile, handshake, pins digest, version and pro
   const { spawnWorker } = await import('./orchestrator/launch.mjs');
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-short-launch-')));
   const skills = path.join(root, 'skills'), state = path.join(root, 'state'), repo = path.join(root, 'repo'), bin = path.join(root, 'bin');
-  const env = { ...process.env, MONO_WORKFLOW_STATE_ROOT: path.join(root, 'install-state'), MONO_WORKFLOW_KNOWN_ROOTS: skills };
+  const env = { ...process.env, };
   const oldPath = process.env.PATH; let pid;
   try {
-    pass(run(process.execPath, ['scripts/install-local.mjs', '--skills-root', skills], checkout, env));
+    copyPluginFixture(skills);
     fs.mkdirSync(repo); pass(run('git', ['init', '-b', 'delivery'], repo, env));
     pass(run('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'base'], repo, env));
     const base = pass(run('git', ['rev-parse', 'HEAD'], repo, env)).stdout.trim();
-    const lock = path.join(skills, '.mono-agent-workflow.lock.json'), identity = json(lock);
+    const identity = packLayout(skills).identity();
     const dispatchFile = path.join(root, 'dispatch.md'), pinsFile = path.join(root, 'pins.json');
     write(dispatchFile, 'fixture'); write(pinsFile, { profile: 'short', handshake: 'wait' });
     const pins = { file: pinsFile, digest: crypto.createHash('sha256').update(fs.readFileSync(pinsFile)).digest('hex') };
@@ -1320,7 +1322,7 @@ test('scratch short launch pins profile, handshake, pins digest, version and pro
     write(path.join(bin, 'ps'), '#!/usr/bin/env node\nconsole.log("Mon Jan  1 00:00:00 2024");\n');
     for (const tool of ['codex', 'ps']) fs.chmodSync(path.join(bin, tool), 0o700);
     process.env.PATH = bin + path.delimiter + oldPath;
-    const request = { root: state, issue: 'MONO-993', worktree: repo, branch: 'delivery', base, lock, ...identity,
+    const request = { root: state, issue: 'MONO-993', worktree: repo, branch: 'delivery', base, packRoot: skills, skillsRoot: skills, ...identity,
       role: 'worker-default', dispatchFile, evidenceRoot: path.join(root, 'evidence'), writable_roots: [],
       workerWritableRoots: [repo, path.join(repo, '.git'), path.join(state, 'reports')], lifecycle_moves: [],
       handshake: 'wait', profile: 'short', risk: 'standard', critical: null, afk: true, openDecisions: 0, pins };

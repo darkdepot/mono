@@ -1,3 +1,4 @@
+import { copyPluginFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -314,7 +315,7 @@ test("extract-empty-and-closed-headings: section titles normalize while every he
 test("installed command workflow on scratch: refusals, dispatch, ack, sessions, admission and amend", async t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-command-fixture-"));
   const skills = path.join(scratch, "skills"), root = path.join(scratch, "orchestrator"), repo = path.join(scratch, "repo"), bin = path.join(scratch, "bin"), temp = path.join(scratch, "worker-temp");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, MONO_WORKFLOW_STATE_ROOT: path.join(scratch, "install-state"), MONO_WORKFLOW_KNOWN_ROOTS: skills };
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, };
   const processes = fixtureProcesses();
   const run = (cmd, args, cwd = checkout) => {
     const result = spawnSync(cmd, args, { cwd, env, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
@@ -326,16 +327,11 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
   let livePid;
   try {
     for (const directory of [repo, bin, temp, path.join(root, "reports")]) fs.mkdirSync(directory, { recursive: true });
-    pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills]));
-    pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills, "--check"]));
-    const runtime = path.join(skills, ".mono-agent-workflow/scripts");
+    copyPluginFixture(skills);
+    const runtime = path.join(skills, "scripts");
     for (const script of ["dispatch", "accept", "linear-adapter", "collector"]) pass(run(process.execPath, [path.join(runtime, `orchestrator/${script}.mjs`), "--help"]));
     const budget = JSON.parse(pass(run(process.execPath, [path.join(runtime, "read-budget.mjs"), "--json"])));
-    // Dirty scratch installs add a six-byte provenance suffix per skill. It is
-    // installer metadata, not a corpus change; clean committed installs are exact.
-    const provenanceBytes = budget.files.filter(file => file.path.startsWith("skills/")).reduce((bytes, file) =>
-      bytes + (fs.readFileSync(path.join(skills, file.path.slice(7)), "utf8").includes(" dirty. Do not edit manually. -->") ? 6 : 0), 0);
-    assert.ok(budget.bytes - provenanceBytes <= 99_756, "worker corpus must not grow from the U12 baseline");
+    assert.ok(budget.bytes <= 98_373, "worker corpus must not grow from the MONO-121 baseline");
     write(path.join(bin, "codex"), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"fixture-thread"}));setInterval(()=>{},1000);\n'); fs.chmodSync(path.join(bin, "codex"), 0o700);
     write(path.join(bin, "ps"), '#!/usr/bin/env node\nconsole.log("fixture-start");\n'); fs.chmodSync(path.join(bin, "ps"), 0o700);
     atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); atomicJson(path.join(root, "workers.json"), {});
@@ -452,7 +448,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.ok(fs.existsSync(ackFile.replace(".json", ".applied.json"))); assert.equal(readJson(path.join(root, "workers.json"))[ack.issue].gates, undefined);
     const reportFile = path.join(root, "reports/MONO-999-phase-code.json"), head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).trim();
     const queue = [{ id: "fixture:comment", operation: "comment", target: ack.issue, payload: { body: "Russian lead\nappend #/certificate" } }, { id: "fixture:state", operation: "issue-state", target: ack.issue, payload: { state: "In Progress" } }];
-    const report = publishPhase({ issue: ack.issue, stage: "mono-deliver", attempt: 1, packVersion: entry.packVersion, sourceCommit: entry.sourceCommit, surfaceRevision: entry.surfaceRevision,
+    const report = publishPhase({ issue: ack.issue, stage: "mono-deliver", attempt: 1, packVersion: entry.packVersion, ...(entry.sourceCommit ? { sourceCommit: entry.sourceCommit } : {}), surfaceRevision: entry.surfaceRevision,
       phase: "code", sequence: 1, kind: "phase", head, certificate: "fixture certificate", linear_mutations_pending: queue, capsule: { phase: "code", head, decisions: [], writable_roots: entry.workerWritableRoots, open_queue: queue } }, reportFile);
     await t.test("report-durable-queue-conflict: every existing write identity is checked before instructions", async () => {
       const file = path.join(root, "consumed/MONO-999-a1", `${queue[1].id}.json`);
@@ -925,7 +921,7 @@ async function collectorAttentionFixture(runFixture, plugin = false) {
     write(path.join(bin, "ps"), "#!/usr/bin/env node\nconsole.log('fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
     process.env.PATH = `${bin}:${oldPath}`;
     if (plugin) write(path.join(pins.packRoot, 'VERSION'), '0.22.0\n');
-    write(plugin ? path.join(pins.packRoot, 'scripts/gate.mjs') : path.join(skillsRoot, ".mono-agent-workflow/scripts/gate.mjs"), "console.log('gate preflight: pass: fixture admission');\n");
+    write(plugin ? path.join(pins.packRoot, 'scripts/gate.mjs') : path.join(skillsRoot, "scripts/gate.mjs"), "console.log('gate preflight: pass: fixture admission');\n");
     const signedHistory = async value => {
       const { createHmac, randomUUID } = await import("node:crypto"), { canonical } = await import("./runtime.mjs");
       const key = Buffer.alloc(32, 9); fs.writeFileSync(path.join(evidenceRoot, "receipt.key"), key);
@@ -1069,7 +1065,7 @@ for(const row of found.values()) console.log(row.pid+' 1 '+row.processGroup+' S 
     process.env.PATH = `${bin}:${oldPath}`; process.env.MONO_FIXTURE_ROWS = rows;
     fs.writeFileSync(path.join(evidence, "receipt.key"), Buffer.alloc(32, 7));
     atomicJson(modeFile, { crash: false }); atomicJson(countFile, { collections: 0 });
-    write(path.join(skills, ".mono-agent-workflow/scripts/gate.mjs"), `import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';
+    write(path.join(skills, "scripts/gate.mjs"), `import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';
 import {withLock,atomicJson,readJson,canonical} from ${JSON.stringify(runtimeUrl)};
 const request=readJson(process.argv[process.argv.indexOf('--request')+1]);
 if(!request.collect){if(readJson(${JSON.stringify(modeFile)}).holdValidation){atomicJson(${JSON.stringify(validationFile)},{pid:process.pid});while(readJson(${JSON.stringify(modeFile)}).holdValidation)await new Promise(r=>setTimeout(r,50));}const receipt=readJson(path.join(request.evidenceRoot,request.head+'.json')).receipt;console.log(receipt.verification.exitCode===0?'gate preflight: pass: fixture recovered':'gate preflight: fail: fixture verification failed');process.exit();}
@@ -1232,7 +1228,7 @@ test("collector recovers a baseline dataset with a separately numbered signed ar
     atomicJson(history, sign(receipt));
     const bin = path.join(scratch, "bin"), oldPath = process.env.PATH;
     write(path.join(bin, "ps"), "#!/usr/bin/env node\nconsole.log('fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
-    write(path.join(skillsRoot, ".mono-agent-workflow/scripts/gate.mjs"), "console.log('gate preflight: pass: fixture baseline recovered');\n");
+    write(path.join(skillsRoot, "scripts/gate.mjs"), "console.log('gate preflight: pass: fixture baseline recovered');\n");
     try {
       process.env.PATH = `${bin}:${oldPath}`;
       await collectOnce({ root, issue, attempt: 1 });
@@ -1260,7 +1256,7 @@ test("collector startup timeout stops its detached child before reporting failur
 test("preapply AE12 named contracts on installed scratch", async t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-preapply-ae12-"));
   const skills = path.join(scratch, "skills"), repo = path.join(scratch, "repo"), root = path.join(scratch, "orchestrator"), bin = path.join(scratch, "bin");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, MONO_WORKFLOW_STATE_ROOT: path.join(scratch, "state"), MONO_WORKFLOW_KNOWN_ROOTS: skills,
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`,
     GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid", GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid" };
   const processes = fixtureProcesses();
   const run = (cmd, args, cwd = checkout) => {
@@ -1273,8 +1269,8 @@ test("preapply AE12 named contracts on installed scratch", async t => {
   let pid;
   try {
     for (const dir of [repo, bin, path.join(root, "reports")]) fs.mkdirSync(dir, { recursive: true });
-    pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills]));
-    const runtime = path.join(skills, ".mono-agent-workflow/scripts");
+    copyPluginFixture(skills);
+    const runtime = path.join(skills, "scripts");
     write(path.join(bin, "codex"), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"ae12"}));setInterval(()=>{},1000);\n'); fs.chmodSync(path.join(bin, "codex"), 0o700);
     atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); atomicJson(path.join(root, "workers.json"), {});
     git(repo, "init", "-b", "main"); const origin = path.join(scratch, "origin.git"); git(scratch, "init", "--bare", origin); git(repo, "remote", "add", "origin", origin);

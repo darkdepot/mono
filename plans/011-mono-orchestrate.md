@@ -1,3 +1,5 @@
+> Archived: completed implementation plan. Current rules are in the skills and references; do not execute this historical checklist.
+
 # Plan 011: mono-orchestrate control-plane skill
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

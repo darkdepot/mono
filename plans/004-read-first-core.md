@@ -84,11 +84,7 @@ one-file edit and shortens every skill's preamble.
     list (it is skill-specific anyway).
   - `validateSkills` line 163 fails any SKILL.md under 900 characters — the
     trimmed lists keep every skill far above that; no risk.
-- Installer interplay (`scripts/install-local.mjs:126`): peer-skill paths
-  (`skills/mono-*/SKILL.md`) are rewritten to `../mono-*/SKILL.md` at
-  install time, and the whole `references/` directory is copied into each
-  installed skill dir — so `references/core-reading.md` resolves correctly in
-  both the repo and installed layouts with no extra work.
+- Plugin paths: all shared reading inputs resolve from the repository-shaped pack root. Verify the delivery reading union with `node scripts/read-budget.mjs`.
 - `scripts/lint-mono-artifacts.mjs` pins nothing about Read-first lists.
 - Language convention: the new reference is repo instruction text → English
   (`AGENTS.md:9-12`).

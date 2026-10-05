@@ -673,11 +673,11 @@ authenticated, then `claude-code-desktop` when running in Claude Code
 Desktop, then `fallback`. Per-runtime bindings:
 
 Every transport is pinned to the installed pack identity. Before dispatch,
-read `packVersion`, `sourceCommit`, and `surfaceRevision` from the installed
-`.mono-agent-workflow.lock.json` and copy them verbatim into the dispatch
+read `packVersion` from `VERSION`, `surfaceRevision` from runtime and optional
+`sourceCommit` from plugin identity, and copy them verbatim into the dispatch
 snapshot and the new `workers.json` entry. At the first start and every stage
 resume the worker runs `verify-pack-state.mjs identity` under the compatibility
-rule in [Versioning](versioning.md#local-lockfile). Retain the task's original
+rule in [Versioning](install.md#compatibility). Retain the task's original
 identity after a compatible update; reports must still match the task record
 strictly. Incompatible surfaces block with a named recovery: a new attempt.
 
@@ -789,44 +789,6 @@ landings, retains Issues In Review until batch close, then closes and retires ea
 task with its proof. It owns first rollout from merged main and removes halt after
 close or failed installation; worker stages never perform these actions.
 
-## Install Coordination
-
-Orchestrator startup and breaking installation share one exclusion boundary.
-Before creating `~/.mono-agent-workflow/orchestrator/<product>/`, repairing a
-missing `control.json` or `workers.json`, or changing an existing product from
-`idle` to `active`, the orchestrator must acquire
-`~/.mono-agent-workflow/install.lock` with the shared token-scoped claim
-protocol. Create a missing directory with atomic `mkdir` and publish
-`protocol.json` as `token-claims-v1`; when the directory already exists, require
-that exact marker before joining it. A missing marker is an incomplete or
-legacy acquisition and fails closed. The directory is then a stable container:
-publish a unique
-`choosing-<token>.json`, derive the next sequence from existing claims, publish
-`claim-<token>.json`, clear the choosing entry, then proceed only when the
-sequence/token ordering selects that exact claim and no foreign choosing entry
-remains. Tokens are 1-128 ASCII alphanumerics/hyphens; equal sequences use
-ascending bytewise ASCII token order, never locale collation. Every entry
-carries the current PID, ownership token, and `startedAt`.
-This is the same protocol used by `install-local --breaking`, not a second
-orchestrator-only lock.
-
-While holding the lock, create or repair the product root and initialize
-`control.json` plus `workers.json`, or write `control.json` as `active`. In
-either case, hold the lock through read-back of every state file written by
-that operation. Only then may startup continue to watcher launch and worker
-dispatch. Release only the caller's unique `claim-<token>.json`, after reading
-it back and confirming the same token and sequence; the stable `install.lock`
-container remains. A missing, unreadable, or mismatched owned claim is an
-explicit startup failure, never a silently successful release.
-
-If the election finds a foreign choosing entry or an earlier claim, make no
-product-root, control, or registry mutation. An active owner means this startup
-or wave transition must wait and retry after that owner releases it. A stale or
-unreadable lock fails closed and its foreign token-scoped entry remains for
-manual inspection and removal; never remove another token's entry. This makes
-product-root discovery and the quiescence decision stable for the installer's
-complete cut-over window.
-
 ## Mailbox And Ledger
 
 - Root: `~/.mono-agent-workflow/orchestrator/<product>/` — never inside a
@@ -870,7 +832,7 @@ complete cut-over window.
   `templates/orchestrator-report.md`. The orchestrator owns the lifecycle
   `active` → `draining` → `idle`: use `active` while dispatch is allowed,
   `draining` when no new work may start but registered workers are closing, and
-  `idle` only when the active registry is empty. Breaking-install quiescence is
+  `idle` only when the active registry is empty. Incompatible-update quiescence is
   exactly `idle` plus an empty `workers.json`; verify it with
   `verify-pack-state.mjs quiescence`. Missing either condition blocks.
 - Report delivery under a write sandbox: the mailbox root is writable for
@@ -1023,7 +985,7 @@ new ID. Otherwise record the decision to proceed and run the unchanged gate.
 Publish the pilot protocol before its control/two pilot waves and report the
 outcome before proposing universal rules. Measure generated dispatch bytes and
 rendered dataset bytes as pilot overhead, separately from the unchanged worker
-corpus; report source and scratch-installed read-budget measurements.
+corpus; report source and scratch-plugin read-budget measurements.
 
 ## Delivery Write Barriers
 
@@ -1491,7 +1453,7 @@ A fresh orchestrator session rebuilds state without loss:
    Resume skips same-attempt nudge and verified-respawns a NEW gate attempt
    with its own correct list before the ordinary no-ack ladder can run.
    Compare each entry's `surfaceRevision` with the currently installed
-   lockfile before using its thread id. When surfaceRevision differs, do not rebind
+   plugin identity before using its thread id. When surfaceRevision differs, do not rebind
    or resume that thread; report it blocked and start a new attempt.
    Otherwise rebind to surviving `codex-cli` workers by thread id
    through installed scripts/orchestrator/resume.mjs instead of respawning them.

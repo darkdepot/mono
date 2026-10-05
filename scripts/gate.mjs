@@ -70,7 +70,7 @@ const cleanTree = (cwd) => requireThat(git(cwd, "status", "--porcelain", "--untr
 export function startGate(request) {
   requireThat(identity(request), "missing pack identity");
   const output = execFileSync(process.execPath, [path.join(scriptDir, "verify-pack-state.mjs"), "identity",
-    ...(request.packRoot ? ["--pack-root", request.packRoot] : ["--lock", request.lock]),
+    "--pack-root", request.packRoot,
     "--pack-version", request.packVersion, ...(request.sourceCommit ? ["--source-commit", request.sourceCommit] : []), "--surface-revision", String(request.surfaceRevision)], { encoding: "utf8" });
   requireThat(output.trim() === "pack-state: identity verified", "pack identity not verified");
   requireThat(git(request.worktree, "branch", "--show-current") === request.branch && !["main", "master", ""].includes(request.branch), "wrong delivery branch");
@@ -724,7 +724,7 @@ if (isMain(import.meta.url)) {
   try {
     const args = flags(rest);
     if (name === "--help" || args.help) console.log(`Usage: gate.mjs start|preflight|ship --request <json>
-start request: {worktree, branch, base, lock, packVersion, sourceCommit, surfaceRevision}
+start request: {worktree, branch, base, packRoot, skillsRoot, packVersion, sourceCommit, surfaceRevision}
 preflight request: {product,collectionId,root,worktree,head,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,reviewDatasetVersion?,pins?:{file,digest},modelRoutes?,collect,verification:{command,args}}
   modelRoutes pins immutable base/configDigest/roles from resolveModelRoutes; overrides require pins.
   risk is the final approved/diff risk; critical is a concrete escalation reason or null.

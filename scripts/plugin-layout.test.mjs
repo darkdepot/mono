@@ -8,7 +8,7 @@ import { checkPlugin } from './validate-plugin.mjs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-test('plugin layout shares the repository paths and reads identity without a lock', () => {
+test('plugin layout shares the repository paths and reads VERSION identity', () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-layout-')));
   try {
     fs.writeFileSync(path.join(root, 'VERSION'), '0.22.0\n');
@@ -23,65 +23,41 @@ test('plugin layout shares the repository paths and reads identity without a loc
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('legacy layout preserves installed paths and lock identity', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-legacy-layout-')));
-  try {
-    const expected = { packVersion: '0.22.0', sourceCommit: 'a'.repeat(40), surfaceRevision: 4 };
-    fs.writeFileSync(path.join(root, '.mono-agent-workflow.lock.json'), JSON.stringify(expected));
-    const layout = packLayout(root);
-    assert.deepEqual(layout.identity(), expected);
-    assert.equal(layout.skill('mono-deliver'), path.join(root, 'mono-deliver/SKILL.md'));
-    assert.equal(layout.template('orchestrator-dispatch.md'), path.join(root, 'mono-orchestrate/templates/orchestrator-dispatch.md'));
-    assert.equal(layout.policyDirectory, path.join(root, 'mono-implement/references'));
-    assert.equal(layout.script('gate.mjs'), path.join(root, '.mono-agent-workflow/scripts/gate.mjs'));
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
 test('missing task pack folder requires a new attempt', () => {
   assert.throws(() => packLayout(path.join(os.tmpdir(), 'mono-plugin-folder-absent')), /pack.*missing.*new attempt/);
 });
 
-test('legacy installation rewrites pack script paths in skills and shared references', () => {
-  const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-legacy-text-')), skills = path.join(root, 'skills');
-  const env = { ...process.env, MONO_WORKFLOW_STATE_ROOT: path.join(root, 'state'), MONO_WORKFLOW_KNOWN_ROOTS: skills };
+test('plugin identity accepts compatible versions and refuses a different report format', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-identity-'));
   try {
-    for (const extra of [[], ['--check']]) {
-      const result = spawnSync(process.execPath, ['scripts/install-local.mjs', '--skills-root', skills, ...extra], { cwd: checkout, env, encoding: 'utf8' });
-      assert.equal(result.status, 0, result.stderr + result.stdout);
+    fs.writeFileSync(path.join(root, 'VERSION'), '0.23.0\n');
+    const command = ['scripts/verify-pack-state.mjs', 'identity', '--pack-root', root,
+      '--pack-version', '99.0.0', '--source-commit', 'a'.repeat(40), '--surface-revision'];
+    const compatible = spawnSync(process.execPath, [...command, '4'], { encoding: 'utf8' });
+    assert.equal(compatible.status, 0, compatible.stderr);
+    assert.match(compatible.stdout, /pack-state: identity verified/);
+    const incompatible = spawnSync(process.execPath, [...command, '5'], { encoding: 'utf8' });
+    assert.equal(incompatible.status, 1);
+    assert.match(incompatible.stderr, /surfaceRevision expected 5 but installed 4; start a new attempt/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('incompatible-update quiescence requires idle control and an empty registry', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-quiescence-'));
+  const run = () => spawnSync(process.execPath, ['scripts/verify-pack-state.mjs', 'quiescence', '--root', root], { encoding: 'utf8' });
+  try {
+    fs.writeFileSync(path.join(root, 'control.json'), JSON.stringify({ state: 'idle' }));
+    fs.writeFileSync(path.join(root, 'workers.json'), '{}');
+    assert.equal(run().status, 0);
+    fs.writeFileSync(path.join(root, 'workers.json'), JSON.stringify({ 'MONO-999': {} }));
+    assert.match(run().stderr, /workers.json has 1 active worker/);
+    fs.writeFileSync(path.join(root, 'workers.json'), '{}');
+    for (const state of ['active', 'draining', 'paused']) {
+      fs.writeFileSync(path.join(root, 'control.json'), JSON.stringify({ state }));
+      assert.equal(run().status, 1, state);
     }
-    const issue = fs.readFileSync(path.join(skills, 'mono-issue/SKILL.md'), 'utf8');
-    const body = path.join(root, 'issue.md'); fs.writeFileSync(body, '# Fixture\nApproved body\n');
-    for (const [text, prefix, directory] of [[issue, '<skills-root>/.mono-agent-workflow', skills],
-      [fs.readFileSync(path.join(checkout, 'skills/mono-issue/SKILL.md'), 'utf8'), '<pack-root>', checkout]]) {
-      const operands = [...text.matchAll(/node '([^']+\/resolve-issue-context\.mjs)'/g)].map(match => match[1]);
-      assert.equal(operands.length, 2);
-      for (const operand of operands) {
-        assert.ok(operand.startsWith(prefix));
-        const script = operand.replace(prefix, prefix === '<pack-root>' ? directory : path.join(directory, '.mono-agent-workflow'));
-        const result = spawnSync(process.execPath, [script, '--issue', body, '--emit-fingerprint'], { cwd: root, env, encoding: 'utf8' });
-        assert.equal(result.status, 0, result.stderr);
-        assert.match(result.stdout.trim(), /^[a-f0-9]{64}$/);
-      }
-    }
-    const contract = fs.readFileSync(path.join(skills, 'mono-deliver/references/worker-contract.md'), 'utf8');
-    assert.ok(contract.includes("node '<skills-root>/.mono-agent-workflow/scripts/verify-pack-state.mjs' identity"));
-    const orchestration = fs.readFileSync(path.join(skills, 'mono-orchestrate/references/orchestration.md'), 'utf8');
-    for (const name of ['spawn', 'resume']) {
-      const operand = orchestration.match(new RegExp(`node '([^']+/orchestrator/${name}\\.mjs)'`))?.[1];
-      assert.ok(operand, `installed ${name} command has an explicit root`);
-      const script = operand.replace('<skills-root>', skills);
-      assert.ok(path.isAbsolute(script));
-      const result = spawnSync(process.execPath, [script, '--help'], { cwd: os.tmpdir(), env, encoding: 'utf8' });
-      assert.equal(result.status, 0, result.stderr);
-      assert.match(result.stdout, /Usage:/);
-    }
-    for (const skill of ['mono-deploy', 'mono-orchestrate']) {
-      const text = fs.readFileSync(path.join(skills, skill, 'SKILL.md'), 'utf8');
-      const operand = text.match(/node '([^']+\/wave-cost\.mjs)'/)?.[1];
-      assert.ok(operand, `installed ${skill} cost command has an explicit root`);
-      assert.ok(fs.statSync(operand.replace('<skills-root>', skills)).isFile());
-    }
+    fs.writeFileSync(path.join(root, 'control.json'), '{');
+    assert.match(run().stderr, /cannot read control.json/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

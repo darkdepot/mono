@@ -232,17 +232,7 @@ seam. It mirrors the deterministic-config-script structure of
   `required_artifacts`. It reads recorded state (risk class, approval) and checks
   scope integrity; it does not classify risk, reduce an assurance vector, or
   compute a route. Those are later slices.
-- **Installed location (runtime):** the intake transaction runs the resolver from
-  an installed environment, so `scripts/install-local.mjs` publishes it — per
-  skills root — at the canonical pack-private path
-  `<pack-root>/scripts/resolve-issue-context.mjs`,
-  recorded in the lockfile's `runtimeScripts` (see `references/install.md`). The
-  create-then-approve intake transaction invokes it there; because the
-  pack-private directory is one level up from any installed `mono-*` skill
-  directory, a skill reaches it at
-  `scripts/resolve-issue-context.mjs`. Product repos
-  never vendor the script — the installer owns the copy. In this upstream
-  checkout the same script is `scripts/resolve-issue-context.mjs`.
+- **Installed location (runtime):** invoke `<pack-root>/scripts/resolve-issue-context.mjs` from the plugin; repository and plugin paths match. Product repos never vendor the script. See `references/install.md`.
 
 ## Theme project
 

@@ -57,7 +57,7 @@ unmeasured model remains an assumption.
 route plus config digest. Resolve from the immutable BASE config at launch;
 record `modelRoutes{base,configDigest,roles}` in dispatch/request/registry.
 Keep launch routes on resume; never backfill. Config changes affect new launches
-only. [Pack compatibility](versioning.md#local-lockfile).
+only. [Pack compatibility](install.md#compatibility).
 
 ## Orchestrator self-check
 
