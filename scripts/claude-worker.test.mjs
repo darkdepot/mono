@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { copyPluginFixture } from "./plugin-fixture.mjs";
 import { workerTransport } from "./worker-transport.mjs";
@@ -14,6 +14,38 @@ const write = (file, value) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, typeof value === "string" ? value : JSON.stringify(value));
 };
+
+for (const encoding of ["literal", "base64", "uri"]) {
+  for (const stream of ["stdout", "stderr"]) {
+    for (const truncated of [false, true]) {
+      test(`Claude journal redacts split ${encoding} ${stream}, ${truncated ? "final prefix" : "complete value"}`, () => {
+        const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "claude-journal-"));
+        const secret = crypto.randomBytes(32).toString("hex") + "+/=";
+        const encoded = encoding === "base64" ? Buffer.from(secret).toString("base64")
+          : encoding === "uri" ? encodeURIComponent(secret) : secret;
+        const expected = truncated ? encoded.slice(0, -1) : encoded;
+        try {
+          const log = path.join(scratch, "events.jsonl"), diagnostic = path.join(scratch, "diagnostic.log");
+          const child = `const secret=process.env.GH_TOKEN;
+            const value=${encoding === "base64" ? 'Buffer.from(secret).toString("base64")'
+              : encoding === "uri" ? "encodeURIComponent(secret)" : "secret"};
+            const emitted=${truncated ? "value.slice(0,-1)" : "value"};
+            process.${stream}.write(emitted.slice(0,7));
+            setTimeout(()=>process.${stream}.write(emitted.slice(7)),10);`;
+          const result = spawnSync(process.execPath, [
+            fileURLToPath(new URL("./transports/claude-runner.mjs", import.meta.url)),
+            log, diagnostic, process.execPath, "-e", child,
+          ], { env: { ...process.env, GH_TOKEN: secret }, input: "", encoding: "utf8", timeout: 10_000 });
+          assert.equal(result.status, 0);
+          const journal = fs.readFileSync(stream === "stdout" ? log : diagnostic, "utf8");
+          assert.equal(journal.includes(expected), false, "credential value or final prefix must not persist");
+          assert.equal(journal, "[REDACTED]");
+          assert.equal(fs.readFileSync(stream === "stdout" ? diagnostic : log, "utf8"), "");
+        } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+      });
+    }
+  }
+}
 
 test("Claude adapter pins stdin, session, model, effort, and closed tool sources", () => {
   const transport = workerTransport("claude-cli");

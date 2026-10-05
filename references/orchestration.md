@@ -756,6 +756,7 @@ separate from the policy target:
   only as a real process environment variable. Prepare a private, owner-only
   GH_CONFIG_DIR inside the grants, reuse it on resume, and keep stored credential
   sources unreadable. Redact stdout/stderr before storing either stream.
+  The CLI's own native session storage is owner-only and lies outside this journal-redaction boundary.
   Submit the task on stdin with print/stream-json, pinned session/model/effort.
   Success requires matching init session/model, dontAsk, no key source or
   connectors, only tools with an explicit policy, and a first successful assistant

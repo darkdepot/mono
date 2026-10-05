@@ -13,11 +13,12 @@ function sink(file) {
   const flush = final => {
     for (const value of forms) pending = pending.split(value).join("[REDACTED]");
     let reserve = 0;
-    if (!final) for (const value of forms) {
+    for (const value of forms) {
       for (let length = Math.min(value.length - 1, pending.length); length > reserve; length--) {
         if (pending.endsWith(value.slice(0, length))) { reserve = length; break; }
       }
     }
+    if (final && reserve) { pending = pending.slice(0, -reserve) + "[REDACTED]"; reserve = 0; }
     const count = pending.length - reserve;
     if (count) { fs.writeSync(fd, pending.slice(0, count)); pending = pending.slice(count); }
   };
