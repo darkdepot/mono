@@ -1,3 +1,5 @@
+> Archived: completed implementation plan. Current rules are in the skills and references; do not execute this historical checklist.
+
 # Plan 007: Specify the two undefined approval moments (implementation start, deploy)
 
 > **Executor instructions**: Follow this plan step by step. Run every
@@ -6,7 +8,7 @@
 > report — do not improvise. When done, update the status row for this plan
 > in `plans/README.md`.
 >
-> **Drift check (run first)**: `git diff --stat 889742b..HEAD -- skills/mono-implement/SKILL.md skills/mono-handoff/SKILL.md skills/mono-deploy/SKILL.md references/questioning.md scripts/project-config.mjs scripts/validate-workflow.mjs references/versioning.md references/install.md`
+> **Drift check (run first)**: `git diff --stat 889742b..HEAD -- skills/mono-implement/SKILL.md skills/mono-handoff/SKILL.md skills/mono-deploy/SKILL.md references/questioning.md scripts/project-config.mjs scripts/validate-workflow.mjs references/install.md references/install.md`
 > On any mismatch with the "Current state" excerpts, treat as a STOP condition.
 
 ## Status
@@ -68,7 +70,7 @@ All excerpts verified at commit `889742b`.
   mono-ship. **No mono-deploy line.**
 - `scripts/project-config.mjs` — config schema includes `workflows.*`,
   `linearTeam`, `languages`, `artifactRoots`, `prerequisites.autoreviewHelper`.
-  No deploy-approval policy field. Config docs: `references/versioning.md:80-130`,
+  No deploy-approval policy field. Config docs: `references/install.md:80-130`,
   `references/install.md:60-115`.
 - Validator: `validateAntiPatterns` pins implement strings at
   `scripts/validate-workflow.mjs:489-501` (including
@@ -89,7 +91,7 @@ All excerpts verified at commit `889742b`.
 - `skills/mono-implement/SKILL.md`, `skills/mono-handoff/SKILL.md`,
   `skills/mono-deploy/SKILL.md`
 - `references/questioning.md`
-- `scripts/project-config.mjs` + `references/versioning.md` +
+- `scripts/project-config.mjs` + `references/install.md` +
   `references/install.md` (new optional config field, documented)
 - `scripts/validate-workflow.mjs` (new pins; update its project-config
   fixtures if the new field is required — prefer optional)
@@ -168,7 +170,7 @@ b. `skills/mono-deploy/SKILL.md`: replace the vague step 5 with a defined
 c. `references/questioning.md`: add the missing stage line:
    `- `mono-deploy`: ask only for deploy approval per the configured
    deploy-approval policy, or a delivery-policy/risk-acceptance decision.`
-d. Document the field in `references/versioning.md` (config fields list,
+d. Document the field in `references/install.md` (config fields list,
    ~line 80-90) and `references/install.md` (config example + field list,
    keeping the JSON examples valid).
 

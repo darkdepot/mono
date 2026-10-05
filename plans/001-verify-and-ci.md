@@ -1,3 +1,5 @@
+> Archived: completed implementation plan. Current rules are in the skills and references; do not execute this historical checklist.
+
 # Plan 001: Add a one-command verification entry point and CI
 
 > **Executor instructions**: Follow this plan step by step. Run every

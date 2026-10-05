@@ -29,7 +29,9 @@ Review only reports quality/risk; check only reports readiness. Repair: handoff 
 
 Pin autoreview model by policy role and effort by risk, never helper defaults. Project Updates inform deploy closeout; never gate any stage. Record user acceptance in Linear comments.
 
-Project repos keep only `.agents/mono-workflow.config.json`; never install/generate/vendor `.agents/skills/mono-*`, `.claude/skills/mono-*`, workflow locks, local checkers or updater CI there.
+Project repos keep only `.agents/mono-workflow.config.json`; never install/generate/vendor `.agents/skills/mono-*`, `.claude/skills/mono-*`, workflow lockfiles, local checkers or updater CI there.
+
+Install/update through the GitHub marketplace plugin; one repository layout and shared files. Compatibility, update condition and proof: [Installation](references/install.md).
 
 ## Change Discipline
 

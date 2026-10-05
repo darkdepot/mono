@@ -43,241 +43,6 @@ function fail(message) {
   failures.push(message);
 }
 
-function extractRuntimeScripts(installerSource) {
-  const declarations = [...installerSource.matchAll(/\bconst\s+RUNTIME_SCRIPTS\s*=\s*\[([\s\S]*?)\]\s*;/g)];
-  if (declarations.length !== 1) {
-    throw new Error(`expected one RUNTIME_SCRIPTS declaration, found ${declarations.length}`);
-  }
-
-  const body = declarations[0][1].replace(/\/\/[^\n]*/g, "");
-  const scripts = [];
-  let rest = body;
-  while (true) {
-    rest = rest.replace(/^\s*(?:,\s*)?/, "");
-    if (!rest) break;
-    const entry = rest.match(/^(["'])([^"'\\\r\n]+\.mjs)\1/);
-    if (!entry) throw new Error("RUNTIME_SCRIPTS must contain only literal .mjs paths");
-    scripts.push(entry[2]);
-    rest = rest.slice(entry[0].length);
-  }
-  if (scripts.length === 0) throw new Error("RUNTIME_SCRIPTS must not be empty");
-  return scripts;
-}
-
-function javascriptModuleTokens(source) {
-  const tokens = [];
-  const regexPrefixIdentifiers = new Set([
-    "case", "delete", "in", "instanceof", "new", "of", "return", "throw", "typeof", "void", "yield",
-  ]);
-  const canStartRegex = () => {
-    const previous = tokens.at(-1);
-    if (!previous) return true;
-    if (previous.type === "identifier") return regexPrefixIdentifiers.has(previous.value);
-    return /^[([{,:;=!?&|+*%^~<>-]$/.test(previous.value);
-  };
-  let index = 0;
-  while (index < source.length) {
-    const character = source[index];
-    if (/\s/.test(character)) {
-      index += 1;
-      continue;
-    }
-    if (source.startsWith("//", index)) {
-      index = source.indexOf("\n", index + 2);
-      if (index < 0) break;
-      continue;
-    }
-    if (source.startsWith("/*", index)) {
-      const end = source.indexOf("*/", index + 2);
-      if (end < 0) throw new Error("unterminated block comment in runtime script");
-      index = end + 2;
-      continue;
-    }
-    if (character === "/" && canStartRegex()) {
-      let inCharacterClass = false;
-      let closed = false;
-      index += 1;
-      while (index < source.length) {
-        const next = source[index++];
-        if (next === "\\") index += 1;
-        else if (next === "[") inCharacterClass = true;
-        else if (next === "]") inCharacterClass = false;
-        else if (next === "/" && !inCharacterClass) {
-          closed = true;
-          break;
-        }
-      }
-      if (!closed) throw new Error("unterminated regular expression in runtime script");
-      while (index < source.length && /[A-Za-z]/.test(source[index])) index += 1;
-      tokens.push({ type: "regex", value: "" });
-      continue;
-    }
-    if (character === "'" || character === '"') {
-      const quote = character;
-      let value = "";
-      let escaped = false;
-      let closed = false;
-      index += 1;
-      while (index < source.length) {
-        const next = source[index++];
-        if (next === quote) {
-          closed = true;
-          break;
-        }
-        if (next === "\\") {
-          escaped = true;
-          if (index < source.length) value += source[index++];
-        } else {
-          value += next;
-        }
-      }
-      if (!closed) throw new Error("unterminated string in runtime script");
-      tokens.push({ type: "string", value, escaped });
-      continue;
-    }
-    if (character === "`") {
-      let closed = false;
-      index += 1;
-      while (index < source.length) {
-        const next = source[index++];
-        if (next === "\\") index += 1;
-        else if (next === "`") {
-          closed = true;
-          break;
-        }
-      }
-      if (!closed) throw new Error("unterminated template literal in runtime script");
-      tokens.push({ type: "template", value: "" });
-      continue;
-    }
-    if (/[A-Za-z_$]/.test(character)) {
-      const start = index++;
-      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index])) index += 1;
-      tokens.push({ type: "identifier", value: source.slice(start, index) });
-      continue;
-    }
-    tokens.push({ type: "punctuator", value: character });
-    index += 1;
-  }
-  return tokens;
-}
-
-function relativeMjsModuleSpecifiers(source) {
-  const tokens = javascriptModuleTokens(source);
-  const specifiers = [];
-  const add = (token) => {
-    if (token?.type === "string" && !token.escaped && /^\.\.?\/.+\.mjs$/.test(token.value)) {
-      specifiers.push(token.value);
-    }
-  };
-
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (token.type !== "identifier" || !["import", "export"].includes(token.value)) continue;
-    if (tokens[index - 1]?.value === ".") continue;
-
-    if (token.value === "import" && tokens[index + 1]?.value === "(") {
-      if (tokens[index + 3]?.value === ")") add(tokens[index + 2]);
-      continue;
-    }
-    if (token.value === "import" && tokens[index + 1]?.type === "string") {
-      add(tokens[index + 1]);
-      continue;
-    }
-    for (let cursor = index + 1; cursor < tokens.length && tokens[cursor].value !== ";"; cursor += 1) {
-      if (tokens[cursor].value === "from") {
-        add(tokens[cursor + 1]);
-        break;
-      }
-    }
-  }
-  return specifiers;
-}
-
-function installedRuntimeImportDiagnostics(runtimeScripts, scriptSource = (script) => read(`scripts/${script}`)) {
-  const installed = new Set(runtimeScripts.map((script) => path.posix.normalize(script)));
-  const diagnostics = [];
-
-  for (const script of runtimeScripts) {
-    const source = scriptSource(script);
-    for (const specifier of new Set(relativeMjsModuleSpecifiers(source))) {
-      const target = path.posix.normalize(path.posix.join(path.posix.dirname(script), specifier));
-      if (!installed.has(target)) diagnostics.push(`${script} → ${target}`);
-    }
-  }
-  return diagnostics;
-}
-
-function validateInstalledRuntimeImports() {
-  const installerSource = read("scripts/install-local.mjs");
-  let runtimeScripts;
-  try {
-    runtimeScripts = extractRuntimeScripts(installerSource);
-  } catch (error) {
-    fail(`installed-runtime imports resolve: ${error.message}`);
-    return;
-  }
-
-  const diagnostics = installedRuntimeImportDiagnostics(runtimeScripts);
-  if (diagnostics.length > 0) {
-    fail(`installed-runtime imports resolve: ${diagnostics.join(", ")}`);
-  }
-
-  const withoutReviewLedger = runtimeScripts.filter((script) => script !== "review-ledger.mjs");
-  const missingLedgerDiagnostics = installedRuntimeImportDiagnostics(withoutReviewLedger);
-  if (JSON.stringify(missingLedgerDiagnostics) !== JSON.stringify(["wave-cost.mjs → review-ledger.mjs"])) {
-    fail("installed-runtime missing-review-ledger fixture must return exactly wave-cost.mjs → review-ledger.mjs");
-  }
-
-  const syntheticSources = new Map([
-    ["nested/entry.mjs", [
-      "import one from './static-single.mjs';",
-      "import two from \"../shared/static-double.mjs\";",
-      "const three = import('./dynamic-single.mjs');",
-      "const four = import(\"../shared/dynamic-double.mjs\");",
-      "export { five } from '../shared/re-export.mjs';",
-      "const ignored = \"import './not-an-import.mjs'\";",
-      "const pattern = /import [\"']\\.\\/not-an-import\\.mjs/;",
-      "// import six from './commented-out.mjs';",
-      "/* export { seven } from '../shared/commented-out.mjs'; */",
-      "import fs from 'node:fs';",
-    ].join("\n")],
-    ["nested/static-single.mjs", ""],
-    ["shared/static-double.mjs", ""],
-    ["nested/dynamic-single.mjs", ""],
-    ["shared/dynamic-double.mjs", ""],
-    ["shared/re-export.mjs", ""],
-  ]);
-  const syntheticScripts = [...syntheticSources.keys()];
-  const syntheticRead = (script) => syntheticSources.get(script);
-  if (installedRuntimeImportDiagnostics(syntheticScripts, syntheticRead).length !== 0) {
-    fail("installed-runtime import-form fixture must resolve both quotes, ./ and ../, static and dynamic imports");
-  }
-  const onlyImporter = installedRuntimeImportDiagnostics(["nested/entry.mjs"], syntheticRead);
-  if (JSON.stringify(onlyImporter) !== JSON.stringify([
-    "nested/entry.mjs → nested/static-single.mjs",
-    "nested/entry.mjs → shared/static-double.mjs",
-    "nested/entry.mjs → nested/dynamic-single.mjs",
-    "nested/entry.mjs → shared/dynamic-double.mjs",
-    "nested/entry.mjs → shared/re-export.mjs",
-  ])) {
-    fail("installed-runtime import-form negative fixture must report imports and re-exports without comment or string false positives");
-  }
-  console.log("PASS installed-runtime imports resolve: full list empty; missing review-ledger gives wave-cost.mjs → review-ledger.mjs");
-
-  for (const [label, source] of [
-    ["missing declaration", "const OTHER_SCRIPTS = [];"],
-    ["empty declaration", "const RUNTIME_SCRIPTS = [];"],
-  ]) {
-    try {
-      extractRuntimeScripts(source);
-      fail(`installed-runtime ${label} fixture must fail closed`);
-    } catch {
-      // Expected: extraction errors are validation failures, never an empty success.
-    }
-  }
-}
-
 function reviewLedgerFixture() {
   const reviewEvent = {
     sources: [],
@@ -375,21 +140,7 @@ function validateReadBudgetFixtures() {
       const paths = readingPaths("Resolve [role:autoreview](model-policy.md#roles).\n\n```md\nRead `references/example.md`.\n```\n");
       require(paths.join() === "model-policy.md", "role or fenced-example parsing differs");
     });
-    fixture("installed layout without repository dependency", () => {
-      const sourceBudget = measureReadBudget(scratch);
-      for (const skill of DELIVERY_SKILLS) {
-        write(`${skill}/SKILL.md`, base);
-        write(`${skill}/AGENTS.md`, "# fixture\n");
-        write(`${skill}/references/shared.md`, "Read `references/nested.md`.\n");
-        write(`${skill}/references/nested.md`, "Read `references/shared.md`.\n");
-      }
-      fs.renameSync(path.join(scratch, "skills"), path.join(scratch, "source-skills"));
-      write(".mono-agent-workflow/scripts/runtime.mjs", read("scripts/runtime.mjs"));
-      write(".mono-agent-workflow/scripts/read-budget.mjs", read("scripts/read-budget.mjs"));
-      const result = spawnSync(process.execPath, [path.join(scratch, ".mono-agent-workflow/scripts/read-budget.mjs"), "--json"], { cwd: os.tmpdir(), encoding: "utf8" });
-      require(result.status === 0, result.stderr);
-      require(JSON.parse(result.stdout).bytes === sourceBudget.bytes, "installed union differs");
-    });
+
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 
@@ -620,7 +371,7 @@ function forEachMarkdownLine(text, visit) {
 }
 
 // README validation is document structure and link addressability, never rule semantics.
-const README_SECTIONS = ["Workflow", "Gates", "Roles and Decisions", "Cost", "Install Locally", "Project Config", "Owner Rules", "Skills", "Documentation Map", "Principles", "Validation"];
+const README_SECTIONS = ["Workflow", "Gates", "Roles and Decisions", "Cost", "Plugin Installation", "Project Config", "Owner Rules", "Skills", "Documentation Map", "Principles", "Validation"];
 
 function markdownHeadings(text) {
   const headings = [];
@@ -912,1287 +663,6 @@ function validateRepairAndRoutingContract() {
     }
   }
 
-}
-
-function validateLocalInstallBehavior() {
-  const skillsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-workflow-skills-"));
-  const installedResolver = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "resolve-issue-context.mjs");
-  const installedPackVerifier = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "verify-pack-state.mjs");
-  const installedWatcher = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "watch-workers.mjs");
-  const installedReviewLedger = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "review-ledger.mjs");
-  const installedWaveCost = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "wave-cost.mjs");
-  const readmeRelativePath = ".mono-agent-workflow/README.md";
-  const installedReadme = path.join(skillsRoot, readmeRelativePath);
-  const legacySkillDir = path.join(skillsRoot, "linear-check");
-  const legacyLockPath = path.join(skillsRoot, ".linear-agent-workflow.lock.json");
-  const legacyRuntimeDir = path.join(skillsRoot, ".linear-agent-workflow");
-  try {
-    expectCommandFailure(
-      "install-local --check --remove-stale conflict",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check", "--remove-stale"]),
-      "--remove-stale has no effect in --check mode"
-    );
-
-    fs.mkdirSync(legacySkillDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(legacySkillDir, "SKILL.md"),
-      "<!-- Installed from darkdepot/linear-agent-workflow @ legacy. Do not edit manually. -->\n"
-    );
-    fs.mkdirSync(legacyRuntimeDir, { recursive: true });
-    fs.writeFileSync(path.join(legacyRuntimeDir, "legacy.mjs"), "// legacy\n");
-    fs.writeFileSync(
-      legacyLockPath,
-      `${JSON.stringify({ installedSkills: [{ name: "linear-check" }] }, null, 2)}\n`
-    );
-
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-
-    const installedReadBudget = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "read-budget.mjs");
-    const installedBudget = JSON.parse(runNode([installedReadBudget, "--json"]));
-    if (!installedBudget.within_ceiling) fail("Installed delivery corpus exceeds the byte ceiling");
-    console.log(`PASS installed read-budget: ${installedBudget.bytes} bytes, ${installedBudget.files.length} files`);
-
-    const lockPath = path.join(skillsRoot, ".mono-agent-workflow.lock.json");
-    const installedIdentity = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-    const expectedCommit = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: root,
-      encoding: "utf8",
-    }).trim();
-    if (installedIdentity.packVersion !== read("VERSION").trim()) {
-      fail("Local install lockfile packVersion must equal VERSION");
-    }
-    if (installedIdentity.sourceCommit !== expectedCommit) {
-      fail("Local install lockfile sourceCommit must equal the immutable source HEAD");
-    }
-    if (installedIdentity.surfaceRevision !== 4) {
-      fail("Local install lockfile surfaceRevision must equal the current surface revision");
-    }
-    if (installedIdentity.installedSkills?.length !== EXPECTED_SKILLS.length) {
-      fail(`Fresh local install must contain exactly ${EXPECTED_SKILLS.length} skills`);
-    }
-    if (!fs.existsSync(installedReviewLedger)) {
-      fail("Local install missing the review ledger runtime script");
-    } else {
-      const reviewLedgerManifestPath = ".mono-agent-workflow/scripts/review-ledger.mjs";
-      const reviewLedgerManifest = installedIdentity.runtimeScripts?.find(
-        (entry) => entry.path === reviewLedgerManifestPath
-      );
-      const installedReviewLedgerHash = createHash("sha256")
-        .update(fs.readFileSync(installedReviewLedger))
-        .digest("hex");
-      if (reviewLedgerManifest?.sha256 !== installedReviewLedgerHash) {
-        fail("Local install review ledger hash must match the runtimeScripts manifest");
-      }
-    }
-    for (const retired of ["mono-project", "mono-prd", "mono-spec"]) {
-      if (fs.existsSync(path.join(skillsRoot, retired))) {
-        fail(`Fresh 10-skill install unexpectedly contains retired adapter ${retired}`);
-      }
-    }
-    if (fs.existsSync(path.join(skillsRoot, "mono-issue-intake"))) {
-      fail("Fresh 10-skill install unexpectedly contains retired mono-issue-intake");
-    }
-    const installedIssue = fs.readFileSync(path.join(skillsRoot, "mono-issue", "SKILL.md"), "utf8");
-    if (parseFrontmatter(installedIssue)?.name !== "mono-issue") {
-      fail("Installed mono-issue must be the issue-only front door, not the retired atomic adapter");
-    }
-    const installedIssueLock = installedIdentity.installedSkills.find((entry) => entry.name === "mono-issue");
-    const installedIssueHash = createHash("sha256").update(installedIssue).digest("hex");
-    if (installedIssueLock?.sha256 !== installedIssueHash) {
-      fail("Installed mono-issue hash must match the installed front-door body");
-    }
-    if (!fs.existsSync(installedPackVerifier)) {
-      fail("Local install missing the canonical pack-state verifier");
-    } else {
-      runNode([
-        installedPackVerifier,
-        "identity",
-        "--lock",
-        lockPath,
-        "--pack-version",
-        installedIdentity.packVersion,
-        "--source-commit",
-        installedIdentity.sourceCommit,
-        "--surface-revision",
-        String(installedIdentity.surfaceRevision),
-      ]);
-    }
-    if (!fs.existsSync(installedWatcher)) {
-      fail("Local install missing the canonical heartbeat watcher");
-    } else {
-      const watcherManifestPath = ".mono-agent-workflow/scripts/watch-workers.mjs";
-      const watcherManifest = installedIdentity.runtimeScripts?.find(
-        (entry) => entry.path === watcherManifestPath
-      );
-      const installedWatcherHash = createHash("sha256")
-        .update(fs.readFileSync(installedWatcher))
-        .digest("hex");
-      if (watcherManifest?.sha256 !== installedWatcherHash) {
-        fail("Local install heartbeat watcher hash must match the runtimeScripts manifest");
-      }
-    }
-
-    if (fs.existsSync(legacySkillDir)) fail("Local install kept previous-brand linear-check");
-    if (fs.existsSync(legacyLockPath)) fail("Local install kept previous-brand lockfile");
-    if (fs.existsSync(legacyRuntimeDir)) fail("Local install kept previous-brand runtime directory");
-
-    for (const skill of EXPECTED_SKILLS) {
-      const skillPath = path.join(skillsRoot, skill, "SKILL.md");
-      if (!fs.existsSync(skillPath)) {
-        fail(`Local install missing ${skill}`);
-        continue;
-      }
-      const skillText = fs.readFileSync(skillPath, "utf8");
-      if (!skillText.includes("Installed by Mono Agent Workflow")) {
-        fail(`Local install ${skill} missing generated metadata`);
-      }
-      if (!skillText.includes("`.agents/mono-workflow.config.json`")) {
-        fail(`Local install ${skill} missing project config note`);
-      }
-      if (/`skills\/mono-/.test(skillText)) {
-        fail(`Local install ${skill} kept repo-root peer skill paths`);
-      }
-    }
-
-    // AC3: the issue-only resolver is installed at the canonical pack-private
-    // path and is runnable in the installed layout — the create-then-approve
-    // intake (MONO-15) invokes it from here at delivery time.
-    if (!fs.existsSync(installedResolver)) {
-      fail("Local install missing the canonical issue-only resolver");
-    } else {
-      const probeIssue = path.join(skillsRoot, "probe-issue.md");
-      fs.writeFileSync(
-        probeIssue,
-        ["# Probe", "", "## Что сделать", "", "- do it", "", "## Критерии приёмки", "", "- AC1: x", "", "## Как проверить", "", "1. s", "", "## Что не входит", "", "- ng", "", "## Ревью-гейт", "", "- standard", ""].join("\n")
-      );
-      const probeFp = runNode([installedResolver, "--issue", probeIssue, "--emit-fingerprint"]).trim();
-      if (!/^[0-9a-f]{64}$/.test(probeFp)) {
-        fail("Installed issue-only resolver must be runnable and emit a 64-hex fingerprint");
-      }
-      fs.rmSync(probeIssue, { force: true });
-    }
-
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]);
-
-    // U4: invoke the installed assembler away from the checkout; its import
-    // closure and output must match the checked-in golden bytes.
-    const changelogFixture = fs.mkdtempSync(path.join(os.tmpdir(), "mono-installed-changelog-"));
-    try {
-      const golden = JSON.parse(read("scripts/fixtures/changelog-u4/ordered.json"));
-      fs.mkdirSync(path.join(changelogFixture, "changelog.d"));
-      fs.writeFileSync(path.join(changelogFixture, "CHANGELOG.md"), golden.initial);
-      fs.writeFileSync(path.join(changelogFixture, "config.json"), JSON.stringify({ landing: { changelog: {
-        fragmentDir: "changelog.d", target: "CHANGELOG.md", heading: "## [Unreleased]",
-      } } }));
-      for (const [name, text] of Object.entries(golden.fragments)) fs.writeFileSync(path.join(changelogFixture, "changelog.d", name), text);
-      execFileSync(process.execPath, [path.join(skillsRoot, ".mono-agent-workflow/scripts/changelog-assemble.mjs"),
-        "--worktree", changelogFixture, "--config", path.join(changelogFixture, "config.json")], { cwd: changelogFixture });
-      if (fs.readFileSync(path.join(changelogFixture, "CHANGELOG.md"), "utf8") !== golden.expected || fs.readdirSync(path.join(changelogFixture, "changelog.d")).length)
-        fail("installed changelog assembler must match golden output and consume records");
-    } finally { fs.rmSync(changelogFixture, { recursive: true, force: true }); }
-
-    // U6 installed layout: both commands run outside the source checkout with
-    // the installed import closure and a substituted GitHub boundary.
-    const guardFixture = fs.mkdtempSync(path.join(os.tmpdir(), "mono-installed-guard-"));
-    try {
-      const sha = "a".repeat(40), config = path.join(guardFixture, "config.json");
-      fs.writeFileSync(config, JSON.stringify({ landing: { validation: { check: "validate", timeoutSec: 1800 } } }));
-      fs.writeFileSync(path.join(guardFixture, "gh"), "#!/usr/bin/env node\nconsole.log(JSON.stringify({total_count:1,check_runs:[{id:1,name:'validate',head_sha:'" + sha + "',status:'completed',conclusion:'failure',completed_at:'2026-10-01T00:00:00Z'}]}));\n");
-      fs.chmodSync(path.join(guardFixture, "gh"), 0o755);
-      const installedGuard = path.join(skillsRoot, ".mono-agent-workflow/scripts/orchestrator/landing-guard.mjs");
-      const options = { cwd: guardFixture, encoding: "utf8", env: { ...process.env, PATH: guardFixture + path.delimiter + process.env.PATH } };
-      const check = spawnSync(process.execPath, [installedGuard, "check", "--repo", "owner/repo", "--sha", sha, "--root", guardFixture, "--config", config, "--json"], options);
-      if (check.status !== 1 || JSON.parse(check.stdout).reason !== "completed/failure") fail("installed landing guard must inspect the exact SHA");
-      const corrective = spawnSync(process.execPath, [installedGuard, "corrective", "--issue", "MONO-108", "--red-sha", sha, "--reason", "fixture repair", "--root", guardFixture], options);
-      if (corrective.status !== 0 || !fs.readFileSync(path.join(guardFixture, "ledger.md"), "utf8").includes("LANDING-CORRECTIVE")) fail("installed landing guard corrective must record authorization");
-    } finally { fs.rmSync(guardFixture, { recursive: true, force: true }); }
-
-    // Named integration fixture: the installed wave-cost script must load its
-    // sibling review-ledger module, never the upstream source-tree copy.
-    const installedWaveCostFixtureRoot = path.join(skillsRoot, "installed-wave-cost-fixture");
-    const installedWaveCostLogs = path.join(installedWaveCostFixtureRoot, "logs");
-    const installedWaveCostLedger = path.join(installedWaveCostFixtureRoot, "review-ledger.json");
-    fs.mkdirSync(installedWaveCostLogs, { recursive: true });
-    fs.writeFileSync(
-      path.join(installedWaveCostLogs, "MONO-999-mono-implement-a1.jsonl"),
-      `${JSON.stringify({ type: "thread.started", thread_id: "installed-wave-cost-fixture" })}\n`
-    );
-    fs.writeFileSync(installedWaveCostLedger, `${JSON.stringify(reviewLedgerFixture())}\n`);
-    const installedWaveCostOutput = parseWaveCostOutput(runNode([
-      installedWaveCost,
-      "MONO-999",
-      "--root",
-      installedWaveCostFixtureRoot,
-      "--ledger",
-      installedWaveCostLedger,
-    ]));
-    if (
-      installedWaveCostOutput.json.autoreview.ledger.collections !== 2 ||
-      installedWaveCostOutput.json.autoreview.ledger.invocations !== 1 ||
-      !installedWaveCostOutput.line.includes("авто-ревью: сборов 2 (отклонено 1), вызовов 1") ||
-      !installedWaveCostOutput.line.includes("измерено 0 из 1")
-    ) {
-      fail("installed wave-cost review-ledger fixture must use the installed runtime and preserve fixture counters");
-    }
-    console.log("PASS installed wave-cost review-ledger fixture: collections 2, withheld 1, invocations 1, measured 0 of 1");
-
-    // AC3: execute the INSTALLED watcher, not the upstream source copy. A
-    // malformed synthetic worker log produces spawn-fail immediately, avoiding
-    // filesystem birthtime/ctime/mtime assumptions across macOS and Linux.
-    const watcherFixtureRoot = path.join(skillsRoot, "watcher-fixture");
-    const watcherLogsDir = path.join(watcherFixtureRoot, "logs");
-    fs.mkdirSync(watcherLogsDir, { recursive: true });
-    const watcherLogPath = path.join(watcherLogsDir, "MONO-39-mono-implement-a1.jsonl");
-    fs.writeFileSync(watcherLogPath, "synthetic non-json worker output\n");
-    fs.writeFileSync(
-      path.join(watcherFixtureRoot, "workers.json"),
-      `${JSON.stringify({
-        "MONO-39": {
-          transport: "codex-cli",
-          stage: "mono-implement",
-          pid: 999_999_999,
-          log: watcherLogPath,
-        },
-      }, null, 2)}\n`
-    );
-    fs.writeFileSync(
-      path.join(watcherFixtureRoot, "control.json"),
-      `${JSON.stringify({ state: "active" }, null, 2)}\n`
-    );
-    const installedWatcherOutput = runNode([
-      installedWatcher,
-      "--root",
-      watcherFixtureRoot,
-      "--once",
-    ]);
-    if (!installedWatcherOutput.includes("EVENT:spawn-fail MONO-39")) {
-      fail("Installed heartbeat watcher must emit an event for the synthetic registry/log fixture");
-    }
-
-    for (const [field, value, expectedText] of [
-      ["packVersion", "0.0.0", "Lockfile packVersion is 0.0.0"],
-      ["sourceCommit", "b".repeat(40), "Lockfile sourceCommit mismatch"],
-      ["surfaceRevision", 99, "Lockfile surfaceRevision is 99"],
-    ]) {
-      const tamperedLock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-      tamperedLock[field] = value;
-      fs.writeFileSync(lockPath, `${JSON.stringify(tamperedLock, null, 2)}\n`);
-      expectCommandFailure(
-        `install-local --check tampered ${field} fixture`,
-        () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-        expectedText
-      );
-      runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    }
-
-    fs.appendFileSync(path.join(skillsRoot, "mono-review", "SKILL.md"), "\nBROKEN\n");
-    expectCommandFailure(
-      "install-local --check edited skill fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "stale or edited"
-    );
-
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    fs.appendFileSync(path.join(skillsRoot, "mono-review", "references", "review-rubric.md"), "\nBROKEN\n");
-    expectCommandFailure(
-      "install-local --check edited reference fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "stale or edited"
-    );
-
-    // A tampered installed runtime script is caught by --check, exactly like an
-    // edited skill body or reference.
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    fs.appendFileSync(installedResolver, "\n// BROKEN\n");
-    expectCommandFailure(
-      "install-local --check edited runtime script fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "stale or edited"
-    );
-
-    // AC1 negative probe: deleting the installed watcher makes --check fail.
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    fs.rmSync(installedWatcher, { force: true });
-    expectCommandFailure(
-      "install-local --check missing heartbeat watcher fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "Missing installed runtime script: .mono-agent-workflow/scripts/watch-workers.mjs"
-    );
-
-    // The "unexpected" branch: an extra file under the canonical scripts dir is
-    // flagged (mirrors the copied-asset unexpected-file test).
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    fs.writeFileSync(path.join(skillsRoot, ".mono-agent-workflow", "scripts", "stray.mjs"), "// stray\n");
-    expectCommandFailure(
-      "install-local --check unexpected runtime script fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "Unexpected installed pack file"
-    );
-
-    // The tamper scan walks the whole .mono-agent-workflow/ root: a file planted
-    // one level up (not under scripts/) is flagged too.
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    fs.writeFileSync(path.join(skillsRoot, ".mono-agent-workflow", "evil.mjs"), "// evil\n");
-    expectCommandFailure(
-      "install-local --check pack-root stray file fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "Unexpected installed pack file"
-    );
-
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    const documentationLock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-    if (Object.hasOwn(documentationLock, "ownerLayer")) fail("Install lock must omit ownerLayer");
-    if (fs.existsSync(path.join(skillsRoot, ".mono-agent-workflow/docs/ru"))) fail("Install must omit docs/ru");
-    if (fs.readFileSync(installedReadme, "utf8") !== read("README.md")) fail("Installed README must match source");
-    if (documentationLock.assets.readme !== createHash("sha256").update(read("README.md")).digest("hex")) fail("README hash mismatch");
-    fs.rmSync(installedReadme);
-    expectCommandFailure("missing installed README", () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]), "Missing installed README");
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    fs.appendFileSync(installedReadme, "\nBROKEN\n");
-    expectCommandFailure("edited installed README", () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]), "Installed README is stale or edited");
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    fs.writeFileSync(path.join(path.dirname(installedReadme), "stray.md"), "# stray\n");
-    expectCommandFailure("unexpected documentation file", () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]), "Unexpected installed pack file");
-
-    // schemaVersion 2 -> 3 migration: a pre-MONO-19 lockfile (v2 shape, no
-    // runtimeScripts) fails --check loudly, and a re-sync upgrades it to a clean
-    // v3 install that passes.
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    const v2Lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-    v2Lock.schemaVersion = 2;
-    delete v2Lock.runtimeScripts;
-    fs.writeFileSync(lockPath, `${JSON.stringify(v2Lock, null, 2)}\n`);
-    expectCommandFailure(
-      "install-local --check schemaVersion 2 lockfile fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]),
-      "Lockfile schemaVersion must be 3"
-    );
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot]);
-    runNode(["scripts/install-local.mjs", "--skills-root", skillsRoot, "--check"]);
-  } finally {
-    fs.rmSync(skillsRoot, { recursive: true, force: true });
-  }
-}
-
-function validatePackIdentityAndQuiescenceBehavior() {
-  const script = "scripts/verify-pack-state.mjs";
-  if (!exists(script)) {
-    fail(`Missing ${script}`);
-    return;
-  }
-
-  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-workflow-pack-state-"));
-  const lockPath = path.join(fixtureRoot, ".mono-agent-workflow.lock.json");
-  const controlPath = path.join(fixtureRoot, "control.json");
-  const workersPath = path.join(fixtureRoot, "workers.json");
-  const identity = {
-    packVersion: "0.20.1",
-    sourceCommit: "a".repeat(40),
-    surfaceRevision: 1,
-  };
-
-  try {
-    fs.writeFileSync(lockPath, `${JSON.stringify(identity, null, 2)}\n`);
-
-    // AC1: the four identity-bearing JSON surfaces and control.json accept the
-    // canonical additive shape. Template pins below keep the prose examples in
-    // lockstep with these executable fixtures.
-    const dispatch = { ...identity };
-    const registry = { "MONO-30": { ...identity } };
-    const report = { issue: "MONO-30", stage: "mono-implement", ...identity };
-    const control = { state: "idle" };
-    for (const [label, value] of Object.entries({ dispatch, report })) {
-      if (
-        typeof value.packVersion !== "string" ||
-        !/^[0-9a-f]{40}$/.test(value.sourceCommit) ||
-        !Number.isInteger(value.surfaceRevision) ||
-        value.surfaceRevision < 1
-      ) {
-        fail(`${label} identity schema fixture rejected the canonical shape`);
-      }
-    }
-    if (Object.values(registry).some((entry) => entry.surfaceRevision !== identity.surfaceRevision)) {
-      fail("workers.json identity schema fixture rejected the canonical shape");
-    }
-    if (!["active", "draining", "idle"].includes(control.state)) {
-      fail("control.json schema fixture rejected the canonical shape");
-    }
-
-    runNode([
-      script,
-      "identity",
-      "--lock",
-      lockPath,
-      "--pack-version",
-      identity.packVersion,
-      "--source-commit",
-      identity.sourceCommit,
-      "--surface-revision",
-      String(identity.surfaceRevision),
-    ]);
-
-    // Compatible pack update: version and source commit are descriptive pins.
-    runNode([
-      script,
-      "identity",
-      "--lock",
-      lockPath,
-      "--pack-version",
-      "99.0.0",
-      "--source-commit",
-      "b".repeat(40),
-      "--surface-revision",
-      String(identity.surfaceRevision),
-    ]);
-    expectCommandFailure(
-      "pack surface revision mismatch fixture",
-      () =>
-        runNode([
-          script,
-          "identity",
-          "--lock",
-          lockPath,
-          "--pack-version",
-          identity.packVersion,
-          "--source-commit",
-          identity.sourceCommit,
-          "--surface-revision",
-          "3",
-        ]),
-      "surfaceRevision expected 3 but installed 1; start a new attempt"
-    );
-
-    // AC3: breaking-install quiescence is exactly idle + empty registry.
-    fs.writeFileSync(controlPath, `${JSON.stringify(control, null, 2)}\n`);
-    fs.writeFileSync(workersPath, "{}\n");
-    runNode([script, "quiescence", "--root", fixtureRoot]);
-
-    fs.writeFileSync(
-      workersPath,
-      `${JSON.stringify({ "MONO-30": registry["MONO-30"] }, null, 2)}\n`
-    );
-    expectCommandFailure(
-      "pack nonempty worker registry quiescence fixture",
-      () => runNode([script, "quiescence", "--root", fixtureRoot]),
-      "workers.json has 1 active worker"
-    );
-
-    fs.writeFileSync(workersPath, "{}\n");
-    fs.writeFileSync(controlPath, `${JSON.stringify({ state: "paused" }, null, 2)}\n`);
-    expectCommandFailure(
-      "pack invalid control schema fixture",
-      () => runNode([script, "quiescence", "--root", fixtureRoot]),
-      "control.state must be one of active, draining, idle"
-    );
-    for (const state of ["active", "draining"]) {
-      fs.writeFileSync(controlPath, `${JSON.stringify({ state }, null, 2)}\n`);
-      expectCommandFailure(
-        `pack ${state} control quiescence fixture`,
-        () => runNode([script, "quiescence", "--root", fixtureRoot]),
-        `control.state=${state}`
-      );
-    }
-
-    const surfaceRevisionMatch = read("scripts/runtime.mjs").match(
-      /const SURFACE_REVISION = (\d+);/
-    );
-    if (!surfaceRevisionMatch) {
-      fail("runtime must declare the canonical numeric SURFACE_REVISION");
-    } else {
-      // The report and registry examples must never hand a worker a concrete
-      // revision to copy: during a surface cut-over the code constant and the
-      // dispatch pin are deliberately different numbers, and only the dispatch
-      // pin belongs in a report or a registry entry. The placeholder is
-      // unquoted because the emitted value must be an integer, never a string.
-      const reportTemplate = read("templates/orchestrator-report.md") + read("references/worker-contract.md");
-      if (/"surfaceRevision":\s*\d/.test(reportTemplate)) {
-        fail(
-          `orchestrator report template must not pin a concrete surfaceRevision (code constant is ${surfaceRevisionMatch[1]}); its examples repeat the dispatch pin`
-        );
-      }
-      const reportSurfacePin = '"surfaceRevision": <repeat the dispatch pin, integer>,';
-      const reportSurfacePins = reportTemplate.split(reportSurfacePin).length - 1;
-      if (reportSurfacePins !== 2) {
-        fail(
-          `orchestrator report template must show ${reportSurfacePin} in both report and registry shapes`
-        );
-      }
-    }
-  } finally {
-    fs.rmSync(fixtureRoot, { recursive: true, force: true });
-  }
-}
-
-function validateMultiRootInstallBehavior() {
-  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "mono-workflow-multi-root-"));
-  const codexRoot = path.join(baseDir, "codex", "skills");
-  const claudeRoot = path.join(baseDir, "claude", "skills");
-  const recordedRoot = path.join(baseDir, "recorded", "skills");
-  const lockName = ".mono-agent-workflow.lock.json";
-  const env = {
-    ...process.env,
-    MONO_WORKFLOW_KNOWN_ROOTS: [codexRoot, claudeRoot].join(path.delimiter),
-  };
-  const version = read("VERSION").trim();
-
-  try {
-    expectCommandFailure(
-      "install-local --all-roots --skills-root conflict",
-      () => runNode(["scripts/install-local.mjs", "--all-roots", "--skills-root", codexRoot]),
-      "--all-roots cannot be combined with --skills-root"
-    );
-
-    // Fresh machine: no lockfiles anywhere, default mode installs the first known root only.
-    const fallbackOutput = runNode(["scripts/install-local.mjs"], { env });
-    if (!fallbackOutput.includes("No installed skills roots found")) {
-      fail("install-local default mode must report the fresh-install fallback");
-    }
-    if (!fs.existsSync(path.join(codexRoot, lockName))) {
-      fail("install-local default mode must install into the first known root on a fresh machine");
-    }
-    if (fs.existsSync(claudeRoot)) {
-      fail("install-local fresh-install fallback must not create other known roots");
-    }
-
-    // With a second installed root, one default run must sync every root and report per-root versions.
-    runNode(["scripts/install-local.mjs", "--skills-root", claudeRoot], { env });
-    const syncOutput = runNode(["scripts/install-local.mjs", "--all-roots", "--remove-stale"], { env });
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      if (!syncOutput.includes(`Installed ${EXPECTED_SKILLS.length} Mono workflow skills into ${skillsRoot} (version ${version})`)) {
-        fail(`install-local --all-roots must report a per-root install for ${skillsRoot}`);
-      }
-      // AC3: every synced root gets the pack-private resolver at the canonical path.
-      if (!fs.existsSync(path.join(skillsRoot, ".mono-agent-workflow", "scripts", "resolve-issue-context.mjs"))) {
-        fail(`install-local --all-roots must install the issue-only resolver into ${skillsRoot}`);
-      }
-      const reviewLedgerPath = path.join(skillsRoot, ".mono-agent-workflow", "scripts", "review-ledger.mjs");
-      const installedLock = JSON.parse(fs.readFileSync(path.join(skillsRoot, lockName), "utf8"));
-      const reviewLedgerEntry = installedLock.runtimeScripts?.find(
-        (entry) => entry.path === ".mono-agent-workflow/scripts/review-ledger.mjs"
-      );
-      if (
-        !fs.existsSync(reviewLedgerPath) ||
-        reviewLedgerEntry?.sha256 !== createHash("sha256").update(fs.readFileSync(reviewLedgerPath)).digest("hex")
-      ) {
-        fail(`install-local --all-roots must install and hash the review ledger into ${skillsRoot}`);
-      }
-    }
-
-    const checkOutput = runNode(["scripts/install-local.mjs", "--check"], { env });
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      if (!checkOutput.includes(`Mono workflow local install check passed for ${skillsRoot} (version ${version})`)) {
-        fail(`install-local --check must report the per-root version for ${skillsRoot}`);
-      }
-    }
-
-    // A root recorded in a discovered lockfile is synced even when missing from the known list.
-    runNode(["scripts/install-local.mjs", "--skills-root", recordedRoot], { env });
-    const claudeLockPath = path.join(claudeRoot, lockName);
-    const claudeLock = JSON.parse(fs.readFileSync(claudeLockPath, "utf8"));
-    claudeLock.skillsRoot = recordedRoot;
-    fs.writeFileSync(claudeLockPath, `${JSON.stringify(claudeLock, null, 2)}\n`);
-    const recordedOutput = runNode(["scripts/install-local.mjs"], { env });
-    if (!recordedOutput.includes(`Installed ${EXPECTED_SKILLS.length} Mono workflow skills into ${recordedRoot}`)) {
-      fail("install-local --all-roots must sync roots recorded in discovered lockfiles");
-    }
-
-    // One root left at an older version: the multi-root check must surface it.
-    const codexLockPath = path.join(codexRoot, lockName);
-    const codexLock = JSON.parse(fs.readFileSync(codexLockPath, "utf8"));
-    codexLock.upstreamVersion = "0.0.1";
-    fs.writeFileSync(codexLockPath, `${JSON.stringify(codexLock, null, 2)}\n`);
-    expectCommandFailure(
-      "install-local --check stale per-root version fixture",
-      () => runNode(["scripts/install-local.mjs", "--check"], { env }),
-      "Lockfile upstreamVersion is 0.0.1"
-    );
-    runNode(["scripts/install-local.mjs"], { env });
-
-    // One edited root: the multi-root check must fail naming the broken root and still pass the healthy one.
-    fs.appendFileSync(path.join(claudeRoot, "mono-review", "SKILL.md"), "\nBROKEN\n");
-    for (const expectedText of [
-      `Mono workflow local install check failed for ${claudeRoot}`,
-      `Mono workflow local install check passed for ${codexRoot}`,
-    ]) {
-      expectCommandFailure(
-        "install-local --check multi-root edited skill fixture",
-        () => runNode(["scripts/install-local.mjs", "--check"], { env }),
-        expectedText
-      );
-    }
-
-    runNode(["scripts/install-local.mjs", "--all-roots"], { env });
-    runNode(["scripts/install-local.mjs", "--all-roots", "--check"], { env });
-  } finally {
-    fs.rmSync(baseDir, { recursive: true, force: true });
-  }
-}
-
-function validateBreakingInstallBehavior() {
-  const installerSource = read("scripts/install-local.mjs");
-  const breakingStart = installerSource.indexOf("function breakingSync(");
-  const breakingEnd = installerSource.indexOf("\nconst args =", breakingStart);
-  const breakingBody = installerSource.slice(breakingStart, breakingEnd);
-  if (
-    breakingStart < 0 ||
-    breakingEnd < 0 ||
-    breakingBody.indexOf("acquireGlobalInstallLock") < 0 ||
-    breakingBody.indexOf("resolveTargetRoots(args)") < breakingBody.indexOf("acquireGlobalInstallLock")
-  ) {
-    fail("install-local --breaking must discover target roots only after acquiring the global lock");
-  }
-
-  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "mono-workflow-breaking-install-"));
-  const stateRoot = path.join(baseDir, "state");
-  const productRoot = path.join(stateRoot, "orchestrator", "fixture-product");
-  const codexRoot = path.join(baseDir, "codex", "skills");
-  const claudeRoot = path.join(baseDir, "claude", "skills");
-  const lockName = ".mono-agent-workflow.lock.json";
-  const installLockPath = path.join(stateRoot, "install.lock");
-  const env = {
-    ...process.env,
-    MONO_WORKFLOW_KNOWN_ROOTS: [codexRoot, claudeRoot].join(path.delimiter),
-    MONO_WORKFLOW_STATE_ROOT: stateRoot,
-  };
-
-  function writeProductState(control, workers) {
-    fs.mkdirSync(productRoot, { recursive: true });
-    fs.writeFileSync(path.join(productRoot, "control.json"), `${JSON.stringify(control, null, 2)}\n`);
-    fs.writeFileSync(path.join(productRoot, "workers.json"), `${JSON.stringify(workers, null, 2)}\n`);
-  }
-
-  function writeInstallLock(owner) {
-    fs.mkdirSync(installLockPath, { recursive: true });
-    fs.writeFileSync(
-      path.join(installLockPath, "protocol.json"),
-      `${JSON.stringify({ protocol: "token-claims-v1" }, null, 2)}\n`
-    );
-    fs.writeFileSync(
-      path.join(installLockPath, `claim-${owner.token}.json`),
-      `${JSON.stringify({ ...owner, sequence: 1 }, null, 2)}\n`
-    );
-  }
-
-  function installLockClaims() {
-    if (!fs.existsSync(installLockPath)) return [];
-    return fs.readdirSync(installLockPath).filter((name) => /^claim-.+\.json$/.test(name));
-  }
-
-  function seedPreviousSkillSurface(skillsRoot, surfaceRevision, retiredSkills) {
-    const lockPath = path.join(skillsRoot, lockName);
-    const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-    lock.surfaceRevision = surfaceRevision;
-
-    const atomicIssueBody = [
-      "<!-- Installed by Mono Agent Workflow @ previous-surface. Do not edit manually. -->",
-      "# Mono Issue",
-      "",
-      "This is the retired internal/advanced atomic helper.",
-      "",
-    ].join("\n");
-    const atomicIssuePath = path.join(skillsRoot, "mono-issue", "SKILL.md");
-    fs.writeFileSync(atomicIssuePath, atomicIssueBody);
-    const issueEntry = lock.installedSkills.find((entry) => entry.name === "mono-issue");
-    issueEntry.sha256 = createHash("sha256").update(atomicIssueBody).digest("hex");
-
-    for (const retired of retiredSkills) {
-      const retiredDir = path.join(skillsRoot, retired);
-      fs.mkdirSync(retiredDir, { recursive: true });
-      const body = "<!-- Installed by Mono Agent Workflow @ previous-surface. Do not edit manually. -->\n";
-      fs.writeFileSync(path.join(retiredDir, "SKILL.md"), body);
-      lock.installedSkills.push({
-        name: retired,
-        path: `${retired}/SKILL.md`,
-        sha256: createHash("sha256").update(body).digest("hex"),
-      });
-    }
-    fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
-  }
-
-  function snapshotTree(treeRoot) {
-    const entries = [];
-    function walk(current) {
-      for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-        const entryPath = path.join(current, entry.name);
-        const relativePath = path.relative(treeRoot, entryPath);
-        if (entry.isDirectory()) {
-          entries.push(`dir:${relativePath}`);
-          walk(entryPath);
-        } else if (entry.isFile()) {
-          entries.push(`file:${relativePath}:${createHash("sha256").update(fs.readFileSync(entryPath)).digest("hex")}`);
-        } else {
-          entries.push(`other:${relativePath}`);
-        }
-      }
-    }
-    walk(treeRoot);
-    return entries.join("\n");
-  }
-
-  function orchestratorTransactionArtifacts() {
-    if (!fs.existsSync(stateRoot)) return [];
-    return fs
-      .readdirSync(stateRoot)
-      .filter(
-        (name) =>
-          name.startsWith(".orchestrator.install-backup-") ||
-          name.startsWith(".orchestrator.install-claim-")
-      )
-      .sort();
-  }
-
-  try {
-    expectCommandFailure(
-      "install-local --breaking --check conflict",
-      () => runNode(["scripts/install-local.mjs", "--breaking", "--check"], { env }),
-      "--breaking cannot be combined with --check"
-    );
-
-    expectCommandFailure(
-      "install-local --breaking unsupported Windows fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], {
-        env: { ...env, MONO_WORKFLOW_TEST_FORCE_WINDOWS: "1" },
-      }),
-      "--breaking is not supported on Windows"
-    );
-    if (fs.existsSync(installLockPath)) {
-      fail("install-local --breaking Windows refusal mutated the global lock state");
-    }
-
-    writeProductState({ state: "idle" }, {});
-    runNode(["scripts/install-local.mjs", "--skills-root", codexRoot], { env });
-    runNode(["scripts/install-local.mjs", "--skills-root", claudeRoot], { env });
-
-    // AC1 fresh 10, 11→10, and direct 14→10: first prove a clean current
-    // install, then model both previous surfaces. Both paths also restore the
-    // retired atomic mono-issue body so the transaction must perform the
-    // semantic swap, not merely delete a directory.
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      const freshLock = JSON.parse(
-        fs.readFileSync(path.join(skillsRoot, lockName), "utf8")
-      );
-      if (freshLock.surfaceRevision !== 4 || freshLock.installedSkills?.length !== 11) {
-        fail(`Fresh breaking-install fixture must start with 11 skills at surfaceRevision 4 in ${skillsRoot}`);
-      }
-    }
-    seedPreviousSkillSurface(
-      codexRoot,
-      1,
-      ["mono-issue-intake", "mono-project", "mono-prd", "mono-spec"]
-    );
-    seedPreviousSkillSurface(claudeRoot, 2, ["mono-issue-intake"]);
-
-    // AC3 + strengthened --check: generated stale directories and surplus
-    // installedSkills entries are failures, while a user-owned mono-* lookalike
-    // is neither removed nor reported as generated drift.
-    const staleDir = path.join(codexRoot, "mono-retired");
-    const lookalikeDir = path.join(codexRoot, "mono-user-owned");
-    fs.mkdirSync(staleDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(staleDir, "SKILL.md"),
-      "<!-- Installed by Mono Agent Workflow @ retired. Do not edit manually. -->\n"
-    );
-    fs.mkdirSync(lookalikeDir, { recursive: true });
-    fs.writeFileSync(path.join(lookalikeDir, "SKILL.md"), "# User-owned lookalike\n");
-    expectCommandFailure(
-      "install-local --check unexpected generated directory fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", codexRoot, "--check"], { env }),
-      "Unexpected generated workflow skill directory: mono-retired"
-    );
-    expectCommandFailure(
-      "install-local --breaking unowned generated directory fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-      "not owned by the previous lock: mono-retired"
-    );
-    fs.rmSync(staleDir, { recursive: true, force: true });
-
-    const codexLockPath = path.join(codexRoot, lockName);
-    const escapeTarget = path.join(baseDir, "escape-target", "mono-prd");
-    fs.mkdirSync(escapeTarget, { recursive: true });
-    fs.writeFileSync(
-      path.join(escapeTarget, "SKILL.md"),
-      "<!-- Installed by Mono Agent Workflow @ external. Do not edit manually. -->\n"
-    );
-    const pathEscapeLock = JSON.parse(fs.readFileSync(codexLockPath, "utf8"));
-    pathEscapeLock.installedSkills.push({
-      name: "../../escape-target/mono-prd",
-      path: "../../escape-target/mono-prd/SKILL.md",
-      sha256: "0".repeat(64),
-    });
-    fs.writeFileSync(codexLockPath, `${JSON.stringify(pathEscapeLock, null, 2)}\n`);
-    expectCommandFailure(
-      "install-local --breaking previous-lock path escape fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-      "installed skill name must be a safe direct child"
-    );
-    if (!fs.existsSync(path.join(escapeTarget, "SKILL.md"))) {
-      fail("install-local --breaking path escape fixture mutated an external generated directory");
-    }
-    pathEscapeLock.installedSkills = pathEscapeLock.installedSkills.filter(
-      (entry) => entry.name !== "../../escape-target/mono-prd"
-    );
-    fs.writeFileSync(codexLockPath, `${JSON.stringify(pathEscapeLock, null, 2)}\n`);
-    fs.rmSync(path.join(baseDir, "escape-target"), { recursive: true, force: true });
-
-    const surplusLock = JSON.parse(fs.readFileSync(codexLockPath, "utf8"));
-    surplusLock.installedSkills.push({
-      name: "mono-ghost",
-      path: "mono-ghost/SKILL.md",
-      sha256: "0".repeat(64),
-    });
-    fs.writeFileSync(codexLockPath, `${JSON.stringify(surplusLock, null, 2)}\n`);
-    expectCommandFailure(
-      "install-local --check surplus lock entry fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", codexRoot, "--check"], { env }),
-      "Lockfile has unexpected skill entry: mono-ghost"
-    );
-    surplusLock.installedSkills = surplusLock.installedSkills.filter(
-      (entry) => entry.name !== "mono-ghost"
-    );
-    fs.writeFileSync(codexLockPath, `${JSON.stringify(surplusLock, null, 2)}\n`);
-
-    // AC1 multi-root success: one breaking transaction repairs both roots,
-    // removes generated stale state, preserves the non-generated lookalike,
-    // and leaves every root post-check clean.
-    const successOutput = runNode(["scripts/install-local.mjs", "--breaking"], {
-      env: { ...env, MONO_WORKFLOW_TEST_PROBE_QUIESCENCE_CLAIM: "1" },
-    });
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      if (!successOutput.includes(`Breaking install committed for ${skillsRoot}`)) {
-        fail(`install-local --breaking must report a committed transaction for ${skillsRoot}`);
-      }
-    }
-    if (!successOutput.includes("Quiescence claim probe passed")) {
-      fail("install-local --breaking did not prove that control.json writers were excluded during cut-over");
-    }
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      const migratedLock = JSON.parse(
-        fs.readFileSync(path.join(skillsRoot, lockName), "utf8")
-      );
-      if (migratedLock.surfaceRevision !== 4 || migratedLock.installedSkills?.length !== 11) {
-        fail(`Breaking install did not migrate the previous surface to 11 skills at surfaceRevision 4 in ${skillsRoot}`);
-      }
-      for (const retired of ["mono-issue-intake", "mono-project", "mono-prd", "mono-spec"]) {
-        if (fs.existsSync(path.join(skillsRoot, retired))) {
-          fail(`Breaking install kept retired generated adapter ${retired} at ${skillsRoot}`);
-        }
-      }
-      const installedIssue = fs.readFileSync(path.join(skillsRoot, "mono-issue", "SKILL.md"), "utf8");
-      if (parseFrontmatter(installedIssue)?.name !== "mono-issue") {
-        fail(`Breaking install did not swap mono-issue to the front-door body at ${skillsRoot}`);
-      }
-      const lockedIssue = migratedLock.installedSkills.find((entry) => entry.name === "mono-issue");
-      if (lockedIssue?.sha256 !== createHash("sha256").update(installedIssue).digest("hex")) {
-        fail(`Breaking install recorded the wrong mono-issue front-door hash at ${skillsRoot}`);
-      }
-    }
-    if (!fs.existsSync(path.join(lookalikeDir, "SKILL.md"))) {
-      fail("install-local --breaking removed a non-generated mono-* lookalike");
-    }
-    runNode(["scripts/install-local.mjs", "--check"], { env });
-    const idempotentOutput = runNode(["scripts/install-local.mjs", "--breaking"], { env });
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      if (!idempotentOutput.includes(`Breaking install committed for ${skillsRoot}`)) {
-        fail(`Idempotent 11→11 breaking install did not commit ${skillsRoot}`);
-      }
-      const idempotentLock = JSON.parse(fs.readFileSync(path.join(skillsRoot, lockName), "utf8"));
-      if (idempotentLock.surfaceRevision !== 4 || idempotentLock.installedSkills?.length !== 11) {
-        fail(`Idempotent 11→11 breaking install changed the target surface at ${skillsRoot}`);
-      }
-    }
-    runNode(["scripts/install-local.mjs", "--check"], { env });
-    if (fs.readFileSync(path.join(productRoot, "control.json"), "utf8") !== '{\n  "state": "idle"\n}\n') {
-      fail("install-local --breaking did not restore the claimed control.json byte-for-byte");
-    }
-
-    // AC1 rollback: inject a failure after committing the second root. Both
-    // roots must return byte-for-byte to their pre-transaction trees.
-    fs.appendFileSync(path.join(codexRoot, "mono-review", "SKILL.md"), "\nROOT-ONE-BEFORE-ROLLBACK\n");
-    fs.appendFileSync(path.join(claudeRoot, "mono-review", "SKILL.md"), "\nROOT-TWO-BEFORE-ROLLBACK\n");
-    const beforeRollback = new Map([
-      [codexRoot, snapshotTree(codexRoot)],
-      [claudeRoot, snapshotTree(claudeRoot)],
-    ]);
-    expectCommandFailure(
-      "install-local --breaking second-root rollback fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], {
-        env: { ...env, MONO_WORKFLOW_TEST_FAIL_AFTER_ROOT: "2" },
-      }),
-      "Injected breaking install failure after root 2"
-    );
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      if (snapshotTree(skillsRoot) !== beforeRollback.get(skillsRoot)) {
-        fail(`install-local --breaking did not roll back ${skillsRoot} exactly`);
-      }
-    }
-
-    // A rollback failure must retain the transaction backup for manual
-    // recovery instead of deleting the only remaining copy in finally.
-    expectCommandFailure(
-      "install-local --breaking rollback backup retention fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], {
-        env: {
-          ...env,
-          MONO_WORKFLOW_TEST_FAIL_AFTER_ROOT: "1",
-          MONO_WORKFLOW_TEST_FAIL_ROLLBACK_ROOT: "1",
-        },
-      }),
-      "backup retained at"
-    );
-    const codexTransactionDirs = fs
-      .readdirSync(path.dirname(codexRoot), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith(".mono-agent-workflow-install-"))
-      .map((entry) => path.join(path.dirname(codexRoot), entry.name));
-    if (codexTransactionDirs.length !== 1) {
-      fail("install-local --breaking rollback failure must retain exactly one transaction directory");
-    } else if (!fs.existsSync(path.join(codexTransactionDirs[0], "backup", "mono-review", "SKILL.md"))) {
-      fail("install-local --breaking rollback failure did not retain the managed-root backup");
-    }
-    for (const transactionDir of codexTransactionDirs) {
-      fs.rmSync(transactionDir, { recursive: true, force: true });
-    }
-    for (const entry of fs.readdirSync(path.dirname(claudeRoot), { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name.startsWith(".mono-agent-workflow-install-")) {
-        fs.rmSync(path.join(path.dirname(claudeRoot), entry.name), { recursive: true, force: true });
-      }
-    }
-    if (installLockClaims().length !== 1) {
-      fail("install-local --breaking rollback failure must retain the global lock for recovery");
-    }
-    fs.rmSync(installLockPath, { recursive: true, force: true });
-
-    // A lock whose ownership cannot be proven at release is an installation
-    // failure, not success. Already-mutated roots are rolled back and the lock
-    // plus backups remain available for recovery.
-    const beforeReleaseFailure = new Map([
-      [codexRoot, snapshotTree(codexRoot)],
-      [claudeRoot, snapshotTree(claudeRoot)],
-    ]);
-    expectCommandFailure(
-      "install-local --breaking lock release failure fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], {
-        env: { ...env, MONO_WORKFLOW_TEST_FAIL_INSTALL_LOCK_RELEASE: "1" },
-      }),
-      "Install lock release failed"
-    );
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      if (snapshotTree(skillsRoot) !== beforeReleaseFailure.get(skillsRoot)) {
-        fail(`install-local --breaking did not roll back ${skillsRoot} after lock release failure`);
-      }
-      for (const entry of fs.readdirSync(path.dirname(skillsRoot), { withFileTypes: true })) {
-        if (entry.isDirectory() && entry.name.startsWith(".mono-agent-workflow-install-")) {
-          fs.rmSync(path.join(path.dirname(skillsRoot), entry.name), { recursive: true, force: true });
-        }
-      }
-    }
-    if (installLockClaims().length !== 1) {
-      fail("install-local --breaking release failure did not retain the global lock");
-    }
-    fs.rmSync(installLockPath, { recursive: true, force: true });
-
-    // The ordinary writer is not transactional, but a failed release is still
-    // an explicit non-zero install failure. Handle it without an uncaught
-    // exception and retain the claim for safe manual recovery.
-    expectCommandFailure(
-      "install-local ordinary lock release failure fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", codexRoot], {
-        env: { ...env, MONO_WORKFLOW_TEST_FAIL_INSTALL_LOCK_RELEASE: "1" },
-      }),
-      "Install lock release failed"
-    );
-    if (installLockClaims().length !== 1) {
-      fail("install-local ordinary release failure did not retain the global lock");
-    }
-    fs.rmSync(installLockPath, { recursive: true, force: true });
-
-    // Replacing the whole stable container after ownership read-back cannot
-    // make release delete a newer owner: the old token's unique claim pathname
-    // is absent in the replacement container. Ownership is now uncertain, so
-    // roots stay in their fully post-checked state and recovery data is retained
-    // instead of racing the newer owner with an unsafe rollback.
-    expectCommandFailure(
-      "install-local --breaking replacement-owner release race fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], {
-        env: { ...env, MONO_WORKFLOW_TEST_REPLACE_LOCK_CONTAINER_BEFORE_RELEASE: "1" },
-      }),
-      "lock ownership is uncertain"
-    );
-    runNode(["scripts/install-local.mjs", "--check"], { env });
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      let retainedRecovery = false;
-      for (const entry of fs.readdirSync(path.dirname(skillsRoot), { withFileTypes: true })) {
-        if (entry.isDirectory() && entry.name.startsWith(".mono-agent-workflow-install-")) {
-          retainedRecovery = true;
-          fs.rmSync(path.join(path.dirname(skillsRoot), entry.name), { recursive: true, force: true });
-        }
-      }
-      if (!retainedRecovery) {
-        fail(`install-local --breaking did not retain recovery data after lock replacement at ${skillsRoot}`);
-      }
-    }
-    if (JSON.stringify(installLockClaims()) !== JSON.stringify(["claim-newer-owner.json"])) {
-      fail("install-local --breaking release race removed or changed the newer owner's claim");
-    }
-    const displacedLocks = fs
-      .readdirSync(stateRoot)
-      .filter((name) => name.startsWith("install.lock.displaced-"));
-    if (displacedLocks.length !== 1) {
-      fail("install-local --breaking release race did not retain the displaced owned claim");
-    }
-    fs.rmSync(installLockPath, { recursive: true, force: true });
-    if (displacedLocks.length === 1) {
-      fs.rmSync(path.join(stateRoot, displacedLocks[0]), { recursive: true, force: true });
-    }
-
-    // A staging failure on root 2 must clean both root 2's locally-created
-    // transaction directory and the already-tracked staged root 1 directory.
-    expectCommandFailure(
-      "install-local --breaking staging cleanup fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], {
-        env: { ...env, MONO_WORKFLOW_TEST_FAIL_DURING_STAGE_ROOT: "2" },
-      }),
-      "Injected breaking install staging failure at root 2"
-    );
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      const leaked = fs
-        .readdirSync(path.dirname(skillsRoot), { withFileTypes: true })
-        .some((entry) => entry.isDirectory() && entry.name.startsWith(".mono-agent-workflow-install-"));
-      if (leaked) fail(`install-local --breaking leaked staging data beside ${skillsRoot}`);
-    }
-
-    // A root and parent created only by a failed breaking transaction must be
-    // removed after rollback so filesystem absence is restored exactly.
-    const freshRoot = path.join(baseDir, "fresh-runtime", "skills");
-    expectCommandFailure(
-      "install-local --breaking fresh-root rollback fixture",
-      () => runNode(
-        ["scripts/install-local.mjs", "--skills-root", freshRoot, "--breaking"],
-        { env: { ...env, MONO_WORKFLOW_TEST_FAIL_AFTER_ROOT: "1" } }
-      ),
-      "Injected breaking install failure after root 1"
-    );
-    if (fs.existsSync(freshRoot) || fs.existsSync(path.dirname(freshRoot))) {
-      fail("install-local --breaking rollback kept a root or parent created by the failed transaction");
-    }
-
-    // AC2 quiescence: both non-idle control states and a nonempty registry
-    // block before target-root mutation with the A5 helper's precise reason.
-    for (const state of ["active", "draining"]) {
-      writeProductState({ state }, {});
-      const liveTreeBefore = snapshotTree(path.join(stateRoot, "orchestrator"));
-      expectCommandFailure(
-        `install-local --breaking ${state} wave fixture`,
-        () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-        `control.state=${state} (requires idle)`
-      );
-      if (snapshotTree(path.join(stateRoot, "orchestrator")) !== liveTreeBefore) {
-        fail(`install-local --breaking mutated the live ${state} orchestrator tree before refusal`);
-      }
-      if (orchestratorTransactionArtifacts().length > 0) {
-        fail(`install-local --breaking claimed the live ${state} orchestrator tree before refusal`);
-      }
-    }
-    writeProductState({ state: "idle" }, { "MONO-LIVE": { stage: "mono-implement" } });
-    expectCommandFailure(
-      "install-local --breaking nonempty registry fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-      "workers.json has 1 active worker: MONO-LIVE"
-    );
-
-    // An orchestrator still running the pre-coordination surface can activate
-    // after the initial scan. The frozen-tree revalidation must catch that
-    // race before any skills root changes and restore the now-active state.
-    writeProductState({ state: "idle" }, {});
-    const beforeRacedQuiescence = new Map([
-      [codexRoot, snapshotTree(codexRoot)],
-      [claudeRoot, snapshotTree(claudeRoot)],
-    ]);
-    expectCommandFailure(
-      "install-local --breaking scan-to-claim activation fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], {
-        env: { ...env, MONO_WORKFLOW_TEST_ACTIVATE_AFTER_QUIESCENCE_SCAN: "1" },
-      }),
-      "control.state=active (requires idle)"
-    );
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      if (snapshotTree(skillsRoot) !== beforeRacedQuiescence.get(skillsRoot)) {
-        fail(`install-local --breaking mutated ${skillsRoot} before frozen quiescence revalidation`);
-      }
-    }
-    if (
-      JSON.parse(fs.readFileSync(path.join(productRoot, "control.json"), "utf8")).state !==
-      "active"
-    ) {
-      fail("install-local --breaking did not restore the state caught by frozen revalidation");
-    }
-    if (orchestratorTransactionArtifacts().length > 0) {
-      fail("install-local --breaking leaked a claim after frozen quiescence refusal");
-    }
-
-    fs.writeFileSync(path.join(productRoot, "control.json"), "{broken\n");
-    fs.writeFileSync(path.join(productRoot, "workers.json"), "{}\n");
-    expectCommandFailure(
-      "install-local --breaking corrupt control fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-      "cannot read control.json"
-    );
-
-    fs.writeFileSync(path.join(productRoot, "control.json"), '{"state":"idle"}\n');
-    fs.writeFileSync(path.join(productRoot, "workers.json"), "[broken\n");
-    expectCommandFailure(
-      "install-local --breaking corrupt registry fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-      "cannot read workers.json"
-    );
-
-    // All skills roots are preflighted before any target mutation. A corrupt
-    // second lock therefore leaves the first root untouched.
-    writeProductState({ state: "idle" }, {});
-    runNode(["scripts/install-local.mjs", "--skills-root", codexRoot], { env });
-    runNode(["scripts/install-local.mjs", "--skills-root", claudeRoot], { env });
-    const firstBeforePreflightFailure = snapshotTree(codexRoot);
-    fs.writeFileSync(path.join(claudeRoot, lockName), "{broken\n");
-    expectCommandFailure(
-      "install-local --breaking all-root preflight fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-      "Lockfile is corrupted"
-    );
-    if (snapshotTree(codexRoot) !== firstBeforePreflightFailure) {
-      fail("install-local --breaking mutated the first root before the second root passed preflight");
-    }
-    runNode(["scripts/install-local.mjs", "--skills-root", claudeRoot], { env });
-
-    // Protocol cut-over: an empty directory or an active legacy owner without
-    // protocol.json is never joined as a token-claims container.
-    fs.rmSync(installLockPath, { recursive: true, force: true });
-    fs.mkdirSync(installLockPath, { recursive: true });
-    expectCommandFailure(
-      "install-local --breaking incomplete legacy lock fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-      "incomplete or legacy lock requires manual inspection and removal"
-    );
-    fs.writeFileSync(
-      path.join(installLockPath, "owner.json"),
-      `${JSON.stringify({ pid: process.pid, token: "test-token-placeholder" }, null, 2)}\n`
-    );
-    expectCommandFailure(
-      "install-local --breaking active legacy lock fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-      `breaking install lock is held by active process ${process.pid}`
-    );
-    fs.rmSync(installLockPath, { recursive: true, force: true });
-
-    // AC3 global lock: a lock owned by this live parent process represents a
-    // concurrent installer and must be rejected deterministically.
-    fs.mkdirSync(stateRoot, { recursive: true });
-    writeInstallLock({ pid: process.pid, token: "fixture", startedAt: new Date().toISOString() });
-    expectCommandFailure(
-      "install-local --breaking concurrent lock fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-      `breaking install lock is held by active process ${process.pid}`
-    );
-    expectCommandFailure(
-      "install-local ordinary writer honors global lock fixture",
-      () => runNode(["scripts/install-local.mjs", "--skills-root", codexRoot], { env }),
-      `breaking install lock is held by active process ${process.pid}`
-    );
-    fs.rmSync(installLockPath, { recursive: true, force: true });
-
-    // Stale locks fail closed and remain in place for inspection; automatically
-    // unlinking a pathname after a raced read could delete a new live lock.
-    writeInstallLock({
-      pid: 2147483647,
-      token: "test-token-placeholder",
-      startedAt: new Date(0).toISOString(),
-    });
-    expectCommandFailure(
-      "install-local --breaking stale lock race fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], { env }),
-      "stale breaking install lock requires manual removal"
-    );
-    if (installLockClaims().length !== 1) {
-      fail("install-local --breaking removed a stale lock without an atomic ownership claim");
-    }
-    fs.rmSync(installLockPath, { recursive: true, force: true });
-
-    // If a legacy/non-cooperating writer recreates the canonical root during
-    // the narrow claim handoff, partial-claim metadata must keep both the
-    // original tree and global lock available for manual recovery.
-    writeProductState({ state: "idle" }, {});
-    expectCommandFailure(
-      "install-local --breaking partial quiescence claim retention fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], {
-        env: { ...env, MONO_WORKFLOW_TEST_FAIL_DURING_QUIESCENCE_CLAIM: "recreate" },
-      }),
-      "original retained at"
-    );
-    const partialClaimBackups = orchestratorTransactionArtifacts().filter((name) =>
-      name.startsWith(".orchestrator.install-backup-")
-    );
-    if (partialClaimBackups.length !== 1 || installLockClaims().length !== 1) {
-      fail("install-local --breaking partial claim failure did not retain its backup and lock");
-    } else {
-      fs.rmdirSync(path.join(stateRoot, "orchestrator"));
-      fs.renameSync(
-        path.join(stateRoot, partialClaimBackups[0]),
-        path.join(stateRoot, "orchestrator")
-      );
-    }
-    fs.rmSync(installLockPath, { recursive: true, force: true });
-
-    // If the parent-level quiescence claim cannot be restored, the installer
-    // rolls roots back and retains the global lock plus all recovery data.
-    const beforeClaimRestoreFailure = new Map([
-      [codexRoot, snapshotTree(codexRoot)],
-      [claudeRoot, snapshotTree(claudeRoot)],
-    ]);
-    expectCommandFailure(
-      "install-local --breaking quiescence restore retention fixture",
-      () => runNode(["scripts/install-local.mjs", "--breaking"], {
-        env: { ...env, MONO_WORKFLOW_TEST_FAIL_QUIESCENCE_RESTORE: "1" },
-      }),
-      "Quiescence restore failed"
-    );
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      if (snapshotTree(skillsRoot) !== beforeClaimRestoreFailure.get(skillsRoot)) {
-        fail(`install-local --breaking did not roll back ${skillsRoot} after quiescence restore failure`);
-      }
-      const retainedTransaction = fs
-        .readdirSync(path.dirname(skillsRoot), { withFileTypes: true })
-        .some((entry) => entry.isDirectory() && entry.name.startsWith(".mono-agent-workflow-install-"));
-      if (!retainedTransaction) {
-        fail(`install-local --breaking did not retain transaction recovery data beside ${skillsRoot}`);
-      }
-    }
-    if (installLockClaims().length !== 1) {
-      fail("install-local --breaking released the global lock after quiescence restore failure");
-    }
-    const orchestratorBackups = fs
-      .readdirSync(stateRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith(".orchestrator.install-backup-"))
-      .map((entry) => path.join(stateRoot, entry.name));
-    if (orchestratorBackups.length !== 1) {
-      fail("install-local --breaking did not retain exactly one orchestrator backup for recovery");
-    } else {
-      fs.chmodSync(path.join(stateRoot, "orchestrator"), 0o700);
-      fs.rmdirSync(path.join(stateRoot, "orchestrator"));
-      fs.renameSync(orchestratorBackups[0], path.join(stateRoot, "orchestrator"));
-    }
-    for (const skillsRoot of [codexRoot, claudeRoot]) {
-      for (const entry of fs.readdirSync(path.dirname(skillsRoot), { withFileTypes: true })) {
-        if (entry.isDirectory() && entry.name.startsWith(".mono-agent-workflow-install-")) {
-          fs.rmSync(path.join(path.dirname(skillsRoot), entry.name), { recursive: true, force: true });
-        }
-      }
-    }
-    fs.rmSync(installLockPath, { recursive: true, force: true });
-  } finally {
-    const claimedOrchestratorRoot = path.join(stateRoot, "orchestrator");
-    if (fs.existsSync(claimedOrchestratorRoot)) {
-      fs.chmodSync(claimedOrchestratorRoot, 0o700);
-    }
-    fs.rmSync(baseDir, { recursive: true, force: true });
-  }
 }
 
 function writeLegacyProjectConfig(repo) {
@@ -6163,7 +4633,6 @@ function validateWaveCostBehavior() {
 
     const installedScript = path.join(
       installedSkillsRoot,
-      ".mono-agent-workflow",
       "scripts",
       "wave-cost.mjs"
     );
@@ -6176,7 +4645,7 @@ function validateWaveCostBehavior() {
     );
     const installedResult = parseWaveCostOutput(installedOutput);
     if (installedResult.json.worker.usage.input_tokens !== 400) {
-      fail("installed-layout wave-cost fixture must run without a pack checkout");
+      fail("plugin-layout wave-cost fixture must run without a pack checkout");
     }
 
     fs.appendFileSync(
@@ -6400,7 +4869,6 @@ const REVIEW_ROUTES = new Map([
 ]);
 const NORMATIVE_MODEL_SECTIONS = [
   ["references/lifecycle.md", "Preflight"],
-  ["references/versioning.md", "Project Config Contract"],
   ["references/artifact-quality.md", "Preflight Certificate"],
   ["references/install.md", "Project Policy"],
 ];
@@ -6938,15 +5406,14 @@ const STRING_PINS = [
   ["references/install.md","sourceCommit"],
   ["references/install.md","surfaceRevision"],
   ["references/install.md","verify-pack-state.mjs"],
-  ["references/versioning.md","packVersion"],
-  ["references/versioning.md","sourceCommit"],
-  ["references/versioning.md","surfaceRevision"],
-  ["references/versioning.md","verify-pack-state.mjs"],
+  ["references/install.md","packVersion"],
+  ["references/install.md","sourceCommit"],
+  ["references/install.md","surfaceRevision"],
+  ["references/install.md","verify-pack-state.mjs"],
   ["skills/mono-implement/SKILL.md","blocked"],
   ["skills/mono-preflight/SKILL.md","blocked"],
   ["skills/mono-ship/SKILL.md","blocked"],
   ["references/orchestration.md","control.json"],
-  ["references/orchestration.md","protocol.json"],
   ["references/orchestration.md","verify-pack-state.mjs identity"],
   ["skills/mono-orchestrate/SKILL.md","control.json"],
   ["skills/mono-orchestrate/SKILL.md","active"],
@@ -6998,9 +5465,7 @@ const STRING_PINS = [
   ["README.md","mono-preflight"],
   ["README.md","mono-deploy"],
   ["README.md","autoreview"],
-  ["README.md","node scripts/install-local.mjs"],
   ["README.md","node scripts/project-config.mjs"],
-  ["README.md","--all-roots"],
   ["README.md","~/.claude/skills"],
   ["references/artifact-intake.md","read"],
   ["references/artifact-intake.md","unavailable"],
@@ -7019,10 +5484,6 @@ const STRING_PINS = [
   ["references/review-rubric.md","needs-fixes"],
   ["references/review-rubric.md","blocked"],
   ["references/install.md",".agents/mono-workflow.config.json"],
-  ["references/install.md","--all-roots"],
-  ["references/install.md","~/.claude/skills"],
-  ["references/install.md",".mono-agent-workflow.lock.json"],
-  ["references/install.md","MONO_WORKFLOW_KNOWN_ROOTS"],
   ["references/install.md","references/autoreview-routing.md"],
   ["references/orchestration.md","claude-code-desktop"],
   ["references/orchestration.md","deployApproval"],
@@ -7033,7 +5494,7 @@ const STRING_PINS = [
   ["references/orchestration.md","workers.json"],
   ["references/orchestration.md","sandbox_workspace_write.network_access"],
   ["references/orchestration.md","git worktree add"],
-  ["references/versioning.md","references/autoreview-routing.md"],
+  ["references/install.md","references/autoreview-routing.md"],
   ["references/install.md","\"orchestration\""],
   ["scripts/verify.mjs","watch-workers.mjs"],
   ["references/orchestration.md","thread.started"],
@@ -7044,8 +5505,6 @@ const STRING_PINS = [
   ["skills/mono-orchestrate/SKILL.md","watch-workers.mjs"],
   ["skills/mono-orchestrate/SKILL.md","scripts/watch-workers.mjs"],
   ["references/orchestration.md","node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>"],
-  ["references/install.md","scripts/watch-workers.mjs"],
-  ["references/versioning.md","scripts/watch-workers.mjs"],
   ["references/orchestration.md","recorded-late"],
   ["references/orchestration.md","CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"],
   ["references/orchestration.md","compaction-safe"],
@@ -7067,10 +5526,10 @@ const STRING_PINS = [
   ["skills/mono-orchestrate/SKILL.md",".claude/settings.json"],
   ["skills/mono-deploy/SKILL.md","workflows.qa"],
   ["skills/mono-deploy/SKILL.md","qaAuth"],
-  ["references/install.md","\"qa\""],
-  ["references/install.md","cookie-import"],
-  ["references/install.md","test-account"],
-  ["references/install.md","owner-session"],
+  ["README.md","\"qa\""],
+  ["README.md","cookie-import"],
+  ["README.md","test-account"],
+  ["README.md","owner-session"],
   ["templates/deploy-output.md","Live QA:"],
   ["references/worker-contract.md","pass | deferred | not-run"],
   ["templates/orchestrator-dispatch.md","references/orchestration.md"],
@@ -7093,7 +5552,7 @@ const STRING_PINS = [
   ["templates/orchestrator-brief.md","Техника (можно не читать):"],
   ["templates/compact-instructions.md","product_name"],
   ["skills/mono-deploy/SKILL.md","git rev-parse HEAD"],
-  ["references/install.md","git rev-parse HEAD"],
+  ["references/install.md","git show"],
   ["skills/mono-handoff/SKILL.md","references/artifact-intake.md"],
   ["skills/mono-handoff/SKILL.md","read"],
   ["skills/mono-handoff/SKILL.md","unavailable"],
@@ -7148,7 +5607,6 @@ const STRING_PINS = [
   ["templates/deploy-output.md","Ship certificate: <found/missing/stale>"],
   ["skills/mono-handoff/SKILL.md","`mono-review artifact`"],
   ["skills/mono-check/SKILL.md","`repair`"],
-  ["references/orchestration.md","`protocol.json`"],
   ["skills/mono-implement/SKILL.md","`lifecycle_state_entity=issue`"],
   ["references/worker-contract.md","`approval_status=approved-fresh`"],
   ["skills/mono-idea/SKILL.md","`mono-issue`"],
@@ -7318,7 +5776,7 @@ const REQUIRED_HEADINGS = [
   ["templates/review-output.md","Review Output Template"],
   ["references/review-rubric.md","Checks"],
   ["AGENTS.md","Source Of Truth"],
-  ["references/orchestration.md","Install Coordination"],
+
   ["references/orchestration.md","Claude worker transports"],
   ["references/issue-only-lane.md","Marker ≠ Route-Record"],
   ["references/issue-only-lane.md","The Context Contract (the seam)"],
@@ -7344,13 +5802,13 @@ const REQUIRED_HEADINGS = [
   ["references/autoreview-routing.md","Canonical Routes"],
   ["references/autoreview-routing.md","Reviewer capability"],
   ["references/autoreview-routing.md","Same-model review"],
-  ["references/install.md","Breaking Surface Changes"],
+
   ["references/orchestration.md","Sandbox ladder"],
   ["references/orchestration.md","Worker model selection"],
-  ["references/versioning.md","Project Config Contract"],
+  ["references/install.md","Project Config Contract"],
   ["templates/orchestrator-brief.md","UX-чекпоинт (UX Checkpoint Brief)"],
   ["README.md","Skills"],
-  ["references/install.md","Project Config"],
+
   ["references/orchestration.md","Two-Phase Dispatch Handshake"],
   ["references/orchestration.md","Registry gate-list lifecycle"],
   ["skills/mono-orchestrate/SKILL.md","Local compaction wiring"],
@@ -7373,7 +5831,7 @@ const REQUIRED_HEADINGS = [
   ["references/questioning.md","Questioning Policy"],
   ["templates/orchestrator-brief.md","Шаблоны оркестратора: бриф и статус"],
   ["README.md","Mono Agent Workflow"],
-  ["references/install.md","Install Guide"],
+  ["references/install.md","Plugin Installation and Compatibility"],
   ["templates/compact-instructions.md","Orchestrator Compaction Instructions"],
   ["templates/orchestrator-report.md","Worker Report And Ledger Shapes"],
   ["references/readiness-gates.md","Readiness Gates"],
@@ -7393,6 +5851,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "git show",
   "landing-plan.mjs", "LANDING-PLAN", "LANDING-HEAD", "LANDING-REFRESH", "--sibling",
   "opened|sibling-merge|review-fix|docs|unknown", "HEAD_REF_FORCE_PUSHED_EVENT",
   "clean", "conflicts-with-main", "conflicts-with:<KEY>", "unevaluable: <reason>",
@@ -7512,7 +5971,6 @@ const MACHINE_TOKENS = new Set([
   "-",
   "- `artifact`",
   "--add-dir",
-  "--all-roots",
   "--approval-verified",
   "--emit-fingerprint",
   "--issue <issue-body> --emit-fingerprint",
@@ -7521,14 +5979,12 @@ const MACHINE_TOKENS = new Set([
   "--pack-version '<dispatch packVersion>'",
   "--pack-version '<packVersion above>'",
   "--source-commit",
-  "--source-commit '<sourceCommit above>'",
   "--surface-revision '<dispatch surfaceRevision>'",
   "--surface-revision '<surfaceRevision above>'",
   "scripts/watch-workers.mjs",
   "scripts/wave-cost.mjs",
   ".agents/mono-workflow.config.json",
   ".claude/settings.json",
-  ".mono-agent-workflow.lock.json",
   "scripts/resolve-issue-context.mjs",
   "scripts/watch-workers.mjs",
   ".orchestrator/",
@@ -7575,7 +6031,6 @@ const MACHINE_TOKENS = new Set([
   "MONO_COMPACTION_FRESHNESS_SECONDS:-300",
   "MONO_COMPACTION_MAX_DEFERRALS:-3",
   "MONO_ORCHESTRATOR_ROOT",
-  "MONO_WORKFLOW_KNOWN_ROOTS",
   "Marker version: 1",
   "Next:",
   "Next: mono-deploy",
@@ -7613,7 +6068,6 @@ const MACHINE_TOKENS = new Set([
   "`mono-issue`",
   "`mono-review artifact`",
   "`needs-fixes`",
-  "`protocol.json`",
   "`read`",
   "`ready`",
   "`recorded-late`",
@@ -7668,6 +6122,7 @@ const MACHINE_TOKENS = new Set([
   "get_mtime()",
   "gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[] | select(.state==\"PENDING\")'",
   "git rev-parse HEAD",
+  "git show",
   "git worktree add",
   "gstack-learnings-log",
   "gstack-learnings-search",
@@ -7715,7 +6170,6 @@ const MACHINE_TOKENS = new Set([
   "next",
   "node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>",
   "node '<pack-root>/scripts/verify-pack-state.mjs' identity",
-  "node scripts/install-local.mjs",
   "node scripts/project-config.mjs",
   "none",
   "notes",
@@ -7737,7 +6191,6 @@ const MACHINE_TOKENS = new Set([
   "project",
   "project-config",
   "project-first",
-  "protocol.json",
   "qaAuth",
   "question",
   "quiescence",
@@ -7761,7 +6214,7 @@ const MACHINE_TOKENS = new Set([
   "references/repair-machine.md",
   "references/review-rubric.md",
   "references/ship-feedback-loop.md",
-  "references/versioning.md",
+  "references/install.md",
   "repair",
   "reports",
   "required_artifacts",
@@ -7815,7 +6268,6 @@ const MACHINE_TOKENS = new Set([
   "thread.started",
   "timed-out",
   "tiny",
-  "token-claims-v1",
   "unavailable",
   "unavailable: <reason>",
   "unknown",
@@ -8284,7 +6736,6 @@ validateCheckModeDeclaration();
 validateDocumentBoundaries();
 validateCostCommandStructure();
 validateMachineShapes();
-validateInstalledRuntimeImports();
 if (process.argv.includes("--document-skeleton-only") || process.argv.includes("--ae6-fixtures")) {
   validateSkills();
   validateReadFirstTierContract();
@@ -8320,10 +6771,6 @@ validateRetiredAdapterReferenceAllowlist();
 
 validateArtifactContractParity();
 validateRepairAndRoutingContract();
-validatePackIdentityAndQuiescenceBehavior();
-validateLocalInstallBehavior();
-validateMultiRootInstallBehavior();
-validateBreakingInstallBehavior();
 validateLandingBehavior();
 validateProjectConfigBehavior();
 validateIssueOnlyLaneBehavior();

@@ -1,3 +1,4 @@
+import { copyPluginFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -181,12 +182,10 @@ test("landing U9 harvest two check pages retains every run once", t => {
   const r = gh.harvest(); assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(f.rows("LANDING-REFRESH")[0].checks.length, 101); assert.equal(f.rows("LANDING-REFRESH")[0].checks[0].durationSec, null);
 });
-test("landing U9 installed layout executes plan, head and harvest outside source checkout", t => {
+test("landing U9 plugin layout executes plan, head and harvest outside source checkout", t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-plan-install-")); t.after(() => fs.rmSync(scratch, {recursive:true,force:true}));
-  const skills = path.join(scratch, "skills"), installed = path.join(skills, ".mono-agent-workflow/scripts/orchestrator/landing-plan.mjs");
-  const install = spawnSync(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills], {encoding:"utf8",
-    env:{...process.env,MONO_WORKFLOW_STATE_ROOT:path.join(scratch,"state"),MONO_WORKFLOW_KNOWN_ROOTS:skills}});
-  assert.equal(install.status, 0, install.stdout + install.stderr); const f = fixture(t, installed); f.candidate("MONO-901");
+  const skills = path.join(scratch, "skills"), installed = path.join(skills, "scripts/orchestrator/landing-plan.mjs");
+  copyPluginFixture(skills); const f = fixture(t, installed); f.candidate("MONO-901");
   assert.equal(f.run().status, 0); assert.equal(f.run(observation()).status, 0); const gh = githubFixture(f);
   const r = gh.harvest(); assert.equal(r.status, 0, r.stdout + r.stderr); assert.equal(f.rows("LANDING-REFRESH").length, 2);
 });

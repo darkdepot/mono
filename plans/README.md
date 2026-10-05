@@ -15,17 +15,17 @@ maintainer can reorder, reject, or request plans for backlog items below.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001 | One-command verification entry point + CI | P1 | S | — | DONE (be714d3) |
-| 002 | Harden install-local.mjs + fixtures for destructive paths | P2 | S | — | TODO |
+| 001 | One-command verification entry point + CI | P1 | S | — | DONE (be714d3; archived) |
+| 002 | [Retired](002-retired.md): native plugin installation | — | — | — | REJECTED (superseded by MONO-121) |
 | 003 | Close the learnings loop (read-back in implement/deploy) | P2 | S-M | — | DONE (83817f2) |
 | 004 | Consolidate shared Read-first core reference | P3 | M | 001 (soft) | TODO |
 | 005 | Russian human layer above Linear machine blocks | P1 | M | — | DONE (35fcebf) |
 | 006 | Russify output templates, trim chat telemetry | P1 | M | 005 (soft) | DONE (c06040e, 4c850f9) |
-| 007 | Specify implementation-start and deploy approval moments | P1 | M | — | DONE (dc42c31) |
+| 007 | Specify implementation-start and deploy approval moments | P1 | M | — | DONE (dc42c31; archived) |
 | 008 | Linear exit traces + tiny output profile + boundary delta | P2 | M | 005 | DONE (f681f92) |
 | 009 | Linear docs papercuts: PRD overlap, calque headings, ID slugs, AFK gloss | P2 | M | — | DONE (d835ed9) |
 | 010 | Discovery autonomy: decide-and-surface, always-ask list, /design-html control | P1 | M | 007 | DONE (6ef084c, 2ed6171) |
-| 011 | mono-orchestrate control-plane skill | P1 | M | — | DONE (48b1da6) |
+| 011 | mono-orchestrate control-plane skill | P1 | M | — | DONE (48b1da6; archived) |
 | 012 | codex-cli worker transport for mono-orchestrate | P1 | M | 011 | DONE (8cbc8c4) |
 | 013 | Director Discovery: orchestrator answers discovery itself, checkpoint model, UX-чекпоинт brief | P1 | M | 010, 011, 012 | DONE (9a81e8c) |
 | 014 | Second Voice: independent reviewer agent interrogates discovery, orchestrator answers, disagreements route to checkpoints | P1 | S-M | 013 | DONE (1fe86af) |
@@ -38,7 +38,7 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
   validator suite, but nothing breaks if 004 runs first.
 - 001 should land first regardless — it is the verification baseline every
   other plan's done-criteria lean on (`node scripts/verify.mjs`).
-- 002 and 003 are independent of everything and of each other.
+- 002 is retired; its former work is superseded by native plugins.
 - 006 soft-depends on 005 (both edit `references/human-friendly-output.md`);
   008 reuses 005's dual-layer comment convention. Recommended human-UX order:
   005 → 006 → 007 → 008 → 009.
@@ -51,13 +51,6 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
 
 ## Backlog (vetted findings, not planned by default)
 
-- **Installed-pack staleness visibility** (direction, MED): the install
-  lockfile (`~/.codex/skills/.mono-agent-workflow.lock.json`) is written by
-  the installer and read only by `install-local --check`; no workflow stage
-  reports which pack version it is running, so a stale local install fails
-  silently until behavior drifts. Cheap option: stamp
-  `upstreamVersion`/`upstreamCommit` into the preflight certificate. Plan on
-  request.
 - **README/AGENTS/lifecycle rule duplication** (tech-debt, MED): lifecycle
   rules are restated in 3-4 places (e.g. delivery-ladder rules in
   `README.md:33-94`, `AGENTS.md:14-27`, `references/lifecycle.md`, and the
@@ -76,19 +69,11 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJE
 
 (So nobody re-audits these.)
 
-- **Null-dereference in `install-local.mjs check()`** (subagent
-  CORRECTNESS-04): false — `scripts/install-local.mjs:309` guards the `else`
-  branch; lock properties are only accessed when `lock` is non-null.
 - **`artifactRoots`/`linearTeam` config fields unused** (subagent
   DIRECTION-02): false — `references/artifact-intake.md:15,24` and
   `skills/mono-handoff/SKILL.md:148` consume artifact roots; installed
-  skills are instructed to read the config (incl. Linear team) via the note
-  injected by `scripts/install-local.mjs:135`.
-- **"No test harness for the scripts"** (subagent TESTS-02, as stated):
-  overstated — `scripts/validate-workflow.mjs:259-391` functionally tests
-  install and project-config in temp dirs, including negative fixtures. The
-  *genuine* residual gaps (corrupt lockfile, --remove-stale) are covered by
-  plan 002.
+  skills explicitly read product config from `.agents/mono-workflow.config.json`.
+- **"No test harness for the scripts"**: obsolete finding — delivery runtime, plugin layout and product-config fixtures cover real script behavior and negative cases.
 - **"Handoff-first ordering not validated"** (subagent TESTS-03): overstated —
   `validateAntiPatterns` pins the ownership chain (handoff must not own
   Delivery Start, implement owns it, ship requires the preflight certificate,

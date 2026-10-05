@@ -327,7 +327,6 @@ Prove installation by reading each tool's installed plugin version: it must equa
 `VERSION` at T, and `v<VERSION>` must resolve to T. Record both installed folders,
 versions and the tag target alongside the existing per-task ancestry proof
 before `close`; accept the proof only with matching cache-tree comparisons.
-Do not use a commit from the legacy lockfile as plugin proof.
 Without the release task, the wave is not ready for plugin installation.
 The tip, ancestry, branch and batch verification performed by landing scripts
 stays unchanged.

@@ -7,7 +7,7 @@ Project policy:
 - Acme Notes keeps its existing project-specific skills.
 - Acme Notes keeps only `.agents/mono-workflow.config.json` for this workflow.
 - Acme Notes must not vendor `.agents/skills/mono-*`, `.claude/skills/mono-*`, workflow lockfiles, local checkers, or updater CI for this workflow.
-- Use the local skill pack installed from this upstream repo through `scripts/install-local.mjs`.
+- Use the plugin installed from the GitHub marketplace repository per `references/install.md`.
 - Acme Notes stores project policy in `.agents/mono-workflow.config.json` and repo docs.
 - Acme Notes' configured implementation workflow is Compound `ce-work`.
 - Acme Notes' configured ship workflow is gstack `ship`.

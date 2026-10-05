@@ -90,14 +90,14 @@ export function updateBlockers(folder, productsRoot = path.join(os.homedir(), '.
     if (!workers || typeof workers !== 'object' || Array.isArray(workers)) fail(`invalid registry: ${registry}`);
     for (const [key, entry] of Object.entries(workers)) {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) fail(`invalid registry entry: ${product.name}/${key}`);
-      const sources = ['packRoot', 'lock', 'skillsRoot'].filter(field => Object.hasOwn(entry, field));
+      const sources = ['packRoot'].filter(field => Object.hasOwn(entry, field));
       if (!sources.length) {
         unknown.push({ product: product.name, key });
         continue;
       }
       if (sources.some(field => typeof entry[field] !== 'string' || !path.isAbsolute(entry[field])))
         fail(`packRoot unavailable: ${product.name}/${key}`);
-      const packRoot = entry.packRoot ?? (entry.lock ? path.dirname(entry.lock) : entry.skillsRoot);
+      const packRoot = entry.packRoot;
       const saved = resolvedLocation(packRoot);
       if ((saved === replaced || saved.startsWith(replaced + path.sep)) && attemptState(root, entry).state !== 'landed')
         blockers.push({ product: product.name, issue: entry.issue ?? key, attempt: entry.attempt, packRoot: saved });
@@ -121,8 +121,8 @@ function run(argv) {
     console.log('pack-state: update allowed'); return;
   }
   if (command === "identity") {
-    if (!options.lock && !options["pack-root"]) fail("identity requires --lock or --pack-root");
-    const installed = options["pack-root"] ? packLayout(path.resolve(options["pack-root"])).identity() : readJson(path.resolve(options.lock), "lockfile");
+    if (!options["pack-root"]) fail("identity requires --pack-root");
+    const installed = packLayout(path.resolve(options["pack-root"])).identity();
     const expected = {
       packVersion: options["pack-version"],
       ...(options["source-commit"] ? { sourceCommit: options["source-commit"] } : {}),

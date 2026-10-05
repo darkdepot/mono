@@ -1,3 +1,4 @@
+import { copyPluginFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -96,7 +97,7 @@ test("landing U2 dispatch renders landing block only with BASE policy", () => {
 test("landing U2 installed dispatch validates release and reserves a single release for direct spawn", async t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-landing-dispatch-"));
   const skills = path.join(scratch, "skills"), repo = path.join(scratch, "repo"), root = path.join(scratch, "root"), bin = path.join(scratch, "bin");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, MONO_WORKFLOW_STATE_ROOT: path.join(scratch, "state"), MONO_WORKFLOW_KNOWN_ROOTS: skills,
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`,
     GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid", GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid" };
   const run = (cmd, args, cwd = process.cwd()) => spawnSync(cmd, args, { cwd, env, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   const pass = r => { assert.equal(r.status, 0, r.stdout + r.stderr); return r.stdout.trim(); };
@@ -105,7 +106,7 @@ test("landing U2 installed dispatch validates release and reserves a single rele
   let pid;
   try {
     for (const dir of [repo, bin, root]) fs.mkdirSync(dir, { recursive: true });
-    pass(run(process.execPath, ["scripts/install-local.mjs", "--skills-root", skills]));
+    copyPluginFixture(skills);
     write(path.join(bin, "codex"), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"landing-fixture"}));setInterval(()=>{},1000);\n'); fs.chmodSync(path.join(bin, "codex"), 0o700);
     atomicJson(path.join(root, "control.json"), { state: "active" }); atomicJson(path.join(root, "workers.json"), {});
     git("init", "-b", "main"); const origin = path.join(scratch, "origin.git"); pass(run("git", ["init", "--bare", origin])); git("remote", "add", "origin", origin);
@@ -117,7 +118,7 @@ test("landing U2 installed dispatch validates release and reserves a single rele
     const snapshot = path.join(scratch, "snapshot");
     write(path.join(snapshot, "issue-MONO-999.md"), "# Landing fixture\n# Что сделать\nLanding.\n# Готовность агента\nAFK\n# Покрытие PRD/Spec\nU1\n# Как проверить\nLanding.\n# Ключевые контракты\nLanding.\nРиск: standard\n");
     for (const file of ["approval.md", "project-brief.md", "prd.md", "tech-spec.md"]) write(path.join(snapshot, file), "Approved landing fixture.\n");
-    const runtime = path.join(skills, ".mono-agent-workflow/scripts"), extras = path.join(scratch, "roots.json"); atomicJson(extras, [path.join(scratch, "temp")]); fs.mkdirSync(path.join(scratch, "temp"));
+    const runtime = path.join(skills, "scripts"), extras = path.join(scratch, "roots.json"); atomicJson(extras, [path.join(scratch, "temp")]); fs.mkdirSync(path.join(scratch, "temp"));
     const args = [path.join(runtime, "orchestrator/dispatch.mjs"), "--root", root, "--config", configFile, "--snapshot", snapshot, "--issue", "MONO-999", "--profile", "full", "--worker-writable-roots", extras];
     await t.test("invalid-release-flag", () => {
       for (const value of ["yes", "TRUE", "1"]) { const r = run(process.execPath, [...args, "--release", value]); assert.equal(r.status, 1); assert.match(r.stderr, /--release must be true or false/); }

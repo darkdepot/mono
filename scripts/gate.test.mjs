@@ -342,7 +342,7 @@ test("U13 named collection fixtures through the gate CLI", async t => {
       git("init", "-b", "delivery"); git("add", ".gitignore"); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
       const head = git("rev-parse", "HEAD"), dataset = path.join(evidence, "datasets/fixture.md");
       write(dataset, "Approved U13 decisions.\n");
-      for (const policy of ["model-policy.md", "autoreview-routing.md"]) write(path.join(skills, "mono-implement/references", policy), fs.readFileSync(path.join("references", policy), "utf8"));
+      for (const policy of ["model-policy.md", "autoreview-routing.md"]) write(path.join(skills, "references", policy), fs.readFileSync(path.join("references", policy), "utf8"));
       const helper = path.join(skills, "autoreview/scripts/autoreview");
       write(helper, `#!/usr/bin/env node
 const fs=require('node:fs'), a=process.argv.slice(2), val=k=>a[a.indexOf(k)+1];

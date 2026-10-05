@@ -7,28 +7,23 @@ import { execFileSync } from "node:child_process";
 export const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 export const SURFACE_REVISION = 4;
 export function runtimePackRoot() {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-  return path.basename(root) === '.mono-agent-workflow' ? path.dirname(root) : root;
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 }
 export function packLayout(root = runtimePackRoot()) {
   if (!path.isAbsolute(root ?? '')) throw new Error('absolute packRoot required');
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory())
     throw new Error(`pack folder missing: ${root}; start a new attempt`);
   root = fs.realpathSync(root);
-  const legacy = !fs.existsSync(path.join(root, 'VERSION')) && !fs.existsSync(path.join(root, 'skills'));
   return {
-    root, legacy,
-    lock: legacy ? path.join(root, '.mono-agent-workflow.lock.json') : null,
+    root,
     identity() {
-      if (!legacy) return { packVersion: fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim(), surfaceRevision: SURFACE_REVISION };
-      const value = readJson(this.lock);
-      return Object.fromEntries(IDENTITY_FIELDS.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]]));
+      return { packVersion: fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim(), surfaceRevision: SURFACE_REVISION };
     },
-    skill: name => path.join(root, legacy ? name : `skills/${name}`, 'SKILL.md'),
-    template: name => path.join(root, legacy ? 'mono-orchestrate/templates' : 'templates', name),
-    file: name => path.join(root, legacy ? name.startsWith('skills/') ? name.slice(7) : `mono-implement/${name}` : name),
-    policyDirectory: path.join(root, legacy ? 'mono-implement/references' : 'references'),
-    script: name => path.join(root, legacy ? '.mono-agent-workflow/scripts' : 'scripts', name),
+    skill: name => path.join(root, `skills/${name}`, 'SKILL.md'),
+    template: name => path.join(root, 'templates', name),
+    file: name => path.join(root, name),
+    policyDirectory: path.join(root, 'references'),
+    script: name => path.join(root, 'scripts', name),
   };
 }
 export function validateLanding(config) {

@@ -23,9 +23,9 @@ keeps direct access/approval, lifecycle handshake.
 ## Pack identity gate invocation
 
 Before work/resume: all present dispatch identity pins, exit 0 and
-pack-state: identity verified, else block. [Compatibility](versioning.md#local-lockfile).
+pack-state: identity verified, else block. [Compatibility](install.md#compatibility).
 Use the dispatched pack root, never the checkout; single-quote paths/pins.
-Legacy: --lock instead of --pack-root, plus --source-commit when pinned.
+Append `--source-commit` when the dispatch supplies `sourceCommit`.
 
 ```bash
 node '<pack-root>/scripts/verify-pack-state.mjs' identity \
