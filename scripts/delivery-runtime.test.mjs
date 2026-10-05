@@ -1164,7 +1164,7 @@ test('launch pins resolve BASE config and refuse unsupported transport before la
 test('installed collectors seal configured engines and consume the same BASE route after config changes', async () => {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-engines-'));
   const skills=path.join(root,'skills'),repo=path.join(root,'repo'),state=path.join(root,'state'),bin=path.join(root,'bin');
-  const env={...process.env,MONO_WORKFLOW_STATE_ROOT:path.join(root,'install-state'),MONO_WORKFLOW_KNOWN_ROOTS:skills,
+  const env={...process.env,MONO_WORKFLOW_STATE_ROOT:path.join(root,'state-root'),
     PATH:bin+path.delimiter+process.env.PATH,GIT_AUTHOR_NAME:'Fixture',GIT_AUTHOR_EMAIL:'fixture@example.invalid',GIT_COMMITTER_NAME:'Fixture',GIT_COMMITTER_EMAIL:'fixture@example.invalid'};
   try {
     copyPluginFixture(skills);
