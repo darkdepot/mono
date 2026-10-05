@@ -6,6 +6,28 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-05
+
+Breaking: the local installer is removed; use the marketplace plugin and calls such as `/mono:idea` instead of the old `mono-*` skill names. Existing task stages and certificate markers remain compatible.
+
+<!-- fragment: MONO-121 sha256:ea3ccfbe6ee2c632ba55ab44ca4dbe0f1e2a6feb3d019e21ef09227b2b09dd53 -->
+### Changed
+
+- Mono now uses only the repository-shaped plugin layout. Installation and compatibility share a short guide; deployment requires plugin proof in both tools and a completed machine migration.
+
+### Removed
+
+- Retired local installation code, its identity state and operational checks. Delivery fixtures use isolated plugin trees; compatible continuation, update protection and product-repository cleanup checks remain.
+
+<!-- fragment: MONO-122 sha256:7d2468db7141fa2bc3bf4287a54358b6f657bdf0ee5e109e0aa4b6c51c47e041 -->
+### Changed
+
+- Renamed all eleven skill directories and names for plugin calls such as `/mono:idea`, `/mono:ship`, and `/mono:review`. Updated current instructions, paths, pack checks, and four explicitly revised artifact contract fingerprints.
+- Kept persisted stages, certificate markers, issue-only markers, attempt/session names, temporary prefixes, product config/state paths, and historical records compatible with their existing values.
+
+<!-- fragment: MONO-123 sha256:0963e80c9c5f58c0a4431081a6bd3518a81f5ec22ffc325cc06e654a0d85d973 -->
+- MONO-123: release 0.24.0 with the retired installer and plugin skill names, assemble the wave's task records, and align pack and plugin versions.
+
 ## [0.23.0] - 2026-10-03
 
 <!-- fragment: MONO-117 sha256:e0905d65c4ffb9fe830bbe911f5968ce8ae22d80dbfe9d4a66155049bf9151af -->
