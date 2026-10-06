@@ -14,6 +14,12 @@ const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: t
 const json = file => JSON.parse(fs.readFileSync(file, "utf8"));
 const run = (command, args, cwd, env) => spawnSync(command, args, { cwd, env, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
 const pass = result => { assert.equal(result.status, 0, result.stderr + result.stdout); return result; };
+function controlledDarwinTemp(bin, root) {
+  const temp = path.join(root, "darwin-temp"); fs.mkdirSync(temp);
+  const getconf = path.join(bin, "getconf");
+  write(getconf, `#!${process.execPath}\nconsole.log(${JSON.stringify(temp)});\n`);
+  fs.chmodSync(getconf, 0o700);
+}
 
 test("delivery config defaults confirmation to 1800 seconds and keeps it below the evidence limit", async () => {
   const { deliveryConfig } = await import("./runtime.mjs");
@@ -29,11 +35,12 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-delivery-installed-"));
   const skills = path.join(root, "skills"), state = path.join(root, "orchestrator"), repo = path.join(root, "repo"), bin = path.join(root, "bin");
   const mailbox = path.join(state, "reports");
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  const env = { ...process.env, HOME: path.join(root, "home"), PATH: `${bin}:${process.env.PATH}` };
   let livePid;
   const oldPath = process.env.PATH;
   try {
     copyPluginFixture(skills);
+    controlledDarwinTemp(bin, root);
     const runtime = path.join(skills, "scripts");
     for (const script of ["gate.mjs", "delivery-state.mjs", "orchestrator/spawn.mjs", "orchestrator/resume.mjs", "orchestrator/consume-gate-ack.mjs"]) {
       pass(run(process.execPath, [path.join(runtime, script), "--help"], root, env));
@@ -279,10 +286,11 @@ process.exit(r.status===null?1:r.status);
     const broadRequest = { ...preflight, collect: true, workerWritableRoots: [repo, state, path.join(state, "confirmations")] };
     write(gateRequest, broadRequest); pass(preflightCall());
     const narrow = json(receiptFile).receipt;
-    for (const command of [narrow.verification, narrow.review]) {
+    for (const [phase, command] of Object.entries({ verification: narrow.verification, review: narrow.review })) {
       const profile = command.sandbox.args.find(arg => arg.startsWith("permissions.mono-collector="));
       const grants = [...profile.matchAll(/("[^"]+")="write"/g)].map(match => JSON.parse(match[1]));
-      assert.deepEqual(grants.sort(), [fs.realpathSync(repo), command.sandbox.tempRoot].map(p => fs.realpathSync(path.dirname(p)) + path.sep + path.basename(p)).sort());
+      assert.deepEqual(grants.sort(), [fs.realpathSync(repo), command.sandbox.tempRoot,
+        ...(process.platform === "darwin" && phase === "verification" ? [path.join(root, "darwin-temp")] : [])].map(p => fs.realpathSync(path.dirname(p)) + path.sep + path.basename(p)).sort());
       assert.ok(!grants.some(grant => grant === state || grant.startsWith(state + path.sep)));
     }
     for (const flag of ["--json-output", "--status-output"]) {
@@ -521,7 +529,9 @@ console.log(JSON.stringify(result));
       assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
     }
     const errorConfig = path.join(root, "rules-timeout-config.json");
-    write(errorConfig, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 1 } } });
+    // Preserve the first HTTP failure until expiry, rather than race another
+    // process startup in the final millisecond of this deliberately short window.
+    write(errorConfig, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 1, evidenceLimitSec: 1 } } });
     const errorState = path.join(root, "rules-timeout.json");
     write(gateRequest, { ...shipRequest, config: errorConfig, stateFile: errorState });
     write(githubFile, { github, checks, rulesStatus: 500 });
@@ -620,7 +630,9 @@ console.log(JSON.stringify(result));
       assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
       assert.equal(json(githubFile).pendingReads, 0);
     }
-    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 1 } } });
+    // A full paginated snapshot must finish before the pending-state assertion;
+    // the watched cases below still prove expiry at this configured deadline.
+    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 5 } } });
     for (const state of ["BLOCKED", "UNKNOWN"]) {
       const pendingChecks = state === "UNKNOWN" ? [] : checks.map(c => c.name === "validate" ? { ...c, status: "IN_PROGRESS", conclusion: null } : c);
       write(githubFile, { github: { ...github, mergeStateStatus: state, mergeable: state === "UNKNOWN" ? "UNKNOWN" : "MERGEABLE" }, checks: pendingChecks });
@@ -1164,10 +1176,11 @@ test('launch pins resolve BASE config and refuse unsupported transport before la
 test('installed collectors seal configured engines and consume the same BASE route after config changes', async () => {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-engines-'));
   const skills=path.join(root,'skills'),repo=path.join(root,'repo'),state=path.join(root,'state'),bin=path.join(root,'bin');
-  const env={...process.env,MONO_WORKFLOW_STATE_ROOT:path.join(root,'state-root'),
+  const env={...process.env,HOME:path.join(root,'home'),MONO_WORKFLOW_STATE_ROOT:path.join(root,'state-root'),
     PATH:bin+path.delimiter+process.env.PATH,GIT_AUTHOR_NAME:'Fixture',GIT_AUTHOR_EMAIL:'fixture@example.invalid',GIT_COMMITTER_NAME:'Fixture',GIT_COMMITTER_EMAIL:'fixture@example.invalid'};
   try {
     copyPluginFixture(skills);
+    controlledDarwinTemp(bin, root);
     const runtime=path.join(skills,'scripts');
     const {requiredPairings,resolveModelRoutes,canonical}=await import(pathToFileURL(path.join(runtime,'runtime.mjs')));
     write(path.join(bin,'codex'),`#!/usr/bin/env node

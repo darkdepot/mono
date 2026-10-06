@@ -323,20 +323,32 @@ test('declared provider credentials are redacted from reviewer evidence without 
   assert.equal(clean.json.usage,42);assert.deepEqual(clean.json.nested,['[REDACTED]']);
 });
 
-test("U13 named collection fixtures through the gate CLI", async t => {
+test("named collection fixtures through the gate CLI", async t => {
   const fs = await import("node:fs"), path = await import("node:path"), os = await import("node:os"), crypto = await import("node:crypto");
   const { spawnSync } = await import("node:child_process");
-  const { atomicJson, canonical, digest } = await import("./runtime.mjs");
+  const { atomicJson, canonical, digest, resolvedLocation } = await import("./runtime.mjs");
   const { sha256File } = await import("./orchestrator/command-state.mjs");
-  const files = fs.readdirSync("scripts/fixtures").filter(name => /^collection-u13-.*\.json$/u.test(name));
+  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collector-temp)-.*\.json$/u.test(name));
   for (const name of files) await t.test(name, () => {
     const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-u13-cli-"));
     try {
-      const repo = path.join(scratch, "repo"), root = path.join(scratch, "orchestrator"), evidence = path.join(scratch, "evidence"), skills = path.join(scratch, "skills"), bin = path.join(scratch, "bin");
-      for (const dir of [repo, root, evidence, skills, bin]) fs.mkdirSync(dir);
-      const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+      const repo = path.join(scratch, "repo"), root = path.join(scratch, "orchestrator"), evidence = path.join(scratch, "evidence"), skills = path.join(scratch, "skills"), bin = path.join(scratch, "bin"), darwinTemp = path.join(scratch, "darwin-temp");
+      for (const dir of [repo, root, evidence, skills, bin, darwinTemp]) fs.mkdirSync(dir);
+      const sandboxLog = path.join(scratch, "sandbox.log"), getconfLog = path.join(scratch, "getconf.log");
+      const env = { ...process.env, HOME: path.join(scratch, "home"), PATH: `${bin}:${process.env.PATH}`, MONO_FIXTURE_DARWIN_TEMP: darwinTemp,
+        MONO_FIXTURE_SANDBOX_LOG: sandboxLog, MONO_FIXTURE_GETCONF_LOG: getconfLog };
       const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, value); };
+      // All portable collectors, including U13, use a disjoint controlled root.
+      const getconf = path.join(bin, "getconf");
+      write(getconf, `#!/usr/bin/env node
+if(process.argv[2]!=='DARWIN_USER_TEMP_DIR')process.exit(72);
+require('node:fs').appendFileSync(process.env.MONO_FIXTURE_GETCONF_LOG,'getconf\\n');
+if(${JSON.stringify(fixture.unavailable)}==='command-failed')process.exit(1);
+console.log(process.env.MONO_FIXTURE_DARWIN_TEMP);
+`); fs.chmodSync(getconf, 0o700);
+      const preload = path.join(scratch, "platform.cjs");
+      if (fixture.platform) write(preload, `Object.defineProperty(process,'platform',{value:${JSON.stringify(fixture.platform)}});`);
       const git = (...args) => { const r = spawnSync("git", args, { cwd: repo, encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
       write(path.join(repo, ".gitignore"), ".orchestrator/\n");
       git("init", "-b", "delivery"); git("add", ".gitignore"); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
@@ -351,20 +363,87 @@ fs.writeFileSync(val('--status-output'),JSON.stringify({schema_version:1,status:
 console.log('autoreview target: branch | engine: claude | model: '+val('--model')+' | thinking: '+val('--thinking'));
 console.log('autoreview clean: no accepted/actionable findings reported');console.log('overall: patch is correct (0.9)');
 `); fs.chmodSync(helper, 0o700);
+      const descendant = path.resolve("scripts/fixtures/collector-review-descendant.cjs");
+      if (fixture.mode === "temp-descendant") write(helper, `#!${process.execPath}\nprocess.argv.splice(2,0,'review');require(${JSON.stringify(descendant)});\n`);
+      if (fixture.helperSymlink) {
+        const target = path.join(scratch, "helper-target", "autoreview");
+        write(target, fs.readFileSync(helper)); fs.chmodSync(target, 0o700);
+        fs.unlinkSync(helper); fs.symlinkSync(target, helper);
+      }
+      let pack = null;
+      if (fixture.protected === "packRoot" || fixture.reviewOverlap === "packRoot") {
+        pack = path.join(scratch, "pack"); fs.mkdirSync(pack);
+        fs.cpSync(path.join(skills, "references"), path.join(pack, "references"), { recursive: true });
+      }
+      const protectedPaths = { evidenceRoot: evidence, "orchestrator root": root, skillsRoot: skills,
+        packRoot: pack ?? skills, "autoreview helper real path": fs.realpathSync(helper) };
+      const workerRoot = path.join(scratch, "worker"); fs.mkdirSync(workerRoot);
+      if (fixture.reviewOverlap && fixture.reviewOverlap !== "verification temp") {
+        const target = fixture.reviewOverlap === "worktree" ? repo : fixture.reviewOverlap === "Darwin root" ? darwinTemp
+          : fixture.reviewOverlap === "worker root" ? workerRoot : protectedPaths[fixture.reviewOverlap];
+        const parent = path.join(env.HOME, ".mono-agent-workflow"); fs.mkdirSync(parent, { recursive: true });
+        fs.symlinkSync(target, path.join(parent, "review-tmp"));
+      }
+      if (fixture.protected) {
+        const target = protectedPaths[fixture.protected];
+        env.MONO_FIXTURE_DARWIN_TEMP = fixture.relationship === "contains" ? path.dirname(target)
+          : fixture.relationship === "inside" ? path.join(target, "darwin-temp") : target;
+        if (fixture.relationship === "inside") fs.mkdirSync(env.MONO_FIXTURE_DARWIN_TEMP);
+      }
+      if (fixture.darwinSymlink) {
+        const link = path.join(scratch, "darwin-link"); fs.symlinkSync(darwinTemp, link);
+        env.MONO_FIXTURE_DARWIN_TEMP = link;
+      }
+      if (fixture.unavailable === "empty") env.MONO_FIXTURE_DARWIN_TEMP = "";
+      if (fixture.unavailable === "missing-path") env.MONO_FIXTURE_DARWIN_TEMP = path.join(scratch, "absent");
+      if (fixture.unavailable === "relative") env.MONO_FIXTURE_DARWIN_TEMP = "relative-temp";
+      if (fixture.privateInsideDarwin) Object.assign(env, { TMPDIR: darwinTemp, TMP: darwinTemp, TEMP: darwinTemp });
+      const boundary = path.join(scratch, "boundary.cjs");
+      write(boundary, `
+const fs=require('node:fs'),path=require('node:path'),write=fs.writeFileSync;
+const grants=JSON.parse(process.env.MONO_FIXTURE_GRANTS);
+fs.writeFileSync=function(file,...args){
+  const target=path.join(fs.realpathSync(path.dirname(path.resolve(file))),path.basename(file));
+  if(!grants.some(root=>target===root||target.startsWith(root+path.sep))){const e=new Error('fixture write grant denial');e.code='EPERM';throw e;}
+  return write.call(this,file,...args);
+};
+const kill=process.kill;
+process.kill=function(pid,signal){
+  const result=kill.call(this,pid,signal),active=path.join(process.cwd(),'.orchestrator/review-active.json');
+  if(signal===0&&process.env.MONO_FIXTURE_PHASE==='verification'&&fs.existsSync(active)&&JSON.parse(fs.readFileSync(active)).pid===pid){
+    fs.writeFileSync(path.join(process.cwd(),'.orchestrator/reviewer-signal-denied'),'EPERM');
+    const e=new Error('fixture cross-sandbox signal denial');e.code='EPERM';throw e;
+  }
+  return result;
+};
+`);
       // Model the outside collector launcher; the actual gate still runs both
       // write-denial probes, verification, helper, signing and history writes.
       const launcher = path.join(bin, "codex");
       write(launcher, `#!/usr/bin/env node
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path'),a=process.argv.slice(2);
 if(a[0]!=='sandbox')process.exit(71);const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1));
+fs.appendFileSync(process.env.MONO_FIXTURE_SANDBOX_LOG,'sandbox\\n');
 const protectedRoot=path.dirname(p.probe);fs.chmodSync(protectedRoot,0o500);let r;
-try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit'});}finally{fs.chmodSync(protectedRoot,0o700);}
+const profile=a[a.indexOf('-c')+1],grants=[...profile.matchAll(/("(?:\\\\.|[^"\\\\])*")="write"/g)].map(m=>JSON.parse(m[1]));
+const env={...process.env,MONO_FIXTURE_GRANTS:JSON.stringify(grants),MONO_FIXTURE_PHASE:p.args.includes('--json-output')?'review':'verification',NODE_OPTIONS:'--require '+JSON.stringify(${JSON.stringify(boundary)})};
+if(${JSON.stringify(fixture.reviewOverlap)}==='verification temp'&&!p.args.includes('--json-output')){
+  const parent=path.join(process.env.HOME,'.mono-agent-workflow');fs.mkdirSync(parent,{recursive:true});fs.symlinkSync(process.env.TMPDIR,path.join(parent,'review-tmp'));
+}
+try{r=cp.spawnSync(command[0],command.slice(1),{stdio:'inherit',env});}finally{fs.chmodSync(protectedRoot,0o700);}
 process.exit(r.status===null?1:r.status);
 `); fs.chmodSync(launcher, 0o700);
       const pinsFile = path.join(root, "dispatch/MONO-999-a1/pins.json");
       const pins = { product: "fixture", root, worktree: repo, skillsRoot: skills, baseRef: "HEAD", evidenceRoot: evidence,
-        risk: "standard", critical: null, verification: { command: process.execPath, args: ["-e", "process.exit(0)"] }, workerWritableRoots: [repo],
+        risk: "standard", critical: null, verification: { command: process.execPath, args: ["-e", "process.exit(0)"] }, workerWritableRoots: [repo, ...(fixture.reviewOverlap === "worker root" ? [workerRoot] : [])],
         reviewDataset: dataset, reviewDatasetVersion: 1, reviewDatasetDigest: sha256File(dataset) };
+      if (pack) pins.packRoot = pack;
+      if (fixture.mode.startsWith("temp-")) pins.verification.args = ["-e", `
+const assert=require('node:assert/strict'),path=require('node:path');
+assert.equal(process.env.TMPDIR,process.env.TMP);assert.equal(process.env.TMPDIR,process.env.TEMP);
+assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
+`];
+      if (fixture.mode === "temp-descendant") pins.verification.args = [descendant, "verification"];
       atomicJson(pinsFile, pins);
       const binding = { file: pinsFile, digest: sha256File(pinsFile) };
       const entry = { issue: "MONO-999", attempt: 1, stage: "mono-deliver", worktree: repo,
@@ -373,7 +452,7 @@ process.exit(r.status===null?1:r.status);
       const register = () => atomicJson(registryFile, { "MONO-999": entry }); register();
       let request = { ...pins, head, collect: false, collectionId: `preflight-collect:${head}:1`, pins: binding }; delete request.reviewDatasetDigest;
       const file = path.join(scratch, "request.json"), receiptFile = path.join(evidence, `${head}.json`);
-      const call = value => { atomicJson(file, value); return spawnSync(process.execPath, ["scripts/gate.mjs", "preflight", "--request", file], { env, encoding: "utf8" }); };
+      const call = value => { atomicJson(file, value); return spawnSync(process.execPath, [...(fixture.platform ? ["--require", preload] : []), "scripts/gate.mjs", "preflight", "--request", file], { env, encoding: "utf8" }); };
       const collect = value => { const r = call({ ...value, collect: true }); assert.equal(r.status, 0, r.stdout + r.stderr); return JSON.parse(fs.readFileSync(receiptFile, "utf8")); };
       const seal = envelope => { envelope.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(envelope.receipt)).digest("hex"); atomicJson(receiptFile, envelope); };
       let expectedField = null, expectedValue = null, expectedStatus = 2;
@@ -399,6 +478,7 @@ process.exit(r.status===null?1:r.status);
         request.collectionId = `preflight-collect:${head}:3`;
       }
       if (fixture.mode === "collect") { expectedStatus = 0; request.collect = true; }
+      if (fixture.mode.startsWith("temp-")) { expectedStatus = fixture.protected || fixture.reviewOverlap || fixture.mode === "temp-descendant" ? 1 : 0; request.collect = true; }
       if (fixture.mode === "legacy") {
         delete pins.reviewDatasetDigest; atomicJson(pinsFile, pins); binding.digest = sha256File(pinsFile); register(); delete request.pins;
         const envelope = collect(request); assert.equal(Object.hasOwn(envelope.receipt, "pins"), false); expectedStatus = 0;
@@ -434,7 +514,55 @@ process.exit(r.status===null?1:r.status);
         assert.equal(fs.existsSync(path.join(evidence, "history", `${envelope.receipt.runId}.json`)), true);
         const verified = call({ ...request, collect: false }); assert.equal(verified.status, 0, verified.stdout);
       }
+      if (fixture.protected) {
+        assert.ok(result.stdout.includes(`collection Darwin temporary write grant (${fixture.protected})`), result.stdout);
+        assert.match(result.stdout, /no overlapping grants/u);
+        assert.equal(fs.existsSync(sandboxLog), false, "overlap refuses before any sandbox invocation");
+        assert.equal(fs.existsSync(receiptFile), false);
+      }
+      if (fixture.reviewOverlap) {
+        assert.match(result.stdout, fixture.reviewOverlap === "verification temp"
+          ? /collection private review directory canonical resolution failed: ENOENT/u
+          : /collection private review directory.*no overlapping grants/u);
+        assert.equal(fs.readFileSync(sandboxLog, "utf8").split("sandbox").length - 1, 1, "only verification launches; review refuses its overlapping directory");
+        const { receipt } = JSON.parse(fs.readFileSync(receiptFile, "utf8"));
+        assert.equal(receipt.verification.sandbox.probed, true);
+        assert.equal(receipt.review.exitCode, null);
+      }
+      if (fixture.mode.startsWith("temp-") && !fixture.protected && !fixture.reviewOverlap) {
+        const { receipt } = JSON.parse(fs.readFileSync(receiptFile, "utf8"));
+        const grantsDarwin = fixture.platform === "darwin" && !fixture.unavailable;
+        assert.equal(fs.existsSync(getconfLog), fixture.platform === "darwin", "other platforms never query Darwin temp");
+        for (const phase of ["verification", "review"]) {
+          const { sandbox } = receipt[phase], profile = sandbox.args[sandbox.args.indexOf("-c") + 1];
+          const actual = [...profile.matchAll(/("(?:\\.|[^"\\])*")="write"/gu)].map(match => JSON.parse(match[1]));
+          const expected = [...new Set([fs.realpathSync(repo), resolvedLocation(sandbox.tempRoot), ...(grantsDarwin && phase === "verification" ? [fs.realpathSync(darwinTemp)] : [])])];
+          assert.deepEqual(actual.sort(), expected.sort(), phase + " records exactly the granted roots");
+          assert.ok(profile.includes('\":root\"="read"'));
+          assert.ok(profile.includes("network={enabled=true}"));
+          assert.equal(sandbox.probed, true);
+          assert.equal(fs.existsSync(sandbox.tempRoot), false);
+          if (fixture.privateInsideDarwin) assert.equal(resolvedLocation(sandbox.tempRoot).startsWith(fs.realpathSync(darwinTemp) + path.sep), phase === "verification");
+          if (fixture.platform === "darwin" && phase === "review") assert.ok(sandbox.tempRoot.startsWith(fs.realpathSync(env.HOME) + path.sep + ".mono-agent-workflow/review-tmp/"));
+        }
+        assert.equal(fs.readdirSync(evidence).some(name => name.startsWith(".write-boundary-")), false);
+        const verified = call({ ...request, collect: false }); assert.equal(verified.status, fixture.mode === "temp-descendant" ? 1 : 0, verified.stdout);
+        if (fixture.mode === "temp-descendant") {
+          const proof = JSON.parse(fs.readFileSync(path.join(repo, ".orchestrator/descendant-attempts.json")));
+          assert.equal(proof.parentAlive, false); assert.equal(proof.reviewAlive, true);
+          assert.equal(fs.readFileSync(path.join(repo, ".orchestrator/reviewer-signal-denied"), "utf8"), "EPERM", "portable proof models a denied signal probe of the live reviewer");
+          assert.deepEqual(proof.attempts.map(attempt => attempt.target), ["--json-output", "--status-output"].map(flag => receipt.review.args[receipt.review.args.indexOf(flag) + 1]));
+          assert.deepEqual(proof.attempts.map(attempt => attempt.result), ["EPERM", "EPERM"]);
+          assert.equal(receipt.review.json.overall_correctness, "patch is incorrect");
+          assert.equal(receipt.review.json.findings[0].priority, 1);
+          assert.equal(receipt.review.status.status, "findings"); assert.equal(receipt.review.exitCode, 1);
+        }
+      }
       if (fixture.mode === "history") assert.deepEqual(fs.readFileSync(receiptFile), receiptBefore, "history verification does not reconcile the mutable head");
-    } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+    } finally {
+      const ready = path.join(scratch, "repo/.orchestrator/descendant-ready.json");
+      if (fs.existsSync(ready)) { try { process.kill(JSON.parse(fs.readFileSync(ready)).pid, "SIGTERM"); } catch {} }
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
