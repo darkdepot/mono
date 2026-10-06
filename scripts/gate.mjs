@@ -232,10 +232,49 @@ export async function runCaptured(command, args, cwd, env = process.env) {
     });
   });
 }
-export async function runSandboxed(command, args, repo, evidenceRoot, { env = process.env, reviewArtifacts = false } = {}) {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-sandbox-temp-"));
+export function sandboxWriteRoots(sandbox) {
+  const profile = sandbox.args[sandbox.args.indexOf("-c") + 1];
+  return [...profile.matchAll(/("(?:\\.|[^"\\])*")="write"/gu)].map(match => JSON.parse(match[1]));
+}
+export async function runSandboxed(command, args, repo, evidenceRoot, {
+  env = process.env, reviewArtifacts = false, protectedPaths = {}, verificationWritableRoots = [], workerWritableRoots = []
+} = {}) {
+  const isolatedReview = process.platform === "darwin" && reviewArtifacts;
+  const excluded = [...Object.values(protectedPaths), evidenceRoot, repo, ...verificationWritableRoots, ...workerWritableRoots];
+  let tempRoot;
+  if (isolatedReview) {
+    const directory = path.join(os.homedir(), ".mono-agent-workflow", "review-tmp", `mono-review-${crypto.randomUUID()}`);
+    validateEvidenceGrants(directory, excluded, "collection private review directory");
+    // A dangling ancestor symlink must refuse, rather than be treated as a new directory.
+    let ancestor = path.dirname(directory);
+    for (;;) {
+      try { fs.lstatSync(ancestor); break; }
+      catch (error) { if (error.code !== "ENOENT") throw error; ancestor = path.dirname(ancestor); }
+    }
+    try { fs.realpathSync(ancestor); }
+    catch (error) { throw new Error(`collection private review directory canonical resolution failed: ${error.code}`); }
+    fs.mkdirSync(path.dirname(directory), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(directory, { mode: 0o700 });
+    tempRoot = directory;
+  } else tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-sandbox-temp-"));
   try {
+  if (isolatedReview) {
+    tempRoot = fs.realpathSync(tempRoot);
+    validateEvidenceGrants(tempRoot, excluded, "collection private review directory");
+  }
   const roots = [...new Set([repo, tempRoot].map(resolvedLocation))];
+  if (process.platform === "darwin" && !reviewArtifacts) {
+    let darwinTemp = null;
+    try {
+      const result = spawnSync("getconf", ["DARWIN_USER_TEMP_DIR"], { env, encoding: "utf8" });
+      if (result.status === 0 && path.isAbsolute(result.stdout.trim())) darwinTemp = fs.realpathSync(result.stdout.trim());
+    } catch {} // Unavailable system temp root retains the existing grants.
+    if (darwinTemp) {
+      for (const [label, location] of Object.entries({ ...protectedPaths, evidenceRoot }))
+        validateEvidenceGrants(darwinTemp, [location], `collection Darwin temporary write grant (${label})`);
+      if (!roots.includes(darwinTemp)) roots.push(darwinTemp);
+    }
+  }
   validateEvidenceGrants(evidenceRoot, roots);
   const probe = path.join(evidenceRoot, `.write-boundary-${crypto.randomUUID()}`);
   const probeMarker = `mono-boundary-denied:${crypto.randomUUID()}`;
@@ -468,9 +507,11 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       "head or base changed during verification");
   };
   if (request.collect === true) {
+    const protectedPaths = { "orchestrator root": request.root, skillsRoot: request.skillsRoot,
+      packRoot: request.packRoot ?? request.skillsRoot, "autoreview helper real path": helper };
     const archive = dataset.reviewDataset ? await archiveReviewDataset(dataset.reviewDataset.source, evidenceRoot) : null;
     if (archive) requireThat(archive.digest === dataset.reviewDataset.digest, "review dataset changed before archive");
-    const verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot);
+    const verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot, { protectedPaths });
     let review = { exitCode: null, output: "", json: null, status: null };
     const consistency = { passed: true, error: null };
     const checkConsistency = () => {
@@ -489,7 +530,10 @@ async function verifyPreflight(request, live = null, allowPending = false) {
           fs.copyFileSync(dataset.reviewDataset.source, copy);
         }
         checkCopy();
-        review = redactReviewCredentials(await runSandboxed(helper, [...invocation, "--stream-engine-output"], repo, evidenceRoot, { env, reviewArtifacts: true }), route);
+        review = redactReviewCredentials(await runSandboxed(helper, [...invocation, "--stream-engine-output"], repo, evidenceRoot, {
+          env, reviewArtifacts: true, protectedPaths, verificationWritableRoots: sandboxWriteRoots(verification.sandbox),
+          workerWritableRoots: request.workerWritableRoots ?? []
+        }), route);
         checkCopy();
       } catch (error) {
         consistency.passed = false; consistency.error ??= error.message;
@@ -510,7 +554,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   }
   requireThat(receipt.producer === "gate-autoreview-v2" && receipt.helper === helper && receipt.helperDigest === helperDigest &&
     validReviewInvocation(receipt.invocation, invocation), "autoreview artifact provenance/command mismatch");
-  requireThat(receipt.consistency?.passed === true && receipt.consistency.error === null, "collection consistency failed or missing");
+  const reviewDirectoryRefusal = receipt.consistency?.error?.startsWith("collection private review directory") ? `: ${receipt.consistency.error}` : "";
+  requireThat(receipt.consistency?.passed === true && receipt.consistency.error === null, "collection consistency failed or missing" + reviewDirectoryRefusal);
   requireThat(receipt.verification.exitCode === 0, "local verification failed or missing");
   requireThat(receipt.verification.sandbox?.mode === "workspace-write" && receipt.verification.sandbox.probed === true, "verification sandbox proof missing");
   requireThat(receipt.review.sandbox?.mode === "workspace-write" && receipt.review.sandbox.probed === true, "autoreview sandbox proof missing");
@@ -722,7 +767,7 @@ preflight request: {product,collectionId,root,worktree,head,skillsRoot,risk,crit
   Pending worker collection exits 2 with publishRequest; publish exactly that request. Pass exits 0; refusal exits 1.
   Use ~/.mono-agent-workflow/evidence/<product>/ outside EVERY worker-writable root,
   including worktree, orchestrator root and additional workerWritableRoots. Pin that list in dispatch.
-  Collection grants only the worktree and one private temp directory; workerWritableRoots only excludes evidenceRoot.
+  Collection grants the worktree and one private temp directory per invocation. On macOS verification additionally grants the validated Darwin user temp root when available; review uses isolated private results under ~/.mono-agent-workflow/review-tmp, outside verification and worker write grants. workerWritableRoots never becomes collector grants.
   Run verification AND the installed helper there with evidence-write denial probes, independent of command exit codes.
   Optional reviewDataset: absolute source under evidenceRoot; bind receipt reviewDataset:{source,digest,copy}.
   Copy to .orchestrator/review-dataset-<digest8>.md for repo-relative --dataset; check digest before/after helper and remove the copy.

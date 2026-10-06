@@ -116,6 +116,8 @@ After a lost response, the orchestrator reconciles every write against its durab
 
 The orchestrator collects preflight verification and autoreview evidence outside worker sandboxes; workers only read the sealed receipt with `collect:false`. Evidence lives outside every worker-writable root. Reports are the worker mailbox; confirmations and orchestrator control state remain read-only to workers. A timeout parks the delivery with a dictionary reason. Final outcomes are `green` or `parked`, with the latter reflected visibly in Linear; intermediate readiness is never terminal delivery.
 
+On macOS, collection verification also grants the resolved Darwin user temp root for Apple tools that write there independently of `TMPDIR`. Reject overlap with evidence, orchestrator, skills/pack and helper paths; retain the evidence denial probe. Autoreview receives no Darwin grant: its private results live under `~/.mono-agent-workflow/review-tmp`, outside verification and worker write grants, and are removed afterwards. The shared worktree remains writable to verification descendants while review reads it, as on main.
+
 ## Roles and Decisions
 
 | Role | Responsibility and decision boundary |
