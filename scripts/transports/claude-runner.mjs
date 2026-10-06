@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { processStart } from "../runtime.mjs";
 
 const [log, diagnostic, command, ...args] = process.argv.slice(2);
 const secret = process.env.GH_TOKEN;
@@ -28,6 +29,13 @@ function sink(file) {
   };
 }
 const out = sink(log), err = sink(diagnostic);
+if (process.env.MONO_WORKER_JOURNAL_IDENTITY) {
+  const identity = JSON.parse(process.env.MONO_WORKER_JOURNAL_IDENTITY);
+  // A killed prior writer may have left a partial line. The new instance marker
+  // must start its own line rather than disappear into that historical fragment.
+  out.write(Buffer.from("\n" + JSON.stringify({ type: "mono.worker-instance", ...identity,
+    pid: process.pid, procStart: processStart(process.pid) }) + "\n"));
+}
 const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
 child.stdout.on("data", chunk => out.write(chunk));
 child.stderr.on("data", chunk => err.write(chunk));

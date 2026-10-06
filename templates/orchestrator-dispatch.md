@@ -155,6 +155,31 @@ end of the attempt. Missing matrix/checkpoint evidence causes a recorded
   codex 0.153.4 protects the metadata directory of an explicitly listed linked worktree.
 - Report delivery: {{mailbox}}; fallback {{fallback}}
 
+<!-- claude-delivery:start -->
+### Claude Code delivery differences
+
+Start acknowledgement uses `resume`: write the gate acknowledgement and stop.
+The orchestrator applies and reads back the moves, then resumes this same session
+with the amendment. A request for start-handshake `wait` is refused.
+
+Phase and collection confirmations still wait in place. Run the pack's plain
+`node '<pack-root>/scripts/delivery-state.mjs' wait --report '<own phase report>'
+--confirmation '<confirmation path>' --config '<project config>'` invocation in
+the foreground. Use the full confirmation timeout under the launcher's raised
+Bash timeout ceiling. Never background it or replace it with sleep/polling; a
+refused command is reported through the existing stop protocol.
+
+Pre-PR autoreview uses only external collection on a committed head, including
+full/deep/risky work. Do not invoke the helper inside this worker. Fix collection
+findings, commit, publish the returned request and wait for its confirmation;
+only a passing `collect:false` gate permits readiness. Record both delivery
+differences in the ready certificate. Phase/terminal reports must identify this
+registered Issue and attempt; a final model answer alone is not green or parked.
+
+Never print credential values. Claude Code's own owner-only session transcripts
+persist command output outside the pack journal's redaction, like Codex logs.
+<!-- claude-delivery:end -->
+
 Emit the resolved command below; it is invocation data, not a second gate definition:
 
 ```bash

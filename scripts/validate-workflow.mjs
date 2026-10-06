@@ -5624,7 +5624,7 @@ const STRING_PINS = [
   ["references/review-rubric.md","`advisory-ready`"],
   ["references/review-rubric.md","`needs-fixes`"],
   ["references/review-rubric.md","`blocked`"],
-  ["references/orchestration.md","EVENT:<stall|dead|spawn-fail|report|phase|phase-rejected|gate-ack|halt|idle>"],
+  ["references/orchestration.md","EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle>"],
   ["references/orchestration.md","`recorded-late`"],
 ];
 const REQUIRED_HEADINGS = [
@@ -6012,7 +6012,7 @@ const MACHINE_TOKENS = new Set([
   "Documentation workflow",
   "Drift candidate:",
   "EVENT:",
-  "EVENT:<stall|dead|spawn-fail|report|phase|phase-rejected|gate-ack|halt|idle>",
+  "EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle>",
   "Exit disposition:",
   "Expansion destination:",
   "Frozen slice disposition:",

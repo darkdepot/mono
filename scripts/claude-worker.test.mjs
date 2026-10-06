@@ -104,6 +104,13 @@ process.stdin.on("end", () => {
     message:{model:value("--model"),content:[{type:"text",text:"fixture response"}]}});
   if (mode === "late-response") setTimeout(reply, 2000);
   else if (mode !== "no-response") reply();
+  if (mode === "gate-pause") {
+    const task = JSON.parse(input);
+    fs.writeFileSync(task.ack, JSON.stringify({issue:"MONO-999",phase:"gate",status:"gates-passed",
+      gates:[{gate:"identity",status:"pass",evidence:"synthetic startup"}]}));
+    emit({type:"result",session_id:session,is_error:false,
+      usage:{input_tokens:1,cache_creation_input_tokens:0,cache_read_input_tokens:0,output_tokens:1}});
+  }
   if (mode === "live") setInterval(() => {}, 1000);
   };
   if (mode === "leak") {
@@ -151,7 +158,11 @@ async function fixture(run, { auth, config, missingTool = false, shortWindow = f
     fs.chmodSync(path.join(bin, "gh"), 0o700);
     // The synthetic credential exists only in process memory/environment.
     const secret = crypto.randomBytes(30).toString("hex");
-    for (const [name, target] of [["node", process.execPath], ["git", "/usr/bin/git"], ["ps", "/bin/ps"], ["date", "/bin/date"]]) fs.symlinkSync(target, path.join(bin, name));
+    for (const [name, target] of [["node", process.execPath], ["git", "/usr/bin/git"], ["date", "/bin/date"]]) fs.symlinkSync(target, path.join(bin, name));
+    // Process metadata is also a stub: worker sandboxes may deny the real ps.
+    // A distinct PID still gives a distinct incarnation in launch/resume tests.
+    write(path.join(bin, "ps"), '#!/usr/bin/env node\nconsole.log("fixture-start-" + process.argv[process.argv.indexOf("-p") + 1]);\n');
+    fs.chmodSync(path.join(bin, "ps"), 0o700);
     Object.assign(process.env, { PATH: bin, FIXTURE_GH_INPUT: secret,
       GH_CONFIG_DIR: path.join(scratch, "github-config"), XDG_CONFIG_HOME: path.join(scratch, "xdg"),
       ANTHROPIC_API_KEY: secret, ANTHROPIC_BASE_URL: "https://provider.example.invalid",
@@ -425,7 +436,45 @@ test("installed dispatch selects Claude role and transport from immutable BASE",
     assert.equal(entry.model_policy.role, "worker-claude");
     const dispatch = fs.readFileSync(path.join(root, "dispatch/MONO-999-a1/dispatch.md"), "utf8");
     assert.match(dispatch, /Transport: claude-cli/);
+    assert.match(dispatch, /### Claude Code delivery differences/);
+    assert.match(dispatch, /Never print credential values/);
+    assert.match(dispatch, /Pre-PR autoreview uses only external collection/);
+    assert.equal(entry.model_launch.delivery_differences.length, 2);
     assert.equal(entry.handshake, "resume");
+  });
+});
+
+test("Claude startup ack stops, then same-session resume registers before consumption", async () => {
+  // Synthetic CLI/Linear read-back only; the real stop/resume probe is closeout.
+  await fixture(async ({ root, pack, request, registry, runtime }) => {
+    const { consumeAck } = await import(pathToFileURL(path.join(pack, "scripts/orchestrator/consume-gate-ack.mjs")));
+    const { digest } = await import(pathToFileURL(path.join(pack, "scripts/runtime.mjs")));
+    const ack = path.join(root, "reports/MONO-999-gate-ack-a1.json");
+    request.gates = ["identity"];
+    request.lifecycle_moves = [{ entity: "issue", key: "MONO-999", from: "Backlog", to: "In Progress" }];
+    write(request.dispatchFile, JSON.stringify({ mode: "gate-pause", ack }));
+    const launched = await runtime.spawnWorker(request);
+    let entry = registry()[request.issue];
+    while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
+    assert.ok(fs.existsSync(ack));
+    const consume = { root, issue: request.issue, attempt: 1, outcome: "applied",
+      readback: [{ moveDigest: digest(request.lifecycle_moves[0]), evidence: "synthetic In Progress read-back" }] };
+    await assert.rejects(consumeAck(consume), /resumed writer registration/);
+    const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"success"}');
+    await runtime.resumeWorker({ root, issue: request.issue, resumeFile });
+    entry = registry()[request.issue];
+    assert.equal(entry.thread_id, launched.thread_id);
+    assert.equal(entry.last_resume.pid, entry.pid);
+    await consumeAck(consume);
+    await consumeAck(consume); // Same applied record reconciles without a second move.
+    assert.ok(fs.existsSync(ack.replace(".json", ".applied.json")));
+    assert.equal(registry()[request.issue].gates, undefined);
+    const instances = fs.readFileSync(entry.log, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line))
+      .filter(event => event.type === "mono.worker-instance");
+    assert.equal(instances.length, 2);
+    assert.notEqual(instances[0].pid, instances[1].pid);
+    assert.equal(instances[1].procStart, entry.procStart);
+    assert.equal(instances[1].thread_id, launched.thread_id);
   });
 });
 

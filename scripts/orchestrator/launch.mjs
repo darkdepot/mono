@@ -138,8 +138,9 @@ async function launchTransport(root, entry, prompt, resume, prepared) {
       entry.log.replace(/\.jsonl$/, ".stderr.log"), invocation.command, ...invocation.args] : invocation.args;
     child = spawn(command, args, { cwd: entry.worktree, detached: true,
       stdio: piped ? ["pipe", "ignore", "ignore"] : ["ignore", stdout, stderr],
-      env: transport.environment(entry.modelRoutes?.roles[entry.model_policy.role], process.env,
-        { ...prepared, timeoutSec: entry.confirmationTimeoutSec, tempDir: temporaryDirectory(transport, entry, roots) }) });
+      env: { ...transport.environment(entry.modelRoutes?.roles[entry.model_policy.role], process.env,
+        { ...prepared, timeoutSec: entry.confirmationTimeoutSec, tempDir: temporaryDirectory(transport, entry, roots) }),
+        ...(piped ? { MONO_WORKER_JOURNAL_IDENTITY: JSON.stringify({ issue: entry.issue, attempt: entry.attempt, thread_id: entry.thread_id }) } : {}) } });
     await new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
     if (piped) {
       child.stdin.on("error", error => { if (error.code !== "EPIPE") child.kill("SIGTERM"); });
@@ -175,7 +176,7 @@ async function waitForThread(root, entry, pid, launchedStart, logOffset = 0) {
       const line = pending.subarray(0, newline).toString("utf8"); pending = pending.subarray(newline + 1);
       let event; try { event = JSON.parse(line); } catch { continue; }
       if (transport.startupEvent) {
-        try { if (transport.startupEvent(event, entry, state)) threadId = state.identity.thread_id; }
+        try { if (transport.startupEvent(event, { ...entry, pid }, state)) threadId = state.identity.thread_id; }
         catch (error) { error.observedIdentity = state.identity; throw error; }
       } else {
         const observed = transport.startIdentity(event);
@@ -190,7 +191,10 @@ async function waitForThread(root, entry, pid, launchedStart, logOffset = 0) {
               (writer.thread_id && writer.thread_id !== threadId)) throw new Error("startup writer changed before thread registration");
           const currentStart = processStart(pid);
           if (launchedStart && currentStart && currentStart !== launchedStart) throw new Error("startup writer process changed before thread registration");
-          writer.thread_id = threadId; writer.procStart = currentStart ?? launchedStart;
+          if (state.procStart && (currentStart ?? launchedStart) && state.procStart !== (currentStart ?? launchedStart))
+            throw new Error("startup journal process differs from live writer");
+          writer.thread_id = threadId; writer.procStart = currentStart ?? launchedStart ?? state.procStart;
+          if (transport.waitingPhase && !writer.procStart) throw new Error("managed worker process start unavailable; inspect retained attempt");
           if (transport.startupEvent) {
             writer.model_launch.actual_model = state.identity.model;
             writer.model_launch.evidence = "claude-cli init identity and first successful assistant response";
@@ -286,7 +290,8 @@ export async function spawnWorker(request, preparation = {}) {
       const model_launch = { case: transport.transport, model_parameter: model_policy.model, effort_parameter: model_policy.effort,
         effort_source: "explicit", actual_model: null, evidence: "requested command parameters" };
       if (prepared) Object.assign(model_launch, { effort_source: "requested", effort_observed: null,
-        auth_requested: prepared.auth.requested, auth_observed: prepared.auth.observed, auth_confirmed: prepared.auth.positive });
+        auth_requested: prepared.auth.requested, auth_observed: prepared.auth.observed, auth_confirmed: prepared.auth.positive,
+        delivery_differences: transport.deliveryDifferences });
       const entry = { issue: request.issue, transport: transport.transport, stage: "mono-deliver", attempt, ...launch,
         thread_id: transport.startupEvent ? crypto.randomUUID() : null, pid: null, worktree: request.worktree, branch: request.branch, product_name: request.product_name,
         packVersion: request.packVersion, sourceCommit: request.sourceCommit, surfaceRevision: request.surfaceRevision,

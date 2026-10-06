@@ -24,6 +24,7 @@ export function renderDispatch(template, values, pilot = false) {
   let source = template.replace(/<!-- generator:start -->[\s\S]*?<!-- generator:end -->\s*/u, "");
   if (values.landing_paths === undefined) source = source.replace(/<!-- landing:start -->[\s\S]*?<!-- landing:end -->\s*/u, "");
   if (!pilot) source = source.replace(/<!-- review-pilot:start -->[\s\S]*?<!-- review-pilot:end -->\s*/u, "");
+  if (values.transport !== "claude-cli") source = source.replace(/<!-- claude-delivery:start -->[\s\S]*?<!-- claude-delivery:end -->\s*/u, "");
   const rendered = source.replace(/\{\{([^{}]+)\}\}/gu, (_, key) => {
     if (!Object.hasOwn(values, key) || values[key] === undefined || values[key] === null || String(values[key]).trim() === "")
       throw new Error(`unfilled dispatch placeholder: ${key}`);

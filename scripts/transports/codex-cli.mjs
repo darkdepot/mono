@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { reviewEnvironment } from "../model-environment.mjs";
 import { zeroUsage, addUsage, finalizeUsage } from "../token-usage.mjs";
+import { readJsonLines } from "./journal.mjs";
 
 const unavailable = reason => `unavailable: ${reason}`;
 
@@ -13,21 +14,6 @@ function environment(route, source = process.env) {
     Object.assign(env, reviewEnvironment(route, credential));
   }
   return env;
-}
-
-function safeJsonLines(filename) {
-  const events = [];
-  const errors = [];
-  const text = fs.readFileSync(filename, "utf8");
-  for (const [index, line] of text.split("\n").entries()) {
-    if (!line.trim()) continue;
-    try {
-      events.push({ value: JSON.parse(line), line: index + 1 });
-    } catch (error) {
-      errors.push(`line ${index + 1}: ${error.message}`);
-    }
-  }
-  return { events, errors };
 }
 
 function issueKeysIn(value, issue) {
@@ -212,7 +198,7 @@ export const codexCli = Object.freeze({
   startIdentity,
   waitingCommand,
   activityTime: stat => stat.mtimeMs,
-  readLog: safeJsonLines,
+  readLog: readJsonLines,
   attemptUsage,
   transcriptUsage,
   modelMetadata,

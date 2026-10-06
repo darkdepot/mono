@@ -4,7 +4,7 @@
 // "## Heartbeat"). Watches one orchestrator mailbox root and prints one
 // stable line per worker liveness event to stdout:
 //
-//   <ISO time> EVENT:<stall|dead|spawn-fail|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>
+//   <ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>
 //
 // Checks per scan (log checks apply only to Issues present in workers.json,
 // the active registry; logs of retired Issues are history and are skipped
@@ -32,7 +32,7 @@
 // exact set equality for `gates-passed`; `blocked` accepts a non-empty subset
 // but still rejects foreign or duplicate names.
 //
-// Report and gate-ack events apply only to codex-cli workers with a
+// Report and gate-ack events apply to managed CLI workers with a
 // correlated A5 identity and use file mtime+size as the in-process version
 // key. Idle follows the A5 retirement contract: registry entries remain
 // active until deploy closeout removes them; control active/draining never
@@ -88,7 +88,7 @@ function usage(exitCode = 2) {
   console.error("");
   console.error("Watch an orchestrator mailbox root (logs/, reports/, workers.json) and");
   console.error("print one line per worker liveness event to stdout:");
-  console.error("  <ISO time> EVENT:<stall|dead|spawn-fail|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>");
+  console.error("  <ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>");
   console.error("");
   console.error("Options:");
   console.error("  --root <dir>        Orchestrator root, e.g. ~/.mono-agent-workflow/orchestrator/<product> (required)");
@@ -677,7 +677,7 @@ function readGateAck(reportsDir, log, registryEntry) {
 
 function hasPackIdentity(value) { return identity(value); }
 
-// Shared correlation surface for the two delivery events: only a codex-cli
+// Shared correlation surface for the two delivery events: only a managed CLI
 // worker whose registry entry names this exact log, this stage, and a full
 // A5 identity can produce a `report` or a `gate-ack`.
 function isCorrelatedDeliveryLog(log, registryEntry) {
@@ -906,6 +906,12 @@ function checkLog(log, gateAck, report, registry, nowMs) {
     );
   }
 
+  const turn = transport.turnState?.(registryEntry);
+  if (turn && !report && !gateAck) {
+    const event = turn.status === "failed" ? "failed" : "completed-without-report";
+    emitEvent(event, log.issue, `${turn.status} turn without an attempt-correlated terminal report; resume the same session for a report`, `${event}:${log.name}`, nowMs);
+    return;
+  }
   if (ageSec < args.stallSec) return;
   // One fixed post-consumption window, only while the waiting command's log
   // has not resumed. Reading the tombstone never renews consumedAt.
@@ -1036,7 +1042,7 @@ function checkLog(log, gateAck, report, registry, nowMs) {
 
 function checkRegistry(registry, nowMs) {
   for (const [issueKey, entry] of Object.entries(registry)) {
-    // Log-based liveness only applies to codex-cli workers: desktop and
+    // Log-based liveness applies to managed CLI workers: desktop and
     // fallback transports have no JSONL log by design and are monitored
     // through their own runtime signals.
     if (entry?.transport && !workerTransport(entry.transport)?.logLiveness) continue;
@@ -1116,7 +1122,11 @@ function checkPhase(log, entry, nowMs) {
   const confirmation = confirmationPath(latest.report, args.root);
   try { validateConfirmation(latest.report, JSON.parse(fs.readFileSync(confirmation, "utf8"))); return false; } catch { /* still awaiting whole queue */ }
   const timeout = entry.confirmationTimeoutSec ?? deliveryConfig().confirmationTimeoutSec;
-  return Number.isFinite(timeout) && timeout > 0 && nowMs - latest.publishedAtMs >= 0 && nowMs - latest.publishedAtMs <= timeout * 1000;
+  const withinDeadline = Number.isFinite(timeout) && timeout > 0 && nowMs - latest.publishedAtMs >= 0 && nowMs - latest.publishedAtMs <= timeout * 1000;
+  const transport = workerTransport(entry.transport);
+  if (!withinDeadline || !transport?.waitingPhase) return withinDeadline;
+  return writerPidState(entry) === "alive" && processStart(entry.pid) === entry.procStart &&
+    transport.waitingPhase(entry, latest.file, confirmation) !== null;
 }
 
 function scan() {
