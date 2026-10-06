@@ -26,6 +26,9 @@ function fetchGitEnv() {
     delete env[key];
     if (process.env[key] !== undefined) env[key] = process.env[key];
   }
+  // Compatibility hint only: collection authority is checked independently.
+  if (process.env.MONO_WORKER_JOURNAL_IDENTITY && process.env.GIT_CONFIG_PARAMETERS !== undefined)
+    env.GIT_CONFIG_PARAMETERS = process.env.GIT_CONFIG_PARAMETERS;
   return env;
 }
 function rejectSubmodules(cwd, env) {

@@ -1,0 +1,2 @@
+- Preserve Claude Code sandbox proxy parameters only for gate base-branch fetches with the existing managed-worker hint; keep all other Git environment filtering unchanged.
+- Skip nested macOS sandbox host proofs under that compatibility hint and isolate Claude launch fixtures from real GitHub credential paths, with launch/resume and environment regression coverage.
