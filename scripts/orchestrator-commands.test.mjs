@@ -1275,6 +1275,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); atomicJson(path.join(root, "workers.json"), {});
     git(repo, "init", "-b", "main"); const origin = path.join(scratch, "origin.git"); git(scratch, "init", "--bare", origin); git(repo, "remote", "add", "origin", origin);
     const config = path.join(repo, ".agents/mono-workflow.config.json"), policy = readJson(path.join(checkout, ".agents/mono-workflow.config.json"));
+    policy.orchestration.transport = "codex-cli";
     policy.orchestration.preapply = { mandate: input.mandate };
     policy.orchestration.delivery = { ...policy.orchestration.delivery, attemptCap: 10 };
     policy.orchestration.dispatch = { product: "ae12", evidenceRoot: path.join(scratch, "evidence"), openDecisions: 0, lifecycle_moves: [], verification: { command: "node", args: ["scripts/verify.mjs"] } };
