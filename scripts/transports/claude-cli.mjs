@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { resolvedLocation } from "../runtime.mjs";
 import { readJsonLines } from "./journal.mjs";
 import { zeroUsage, addUsage, finalizeUsage } from "../token-usage.mjs";
@@ -203,58 +204,89 @@ function startupEvent(event, entry, state) {
   return state.identity && state.response && state.procStart;
 }
 
-function currentEvents(entry) {
-  let instance = null, instanceLine = 0, events = [];
+const currentLogs = new Map();
+
+function reduceCurrent(state, event) {
+  if (event?.type === "mono.worker-instance") {
+    state.instance = event; state.invalid = false; state.calls.clear(); state.result = null; return;
+  }
+  if (event?.session_id && event.session_id !== state.instance?.thread_id) return;
+  if (event?.type === "result" || (event?.type === "system" && event.subtype === "init")) {
+    state.calls.clear(); state.result = event.type === "result" ? event : null;
+  }
+  if (event?.type === "system" && event.subtype === "permission_denied") {
+    if (event.tool_use_id) state.calls.delete(event.tool_use_id); else state.calls.clear();
+  }
+  for (const item of event?.message?.content ?? []) {
+    if (item.type === "tool_result") state.calls.delete(item.tool_use_id);
+    if (event.type === "assistant" && event.session_id === state.instance?.thread_id && item.type === "tool_use" &&
+        item.name === "Bash" && typeof item.id === "string" && item.id) state.calls.set(item.id, item.input);
+  }
+}
+
+function currentState(entry) {
+  let fd;
   try {
-    const parsed = readJsonLines(entry.log, { errorLines: true });
-    for (const { value, line } of parsed.events) {
-      if (value.type === "mono.worker-instance") { instance = value; instanceLine = line; events = []; continue; }
-      if (value.session_id && value.session_id !== entry.thread_id) continue;
-      events.push(value);
+    fd = fs.openSync(entry.log, "r");
+    const stat = fs.fstatSync(fd);
+    let state = currentLogs.get(entry.log);
+    // Verify the consumed boundary as well as inode/size: truncation followed
+    // by regrowth must not reuse outstanding calls from the replaced content.
+    const boundary = state && Buffer.alloc(state.boundary.length);
+    const intact = state && stat.size >= state.offset &&
+      fs.readSync(fd, boundary, 0, boundary.length, state.offset - boundary.length) === boundary.length && boundary.equals(state.boundary);
+    if (!state || state.dev !== stat.dev || state.ino !== stat.ino || !intact) {
+      state = { dev: stat.dev, ino: stat.ino, offset: 0, boundary: Buffer.alloc(0), pending: "",
+        decoder: new StringDecoder("utf8"), instance: null, invalid: false, calls: new Map(), result: null };
+      currentLogs.set(entry.log, state);
     }
-    if (parsed.invalidLines.some(line => line > instanceLine)) return [];
-  } catch { return []; }
-  if (!instance || ["issue", "attempt", "thread_id", "pid", "procStart"].some(key =>
-    instance[key] !== entry[key]) || !entry.thread_id || !entry.procStart || !Number.isInteger(entry.pid)) return [];
-  return events;
+    const buffer = Buffer.alloc(64 * 1024);
+    while (state.offset < stat.size) {
+      const count = fs.readSync(fd, buffer, 0, Math.min(buffer.length, stat.size - state.offset), state.offset);
+      if (!count) break;
+      state.offset += count;
+      state.boundary = Buffer.from(Buffer.concat([state.boundary, buffer.subarray(0, count)]).subarray(-64));
+      state.pending += state.decoder.write(buffer.subarray(0, count));
+      let newline;
+      while ((newline = state.pending.indexOf("\n")) >= 0) {
+        const line = state.pending.slice(0, newline); state.pending = state.pending.slice(newline + 1);
+        if (!line.trim()) continue;
+        try { reduceCurrent(state, JSON.parse(line)); } catch { state.invalid = true; }
+      }
+    }
+    const instance = state.instance;
+    if (state.invalid || state.pending.trim() || state.decoder.lastNeed || state.offset !== stat.size || !instance ||
+        ["issue", "attempt", "thread_id", "pid", "procStart"].some(key => instance[key] !== entry[key]) ||
+        !entry.thread_id || !entry.procStart || !Number.isInteger(entry.pid)) return null;
+    return state;
+  } catch { return null; }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
 function waitingPhase(entry, reportFile, confirmationFile) {
   const calls = new Map();
-  for (const event of currentEvents(entry)) {
-    if (event.type === "result" || (event.type === "system" && event.subtype === "init")) calls.clear();
-    if (event.type === "system" && event.subtype === "permission_denied") {
-      if (event.tool_use_id) calls.delete(event.tool_use_id); else calls.clear();
+  for (const [id, input] of currentState(entry)?.calls ?? []) {
+    const command = input?.command;
+    // Plain foreground invocation only. Shell control operators, substitutions
+    // and wrapper commands cannot prove that this call blocks the worker.
+    if (input?.run_in_background === true || typeof command !== "string" || /[;&|`\n\r$<>]/.test(command)) continue;
+    const tokens = command.match(/'[^']*'|"[^"]*"|[^\s'"]+/g)?.map(token => token.replace(/^(['"])(.*)\1$/, "$2")) ?? [];
+    if (tokens[0] !== "node" || !entry.packRoot || tokens[1] !== path.join(entry.packRoot, "scripts/delivery-state.mjs") || tokens[2] !== "wait") continue;
+    const flags = new Map(); let valid = true;
+    for (let i = 3; i < tokens.length; i += 2) {
+      if (!["--report", "--confirmation", "--config"].includes(tokens[i]) || !tokens[i + 1] || flags.has(tokens[i])) { valid = false; break; }
+      flags.set(tokens[i], tokens[i + 1]);
     }
-    for (const item of event.message?.content ?? []) {
-      if (item.type === "tool_result") calls.delete(item.tool_use_id);
-      if (event.type !== "assistant" || event.session_id !== entry.thread_id || item.type !== "tool_use" ||
-          item.name !== "Bash" || typeof item.id !== "string" || !item.id) continue;
-      const command = item.input?.command;
-      // Plain foreground invocation only. Shell control operators, substitutions
-      // and wrapper commands cannot prove that this call blocks the worker.
-      if (item.input?.run_in_background === true || typeof command !== "string" || /[;&|`\n\r$<>]/.test(command)) continue;
-      const tokens = command.match(/'[^']*'|"[^"]*"|[^\s'"]+/g)?.map(token => token.replace(/^(['"])(.*)\1$/, "$2")) ?? [];
-      if (tokens[0] !== "node" || !entry.packRoot || tokens[1] !== path.join(entry.packRoot, "scripts/delivery-state.mjs") || tokens[2] !== "wait") continue;
-      const flags = new Map(); let valid = true;
-      for (let i = 3; i < tokens.length; i += 2) {
-        if (!["--report", "--confirmation", "--config"].includes(tokens[i]) || !tokens[i + 1] || flags.has(tokens[i])) { valid = false; break; }
-        flags.set(tokens[i], tokens[i + 1]);
-      }
-      if (valid && flags.get("--report") === reportFile && flags.get("--confirmation") === confirmationFile)
-        calls.set(item.id, { callId: item.id, issue: entry.issue, attempt: entry.attempt,
-          thread_id: entry.thread_id, pid: entry.pid, procStart: entry.procStart });
-    }
+    if (valid && flags.get("--report") === reportFile && flags.get("--confirmation") === confirmationFile)
+      calls.set(id, { callId: id, issue: entry.issue, attempt: entry.attempt,
+        thread_id: entry.thread_id, pid: entry.pid, procStart: entry.procStart });
   }
   return [...calls.values()].at(-1) ?? null;
 }
 
 function turnState(entry) {
-  let result = null;
-  for (const event of currentEvents(entry)) {
-    if (event.type === "system" && event.subtype === "init") result = null;
-    if (event.type === "result" && event.session_id === entry.thread_id) result = event;
-  }
+  const result = currentState(entry)?.result;
+  if (result?.session_id !== entry.thread_id) return null;
   return result ? { status: result.is_error === true ? "failed" : "completed", session: entry.thread_id } : null;
 }
 

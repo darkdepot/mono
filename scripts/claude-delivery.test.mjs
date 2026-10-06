@@ -102,6 +102,34 @@ test("historical malformed output does not invalidate current-instance wait or c
   assert.equal(transport.turnState(f.entry), null);
 }));
 
+test("Claude monitoring reuses the read position and handles partial, replaced and truncated logs", () => withFixture(f => {
+  f.journal([...f.events, ...Array.from({ length: 1000 }, () => ({ type: "tool_progress", session_id: f.entry.thread_id,
+    tool_use_id: "fixture-call", elapsed_time_seconds: 30, text: "progress".repeat(100) }))]);
+  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+  const read = fs.readSync, whole = fs.readFileSync;
+  let bytes = 0;
+  fs.readSync = (...args) => { const count = read(...args); bytes += count; return count; };
+  fs.readFileSync = (file, ...args) => { assert.notEqual(file, f.entry.log, "monitoring must not reread the whole journal"); return whole(file, ...args); };
+  try {
+    assert.equal(transport.turnState(f.entry), null);
+    assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+    assert.ok(bytes <= 128, "unchanged monitoring reads only the cache boundary");
+    const result = JSON.stringify({ type: "result", session_id: f.entry.thread_id, is_error: false });
+    fs.appendFileSync(f.entry.log, result.slice(0, 40));
+    assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
+    fs.appendFileSync(f.entry.log, result.slice(40) + "\n");
+    assert.equal(transport.turnState(f.entry)?.status, "completed");
+    assert.ok(bytes < 1024, "appending a result must not rescan historical progress");
+  } finally { fs.readSync = read; fs.readFileSync = whole; }
+  fs.unlinkSync(f.entry.log);
+  f.journal([{ ...f.instance, pid: 42 }, f.init, f.call]);
+  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
+  f.journal(f.events);
+  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+  f.journal([f.instance]);
+  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
+}));
+
 test("Claude terminal report correlation rejects foreign attempt and pack", () => withFixture(f => {
   const file = path.join(f.root, "reports", `${f.entry.issue}-mono-deliver.json`);
   const report = { ...f.report, status: "parked", reason: "blocked", text: "fixture stop" };
