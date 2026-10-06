@@ -137,13 +137,69 @@ Mono pilots product `models` overrides in [config](.agents/mono-workflow.config.
 
 In orchestrated mode, use the configured transport or documented runtime detection. The managed Codex CLI and Claude Code transports support one resumable worker session per Issue. The registry, mailbox and append-only ledger support recovery; write only observed events with their actual recording times. The installed watcher reports liveness and phase events. `control.json.halt` stops new launches/resumes without interrupting running workers; persistent attempt limits bound retries. Keep compaction wiring outside product repos and carry exact next action, pending obligations and decisions through compaction.
 
-During the second acceptance window, this repository selects Claude Code with `orchestration.transport: "claude-cli"` until the return-to-Codex task lands.
+The second acceptance window ends with this task: this repository delivers its own Issues on Codex again, with `.agents/mono-workflow.config.json` back at `orchestration.transport: "codex-cli"`.
 
 `orchestration.transport: "claude-cli"` selects managed Claude Code launch/resume and the `worker-claude` role from immutable BASE; unchanged projects continue on Codex. It requires a native Anthropic route and positively confirmed subscription login, without provider keys or address overrides. Per-attempt settings bind file edits and shell writes to the approved grants, require the shell sandbox, close connectors and built-in web tools, and allow only GitHub network hosts. GitHub login is fetched outside the sandbox and passed as a real environment variable. Base-branch refresh preserves the sandbox proxy settings when the transport supplies its managed-worker hint. A private per-attempt GitHub CLI configuration directory is prepared inside the grants and reused on resume; both stored streams redact the login. GitHub CLI credential files and their resolved targets are read-denied to shell and file tools; resume retains those protections. Internal temporary paths must remain within short pinned grants; ungranted system fallbacks are denied. Startup requires the pinned session/model identity and a first successful response. Resume regenerates settings and retains the session, model and rights, refusing a live writer. Effort remains requested rather than observed. Start acknowledgement stops the worker; the orchestrator applies and reads back moves, then resumes the same session. Start handshake `wait` is refused. Phase and collection confirmations wait in the foreground under the raised Bash timeout ceiling and existing deadlines. Wait evidence binds session, attempt, current process instance and call ID; old calls cannot prove a resumed wait. The watcher uses log freshness, including command progress, and distinguishes completion without an attempt-correlated report from green/parked. Pre-PR review uses external collection on committed heads, without an in-worker pass; dispatch, launch record and ready certificate name both differences. Never print credential values: native session transcripts persist command output outside pack redaction. Live waits, expiry and collection are probed by the orchestrator at closeout.
 
 Launch and resume derive the worktree-specific and common Git directories from the requested worktree, canonicalize them, and require the complete effective grant set to match the dispatch pin exactly. A regular checkout contributes one Git directory. Git environment overrides cannot redirect these reads or the capsule HEAD; worker environment settings remain intact. The evidence, installed skills, autoreview helper and orchestrator paths remain guarded. Missing or extra pinned roots refuse launch. Compatible pack updates allow resume under [the versioning rule](references/install.md#compatibility); incompatible updates require a new attempt. Reports retain the task's original identity, and the watcher emits `phase-rejected` with the task and reason when a phase report differs.
 
 Run `node --test scripts/worktree-sandbox.test.mjs` on the orchestrator host at deploy for the paired Git permission proof. It reports `deferred` inside a nested sandbox; outside one, missing Codex or sandbox startup failure fails the probe. This host check runs separately from the portable `verify.mjs` suite.
+
+### Choosing the delivery worker
+
+One setting decides who executes a product's Issues under the orchestrator:
+`orchestration.transport` in its `.agents/mono-workflow.config.json`. `codex-cli` is
+the default and needs no entry; `claude-cli` selects the managed Claude Code worker
+and its `worker-claude` role. Everything else about the product stays as it is, and
+the orchestrator itself runs on Claude either way.
+
+The value is read from the Issue's immutable base commit. Editing it therefore never
+changes a worker that is already running: an attempt keeps the worker, rights and
+model it started with, and the new value applies to the next launch. A worker is also
+never chosen from the diff it delivers. An unknown value, a role belonging to the
+other tool, a provider key or address override, or a producer/reviewer pair without
+an accepted `pairingAccepted` record refuses the launch before the attempt is
+registered.
+
+Both workers deliver one approved Issue to a green PR through the same gates,
+certificates, confirmations and Linear writes. Four differences are worth knowing
+before choosing Claude Code:
+
+| Difference | Codex | Claude Code |
+| --- | --- | --- |
+| Start confirmation | Waits in place for the orchestrator's read-back under `handshake: wait`, or exits and resumes | Always stops after writing its gate acknowledgement; the orchestrator applies and reads back the moves, then resumes the same session. `wait` is refused |
+| Review before the PR | Local autoreview pass inside the worker for full and deep/risky work, plus the orchestrator's mandatory collection | The orchestrator's external collection on a committed head only: nested sandboxes cannot start, so there is no in-worker pass |
+| Subscription | Its own provider subscription | Shared with the orchestrator, so an exhausted subscription stops both. A named limitation, not a defect |
+| Codex on the machine | Required | Still required: review collection runs in the Codex sandbox |
+
+Phase and collection confirmations still wait in place on both workers, and a missing
+mandatory capability is a refused launch rather than a disclosed difference. The
+chosen worker's differences appear in the launch record and in the ready certificate,
+never silently.
+
+A worked example, this repository's own acceptance window:
+
+1. **Select.** The orchestrator pre-applies `"transport": "claude-cli"` under its
+   recorded owner mandate, as a separate commit before the start gate, and lands that
+   Issue. Every other byte of the config is unchanged.
+2. **Check.** `node scripts/project-config.mjs --repo /path/to/product --check`
+   passes on the merged tip, and the accepted pair for `worker-claude` is on record.
+3. **Deliver.** The next Issue dispatched from that base runs on the managed Claude
+   Code worker: its acknowledgement stops the worker, the orchestrator applies the
+   lifecycle move and resumes the same session, each phase waits in the foreground for
+   its confirmation, and the single review before the PR is an external collection on
+   the committed head.
+4. **Return.** The returning Issue carries the reverse pre-application,
+   `"transport": "codex-cli"`, byte-identical otherwise. Its own worker is still
+   Claude Code, because the worker comes from the immutable base and not from this
+   diff.
+5. **Confirm.** After the merge the config check passes again and the next dispatch
+   resolves a Codex worker.
+
+Rolling the choice back is the same one setting in the other direction, with the same
+boundary: running attempts keep their pins and finish on their original worker, while
+new launches go to Codex. Installation requirements for each worker are in
+[Project Policy](references/install.md#project-policy).
 
 ## Cost
 
