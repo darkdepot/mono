@@ -8,14 +8,17 @@ import { runSandboxed, sandboxWriteRoots } from "./gate.mjs";
 
 // Run outside a worker sandbox: nesting Seatbelt is unsupported on macOS.
 // Inside a worker/collector, explicitly skip the unsupported nested host proof.
-function hostAvailable(t, darwinOnly = false) {
-  if (darwinOnly && process.platform !== "darwin") {
+function hostAvailable(t, darwinOnly = false, {
+  platform = process.platform, env = process.env,
+  probe = () => spawnSync("codex", ["--version"], { encoding: "utf8" })
+} = {}) {
+  if (darwinOnly && platform !== "darwin") {
     t.skip("macOS is required for the Darwin collector proof"); return false;
   }
-  if (process.platform === "darwin" && (process.env.CODEX_SANDBOX === "seatbelt" || process.env.MONO_DELIVERY_SANDBOX === "1")) {
+  if (platform === "darwin" && (env.CODEX_SANDBOX === "seatbelt" || env.MONO_DELIVERY_SANDBOX === "1" || env.MONO_WORKER_JOURNAL_IDENTITY)) {
     t.skip("nested Seatbelt sandbox: run host proof from the orchestrator outside worker sandboxes"); return false;
   }
-  const available = spawnSync("codex", ["--version"], { encoding: "utf8" });
+  const available = probe();
   if (available.error?.code === "ENOENT") { t.skip("Codex CLI is absent on this fixture host"); return false; }
   assert.equal(available.status, 0, available.stderr);
   return true;
@@ -144,4 +147,22 @@ test("real macOS collector denies a surviving verification descendant access to 
     if (fs.existsSync(ready)) { try { process.kill(JSON.parse(fs.readFileSync(ready)).pid, "SIGTERM"); } catch {} }
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("Darwin host proof skips a non-authoritative managed Claude worker hint", () => {
+  let reason;
+  const available = hostAvailable({ skip: value => reason = value }, true, {
+    platform: "darwin", env: { MONO_WORKER_JOURNAL_IDENTITY: "synthetic hint" },
+    probe: () => { throw new Error("nested sandbox host must not be probed"); }
+  });
+  assert.equal(available, false);
+  assert.match(reason, /nested.*sandbox.*orchestrator/u);
+});
+
+test("Darwin host proof still probes outside managed workers", () => {
+  let probes = 0;
+  assert.equal(hostAvailable({ skip: () => assert.fail("host proof must not skip") }, true, {
+    platform: "darwin", env: {}, probe: () => { probes++; return { status: 0, stderr: "" }; }
+  }), true);
+  assert.equal(probes, 1);
 });

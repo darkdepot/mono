@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest } from "./gate.mjs";
 
 const head = "a".repeat(40);
@@ -566,3 +570,51 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
     }
   });
 });
+
+async function gitEnvironmentFixture(run) {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "gate-git-env-"));
+  const saved = { ...process.env };
+  try {
+    const pack = path.join(scratch, "pack");
+    fs.cpSync(path.dirname(fileURLToPath(import.meta.url)), path.join(pack, "scripts"), { recursive: true });
+    const gate = path.join(pack, "scripts/gate.mjs");
+    // Expose only the copied fixture's private environment seam.
+    fs.appendFileSync(gate, "\nexport { safeGitEnv, fetchGitEnv };\n");
+    const environments = await import(pathToFileURL(gate));
+    process.env.GIT_CONFIG_PARAMETERS = "'http.proxyAuthMethod'='basic' 'credential.helper'='!fixture proxy helper'";
+    process.env.GIT_DIR = "/fixture/inherited-git-dir";
+    process.env.GIT_ASKPASS = "/fixture/askpass";
+    process.env.GIT_CONFIG_GLOBAL = "/fixture/global";
+    delete process.env.MONO_WORKER_JOURNAL_IDENTITY;
+    await run(environments);
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+    Object.assign(process.env, saved);
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+test("fetchGitEnv preserves sandbox proxy parameters verbatim with the managed-worker hint", () => gitEnvironmentFixture(({ fetchGitEnv }) => {
+  process.env.MONO_WORKER_JOURNAL_IDENTITY = "synthetic compatibility hint";
+  const env = fetchGitEnv();
+  assert.equal(env.GIT_CONFIG_PARAMETERS, process.env.GIT_CONFIG_PARAMETERS);
+  assert.equal(env.GIT_DIR, undefined);
+  assert.equal(env.GIT_ASKPASS, process.env.GIT_ASKPASS);
+  assert.equal(env.GIT_CONFIG_GLOBAL, process.env.GIT_CONFIG_GLOBAL);
+  assert.equal(env.GIT_NO_REPLACE_OBJECTS, "1");
+}));
+
+test("fetchGitEnv removes inherited proxy parameters without the managed-worker hint", () => gitEnvironmentFixture(({ fetchGitEnv }) => {
+  assert.equal(fetchGitEnv().GIT_CONFIG_PARAMETERS, undefined);
+}));
+
+test("safeGitEnv removes inherited proxy parameters for non-fetch git even with the hint", () => gitEnvironmentFixture(({ safeGitEnv }) => {
+  process.env.MONO_WORKER_JOURNAL_IDENTITY = "synthetic compatibility hint";
+  const env = safeGitEnv();
+  assert.equal(env.GIT_CONFIG_PARAMETERS, undefined);
+  assert.equal(env.GIT_DIR, undefined);
+  assert.equal(env.GIT_ASKPASS, undefined);
+  assert.equal(env.GIT_CONFIG_GLOBAL, "/dev/null");
+  assert.equal(env.GIT_CONFIG_NOSYSTEM, "1");
+  assert.equal(env.GIT_TERMINAL_PROMPT, "0");
+}));

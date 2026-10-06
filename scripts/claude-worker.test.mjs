@@ -82,6 +82,7 @@ process.stdin.on("end", () => {
   const session = value("--session-id") || value("--resume");
   fs.writeFileSync(path.join(process.cwd(), "observed.json"), JSON.stringify({args, input, envKeys: Object.keys(process.env),
     tmpdir:process.env.TMPDIR, claudeTmpdir:process.env.CLAUDE_CODE_TMPDIR,
+    journalIdentity:process.env.MONO_WORKER_JOURNAL_IDENTITY,
     githubConfigDir:process.env.GH_CONFIG_DIR, githubConfigMode:fs.statSync(process.env.GH_CONFIG_DIR).mode & 0o777,
     githubConfigEntries:fs.readdirSync(process.env.GH_CONFIG_DIR),
     tempPrepared:fs.statSync(path.join(process.env.CLAUDE_CODE_TMPDIR, "claude-" + process.getuid())).isDirectory()}));
@@ -163,7 +164,7 @@ async function fixture(run, { auth, config, missingTool = false, shortWindow = f
     // A distinct PID still gives a distinct incarnation in launch/resume tests.
     write(path.join(bin, "ps"), '#!/usr/bin/env node\nconsole.log("fixture-start-" + process.argv[process.argv.indexOf("-p") + 1]);\n');
     fs.chmodSync(path.join(bin, "ps"), 0o700);
-    Object.assign(process.env, { PATH: bin, FIXTURE_GH_INPUT: secret,
+    Object.assign(process.env, { HOME: path.join(scratch, "home"), PATH: bin, FIXTURE_GH_INPUT: secret,
       GH_CONFIG_DIR: path.join(scratch, "github-config"), XDG_CONFIG_HOME: path.join(scratch, "xdg"),
       ANTHROPIC_API_KEY: secret, ANTHROPIC_BASE_URL: "https://provider.example.invalid",
       OPENAI_API_KEY: secret, CLAUDE_CODE_OAUTH_TOKEN: secret });
@@ -209,6 +210,8 @@ test("managed Claude launch and resume use pinned identity, rights, and credenti
     assert.equal("tlsTerminate" in settings.sandbox.network, false);
     assert.equal("credentials" in settings.sandbox, false);
     const credentialPaths = [...entry.githubCredentialPaths];
+    assert.ok(credentialPaths.includes(path.join(process.env.HOME, ".config/gh")));
+    assert.ok(credentialPaths.every(value => value.startsWith(path.dirname(repo) + path.sep)));
     assert.ok(credentialPaths.includes(process.env.GH_CONFIG_DIR));
     assert.ok(credentialPaths.includes(path.join(process.env.XDG_CONFIG_HOME, "gh")));
     for (const value of credentialPaths) {
@@ -537,5 +540,23 @@ test("Claude resume refuses surviving commands after its journal owner exits", a
       await assert.rejects(runtime.resumeWorker({ root, issue: request.issue, resumeFile }), /process group is still live/);
       assert.equal(registry()["MONO-999"].pid, leader.pid);
     } finally { process.kill(-leader.pid, "SIGKILL"); }
+  });
+});
+
+for (const resume of [false, true]) test(`Claude transport propagates the managed-worker hint on ${resume ? "resume" : "launch"}`, async () => {
+  await fixture(async ({ start, registry, repo, root, request, runtime }) => {
+    await start("success");
+    let entry = registry()[request.issue];
+    if (resume) {
+      while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
+      const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"success"}');
+      await runtime.resumeWorker({ root, issue: request.issue, resumeFile });
+      entry = registry()[request.issue];
+    }
+    const observed = JSON.parse(fs.readFileSync(path.join(repo, "observed.json")));
+    const hint = JSON.parse(observed.journalIdentity);
+    assert.equal(hint.issue, entry.issue);
+    assert.equal(hint.attempt, entry.attempt);
+    assert.equal(hint.thread_id, entry.thread_id);
   });
 });
