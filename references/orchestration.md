@@ -771,10 +771,26 @@ separate from the policy target:
   long paths and deny ungranted system fallbacks. Strict empty MCP, no Chrome, closed built-in tools, no user,
   project or local setting sources. The Bash timeout exceeds phase confirmation.
   Resume regenerates settings from attempt pins, keeps the same session/model and
-  refuses a live writer. Never adopt current project settings. Launch/resume only:
-  phase waits, watcher/report correlation and usage support are the next delivery
-  unit. Start handshake wait is refused; resume is the supported mode. Full delivery
-  also needs external committed-head review because nested sandboxes cannot run.
+  refuses a live writer. Never adopt current project settings. Startup uses stop/resume:
+  the worker writes its gate acknowledgement and stops; the orchestrator applies
+  and reads back every move before resuming the same session. Start handshake
+  wait is refused. Pre-PR review uses external committed-head collection only,
+  without an in-worker pass because nested sandboxes cannot run. Dispatch,
+  model_launch.delivery_differences and the ready certificate disclose both facts.
+  Never print credentials: native session transcripts retain command output
+  outside journal redaction. A refused shell command follows report-before-stop.
+  Phase and collection confirmations use the plain pack blocking wait command
+  in the foreground under the raised Bash timeout ceiling. The seam proves an
+  outstanding Bash call by session, Issue/attempt, current runner PID/procStart
+  and call ID. Each runner writes a mono.worker-instance marker before CLI output;
+  a resume discards old outstanding calls. A tool result (including background
+  handoff), permission denial or turn result closes the wait. Stale, foreign or
+  partial confirmations never advance the phase; existing deadlines apply.
+  Log mtime supplies liveness, including tool_progress appends during a command.
+  A turn result without a correlated report is completion without a report,
+  never green or parked. Sum result.usage once per completed turn across resumes;
+  normalize cache reads/creation into input, and preserve unavailable/incomplete
+  coverage when a turn lacks final usage. No monetary accounting.
 - `claude-code-desktop`: spawn via task chip with a self-contained dispatch
   prompt (one user click; the platform provides the worktree). Continue or
   steer via session message with user confirmation. Workers stay visible as
@@ -1191,7 +1207,7 @@ pack root; the same source serves development and fixtures. It is
 a zero-dependency, read-only watcher over the orchestrator root: it reads
 `logs/`, `reports/`, `workers.json`, and `control.json`, writes nothing, and
 emits one stable line per watcher event to stdout —
-`<ISO time> EVENT:<stall|dead|spawn-fail|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
+`<ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
 `phase-rejected` names the task and mismatched identity fields when a phase
 report fails strict report-to-task correlation. It never accepts the report or
 suppresses liveness on its strength.
@@ -1214,7 +1230,10 @@ directory's history; retired Issues' logs are outside its scope.
   verification kill+retry rule in Worker Transports. Non-JSON contamination
   before later valid JSON events produces one diagnostic warning on stderr,
   not a repeated watcher event, and does not suppress stall/dead checks.
-- `report` is emitted only for `codex-cli` workers, whose JSONL log provides
+- `completed-without-report` and `failed` on Claude Code require recovery in the
+  same session after reading the latest phase state; neither is a terminal task
+  outcome. Only an attempt-correlated green/parked report supplies that outcome.
+- `report` is emitted for managed `codex-cli` and `claude-cli` workers, whose JSONL log provides
   the correlation surface. The report must match the worker registry's A5
   identity and issue/stage, and must satisfy the exact v2 freshness predicate:
   report mtime is at least the log birthtime and at least log mtime minus the
@@ -1223,10 +1242,10 @@ directory's history; retired Issues' logs are outside its scope.
   one process suppresses an unchanged mtime+size version and emits an updated
   version, while a restarted watcher emits the current version once again.
   The consumer deduplicates by reading the report's current state.
-  Non-Codex transports keep their existing report-polling contract; the watcher never
+  Desktop/fallback transports keep their existing report-polling contract; the watcher never
   emits `report` for `claude-code-desktop` or `fallback` entries.
 - `gate-ack` rides the same correlation surface as `report` and the same
-  at-least-once rule: `codex-cli` entries only, registry-matched identity and
+  at-least-once rule: managed CLI entries only, registry-matched identity and
   stage. Its freshness is deliberately NOT the report's, and the difference is
   load-bearing in both directions. Delivery asks only that the ack BELONG to
   this attempt — its mtime at or after the attempt log's birthtime — because a
@@ -1402,13 +1421,16 @@ of a 1M-token window with no signal to the owner.
 
 Per-Issue collection, performed by the orchestrator:
 
-- Worker tokens: sum every `turn.completed` event in every attempt log of
+- Worker tokens: sum every Codex `turn.completed` or Claude Code `result.usage`
+  event in every attempt log of
   every stage (`logs/<ISSUE-KEY>-<stage>-a<attempt>.jsonl`). Each event is
   per-turn, not cumulative — the observed input sequence 516,590 → 433,845
   → 5,072,542 in one thread is the motivating evidence. Keep input, cached
   input, and output separate; cached input is a subset of input and must not
   be added to it again. Include respawned, parked, and failed attempts, and
-  deduplicate attempt files by their canonical path.
+  deduplicate attempt files by their canonical path. Claude cache reads and
+  creation are included in normalized input. A missing final result preserves
+  unavailable/incomplete coverage across continuations; never replace it with zero.
 - Review cycles: the count of review submissions handled during the ship
   stage, taken from the ship-stage report and PR review history.
 - Stage wall-clock: derived from the ledger's write-time entries for stage

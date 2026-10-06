@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolvedLocation } from "../runtime.mjs";
+import { readJsonLines } from "./journal.mjs";
+import { zeroUsage, addUsage, finalizeUsage } from "../token-usage.mjs";
 
 const tools = Object.freeze(["Bash", "Read", "Edit", "Write", "NotebookEdit", "Glob", "Grep"]);
 const networkPolicy = Object.freeze({ Bash: "sandbox-allowlist", WebFetch: "deny", WebSearch: "deny" });
@@ -173,6 +175,12 @@ function startIdentity(event) {
     apiKeySource: event.apiKeySource, mcp_servers: event.mcp_servers, tools: event.tools };
 }
 function startupEvent(event, entry, state) {
+  if (event?.type === "mono.worker-instance") {
+    const mismatch = ["issue", "attempt", "thread_id", "pid"].filter(key => event[key] !== entry[key]);
+    if (typeof event.procStart !== "string" || !event.procStart) mismatch.push("procStart");
+    if (mismatch.length) throw new Error("Claude journal process identity differs from the launch (" + mismatch.join(", ") + "); inspect retained attempt");
+    state.procStart = event.procStart;
+  }
   const identity = startIdentity(event);
   if (identity) {
     state.identity = identity;
@@ -192,12 +200,127 @@ function startupEvent(event, entry, state) {
       event.message?.model === entry.model_launch.model_parameter && event.is_error !== true &&
       !event.error && !event.message.error && Array.isArray(event.message.content) && event.message.content.length)
     state.response = true;
-  return state.identity && state.response;
+  return state.identity && state.response && state.procStart;
+}
+
+function currentEvents(entry) {
+  let instance = null, instanceLine = 0, events = [];
+  try {
+    const parsed = readJsonLines(entry.log, { errorLines: true });
+    for (const { value, line } of parsed.events) {
+      if (value.type === "mono.worker-instance") { instance = value; instanceLine = line; events = []; continue; }
+      if (value.session_id && value.session_id !== entry.thread_id) continue;
+      events.push(value);
+    }
+    if (parsed.invalidLines.some(line => line > instanceLine)) return [];
+  } catch { return []; }
+  if (!instance || ["issue", "attempt", "thread_id", "pid", "procStart"].some(key =>
+    instance[key] !== entry[key]) || !entry.thread_id || !entry.procStart || !Number.isInteger(entry.pid)) return [];
+  return events;
+}
+
+function waitingPhase(entry, reportFile, confirmationFile) {
+  const calls = new Map();
+  for (const event of currentEvents(entry)) {
+    if (event.type === "result" || (event.type === "system" && event.subtype === "init")) calls.clear();
+    if (event.type === "system" && event.subtype === "permission_denied") {
+      if (event.tool_use_id) calls.delete(event.tool_use_id); else calls.clear();
+    }
+    for (const item of event.message?.content ?? []) {
+      if (item.type === "tool_result") calls.delete(item.tool_use_id);
+      if (event.type !== "assistant" || event.session_id !== entry.thread_id || item.type !== "tool_use" ||
+          item.name !== "Bash" || typeof item.id !== "string" || !item.id) continue;
+      const command = item.input?.command;
+      // Plain foreground invocation only. Shell control operators, substitutions
+      // and wrapper commands cannot prove that this call blocks the worker.
+      if (item.input?.run_in_background === true || typeof command !== "string" || /[;&|`\n\r$<>]/.test(command)) continue;
+      const tokens = command.match(/'[^']*'|"[^"]*"|[^\s'"]+/g)?.map(token => token.replace(/^(['"])(.*)\1$/, "$2")) ?? [];
+      if (tokens[0] !== "node" || !entry.packRoot || tokens[1] !== path.join(entry.packRoot, "scripts/delivery-state.mjs") || tokens[2] !== "wait") continue;
+      const flags = new Map(); let valid = true;
+      for (let i = 3; i < tokens.length; i += 2) {
+        if (!["--report", "--confirmation", "--config"].includes(tokens[i]) || !tokens[i + 1] || flags.has(tokens[i])) { valid = false; break; }
+        flags.set(tokens[i], tokens[i + 1]);
+      }
+      if (valid && flags.get("--report") === reportFile && flags.get("--confirmation") === confirmationFile)
+        calls.set(item.id, { callId: item.id, issue: entry.issue, attempt: entry.attempt,
+          thread_id: entry.thread_id, pid: entry.pid, procStart: entry.procStart });
+    }
+  }
+  return [...calls.values()].at(-1) ?? null;
+}
+
+function turnState(entry) {
+  let result = null;
+  for (const event of currentEvents(entry)) {
+    if (event.type === "system" && event.subtype === "init") result = null;
+    if (event.type === "result" && event.session_id === entry.thread_id) result = event;
+  }
+  return result ? { status: result.is_error === true ? "failed" : "completed", session: entry.thread_id } : null;
+}
+
+function attemptUsage(parsed, source) {
+  const total = zeroUsage(), errors = [...parsed.errors];
+  let turns = 0, lastUsage = null, unfinished = false, interrupted = false, awaitingInit = false;
+  for (const { value, line } of parsed.events) {
+    if (value.type === "mono.worker-instance") {
+      if (unfinished) interrupted = true;
+      unfinished = true; awaitingInit = true;
+    }
+    if (value.type === "system" && value.subtype === "init") {
+      if (unfinished && !awaitingInit) interrupted = true;
+      unfinished = true; awaitingInit = false;
+    }
+    if (["assistant", "user", "tool_progress"].includes(value.type)) unfinished = true;
+    if (value.type !== "result") continue;
+    unfinished = false; awaitingInit = false;
+    const raw = value.usage;
+    if (["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"].some(key =>
+      !Number.isSafeInteger(raw?.[key]) || raw[key] < 0)) {
+      errors.push(`${source}:${line}: missing or invalid result usage`); continue;
+    }
+    // Execution crashes can zero every counter; budget errors omit the response
+    // crossing the cap. Neither result proves complete usage, even after resume.
+    if (["error_during_execution", "error_max_budget_usd"].includes(value.subtype)) {
+      interrupted = true;
+      if (Object.values(raw).every(count => count === 0)) continue;
+    }
+    const usage = { ...zeroUsage(), input_tokens: raw.input_tokens + raw.cache_creation_input_tokens + raw.cache_read_input_tokens,
+      cached_input_tokens: raw.cache_read_input_tokens, cache_write_input_tokens: raw.cache_creation_input_tokens, output_tokens: raw.output_tokens };
+    if (!Number.isSafeInteger(usage.input_tokens)) { errors.push(`${source}:${line}: invalid input total`); continue; }
+    addUsage(total, usage); lastUsage = usage; turns++;
+  }
+  const status = errors.length ? "unavailable: worker logs contain malformed JSON or invalid turn usage"
+    : unfinished || interrupted ? "incomplete: attempt contains interrupted or incomplete turn usage"
+    : turns ? "measured" : "unavailable: worker log contains no usage events";
+  return { usage: turns ? finalizeUsage(total) : null, lastUsage, turns, status, complete: status === "measured", errors };
+}
+
+function readingInputs(event) {
+  if (event.type !== "assistant") return null;
+  const inputs = [];
+  for (const item of event.message?.content ?? []) {
+    if (item.type !== "tool_use") continue;
+    if (["Read", "Glob", "Grep"].includes(item.name)) inputs.push(...Object.values(item.input ?? {}).filter(value => typeof value === "string"));
+    if (item.name === "Bash" && /(?:^|\s)(?:cat|head|tail|sed|rg|grep)(?:\s|$)/.test(item.input?.command ?? "")) inputs.push(item.input.command);
+  }
+  return inputs.length ? inputs : null;
+}
+
+function commandOutput(event) {
+  if (event.type !== "user") return null;
+  const results = (event.message?.content ?? []).filter(item => item.type === "tool_result");
+  return results.length ? results.map(item => typeof item.content === "string" ? item.content
+    : (item.content ?? []).map(block => block.text ?? "").join("\n")).join("\n") : null;
 }
 
 export const claudeCli = Object.freeze({
   transport: "claude-cli", workerRoles: Object.freeze(["worker-claude"]), complexRole: null,
-  handshakeModes: Object.freeze(["resume"]), correlatesReports: false, logLiveness: false,
+  handshakeModes: Object.freeze(["resume"]), correlatesReports: true, logLiveness: true,
+  deliveryDifferences: Object.freeze(["Start acknowledgement stops the worker; the orchestrator applies/read-backs moves and resumes the same session.",
+    "Pre-PR review uses external collection on committed heads only; no in-worker review pass."]),
+  waitingPhase, turnState, activityTime: stat => stat.mtimeMs, readLog: readJsonLines, attemptUsage, readingInputs, commandOutput,
+  modelMetadata: (event, source) => event.type === "mono.launch" ? { model: event.model, effort: event.effort, source }
+    : startIdentity(event) ? { model: event.model, effort: "unavailable: effort is requested, not observed", source } : null,
   journalRunner: "scripts/transports/claude-runner.mjs",
   startupTimeoutMs: 120_000,
   validateRoute, assertStopped, validateGrants, temporaryDirectory, githubCredentialPaths, environment, prepare, settings, invocation, startIdentity, startupEvent,

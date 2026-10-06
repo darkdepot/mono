@@ -36,10 +36,9 @@ node '<pack-root>/scripts/verify-pack-state.mjs' identity \
 ## Pre-applied files
 
 At start match `git show <sha>` blobs to dispatch commit/files/sha256 and Issue
-manifest; never change those files.
-Review findings on them park `blocked` with exact replacement bytes; the artifact
-owner repairs the Tech Spec or renews the issue-only Issue, then starts a NEW
-dispatch. No amendment/resume can apply the repaired manifest.
+manifest; never edit them. Findings park `blocked` with exact replacement bytes;
+artifact owner repairs Tech Spec or renews issue-only Issue, then NEW dispatch.
+Amendment/resume cannot apply a repaired manifest.
 
 ## Two-Phase Dispatch Handshake
 
@@ -64,6 +63,12 @@ ack mtime + ackWaitSec; expiry parks write-unconfirmed. Applied read-backs amend
 state: delivery check, no identity rerun. Resume: Codex exits, desktop/fallback
 keeps session; all move read-backs plus identity/check rerun. Never repeat moves.
 No-move retry: current snapshot, no ack/amendment. Consumption is not approval.
+
+`claude-cli`: passed startup ack stops; orchestrator applies/read-backs, resumes
+same session. Phase/collection waits: plain pack command, foreground, full existing
+timeout under raised Bash ceiling; no backgrounding/sleep/polling substitute.
+Report refusal before stop. Preflight owns external committed-head review/ready
+disclosure; deadlines/queues unchanged.
 
 ## Sandbox ladder
 
@@ -108,7 +113,7 @@ package creation.
 
 ## Review contract
 
-Named package/config and branch/PR review is report-only: no artifact/comment/
+Package/config and branch/PR review is report-only: no artifact/comment/
 Issue/PR/lifecycle/approval/worker writes. Outcomes: ready, advisory-ready,
 needs-fixes, blocked. Apply artifact/execution quality, coherence/feasibility/
 one-PR/durable AFK-HITL and applicable UI/security/data/ship/deep-risky architecture.
@@ -121,39 +126,39 @@ repair routes handoff/issue renewal/ship drift, never review.
 
 Apply `references/execution-quality.md`/`references/artifact-quality.md`.
 Intake: explicit paths → fresh Linear package/reviews → decisions → configured
-narrow roots → scoped gstack. No broad scans; absent roots unavailable. Approved
-newer Linear outranks scratch; stale evidence explains compatible decisions only.
-Missing/conflicting scope/proof/risk/slicing: boundary or stop before writes; no
-stale contracts/certificates. Approval notes: read/unavailable/stale_or_ignored/
+narrow roots → scoped gstack; no broad scans, absent roots unavailable. Newer
+approved Linear outranks scratch; stale evidence supports compatible decisions
+only. Missing/conflicting scope/proof/risk/slicing: boundary/stop before writes;
+no stale contracts/certificates. Notes: read/unavailable/stale_or_ignored/
 conflicts/decisions_carried_forward/confidence_boundary (none if empty), one Russian
 chat sentence. Translate roles; never paste local bodies.
 
 ## Certificate recovery
 
-Use the latest marker-bearing Linear comment/resource; never quote markers elsewhere.
-Apply Machine Blocks In Linear Comments in
-`references/human-friendly-output.md`; report/chat omit human lead.
+Use latest marker-bearing Linear comment/resource; never quote markers elsewhere.
+Apply Machine Blocks In Linear Comments in `references/human-friendly-output.md`;
+report/chat omit human lead.
 
 ## Delivery Reports and Capsule
 
-Mono-deliver: one dispatch; terminal green/parked, intermediate ready/
-implemented-needs-preflight. Park stops; no stage respawn. Standalone retains
+Mono-deliver: one dispatch, terminal green/parked, intermediate ready/
+implemented-needs-preflight; park stops, no stage respawn. Standalone keeps
 statuses/certificates.
 
-Phase: reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json; denied mailbox:
-same name in worktree .orchestrator, never both. Add phase/positive increasing
-sequence/kind (phase/confirmation-request)/head/phase_result to final fields.
+Phase: reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json; denial: same name in
+worktree .orchestrator, never both. Final fields plus phase/positive increasing
+sequence/kind (phase/confirmation-request)/head/phase_result.
 Capsule phase/head match; open_queue = ordered linear_mutations_pending.
-Writes: stable id/operation/target/payload; changed payload needs new ID; preserve
-obligations across heads. Certificate: append #/certificate, one copy. Short:
+Writes: stable id/operation/target/payload; changed payload → new ID; obligations
+survive heads. Certificate: append #/certificate, one copy. Short:
 confirm empty code queue; start facts in capsule.decisions/Russian ready lead
 before unchanged machine core.
 
 Publish/wait through delivery-state.mjs. Confirmation path:
 confirmations/<ISSUE-KEY>-phase-<phase>-a<N>-s<sequence>.confirmed.json.
 Wait rejects paths inside dispatch-derived capsule.writable_roots; binds report
-digest/issue/attempt/phase/sequence and verified results. Reconcile Linear writes
-against Linear, collections against receipts; apply missing only, fsync results
+digest/issue/attempt/phase/sequence/verified results. Reconcile writes against
+Linear, collections against receipts; apply missing only, fsync results
 under consumed/<ISSUE-KEY>-a<N>/, confirm whole queue. Unknown/conflict/read-error
 or partial/stale/foreign confirmation blocks. Reconcile lost responses/comments;
 empty queues wait too. Resume capsule after break/compaction; timeout
@@ -168,14 +173,17 @@ Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
 worktree/orchestrator. Orchestrator collect:true only; worker collect:false.
 Keys grant no writes; hostile operator out of scope (one user/host).
 
-After amend use resume's "Effective attempt pins" pins.v<n>.json for collection;
-no report version field. Commit; pinned collect:false exit 2 is pending, not pass. Publish only publishRequest in payload.request, kind=confirmation-request:
+After amend collect with resume's "Effective attempt pins" pins.v<n>.json;
+no report version field. Commit; pinned collect:false exit 2 is pending, not pass.
+Publish only publishRequest in payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
-target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate, even on failure; confirmation proves completion only. Verify collect:false.
-Findings: fix/recommit/request; transient: same head/route, increment n/sequence. Ready on pass.
+target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate even
+on failure; confirmation proves completion only. Verify collect:false.
+Findings: fix/recommit/request; transient: same head/route, increment n/sequence.
+Ready on pass.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
-readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify the sealed
-head/merge-base receipt before judgment; strings cannot replace it.
+readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
+head/merge-base receipt before judgment; no string substitutes.
 Orchestrator rechecks preflight before ship.
 
 ## Worker Report
@@ -213,9 +221,9 @@ verbatim verification, AFK stops.
 
 Parked reasons: blocked, needs-decision, needs-human, drift-candidate, timed-out,
 scope-drift-needs-handoff, write-unconfirmed, evidence-limit (предел доказательств).
-Decisions need exact question/recommendation. Orchestrator reflects parked in
-Linear this turn/read-back. Green: all queues confirmed/current-head gates pass.
+Decisions: exact question/recommendation. Orchestrator reflects parked in Linear
+this turn/read-back. Green: confirmed queues/current-head gates pass.
 
 Keep Issue «Как проверить» verbatim/in order; pass/deferred/not-run, never unrun
-pass; name later-stage owner. Judgment evidence: judgment check: + inspected
-state. Repeat present pins. Standalone uses dispatched path/status; sequenced intermediate.
+pass; name later-stage owner. Evidence: judgment check: + inspected state.
+Repeat pins. Standalone: dispatched path/status; sequenced: intermediate.

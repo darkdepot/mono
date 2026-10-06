@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
-import { workerTransport } from "./worker-transport.mjs";
+import { workerTransport, workerLog } from "./worker-transport.mjs";
 import { zeroUsage, addUsage, finalizeUsage } from "./token-usage.mjs";
 
 const PHASE_USAGE_NOTE = "по фазам недоступно";
@@ -192,8 +192,8 @@ function collectWorker(root, logs) {
   const logResults = [];
 
   for (const log of logs) {
-    const transport = workerTransport("codex-cli");
-    const parsed = transport.readLog(log.filename);
+    const parsed = workerLog(log.filename);
+    const transport = parsed.transport;
     const measured = transport.attemptUsage(parsed, log.name);
     if (measured.usage) addUsage(total, measured.usage);
     if (measured.lastUsage) addUsage(oldRule, measured.lastUsage);
@@ -654,7 +654,9 @@ async function main() {
     issue: args.issue,
     orchestrator_root: root,
     accounting: {
-      rule: "sum every turn.completed usage from every stage and attempt log exactly once; cached input remains a subset of input and is not added again",
+      rule: logResults.some(log => log.transport.transport === "claude-cli")
+        ? "sum per-turn usage exactly once across attempts: Codex turn.completed and Claude result; Claude cache reads and creation join normalized input; cached input is not added again"
+        : "sum every turn.completed usage from every stage and attempt log exactly once; cached input remains a subset of input and is not added again",
       attempt_logs: logs.map((log) => path.relative(root, log.filename)),
     },
     worker,
@@ -663,7 +665,9 @@ async function main() {
       corrected_all_turns: worker.usage,
       input_delta_tokens: worker.usage ? worker.usage.input_tokens - oldRule.input_tokens : null,
       explanation:
-        "The retired hand-count rule kept only the last turn.completed event of each attempt. These logs report per-turn, not cumulative, usage, so the corrected sum is larger whenever an attempt has more than one completed turn.",
+        logResults.some(log => log.transport.transport === "claude-cli")
+          ? "The last-event comparison retains one result per attempt; per-turn usage sums every Codex turn.completed or Claude result across continuations. Missing final events preserve incomplete coverage."
+          : "The retired hand-count rule kept only the last turn.completed event of each attempt. These logs report per-turn, not cumulative, usage, so the corrected sum is larger whenever an attempt has more than one completed turn.",
     },
     autoreview,
     orchestrator,
