@@ -1,0 +1,1 @@
+- Return this repository to the Codex worker on main by the orchestrator (emergency return under the owner mandate after the live acceptance parked on Claude Code sandbox defects); README wording stays with the acceptance task.
