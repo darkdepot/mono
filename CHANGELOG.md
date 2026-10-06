@@ -6,6 +6,32 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-06
+
+<!-- fragment: MONO-127 sha256:96c657b85ab2bf3e8decd63ba96a452c790b2dad2851a453b12e21a07b5a8f92 -->
+- Extract the worker transport seam with one `codex-cli` implementation for launch/resume, startup identity, waiting-command proof, liveness and usage. Keep Codex delivery behavior and existing attempt records unchanged.
+- Report missing worker usage as unavailable and interrupted attempts as incomplete; mark their wave totals incomplete instead of treating absent usage as a measured zero.
+
+<!-- fragment: MONO-128 sha256:cdb6cc0b859ddc20243a86732beb1914126132a4431a1dcbaaf533f770be0c85 -->
+- Add managed Claude Code launch and resume with pinned sessions, subscription-login checks, canonical write grants, closed settings and connector sources, restricted network tools, credential-safe logs, and explicit startup refusals. Existing Codex delivery remains the default; full Claude delivery follows separately.
+
+<!-- fragment: MONO-129 sha256:732d7248a1c0494b26a9279782045dba63409f64e550aa1d838f877aa9d0abd2 -->
+Managed Claude Code delivery now supports stop/resume startup acknowledgement,
+foreground phase and collection waits, attempt-correlated reports, watcher
+liveness and completion without a report, and honest per-turn token accounting.
+Dispatch, launch records and ready certificates disclose external-only committed
+review and the startup difference; credential values must never be printed.
+Codex delivery behavior is preserved. Live confirmation and collection probes
+remain the orchestrator's closeout verification.
+
+<!-- fragment: MONO-130 sha256:9ad1558aecfd51b8720512750c25f5612ed149062835694acd60a74b2b38989b -->
+- MONO-130: release 0.25.0 with managed Claude Code workers, assemble the wave's task records, align pack and plugin versions, and update the README's supported worker transports.
+
+<!-- fragment: MONO-135 sha256:617f6074f75ec7ae69a443cb42d108f4c5c98b858256fb6f86e047ae10f12e4d -->
+- On macOS, allow sealed collection verification to write under the resolved Darwin user temp root so SwiftPM and Apple tools work with `swift test --disable-sandbox`. Reject overlap with protected evidence, orchestrator, skills, pack and helper paths; retain the evidence write-denial probe and private `TMPDIR`.
+- Isolate macOS autoreview's private results under `~/.mono-agent-workflow/review-tmp`, outside verification and worker write grants, with no Darwin grant. Cover surviving verification descendants with portable and real sandbox fixtures; preserve a known non-clean review after denied artifact writes. The existing shared worktree exposure is unchanged.
+- Add portable grant/overlap/receipt fixtures and explicit host-only macOS atomic-write and SwiftPM proofs. Stabilize existing collection fixture timing while retaining HTTP-error, pending and deadline assertions. Other platforms and receipt/contracts are unchanged.
+
 ## [0.24.0] - 2026-10-05
 
 Breaking: the local installer is removed; use the marketplace plugin and calls such as `/mono:idea` instead of the old `mono-*` skill names. Existing task stages and certificate markers remain compatible.

@@ -1,6 +1,6 @@
 # Mono Agent Workflow
 
-Current release: **0.24.0**. See the [release notes](CHANGELOG.md#0240---2026-10-05).
+Current release: **0.25.0**. See the [release notes](CHANGELOG.md#0250---2026-10-06).
 
 A reusable skill pack for owners and coding agents who deliver software through Linear and GitHub. Use it to turn a raw idea into approved work, run one delivery worker from code to a green pull request, and deploy with evidence. The owner decides the product; agents carry the work and show what they actually verified.
 
@@ -135,7 +135,7 @@ Resolve pack defaults from [the roles table](references/model-policy.md#roles) p
 
 Mono pilots product `models` overrides in [config](.agents/mono-workflow.config.json): [role:second-voice](references/model-policy.md#roles) reviews packages and decisions (Project, PRD, Tech Spec, Issues); [role:autoreview](references/model-policy.md#roles) reviews code. Each role resolves independently from the policy table and product overrides. The pilot accepts same-model Codex worker/code-reviewer pairing. Remove `models` to roll back.
 
-In orchestrated mode, use the configured transport or documented runtime detection. Codex CLI supports one resumable worker thread per Issue. The registry, mailbox and append-only ledger support recovery; write only observed events with their actual recording times. The installed watcher reports liveness and phase events. `control.json.halt` stops new launches/resumes without interrupting running workers; persistent attempt limits bound retries. Keep compaction wiring outside product repos and carry exact next action, pending obligations and decisions through compaction.
+In orchestrated mode, use the configured transport or documented runtime detection. The managed Codex CLI and Claude Code transports support one resumable worker session per Issue. The registry, mailbox and append-only ledger support recovery; write only observed events with their actual recording times. The installed watcher reports liveness and phase events. `control.json.halt` stops new launches/resumes without interrupting running workers; persistent attempt limits bound retries. Keep compaction wiring outside product repos and carry exact next action, pending obligations and decisions through compaction.
 
 `orchestration.transport: "claude-cli"` selects managed Claude Code launch/resume and the `worker-claude` role from immutable BASE; unchanged projects continue on Codex. It requires a native Anthropic route and positively confirmed subscription login, without provider keys or address overrides. Per-attempt settings bind file edits and shell writes to the approved grants, require the shell sandbox, close connectors and built-in web tools, and allow only GitHub network hosts. GitHub login is fetched outside the sandbox and passed as a real environment variable. A private per-attempt GitHub CLI configuration directory is prepared inside the grants and reused on resume; both stored streams redact the login. GitHub CLI credential files and their resolved targets are read-denied to shell and file tools; resume retains those protections. Internal temporary paths must remain within short pinned grants; ungranted system fallbacks are denied. Startup requires the pinned session/model identity and a first successful response. Resume regenerates settings and retains the session, model and rights, refusing a live writer. Effort remains requested rather than observed. Start acknowledgement stops the worker; the orchestrator applies and reads back moves, then resumes the same session. Start handshake `wait` is refused. Phase and collection confirmations wait in the foreground under the raised Bash timeout ceiling and existing deadlines. Wait evidence binds session, attempt, current process instance and call ID; old calls cannot prove a resumed wait. The watcher uses log freshness, including command progress, and distinguishes completion without an attempt-correlated report from green/parked. Pre-PR review uses external collection on committed heads, without an in-worker pass; dispatch, launch record and ready certificate name both differences. Never print credential values: native session transcripts persist command output outside pack redaction. Live waits, expiry and collection are probed by the orchestrator at closeout.
 
@@ -418,7 +418,7 @@ Optional `models.roles` overrides model routes within the [role/transport matrix
 Autoreview accepts claude, kimi, pi or codex with `effortByRisk` for all five risk keys.
 Worker Codex roles stay on Codex, worker Claude stays on Claude; Second Voice stays
 cross-vendor and the orchestrator is not overridable. The CLI worker launcher
-continues to support only Codex workers. Native authentication uses null endpoint
+supports Codex workers and managed Claude Code workers selected by `orchestration.transport`. Native authentication uses null endpoint
 and credentialEnv; external credentials are environment variable **names**, never
 values. Pi supports native xai/google/minimax with a null endpoint, or OpenAI-compatible
 routing via `OPENAI_BASE_URL`; unsupported endpoint mappings are refused.
