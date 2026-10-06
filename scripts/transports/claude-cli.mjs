@@ -205,6 +205,7 @@ function startupEvent(event, entry, state) {
 }
 
 const currentLogs = new Map();
+const currentLogLimit = 64;
 
 function reduceCurrent(state, event) {
   if (event?.type === "mono.worker-instance") {
@@ -238,8 +239,10 @@ function currentState(entry) {
     if (!state || state.dev !== stat.dev || state.ino !== stat.ino || !intact) {
       state = { dev: stat.dev, ino: stat.ino, offset: 0, boundary: Buffer.alloc(0), pending: "",
         decoder: new StringDecoder("utf8"), instance: null, invalid: false, calls: new Map(), result: null };
-      currentLogs.set(entry.log, state);
     }
+    currentLogs.delete(entry.log);
+    currentLogs.set(entry.log, state);
+    while (currentLogs.size > currentLogLimit) currentLogs.delete(currentLogs.keys().next().value);
     const buffer = Buffer.alloc(64 * 1024);
     while (state.offset < stat.size) {
       const count = fs.readSync(fd, buffer, 0, Math.min(buffer.length, stat.size - state.offset), state.offset);

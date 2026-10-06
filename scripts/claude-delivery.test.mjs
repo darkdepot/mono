@@ -130,6 +130,24 @@ test("Claude monitoring reuses the read position and handles partial, replaced a
   assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation), null);
 }));
 
+test("Claude monitoring evicts retired journals and rebuilds their current-instance proof on reuse", () => withFixture(f => {
+  assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+  for (let index = 0; index < 100; index++) {
+    const log = path.join(f.root, "logs", `retired-${index}.jsonl`);
+    fs.copyFileSync(f.entry.log, log);
+    assert.equal(transport.waitingPhase({ ...f.entry, log }, f.reportFile, f.confirmation)?.callId, "fixture-call");
+  }
+  const read = fs.readSync; let bytes = 0;
+  fs.readSync = (...args) => { const count = read(...args); bytes += count; return count; };
+  try {
+    assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+    assert.ok(bytes >= fs.statSync(f.entry.log).size, "retired log must be reloaded after eviction");
+    bytes = 0;
+    assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
+    assert.ok(bytes <= 128, "reused log is cached again");
+  } finally { fs.readSync = read; }
+}));
+
 test("Claude terminal report correlation rejects foreign attempt and pack", () => withFixture(f => {
   const file = path.join(f.root, "reports", `${f.entry.issue}-mono-deliver.json`);
   const report = { ...f.report, status: "parked", reason: "blocked", text: "fixture stop" };
