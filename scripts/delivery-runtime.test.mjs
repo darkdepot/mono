@@ -529,7 +529,9 @@ console.log(JSON.stringify(result));
       assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
     }
     const errorConfig = path.join(root, "rules-timeout-config.json");
-    write(errorConfig, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 1 } } });
+    // Preserve the first HTTP failure until expiry, rather than race another
+    // process startup in the final millisecond of this deliberately short window.
+    write(errorConfig, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 1, evidenceLimitSec: 1 } } });
     const errorState = path.join(root, "rules-timeout.json");
     write(gateRequest, { ...shipRequest, config: errorConfig, stateFile: errorState });
     write(githubFile, { github, checks, rulesStatus: 500 });
@@ -628,7 +630,9 @@ console.log(JSON.stringify(result));
       assert.match(pass(shipCall()).stdout, /^gate ship: pass:/);
       assert.equal(json(githubFile).pendingReads, 0);
     }
-    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 1 } } });
+    // A full paginated snapshot must finish before the pending-state assertion;
+    // the watched cases below still prove expiry at this configured deadline.
+    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 5 } } });
     for (const state of ["BLOCKED", "UNKNOWN"]) {
       const pendingChecks = state === "UNKNOWN" ? [] : checks.map(c => c.name === "validate" ? { ...c, status: "IN_PROGRESS", conclusion: null } : c);
       write(githubFile, { github: { ...github, mergeStateStatus: state, mergeable: state === "UNKNOWN" ? "UNKNOWN" : "MERGEABLE" }, checks: pendingChecks });
