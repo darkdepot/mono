@@ -6,6 +6,28 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-11
+
+<!-- fragment: MONO-132 sha256:d98a01fa8cbf8de93478200f31db63efd66092c91cc446b5c43dea196cb04cf4 -->
+- Document how a product chooses its delivery worker with one setting, how Claude Code differs from Codex and a worked selection/return example, state the Claude Code installation requirements, and return this repository's own worker to Codex.
+
+<!-- fragment: MONO-133 sha256:1cfe2a7ab5a4d299d818adc99279fd10fd871a85e0b8395ab43c44120954d8de -->
+- Allow projects to name a backup Codex or Claude Code worker. The orchestrator can open one new attempt only for subscription exhaustion or persistent provider refusal after recovery, with pinned journal evidence, unchanged reviewer and rights, quiesced and stopped previous processes, reconciled process ownership (including detached descendants) and the existing gates and attempt limit.
+
+<!-- fragment: MONO-134 sha256:b72ec7963990877d0066da941b6494cfea041246616392d74984ba6e5df4d6b9 -->
+- Release 0.27.0 with the worker-choice guide, the return of this repository to Codex, the backup worker and managed Claude Code permission fixes; assemble the final wave's task records and align the pack, plugin and README release versions.
+
+<!-- fragment: MONO-139 sha256:a16a271c0a717858d7605dc8e6c18ddb270488e996e984420462b41d228b612b -->
+### Changed
+
+- Re-enable Claude Code for this repository's second acceptance attempt on installed release 0.26.0; the orchestrator pre-applied the transport setting, and README now identifies the second acceptance window (MONO-139).
+
+<!-- fragment: MONO-140 sha256:9a4f7bc24eb52482b4d257d7d720e14e787d626871e23f3e07996c25f067c0b0 -->
+- Keep the managed-worker journal identity hint out of the credential-redaction fixture's child process, so the full pack verification is green inside a managed Claude Code worker; the instance marker stays covered by the existing startup-ack and same-session resume test (MONO-140).
+
+<!-- fragment: MONO-141 sha256:ce571ad1e9f9a10333313ece00aceece190a057e8882c1a0f8cbd3c002190ea8 -->
+- Explicitly allow the GitHub CLI `gh api` command family and direct Read access to the two pinned pack and skills roots in managed Claude Code launch and resume settings, keeping credential, write and web-tool restrictions unchanged. Real permission acceptance remains pending the orchestrator's post-release probe (MONO-141).
+
 ## [0.26.0] - 2026-10-11
 
 <!-- fragment: MONO-131 sha256:dd7d472d9b2d63ecb3dd653d4b628aa9864db7acc26ec546f93e31f041972d2a -->

@@ -1,1 +1,0 @@
-- Document how a product chooses its delivery worker with one setting, how Claude Code differs from Codex and a worked selection/return example, state the Claude Code installation requirements, and return this repository's own worker to Codex.
