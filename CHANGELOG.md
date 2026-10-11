@@ -6,6 +6,21 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-11
+
+<!-- fragment: MONO-131 sha256:dd7d472d9b2d63ecb3dd653d4b628aa9864db7acc26ec546f93e31f041972d2a -->
+- Select Claude Code for this repository's acceptance window through the orchestrator-pre-applied transport setting, and name the temporary selection in README.
+
+<!-- fragment: MONO-136 sha256:713d8ac761c79af15e26d04af68b7182d23cff746b5c0b25b67ba0059ce9847e -->
+- Return this repository to the Codex worker on main by the orchestrator (emergency return under the owner mandate after the live acceptance parked on Claude Code sandbox defects); README wording stays with the acceptance task.
+
+<!-- fragment: MONO-137 sha256:606a8954a69c66f937220b21109c545643d9a56e503ee19b451108fd86fb7e2b -->
+- Preserve Claude Code sandbox proxy parameters only for gate base-branch fetches with the existing managed-worker hint; keep all other Git environment filtering unchanged.
+- Skip nested macOS sandbox host proofs under that compatibility hint and isolate Claude launch fixtures from real GitHub credential paths, with launch/resume and environment regression coverage.
+
+<!-- fragment: MONO-138 sha256:59f1a906b8a148b8aca63031e6681442c0036bc8562f5ccc344ba5e1e5dd1a95 -->
+- MONO-138: release 0.26.0 with the Claude Code sandbox fixes and the emergency return of this repository to Codex; assemble the interim wave's task records and align the pack, plugin and README release versions.
+
 ## [0.25.0] - 2026-10-06
 
 <!-- fragment: MONO-127 sha256:96c657b85ab2bf3e8decd63ba96a452c790b2dad2851a453b12e21a07b5a8f92 -->

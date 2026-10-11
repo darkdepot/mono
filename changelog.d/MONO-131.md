@@ -1,1 +1,0 @@
-- Select Claude Code for this repository's acceptance window through the orchestrator-pre-applied transport setting, and name the temporary selection in README.
