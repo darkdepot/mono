@@ -32,10 +32,15 @@ for (const encoding of ["literal", "base64", "uri"]) {
             const emitted=${truncated ? "value.slice(0,-1)" : "value"};
             process.${stream}.write(emitted.slice(0,7));
             setTimeout(()=>process.${stream}.write(emitted.slice(7)),10);`;
+          // The runner prepends an instance marker whenever the journal identity hint is
+          // set, so a suite running inside a managed worker must keep the hint out of this
+          // child: these journals are compared byte for byte.
+          const env = { ...process.env, GH_TOKEN: secret };
+          delete env.MONO_WORKER_JOURNAL_IDENTITY;
           const result = spawnSync(process.execPath, [
             fileURLToPath(new URL("./transports/claude-runner.mjs", import.meta.url)),
             log, diagnostic, process.execPath, "-e", child,
-          ], { env: { ...process.env, GH_TOKEN: secret }, input: "", encoding: "utf8", timeout: 10_000 });
+          ], { env, input: "", encoding: "utf8", timeout: 10_000 });
           assert.equal(result.status, 0);
           const journal = fs.readFileSync(stream === "stdout" ? log : diagnostic, "utf8");
           assert.equal(journal.includes(expected), false, "credential value or final prefix must not persist");
