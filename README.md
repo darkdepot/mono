@@ -157,9 +157,10 @@ The value is read from the Issue's immutable base commit. Editing it therefore n
 changes a worker that is already running: an attempt keeps the worker, rights and
 model it started with, and the new value applies to the next launch. A worker is also
 never chosen from the diff it delivers. An unknown value, a role belonging to the
-other tool, a provider key or address override, or a producer/reviewer pair without
-an accepted `pairingAccepted` record refuses the launch before the attempt is
-registered.
+other tool, or a producer/reviewer pair without an accepted `pairingAccepted` record
+refuses the launch before the attempt is registered. `claude-cli` additionally
+requires the native Anthropic route: a provider key or an address override on
+`worker-claude` refuses that launch, while Codex roles may keep them.
 
 Both workers deliver one approved Issue to a green PR through the same gates,
 certificates, confirmations and Linear writes. Four differences are worth knowing
