@@ -194,6 +194,52 @@ async function fixture(run, { auth, config, missingTool = false, shortWindow = f
   }
 }
 
+for (const resume of [false, true]) test(`Claude managed permissions on ${resume ? "resume" : "launch"}`, async t => {
+  await fixture(async ({ start, registry, root, request, runtime }) => {
+    await start("success");
+    let entry = registry()[request.issue];
+    if (resume) {
+      while (true) { try { process.kill(entry.pid, 0); } catch { break; } await new Promise(resolve => setTimeout(resolve, 20)); }
+      const resumeFile = path.join(root, "resume.md"); write(resumeFile, '{"mode":"success"}');
+      await runtime.resumeWorker({ root, issue: request.issue, resumeFile });
+      entry = registry()[request.issue];
+    }
+    const policy = JSON.parse(fs.readFileSync(entry.settingsFile));
+    await t.test("allows only the gh api Bash family", () => {
+      assert.deepEqual(policy.permissions.allow.filter(rule => rule.startsWith("Bash(")), ["Bash(gh api:*)"]);
+    });
+    await t.test("allows Read of exactly the explicit pack and skills roots", () => {
+      assert.deepEqual(policy.permissions.allow.filter(rule => rule.startsWith("Read(")),
+        [`Read(/${request.packRoot}/**)`, `Read(/${request.skillsRoot}/**)`]);
+    });
+    await t.test("keeps credential source reads denied", () => {
+      assert.deepEqual(policy.sandbox.filesystem.denyRead, entry.githubCredentialPaths);
+      for (const value of entry.githubCredentialPaths) {
+        assert.ok(policy.permissions.deny.includes(`Read(/${value})`));
+        assert.ok(policy.permissions.deny.includes(`Read(/${value}/**)`));
+      }
+    });
+    await t.test("keeps writes confined to granted roots and protected paths denied", () => {
+      assert.deepEqual(policy.sandbox.filesystem.allowWrite, request.workerWritableRoots);
+      assert.deepEqual(policy.permissions.allow.filter(rule => rule.startsWith("Edit(")),
+        request.workerWritableRoots.map(value => `Edit(/${value}/**)`));
+      for (const value of [request.packRoot, request.skillsRoot, request.evidenceRoot, path.join(root, "managed-settings")]) {
+        assert.ok(policy.sandbox.filesystem.denyWrite.includes(value));
+        assert.ok(policy.permissions.deny.includes(`Edit(/${value}/**)`));
+      }
+      assert.equal(policy.sandbox.allowUnsandboxedCommands, false);
+    });
+    await t.test("keeps WebFetch and WebSearch denied without other allow rules", () => {
+      assert.ok(policy.permissions.deny.includes("WebFetch"));
+      assert.ok(policy.permissions.deny.includes("WebSearch"));
+      assert.deepEqual(policy.permissions.allow, [
+        ...request.workerWritableRoots.map(value => `Edit(/${value}/**)`),
+        "Bash(gh api:*)", `Read(/${request.packRoot}/**)`, `Read(/${request.skillsRoot}/**)`,
+      ]);
+    });
+  });
+});
+
 test("managed Claude launch and resume use pinned identity, rights, and credential-free artifacts", async () => {
   await fixture(async ({ start, registry, repo, root, request, runtime, secret }) => {
     const launched = await start("leak");
