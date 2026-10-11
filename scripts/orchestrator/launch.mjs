@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
 import { effectivePins, attemptState } from "./command-state.mjs";
+import { configuredBackup, resolveBackupSwitch, validateBackupLaunch, recordAttempt, recordBackupSwitch } from "./backup-switch.mjs";
 
 function releasePin(request) {
   if (!request.pins) return false;
@@ -41,7 +42,9 @@ function deliveryLaunch(request, transport) {
 }
 function selectedTransport(request) {
   const config = baseModelConfig(request.worktree, request.base);
-  const transport = config.orchestration?.transport ?? 'codex-cli';
+  configuredBackup(config);
+  const backupSwitch = resolveBackupSwitch(request);
+  const transport = backupSwitch?.backupTransport ?? config.orchestration?.transport ?? 'codex-cli';
   if (request.transport !== undefined && request.transport !== transport) throw new Error('request transport conflicts with immutable BASE config');
   const implementation = workerTransport(transport);
   if (!implementation?.workerRoles.includes(request.role)) throw new Error('unsupported worker role/transport for managed launch');
@@ -154,8 +157,9 @@ async function launchTransport(root, entry, prompt, resume, prepared) {
   const procStart = processStart(child.pid);
   if (resume) registry[entry.issue].procStart = procStart;
   if (resume) registry[entry.issue].last_resume = { pid: child.pid, thread_id: entry.thread_id,
-    registeredAt: registry[entry.issue].last_activity_at, gateAckDigest };
+    registeredAt: registry[entry.issue].last_activity_at, gateAckDigest, logOffset };
   atomicJson(registryPath, registry);
+  recordAttempt(root, { ...registry[entry.issue], procStart });
   return { pid: child.pid, thread_id: entry.thread_id, procStart, logOffset };
 }
 async function waitForThread(root, entry, pid, launchedStart, logOffset = 0) {
@@ -202,6 +206,7 @@ async function waitForThread(root, entry, pid, launchedStart, logOffset = 0) {
           }
           if (writer.handshake === "wait" && !writer.procStart) throw new Error("waiting writer process start unavailable");
           atomicJson(registryPath, current);
+          recordAttempt(root, writer);
           return { pid, thread_id: threadId };
         });
       } catch (error) { if (error.code !== "ELOCKED") throw error; }
@@ -270,6 +275,7 @@ export async function spawnWorker(request, preparation = {}) {
       if (!Array.isArray(request.writable_roots) || request.writable_roots.some(p => !path.isAbsolute(p))) throw new Error("explicit writable roots required");
       fs.mkdirSync(path.join(request.root, "reports"), { recursive: true });
       const roots = effectiveGrants(request, request.root);
+      const backupSwitch = validateBackupLaunch(request, used, roots);
       let prepared;
       try {
         prepared = transport.prepare?.(model_policy, { cwd: request.worktree,
@@ -302,14 +308,17 @@ export async function spawnWorker(request, preparation = {}) {
         confirmationTimeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
         capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
           open_queue: [], decisions: [], writable_roots: roots } };
+      if (backupSwitch) { entry.backupSwitch = backupSwitch; entry.modelReason = request.modelReason ?? null; }
       if (gates.length) entry.gates = gates;
       if (prepared?.credentialPaths) entry.githubCredentialPaths = prepared.credentialPaths;
       if (prepared?.githubConfigDir) entry.githubConfigDir = prepared.githubConfigDir;
       managedSettings(entry, request.root, roots, transport);
+      if (backupSwitch) recordBackupSwitch(request.root, backupSwitch);
       attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);
       registry[request.issue] = entry; atomicJson(file, registry);
+      recordAttempt(request.root, entry);
       appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, modelRoutes, model_policy, model_launch,
-        model: entry.model, effort: entry.effort });
+        model: entry.model, effort: entry.effort, ...(backupSwitch ? { backupSwitch, modelReason: entry.modelReason } : {}) });
       return { entry, ...await launchTransport(request.root, entry, prompt, false, prepared) };
     } catch (error) {
       await preparation.onRefusal?.();

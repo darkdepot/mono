@@ -702,6 +702,85 @@ ship; broader process capability never widens the Issue. Standalone phase grants
 follow the worker contract. Hidden directories need exact grants. Disabled sandbox
 remains exceptional, recorded in the ledger with the owner mandate/reason.
 
+### Backup worker switch
+
+The owner may name `orchestration.backupTransport` in project config: `codex-cli`
+or `claude-cli`, distinct from the primary, and only with a managed CLI primary.
+Absence means no mandate. The value on the previous attempt's immutable BASE is
+the standing owner mandate; changing live config cannot grant it retroactively.
+
+Only the orchestrator decides to switch, using this dictionary:
+
+| Reason | Required decision |
+| --- | --- |
+| `subscription-exhausted` | The primary's subscription is exhausted |
+| `provider-refusal-after-recovery` | The primary's provider explicitly and persistently refuses after ordinary recovery on that same worker failed |
+
+There is no failure classifier. Task failure, stopped gates, unexplained silence,
+installation problems and config errors never authorize a switch. For the second
+reason, retained same-thread resume metadata and journal evidence after that
+resume are required. The orchestrator judges what the excerpt demonstrates.
+
+Run ordinary recovery/reconciliation first: settle queued obligations against
+Linear, capture and stop the process tree, preserve unfinished work, and retire
+the previous registry entry by the existing verified-retry procedure. Do not
+delete `attempts.json`, logs, dispatch pins or `attempt-records/`. Launch/resume
+retain a protected per-attempt entry and process incarnation/group history when
+a backup is configured. Missing history or process identity refuses switching.
+Orphan group members and surviving thread processes refuse it too.
+
+Create a decision file outside worker grants and an evidence file containing a
+nonempty, verbatim contiguous excerpt from the previous attempt's JSONL journal.
+Keep both as history. Example decision (replace paths and Issue facts):
+
+```json
+{
+  "issue": "EXAMPLE-7",
+  "previousAttempt": 1,
+  "reason": "subscription-exhausted",
+  "backupTransport": "claude-cli",
+  "evidenceFile": "/absolute/orchestrator/switch-input/EXAMPLE-7-a1.txt"
+}
+```
+
+Add `--backup-switch /absolute/orchestrator/switch-input/EXAMPLE-7.json` to the
+ordinary installed `orchestrator/dispatch.mjs` command, retaining the current
+snapshot, gates, verification, risk and complete write grants. A direct spawn
+request carries the same object in `backupSwitch` and its normalized record in
+the new attempt's pins. This record is the sole exception to selecting the
+BASE primary. The runtime adds both attempt numbers, both transports, both bases,
+the source journal and SHA-256 of the evidence bytes. It rechecks the record
+under the launch lock before registering the new attempt.
+
+The previous attempt must be the latest counted one and unregistered; its
+processes and descendants must be stopped. Both bases must retain the same
+backup and primary, and the resolved reviewer route must be unchanged (compare
+route values, not fingerprints that also include the whole config). The normal
+producer/reviewer pairing check still applies. The ordinary start gate requires
+a clean tree containing the new BASE: reconcile preserved edits/commits first,
+never discard work or bypass the gate to admit a dirty tree. New grants may not
+expand the previous worker's grants. The existing attempt cap is unchanged.
+
+On backup Codex, default to `worker-default`; `worker-complex` requires a recorded
+selection reason. On backup Claude Code, use `worker-claude` and `handshake: resume`.
+Every startup, phase, collection and ship gate still applies. The runtime retains
+the switch in `backup-switches/<KEY>.json`, the ledger, registry, dispatch and new
+attempt pins/journal. One switch per Issue; retain that marker through retirement.
+There is no automatic return or second switch. A stopped backup may resume its
+same session under the existing recovery rules.
+
+After dispatch, including a refused startup that retained an attempt, reconcile
+the switch record and write/read back a Russian Issue comment before advancing
+startup moves. Name the reason, evidence path and digest, previous/new workers
+and attempt numbers; include the complex-role reason when selected. Reconcile a
+lost comment response before writing another. Scripts never write Linear.
+
+Closeout training is orchestrator-owned: use a one-off root and a real managed
+attempt, with `"training": true` in the decision and a clearly marked reason in
+the ledger/Issue comment. Synthetic unit-test data proves refusal branches;
+training proves the actual launch path. Neither claims a live subscription-limit
+response; that remains a separate observation and must never be fabricated.
+
 ### Worker model selection
 
 For a new Codex worker, select [role:worker-default](model-policy.md#roles).

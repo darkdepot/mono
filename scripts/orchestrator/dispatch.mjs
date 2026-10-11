@@ -10,6 +10,7 @@ import { extractSnapshot, section } from "./snapshot.mjs";
 import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
 import { workerTransport } from "../worker-transport.mjs";
 import { spawnWorker } from "./launch.mjs";
+import { configuredBackup, resolveBackupSwitch } from "./backup-switch.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const q = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -41,7 +42,7 @@ export async function dispatch(args) {
 
 async function prepareDispatch(args) {
   allowedFlags(args, ["issue", "root", "config", "snapshot", "risk", "critical", "profile", "handshake", "role", "reason", "full-snapshot", "preapply",
-    "skills-root", "moves", "gates", "open-decisions", "verification", "review-dataset", "review-dataset-version", "review-pilot", "worker-writable-roots", "release"]);
+    "skills-root", "moves", "gates", "open-decisions", "verification", "review-dataset", "review-dataset-version", "review-pilot", "worker-writable-roots", "release", "backup-switch"]);
   if (args.release !== undefined && !["true", "false"].includes(args.release)) throw new Error("--release must be true or false");
   const release = args.release === "true";
   const issue = args.issue;
@@ -93,7 +94,11 @@ async function prepareDispatch(args) {
   const base = git(repo, "rev-parse", "origin/main");
   const baseConfig = baseModelConfig(repo, base);
   const landing = validateLanding(baseConfig);
-  const transport = workerTransport(baseConfig.orchestration?.transport ?? "codex-cli");
+  configuredBackup(baseConfig);
+  if (args["backup-switch"] && !path.isAbsolute(args["backup-switch"])) throw new Error("absolute --backup-switch file required");
+  const backupSwitch = args["backup-switch"] ? resolveBackupSwitch({ root: args.root, issue, worktree, branch, base, packRoot,
+    backupSwitch: readJson(args["backup-switch"]) }) : null;
+  const transport = workerTransport(backupSwitch?.backupTransport ?? baseConfig.orchestration?.transport ?? "codex-cli");
   const role = args.role ?? transport?.workerRoles[0], reason = args.reason ?? null;
   if (!transport?.workerRoles.includes(role)) throw new Error("unsupported managed worker role/transport on BASE");
   if (role === transport.complexRole && !reason?.trim()) throw new Error("complex worker requires --reason");
@@ -112,9 +117,10 @@ async function prepareDispatch(args) {
   fs.mkdirSync(output, { recursive: true });
   const gateFile = path.join(output, "start-gate.json"), spawnFile = path.join(output, "spawn.json"), pinsFile = path.join(output, "pins.json"), dispatchFile = path.join(output, "dispatch.md"), movesFile = path.join(output, "moves.json");
   const gate = { worktree, branch, base, packRoot, skillsRoot, packVersion: installed.packVersion, sourceCommit: installed.sourceCommit, surfaceRevision: installed.surfaceRevision };
-  const modelFile = path.join(output, "model-request.json"); atomicJson(modelFile, { ...gate, role });
+  const modelFile = path.join(output, "model-request.json"); atomicJson(modelFile, { ...gate, role,
+    ...(backupSwitch ? { root: args.root, issue, backupSwitch } : {}) });
   const modelRoutes = JSON.parse(run("spawn.mjs", ["--pins", modelFile]));
-  const pins = { ...gate, release, modelRoutes, product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
+  const pins = { ...gate, release, modelRoutes, ...(backupSwitch ? { backupSwitch } : {}), product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
     risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind,
     reviewDataset: args["review-dataset"] ?? settings.reviewDataset ?? null, reviewDatasetVersion: Number(args["review-dataset-version"] ?? settings.reviewDatasetVersion ?? 0) };
   pins.reviewDatasetDigest = pins.reviewDataset ? sha256File(pins.reviewDataset) : null;
@@ -132,6 +138,7 @@ async function prepareDispatch(args) {
     fs.rmSync(snapshot, { recursive: true, force: true }); fs.renameSync(preparedSnapshot, snapshot);
   } finally { fs.rmSync(preparedSnapshot, { recursive: true, force: true }); }
   const request = { ...gate, root: args.root, issue, role, modelRoutes, modelReason: reason, transport: transport.transport, dispatchFile, evidenceRoot,
+    ...(backupSwitch ? { backupSwitch } : {}),
     writable_roots: extras, workerWritableRoots: roots, gates, lifecycle_moves: moves, config: args.config, product_name: product, handshake, profile,
     pins: { file: pinsFile, digest: pinsDigest }, pinsVersion: 0, risk, critical, afk, openDecisions };
   atomicJson(spawnFile, request);
@@ -162,6 +169,7 @@ async function prepareDispatch(args) {
   if (pilot) Object.assign(values, { review_project: pilot.project, dataset_version: pilot.version, dataset_path: pilot.path, dataset_digest: pilot.digest });
   const template = fs.readFileSync(layout.template("orchestrator-dispatch.md"), "utf8");
   fs.writeFileSync(dispatchFile, renderDispatch(template, values, Boolean(pilot)));
+  if (backupSwitch) fs.appendFileSync(dispatchFile, `\n## Backup switch\n\n${JSON.stringify(backupSwitch, null, 2)}\n\nThe orchestrator records this switch in the Issue; worker phase gates, write barriers and attempt limits remain unchanged.\n`);
   let originalHead, preapplied = null, preapplyLine = null;
   const ledgerFile = path.join(args.root, "ledger.md");
   const beforeStart = () => {
@@ -190,13 +198,13 @@ async function prepareDispatch(args) {
   const stamp = execFileSync("date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"], { encoding: "utf8" }).trim();
   const fd = fs.openSync(path.join(args.root, "ledger.md"), "a");
   try { fs.writeSync(fd, `- ${stamp} DISPATCHED ${issue} a${launched.attempt}: ${dispatchFile}; pins ${pinsDigest}; profile ${profile}; snapshot ${extracts.note ?? "extracts"}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-  return { ...launched, pins: request.pins, gateFile, dispatchFile, spawnFile, snapshot };
+  return { ...launched, pins: request.pins, gateFile, dispatchFile, spawnFile, snapshot, ...(backupSwitch ? { backupSwitch } : {}) };
 }
 
 if (isMain(import.meta.url)) {
   try {
     const args = commandFlags(process.argv.slice(2), ["preapply", "full-snapshot"]);
-    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex|worker-claude --reason TEXT] [--preapply] [--full-snapshot] [--release true|false]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON] [--review-dataset FILE --review-dataset-version N] [--review-pilot JSON]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. Every pre-spawn refusal leaves attempts unregistered.");
+    if (args.help) console.log("Usage: dispatch.mjs --issue KEY --root DIR --config FILE --snapshot DIR [--risk tiny|standard|deep|risky] [--critical TEXT] [--profile short|full] [--handshake wait|resume] [--role worker-default|worker-complex|worker-claude --reason TEXT] [--preapply] [--full-snapshot] [--release true|false] [--backup-switch FILE]\nExplicit facts: --moves JSON --open-decisions N --verification JSON [--gates JSON] [--skills-root DIR] [--worker-writable-roots JSON] [--review-dataset FILE --review-dataset-version N] [--review-pilot JSON]. Facts may use orchestration.dispatch config defaults. --preapply applies approved .agents/ bytes under a configured mandate before start gates. Project repo derives from the config path; worktree .worktrees/KEY and branch mono/key start at origin/main. Issue-only uses issue-only.json with marker/label/fingerprint/config/ownerApproval/seam; no Project docs. --backup-switch names the orchestrator decision/evidence file described in references/orchestration.md; it never classifies failures. Every pre-spawn refusal leaves attempts unregistered.");
     else console.log(JSON.stringify(await dispatch(args)));
   } catch (error) { console.error(`dispatch: ${error.message}`); process.exitCode = 1; }
 }

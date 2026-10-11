@@ -7,6 +7,27 @@ import { spawnSync } from 'node:child_process';
 import * as runtime from './runtime.mjs';
 
 const risks = ['tiny', 'standard', 'deep', 'risky', 'riskyCritical'];
+test('backup transport config accepts only distinct managed CLI workers', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-backup-config-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    for (const [transport, backupTransport, valid] of [
+      ['codex-cli', 'claude-cli', true], ['claude-cli', 'codex-cli', true],
+      [undefined, 'claude-cli', true], ['codex-cli', 'codex-cli', false],
+      ['claude-cli', 'claude-cli', false], ['codex-cli', 'unknown-cli', false],
+      ['codex-cli', null, false], ['fallback', 'codex-cli', false],
+      ['claude-code-desktop', 'claude-cli', false],
+    ]) {
+      config.orchestration.transport = transport;
+      config.orchestration.backupTransport = backupTransport;
+      fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify(config));
+      const result = spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+      assert.equal(result.status, valid ? 0 : 1, `${transport} -> ${backupTransport}: ${result.stderr}`);
+      if (!valid) assert.match(result.stderr, /backupTransport/);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 test('managed worker config accepts Claude CLI and rejects unknown transports', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-claude-config-'));
   try {

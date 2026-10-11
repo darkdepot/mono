@@ -14,6 +14,241 @@ const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: t
 const json = file => JSON.parse(fs.readFileSync(file, "utf8"));
 const run = (command, args, cwd, env) => spawnSync(command, args, { cwd, env, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
 const pass = result => { assert.equal(result.status, 0, result.stderr + result.stdout); return result; };
+test("backup switch named launch contracts", async t => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-backup-"));
+  const savedPath = process.env.PATH;
+  const pack = path.join(scratch, "pack"), bin = path.join(scratch, "bin"), repo = path.join(scratch, "repo");
+  const pids = new Set();
+  const stop = async pid => {
+    try { process.kill(pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+    for (let n = 0; n < 200; n++) {
+      try { process.kill(pid, 0); } catch (error) { if (error.code === "ESRCH") { pids.delete(pid); return; } throw error; }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error("fixture process failed to stop");
+  };
+  try {
+    copyPluginFixture(pack);
+    for (const dir of [bin, repo]) fs.mkdirSync(dir);
+    const tool = (name, source) => { write(path.join(bin, name), `#!${process.execPath}\n${source}`); fs.chmodSync(path.join(bin, name), 0o700); };
+    tool("ps", `const a=process.argv; if(a.includes('-p')) console.log('fixture-start-'+a[a.indexOf('-p')+1]);
+      else if(!a.includes('command=')) process.stdout.write(require('fs').readFileSync(${JSON.stringify(path.join(bin, "tree"))},'utf8'));`);
+    write(path.join(bin, "tree"), "");
+    tool("codex", `console.log(JSON.stringify({type:'thread.started',thread_id:'backup-fixture-'+process.pid}));setInterval(()=>{},1000);`);
+    tool("gh", "process.stdout.write('fixture-auth');");
+    tool("claude", `const a=process.argv; if(a.includes('auth')) {console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}));process.exit(0);}
+      let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{const val=k=>a[a.indexOf(k)+1],id=val(a.includes('--resume')?'--resume':'--session-id');
+      console.log(JSON.stringify({type:'system',subtype:'init',session_id:id,model:val('--model'),permissionMode:'dontAsk',apiKeySource:'none',mcp_servers:[],tools:['Bash','Read','Edit','Write','NotebookEdit','Glob','Grep']}));
+      console.log(JSON.stringify({type:'assistant',session_id:id,message:{model:val('--model'),content:[{type:'text',text:'fixture response'}]}}));setInterval(()=>{},1000);});`);
+    // Only the fixture relaxes the socket path bound; the production checks
+    // remain covered by the Claude transport's own named tests.
+    const adapter = path.join(pack, "scripts/transports/claude-cli.mjs");
+    write(adapter, fs.readFileSync(adapter, "utf8").replace("const maximumTemporaryPathBytes = 44;", "const maximumTemporaryPathBytes = Number.MAX_SAFE_INTEGER;"));
+    process.env.PATH = `${bin}:${savedPath}`;
+    const runtime = await import(pathToFileURL(path.join(pack, "scripts/orchestrator/launch.mjs")));
+    const routes = await import(pathToFileURL(path.join(pack, "scripts/runtime.mjs")));
+    const switchRuntime = await import(pathToFileURL(path.join(pack, "scripts/orchestrator/backup-switch.mjs")));
+    const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    git("init", "-b", "fixture"); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
+    const configFile = path.join(repo, ".agents/mono-workflow.config.json");
+    const config = { orchestration: { transport: "codex-cli", backupTransport: "claude-cli" } };
+    write(configFile, config); git("add", "."); git("commit", "-m", "backup mandate");
+    const base = git("rev-parse", "HEAD"), identity = routes.packLayout(pack).identity();
+    let serial = 0;
+    const setup = async (primary = "codex-cli") => {
+      const backupTransport = primary === "codex-cli" ? "claude-cli" : "codex-cli";
+      let setupBase = base;
+      if (primary !== "codex-cli") {
+        write(configFile, { orchestration: { transport: primary, backupTransport } });
+        git("add", "."); git("commit", "--allow-empty", "-m", "reverse backup mandate"); setupBase = git("rev-parse", "HEAD");
+      }
+      const root = path.join(scratch, "control-" + ++serial), temp = path.join(scratch, "temp-" + serial);
+      fs.mkdirSync(temp); write(path.join(root, "workers.json"), {}); write(path.join(root, "control.json"), { state: "active" });
+      const roots = [repo, path.join(repo, ".git"), path.join(root, "reports"), temp].sort();
+      const request = { root, issue: "MONO-999", worktree: repo, branch: "fixture", base: setupBase, packRoot: pack, skillsRoot: pack, ...identity,
+        role: primary === "codex-cli" ? "worker-default" : "worker-claude", transport: primary, dispatchFile: path.join(root, "task.md"), evidenceRoot: path.join(root, "evidence"),
+        writable_roots: [temp], workerWritableRoots: roots, gates: [], lifecycle_moves: [], config: configFile, handshake: "resume", profile: "full" };
+      write(request.dispatchFile, "fixture");
+      const pin = (req, attempt = 1) => {
+        const pinsFile = path.join(root, "dispatch", `MONO-999-a${attempt}`, "pins.json");
+        const modelRoutes = runtime.resolveWorkerPins(req);
+        write(pinsFile, { base: req.base, modelRoutes, workerWritableRoots: roots, ...(req.backupSwitch ? { backupSwitch: req.backupSwitch } : {}) });
+        return { ...req, modelRoutes, pins: { file: pinsFile, digest: crypto.createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") } };
+      };
+      const first = await runtime.spawnWorker(pin(request)); pids.add(first.pid);
+      const old = json(path.join(root, "workers.json"))[request.issue];
+      const logLine = JSON.stringify({ type: "error", message: "fixture refusal (training data)" });
+      fs.appendFileSync(old.log, logLine + "\n");
+      const evidenceFile = path.join(root, "evidence.txt"); write(evidenceFile, logLine + "\n");
+      const raw = { issue: request.issue, previousAttempt: 1, reason: "subscription-exhausted", backupTransport, evidenceFile, training: true };
+      const backup = () => {
+        const req = { ...request, role: backupTransport === "codex-cli" ? "worker-default" : "worker-claude", transport: backupTransport, backupSwitch: raw };
+        return pin({ ...req, backupSwitch: switchRuntime.resolveBackupSwitch(req) }, 2);
+      };
+      const retire = async () => { await stop(first.pid); write(path.join(root, "workers.json"), {}); };
+      return { root, request, first, old, raw, backup, retire, pin, record: path.join(root, "attempt-records/MONO-999-a1.json") };
+    };
+    const f = await setup();
+    await t.test("backup-previous-registry-not-retired", async () => {
+      await assert.rejects(runtime.spawnWorker(f.backup()), /already registered/);
+      assert.equal(json(path.join(f.root, "attempts.json"))[f.request.issue], 1);
+    });
+    write(path.join(f.root, "workers.json"), {});
+    await t.test("backup-previous-worker-live", async () => {
+      write(path.join(bin, "tree"), `${f.first.pid} 1 ${f.first.pid} S fixture-start-${f.first.pid}\n`);
+      await assert.rejects(runtime.spawnWorker(f.backup()), /previous worker.*live/);
+    });
+    await f.retire(); write(path.join(bin, "tree"), "");
+    const refusal = async (change, pattern) => {
+      const record = fs.readFileSync(f.record, "utf8"), pins = fs.readFileSync(f.old.pins.file, "utf8"), raw = structuredClone(f.raw);
+      try { await change(); await assert.rejects(async () => runtime.spawnWorker(f.backup()), pattern);
+        assert.equal(json(path.join(f.root, "attempts.json"))[f.request.issue], 1); assert.deepEqual(json(path.join(f.root, "workers.json")), {});
+      } finally { write(f.record, record); write(f.old.pins.file, pins); Object.assign(f.raw, raw); git("reset", "--hard", base); }
+    };
+    const oldConfig = cfg => {
+      write(configFile, cfg); git("add", "."); git("commit", "-m", "old config variant");
+      const oldBase = git("rev-parse", "HEAD"), record = json(f.record), pins = json(f.old.pins.file);
+      record.entry.modelRoutes = routes.resolveModelRoutes(repo, oldBase, "worker-default", { packRoot: pack });
+      record.entry.transport = cfg.orchestration.transport; pins.base = oldBase; pins.modelRoutes = record.entry.modelRoutes;
+      write(f.old.pins.file, pins); record.entry.pins.digest = crypto.createHash("sha256").update(fs.readFileSync(f.old.pins.file)).digest("hex"); write(f.record, record);
+    };
+    for (const [name, cfg, pattern] of [
+      ["backup-not-configured", { orchestration: { transport: "codex-cli" } }, /not configured/],
+      ["backup-equals-primary", { orchestration: { transport: "codex-cli", backupTransport: "codex-cli" } }, /differ/],
+      ["backup-legacy-primary", { orchestration: { transport: "fallback", backupTransport: "claude-cli" } }, /managed CLI primary/],
+    ]) await t.test(name, () => refusal(() => oldConfig(cfg), pattern));
+    await t.test("backup-reason-outside-dictionary", () => refusal(() => { f.raw.reason = "task-failed"; }, /reason must/));
+    await t.test("backup-no-evidence", () => refusal(() => { f.raw.evidenceFile = path.join(f.root, "missing"); }, /evidence file/));
+    await t.test("backup-foreign-evidence", () => refusal(() => { write(f.raw.evidenceFile, "not in journal"); }, /excerpt/));
+    write(f.raw.evidenceFile, JSON.stringify({ type: "error", message: "fixture refusal (training data)" }) + "\n");
+    await t.test("backup-new-base-backup-changed", () => refusal(() => {
+      write(configFile, { orchestration: { transport: "codex-cli" } }); git("add", "."); git("commit", "-m", "new backup missing");
+      f.request.base = git("rev-parse", "HEAD");
+    }, /changed on new BASE/)); f.request.base = base;
+    await t.test("backup-new-base-reviewer-changed", () => refusal(() => {
+      const cfg = { ...config, models: { roles: { autoreview: { model: "fixture-reviewer" } } } };
+      cfg.models.pairingAccepted = routes.requiredPairings(cfg, { packRoot: pack }).map(pair => ({ ...pair, linearDecision: "https://linear.app/example/issue/EX-1#comment-owner", by: "owner", date: "2026-10-01" }));
+      write(configFile, cfg); git("add", "."); git("commit", "-m", "reviewer changed"); f.request.base = git("rev-parse", "HEAD");
+    }, /reviewer route changed/)); f.request.base = base;
+    await t.test("backup-orphan-descendant-live", () => refusal(() => {
+      write(path.join(bin, "tree"), `900001 1 ${f.first.pid} S fixture-orphan\n`);
+    }, /descendants still live/)); write(path.join(bin, "tree"), "");
+    await t.test("backup-dirty-unresolved-worktree", async () => {
+      const dirty = path.join(repo, "unfinished.txt"); write(dirty, "preserve me");
+      try { await assert.rejects(runtime.spawnWorker(f.backup()), /working tree is dirty/); assert.equal(fs.readFileSync(dirty, "utf8"), "preserve me"); }
+      finally { fs.unlinkSync(dirty); }
+    });
+    await t.test("backup-attempt-cap-exhausted", async () => {
+      write(path.join(f.root, "attempts.json"), { "MONO-999": 3 });
+      try { await assert.rejects(runtime.spawnWorker(f.backup()), /attempt cap/); assert.equal(json(path.join(f.root, "attempts.json"))["MONO-999"], 3); }
+      finally { write(path.join(f.root, "attempts.json"), { "MONO-999": 1 }); }
+    });
+    await t.test("backup-provider-refusal-without-recovery", () => refusal(() => { f.raw.reason = "provider-refusal-after-recovery"; }, /recorded recovery/));
+    await t.test("backup-expanded-grants-refused", async () => {
+      const extra = path.join(scratch, "extra"); fs.mkdirSync(extra);
+      const req = f.backup(); req.writable_roots = [...req.writable_roots, extra]; req.workerWritableRoots = [...req.workerWritableRoots, extra];
+      const pins = json(req.pins.file); pins.workerWritableRoots = req.workerWritableRoots; write(req.pins.file, pins);
+      req.pins.digest = crypto.createHash("sha256").update(fs.readFileSync(req.pins.file)).digest("hex");
+      await assert.rejects(runtime.spawnWorker(req), /must not expand/);
+    });
+    await t.test("backup-missing-switch-pin-refused", async () => {
+      const req = f.backup(); const pins = json(req.pins.file); delete pins.backupSwitch; write(req.pins.file, pins);
+      req.pins.digest = crypto.createHash("sha256").update(fs.readFileSync(req.pins.file)).digest("hex");
+      await assert.rejects(runtime.spawnWorker(req), /new attempt pins/);
+    });
+    await t.test("backup-subscription-exhausted-success", async () => {
+      const request = f.backup(); const launched = await runtime.spawnWorker(request); pids.add(launched.pid);
+      const entry = json(path.join(f.root, "workers.json"))["MONO-999"];
+      assert.equal(entry.attempt, 2); assert.equal(entry.transport, "claude-cli"); assert.equal(entry.model_policy.role, "worker-claude");
+      assert.deepEqual(entry.backupSwitch, json(request.pins.file).backupSwitch);
+      assert.deepEqual(entry.workerWritableRoots, f.old.workerWritableRoots);
+      assert.ok(fs.readFileSync(entry.log, "utf8").includes(request.backupSwitch.evidenceDigest));
+      assert.ok(fs.readFileSync(path.join(f.root, "ledger.md"), "utf8").includes("subscription-exhausted"));
+      await stop(launched.pid); write(path.join(f.root, "workers.json"), {});
+    });
+    await t.test("backup-issue-already-switched", async () => {
+      await assert.rejects(runtime.spawnWorker(f.backup()), /already switched/);
+      await assert.rejects(runtime.spawnWorker(f.pin(f.request)), /already switched/);
+      assert.equal(json(path.join(f.root, "attempts.json"))["MONO-999"], 2);
+    });
+    const recovery = await setup();
+    const resumeFile = path.join(recovery.root, "resume.md"); write(resumeFile, "fixture recovery");
+    await stop(recovery.first.pid);
+    const resumed = await runtime.resumeWorker({ root: recovery.root, issue: "MONO-999", resumeFile }); pids.add(resumed.pid);
+    await stop(resumed.pid); write(path.join(recovery.root, "workers.json"), {});
+    recovery.raw.reason = "provider-refusal-after-recovery";
+    await t.test("backup-evidence-before-recovery-refused", async () => {
+      await assert.rejects(async () => runtime.spawnWorker(recovery.backup()), /evidence after recovery/);
+    });
+    const afterRecovery = JSON.stringify({ type: "error", message: "fixture persistent refusal after recovery (training data)" });
+    fs.appendFileSync(recovery.old.log, afterRecovery + "\n"); write(recovery.raw.evidenceFile, afterRecovery + "\n");
+    write(configFile, { ...config, projectName: "Unrelated base change" }); git("add", "."); git("commit", "-m", "new base unchanged reviewer");
+    recovery.request.base = git("rev-parse", "HEAD");
+    await t.test("backup-provider-refusal-after-recovery-success", async () => {
+      const request = recovery.backup(); const launched = await runtime.spawnWorker(request); pids.add(launched.pid);
+      const entry = json(path.join(recovery.root, "workers.json"))["MONO-999"];
+      assert.equal(entry.attempt, 2); assert.equal(entry.backupSwitch.reason, "provider-refusal-after-recovery");
+      assert.notEqual(entry.modelRoutes.configDigest, recovery.old.modelRoutes.configDigest);
+      assert.equal(json(recovery.record).processes.length, 2);
+      await stop(launched.pid);
+    });
+    const complexFixture = await setup("claude-cli"); await complexFixture.retire();
+    await t.test("backup-codex-complex-role-recorded-success", async () => {
+      const req = complexFixture.pin({ ...complexFixture.backup(), role: "worker-complex", modelRoutes: undefined, modelReason: "Deep state-machine changes" }, 2);
+      const launched = await runtime.spawnWorker(req); pids.add(launched.pid);
+      const entry = json(path.join(complexFixture.root, "workers.json"))["MONO-999"];
+      assert.equal(entry.model_policy.role, "worker-complex"); assert.equal(entry.modelReason, "Deep state-machine changes");
+      assert.ok(fs.readFileSync(entry.log, "utf8").includes(entry.modelReason)); await stop(launched.pid);
+    });
+    const reverse = await setup("claude-cli"); await reverse.retire();
+    await t.test("backup-codex-role-default-and-complex-reason", async () => {
+      const req = reverse.backup();
+      await assert.rejects(runtime.spawnWorker({ ...req, role: "worker-claude" }), /role\/transport/);
+      const complex = { ...req, role: "worker-complex", modelRoutes: undefined };
+      await assert.rejects(runtime.spawnWorker(complex), /recorded reason/);
+      assert.equal(json(path.join(reverse.root, "attempts.json"))["MONO-999"], 1);
+      const launched = await runtime.spawnWorker(req); pids.add(launched.pid);
+      assert.equal(json(path.join(reverse.root, "workers.json"))["MONO-999"].model_policy.role, "worker-default");
+      await stop(launched.pid);
+    });
+    await t.test("backup-installed-dispatch-pins-and-default-role", async () => {
+      const dispatchRepo = path.join(scratch, "dispatch-repo"), origin = path.join(scratch, "origin.git"), root = path.join(scratch, "dispatch-control");
+      const temp = path.join(scratch, "dispatch-temp"); fs.mkdirSync(temp);
+      const cfg = { orchestration: { transport: "claude-cli", backupTransport: "codex-cli", dispatch: {
+        product: "fixture", evidenceRoot: path.join(scratch, "dispatch-evidence"), openDecisions: 0,
+        lifecycle_moves: [], verification: { command: "node", args: ["scripts/verify.mjs"] },
+      } } };
+      write(configFile, cfg); write(path.join(repo, ".gitignore"), ".worktrees/\n"); git("add", "."); git("commit", "-m", "dispatch defaults"); git("branch", "-M", "main");
+      execFileSync("git", ["clone", "--bare", repo, origin], { stdio: "pipe" });
+      execFileSync("git", ["clone", origin, dispatchRepo], { stdio: "pipe" });
+      const snapshot = path.join(scratch, "snapshot"), writable = path.join(scratch, "writable.json"); write(writable, [temp]);
+      write(path.join(snapshot, "issue-MONO-998.md"), "# Backup fixture\n# Что сделать\nSwitch worker.\n# Готовность агента\nAFK\n# Ключевые контракты\nRetain gates.\n# Как проверить\nNamed fixtures.\nРиск: risky\n");
+      for (const [name, text] of [["approval.md", "Approved package/start; Project Delivery."], ["project-brief.md", "Fixture"], ["prd.md", "## Кратко\nFixture"], ["tech-spec.md", "## Кратко\nFixture"]]) write(path.join(snapshot, name), text);
+      write(path.join(root, "workers.json"), {}); write(path.join(root, "control.json"), { state: "active" });
+      const { dispatch } = await import(pathToFileURL(path.join(pack, "scripts/orchestrator/dispatch.mjs")));
+      const args = { root, issue: "MONO-998", config: path.join(dispatchRepo, ".agents/mono-workflow.config.json"), snapshot,
+        profile: "full", handshake: "resume", "worker-writable-roots": writable };
+      const primary = await dispatch(args); pids.add(primary.pid);
+      const old = json(path.join(root, "workers.json"))[args.issue]; await stop(primary.pid);
+      write(path.join(root, "workers.json"), {});
+      const excerpt = JSON.stringify({ type: "error", message: "marked fixture subscription exhaustion" });
+      fs.appendFileSync(old.log, excerpt + "\n"); const evidenceFile = path.join(root, "switch-input/evidence.txt"); write(evidenceFile, excerpt + "\n");
+      const decision = path.join(root, "switch-input/decision.json"); write(decision, {
+        issue: args.issue, previousAttempt: 1, reason: "subscription-exhausted", backupTransport: "codex-cli", evidenceFile, training: true,
+      });
+      const switched = await dispatch({ ...args, "backup-switch": decision }); pids.add(switched.pid);
+      const entry = json(path.join(root, "workers.json"))[args.issue], pins = json(switched.pins.file);
+      assert.equal(switched.attempt, 2); assert.equal(entry.transport, "codex-cli"); assert.equal(entry.model_policy.role, "worker-default");
+      assert.deepEqual(pins.backupSwitch, switched.backupSwitch); assert.equal(pins.backupSwitch.training, true);
+      assert.deepEqual(entry.workerWritableRoots, old.workerWritableRoots);
+      assert.ok(fs.readFileSync(switched.dispatchFile, "utf8").includes(pins.backupSwitch.evidenceDigest));
+      await stop(switched.pid);
+    });
+  } finally {
+    for (const pid of pids) await stop(pid);
+    process.env.PATH = savedPath; fs.rmSync(scratch, { recursive: true, force: true });
+  }
+});
 function controlledDarwinTemp(bin, root) {
   const temp = path.join(root, "darwin-temp"); fs.mkdirSync(temp);
   const getconf = path.join(bin, "getconf");
