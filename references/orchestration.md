@@ -727,7 +727,21 @@ the previous registry entry by the existing verified-retry procedure. Do not
 delete `attempts.json`, logs, dispatch pins or `attempt-records/`. Launch/resume
 retain a protected per-attempt entry and process incarnation/group history when
 a backup is configured. Missing history or process identity refuses switching.
-Orphan group members and surviving thread processes refuse it too.
+Before stopping each process incarnation, run the installed command while its
+registered writer is still live:
+
+```bash
+node '<pack-root>/scripts/orchestrator/backup-switch.mjs' capture --root '<root>' --issue 'EXAMPLE-7'
+```
+
+This retains the recursively captured descendants and their start identities,
+including children in separate process groups, under the launch lock. Use that
+capture for the existing leaf-to-root termination and survivor proof. Retain
+captures across resumes; a later incarnation requires its own capture. Missing
+or incomplete captures refuse switching, including an attempt that exited before
+its tree was captured. Reconcile that missing evidence instead of claiming an
+unobserved tree stopped. Captured descendants, orphan group members and surviving
+thread processes all refuse switching while live.
 
 Create a decision file outside worker grants and an evidence file containing a
 nonempty, verbatim contiguous excerpt from the previous attempt's JSONL journal.

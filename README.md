@@ -221,7 +221,10 @@ stopped gates, unexplained silence, installation problems and config errors do
 not qualify; there is no automatic failure classifier.
 
 The orchestrator first reconciles outstanding writes and unfinished work,
-stops the old process tree and retires the registry entry. It then uses the
+captures the old process tree with the installed `backup-switch.mjs capture`
+command while its writer is live, stops that captured tree and retires the registry
+entry. Captures retain descendants in separate process groups across resumes;
+missing or incomplete capture evidence refuses switching. It then uses the
 ordinary dispatch command with `--backup-switch <absolute-decision-file>`.
 The backup must have been named on the old attempt's base and remain the same
 on the new base; the reviewer route stays unchanged. A dirty unresolved copy,

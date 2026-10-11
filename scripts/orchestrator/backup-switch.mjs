@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { atomicJson, readJson, baseModelConfig, canonical, digest, processTable, resolveRole, resolvedLocation, syncDir } from "../runtime.mjs";
+import { atomicJson, readJson, baseModelConfig, canonical, digest, processTable, resolveRole, resolvedLocation, syncDir, withLock, flags, isMain } from "../runtime.mjs";
 import { effectivePins } from "./command-state.mjs";
 
 const transports = ["codex-cli", "claude-cli"];
@@ -34,10 +34,48 @@ export function configuredBackup(config) {
 export function recordAttempt(root, entry) {
   const file = recordFile(root, entry.issue, entry.attempt);
   if (!fs.existsSync(file) && (!entry.modelRoutes?.base || !configuredBackup(baseModelConfig(entry.worktree, entry.modelRoutes.base)))) return;
-  const processes = fs.existsSync(file) ? readJson(file).processes : [];
+  const previous = fs.existsSync(file) ? readJson(file) : {};
+  const processes = previous.processes ?? [];
   if (entry.pid && !processes.some(row => row.pid === entry.pid && row.procStart === entry.procStart))
     processes.push({ pid: entry.pid, procStart: entry.procStart, processGroup: entry.processGroup ?? entry.pid });
-  atomicJson(file, { entry, processes });
+  atomicJson(file, { ...previous, entry, processes });
+}
+
+// The existing stop procedure captures descendants before terminating them.
+// Keep that capture outside worker grants, including children in other groups.
+export async function captureBackupProcessTree(root, issue) {
+  if (!path.isAbsolute(root ?? "") || !/^[A-Z][A-Z0-9]*-\d+$/.test(issue)) throw new Error("absolute root and issue required");
+  return withLock(path.join(root, "launch.lock"), () => {
+    const entry = readJson(path.join(root, "workers.json"))[issue];
+    if (!entry?.pid || !entry.procStart) throw new Error("capture the primary process tree before stopping or retiring it");
+    recordAttempt(root, entry);
+    const file = recordFile(root, issue, entry.attempt), previous = readJson(file);
+    const live = processTable().filter(row => !row.state.startsWith("Z"));
+    if (!live.some(row => row.pid === entry.pid && row.procStart === entry.procStart))
+      throw new Error("capture the primary process tree while its registered writer is still live");
+    const retained = previous.retirement ?? { capturedWriters: [], processes: [] };
+    const selected = new Set();
+    for (const writer of previous.processes) {
+      const row = live.find(row => row.pid === writer.pid && row.procStart === writer.procStart);
+      if (row) selected.add(row.pid);
+      else if (!retained.capturedWriters.some(old => old.pid === writer.pid && old.procStart === writer.procStart))
+        throw new Error("previous process incarnation has no retained tree capture; reconcile before switching");
+    }
+    for (const old of retained.processes) if (live.some(row => row.pid === old.pid && row.procStart === old.procStart)) selected.add(old.pid);
+    let added;
+    do {
+      added = false;
+      for (const row of live) if (!selected.has(row.pid) && (selected.has(row.ppid) || previous.processes.some(old => old.processGroup === row.group))) {
+        selected.add(row.pid); added = true;
+      }
+    } while (added);
+    const captured = live.filter(row => selected.has(row.pid)).map(row => ({ pid: row.pid, ppid: row.ppid, procStart: row.procStart, processGroup: row.group }));
+    const processes = [...retained.processes];
+    for (const row of captured) if (!processes.some(old => old.pid === row.pid && old.procStart === row.procStart)) processes.push(row);
+    const retirement = { capturedAt: new Date().toISOString(), capturedWriters: previous.processes, processes };
+    atomicJson(file, { ...previous, retirement });
+    return { file, retirement };
+  });
 }
 
 function previousAttempt(request, input) {
@@ -110,8 +148,16 @@ export function validateBackupLaunch(request, used, roots) {
   const live = processTable().filter(row => !row.state.startsWith("Z"));
   if (processes.some(old => live.some(row => (row.pid === old.pid && row.procStart === old.procStart) || row.group === old.processGroup)))
     throw new Error("previous worker or descendants still live; backup switch refused");
-  for (const old of processes) {
-    try { process.kill(-old.processGroup, 0); }
+  const capture = previous.retirement;
+  if (!capture?.capturedAt || !Array.isArray(capture.processes) || !Array.isArray(capture.capturedWriters) ||
+      processes.some(writer => !capture.capturedWriters.some(old => old.pid === writer.pid && old.procStart === writer.procStart)) ||
+      capture.processes.some(row => !Number.isSafeInteger(row.pid) || row.pid <= 0 || !row.procStart || !Number.isSafeInteger(row.processGroup) || row.processGroup <= 0) ||
+      processes.some(writer => !capture.processes.some(old => old.pid === writer.pid && old.procStart === writer.procStart)))
+    throw new Error("previous process tree capture missing or incomplete; reconcile before switching");
+  if (capture.processes.some(old => live.some(row => row.pid === old.pid && row.procStart === old.procStart)))
+    throw new Error("previous worker or descendants still live; backup switch refused");
+  for (const group of new Set([...processes, ...capture.processes].map(row => row.processGroup))) {
+    try { process.kill(-group, 0); }
     catch (error) { if (error.code === "ESRCH") continue; throw error; }
     throw new Error("previous worker process group still live; backup switch refused");
   }
@@ -127,4 +173,12 @@ export function validateBackupLaunch(request, used, roots) {
   if (roots.some(root => record.evidenceFile === root || record.evidenceFile.startsWith(root + path.sep)))
     throw new Error("backup switch evidence must remain outside worker write grants");
   return record;
+}
+
+if (isMain(import.meta.url)) {
+  try {
+    const [command, ...rest] = process.argv.slice(2), args = flags(rest);
+    if (command !== "capture") throw new Error("Usage: backup-switch.mjs capture --root DIR --issue KEY (before ordinary process-tree termination)");
+    console.log(JSON.stringify(await captureBackupProcessTree(args.root, args.issue)));
+  } catch (error) { console.error(`backup-switch: ${error.message}`); process.exitCode = 1; }
 }
