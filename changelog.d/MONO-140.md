@@ -1,0 +1,1 @@
+- Keep the managed-worker journal identity hint out of the credential-redaction fixture's child process, so the full pack verification is green inside a managed Claude Code worker; the instance marker stays covered by the existing startup-ack and same-session resume test (MONO-140).
