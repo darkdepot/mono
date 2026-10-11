@@ -59,7 +59,7 @@ Inputs to gather:
 
 - Project config `.agents/mono-workflow.config.json`: product name,
   configured workflows, `deployApproval`, and the optional `orchestration`
-  block (`orchestration.transport`, `orchestration.maxParallelWorkers`).
+  block (`orchestration.transport`, `orchestration.backupTransport`, `orchestration.maxParallelWorkers`).
 - Fresh Linear state: projects in flight, Issue statuses, latest comments and
   certificates.
 - Orchestrator state on disk under
@@ -235,6 +235,19 @@ Workflow states:
      is bounded by config. No report: same-thread resume once to demand capsule
      and report; failed recovery uses a new attempt within cap, not a restarted
      Issue. Record every healing step/result. Do not steer progressing workers.
+   - Backup switching is an orchestrator decision, never failure classification.
+     Only `subscription-exhausted` or `provider-refusal-after-recovery` may use the
+     standing `orchestration.backupTransport` mandate on the old BASE. Follow
+     Backup worker switch in `references/orchestration.md`: quiesce/capture the tree,
+     stop/retire the old attempt, reconcile unattributed post-launch processes
+     against its retained baseline, preserve/reconcile work, and dispatch a
+     new attempt with `--backup-switch` and journal evidence. Both bases retain
+     the backup and reviewer; cap, rights and gates stay intact. Default backup
+     roles: Codex `worker-default` (complex only with recorded reason), Claude
+     `worker-claude`. Read back the Issue comment naming reason, evidence/digest,
+     workers and attempts before startup moves. Retain the one-switch marker;
+     no automatic return. Closeout training uses a real attempt in a one-off
+     root with a marked reason; never fabricate live subscription exhaustion.
 6. `decide-or-escalate`
    - Technical questions: decide, record in the ledger under «Решил сам:»
      with a one-line reason, answer the worker.

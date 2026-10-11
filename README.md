@@ -202,6 +202,60 @@ boundary: running attempts keep their pins and finish on their original worker, 
 new launches go to Codex. Installation requirements for each worker are in
 [Project Policy](references/install.md#project-policy).
 
+### Naming a backup worker
+
+An owner can also set `orchestration.backupTransport` to `codex-cli` or
+`claude-cli`. It must differ from the primary, and the primary must be one of
+those two managed CLI workers. For example:
+
+```json
+{ "orchestration": { "transport": "codex-cli", "backupTransport": "claude-cli" } }
+```
+
+This is a standing mandate for the orchestrator to open one new attempt when
+the primary's subscription is exhausted (`subscription-exhausted`), or its
+provider explicitly and persistently refuses after recovery on that same worker
+(`provider-refusal-after-recovery`). The orchestrator chooses the reason and
+supplies a verbatim excerpt from the previous attempt's output. Task failure,
+stopped gates, unexplained silence, installation problems and config errors do
+not qualify; there is no automatic failure classifier.
+
+The orchestrator first reconciles outstanding writes and unfinished work,
+uses the installed `backup-switch.mjs stop` command before retiring the old writer.
+It freezes process creation, retains the tree (including separate process groups),
+then force-stops it without resuming it. The orchestrator proves exit and retires
+the registry entry. Captures remain across resumes; missing or incomplete stop
+evidence refuses switching. It then uses the
+ordinary dispatch command with `--backup-switch <absolute-decision-file>`.
+The previous launch retains a host PID/start-time baseline. A new live process
+whose ownership cannot be established blocks switching, including a descendant
+orphaned before stopping; reconcile ownership before retrying.
+If the writer already exited, the command records its stopped state only after
+the same process and ownership checks; it sends no signals.
+The backup must have been named on the old attempt's base and remain the same
+on the new base; the reviewer route stays unchanged. A dirty unresolved copy,
+live old worker or descendant, exhausted attempt limit, or previous switch
+refuses the launch. Preserved work is reconciled into a clean tree before the
+ordinary start gate; rights, gates and attempt limits are never weakened.
+
+Backup Codex uses `worker-default` unless the orchestrator records a reason for
+`worker-complex`; backup Claude Code uses `worker-claude` and stop/resume startup.
+The normal producer/reviewer pairing check applies. The new attempt pins carry
+the switch and SHA-256 of its evidence. The ledger and attempt output retain the
+reason, evidence path/digest, previous/new workers and attempt numbers; the
+orchestrator writes and reads back the same facts in an Issue comment. One switch
+per Issue, with no automatic return; a stopped backup can resume its own session.
+
+The complete decision-file format and recovery procedure are in
+[Backup worker switch](references/orchestration.md#backup-worker-switch).
+At closeout the orchestrator practices the path in a one-off root on a real
+attempt with a marked training reason. That proves switching, while a real
+subscription-exhaustion response remains a separate observation.
+
+For config rollback, remove `backupTransport` before choosing the other primary
+or installing a pack that predates the setting. Existing attempts keep their
+pins; a config edit cannot authorize a switch retroactively.
+
 ## Cost
 
 A wave's cost is telemetry, not a gate. Wait mode avoids an exit/resume cycle; short may use zero local passes plus one certifying collection and one combined start/ready comment. These are mechanisms, not a measured savings claim; worker reading inputs and corpus bytes must not grow. Read the **Cost** line in deploy closeout and the **Wave Cost** line in orchestrator status; project updates carry only a short product-level conclusion. The installed `wave-cost.mjs` calculates the figures from reports, logs and ledger:
