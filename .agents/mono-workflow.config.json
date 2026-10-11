@@ -19,7 +19,7 @@
     "autoreviewHelper": true
   },
   "orchestration": {
-    "transport": "codex-cli",
+    "transport": "claude-cli",
     "maxParallelWorkers": 3,
     "delivery": {
       "confirmationTimeoutSec": 1200
