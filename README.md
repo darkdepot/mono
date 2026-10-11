@@ -221,11 +221,17 @@ stopped gates, unexplained silence, installation problems and config errors do
 not qualify; there is no automatic failure classifier.
 
 The orchestrator first reconciles outstanding writes and unfinished work,
-captures the old process tree with the installed `backup-switch.mjs capture`
-command while its writer is live, stops that captured tree and retires the registry
-entry. Captures retain descendants in separate process groups across resumes;
-missing or incomplete capture evidence refuses switching. It then uses the
+uses the installed `backup-switch.mjs stop` command before retiring the old writer.
+It freezes process creation, retains the tree (including separate process groups),
+then force-stops it without resuming it. The orchestrator proves exit and retires
+the registry entry. Captures remain across resumes; missing or incomplete stop
+evidence refuses switching. It then uses the
 ordinary dispatch command with `--backup-switch <absolute-decision-file>`.
+The previous launch retains a host PID/start-time baseline. A new live process
+whose ownership cannot be established blocks switching, including a descendant
+orphaned before stopping; reconcile ownership before retrying.
+If the writer already exited, the command records its stopped state only after
+the same process and ownership checks; it sends no signals.
 The backup must have been named on the old attempt's base and remain the same
 on the new base; the reviewer route stays unchanged. A dirty unresolved copy,
 live old worker or descendant, exhausted attempt limit, or previous switch

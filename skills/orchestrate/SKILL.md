@@ -238,8 +238,9 @@ Workflow states:
    - Backup switching is an orchestrator decision, never failure classification.
      Only `subscription-exhausted` or `provider-refusal-after-recovery` may use the
      standing `orchestration.backupTransport` mandate on the old BASE. Follow
-     Backup worker switch in `references/orchestration.md`: capture the live tree,
-     stop/retire the old attempt, preserve/reconcile work, and dispatch a
+     Backup worker switch in `references/orchestration.md`: quiesce/capture the tree,
+     stop/retire the old attempt, reconcile unattributed post-launch processes
+     against its retained baseline, preserve/reconcile work, and dispatch a
      new attempt with `--backup-switch` and journal evidence. Both bases retain
      the backup and reviewer; cap, rights and gates stay intact. Default backup
      roles: Codex `worker-default` (complex only with recorded reason), Claude

@@ -32,15 +32,27 @@ test("backup switch named launch contracts", async t => {
     for (const dir of [bin, repo]) fs.mkdirSync(dir);
     const tool = (name, source) => { write(path.join(bin, name), `#!${process.execPath}\n${source}`); fs.chmodSync(path.join(bin, name), 0o700); };
     tool("ps", `const a=process.argv; if(a.includes('-p')) console.log('fixture-start-'+a[a.indexOf('-p')+1]);
-      else if(!a.includes('command=')) process.stdout.write(require('fs').readFileSync(${JSON.stringify(path.join(bin, "tree"))},'utf8'));`);
+      else if(!a.includes('command=')) {const fs=require('fs'),text=fs.readFileSync(${JSON.stringify(path.join(bin, "tree"))},'utf8');
+      process.stdout.write(text.split('\\n').map(line=>line.replace(/^(\\s*\\d+\\s+\\d+\\s+\\d+\\s+)\\S+/, '$1T')).join('\\n'));
+      const file=${JSON.stringify(path.join(bin, "claude-pids"))};if(fs.existsSync(file))for(const line of fs.readFileSync(file,'utf8').trim().split('\\n')){
+        const row=JSON.parse(line);if(text.split('\\n').some(line=>line.trim().startsWith(row.ppid+' ')))console.log(row.pid+' '+row.ppid+' '+row.ppid+' T fixture-start-'+row.pid);}
+      console.log(process.ppid+' 1 '+process.ppid+' T fixture-observer');}`);
     write(path.join(bin, "tree"), "");
     tool("codex", `const fs=require('fs');if(fs.existsSync(${JSON.stringify(path.join(bin, "detach"))})){
       const child=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});child.unref();
       fs.writeFileSync(${JSON.stringify(path.join(bin, "detached-pid"))},String(child.pid));}
-      console.log(JSON.stringify({type:'thread.started',thread_id:'backup-fixture-'+process.pid}));setInterval(()=>{},1000);`);
+      if(fs.existsSync(${JSON.stringify(path.join(bin, "double-fork"))})){
+        const code="const child=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});child.unref();require('fs').writeFileSync("+JSON.stringify(${JSON.stringify(path.join(bin, "orphan-pid"))})+",String(child.pid));";
+        const parent=require('child_process').spawn(process.execPath,['-e',code],{detached:true,stdio:'ignore'});parent.unref();}
+      console.log(JSON.stringify({type:'thread.started',thread_id:'backup-fixture-'+process.pid}));
+      setInterval(()=>{if(fs.existsSync(${JSON.stringify(path.join(bin, "late-detach"))})){
+        fs.unlinkSync(${JSON.stringify(path.join(bin, "late-detach"))});
+        const child=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});child.unref();
+        fs.writeFileSync(${JSON.stringify(path.join(bin, "late-pid"))},String(child.pid));}},10);`);
     tool("gh", "process.stdout.write('fixture-auth');");
     tool("claude", `const a=process.argv; if(a.includes('auth')) {console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}));process.exit(0);}
       let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{const val=k=>a[a.indexOf(k)+1],id=val(a.includes('--resume')?'--resume':'--session-id');
+      require('fs').appendFileSync(${JSON.stringify(path.join(bin, "claude-pids"))},JSON.stringify({pid:process.pid,ppid:process.ppid})+'\\n');
       console.log(JSON.stringify({type:'system',subtype:'init',session_id:id,model:val('--model'),permissionMode:'dontAsk',apiKeySource:'none',mcp_servers:[],tools:['Bash','Read','Edit','Write','NotebookEdit','Glob','Grep']}));
       console.log(JSON.stringify({type:'assistant',session_id:id,message:{model:val('--model'),content:[{type:'text',text:'fixture response'}]}}));setInterval(()=>{},1000);});`);
     // Only the fixture relaxes the socket path bound; the production checks
@@ -90,7 +102,7 @@ test("backup switch named launch contracts", async t => {
         return pin({ ...req, backupSwitch: switchRuntime.resolveBackupSwitch(req) }, 2);
       };
       const retire = async () => {
-        await switchRuntime.captureBackupProcessTree(root, request.issue);
+        await switchRuntime.stopBackupProcessTree(root, request.issue);
         await stop(first.pid); write(path.join(root, "workers.json"), {}); write(path.join(bin, "tree"), "");
       };
       return { root, request, first, old, raw, backup, retire, pin, record: path.join(root, "attempt-records/MONO-999-a1.json") };
@@ -112,10 +124,10 @@ test("backup switch named launch contracts", async t => {
       const detached = await setup(); fs.unlinkSync(path.join(bin, "detach"));
       const childPid = Number(fs.readFileSync(path.join(bin, "detached-pid"), "utf8")); pids.add(childPid);
       write(path.join(bin, "tree"), `${detached.first.pid} 1 ${detached.first.pid} S fixture-start-${detached.first.pid}\n${childPid} ${detached.first.pid} ${childPid} S fixture-start-${childPid}\n`);
-      const capture = pass(run(process.execPath, [path.join(pack, "scripts/orchestrator/backup-switch.mjs"), "capture", "--root", detached.root, "--issue", "MONO-999"], repo, process.env));
+      const capture = pass(run(process.execPath, [path.join(pack, "scripts/orchestrator/backup-switch.mjs"), "stop", "--root", detached.root, "--issue", "MONO-999"], repo, process.env));
       assert.ok(JSON.parse(capture.stdout).retirement.processes.some(row => row.pid === childPid && row.processGroup === childPid));
       await stop(detached.first.pid); write(path.join(detached.root, "workers.json"), {});
-      assert.doesNotThrow(() => process.kill(childPid, 0));
+      await stop(childPid);
       write(path.join(bin, "tree"), `${childPid} 1 ${childPid} S fixture-start-${childPid}\n`);
       try {
         await assert.rejects(async () => {
@@ -123,6 +135,51 @@ test("backup switch named launch contracts", async t => {
         }, /descendants still live/);
         assert.equal(json(path.join(detached.root, "attempts.json"))["MONO-999"], 1);
       } finally { await stop(childPid); write(path.join(bin, "tree"), ""); }
+    });
+    await t.test("backup-capture-prevents-late-process-creation", async () => {
+      const late = await setup();
+      await switchRuntime.stopBackupProcessTree(late.root, late.request.issue);
+      write(path.join(bin, "late-detach"), "try to create a child after capture");
+      await new Promise(resolve => setTimeout(resolve, 150));
+      const latePidFile = path.join(bin, "late-pid");
+      try {
+        if (fs.existsSync(latePidFile)) pids.add(Number(fs.readFileSync(latePidFile, "utf8")));
+        assert.equal(fs.existsSync(latePidFile), false, "a writer must not create a detached child after retirement capture");
+      } finally {
+        if (fs.existsSync(latePidFile)) { await stop(Number(fs.readFileSync(latePidFile, "utf8"))); fs.unlinkSync(latePidFile); }
+        if (fs.existsSync(path.join(bin, "late-detach"))) fs.unlinkSync(path.join(bin, "late-detach"));
+        await stop(late.first.pid); write(path.join(late.root, "workers.json"), {}); write(path.join(bin, "tree"), "");
+      }
+    });
+    await t.test("backup-double-fork-before-stop-refused", async () => {
+      write(path.join(bin, "double-fork"), "spawn and orphan before stop");
+      const orphaned = await setup(); fs.unlinkSync(path.join(bin, "double-fork"));
+      const pidFile = path.join(bin, "orphan-pid");
+      for (let n = 0; !fs.existsSync(pidFile) && n < 200; n++) await new Promise(resolve => setTimeout(resolve, 10));
+      const childPid = Number(fs.readFileSync(pidFile, "utf8")); pids.add(childPid);
+      write(path.join(bin, "tree"), `${orphaned.first.pid} 1 ${orphaned.first.pid} S fixture-start-${orphaned.first.pid}\n${childPid} 1 ${childPid} S fixture-start-${childPid}\n`);
+      try {
+        await switchRuntime.stopBackupProcessTree(orphaned.root, orphaned.request.issue);
+        await stop(orphaned.first.pid);
+        write(path.join(bin, "tree"), `${childPid} 1 ${childPid} S fixture-start-${childPid}\n`);
+        process.kill(childPid, 0);
+        await assert.rejects(switchRuntime.stopBackupProcessTree(orphaned.root, orphaned.request.issue), /unattributed processes.*reconcile ownership/);
+        write(path.join(orphaned.root, "workers.json"), {});
+        await assert.rejects(runtime.spawnWorker(orphaned.backup()), /unattributed processes.*reconcile ownership/);
+        assert.equal(json(path.join(orphaned.root, "attempts.json"))[orphaned.request.issue], 1);
+        assert.deepEqual(json(path.join(orphaned.root, "workers.json")), {});
+      } finally { await stop(childPid); write(path.join(bin, "tree"), ""); }
+    });
+    await t.test("backup-primary-already-exited-success", async () => {
+      const exited = await setup();
+      await stop(exited.first.pid); write(path.join(bin, "tree"), "");
+      const captured = await switchRuntime.stopBackupProcessTree(exited.root, exited.request.issue);
+      assert.equal(captured.retirement.proof, "already-stopped");
+      write(path.join(exited.root, "workers.json"), {});
+      const switched = await runtime.spawnWorker(exited.backup()); pids.add(switched.pid);
+      assert.equal(switched.attempt, 2);
+      assert.equal(json(path.join(exited.root, "workers.json"))[exited.request.issue].transport, "claude-cli");
+      await stop(switched.pid);
     });
     const refusal = async (change, pattern) => {
       const record = fs.readFileSync(f.record, "utf8"), pins = fs.readFileSync(f.old.pins.file, "utf8"), raw = structuredClone(f.raw);
@@ -143,9 +200,24 @@ test("backup switch named launch contracts", async t => {
     await t.test("backup-process-tree-capture-incomplete", () => refusal(() => {
       const record = json(f.record); record.retirement.capturedWriters = []; write(f.record, record);
     }, /tree capture missing/));
+    await t.test("backup-process-tree-not-quiesced", () => refusal(() => {
+      const record = json(f.record); record.retirement.quiesced = false; write(f.record, record);
+    }, /tree capture missing/));
+    await t.test("backup-process-tree-stop-incomplete", () => refusal(() => {
+      const record = json(f.record); record.retirement.stopRequested = false; write(f.record, record);
+    }, /tree capture missing/));
+    await t.test("backup-process-tree-stop-pending", () => refusal(() => {
+      const record = json(f.record); record.retirement.pending = true; write(f.record, record);
+    }, /tree capture missing/));
     await t.test("backup-process-tree-capture-after-retirement-refused", async () => {
-      await assert.rejects(switchRuntime.captureBackupProcessTree(f.root, f.request.issue), /before stopping or retiring/);
+      await assert.rejects(switchRuntime.stopBackupProcessTree(f.root, f.request.issue), /before stopping or retiring/);
     });
+    await t.test("backup-launch-process-baseline-missing", () => refusal(() => {
+      const record = json(f.record); delete record.entry.processBaseline; write(f.record, record);
+    }, /launch process baseline missing/));
+    await t.test("backup-launch-process-baseline-invalid", () => refusal(() => {
+      const record = json(f.record); record.entry.processBaseline = [{ pid: 0, procStart: "invalid" }]; write(f.record, record);
+    }, /launch process baseline missing/));
     for (const [name, cfg, pattern] of [
       ["backup-not-configured", { orchestration: { transport: "codex-cli" } }, /not configured/],
       ["backup-equals-primary", { orchestration: { transport: "codex-cli", backupTransport: "codex-cli" } }, /differ/],
@@ -207,11 +279,11 @@ test("backup switch named launch contracts", async t => {
     });
     const recovery = await setup();
     const resumeFile = path.join(recovery.root, "resume.md"); write(resumeFile, "fixture recovery");
-    await switchRuntime.captureBackupProcessTree(recovery.root, "MONO-999");
+    await switchRuntime.stopBackupProcessTree(recovery.root, "MONO-999");
     await stop(recovery.first.pid);
     const resumed = await runtime.resumeWorker({ root: recovery.root, issue: "MONO-999", resumeFile }); pids.add(resumed.pid);
     write(path.join(bin, "tree"), `${resumed.pid} 1 ${resumed.pid} S fixture-start-${resumed.pid}\n`);
-    await switchRuntime.captureBackupProcessTree(recovery.root, "MONO-999");
+    await switchRuntime.stopBackupProcessTree(recovery.root, "MONO-999");
     await stop(resumed.pid); write(path.join(recovery.root, "workers.json"), {});
     write(path.join(bin, "tree"), "");
     recovery.raw.reason = "provider-refusal-after-recovery";
@@ -269,7 +341,7 @@ test("backup switch named launch contracts", async t => {
       const primary = await dispatch(args); pids.add(primary.pid);
       const old = json(path.join(root, "workers.json"))[args.issue];
       write(path.join(bin, "tree"), `${primary.pid} 1 ${primary.pid} S fixture-start-${primary.pid}\n`);
-      await switchRuntime.captureBackupProcessTree(root, args.issue); await stop(primary.pid);
+      await switchRuntime.stopBackupProcessTree(root, args.issue); await stop(primary.pid);
       write(path.join(root, "workers.json"), {});
       write(path.join(bin, "tree"), "");
       const excerpt = JSON.stringify({ type: "error", message: "marked fixture subscription exhaustion" });

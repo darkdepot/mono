@@ -11,6 +11,44 @@ const sha256 = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const recordFile = (root, issue, attempt) => path.join(root, "attempt-records", `${issue}-a${attempt}.json`);
 const switchFile = (root, issue) => path.join(root, "backup-switches", `${issue}.json`);
 
+export const backupProcessBaseline = () => processTable().filter(row => !row.state.startsWith("Z"))
+  .map(({ pid, procStart }) => ({ pid, procStart }));
+
+function requireProcessOwnership(root, previous, live) {
+  const baseline = previous.entry.processBaseline;
+  if (!Array.isArray(baseline) || !baseline.length || baseline.some(row => !Number.isSafeInteger(row.pid) || row.pid <= 0 || !row.procStart))
+    throw new Error("previous launch process baseline missing; reconcile process ownership before switching");
+  const identity = row => `${row.pid}:${row.procStart}`;
+  const allowed = new Set(baseline.map(identity));
+  const observer = live.find(row => row.pid === process.pid);
+  if (!observer) throw new Error("process observer identity unavailable; reconcile before switching");
+  let ancestor = observer;
+  const ancestors = new Set();
+  while (ancestor && !ancestors.has(ancestor.pid)) {
+    ancestors.add(ancestor.pid); allowed.add(identity(ancestor));
+    ancestor = live.find(row => row.pid === ancestor.ppid);
+  }
+  const roots = [{ pid: process.pid, group: null }];
+  for (const entry of Object.values(readJson(path.join(root, "workers.json")))) {
+    if (entry.issue === previous.entry.issue || entry.stage !== "mono-deliver" || entry.worktree === previous.entry.worktree) continue;
+    const row = live.find(row => row.pid === entry.pid && row.procStart === entry.procStart && row.group === entry.pid);
+    if (row) roots.push({ pid: row.pid, group: row.group });
+  }
+  for (const tree of roots) {
+    const selected = new Set([tree.pid]);
+    let added;
+    do {
+      added = false;
+      for (const row of live) if (!selected.has(row.pid) && (selected.has(row.ppid) || (tree.group !== null && row.group === tree.group))) {
+        selected.add(row.pid); added = true;
+      }
+    } while (added);
+    for (const row of live) if (selected.has(row.pid)) allowed.add(identity(row));
+  }
+  const unknown = live.filter(row => !allowed.has(identity(row)));
+  if (unknown.length) throw new Error(`unattributed processes after previous launch: ${unknown.map(row => row.pid).join(", ")}; reconcile ownership before switching`);
+}
+
 export function recordBackupSwitch(root, record) {
   atomicJson(switchFile(root, record.issue), record);
   const fd = fs.openSync(path.join(root, "ledger.md"), "a", 0o600);
@@ -41,38 +79,99 @@ export function recordAttempt(root, entry) {
   atomicJson(file, { ...previous, entry, processes });
 }
 
-// The existing stop procedure captures descendants before terminating them.
-// Keep that capture outside worker grants, including children in other groups.
-export async function captureBackupProcessTree(root, issue) {
+// Freeze process creation before retaining the tree used by ordinary forced
+// termination. Keep its identities outside worker grants across resumes.
+export async function stopBackupProcessTree(root, issue) {
   if (!path.isAbsolute(root ?? "") || !/^[A-Z][A-Z0-9]*-\d+$/.test(issue)) throw new Error("absolute root and issue required");
-  return withLock(path.join(root, "launch.lock"), () => {
+  return withLock(path.join(root, "launch.lock"), async () => {
     const entry = readJson(path.join(root, "workers.json"))[issue];
     if (!entry?.pid || !entry.procStart) throw new Error("capture the primary process tree before stopping or retiring it");
     recordAttempt(root, entry);
     const file = recordFile(root, issue, entry.attempt), previous = readJson(file);
-    const live = processTable().filter(row => !row.state.startsWith("Z"));
-    if (!live.some(row => row.pid === entry.pid && row.procStart === entry.procStart))
-      throw new Error("capture the primary process tree while its registered writer is still live");
+    if (previous.retirement?.pending === true) throw new Error("incomplete prior stop; reconcile the retained process observations before retrying");
+    const table = () => processTable().filter(row => !row.state.startsWith("Z"));
+    let live = table();
     const retained = previous.retirement ?? { capturedWriters: [], processes: [] };
-    const selected = new Set();
+    if (!live.some(row => row.pid === entry.pid && row.procStart === entry.procStart && row.group === entry.pid)) {
+      const processes = [...previous.processes, ...retained.processes];
+      if (processes.some(old => live.some(row => (row.pid === old.pid && row.procStart === old.procStart) || row.group === old.processGroup)))
+        throw new Error("previous worker or descendants still live; reconcile before recording a stopped tree");
+      for (const group of new Set(processes.map(row => row.processGroup))) {
+        try { process.kill(-group, 0); }
+        catch (error) { if (error.code === "ESRCH") continue; throw error; }
+        throw new Error("previous worker process group still live; reconcile before recording a stopped tree");
+      }
+      requireProcessOwnership(root, previous, live);
+      const retirement = { capturedAt: new Date().toISOString(), capturedWriters: previous.processes, processes,
+        quiesced: true, stopRequested: true, pending: false, proof: "already-stopped" };
+      atomicJson(file, { ...previous, retirement });
+      return { file, retirement };
+    }
+    const observer = live.find(row => row.pid === process.pid);
+    if (!observer) throw new Error("process observer identity unavailable; reconcile before stopping");
+    const writers = [];
     for (const writer of previous.processes) {
       const row = live.find(row => row.pid === writer.pid && row.procStart === writer.procStart);
-      if (row) selected.add(row.pid);
-      else if (!retained.capturedWriters.some(old => old.pid === writer.pid && old.procStart === writer.procStart))
+      if (row && row.group === writer.processGroup) writers.push(row);
+      else if (!retained.quiesced || !retained.stopRequested || !retained.capturedWriters.some(old => old.pid === writer.pid && old.procStart === writer.procStart))
         throw new Error("previous process incarnation has no retained tree capture; reconcile before switching");
     }
-    for (const old of retained.processes) if (live.some(row => row.pid === old.pid && row.procStart === old.procStart)) selected.add(old.pid);
-    let added;
-    do {
-      added = false;
-      for (const row of live) if (!selected.has(row.pid) && (selected.has(row.ppid) || previous.processes.some(old => old.processGroup === row.group))) {
-        selected.add(row.pid); added = true;
+    const groups = new Set(), seen = new Map();
+    const select = rows => {
+      const selected = new Set(writers.map(row => row.pid));
+      for (const old of retained.processes) if (rows.some(row => row.pid === old.pid && row.procStart === old.procStart)) selected.add(old.pid);
+      let added;
+      do {
+        added = false;
+        for (const row of rows) if (!selected.has(row.pid) && (selected.has(row.ppid) || groups.has(row.group))) {
+          selected.add(row.pid); added = true;
+        }
+      } while (added);
+      return rows.filter(row => selected.has(row.pid));
+    };
+    const freeze = rows => {
+      let added = false;
+      for (const row of rows) {
+        if (row.group === observer.group || row.pid === process.pid) throw new Error("stop must run outside the worker process tree");
+        if (groups.has(row.group)) continue;
+        if (!rows.some(leader => leader.pid === row.group) && !retained.processes.some(old => old.processGroup === row.group && rows.some(current => current.pid === old.pid && current.procStart === old.procStart)))
+          throw new Error("descendant process group ownership unknown; reconcile before stopping");
+        process.kill(-row.group, "SIGSTOP"); groups.add(row.group); added = true;
       }
-    } while (added);
-    const captured = live.filter(row => selected.has(row.pid)).map(row => ({ pid: row.pid, ppid: row.ppid, procStart: row.procStart, processGroup: row.group }));
+      return added;
+    };
+    for (const row of select(live)) seen.set(row.pid, row);
+    atomicJson(file, { ...previous, retirement: { ...retained, quiesced: false, stopRequested: false, pending: true,
+      observed: [...seen.values()], startedAt: new Date().toISOString() } });
+    freeze(writers);
+    const deadline = Date.now() + 5000;
+    while (true) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      live = table();
+      if ([...seen.values()].some(old => !live.some(row => row.pid === old.pid && row.procStart === old.procStart)))
+        throw new Error("process disappeared before tree quiescence; reconcile missing descendants");
+      const selected = select(live);
+      for (const row of selected) seen.set(row.pid, row);
+      const added = freeze(selected);
+      if (!added && [...seen.values()].every(row => row.state.startsWith("T"))) break;
+      if (Date.now() >= deadline) throw new Error("process tree quiescence unverified; reconcile the retained stopped processes");
+    }
+    const captured = [...seen.values()].map(row => ({ pid: row.pid, ppid: row.ppid, procStart: row.procStart, processGroup: row.group }));
     const processes = [...retained.processes];
     for (const row of captured) if (!processes.some(old => old.pid === row.pid && old.procStart === row.procStart)) processes.push(row);
-    const retirement = { capturedAt: new Date().toISOString(), capturedWriters: previous.processes, processes };
+    const retirement = { capturedAt: new Date().toISOString(), capturedWriters: previous.processes, processes, quiesced: true, stopRequested: false, pending: true };
+    atomicJson(file, { ...previous, retirement });
+    const depth = row => {
+      if (writers.some(writer => writer.pid === row.pid)) return 0;
+      let count = 1, parent = seen.get(row.ppid);
+      const visited = new Set([row.pid]);
+      while (parent && !visited.has(parent.pid)) { visited.add(parent.pid); count++; parent = seen.get(parent.ppid); }
+      return count;
+    };
+    const kill = pid => { try { process.kill(pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; } };
+    for (const row of [...seen.values()].sort((a, b) => depth(b) - depth(a))) kill(row.pid);
+    retirement.stopRequested = true;
+    retirement.pending = false;
     atomicJson(file, { ...previous, retirement });
     return { file, retirement };
   });
@@ -149,7 +248,7 @@ export function validateBackupLaunch(request, used, roots) {
   if (processes.some(old => live.some(row => (row.pid === old.pid && row.procStart === old.procStart) || row.group === old.processGroup)))
     throw new Error("previous worker or descendants still live; backup switch refused");
   const capture = previous.retirement;
-  if (!capture?.capturedAt || !Array.isArray(capture.processes) || !Array.isArray(capture.capturedWriters) ||
+  if (!capture?.capturedAt || capture.quiesced !== true || capture.stopRequested !== true || capture.pending !== false || !Array.isArray(capture.processes) || !Array.isArray(capture.capturedWriters) ||
       processes.some(writer => !capture.capturedWriters.some(old => old.pid === writer.pid && old.procStart === writer.procStart)) ||
       capture.processes.some(row => !Number.isSafeInteger(row.pid) || row.pid <= 0 || !row.procStart || !Number.isSafeInteger(row.processGroup) || row.processGroup <= 0) ||
       processes.some(writer => !capture.processes.some(old => old.pid === writer.pid && old.procStart === writer.procStart)))
@@ -161,6 +260,7 @@ export function validateBackupLaunch(request, used, roots) {
     catch (error) { if (error.code === "ESRCH") continue; throw error; }
     throw new Error("previous worker process group still live; backup switch refused");
   }
+  requireProcessOwnership(request.root, previous, live);
   if (previous.entry.thread_id) {
     const commands = execFileSync("ps", ["-axo", "command="], { encoding: "utf8" });
     if (commands.split("\n").some(command => command.split(/\s+/).includes(previous.entry.thread_id)))
@@ -178,7 +278,7 @@ export function validateBackupLaunch(request, used, roots) {
 if (isMain(import.meta.url)) {
   try {
     const [command, ...rest] = process.argv.slice(2), args = flags(rest);
-    if (command !== "capture") throw new Error("Usage: backup-switch.mjs capture --root DIR --issue KEY (before ordinary process-tree termination)");
-    console.log(JSON.stringify(await captureBackupProcessTree(args.root, args.issue)));
+    if (command !== "stop") throw new Error("Usage: backup-switch.mjs stop --root DIR --issue KEY (quiesce, capture and force-stop before registry retirement)");
+    console.log(JSON.stringify(await stopBackupProcessTree(args.root, args.issue)));
   } catch (error) { console.error(`backup-switch: ${error.message}`); process.exitCode = 1; }
 }

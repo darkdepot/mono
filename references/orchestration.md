@@ -727,21 +727,40 @@ the previous registry entry by the existing verified-retry procedure. Do not
 delete `attempts.json`, logs, dispatch pins or `attempt-records/`. Launch/resume
 retain a protected per-attempt entry and process incarnation/group history when
 a backup is configured. Missing history or process identity refuses switching.
-Before stopping each process incarnation, run the installed command while its
-registered writer is still live:
+Run the installed stop command before retiring each registered incarnation:
 
 ```bash
-node '<pack-root>/scripts/orchestrator/backup-switch.mjs' capture --root '<root>' --issue 'EXAMPLE-7'
+node '<pack-root>/scripts/orchestrator/backup-switch.mjs' stop --root '<root>' --issue 'EXAMPLE-7'
 ```
 
-This retains the recursively captured descendants and their start identities,
-including children in separate process groups, under the launch lock. Use that
-capture for the existing leaf-to-root termination and survivor proof. Retain
-captures across resumes; a later incarnation requires its own capture. Missing
-or incomplete captures refuse switching, including an attempt that exited before
-its tree was captured. Reconcile that missing evidence instead of claiming an
-unobserved tree stopped. Captured descendants, orphan group members and surviving
-thread processes all refuse switching while live.
+Under the launch lock it sends `SIGSTOP` to the worker groups, recursively finds
+and freezes descendant groups, and requires stopped states before retaining the
+tree and start identities. A process disappearing before quiescence refuses the
+capture. Once process creation is quiescent, it records that proof and force-stops
+the captured processes leaf-to-root with `SIGKILL`, retaining the wrapper last.
+No `SIGCONT` occurs between capture and termination. An incomplete stop leaves
+the registered attempt, process observations and stopped processes for
+reconciliation; a pending stop cannot be retried into a new proof. Never treat it
+as successful retirement. Confirm process exit before removing the registry
+entry. The backup launch separately rechecks every identity and group for survivors.
+Retain captures across resumes; each incarnation requires this stop procedure.
+Missing/incomplete quiescence or stop evidence refuses switching, including an
+attempt that exited before its tree was captured. Reconcile missing evidence
+instead of claiming an unobserved tree stopped. Captured descendants, orphan
+group members and surviving thread processes all refuse switching while live.
+The launch record also retains the pre-launch host PID/start-time baseline when
+a backup is configured. After retirement, any live process absent from that
+baseline must belong to the current control caller or another registered worker
+in a different worktree. Otherwise launch refuses with the unattributed PIDs:
+this also catches descendants already orphaned before the stop snapshot. A new
+unrelated host process can conservatively block switching; reconcile its
+ownership without killing it or treating it as provider evidence. Missing
+baseline proof refuses switching. Do not erase or broaden the retained baseline.
+If the registered writer already exited, the command sends no signals: it
+requires all retained writer/descendant identities and groups to be absent and
+the baseline ownership check to pass, then records `proof: already-stopped`.
+Launch repeats these checks. A clean natural exit therefore needs no live
+writer, but cannot hide an orphan or incomplete earlier stop.
 
 Create a decision file outside worker grants and an evidence file containing a
 nonempty, verbatim contiguous excerpt from the previous attempt's JSONL journal.

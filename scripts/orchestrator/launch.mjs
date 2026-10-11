@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
 import { effectivePins, attemptState } from "./command-state.mjs";
-import { configuredBackup, resolveBackupSwitch, validateBackupLaunch, recordAttempt, recordBackupSwitch } from "./backup-switch.mjs";
+import { configuredBackup, resolveBackupSwitch, validateBackupLaunch, recordAttempt, recordBackupSwitch, backupProcessBaseline } from "./backup-switch.mjs";
 
 function releasePin(request) {
   if (!request.pins) return false;
@@ -308,6 +308,7 @@ export async function spawnWorker(request, preparation = {}) {
         confirmationTimeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
         capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
           open_queue: [], decisions: [], writable_roots: roots } };
+      if (configuredBackup(baseModelConfig(request.worktree, request.base))) entry.processBaseline = backupProcessBaseline();
       if (backupSwitch) { entry.backupSwitch = backupSwitch; entry.modelReason = request.modelReason ?? null; }
       if (gates.length) entry.gates = gates;
       if (prepared?.credentialPaths) entry.githubCredentialPaths = prepared.credentialPaths;
