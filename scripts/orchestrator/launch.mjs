@@ -155,7 +155,7 @@ async function launchTransport(root, entry, prompt, resume, prepared) {
   registry[entry.issue].pid = child.pid; registry[entry.issue].last_activity_at = new Date().toISOString();
   if (transport.assertStopped) registry[entry.issue].processGroup = child.pid;
   const procStart = processStart(child.pid);
-  if (resume) registry[entry.issue].procStart = procStart;
+  registry[entry.issue].procStart = procStart;
   if (resume) registry[entry.issue].last_resume = { pid: child.pid, thread_id: entry.thread_id,
     registeredAt: registry[entry.issue].last_activity_at, gateAckDigest, logOffset };
   atomicJson(registryPath, registry);
