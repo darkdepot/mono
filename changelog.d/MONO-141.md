@@ -1,0 +1,1 @@
+- Explicitly allow the GitHub CLI `gh api` command family and direct Read access to the two pinned pack and skills roots in managed Claude Code launch and resume settings, keeping credential, write and web-tool restrictions unchanged. Real permission acceptance remains pending the orchestrator's post-release probe (MONO-141).

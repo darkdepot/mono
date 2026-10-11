@@ -108,7 +108,8 @@ function managedSettings(entry, root, roots, transport) {
   const protectedPaths = [entry.packRoot, entry.skillsRoot, entry.evidenceRoot,
     path.join(os.homedir(), ".claude"), path.join(os.homedir(), ".claude.json"),
     ...fs.readdirSync(root).filter(name => name !== "reports").map(name => path.join(root, name)), directory];
-  atomicJson(entry.settingsFile, transport.settings(roots, [...new Set(protectedPaths.map(resolvedLocation))], entry.githubCredentialPaths));
+  atomicJson(entry.settingsFile, transport.settings(roots, [...new Set(protectedPaths.map(resolvedLocation))], entry.githubCredentialPaths,
+    { packRoot: resolvedLocation(entry.packRoot), skillsRoot: resolvedLocation(entry.skillsRoot) }));
 }
 function temporaryDirectory(transport, entry, roots) {
   return transport.temporaryDirectory?.(roots) ?? roots.find(root => root === resolvedLocation(os.tmpdir())) ?? entry.worktree;

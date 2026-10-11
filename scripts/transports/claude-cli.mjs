@@ -125,10 +125,11 @@ function prepare(route, { cwd, timeoutSec, tempDir, roots, githubConfigDir, prev
   return { githubToken, githubConfigDir, credentialPaths, auth: { requested: "subscription", observed: auth.authMethod, positive: true } };
 }
 
-function settings(roots, protectedPaths, credentialPaths) {
+function settings(roots, protectedPaths, credentialPaths, { packRoot, skillsRoot } = {}) {
   if (!Array.isArray(credentialPaths) || !credentialPaths.length)
     throw new Error("GitHub credential source protections missing; prepare subscription launch again");
-  validateGrants([...roots, ...protectedPaths, ...credentialPaths]);
+  const readRoots = [...new Set([packRoot, skillsRoot].filter(Boolean))];
+  validateGrants([...roots, ...protectedPaths, ...credentialPaths, ...readRoots]);
   // Edit rules govern every built-in file writer, including Write and NotebookEdit.
   const absolute = value => "/" + value.replace(/[\\*?[\]]/g, "\\$&");
   const pattern = value => absolute(value) + "/**";
@@ -141,7 +142,8 @@ function settings(roots, protectedPaths, credentialPaths) {
     permissions: {
       defaultMode: "dontAsk",
       disableBypassPermissionsMode: "disable",
-      allow: roots.map(root => "Edit(" + pattern(root) + ")"),
+      allow: [...roots.map(root => "Edit(" + pattern(root) + ")"), "Bash(gh api:*)",
+        ...readRoots.map(root => "Read(" + pattern(root) + ")")],
       deny: ["WebFetch", "WebSearch", ...denied.map(root => "Edit(" + pattern(root) + ")"),
         ...credentialPaths.flatMap(value => ["Read(" + absolute(value) + ")", "Read(" + pattern(value) + ")",
           "Edit(" + absolute(value) + ")"])],
