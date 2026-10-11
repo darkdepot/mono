@@ -122,6 +122,13 @@ External review is mandatory: missing helper blocks preflight. Pass the explicit
 `references/autoreview-routing.md`; never inherit helper defaults. Optional
 `"orchestration"` selects transport/concurrency; model routes come from BASE config.
 
+Transport `claude-cli` additionally requires the Claude Code CLI installed on the
+machine and a completed native Anthropic subscription login, positively confirmed
+before each launch; provider keys and address overrides are refused and CLI versions
+are not checked. A missing tool or login refuses the launch with the required action.
+Codex remains required under every transport because review collection runs in its
+sandbox.
+
 ## Release Policy
 
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
