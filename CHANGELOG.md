@@ -6,6 +6,25 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-12
+
+<!-- fragment: MONO-142 sha256:cfbbc9b6faa59c4a254a78475e31000f8ff704a08ac341d42781a71683fab19c -->
+- Named Claude Code as this repository's backup worker while keeping Codex as the primary; switching requires the orchestrator's decision for a documented reason.
+
+<!-- fragment: MONO-143 sha256:d1f5d047cf89913a79d585b27aff93232c2821d4d84948b6a3c12901e266fd60 -->
+- Isolate the managed Claude CLI config test from the repository's backup worker setting, preserving the validator and explicit primary/backup pair checks.
+
+<!-- fragment: MONO-145 sha256:c9ad4bd37fcbd3f0902c1d0e40065ce70dd05b13e7d0788d0e6f873cbfb7b78b -->
+- Isolate launch fixtures from the repository's backup worker setting, preserving launch behavior and explicit backup route tests.
+
+<!-- fragment: MONO-146 sha256:919a50b1a937e45ad5946b1e37fc15348c9bc67fe248e582fc72d6c4677c7210 -->
+### Fixed
+
+- Backup worker switching now ignores unrelated host processes and other tasks' collectors while refusing live remnants identified by captured groups, ancestry, an inherited per-attempt marker or exact attempt paths. Retained snapshots and stop proofs remain mandatory; unavailable marker reads without another trace are counted in launch evidence under the accepted residual risk.
+
+<!-- fragment: MONO-147 sha256:060f5d7ddd74c327946a279d5e96848641800a50d612d042888c89a0b9d9d26c -->
+- Release 0.28.0 with the repository's named backup worker, isolated configuration and launch fixtures, and previous-attempt process ownership checks; assemble the wave's task records and align the pack, plugin and README release versions.
+
 ## [0.27.0] - 2026-10-11
 
 <!-- fragment: MONO-132 sha256:d98a01fa8cbf8de93478200f31db63efd66092c91cc446b5c43dea196cb04cf4 -->

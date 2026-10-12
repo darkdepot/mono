@@ -1,1 +1,0 @@
-- Named Claude Code as this repository's backup worker while keeping Codex as the primary; switching requires the orchestrator's decision for a documented reason.

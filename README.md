@@ -1,6 +1,6 @@
 # Mono Agent Workflow
 
-Current release: **0.27.0**. See the [release notes](CHANGELOG.md#0270---2026-10-11).
+Current release: **0.28.0**. See the [release notes](CHANGELOG.md#0280---2026-10-12).
 
 A reusable skill pack for owners and coding agents who deliver software through Linear and GitHub. Use it to turn a raw idea into approved work, run one delivery worker from code to a green pull request, and deploy with evidence. The owner decides the product; agents carry the work and show what they actually verified.
 
