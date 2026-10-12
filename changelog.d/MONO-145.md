@@ -1,0 +1,1 @@
+- Isolate launch fixtures from the repository's backup worker setting, preserving launch behavior and explicit backup route tests.
