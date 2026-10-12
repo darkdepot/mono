@@ -162,27 +162,38 @@ export function processTable() {
 // the same kernel argument buffer with its NUL boundaries still intact.
 const darwinMarkerProbe = String.raw`
 import ctypes, json, sys
-def verdict(raw, marker):
+def decode(raw):
     if len(raw) < 4:
-        return "unavailable"
+        return None
     argc = int.from_bytes(raw[:4], sys.byteorder, signed=True)
-    if argc < 1 or argc > len(raw):
-        return "unavailable"
+    if argc < 0 or argc > len(raw):
+        return None
     end = raw.find(b"\0", 4)
     if end < 0:
-        return "unavailable"
-    pos = end + 1
-    while pos < len(raw) and raw[pos] == 0:
-        pos += 1
+        return None
+    # Darwin's path area is pointer-aligned; modern macOS processes are 64-bit.
+    # Skipping all NULs would consume empty argv entries and expose environment.
+    pos = 4 + ((end + 1 - 4 + 7) // 8) * 8
+    if pos > len(raw) or any(raw[end + 1:pos]):
+        return None
+    argv = []
     for _ in range(argc):
         end = raw.find(b"\0", pos)
         if end < 0:
-            return "unavailable"
+            return None
+        argv.append(raw[pos:end])
         pos = end + 1
     entries = [entry for entry in raw[pos:].split(b"\0") if entry]
-    if not entries:
-        return "unavailable"
-    return "matched" if b"MONO_ATTEMPT=" + marker.encode() in entries else "absent"
+    return argv, entries
+request = {}
+def emit(raw):
+    parts = decode(raw) if raw is not None else None
+    if request.get("mode") == "argv":
+        print(json.dumps([arg.decode("utf8") for arg in parts[0]]) if parts is not None else "null")
+    elif parts is None or not parts[1]:
+        print("unavailable")
+    else:
+        print("matched" if b"MONO_ATTEMPT=" + request["marker"].encode() in parts[1] else "absent")
 try:
     request = json.load(sys.stdin)
     libc = ctypes.CDLL(None, use_errno=True)
@@ -190,18 +201,37 @@ try:
     max_size = ctypes.c_size_t(ctypes.sizeof(argmax))
     max_mib = (ctypes.c_int * 2)(1, 8)
     if libc.sysctl(max_mib, 2, ctypes.byref(argmax), ctypes.byref(max_size), None, 0) != 0 or argmax.value <= 4:
-        print("unavailable")
+        emit(None)
     else:
         mib = (ctypes.c_int * 3)(1, 49, request["pid"])
         size = ctypes.c_size_t(min(argmax.value, 1024 * 1024))
         raw = ctypes.create_string_buffer(size.value)
         if libc.sysctl(mib, 3, raw, ctypes.byref(size), None, 0) != 0:
-            print("unavailable")
+            emit(None)
         else:
-            print(verdict(raw.raw[:size.value], request["marker"]))
+            emit(raw.raw[:size.value])
 except Exception:
-    print("unavailable")
+    print("null" if request.get("mode") == "argv" else "unavailable")
 `;
+export function readProcessArguments(row) {
+  if (!Number.isSafeInteger(row?.pid) || row.pid <= 0 || !row.procStart) return null;
+  const sameStart = () => processStart(row.pid)?.replace(/\s+/g, " ") === row.procStart.replace(/\s+/g, " ");
+  try {
+    if (!sameStart()) return null;
+    let args;
+    if (process.platform === "linux") {
+      const raw = fs.readFileSync(`/proc/${row.pid}/cmdline`, "utf8");
+      args = raw.split("\0");
+      if (raw.endsWith("\0")) args.pop();
+    } else if (process.platform === "darwin") {
+      args = JSON.parse(execFileSync("python3", ["-I", "-S", "-c", darwinMarkerProbe], {
+        input: JSON.stringify({ pid: row.pid, mode: "argv" }), encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"]
+      }));
+    } else return null;
+    return Array.isArray(args) && args.every(arg => typeof arg === "string") && sameStart() ? args : null;
+  } catch { return null; }
+}
 // Environment bytes stay inside this reader, including on errors. The caller
 // receives only a verdict bound to the observed process incarnation.
 export function readProcessAttemptMarker(row, marker) {

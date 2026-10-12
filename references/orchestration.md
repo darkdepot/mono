@@ -774,6 +774,15 @@ the same recorded residual-risk count. A marker-like argument or text inside
 another environment value is not a match. Empty/omitted environment data or a
 flattened candidate that cannot be confirmed is unavailable, rather than evidence
 of absence.
+Exact path checks use a separate incarnation-checked argv reader (`/proc/<pid>/cmdline`
+on Linux and the private kernel probe on macOS). It returns arguments only, never
+environment. Darwin's aligned path area and argc delimit the argv region, including
+empty arguments. Flattened `ps` text cannot establish or reject exact path
+references: actual argv is checked first, including escaped paths in shell bodies.
+Only recognized interpreters' shell/eval options parse a
+code body, including bodies starting with an absolute executable; `grep -e` and
+ordinary arguments
+retain their literal quotes, apostrophes, spaces and punctuation.
 
 The launch record retains the pre-launch host PID/start-time baseline when a
 backup is configured. Missing baseline proof still refuses switching; never erase
@@ -794,8 +803,11 @@ than advancing them to the time of a later reconciliation. Recording a resume
 freezes legacy bounds before replacing the entry; each new writer retains its
 own registration bound. An unavailable original bound stays unavailable.
 The pre-launch baseline keeps its existing
-PID/formatted-start shape. Verified processes of the current control invocation are
-excluded; another task's collector under the same root is not a remnant. The
+PID/formatted-start shape. Quoted path arguments remain whole; spaces and shell
+punctuation inside a longer quoted path do not establish an exact reference.
+Verified processes of the current control invocation are excluded after checking
+the registered previous-attempt collector and its checks, even when they descend
+from that controller. Another task's collector under the same root is not a remnant. The
 previous attempt's collector, its active gate and their descendants are checked
 separately. Refusals retain the existing text and identify the blocking PIDs.
 
@@ -808,6 +820,10 @@ reconciliation, as part of the accepted residual risk: an uncaptured orphan
 outside captured groups, with a cleared environment and neutral command, may
 remain undetected. Unrelated products, sessions, utilities and other tasks'
 collectors do not block switching.
+If a process's actual argv is unreadable, it cannot establish the exact
+path signal. `processOwnership.unavailableArgumentsCount` records that uncertainty
+for reconciliation, without treating it as proof that the path is absent; the
+other ownership signals continue to block independently.
 If the registered writer already exited, the command sends no signals: it
 requires all retained writer/descendant identities and groups to be absent and
 the attempt-ownership check to pass, then records `proof: already-stopped`.

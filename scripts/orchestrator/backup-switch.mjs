@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, readJson, baseModelConfig, canonical, digest, processTable, readProcessAttemptMarker, resolveRole, resolvedLocation, syncDir, withLock, flags, isMain } from "../runtime.mjs";
+import { atomicJson, readJson, baseModelConfig, canonical, digest, processTable, readProcessAttemptMarker, readProcessArguments, resolveRole, resolvedLocation, syncDir, withLock, flags, isMain } from "../runtime.mjs";
 import { effectivePins } from "./command-state.mjs";
 
 const transports = ["codex-cli", "claude-cli"];
@@ -45,18 +45,239 @@ function capturedLive(row, captured, live) {
     (row.group === old.processGroup && !groupReused(old.processGroup, captured, live)));
 }
 
-function exactAttemptReference(command, references) {
-  // Shell quoting, assignment and directory descendants are references; a
-  // longer path prefix or an incidental substring is not.
-  return references.filter(Boolean).some(reference => {
-    let offset = 0, index;
-    while ((index = command.indexOf(reference, offset)) !== -1) {
-      const before = command[index - 1], after = command[index + reference.length];
-      if ((!before || /[\s'"=;|&()<>`]/.test(before)) && (!after || /[\s'"/;|&()<>`]/.test(after))) return true;
-      offset = index + reference.length;
+function substitutionEnd(source, start, backtick) {
+  let quote = null;
+  const contexts = [null];
+  for (let i = start; i < source.length; i++) {
+    const char = source[i];
+    if (char === "\\" && quote !== "'") { i++; continue; }
+    if (backtick) { if (char === "`") return i; continue; }
+    if (quote === "'") { if (char === quote) quote = null; continue; }
+    if (char === '"') { quote = quote === '"' ? null : '"'; continue; }
+    if (source.slice(i, i + 2) === "$(") { contexts.push(quote); quote = null; i++; continue; }
+    if (quote) continue;
+    if (char === "'") quote = char;
+    else if (char === "(") contexts.push(null);
+    else if (char === ")") { quote = contexts.pop(); if (!contexts.length) return i; }
+    else if (char === "#" && (i === start || /[\s;|&()<>]/.test(source[i - 1]))) {
+      while (i < source.length && source[i] !== "\n") i++;
     }
-    return false;
-  });
+  }
+  return null;
+}
+
+function commandWords(source, program) {
+  const words = [];
+  words.substitutions = [];
+  words.commands = [];
+  const shell = ["sh", "bash", "zsh", "dash", "ksh", "fish"].includes(program);
+  const literalArguments = program === "env-args";
+  let word = "", quote = null, started = false, commandStart = 0;
+  const finish = () => { if (started) words.push(word); word = ""; started = false; };
+  const finishCommand = () => {
+    finish();
+    if (words.length > commandStart) words.commands.push(words.slice(commandStart));
+    commandStart = words.length;
+  };
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (shell && quote !== "'" && (source.slice(i, i + 2) === "$(" || char === "`")) {
+      const start = i + (char === "`" ? 1 : 2), end = substitutionEnd(source, start, char === "`");
+      if (end !== null) {
+        words.substitutions.push(source.slice(start, end));
+        word += source.slice(i, end + 1); started = true; i = end; continue;
+      }
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+        if (!shell && !literalArguments) {
+          if (/^\s*(?:cd|pushd)\s/.test(word)) words.substitutions.push(word);
+          finish();
+        }
+      }
+      else if (char === "\\" && (!shell || quote === '"') && i + 1 < source.length) word += source[++i];
+      else word += char;
+    } else if (char === "#" && (!started || (!shell && !literalArguments))) {
+      while (i < source.length && source[i] !== "\n") i++;
+      if (shell) finishCommand(); else finish();
+    } else if (["node", "nodejs", "php"].includes(program) && source.slice(i, i + 2) === "//") {
+      while (i < source.length && source[i] !== "\n") i++;
+      finish();
+    } else if (["node", "nodejs", "php"].includes(program) && source.slice(i, i + 2) === "/*") {
+      const end = source.indexOf("*/", i + 2);
+      if (end < 0) break;
+      i = end + 1;
+    } else if (char === "'" || char === '"' || (!shell && char === "`")) {
+      if (!shell && !literalArguments) finish();
+      quote = char; started = true;
+    }
+    else if (char === "\\" && i + 1 < source.length) { word += source[++i]; started = true; }
+    else if (shell && /[;|&\n()]/.test(char)) finishCommand();
+    else if ((literalArguments ? /\s/ : /[\s;|&()<>`]/).test(char)) finish();
+    else { word += char; started = true; }
+  }
+  if (!quote) finish();
+  if (shell) finishCommand();
+  return words;
+}
+
+function evaluatesArgument(program, option) {
+  if (["sh", "bash", "zsh", "dash", "ksh", "fish"].includes(program))
+    return /^-[A-Za-z]*c[A-Za-z]*$/.test(option) || option === "--command";
+  if (["node", "nodejs"].includes(program)) return ["-e", "--eval", "-p", "--print", "-pe"].includes(option);
+  if (/^python(?:\d+(?:\.\d+)*)?$/.test(program)) return option === "-c";
+  if (program === "perl") return ["-e", "-E"].includes(option);
+  if (program === "ruby" || program === "lua") return option === "-e";
+  return program === "php" && option === "-r";
+}
+
+function executionCommand(words, shellBody) {
+  if (shellBody) {
+    let start = 0;
+    while (["if", "elif", "then", "else", "while", "until", "do", "!", "{"].includes(words[start]) ||
+      /^[A-Za-z_][\w]*=/.test(words[start] ?? "")) start++;
+    words = words.slice(start);
+  }
+  const wrappers = ["exec", "env", "command", "nohup", "nice", "time"];
+  while (wrappers.includes(path.basename(words[0] ?? ""))) {
+    const program = path.basename(words[0]), values = {
+      exec: ["-a"], env: ["-u", "--unset", "-C", "--chdir", "-P", "-a", "--argv0"],
+      nice: ["-n", "--adjustment"], time: ["-f", "--format", "-o", "--output"]
+    }[program] ?? [];
+    let start = 1;
+    while (start < words.length && words[start].startsWith("-") && words[start] !== "-") {
+      const option = words[start++];
+      if (option === "--") break;
+      const equals = option.indexOf("="), flag = equals < 0 ? option : option.slice(0, equals);
+      if (program === "env" && ["-S", "--split-string"].includes(flag)) {
+        const source = equals < 0 ? words[start++] : option.slice(equals + 1);
+        if (source === undefined) return [];
+        words = ["env", ...commandWords(source, "env-args"), ...words.slice(start)];
+        start = 1; continue;
+      }
+      if (values.includes(flag)) { if (equals < 0) start++; continue; }
+      if (program === "exec" && /^-[cl]*a/.test(option)) {
+        if (/^-[cl]*a$/.test(option)) start++;
+        continue;
+      }
+      if (program === "env" && /^-[uCPa].+/.test(option)) continue;
+      if (program === "nice" && /^-(?:n[+-]?|[+-]?)\d+$/.test(option)) continue;
+      const flags = {
+        exec: /^-[cl]+$/, env: /^(?:-i|--ignore-environment|-)$/, command: /^-p$/,
+        nohup: /^(?!)$/, nice: /^(?!)$/, time: /^-[pva]+$/
+      }[program];
+      if (!flags.test(option)) return [];
+    }
+    if (program === "env") while (/^[A-Za-z_][\w]*=/.test(words[start] ?? "")) start++;
+    words = words.slice(start);
+  }
+  return words;
+}
+
+function evaluatedBodies(words) {
+  const program = path.basename(words[0] ?? ""), bodies = [];
+  const valueOptions = {
+    node: ["-r", "--require", "--import", "--loader", "--experimental-loader", "--input-type", "--conditions", "-C"],
+    python: ["-W", "-X"], lua: ["-l"], php: ["-c", "-d", "-z", "-f"], shell: ["-o", "-O"]
+  };
+  const options = ["node", "nodejs"].includes(program) ? valueOptions.node :
+    /^python(?:\d+(?:\.\d+)*)?$/.test(program) ? valueOptions.python : valueOptions[program] ?? valueOptions.shell;
+  for (let i = 1; i < words.length; i++) {
+    const option = words[i];
+    if (option === "--" || !option.startsWith("-") || option === "-") break;
+    if (program === "ruby" && !option.startsWith("--")) {
+      for (let n = 1; n < option.length; n++) {
+        const flag = option[n];
+        if (flag === "e") {
+          const body = option.slice(n + 1) || words[++i];
+          if (body) bodies.push({ body, program });
+          break;
+        }
+        if ("IrEF".includes(flag)) { if (n + 1 === option.length) i++; break; }
+        if (flag === "i" || (flag === "W" && option[n + 1] === ":")) break;
+        if (flag === "W") { if (/\d/.test(option[n + 1] ?? "")) n++; }
+        else if (flag === "0") { while (/[0-7]/.test(option[n + 1] ?? "")) n++; }
+        else if (flag === "K") { if (n + 1 < option.length) n++; }
+        else if (!"acdlnpsSvwy".includes(flag)) break;
+      }
+      continue;
+    }
+    if ((program === "lua" && option.startsWith("-e") || program === "php" && option.startsWith("-r")) && option.length > 2) {
+      bodies.push({ body: option.slice(2), program }); continue;
+    }
+    if (program === "perl" && !option.startsWith("--")) {
+      for (let n = 1; n < option.length; n++) {
+        const flag = option[n];
+        if (flag === "e" || flag === "E") {
+          const body = option.slice(n + 1) || words[++i];
+          if (body) bodies.push({ body, program });
+          break;
+        }
+        if ("IFmMD".includes(flag)) { if (n + 1 === option.length) i++; break; }
+        if (flag === "C") {
+          if (n + 1 === option.length && /^(?:\d+|[IOEioeASDL]+)$/.test(words[i + 1] ?? "")) i++;
+          break;
+        }
+        if ("ixV".includes(flag) || (flag === "d" && option[n + 1] === ":")) break;
+        if (flag === "0" || flag === "l") {
+          while (/\d/.test(option[n + 1] ?? "")) n++;
+        } else if (!"acdfghnpSsTtuUvWwX".includes(flag)) break;
+      }
+      continue;
+    }
+    if (/^python(?:\d+(?:\.\d+)*)?$/.test(program) && !option.startsWith("--")) {
+      let consumesNext = false, command = false;
+      for (let n = 1; n < option.length; n++) {
+        const flag = option[n];
+        if (flag === "c" || flag === "m") {
+          if (flag === "c") {
+            const body = option.slice(n + 1) || words[++i];
+            if (body) bodies.push({ body, program });
+          }
+          command = true; break;
+        }
+        if (flag === "W" || flag === "X") { consumesNext = n + 1 === option.length; break; }
+        if (!"bBdEhiIOPqRsSuvVx?".includes(flag)) break;
+      }
+      if (command) break;
+      if (consumesNext) i++;
+      continue;
+    }
+    const equals = option.indexOf("="), flag = equals < 0 ? option : option.slice(0, equals);
+    if (evaluatesArgument(program, flag)) {
+      const body = equals < 0 ? words[++i] : option.slice(equals + 1);
+      if (body) bodies.push({ body, program });
+      // The shell/Python command ends interpreter options; remaining values
+      // become command arguments, even if they resemble another code option.
+      if (["sh", "bash", "zsh", "dash", "ksh", "fish"].includes(program) || /^python/.test(program)) break;
+    } else if (option === "-m" && /^python/.test(program)) break;
+    else if (equals < 0 && options.includes(option)) i++;
+  }
+  return bodies;
+}
+
+function exactAttemptReference(args, references) {
+  const refs = references.filter(Boolean), pending = [args], seen = new Set();
+  const matches = value => refs.some(reference => value === reference || value.startsWith(reference + "/"));
+  while (pending.length) {
+    const words = pending.pop();
+    for (const body of words.substitutions ?? []) if (!seen.has(body)) {
+      seen.add(body); pending.push(commandWords(body, "sh"));
+    }
+    for (const word of words) {
+      const assignment = /^(?:--?[\w.-]+|[A-Za-z_][\w.]*)=([\s\S]*)$/.exec(word);
+      if (matches(assignment ? assignment[1] : word)) return true;
+    }
+    for (const command of words.commands?.length ? words.commands : [words]) {
+      const args = executionCommand(command, Boolean(words.commands?.length));
+      if (args.some(word => matches(word))) return true;
+      for (const { body, program } of evaluatedBodies(args)) if (!seen.has(body)) {
+        seen.add(body); pending.push(commandWords(body, program));
+      }
+    }
+  }
+  return false;
 }
 
 function requireProcessOwnership(root, previous, live) {
@@ -90,11 +311,11 @@ function requireProcessOwnership(root, previous, live) {
   const collectors = [collector, collector?.gate, ...(collector?.descendants ?? [])].filter(Boolean)
     .map(row => ({ ...row, observedByEpoch: collectorObservedBy }));
   const sameIdentity = sameCapturedIdentity;
-  const reachesCapture = row => {
+  const reachesCapture = (row, targets = [...captured, ...collectors]) => {
     const seen = new Set();
     while (row && !seen.has(row.pid)) {
       seen.add(row.pid);
-      if ([...captured, ...collectors].some(old => sameIdentity(row, old))) return true;
+      if (targets.some(old => sameIdentity(row, old))) return true;
       row = live.find(parent => parent.pid === row.ppid);
     }
     return false;
@@ -106,17 +327,22 @@ function requireProcessOwnership(root, previous, live) {
     previous.entry.pins?.file, recordFile(root, previous.entry.issue, previous.entry.attempt),
     collectorFile, path.join(root, "reports", `${previous.entry.issue}-collector-a${previous.entry.attempt}-request.json`)];
   const remnants = [];
-  let unavailableMarkerCount = 0;
+  let unavailableMarkerCount = 0, unavailableArgumentsCount = 0;
   for (const row of live) {
-    if (controls.has(row.pid)) continue;
-    const otherSignal = capturedLive(row, captured, live) || capturedLive(row, collectors, live) ||
-      reachesCapture(row) || exactAttemptReference(row.command ?? "", references);
+    const collectorSignal = capturedLive(row, collectors, live) || reachesCapture(row, collectors);
+    if (controls.has(row.pid) && !collectorSignal) continue;
+    let otherSignal = collectorSignal || capturedLive(row, captured, live) || reachesCapture(row);
+    if (!otherSignal) {
+      const args = readProcessArguments(row);
+      if (args === null) unavailableArgumentsCount++;
+      else otherSignal = exactAttemptReference(args, references);
+    }
     const marker = previous.entry.attemptMarker ? readProcessAttemptMarker(row, previous.entry.attemptMarker) : "absent";
     if (otherSignal || marker === "matched") remnants.push(row.pid);
     else if (marker === "unavailable") unavailableMarkerCount++;
   }
   if (remnants.length) throw new Error(`unattributed processes after previous launch: ${remnants.join(", ")}; reconcile ownership before switching`);
-  return { unavailableMarkerCount };
+  return { unavailableMarkerCount, unavailableArgumentsCount };
 }
 
 export function recordBackupSwitch(root, record) {
