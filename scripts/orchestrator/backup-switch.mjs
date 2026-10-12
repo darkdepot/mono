@@ -33,9 +33,9 @@ function groupReused(group, captured, live) {
 
 function processObservations(previous) {
   const bound = (rows, time) => (rows ?? []).map(row => ({ ...row,
-    observedByEpoch: row.observedByEpoch ?? Date.parse(time) }));
+    observedByEpoch: Object.hasOwn(row, "observedByEpoch") ? row.observedByEpoch : Date.parse(time) }));
   return {
-    writers: bound(previous.processes, previous.entry.last_activity_at),
+    writers: bound(previous.processes, previous.entry?.last_activity_at),
     captured: bound(previous.retirement?.processes, previous.retirement?.capturedAt)
   };
 }
@@ -145,10 +145,16 @@ export function recordAttempt(root, entry) {
   const previous = fs.existsSync(file) ? readJson(file) : {};
   if (previous.entry?.attemptMarker && previous.entry.attemptMarker !== entry.attemptMarker)
     throw new Error("attempt marker changed; reconcile the protected attempt before launch or resume");
-  const processes = previous.processes ?? [];
-  if (entry.pid && !processes.some(row => row.pid === entry.pid && row.procStart === entry.procStart))
-    processes.push({ pid: entry.pid, procStart: entry.procStart, procStartEpoch: entry.procStartEpoch, processGroup: entry.processGroup ?? entry.pid });
-  atomicJson(file, { ...previous, entry, processes });
+  // Freeze legacy observations before replacing the entry with a later resume.
+  // An unavailable original bound stays unavailable instead of advancing.
+  const observations = processObservations(previous), processes = observations.writers;
+  if (entry.pid && !processes.some(row => row.pid === entry.pid &&
+    (Number.isFinite(row.procStartEpoch) || Number.isFinite(entry.procStartEpoch)
+      ? row.procStartEpoch === entry.procStartEpoch : row.procStart === entry.procStart)))
+    processes.push({ pid: entry.pid, procStart: entry.procStart, procStartEpoch: entry.procStartEpoch,
+      observedByEpoch: Date.parse(entry.last_activity_at), processGroup: entry.processGroup ?? entry.pid });
+  const retained = previous.retirement ? { retirement: { ...previous.retirement, processes: observations.captured } } : {};
+  atomicJson(file, { ...previous, ...retained, entry, processes });
 }
 
 // Freeze process creation before retaining the tree used by ordinary forced

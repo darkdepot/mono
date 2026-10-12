@@ -179,18 +179,26 @@ def verdict(raw, marker):
         if end < 0:
             return "unavailable"
         pos = end + 1
-    entries = raw[pos:].split(b"\0")
+    entries = [entry for entry in raw[pos:].split(b"\0") if entry]
+    if not entries:
+        return "unavailable"
     return "matched" if b"MONO_ATTEMPT=" + marker.encode() in entries else "absent"
 try:
     request = json.load(sys.stdin)
     libc = ctypes.CDLL(None, use_errno=True)
-    mib = (ctypes.c_int * 3)(1, 49, request["pid"])
-    size = ctypes.c_size_t(1024 * 1024)
-    raw = ctypes.create_string_buffer(size.value)
-    if libc.sysctl(mib, 3, raw, ctypes.byref(size), None, 0) != 0:
+    argmax = ctypes.c_int()
+    max_size = ctypes.c_size_t(ctypes.sizeof(argmax))
+    max_mib = (ctypes.c_int * 2)(1, 8)
+    if libc.sysctl(max_mib, 2, ctypes.byref(argmax), ctypes.byref(max_size), None, 0) != 0 or argmax.value <= 4:
         print("unavailable")
     else:
-        print(verdict(raw.raw[:size.value], request["marker"]))
+        mib = (ctypes.c_int * 3)(1, 49, request["pid"])
+        size = ctypes.c_size_t(min(argmax.value, 1024 * 1024))
+        raw = ctypes.create_string_buffer(size.value)
+        if libc.sysctl(mib, 3, raw, ctypes.byref(size), None, 0) != 0:
+            print("unavailable")
+        else:
+            print(verdict(raw.raw[:size.value], request["marker"]))
 except Exception:
     print("unavailable")
 `;
@@ -212,14 +220,14 @@ export function readProcessAttemptMarker(row, marker) {
       if (!match || Number(match[1]) !== process.getuid()) return "unavailable";
       matched = match[2].split(/\s+/).includes(`MONO_ATTEMPT=${marker}`);
       if (!matched && (!match[2].trim() || /^\(.*\)$/.test(match[2].trim()))) return "unavailable";
-      if (matched) {
-        const verdict = execFileSync("python3", ["-c", darwinMarkerProbe], {
-          input: JSON.stringify({ pid: row.pid, marker }), encoding: "utf8",
-          stdio: ["pipe", "pipe", "pipe"]
-        }).trim();
-        if (!["matched", "absent"].includes(verdict)) return "unavailable";
-        matched = verdict === "matched";
-      }
+      const verdict = execFileSync("python3", ["-I", "-S", "-c", darwinMarkerProbe], {
+        input: JSON.stringify({ pid: row.pid, marker }), encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"]
+      }).trim();
+      // A rejected flattened candidate or omitted environment does not prove
+      // absence: argv storage may have changed or kernel visibility may differ.
+      if (!["matched", "absent"].includes(verdict) || (matched && verdict === "absent")) return "unavailable";
+      matched = verdict === "matched";
     } else return "unavailable";
     if (!sameStart()) return "unavailable";
     return matched ? "matched" : "absent";

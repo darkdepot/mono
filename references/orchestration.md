@@ -767,10 +767,13 @@ An unavailable read is not evidence that the marker is absent. Successful macOS
 `ps` fallback output without readable arguments/environment is also unavailable.
 Because macOS `ps` flattens arguments and environment values, a candidate match
 is confirmed against NUL-delimited `KERN_PROCARGS2` entries by a private `python3`
-probe using the standard `ctypes` library. The probe returns only a verdict; a
+probe using the standard `ctypes` library. Its isolated `-I -S` invocation excludes
+workspace/user startup imports and respects the kernel's `ARG_MAX`. The probe returns only a verdict; a
 missing interpreter or denied kernel read returns `unavailable`, contributing to
 the same recorded residual-risk count. A marker-like argument or text inside
-another environment value is not a match.
+another environment value is not a match. Empty/omitted environment data or a
+flattened candidate that cannot be confirmed is unavailable, rather than evidence
+of absence.
 
 The launch record retains the pre-launch host PID/start-time baseline when a
 backup is configured. Missing baseline proof still refuses switching; never erase
@@ -787,7 +790,10 @@ that UTC observation can still be ruled out when the current UTC start is after
 the protected writer activity/capture time, or the collector lock's last write.
 Otherwise their PID/group signal remains and requires reconciliation. Stopped
 proofs preserve those original observation bounds as `observedByEpoch` rather
-than advancing them to the time of a later reconciliation. The pre-launch baseline keeps its existing
+than advancing them to the time of a later reconciliation. Recording a resume
+freezes legacy bounds before replacing the entry; each new writer retains its
+own registration bound. An unavailable original bound stays unavailable.
+The pre-launch baseline keeps its existing
 PID/formatted-start shape. Verified processes of the current control invocation are
 excluded; another task's collector under the same root is not a remnant. The
 previous attempt's collector, its active gate and their descendants are checked
