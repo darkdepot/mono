@@ -86,10 +86,32 @@ export function canonical(value) {
   return JSON.stringify(value);
 }
 export const digest = (value) => crypto.createHash("sha256").update(canonical(value)).digest("hex");
+function processCommandEnvironment() {
+  const env = { ...process.env, LC_CTYPE: process.platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8" };
+  delete env.LC_ALL;
+  return env;
+}
 export function processStart(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try { return execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim() || null; }
   catch { return null; }
+}
+function startEpoch(value) {
+  const match = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$/.exec(value.trim());
+  if (!match) return null;
+  const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].indexOf(match[1]);
+  return Date.UTC(Number(match[6]), month, Number(match[2]), Number(match[3]), Number(match[4]), Number(match[5]));
+}
+function utcProcessEnvironment() {
+  return { ...processCommandEnvironment(), LC_TIME: "C", TZ: "UTC" };
+}
+export function processStartEpoch(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  try {
+    return startEpoch(execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+      encoding: "utf8", env: utcProcessEnvironment(), stdio: ["ignore", "pipe", "pipe"]
+    }));
+  } catch { return null; }
 }
 export function durableDirectory(dir) {
   if (fs.existsSync(dir)) return;
@@ -112,12 +134,184 @@ export function atomicJson(file, value) {
 }
 // A dedicated process group preserves descendants after their parent exits.
 export function processTable() {
+  // Preserve the existing caller-locale start identity, including legacy
+  // records. Read commands separately so date parsing cannot consume argv.
   const output = execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  let commands;
+  if (process.platform === "darwin") {
+    const pids = output.trim().split("\n").filter(Boolean).map(line => Number(line.trim().split(/\s+/)[0]));
+    try {
+      const result = JSON.parse(execFileSync("python3", ["-I", "-S", "-c", darwinProcessProbe], {
+        input: JSON.stringify({ pids }), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"]
+      }));
+      if (!Array.isArray(result) || result.some(row => !Array.isArray(row) || row.length !== 2 ||
+        !pids.includes(row[0]) || typeof row[1] !== "string")) throw new Error("invalid process commands");
+      commands = new Map(result);
+    } catch { commands = new Map(); }
+  } else {
+    const commandOutput = execFileSync("ps", ["-ww", "-axo", "pid=,command="],
+      { encoding: "utf8", env: processCommandEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
+    commands = new Map(commandOutput.split("\n").filter(line => line.trim()).map(line => {
+      const match = /^\s*(\d+)(?:\s+(.*))?$/.exec(line);
+      if (!match) throw new Error("process commands unavailable");
+      return [Number(match[1]), match[2] ?? ""];
+    }));
+  }
+  const utcOutput = execFileSync("ps", ["-axo", "pid=,lstart="],
+    { encoding: "utf8", env: utcProcessEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
+  const epochs = new Map(utcOutput.split("\n").filter(line => line.trim()).map(line => {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (!match) throw new Error("process start identities unavailable");
+    return [Number(match[1]), startEpoch(match[2])];
+  }));
   return output.trim().split("\n").filter(Boolean).map(line => {
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
     if (!match) throw new Error("process tree unavailable");
-    return { pid: Number(match[1]), ppid: Number(match[2]), group: Number(match[3]), state: match[4], procStart: match[5].trim() };
+    return { pid: Number(match[1]), ppid: Number(match[2]), group: Number(match[3]), state: match[4], procStart: match[5].trim(),
+      procStartEpoch: epochs.get(Number(match[1])) ?? null, command: commands.get(Number(match[1])) ?? "" };
   });
+}
+// Darwin ps can consume environment entries when initial arguments are empty.
+// Decode the kernel buffer once, retaining argv/environment boundaries.
+const darwinProcessProbe = String.raw`
+import ctypes, json, sys
+def decode(raw):
+    if len(raw) < 4:
+        return None
+    argc = int.from_bytes(raw[:4], sys.byteorder, signed=True)
+    if argc < 0 or argc > len(raw):
+        return None
+    end = raw.find(b"\0", 4)
+    if end < 0:
+        return None
+    executable = raw[4:end]
+    # Darwin's path area is pointer-aligned; modern macOS processes are 64-bit.
+    # Skipping all NULs would consume empty argv entries and expose environment.
+    pos = 4 + ((end + 1 - 4 + 7) // 8) * 8
+    if pos > len(raw) or any(raw[end + 1:pos]):
+        return None
+    argv = []
+    for _ in range(argc):
+        end = raw.find(b"\0", pos)
+        if end < 0:
+            return None
+        argv.append(raw[pos:end])
+        pos = end + 1
+    entries = [entry for entry in raw[pos:].split(b"\0") if entry]
+    return executable, argv, entries
+def read(pid, libc, argmax):
+    mib = (ctypes.c_int * 3)(1, 49, pid)
+    size = ctypes.c_size_t(min(argmax, 1024 * 1024))
+    raw = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, raw, ctypes.byref(size), None, 0) != 0:
+        return None
+    return decode(raw.raw[:size.value])
+try:
+    request = json.load(sys.stdin)
+    libc = ctypes.CDLL(None, use_errno=True)
+    argmax = ctypes.c_int()
+    max_size = ctypes.c_size_t(ctypes.sizeof(argmax))
+    max_mib = (ctypes.c_int * 2)(1, 8)
+    if libc.sysctl(max_mib, 2, ctypes.byref(argmax), ctypes.byref(max_size), None, 0) != 0 or argmax.value <= 4:
+        raise ValueError("unavailable")
+    if "pids" in request:
+        commands = []
+        for pid in request["pids"]:
+            parts = read(pid, libc, argmax.value)
+            if parts is not None:
+                commands.append([pid, parts[0].decode("utf8", errors="replace")])
+        print(json.dumps(commands))
+    else:
+        parts = read(request["pid"], libc, argmax.value)
+        if parts is None:
+            print("unavailable")
+        elif "references" in request:
+            references = [path.encode("utf8") for path in request["references"]]
+            matched = False
+            for argument in parts[1]:
+                for reference in references:
+                    start = 0
+                    while True:
+                        index = argument.find(reference, start)
+                        if index < 0:
+                            break
+                        end = index + len(reference)
+                        if end == len(argument) or argument[end] == 47 or argument[end] not in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-":
+                            matched = True
+                            break
+                        start = end
+            print("matched" if matched else "absent")
+        else:
+            marker = b"MONO_ATTEMPT=" + request["marker"].encode()
+            if marker in parts[2]:
+                print("matched")
+            elif not parts[2] or marker in parts[1]:
+                print("unavailable")
+            else:
+                print("absent")
+except Exception:
+    print("[]" if "pids" in locals().get("request", {}) else "unavailable")
+`;
+// Environment bytes stay inside this reader, including on errors. The caller
+// receives only a verdict bound to the observed process incarnation.
+export function readProcessAttemptMarker(row, marker) {
+  if (!Number.isSafeInteger(row?.pid) || row.pid <= 0 || !row.procStart || !marker) return "unavailable";
+  const sameStart = () => processStart(row.pid)?.replace(/\s+/g, " ") === row.procStart.replace(/\s+/g, " ");
+  try {
+    if (!sameStart()) return "unavailable";
+    let matched;
+    if (process.platform === "linux") {
+      const variables = fs.readFileSync(`/proc/${row.pid}/environ`, "utf8").split("\0");
+      matched = variables.includes(`MONO_ATTEMPT=${marker}`);
+    } else if (process.platform === "darwin") {
+      const output = execFileSync("ps", ["eww", "-p", String(row.pid), "-o", "ruid=,command="],
+        { encoding: "utf8", env: processCommandEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
+      const match = /^\s*(\d+)\s+([^\n]*)\n?$/.exec(output);
+      if (!match || Number(match[1]) !== process.getuid()) return "unavailable";
+      matched = match[2].split(/\s+/).includes(`MONO_ATTEMPT=${marker}`);
+      if (!matched && (!match[2].trim() || /^\(.*\)$/.test(match[2].trim()))) return "unavailable";
+      const verdict = execFileSync("python3", ["-I", "-S", "-c", darwinProcessProbe], {
+        input: JSON.stringify({ pid: row.pid, marker }), encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"]
+      }).trim();
+      // A rejected flattened candidate or omitted environment does not prove
+      // absence: argv storage may have changed or kernel visibility may differ.
+      if (!["matched", "absent"].includes(verdict) || (matched && verdict === "absent")) return "unavailable";
+      matched = verdict === "matched";
+    } else return "unavailable";
+    if (!sameStart()) return "unavailable";
+    return matched ? "matched" : "absent";
+  } catch { return "unavailable"; }
+}
+export function matchesAttemptReference(command, references) {
+  return references.filter(Boolean).some(reference => {
+    let start = 0, index;
+    while ((index = command.indexOf(reference, start)) !== -1) {
+      const next = command[index + reference.length];
+      if (next === undefined || next === "/" || !/[A-Za-z0-9._-]/.test(next)) return true;
+      start = index + reference.length;
+    }
+    return false;
+  });
+}
+// Keep argument/environment bytes private. Callers receive a path-match verdict.
+export function readProcessAttemptReference(row, references) {
+  if (!Number.isSafeInteger(row?.pid) || row.pid <= 0 || !row.procStart) return "unavailable";
+  references = references.filter(value => typeof value === "string" && path.isAbsolute(value));
+  const sameStart = () => processStart(row.pid)?.replace(/\s+/g, " ") === row.procStart.replace(/\s+/g, " ");
+  try {
+    if (!sameStart()) return "unavailable";
+    let verdict;
+    if (process.platform === "linux") {
+      const command = fs.readFileSync(`/proc/${row.pid}/cmdline`, "utf8");
+      verdict = command.split("\0").some(argument => matchesAttemptReference(argument, references)) ? "matched" : "absent";
+    } else if (process.platform === "darwin") {
+      verdict = execFileSync("python3", ["-I", "-S", "-c", darwinProcessProbe], {
+        input: JSON.stringify({ pid: row.pid, references }), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"]
+      }).trim();
+    } else return "unavailable";
+    return ["matched", "absent", "unavailable"].includes(verdict) && sameStart() ? verdict : "unavailable";
+  } catch { return "unavailable"; }
 }
 export function lockTreeDead(holder) {
   const processes = processTable().filter(row => !row.state.startsWith("Z"));
@@ -148,7 +342,7 @@ export async function withLock(file, action, { reclaim = false } = {}) {
   if (fs.existsSync(file + ".reclaim")) throw new Error(`operation locked: ${file}.reclaim`);
   let processGroup = null;
   try { processGroup = processTable().find(row => row.pid === process.pid)?.group ?? null; } catch {}
-  const holder = { pid: process.pid, procStart: processStart(process.pid), processGroup, lockId: crypto.randomUUID(), createdAt: new Date().toISOString() };
+  const holder = { pid: process.pid, procStart: processStart(process.pid), procStartEpoch: processStartEpoch(process.pid), processGroup, lockId: crypto.randomUUID(), createdAt: new Date().toISOString() };
   let fd;
   try { fd = fs.openSync(file, "wx", 0o600); }
   catch (error) {

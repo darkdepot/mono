@@ -746,21 +746,92 @@ entry. The backup launch separately rechecks every identity and group for surviv
 Retain captures across resumes; each incarnation requires this stop procedure.
 Missing/incomplete quiescence or stop evidence refuses switching, including an
 attempt that exited before its tree was captured. Reconcile missing evidence
-instead of claiming an unobserved tree stopped. Captured descendants, orphan
-group members and surviving thread processes all refuse switching while live.
-The launch record also retains the pre-launch host PID/start-time baseline when
-a backup is configured. After retirement, any live process absent from that
-baseline must belong to the current control caller or another registered worker
-in a different worktree. Otherwise launch refuses with the unattributed PIDs:
-this also catches descendants already orphaned before the stop snapshot. A new
-unrelated host process can conservatively block switching; reconcile its
-ownership without killing it or treating it as provider evidence. Missing
-baseline proof refuses switching. Do not erase or broaden the retained baseline.
+instead of claiming an unobserved tree stopped. Captured descendants and orphan group members refuse switching while live.
+Before spawning either managed transport, launch creates an opaque UUID v4
+marker, `MONO_ATTEMPT`, stored as `entry.attemptMarker` in the protected
+`attempt-records/<ISSUE>-a<N>.json` (and protected registry entry). Each attempt
+gets a different value; every continuation retains the same value. Both
+transports pass the pinned marker after environment filtering, replacing any
+inherited caller marker. The Claude journal runner and worker's child commands
+inherit it; managed settings do not override it. The marker identifies process
+ownership only: it grants no permissions and changes no sandbox, network or gate.
+Legacy attempts without a marker continue to use the other three traces.
+
+The process table returns PID, parent PID, group, start time, state and command,
+without environment. Start identities retain the legacy caller-locale format;
+Linux reads full UTF-8 command text separately. On macOS, the command column
+contains only the executable label from the kernel's separate path area. Raw
+arguments stay inside a private probe: an incarnation-checked exact-path query
+returns only `matched`, `absent` or `unavailable`, preserving literal references
+without returning argument/environment bytes. The query scans the kernel-reported
+argument region conservatively; a rewritten title can make that region ambiguous.
+A separate incarnation-checked reader returns only
+`matched`, `absent` or `unavailable`: macOS reads `ps` environment output for
+processes owned by the current user; Linux reads `/proc/<pid>/environ`. Environment
+bytes never leave that reader or appear in records, snapshots, journals or errors.
+An unavailable read is not evidence that the marker is absent. Successful macOS
+`ps` fallback output without readable arguments/environment is also unavailable.
+Because macOS `ps` flattens arguments and environment values, a candidate match
+is confirmed against NUL-delimited `KERN_PROCARGS2` entries by a private `python3`
+probe using the standard `ctypes` library. Its isolated `-I -S` invocation excludes
+workspace/user startup imports and respects the kernel's `ARG_MAX`. Marker
+and exact-path requests return only verdicts; command-table requests return only
+PID and executable label. A missing interpreter or denied kernel read returns
+`unavailable` for those queries. A marker-like argument or text inside another
+environment value is not a confirmed environment match. Empty/omitted environment
+data or a flattened candidate that cannot be confirmed is unavailable, rather
+than evidence of absence. Rewritten titles may remove argument separators while
+the kernel retains argc. An intact marker beyond that reported region still
+matches; a marker consumed into it is unavailable rather than absent. No raw
+arguments or environment leave the private probe, regardless of variable names.
+The fourth trace scans the whole command text for a literal worktree or
+attempt-artifact path. An occurrence counts when the character after the path
+is the end of the text, `/`, or outside `[A-Za-z0-9._-]`. Longer sibling paths
+such as `<worktree>-2` do not match. Quotes, comments, interpreter options and
+script syntax are not interpreted. Literal references inside inline comments,
+patterns or script bodies may conservatively block switching; that false
+positive is accepted. Process exclusions depend on identity, never command text.
+
+The launch record retains the pre-launch host PID/start-time baseline when a
+backup is configured. Missing baseline proof still refuses switching; never erase
+or broaden it. The snapshot does not make unrelated new processes remnants.
+At both stopped-tree reconciliation and backup launch, a live process blocks if
+it belongs to a captured group, its parent chain reaches a captured incarnation,
+its marker matches, or its command contains an exact reference to this attempt's
+worktree or artifact. A shared product root, incidental substring or longer path
+prefix is insufficient. New writer, captured-process and collector identities
+also retain `procStartEpoch`, observed with `LC_TIME=C` and `TZ=UTC`. Different
+independently observed UTC starts prove PID reuse; a locale or time-zone change
+in the legacy formatted `procStart` string does not. Legacy identities without
+that UTC observation can still be ruled out when the current UTC start is after
+the protected writer activity/capture time, or the collector lock's last write.
+Otherwise their PID/group signal remains and requires reconciliation. Stopped
+proofs preserve those original observation bounds as `observedByEpoch` rather
+than advancing them to the time of a later reconciliation. Recording a resume
+freezes legacy bounds before replacing the entry; each new writer retains its
+own registration bound. An unavailable original bound stays unavailable.
+The pre-launch baseline keeps its existing
+PID/formatted-start shape.
+Verified processes of the current control invocation are excluded after checking
+the registered previous-attempt collector and its checks, even when they descend
+from that controller. Another task's collector under the same root is not a remnant. The
+previous attempt's collector, its active gate and their descendants are checked
+separately. Refusals retain the existing text and identify the blocking PIDs.
+
+For a marked attempt, an unavailable marker read with no other trace allows the
+process to be ignored. The backup launch records
+`processOwnership.unavailableMarkerCount` in its protected launch/attempt entry;
+stopped-tree reconciliation records the same count in its retirement proof.
+No environment is recorded. This count is available for orchestrator
+reconciliation, as part of the accepted residual risk: an uncaptured orphan
+outside captured groups, with a cleared environment and neutral command, may
+remain undetected. Unrelated products, sessions, utilities and other tasks'
+collectors do not block switching.
 If the registered writer already exited, the command sends no signals: it
 requires all retained writer/descendant identities and groups to be absent and
-the baseline ownership check to pass, then records `proof: already-stopped`.
-Launch repeats these checks. A clean natural exit therefore needs no live
-writer, but cannot hide an orphan or incomplete earlier stop.
+the attempt-ownership check to pass, then records `proof: already-stopped`.
+Launch repeats these checks. A clean natural exit still requires complete stop
+proof and absence of every surviving trace of the old attempt.
 
 Create a decision file outside worker grants and an evidence file containing a
 nonempty, verbatim contiguous excerpt from the previous attempt's JSONL journal.

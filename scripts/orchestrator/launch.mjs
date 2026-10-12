@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
-import { atomicJson, readJson, identity, requireCompatiblePack, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart, packLayout, runtimePackRoot } from "../runtime.mjs";
+import { atomicJson, readJson, identity, requireCompatiblePack, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart, processStartEpoch, packLayout, runtimePackRoot } from "../runtime.mjs";
 import { startGate } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
@@ -130,6 +130,7 @@ async function launchTransport(root, entry, prompt, resume, prepared) {
   }
   const transport = workerTransport(entry.transport) ?? workerTransport("codex-cli");
   managedSettings(entry, root, roots, transport);
+  recordAttempt(root, entry);
   const invocation = transport.invocation(entry, { reportsDir: path.join(root, "reports"), roots, prompt, resume });
   guard(root, resume);
   const logOffset = fs.statSync(entry.log).size;
@@ -143,7 +144,7 @@ async function launchTransport(root, entry, prompt, resume, prepared) {
     child = spawn(command, args, { cwd: entry.worktree, detached: true,
       stdio: piped ? ["pipe", "ignore", "ignore"] : ["ignore", stdout, stderr],
       env: { ...transport.environment(entry.modelRoutes?.roles[entry.model_policy.role], process.env,
-        { ...prepared, timeoutSec: entry.confirmationTimeoutSec, tempDir: temporaryDirectory(transport, entry, roots) }),
+        { ...prepared, attemptMarker: entry.attemptMarker, timeoutSec: entry.confirmationTimeoutSec, tempDir: temporaryDirectory(transport, entry, roots) }),
         ...(piped ? { MONO_WORKER_JOURNAL_IDENTITY: JSON.stringify({ issue: entry.issue, attempt: entry.attempt, thread_id: entry.thread_id }) } : {}) } });
     await new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
     if (piped) {
@@ -157,6 +158,7 @@ async function launchTransport(root, entry, prompt, resume, prepared) {
   if (transport.assertStopped) registry[entry.issue].processGroup = child.pid;
   const procStart = processStart(child.pid);
   registry[entry.issue].procStart = procStart;
+  registry[entry.issue].procStartEpoch = processStartEpoch(child.pid);
   if (resume) registry[entry.issue].last_resume = { pid: child.pid, thread_id: entry.thread_id,
     registeredAt: registry[entry.issue].last_activity_at, gateAckDigest, logOffset };
   atomicJson(registryPath, registry);
@@ -276,7 +278,8 @@ export async function spawnWorker(request, preparation = {}) {
       if (!Array.isArray(request.writable_roots) || request.writable_roots.some(p => !path.isAbsolute(p))) throw new Error("explicit writable roots required");
       fs.mkdirSync(path.join(request.root, "reports"), { recursive: true });
       const roots = effectiveGrants(request, request.root);
-      const backupSwitch = validateBackupLaunch(request, used, roots);
+      const backupProof = validateBackupLaunch(request, used, roots);
+      const backupSwitch = backupProof?.record ?? null;
       let prepared;
       try {
         prepared = transport.prepare?.(model_policy, { cwd: request.worktree,
@@ -300,17 +303,18 @@ export async function spawnWorker(request, preparation = {}) {
         auth_requested: prepared.auth.requested, auth_observed: prepared.auth.observed, auth_confirmed: prepared.auth.positive,
         delivery_differences: transport.deliveryDifferences });
       const entry = { issue: request.issue, transport: transport.transport, stage: "mono-deliver", attempt, ...launch,
+        attemptMarker: crypto.randomUUID(),
         thread_id: transport.startupEvent ? crypto.randomUUID() : null, pid: null, worktree: request.worktree, branch: request.branch, product_name: request.product_name,
         packVersion: request.packVersion, sourceCommit: request.sourceCommit, surfaceRevision: request.surfaceRevision,
         packRoot: request.packRoot,
-        skillsRoot: request.skillsRoot, spawned_at: new Date().toISOString(), last_activity_at: null, log,
+        skillsRoot: request.skillsRoot, spawned_at: new Date().toISOString(), last_activity_at: null, log, dispatchFile: request.dispatchFile,
         modelRoutes, model_policy, model_launch, model: model_policy.model, effort: model_policy.effort,
         writable_roots: roots, workerWritableRoots: roots, evidenceRoot: resolvedLocation(request.evidenceRoot), network_access: true, lifecycle_moves: request.lifecycle_moves,
         confirmationTimeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
         capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
           open_queue: [], decisions: [], writable_roots: roots } };
       if (configuredBackup(baseModelConfig(request.worktree, request.base))) entry.processBaseline = backupProcessBaseline();
-      if (backupSwitch) { entry.backupSwitch = backupSwitch; entry.modelReason = request.modelReason ?? null; }
+      if (backupSwitch) { entry.backupSwitch = backupSwitch; entry.processOwnership = backupProof.ownership; entry.modelReason = request.modelReason ?? null; }
       if (gates.length) entry.gates = gates;
       if (prepared?.credentialPaths) entry.githubCredentialPaths = prepared.credentialPaths;
       if (prepared?.githubConfigDir) entry.githubConfigDir = prepared.githubConfigDir;

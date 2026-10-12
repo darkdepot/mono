@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { atomicJson, readJson, baseModelConfig, canonical, digest, processTable, resolveRole, resolvedLocation, syncDir, withLock, flags, isMain } from "../runtime.mjs";
+import { atomicJson, readJson, baseModelConfig, canonical, digest, processTable, readProcessAttemptMarker, readProcessAttemptReference, matchesAttemptReference, resolveRole, resolvedLocation, syncDir, withLock, flags, isMain } from "../runtime.mjs";
 import { effectivePins } from "./command-state.mjs";
 
 const transports = ["codex-cli", "claude-cli"];
@@ -14,39 +13,97 @@ const switchFile = (root, issue) => path.join(root, "backup-switches", `${issue}
 export const backupProcessBaseline = () => processTable().filter(row => !row.state.startsWith("Z"))
   .map(({ pid, procStart }) => ({ pid, procStart }));
 
+function sameCapturedIdentity(row, old) {
+  if (row.pid !== old.pid) return false;
+  if (Number.isFinite(row.procStartEpoch) && Number.isFinite(old.procStartEpoch))
+    return row.procStartEpoch === old.procStartEpoch;
+  if (Number.isFinite(row.procStartEpoch) && Number.isFinite(old.observedByEpoch) && row.procStartEpoch > old.observedByEpoch)
+    return false;
+  // Without independent UTC observations, different locale/time-zone strings
+  // cannot prove PID reuse. Keep the retained identity until reconciliation.
+  return true;
+}
+
+function groupReused(group, captured, live) {
+  const oldLeader = captured.find(row => row.pid === group && row.processGroup === group);
+  const leader = live.find(row => row.pid === group);
+  if (!oldLeader || !leader) return false;
+  return !sameCapturedIdentity(leader, oldLeader);
+}
+
+function processObservations(previous) {
+  const bound = (rows, time) => (rows ?? []).map(row => ({ ...row,
+    observedByEpoch: Object.hasOwn(row, "observedByEpoch") ? row.observedByEpoch : Date.parse(time) }));
+  return {
+    writers: bound(previous.processes, previous.entry?.last_activity_at),
+    captured: bound(previous.retirement?.processes, previous.retirement?.capturedAt)
+  };
+}
+
+function capturedLive(row, captured, live) {
+  return captured.some(old => sameCapturedIdentity(row, old) ||
+    (row.group === old.processGroup && !groupReused(old.processGroup, captured, live)));
+}
+
 function requireProcessOwnership(root, previous, live) {
   const baseline = previous.entry.processBaseline;
   if (!Array.isArray(baseline) || !baseline.length || baseline.some(row => !Number.isSafeInteger(row.pid) || row.pid <= 0 || !row.procStart))
     throw new Error("previous launch process baseline missing; reconcile process ownership before switching");
-  const identity = row => `${row.pid}:${row.procStart}`;
-  const allowed = new Set(baseline.map(identity));
   const observer = live.find(row => row.pid === process.pid);
   if (!observer) throw new Error("process observer identity unavailable; reconcile before switching");
+  const controls = new Set();
   let ancestor = observer;
-  const ancestors = new Set();
-  while (ancestor && !ancestors.has(ancestor.pid)) {
-    ancestors.add(ancestor.pid); allowed.add(identity(ancestor));
+  while (ancestor && !controls.has(ancestor.pid)) {
+    controls.add(ancestor.pid);
     ancestor = live.find(row => row.pid === ancestor.ppid);
   }
-  const roots = [{ pid: process.pid, group: null }];
-  for (const entry of Object.values(readJson(path.join(root, "workers.json")))) {
-    if (entry.issue === previous.entry.issue || entry.stage !== "mono-deliver" || entry.worktree === previous.entry.worktree) continue;
-    const row = live.find(row => row.pid === entry.pid && row.procStart === entry.procStart && row.group === entry.pid);
-    if (row) roots.push({ pid: row.pid, group: row.group });
+  // Only descendants of this verified invocation, not siblings of its ancestors.
+  const callerTree = new Set([observer.pid]);
+  let added;
+  do {
+    added = false;
+    for (const row of live) if (!callerTree.has(row.pid) && callerTree.has(row.ppid)) {
+      callerTree.add(row.pid); controls.add(row.pid); added = true;
+    }
+  } while (added);
+  const observations = processObservations(previous);
+  const captured = [...observations.writers, ...observations.captured];
+  // A collector is not part of the writer tree. Check this attempt's holder,
+  // gate and their groups separately; never select another task by product root.
+  const collectorFile = path.join(root, "reports", `${previous.entry.issue}-collector-a${previous.entry.attempt}.lock`);
+  const collector = fs.existsSync(collectorFile) ? readJson(collectorFile) : null;
+  const collectorObservedBy = collector ? fs.statSync(collectorFile).mtimeMs : null;
+  const collectors = [collector, collector?.gate, ...(collector?.descendants ?? [])].filter(Boolean)
+    .map(row => ({ ...row, observedByEpoch: collectorObservedBy }));
+  const sameIdentity = sameCapturedIdentity;
+  const reachesCapture = (row, targets = [...captured, ...collectors]) => {
+    const seen = new Set();
+    while (row && !seen.has(row.pid)) {
+      seen.add(row.pid);
+      if (targets.some(old => sameIdentity(row, old))) return true;
+      row = live.find(parent => parent.pid === row.ppid);
+    }
+    return false;
+  };
+  const dispatchDirectory = previous.entry.pins?.file ? path.dirname(previous.entry.pins.file) : null;
+  const references = [previous.entry.worktree, previous.entry.log, previous.entry.log?.replace(/\.jsonl$/, ".stderr.log"),
+    previous.entry.settingsFile, previous.entry.dispatchFile,
+    dispatchDirectory && path.basename(dispatchDirectory) === `${previous.entry.issue}-a${previous.entry.attempt}` ? dispatchDirectory : null,
+    previous.entry.pins?.file, recordFile(root, previous.entry.issue, previous.entry.attempt),
+    collectorFile, path.join(root, "reports", `${previous.entry.issue}-collector-a${previous.entry.attempt}-request.json`)];
+  const remnants = [];
+  let unavailableMarkerCount = 0;
+  for (const row of live) {
+    const collectorSignal = capturedLive(row, collectors, live) || reachesCapture(row, collectors);
+    if (controls.has(row.pid) && !collectorSignal) continue;
+    let otherSignal = collectorSignal || capturedLive(row, captured, live) || reachesCapture(row);
+    if (!otherSignal) otherSignal = matchesAttemptReference(row.command ?? "", references) || readProcessAttemptReference(row, references) === "matched";
+    const marker = previous.entry.attemptMarker ? readProcessAttemptMarker(row, previous.entry.attemptMarker) : "absent";
+    if (otherSignal || marker === "matched") remnants.push(row.pid);
+    else if (marker === "unavailable") unavailableMarkerCount++;
   }
-  for (const tree of roots) {
-    const selected = new Set([tree.pid]);
-    let added;
-    do {
-      added = false;
-      for (const row of live) if (!selected.has(row.pid) && (selected.has(row.ppid) || (tree.group !== null && row.group === tree.group))) {
-        selected.add(row.pid); added = true;
-      }
-    } while (added);
-    for (const row of live) if (selected.has(row.pid)) allowed.add(identity(row));
-  }
-  const unknown = live.filter(row => !allowed.has(identity(row)));
-  if (unknown.length) throw new Error(`unattributed processes after previous launch: ${unknown.map(row => row.pid).join(", ")}; reconcile ownership before switching`);
+  if (remnants.length) throw new Error(`unattributed processes after previous launch: ${remnants.join(", ")}; reconcile ownership before switching`);
+  return { unavailableMarkerCount };
 }
 
 export function recordBackupSwitch(root, record) {
@@ -71,12 +128,20 @@ export function configuredBackup(config) {
 // groups also retain visibility of commands orphaned by a stopped wrapper.
 export function recordAttempt(root, entry) {
   const file = recordFile(root, entry.issue, entry.attempt);
-  if (!fs.existsSync(file) && (!entry.modelRoutes?.base || !configuredBackup(baseModelConfig(entry.worktree, entry.modelRoutes.base)))) return;
+  if (!entry.attemptMarker && !fs.existsSync(file) && (!entry.modelRoutes?.base || !configuredBackup(baseModelConfig(entry.worktree, entry.modelRoutes.base)))) return;
   const previous = fs.existsSync(file) ? readJson(file) : {};
-  const processes = previous.processes ?? [];
-  if (entry.pid && !processes.some(row => row.pid === entry.pid && row.procStart === entry.procStart))
-    processes.push({ pid: entry.pid, procStart: entry.procStart, processGroup: entry.processGroup ?? entry.pid });
-  atomicJson(file, { ...previous, entry, processes });
+  if (previous.entry?.attemptMarker && previous.entry.attemptMarker !== entry.attemptMarker)
+    throw new Error("attempt marker changed; reconcile the protected attempt before launch or resume");
+  // Freeze legacy observations before replacing the entry with a later resume.
+  // An unavailable original bound stays unavailable instead of advancing.
+  const observations = processObservations(previous), processes = observations.writers;
+  if (entry.pid && !processes.some(row => row.pid === entry.pid &&
+    (Number.isFinite(row.procStartEpoch) || Number.isFinite(entry.procStartEpoch)
+      ? row.procStartEpoch === entry.procStartEpoch : row.procStart === entry.procStart)))
+    processes.push({ pid: entry.pid, procStart: entry.procStart, procStartEpoch: entry.procStartEpoch,
+      observedByEpoch: Date.parse(entry.last_activity_at), processGroup: entry.processGroup ?? entry.pid });
+  const retained = previous.retirement ? { retirement: { ...previous.retirement, processes: observations.captured } } : {};
+  atomicJson(file, { ...previous, ...retained, entry, processes });
 }
 
 // Freeze process creation before retaining the tree used by ordinary forced
@@ -93,17 +158,20 @@ export async function stopBackupProcessTree(root, issue) {
     let live = table();
     const retained = previous.retirement ?? { capturedWriters: [], processes: [] };
     if (!live.some(row => row.pid === entry.pid && row.procStart === entry.procStart && row.group === entry.pid)) {
-      const processes = [...previous.processes, ...retained.processes];
-      if (processes.some(old => live.some(row => (row.pid === old.pid && row.procStart === old.procStart) || row.group === old.processGroup)))
-        throw new Error("previous worker or descendants still live; reconcile before recording a stopped tree");
+      const observations = processObservations(previous);
+      const processes = [...observations.writers, ...observations.captured];
+      const survivors = live.filter(row => capturedLive(row, processes, live));
+      if (survivors.length)
+        throw new Error(`previous worker or descendants still live; reconcile before recording a stopped tree: ${survivors.map(row => row.pid).join(", ")}`);
       for (const group of new Set(processes.map(row => row.processGroup))) {
+        if (groupReused(group, processes, live)) continue;
         try { process.kill(-group, 0); }
         catch (error) { if (error.code === "ESRCH") continue; throw error; }
-        throw new Error("previous worker process group still live; reconcile before recording a stopped tree");
+        throw new Error(`previous worker process group still live; reconcile before recording a stopped tree: ${group}`);
       }
-      requireProcessOwnership(root, previous, live);
+      const processOwnership = requireProcessOwnership(root, previous, live);
       const retirement = { capturedAt: new Date().toISOString(), capturedWriters: previous.processes, processes,
-        quiesced: true, stopRequested: true, pending: false, proof: "already-stopped" };
+        quiesced: true, stopRequested: true, pending: false, proof: "already-stopped", processOwnership };
       atomicJson(file, { ...previous, retirement });
       return { file, retirement };
     }
@@ -156,7 +224,7 @@ export async function stopBackupProcessTree(root, issue) {
       if (!added && [...seen.values()].every(row => row.state.startsWith("T"))) break;
       if (Date.now() >= deadline) throw new Error("process tree quiescence unverified; reconcile the retained stopped processes");
     }
-    const captured = [...seen.values()].map(row => ({ pid: row.pid, ppid: row.ppid, procStart: row.procStart, processGroup: row.group }));
+    const captured = [...seen.values()].map(row => ({ pid: row.pid, ppid: row.ppid, procStart: row.procStart, procStartEpoch: row.procStartEpoch, processGroup: row.group }));
     const processes = [...retained.processes];
     for (const row of captured) if (!processes.some(old => old.pid === row.pid && old.procStart === row.procStart)) processes.push(row);
     const retirement = { capturedAt: new Date().toISOString(), capturedWriters: previous.processes, processes, quiesced: true, stopRequested: false, pending: true };
@@ -245,34 +313,33 @@ export function validateBackupLaunch(request, used, roots) {
   if (!Array.isArray(processes) || !processes.length || processes.some(row => !Number.isSafeInteger(row.pid) || row.pid <= 0 ||
       !row.procStart || row.processGroup !== row.pid)) throw new Error("previous worker process identity incomplete; reconcile before switching");
   const live = processTable().filter(row => !row.state.startsWith("Z"));
-  if (processes.some(old => live.some(row => (row.pid === old.pid && row.procStart === old.procStart) || row.group === old.processGroup)))
-    throw new Error("previous worker or descendants still live; backup switch refused");
+  const observations = processObservations(previous);
+  const survivors = live.filter(row => capturedLive(row, observations.writers, live));
+  if (survivors.length)
+    throw new Error(`previous worker or descendants still live; backup switch refused: ${survivors.map(row => row.pid).join(", ")}`);
   const capture = previous.retirement;
   if (!capture?.capturedAt || capture.quiesced !== true || capture.stopRequested !== true || capture.pending !== false || !Array.isArray(capture.processes) || !Array.isArray(capture.capturedWriters) ||
       processes.some(writer => !capture.capturedWriters.some(old => old.pid === writer.pid && old.procStart === writer.procStart)) ||
       capture.processes.some(row => !Number.isSafeInteger(row.pid) || row.pid <= 0 || !row.procStart || !Number.isSafeInteger(row.processGroup) || row.processGroup <= 0) ||
       processes.some(writer => !capture.processes.some(old => old.pid === writer.pid && old.procStart === writer.procStart)))
     throw new Error("previous process tree capture missing or incomplete; reconcile before switching");
-  if (capture.processes.some(old => live.some(row => row.pid === old.pid && row.procStart === old.procStart)))
-    throw new Error("previous worker or descendants still live; backup switch refused");
-  for (const group of new Set([...processes, ...capture.processes].map(row => row.processGroup))) {
+  const descendants = live.filter(row => capturedLive(row, observations.captured, live));
+  if (descendants.length)
+    throw new Error(`previous worker or descendants still live; backup switch refused: ${descendants.map(row => row.pid).join(", ")}`);
+  for (const group of new Set([...observations.writers, ...observations.captured].map(row => row.processGroup))) {
+    if (groupReused(group, [...observations.writers, ...observations.captured], live)) continue;
     try { process.kill(-group, 0); }
     catch (error) { if (error.code === "ESRCH") continue; throw error; }
-    throw new Error("previous worker process group still live; backup switch refused");
+    throw new Error(`previous worker process group still live; backup switch refused: ${group}`);
   }
-  requireProcessOwnership(request.root, previous, live);
-  if (previous.entry.thread_id) {
-    const commands = execFileSync("ps", ["-axo", "command="], { encoding: "utf8" });
-    if (commands.split("\n").some(command => command.split(/\s+/).includes(previous.entry.thread_id)))
-      throw new Error("previous worker thread still live; backup switch refused");
-  }
+  const ownership = requireProcessOwnership(request.root, previous, live);
   if (roots.some(root => !previous.entry.workerWritableRoots?.some(old => root === resolvedLocation(old) || root.startsWith(resolvedLocation(old) + path.sep))))
     throw new Error("backup switch must not expand previous worker write grants");
   if (!request.pins || canonical(effectivePins({ ...request, pinsVersion: 0 }).backupSwitch) !== canonical(record))
     throw new Error("backup switch record missing or changed in new attempt pins");
   if (roots.some(root => record.evidenceFile === root || record.evidenceFile.startsWith(root + path.sep)))
     throw new Error("backup switch evidence must remain outside worker write grants");
-  return record;
+  return { record, ownership };
 }
 
 if (isMain(import.meta.url)) {

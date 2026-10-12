@@ -6,13 +6,15 @@ import { readJsonLines } from "./journal.mjs";
 
 const unavailable = reason => `unavailable: ${reason}`;
 
-function environment(route, source = process.env) {
+function environment(route, source = process.env, { attemptMarker } = {}) {
   const env = { ...source };
+  delete env.MONO_ATTEMPT;
   if (route?.credentialEnv || route?.provider.endpoint) {
     for (const key of ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY']) delete env[key];
     const credential = route.credentialEnv ? { [route.credentialEnv]: source[route.credentialEnv] } : {};
     Object.assign(env, reviewEnvironment(route, credential));
   }
+  if (attemptMarker) env.MONO_ATTEMPT = attemptMarker;
   return env;
 }
 
