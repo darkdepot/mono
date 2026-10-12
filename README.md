@@ -233,6 +233,9 @@ refuses switching, and the snapshot must never be erased or broadened. A live
 process blocks switching only when it retains a trace of that attempt: a captured
 process group, a parent chain reaching a captured process, a matching
 `MONO_ATTEMPT` marker, or an exact reference to that attempt's worktree or artifact.
+Path references are literal matches with a trailing path boundary; longer sibling
+paths do not match. References inside inline comments or script text may block
+conservatively, without interpreting that language.
 Verified control-caller processes are excluded. Unrelated host processes and
 collectors for other tasks, even under the same product root, do not block; the
 previous attempt's collector and active checks are checked separately.

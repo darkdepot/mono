@@ -36,27 +36,24 @@ test("backup switch named launch contracts", async t => {
     const markersFile = path.join(bin, "marker-outputs");
     const markerOutputs = {};
     write(markersFile, markerOutputs);
-    const argumentsFile = path.join(bin, "argument-outputs"), argumentOutputs = {};
-    write(argumentsFile, argumentOutputs);
     const python = execFileSync("which", ["python3"], { encoding: "utf8" }).trim();
     tool("python3", `const fs=require('fs'),request=JSON.parse(fs.readFileSync(0,'utf8')),
-      output=JSON.parse(fs.readFileSync(${JSON.stringify(markersFile)},'utf8'))[request.pid];
-      const args=JSON.parse(fs.readFileSync(${JSON.stringify(argumentsFile)},'utf8'));
-      if(request.mode==='argv'&&args[request.pid]===undefined){process.stdout.write('null');process.exit(0);}
-      const argv=args[request.pid]??(typeof output==='object'?(output.argv??['node']):['node']),env=output?.nativeEnvOmitted?'':typeof output==='string'?output:(output?.environ??'');
-      const argc=Buffer.alloc(4);argc.writeInt32LE(argv.length);
-      const executable=Buffer.from('/usr/bin/node\\0'),padding=Buffer.alloc((8-executable.length%8)%8);
-      const raw=Buffer.concat([argc,executable,padding,Buffer.from(argv.join('\\0')+'\\0'+env+'\\0')]);
-      const prefix="import ctypes\\nclass FixtureLibc:\\n def sysctl(self,mib,n,buf,size,new,length):\\n  if n==2:\\n   buf._obj.value=262144\\n   size._obj.value=4\\n   return 0\\n  if size._obj.value-4>262144: return -1\\n  raw=bytes.fromhex("+JSON.stringify(raw.toString('hex'))+")\\n  ctypes.memmove(buf,raw,len(raw))\\n  size._obj.value=len(raw)\\n  return "+(output?.nativeUnavailable?'-1':'0')+"\\nctypes.CDLL=lambda *a,**k: FixtureLibc()\\n";
+      outputs=JSON.parse(fs.readFileSync(${JSON.stringify(markersFile)},'utf8')),
+      tree=fs.readFileSync(${JSON.stringify(path.join(bin, "tree"))},'utf8').trim().split('\\n').filter(Boolean);
+      const rawByPid={},unavailable=[];
+      for(const pid of request.pids??[request.pid]) {
+        const output=outputs[pid],line=tree.find(row=>row.trim().startsWith(pid+' ')),command=line?.trim().split(/\\s+/).slice(5)??['fixture-control'];
+        const argv=typeof output==='object'?(output.argv??command):command,env=output?.nativeEnvOmitted?'':typeof output==='string'?output:(output?.environ??'');
+        const argc=Buffer.alloc(4);argc.writeInt32LE(argv.length);
+        const executable=Buffer.from('/usr/bin/node\\0'),padding=Buffer.alloc((8-executable.length%8)%8);
+        rawByPid[pid]=Buffer.concat([argc,executable,padding,Buffer.from(argv.join('\\0')+'\\0'+env+'\\0')]).toString('hex');
+        if(output?.nativeUnavailable)unavailable.push(pid);
+      }
+      const prefix="import ctypes\\nraw_by_pid="+JSON.stringify(rawByPid)+"\\nunavailable="+JSON.stringify(unavailable)+"\\nclass FixtureLibc:\\n def sysctl(self,mib,n,buf,size,new,length):\\n  if n==2:\\n   buf._obj.value=262144\\n   size._obj.value=4\\n   return 0\\n  if size._obj.value-4>262144 or mib[2] in unavailable: return -1\\n  raw=bytes.fromhex(raw_by_pid[str(mib[2])])\\n  ctypes.memmove(buf,raw,len(raw))\\n  size._obj.value=len(raw)\\n  return 0\\nctypes.CDLL=lambda *a,**k: FixtureLibc()\\n";
       const result=require('child_process').spawnSync(${JSON.stringify(python)},[...process.argv.filter(a=>a==='-I'||a==='-S'),'-c',prefix+process.argv[process.argv.indexOf('-c')+1]],{input:JSON.stringify(request),encoding:'utf8'});
       process.stdout.write(result.stdout||'');process.exit(result.status??1);`);
     // No /proc or ps of the host is inspected, on either supported platform.
     fs.readFileSync = function(file, ...args) {
-      const command = /^\/proc\/(\d+)\/cmdline$/.exec(String(file));
-      if (command) {
-        if (!argumentOutputs[command[1]]) throw new Error("unavailable argv fixture");
-        return argumentOutputs[command[1]].join("\0") + "\0";
-      }
       const match = /^\/proc\/(\d+)\/environ$/.exec(String(file));
       if (!match) return realRead.call(fs, file, ...args);
       const output = markerOutputs[match[1]];
@@ -212,7 +209,7 @@ test("backup switch named launch contracts", async t => {
       } finally { write(f.record, before); write(path.join(f.root, "workers.json"), {}); write(path.join(bin, "tree"), ""); }
     });
     const ownershipCase = async (rows, { marker = f.old.attemptMarker, outputs = {}, capture = [], collector = null,
-      baseline = f.old.processBaseline, legacyStarts = false, observedAt = null, resumeEntry = null, args = {}, extraEntry = {} } = {}, refused = true) => {
+      baseline = f.old.processBaseline, legacyStarts = false, observedAt = null, resumeEntry = null, extraEntry = {} } = {}, refused = true) => {
       const before = fs.readFileSync(f.record, "utf8"), old = structuredClone(f.old);
       const entry = { ...old, processBaseline: baseline, ...extraEntry };
       if (marker) entry.attemptMarker = marker; else delete entry.attemptMarker;
@@ -230,7 +227,6 @@ test("backup switch named launch contracts", async t => {
       }
       const collectorFile = path.join(f.root, "reports", "MONO-999-collector-a1.lock");
       Object.assign(markerOutputs, outputs); write(markersFile, markerOutputs);
-      Object.assign(argumentOutputs, args); write(argumentsFile, argumentOutputs);
       write(f.record, record); write(path.join(bin, "tree"), rows);
       write(path.join(f.root, "workers.json"), { [f.request.issue]: entry });
       if (resumeEntry) {
@@ -253,7 +249,6 @@ test("backup switch named launch contracts", async t => {
       } finally {
         write(f.record, before); write(path.join(f.root, "workers.json"), {}); write(path.join(bin, "tree"), "");
         for (const pid of Object.keys(outputs)) delete markerOutputs[pid]; write(markersFile, markerOutputs);
-        for (const pid of Object.keys(args)) delete argumentOutputs[pid]; write(argumentsFile, argumentOutputs);
         if (collector) fs.unlinkSync(collectorFile);
       }
     };
@@ -267,7 +262,7 @@ test("backup switch named launch contracts", async t => {
         }));
       for (const reference of [f.old.worktree + "/scripts/check.mjs", f.old.log, f.old.pins.file])
         await t.test(`backup-${label}-exact-reference-${path.basename(reference)}-blocks-both-entries-marker-unavailable`, () =>
-          ownershipCase(`900013 1 900013 S fixture-path node ${reference}\n`, { marker, args: { 900013: ["node", reference] } }));
+          ownershipCase(`900013 1 900013 S fixture-path node ${reference}\n`, { marker }));
     }
     await t.test("backup-missing-and-invalid-baseline-refuse-both-entries", async () => {
       await ownershipCase("", { baseline: null });
@@ -287,7 +282,7 @@ test("backup switch named launch contracts", async t => {
     await t.test("backup-exact-attempt-path-shell-separators-and-redirections-block-both-entries", async () => {
       for (const command of [`cd ${f.old.worktree};sleep 600`, `(cd ${f.old.worktree})`,
         `cat<${f.old.log}>/dev/null`, `cd ${f.old.worktree}&&sleep 600`])
-        await ownershipCase(`900041 1 900041 S fixture-shell sh -c ${command}\n`, { marker: null, args: { 900041: ["sh", "-c", command] } });
+        await ownershipCase(`900041 1 900041 S fixture-shell sh -c ${command}\n`, { marker: null });
     });
     await t.test("backup-legacy-incomparable-start-format-retains-captured-group-on-both-entries", () =>
       ownershipCase("900044 1 900044 S fixture-old node\n", { marker: null,
@@ -342,6 +337,17 @@ test("backup switch named launch contracts", async t => {
         assert.equal(fs.existsSync(loaded), false);
       } finally { process.chdir(cwd); delete markerOutputs[900050]; write(markersFile, markerOutputs); }
     });
+    await t.test("backup-mac-command-table-empty-argv-does-not-expose-environment", async () => {
+      const secret = "EMPTY_ARGV_ENV_SECRET_DECOY_146", pid = 900085;
+      markerOutputs[pid] = { argv: ["", "", "node"], text: `node SECRET=${secret}`, environ: `SECRET=${secret}\0` };
+      write(markersFile, markerOutputs);
+      write(path.join(bin, "tree"), `${pid} 1 ${pid} S fixture-empty node SECRET=${secret}\n`);
+      try {
+        const table = macRuntime.processTable();
+        assert.equal(table.find(row => row.pid === pid).command.trim(), "node");
+        assert.ok(!JSON.stringify(table).includes(secret));
+      } finally { delete markerOutputs[pid]; write(markersFile, markerOutputs); write(path.join(bin, "tree"), ""); }
+    });
     await t.test("backup-matched-attempt-marker-blocks-both-entries", () => ownershipCase(
       "900014 1 900014 S fixture-marker node\n", { outputs: { 900014: `SECRET_DECOY=must-not-escape\0MONO_ATTEMPT=${f.old.attemptMarker}\0` } }));
     await t.test("backup-unavailable-marker-without-other-signals-allows-and-records-count", async () => {
@@ -388,175 +394,26 @@ test("backup switch named launch contracts", async t => {
         descendants: [{ pid: 900054, procStart: fixtureStart, processGroup: 900054 }] };
       return ownershipCase(`900052 ${process.pid} 900052 S fixture-collector node\n900053 900052 900053 S fixture-gate node\n900054 900053 900054 S fixture-check node\n`, { collector });
     });
-    await t.test("backup-quoted-longer-path-with-space-or-shell-punctuation-is-not-an-exact-reference", async () => {
-      for (const suffix of [" other", ";other", "|other", "(other)"]) {
-        const body = `cd "${f.old.worktree}${suffix}"; sleep 600`;
-        await ownershipCase(`900055 1 900055 S fixture-prefix sh -c ${body}\n`, { args: { 900055: ["sh", "-c", body] } }, false);
-        await ownershipCase(`900055 1 900055 S fixture-prefix node ${f.old.worktree}${suffix}\n`, { args: { 900055: ["node", f.old.worktree + suffix] } }, false);
+    await t.test("backup-path-bounded-literal-reference-blocks-both-entries", async () => {
+      for (const suffix of ["", "/check.js", "'", '"', ";", ")", " ", ",", "$", "\\", "é"]) {
+        await ownershipCase(`900055 1 900055 S fixture-literal node prefix${f.old.worktree}${suffix}\n`, { marker: null });
       }
     });
-    await t.test("backup-flat-ps-longer-single-argument-does-not-block-both-entries", () =>
-      ownershipCase(`900056 1 900056 S fixture-prefix node ${f.old.worktree} other/check\n`, {
-        args: { 900056: ["node", f.old.worktree + " other/check"] }
-      }, false));
-    await t.test("backup-unmatched-apostrophe-in-another-argv-does-not-hide-exact-path", () => {
-      const file = f.old.worktree + "/check.js";
-      return ownershipCase(`900057 1 900057 S fixture-path node ${file} don't\n`, {
-        marker: null, args: { 900057: ["node", file, "don't"] }
-      });
-    });
-    await t.test("backup-shell-body-with-absolute-executable-keeps-exact-reference-on-both-entries", () => {
-      const body = `/usr/bin/node ${f.old.worktree}/check.js`;
-      return ownershipCase(`900060 1 900060 S fixture-shell sh -c ${body}\n`, {
-        marker: null, args: { 900060: ["sh", "-c", body] }
-      });
-    });
-    await t.test("backup-grep-pattern-is-a-literal-argument-not-eval-code-on-both-entries", () => {
-      const pattern = `prefix ${f.old.worktree} suffix`;
-      return ownershipCase(`900061 1 900061 S fixture-grep grep -e ${pattern} /unrelated/log\n`, {
-        args: { 900061: ["grep", "-e", pattern, "/unrelated/log"] }
-      }, false);
-    });
-    await t.test("backup-escaped-shell-artifact-path-is-decoded-before-candidate-rejection", () => {
-      const artifact = path.join(f.root, "artifact with space.sh"), body = "cat " + artifact.replace(/ /g, "\\ ");
-      return ownershipCase(`900062 1 900062 S fixture-shell sh -c ${body}\n`, {
-        marker: null, extraEntry: { dispatchFile: artifact }, args: { 900062: ["sh", "-c", body] }
-      });
-    });
-    await t.test("backup-shell-comment-apostrophe-does-not-erase-prior-exact-path", () => {
-      const body = `cd ${f.old.worktree}; while :; do sleep 600; done # don't stop`;
-      return ownershipCase(`900063 1 900063 S fixture-shell sh -c ${body}\n`, {
-        marker: null, args: { 900063: ["sh", "-c", body] }
-      });
-    });
-    await t.test("backup-quoted-shell-command-substitution-preserves-exact-path-on-both-entries", async () => {
-      for (const expression of [`$(printf %s ${f.old.worktree})`, "`printf %s " + f.old.worktree + "`"]) {
-        const body = `cd "${expression}"; while :; do sleep 600; done`;
-        await ownershipCase(`900064 1 900064 S fixture-shell sh -c ${body}\n`, {
-          marker: null, args: { 900064: ["sh", "-c", body] }
-        });
+    await t.test("backup-longer-sibling-path-and-product-root-do-not-match-both-entries", async () => {
+      for (const reference of [f.root, ...["-2", "_other", ".bak", "2", "A"].map(suffix => f.old.worktree + suffix)]) {
+        await ownershipCase(`900056 1 900056 S fixture-prefix node '${reference}'\n`, {}, false);
       }
     });
-    await t.test("backup-later-shell-command-eval-keeps-exact-reference-on-both-entries", () => {
-      const body = `sleep 600; node -e 'process.chdir("${f.old.worktree}")'`;
-      return ownershipCase(`900065 1 900065 S fixture-shell sh -c ${body}\n`, {
-        marker: null, args: { 900065: ["sh", "-c", body] }
-      });
-    });
-    await t.test("backup-interpreter-script-arguments-are-literal-on-both-entries", async () => {
-      for (const args of [["node", "/unrelated/search.js", "--", "-e", `prefix ${f.old.worktree} suffix`],
-        ["node", "--", "-e", `prefix ${f.old.worktree} suffix`],
-        ["python3", "/unrelated/search.py", "-c", `prefix ${f.old.worktree} suffix`]]) {
-        await ownershipCase(`900066 1 900066 S fixture-script ${args.join(" ")}\n`, {
-          args: { 900066: args }
-        }, false);
-      }
-    });
-    await t.test("backup-attached-python-command-keeps-exact-reference-on-both-entries", async () => {
-      const body = `import os,time;os.chdir('${f.old.worktree}');time.sleep(600)`;
-      for (const option of ["-c", "-Iuc"]) {
-        const args = ["python3", option + body];
-        await ownershipCase(`900067 1 900067 S fixture-python ${args.join(" ")}\n`, {
-          marker: null, args: { 900067: args }
-        });
-      }
-    });
-    await t.test("backup-javascript-path-literal-before-comma-blocks-both-entries", () => {
-      const body = `const root="${f.old.worktree}", fs=require("fs"); process.chdir(root); setInterval(()=>fs.appendFileSync("output","x"),1000)`;
-      return ownershipCase(`900068 1 900068 S fixture-javascript node -e ${body}\n`, {
-        marker: null, args: { 900068: ["node", "-e", body] }
-      });
-    });
-    await t.test("backup-shell-control-keywords-do-not-hide-interpreter-path-on-both-entries", async () => {
-      const code = `require("fs").appendFileSync("${f.old.worktree}/out","x")`;
-      for (const body of [`while :; do node -e '${code}'; sleep 5; done`,
-        `if true; then node -e '${code}'; fi`, `sleep 5 # prior command\nnode -e '${code}'`]) {
-        await ownershipCase(`900069 1 900069 S fixture-shell sh -c ${body.replaceAll("\n", " ")}\n`, {
-          marker: null, args: { 900069: ["sh", "-c", body] }
-        });
-      }
-    });
-    await t.test("backup-combined-perl-evaluation-switches-block-both-entries", async () => {
-      const body = `chdir "${f.old.worktree}"; sleep 600`;
-      for (const option of ["-we", "-wE", "-ne", "-we" + body]) {
-        const args = ["perl", option, ...(option.endsWith(body) ? [] : [body])];
-        await ownershipCase(`900070 1 900070 S fixture-perl ${args.join(" ")}\n`, {
-          marker: null, args: { 900070: args }
-        });
-      }
-    });
-    await t.test("backup-execution-wrappers-do-not-hide-eval-path-on-both-entries", async () => {
-      const code = `require("fs").appendFileSync("${f.old.worktree}/out","x")`;
-      for (const wrapper of ["exec", "exec -a neutral", "env", "env -i OTHER=fixture", "env -u OTHER", "command", "nohup", "nice -n 5"]) {
-        const body = `sleep 600; ${wrapper} node -e '${code}'`;
-        await ownershipCase(`900071 1 900071 S fixture-wrapper sh -c ${body}\n`, {
-          marker: null, args: { 900071: ["sh", "-c", body] }
-        });
-      }
-      for (const args of [["env", "node", "/unrelated/script.js", "--", "-e", `prefix ${f.old.worktree} suffix`],
-        ["env", "grep", "-e", `prefix ${f.old.worktree} suffix`]]) {
-        await ownershipCase(`900072 1 900072 S fixture-literal ${args.join(" ")}\n`, {
-          args: { 900072: args }
-        }, false);
-      }
-    });
-    await t.test("backup-env-split-string-keeps-exact-argv-and-prefix-boundaries", async () => {
-      const code = `require("fs").appendFileSync("${f.old.worktree}/out","x")`;
-      for (const source of [`node -e '${code}'`, `node ${f.old.worktree}/check.js`]) {
-        const args = ["env", "-S", source];
-        await ownershipCase(`900073 1 900073 S fixture-env ${args.join(" ")}\n`, {
-          marker: null, args: { 900073: args }
-        });
-      }
-      for (const suffix of [";other", " other"]) {
-        const args = ["env", "-S", `node "${f.old.worktree}${suffix}"`];
-        await ownershipCase(`900073 1 900073 S fixture-env ${args.join(" ")}\n`, {
-          args: { 900073: args }
-        }, false);
-      }
-    });
-    await t.test("backup-node-print-eval-alias-blocks-both-entries", () => {
-      const body = `setInterval(()=>require("fs").appendFileSync("${f.old.worktree}/out","x"),1000)`;
-      const args = ["node", "-pe", body];
-      return ownershipCase(`900074 1 900074 S fixture-node ${args.join(" ")}\n`, {
-        marker: null, args: { 900074: args }
-      });
-    });
-    await t.test("backup-attached-and-combined-ruby-eval-blocks-both-entries", async () => {
-      const body = `Dir.chdir("${f.old.worktree}"); loop { File.write("out", "x"); sleep 1 }`;
-      for (const option of ["-e", "-we", "-W2e"]) {
-        const args = ["ruby", option + body];
-        await ownershipCase(`900075 1 900075 S fixture-ruby ${args.join(" ")}\n`, {
-          marker: null, args: { 900075: args }
-        });
-      }
-    });
-    await t.test("backup-attached-lua-and-php-eval-blocks-both-entries", async () => {
-      for (const [program, option, body] of [["lua", "-e", `os.execute('cd ${f.old.worktree}; sleep 600')`],
-        ["php", "-r", `chdir('${f.old.worktree}'); sleep(600);`]]) {
-        const args = [program, option + body];
-        await ownershipCase(`900076 1 900076 S fixture-eval ${args.join(" ")}\n`, {
-          marker: null, args: { 900076: args }
-        });
-      }
-    });
-    await t.test("backup-unavailable-argv-reference-is-counted-without-false-ownership", async () => {
-      const result = await ownershipCase(`900058 1 900058 S fixture-path node ${f.old.worktree} other\n`, {}, false);
-      assert.equal(result.stopped.retirement.processOwnership.unavailableArgumentsCount, 1);
-      assert.equal(result.proof.ownership.unavailableArgumentsCount, 1);
-    });
-    await t.test("backup-process-argv-preserves-empty-arguments-and-never-returns-environment", () => {
-      const row = { pid: 900059, procStart: fixtureStart }, secret = "ARGV_READER_SECRET_DECOY_146";
-      const args = ["", "node", f.old.worktree + " other", "don't"];
-      argumentOutputs[row.pid] = args; write(argumentsFile, argumentOutputs);
-      markerOutputs[row.pid] = `SECRET=${secret}\0MONO_ATTEMPT=${f.old.attemptMarker}\0`; write(markersFile, markerOutputs);
-      try {
-        const actual = macRuntime.readProcessArguments(row);
-        assert.deepEqual(actual, args); assert.ok(!JSON.stringify(actual).includes(secret));
-        assert.deepEqual(routes.readProcessArguments(row), args);
-      } finally {
-        delete argumentOutputs[row.pid]; delete markerOutputs[row.pid];
-        write(argumentsFile, argumentOutputs); write(markersFile, markerOutputs);
+    await t.test("backup-node-value-option-before-inline-literal-blocks-both-entries", () =>
+      ownershipCase(`900077 1 900077 S fixture-node node --v8-pool-size 4 -e 'process.chdir("${f.old.worktree}")'\n`, { marker: null }));
+    await t.test("backup-node-private-field-before-inline-literal-blocks-both-entries", () =>
+      ownershipCase(`900078 1 900078 S fixture-node node -e 'class C { #x = 1; } process.chdir("${f.old.worktree}")'\n`, { marker: null }));
+    await t.test("backup-quoted-path-literal-blocks-both-entries", () =>
+      ownershipCase(`900079 1 900079 S fixture-quoted node '${f.old.worktree}'\n`, { marker: null }));
+    await t.test("backup-inline-comments-patterns-and-template-literals-conservatively-block-both-entries", async () => {
+      for (const command of [`node -e '// ${f.old.worktree}'`, `grep -e 'prefix ${f.old.worktree} suffix' /unrelated/log`,
+        'node -e \'process.chdir(`' + f.old.worktree + '${"-other"}`)\'']) {
+        await ownershipCase(`900080 1 900080 S fixture-literal ${command}\n`, { marker: null });
       }
     });
     await t.test("backup-marker-reader-tristate-and-secret-decoy-never-escapes", async () => {

@@ -759,7 +759,11 @@ Legacy attempts without a marker continue to use the other three traces.
 
 The process table returns PID, parent PID, group, start time, state and command,
 without environment. Start identities retain the legacy caller-locale format;
-full UTF-8 commands are read separately. A separate incarnation-checked reader returns only
+full UTF-8 commands are read separately. On macOS, the private kernel probe
+joins only argc-delimited arguments for the command column, preserving empty
+arguments so environment entries cannot be mistaken for commands. Unreadable
+commands remain empty; group, ancestry and marker checks remain independent.
+A separate incarnation-checked reader returns only
 `matched`, `absent` or `unavailable`: macOS reads `ps` environment output for
 processes owned by the current user; Linux reads `/proc/<pid>/environ`. Environment
 bytes never leave that reader or appear in records, snapshots, journals or errors.
@@ -768,21 +772,21 @@ An unavailable read is not evidence that the marker is absent. Successful macOS
 Because macOS `ps` flattens arguments and environment values, a candidate match
 is confirmed against NUL-delimited `KERN_PROCARGS2` entries by a private `python3`
 probe using the standard `ctypes` library. Its isolated `-I -S` invocation excludes
-workspace/user startup imports and respects the kernel's `ARG_MAX`. The probe returns only a verdict; a
-missing interpreter or denied kernel read returns `unavailable`, contributing to
+workspace/user startup imports and respects the kernel's `ARG_MAX`. Marker
+requests return only a verdict; command-table requests return only PID and
+command text from the argv region. A missing interpreter or denied kernel
+marker read returns `unavailable`, contributing to
 the same recorded residual-risk count. A marker-like argument or text inside
 another environment value is not a match. Empty/omitted environment data or a
 flattened candidate that cannot be confirmed is unavailable, rather than evidence
 of absence.
-Exact path checks use a separate incarnation-checked argv reader (`/proc/<pid>/cmdline`
-on Linux and the private kernel probe on macOS). It returns arguments only, never
-environment. Darwin's aligned path area and argc delimit the argv region, including
-empty arguments. Flattened `ps` text cannot establish or reject exact path
-references: actual argv is checked first, including escaped paths in shell bodies.
-Only recognized interpreters' shell/eval options parse a
-code body, including bodies starting with an absolute executable; `grep -e` and
-ordinary arguments
-retain their literal quotes, apostrophes, spaces and punctuation.
+The fourth trace scans the whole command text for a literal worktree or
+attempt-artifact path. An occurrence counts when the character after the path
+is the end of the text, `/`, or outside `[A-Za-z0-9._-]`. Longer sibling paths
+such as `<worktree>-2` do not match. Quotes, comments, interpreter options and
+script syntax are not interpreted. Literal references inside inline comments,
+patterns or script bodies may conservatively block switching; that false
+positive is accepted. Process exclusions depend on identity, never command text.
 
 The launch record retains the pre-launch host PID/start-time baseline when a
 backup is configured. Missing baseline proof still refuses switching; never erase
@@ -803,8 +807,7 @@ than advancing them to the time of a later reconciliation. Recording a resume
 freezes legacy bounds before replacing the entry; each new writer retains its
 own registration bound. An unavailable original bound stays unavailable.
 The pre-launch baseline keeps its existing
-PID/formatted-start shape. Quoted path arguments remain whole; spaces and shell
-punctuation inside a longer quoted path do not establish an exact reference.
+PID/formatted-start shape.
 Verified processes of the current control invocation are excluded after checking
 the registered previous-attempt collector and its checks, even when they descend
 from that controller. Another task's collector under the same root is not a remnant. The
@@ -820,10 +823,6 @@ reconciliation, as part of the accepted residual risk: an uncaptured orphan
 outside captured groups, with a cleared environment and neutral command, may
 remain undetected. Unrelated products, sessions, utilities and other tasks'
 collectors do not block switching.
-If a process's actual argv is unreadable, it cannot establish the exact
-path signal. `processOwnership.unavailableArgumentsCount` records that uncertainty
-for reconciliation, without treating it as proof that the path is absent; the
-other ownership signals continue to block independently.
 If the registered writer already exited, the command sends no signals: it
 requires all retained writer/descendant identities and groups to be absent and
 the attempt-ownership check to pass, then records `proof: already-stopped`.

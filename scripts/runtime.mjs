@@ -137,13 +137,26 @@ export function processTable() {
   // Preserve the existing caller-locale start identity, including legacy
   // records. Read commands separately so date parsing cannot consume argv.
   const output = execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  const commandOutput = execFileSync("ps", ["-ww", "-axo", "pid=,command="],
-    { encoding: "utf8", env: processCommandEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
-  const commands = new Map(commandOutput.split("\n").filter(line => line.trim()).map(line => {
-    const match = /^\s*(\d+)(?:\s+(.*))?$/.exec(line);
-    if (!match) throw new Error("process commands unavailable");
-    return [Number(match[1]), match[2] ?? ""];
-  }));
+  let commands;
+  if (process.platform === "darwin") {
+    const pids = output.trim().split("\n").filter(Boolean).map(line => Number(line.trim().split(/\s+/)[0]));
+    try {
+      const result = JSON.parse(execFileSync("python3", ["-I", "-S", "-c", darwinProcessProbe], {
+        input: JSON.stringify({ pids }), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"]
+      }));
+      if (!Array.isArray(result) || result.some(row => !Array.isArray(row) || row.length !== 2 ||
+        !pids.includes(row[0]) || typeof row[1] !== "string")) throw new Error("invalid process commands");
+      commands = new Map(result);
+    } catch { commands = new Map(); }
+  } else {
+    const commandOutput = execFileSync("ps", ["-ww", "-axo", "pid=,command="],
+      { encoding: "utf8", env: processCommandEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
+    commands = new Map(commandOutput.split("\n").filter(line => line.trim()).map(line => {
+      const match = /^\s*(\d+)(?:\s+(.*))?$/.exec(line);
+      if (!match) throw new Error("process commands unavailable");
+      return [Number(match[1]), match[2] ?? ""];
+    }));
+  }
   const utcOutput = execFileSync("ps", ["-axo", "pid=,lstart="],
     { encoding: "utf8", env: utcProcessEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
   const epochs = new Map(utcOutput.split("\n").filter(line => line.trim()).map(line => {
@@ -158,9 +171,9 @@ export function processTable() {
       procStartEpoch: epochs.get(Number(match[1])) ?? null, command: commands.get(Number(match[1])) ?? "" };
   });
 }
-// ps flattens argv and environment on Darwin. Confirm candidate matches against
-// the same kernel argument buffer with its NUL boundaries still intact.
-const darwinMarkerProbe = String.raw`
+// Darwin ps can consume environment entries when initial arguments are empty.
+// Decode the kernel buffer once, retaining argv/environment boundaries.
+const darwinProcessProbe = String.raw`
 import ctypes, json, sys
 def decode(raw):
     if len(raw) < 4:
@@ -185,15 +198,13 @@ def decode(raw):
         pos = end + 1
     entries = [entry for entry in raw[pos:].split(b"\0") if entry]
     return argv, entries
-request = {}
-def emit(raw):
-    parts = decode(raw) if raw is not None else None
-    if request.get("mode") == "argv":
-        print(json.dumps([arg.decode("utf8") for arg in parts[0]]) if parts is not None else "null")
-    elif parts is None or not parts[1]:
-        print("unavailable")
-    else:
-        print("matched" if b"MONO_ATTEMPT=" + request["marker"].encode() in parts[1] else "absent")
+def read(pid, libc, argmax):
+    mib = (ctypes.c_int * 3)(1, 49, pid)
+    size = ctypes.c_size_t(min(argmax, 1024 * 1024))
+    raw = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, raw, ctypes.byref(size), None, 0) != 0:
+        return None
+    return decode(raw.raw[:size.value])
 try:
     request = json.load(sys.stdin)
     libc = ctypes.CDLL(None, use_errno=True)
@@ -201,37 +212,23 @@ try:
     max_size = ctypes.c_size_t(ctypes.sizeof(argmax))
     max_mib = (ctypes.c_int * 2)(1, 8)
     if libc.sysctl(max_mib, 2, ctypes.byref(argmax), ctypes.byref(max_size), None, 0) != 0 or argmax.value <= 4:
-        emit(None)
+        raise ValueError("unavailable")
+    if "pids" in request:
+        commands = []
+        for pid in request["pids"]:
+            parts = read(pid, libc, argmax.value)
+            if parts is not None:
+                commands.append([pid, " ".join(arg.decode("utf8", errors="replace") for arg in parts[0])])
+        print(json.dumps(commands))
     else:
-        mib = (ctypes.c_int * 3)(1, 49, request["pid"])
-        size = ctypes.c_size_t(min(argmax.value, 1024 * 1024))
-        raw = ctypes.create_string_buffer(size.value)
-        if libc.sysctl(mib, 3, raw, ctypes.byref(size), None, 0) != 0:
-            emit(None)
+        parts = read(request["pid"], libc, argmax.value)
+        if parts is None or not parts[1]:
+            print("unavailable")
         else:
-            emit(raw.raw[:size.value])
+            print("matched" if b"MONO_ATTEMPT=" + request["marker"].encode() in parts[1] else "absent")
 except Exception:
-    print("null" if request.get("mode") == "argv" else "unavailable")
+    print("[]" if "pids" in locals().get("request", {}) else "unavailable")
 `;
-export function readProcessArguments(row) {
-  if (!Number.isSafeInteger(row?.pid) || row.pid <= 0 || !row.procStart) return null;
-  const sameStart = () => processStart(row.pid)?.replace(/\s+/g, " ") === row.procStart.replace(/\s+/g, " ");
-  try {
-    if (!sameStart()) return null;
-    let args;
-    if (process.platform === "linux") {
-      const raw = fs.readFileSync(`/proc/${row.pid}/cmdline`, "utf8");
-      args = raw.split("\0");
-      if (raw.endsWith("\0")) args.pop();
-    } else if (process.platform === "darwin") {
-      args = JSON.parse(execFileSync("python3", ["-I", "-S", "-c", darwinMarkerProbe], {
-        input: JSON.stringify({ pid: row.pid, mode: "argv" }), encoding: "utf8",
-        stdio: ["pipe", "pipe", "pipe"]
-      }));
-    } else return null;
-    return Array.isArray(args) && args.every(arg => typeof arg === "string") && sameStart() ? args : null;
-  } catch { return null; }
-}
 // Environment bytes stay inside this reader, including on errors. The caller
 // receives only a verdict bound to the observed process incarnation.
 export function readProcessAttemptMarker(row, marker) {
@@ -250,7 +247,7 @@ export function readProcessAttemptMarker(row, marker) {
       if (!match || Number(match[1]) !== process.getuid()) return "unavailable";
       matched = match[2].split(/\s+/).includes(`MONO_ATTEMPT=${marker}`);
       if (!matched && (!match[2].trim() || /^\(.*\)$/.test(match[2].trim()))) return "unavailable";
-      const verdict = execFileSync("python3", ["-I", "-S", "-c", darwinMarkerProbe], {
+      const verdict = execFileSync("python3", ["-I", "-S", "-c", darwinProcessProbe], {
         input: JSON.stringify({ pid: row.pid, marker }), encoding: "utf8",
         stdio: ["pipe", "pipe", "pipe"]
       }).trim();
