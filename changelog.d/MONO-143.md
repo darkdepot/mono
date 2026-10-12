@@ -1,0 +1,1 @@
+- Isolate the managed Claude CLI config test from the repository's backup worker setting, preserving the validator and explicit primary/backup pair checks.
