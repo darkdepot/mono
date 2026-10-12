@@ -32,6 +32,7 @@ test('managed worker config accepts Claude CLI and rejects unknown transports', 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-claude-config-'));
   try {
     const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    delete config.orchestration.backupTransport;
     fs.mkdirSync(path.join(root, '.agents'));
     for (const transport of ['claude-cli', 'unknown-cli']) {
       config.orchestration.transport = transport;
