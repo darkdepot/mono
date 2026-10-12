@@ -763,7 +763,14 @@ full UTF-8 commands are read separately. A separate incarnation-checked reader r
 `matched`, `absent` or `unavailable`: macOS reads `ps` environment output for
 processes owned by the current user; Linux reads `/proc/<pid>/environ`. Environment
 bytes never leave that reader or appear in records, snapshots, journals or errors.
-An unavailable read is not evidence that the marker is absent.
+An unavailable read is not evidence that the marker is absent. Successful macOS
+`ps` fallback output without readable arguments/environment is also unavailable.
+Because macOS `ps` flattens arguments and environment values, a candidate match
+is confirmed against NUL-delimited `KERN_PROCARGS2` entries by a private `python3`
+probe using the standard `ctypes` library. The probe returns only a verdict; a
+missing interpreter or denied kernel read returns `unavailable`, contributing to
+the same recorded residual-risk count. A marker-like argument or text inside
+another environment value is not a match.
 
 The launch record retains the pre-launch host PID/start-time baseline when a
 backup is configured. Missing baseline proof still refuses switching; never erase
@@ -772,8 +779,16 @@ At both stopped-tree reconciliation and backup launch, a live process blocks if
 it belongs to a captured group, its parent chain reaches a captured incarnation,
 its marker matches, or its command contains an exact reference to this attempt's
 worktree or artifact. A shared product root, incidental substring or longer path
-prefix is insufficient. Reused PIDs with different start times do not establish
-captured ownership. Verified processes of the current control invocation are
+prefix is insufficient. New writer, captured-process and collector identities
+also retain `procStartEpoch`, observed with `LC_TIME=C` and `TZ=UTC`. Different
+independently observed UTC starts prove PID reuse; a locale or time-zone change
+in the legacy formatted `procStart` string does not. Legacy identities without
+that UTC observation can still be ruled out when the current UTC start is after
+the protected writer activity/capture time, or the collector lock's last write.
+Otherwise their PID/group signal remains and requires reconciliation. Stopped
+proofs preserve those original observation bounds as `observedByEpoch` rather
+than advancing them to the time of a later reconciliation. The pre-launch baseline keeps its existing
+PID/formatted-start shape. Verified processes of the current control invocation are
 excluded; another task's collector under the same root is not a remnant. The
 previous attempt's collector, its active gate and their descendants are checked
 separately. Refusals retain the existing text and identify the blocking PIDs.

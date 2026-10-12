@@ -96,6 +96,23 @@ export function processStart(pid) {
   try { return execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim() || null; }
   catch { return null; }
 }
+function startEpoch(value) {
+  const match = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$/.exec(value.trim());
+  if (!match) return null;
+  const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].indexOf(match[1]);
+  return Date.UTC(Number(match[6]), month, Number(match[2]), Number(match[3]), Number(match[4]), Number(match[5]));
+}
+function utcProcessEnvironment() {
+  return { ...processCommandEnvironment(), LC_TIME: "C", TZ: "UTC" };
+}
+export function processStartEpoch(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  try {
+    return startEpoch(execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+      encoding: "utf8", env: utcProcessEnvironment(), stdio: ["ignore", "pipe", "pipe"]
+    }));
+  } catch { return null; }
+}
 export function durableDirectory(dir) {
   if (fs.existsSync(dir)) return;
   const parent = path.dirname(dir);
@@ -127,12 +144,56 @@ export function processTable() {
     if (!match) throw new Error("process commands unavailable");
     return [Number(match[1]), match[2] ?? ""];
   }));
+  const utcOutput = execFileSync("ps", ["-axo", "pid=,lstart="],
+    { encoding: "utf8", env: utcProcessEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
+  const epochs = new Map(utcOutput.split("\n").filter(line => line.trim()).map(line => {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (!match) throw new Error("process start identities unavailable");
+    return [Number(match[1]), startEpoch(match[2])];
+  }));
   return output.trim().split("\n").filter(Boolean).map(line => {
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
     if (!match) throw new Error("process tree unavailable");
-    return { pid: Number(match[1]), ppid: Number(match[2]), group: Number(match[3]), state: match[4], procStart: match[5].trim(), command: commands.get(Number(match[1])) ?? "" };
+    return { pid: Number(match[1]), ppid: Number(match[2]), group: Number(match[3]), state: match[4], procStart: match[5].trim(),
+      procStartEpoch: epochs.get(Number(match[1])) ?? null, command: commands.get(Number(match[1])) ?? "" };
   });
 }
+// ps flattens argv and environment on Darwin. Confirm candidate matches against
+// the same kernel argument buffer with its NUL boundaries still intact.
+const darwinMarkerProbe = String.raw`
+import ctypes, json, sys
+def verdict(raw, marker):
+    if len(raw) < 4:
+        return "unavailable"
+    argc = int.from_bytes(raw[:4], sys.byteorder, signed=True)
+    if argc < 1 or argc > len(raw):
+        return "unavailable"
+    end = raw.find(b"\0", 4)
+    if end < 0:
+        return "unavailable"
+    pos = end + 1
+    while pos < len(raw) and raw[pos] == 0:
+        pos += 1
+    for _ in range(argc):
+        end = raw.find(b"\0", pos)
+        if end < 0:
+            return "unavailable"
+        pos = end + 1
+    entries = raw[pos:].split(b"\0")
+    return "matched" if b"MONO_ATTEMPT=" + marker.encode() in entries else "absent"
+try:
+    request = json.load(sys.stdin)
+    libc = ctypes.CDLL(None, use_errno=True)
+    mib = (ctypes.c_int * 3)(1, 49, request["pid"])
+    size = ctypes.c_size_t(1024 * 1024)
+    raw = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, raw, ctypes.byref(size), None, 0) != 0:
+        print("unavailable")
+    else:
+        print(verdict(raw.raw[:size.value], request["marker"]))
+except Exception:
+    print("unavailable")
+`;
 // Environment bytes stay inside this reader, including on errors. The caller
 // receives only a verdict bound to the observed process incarnation.
 export function readProcessAttemptMarker(row, marker) {
@@ -145,11 +206,20 @@ export function readProcessAttemptMarker(row, marker) {
       const variables = fs.readFileSync(`/proc/${row.pid}/environ`, "utf8").split("\0");
       matched = variables.includes(`MONO_ATTEMPT=${marker}`);
     } else if (process.platform === "darwin") {
-      const output = execFileSync("ps", ["eww", "-p", String(row.pid), "-o", "uid=,command="],
+      const output = execFileSync("ps", ["eww", "-p", String(row.pid), "-o", "ruid=,command="],
         { encoding: "utf8", env: processCommandEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
       const match = /^\s*(\d+)\s+([^\n]*)\n?$/.exec(output);
       if (!match || Number(match[1]) !== process.getuid()) return "unavailable";
       matched = match[2].split(/\s+/).includes(`MONO_ATTEMPT=${marker}`);
+      if (!matched && (!match[2].trim() || /^\(.*\)$/.test(match[2].trim()))) return "unavailable";
+      if (matched) {
+        const verdict = execFileSync("python3", ["-c", darwinMarkerProbe], {
+          input: JSON.stringify({ pid: row.pid, marker }), encoding: "utf8",
+          stdio: ["pipe", "pipe", "pipe"]
+        }).trim();
+        if (!["matched", "absent"].includes(verdict)) return "unavailable";
+        matched = verdict === "matched";
+      }
     } else return "unavailable";
     if (!sameStart()) return "unavailable";
     return matched ? "matched" : "absent";
@@ -184,7 +254,7 @@ export async function withLock(file, action, { reclaim = false } = {}) {
   if (fs.existsSync(file + ".reclaim")) throw new Error(`operation locked: ${file}.reclaim`);
   let processGroup = null;
   try { processGroup = processTable().find(row => row.pid === process.pid)?.group ?? null; } catch {}
-  const holder = { pid: process.pid, procStart: processStart(process.pid), processGroup, lockId: crypto.randomUUID(), createdAt: new Date().toISOString() };
+  const holder = { pid: process.pid, procStart: processStart(process.pid), procStartEpoch: processStartEpoch(process.pid), processGroup, lockId: crypto.randomUUID(), createdAt: new Date().toISOString() };
   let fd;
   try { fd = fs.openSync(file, "wx", 0o600); }
   catch (error) {

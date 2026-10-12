@@ -36,6 +36,15 @@ test("backup switch named launch contracts", async t => {
     const markersFile = path.join(bin, "marker-outputs");
     const markerOutputs = {};
     write(markersFile, markerOutputs);
+    const python = execFileSync("which", ["python3"], { encoding: "utf8" }).trim();
+    tool("python3", `const fs=require('fs'),request=JSON.parse(fs.readFileSync(0,'utf8')),
+      output=JSON.parse(fs.readFileSync(${JSON.stringify(markersFile)},'utf8'))[request.pid];
+      const argv=typeof output==='object'?(output.argv??['node']):['node'],env=typeof output==='string'?output:(output?.environ??'');
+      const argc=Buffer.alloc(4);argc.writeInt32LE(argv.length);
+      const raw=Buffer.concat([argc,Buffer.from('/usr/bin/node\\0\\0'+argv.join('\\0')+'\\0'+env+'\\0')]);
+      const prefix="import ctypes\\nclass FixtureLibc:\\n def sysctl(self,mib,n,buf,size,new,length):\\n  raw=bytes.fromhex("+JSON.stringify(raw.toString('hex'))+")\\n  ctypes.memmove(buf,raw,len(raw))\\n  size._obj.value=len(raw)\\n  return "+(output?.nativeUnavailable?'-1':'0')+"\\nctypes.CDLL=lambda *a,**k: FixtureLibc()\\n";
+      const result=require('child_process').spawnSync(${JSON.stringify(python)},['-c',prefix+process.argv[3]],{input:JSON.stringify(request),encoding:'utf8'});
+      process.stdout.write(result.stdout||'');process.exit(result.status??1);`);
     // No /proc or ps of the host is inspected, on either supported platform.
     fs.readFileSync = function(file, ...args) {
       const match = /^\/proc\/(\d+)\/environ$/.exec(String(file));
@@ -48,18 +57,19 @@ test("backup switch named launch contracts", async t => {
       const date=fs.existsSync(${JSON.stringify(path.join(bin, 'locale-mode'))})&&process.env.LC_ALL!=='C'&&process.env.LC_TIME!=='C'?'Mo. 01 Jan. 2024 00:00:00':${JSON.stringify(fixtureStart)};
       if(a.includes('eww')) {const pid=a[a.indexOf('-p')+1],outputs=JSON.parse(fs.readFileSync(${JSON.stringify(markersFile)},'utf8'));
         if(outputs[pid]===undefined||outputs[pid]===null)process.exit(1);
-        console.log(process.getuid()+' node '+outputs[pid].split('\\0').join(' '));}
+        const output=outputs[pid],uid=typeof output==='object'&&a.includes('ruid=,command=')?(output.ruid??process.getuid()):process.getuid();
+        console.log(uid+' '+(typeof output==='object'?(output.fallback??output.text):'node '+output.split('\\0').join(' ')));}
       else if(a.includes('-p')) console.log(date);
-      else {const commandOnly=a.includes('pid=,command='),text=fs.readFileSync(${JSON.stringify(path.join(bin, "tree"))},'utf8');
+      else {const commandOnly=a.includes('pid=,command='),utcOnly=a.includes('pid=,lstart='),text=fs.readFileSync(${JSON.stringify(path.join(bin, "tree"))},'utf8');
       const modeFile=${JSON.stringify(path.join(bin, "ps-mode"))},countFile=${JSON.stringify(path.join(bin, "ps-calls"))};
       const mode=fs.existsSync(modeFile)?fs.readFileSync(modeFile,'utf8'):'';
       const count=fs.existsSync(countFile)?Number(fs.readFileSync(countFile,'utf8'))+1:1;fs.writeFileSync(countFile,String(count));
       const state=mode==='running'||(mode==='running-then-stopped'&&count<3)?'S':'T';
       for(const line of text.trim().split('\\n').filter(Boolean)) {const fields=line.trim().split(/\\s+/),raw=fields.slice(5).join(' '),encoding=process.env.LC_ALL||process.env.LC_CTYPE||process.env.LANG||'C',cmd=/UTF-?8/i.test(encoding)?raw:raw.replace(/[^\\x00-\\x7f]/g,'?');
-        console.log(commandOnly?fields[0]+' '+(fs.existsSync(${JSON.stringify(path.join(bin, 'locale-mode'))})&&!a.includes('-ww')?cmd.slice(0,24):cmd):fields.slice(0,3).join(' ')+' '+state+' '+(fields[4]==='fixture-reused'?'Tue Jan 1 00:00:00 2025':date));}
+        console.log(commandOnly?fields[0]+' '+(fs.existsSync(${JSON.stringify(path.join(bin, 'locale-mode'))})&&!a.includes('-ww')?cmd.slice(0,24):cmd):utcOnly?fields[0]+' '+(fields[4]==='fixture-reused'?'Tue Jan 1 00:00:00 2025':${JSON.stringify(fixtureStart)}):fields.slice(0,3).join(' ')+' '+state+' '+(fields[4]==='fixture-reused'?'Tue Jan 1 00:00:00 2025':date));}
       const file=${JSON.stringify(path.join(bin, "claude-pids"))};if(fs.existsSync(file))for(const line of fs.readFileSync(file,'utf8').trim().split('\\n')){
-        const row=JSON.parse(line);if(text.split('\\n').some(line=>line.trim().startsWith(row.ppid+' ')))console.log(commandOnly?row.pid+' claude':row.pid+' '+row.ppid+' '+row.ppid+' T '+date);}
-      console.log(commandOnly?process.ppid+' fixture-control':process.ppid+' 1 '+process.ppid+' T '+date);}`);
+        const row=JSON.parse(line);if(text.split('\\n').some(line=>line.trim().startsWith(row.ppid+' ')))console.log(commandOnly?row.pid+' claude':utcOnly?row.pid+' '+${JSON.stringify(fixtureStart)}:row.pid+' '+row.ppid+' '+row.ppid+' T '+date);}
+      console.log(commandOnly?process.ppid+' fixture-control':utcOnly?process.ppid+' '+${JSON.stringify(fixtureStart)}:process.ppid+' 1 '+process.ppid+' T '+date);}`);
     write(path.join(bin, "tree"), "");
     const observations = path.join(bin, "launch-markers");
     const markerObservation = `const roots=require('fs').readdirSync(${JSON.stringify(scratch)}).filter(n=>n.startsWith('control-'));
@@ -93,6 +103,10 @@ test("backup switch named launch contracts", async t => {
     const runtime = await import(pathToFileURL(path.join(pack, "scripts/orchestrator/launch.mjs")));
     const routes = await import(pathToFileURL(path.join(pack, "scripts/runtime.mjs")));
     const switchRuntime = await import(pathToFileURL(path.join(pack, "scripts/orchestrator/backup-switch.mjs")));
+    const macRuntimeFile = path.join(pack, "scripts/runtime-mac-fixture.mjs");
+    write(macRuntimeFile, fs.readFileSync(path.join(pack, "scripts/runtime.mjs"), "utf8")
+      .replace('process.platform === "linux"', 'false').replaceAll('process.platform === "darwin"', 'true'));
+    const macRuntime = await import(pathToFileURL(macRuntimeFile));
     const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     git("init", "-b", "fixture"); git("config", "user.name", "Fixture"); git("config", "user.email", "fixture@example.invalid");
     const configFile = path.join(repo, ".agents/mono-workflow.config.json");
@@ -187,12 +201,21 @@ test("backup switch named launch contracts", async t => {
         assert.deepEqual(json(f.record).entry.processBaseline, JSON.parse(before).entry.processBaseline);
       } finally { write(f.record, before); write(path.join(f.root, "workers.json"), {}); write(path.join(bin, "tree"), ""); }
     });
-    const ownershipCase = async (rows, { marker = f.old.attemptMarker, outputs = {}, capture = [], collector = null, baseline = f.old.processBaseline } = {}, refused = true) => {
+    const ownershipCase = async (rows, { marker = f.old.attemptMarker, outputs = {}, capture = [], collector = null,
+      baseline = f.old.processBaseline, legacyStarts = false, observedAt = null } = {}, refused = true) => {
       const before = fs.readFileSync(f.record, "utf8"), old = structuredClone(f.old);
       const entry = { ...old, processBaseline: baseline };
       if (marker) entry.attemptMarker = marker; else delete entry.attemptMarker;
       const record = JSON.parse(before); record.entry = entry;
       record.retirement.processes.push(...capture);
+      if (legacyStarts) {
+        delete entry.procStartEpoch;
+        for (const row of [...record.processes, ...record.retirement.processes]) delete row.procStartEpoch;
+      }
+      if (observedAt) {
+        record.retirement.capturedAt = observedAt;
+        entry.last_activity_at = observedAt;
+      }
       const collectorFile = path.join(f.root, "reports", "MONO-999-collector-a1.lock");
       Object.assign(markerOutputs, outputs); write(markersFile, markerOutputs);
       write(f.record, record); write(path.join(bin, "tree"), rows);
@@ -247,6 +270,47 @@ test("backup switch named launch contracts", async t => {
         `sh -c 'cat<${f.old.log}>/dev/null'`, `sh -c 'cd ${f.old.worktree}&&sleep 600'`])
         await ownershipCase(`900041 1 900041 S fixture-shell ${command}\n`, { marker: null });
     });
+    await t.test("backup-legacy-incomparable-start-format-retains-captured-group-on-both-entries", () =>
+      ownershipCase("900044 1 900044 S fixture-old node\n", { marker: null,
+        capture: [{ pid: 900044, procStart: "Mo. 01 Jan. 2024 00:00:00", processGroup: 900044 }] }));
+    await t.test("backup-start-time-zone-change-does-not-prove-pid-reuse-on-both-entries", () =>
+      ownershipCase("900047 1 900047 S fixture-old node\n", { marker: null,
+        capture: [{ pid: 900047, procStart: "Mon Jan 1 09:00:00 2024", procStartEpoch: Date.UTC(2024, 0, 1), processGroup: 900047 }] }));
+    await t.test("backup-independent-utc-start-proves-reuse-even-with-equal-formatted-times", () =>
+      ownershipCase("900048 1 900048 S fixture-old node\n", { marker: null,
+        capture: [{ pid: 900048, procStart: fixtureStart, procStartEpoch: Date.UTC(2023, 0, 1), processGroup: 900048 }] }, false));
+    await t.test("backup-utc-start-observation-preserves-baseline-shape", () => {
+      assert.equal(f.old.procStartEpoch, Date.UTC(2024, 0, 1));
+      for (const row of f.old.processBaseline) assert.deepEqual(Object.keys(row).sort(), ["pid", "procStart"]);
+    });
+    await t.test("backup-successful-ps-fallback-is-unavailable-and-counted-on-both-entries", async () => {
+      const outputs = { 900043: { fallback: "(node)" } };
+      Object.assign(markerOutputs, outputs); write(markersFile, markerOutputs);
+      assert.equal(macRuntime.readProcessAttemptMarker({ pid: 900043, procStart: fixtureStart }, f.old.attemptMarker), "unavailable");
+      delete markerOutputs[900043]; write(markersFile, markerOutputs);
+      const result = await ownershipCase("900043 1 900043 S fixture-fallback node\n", { outputs }, false);
+      assert.equal(result.proof.ownership.unavailableMarkerCount, 1);
+      assert.equal(result.stopped.retirement.processOwnership.unavailableMarkerCount, 1);
+    });
+    await t.test("backup-mac-marker-reader-checks-real-user-environment-visibility", () => {
+      markerOutputs[900045] = { ruid: process.getuid() + 1, text: "node readable-arguments-without-environment" };
+      write(markersFile, markerOutputs);
+      try { assert.equal(macRuntime.readProcessAttemptMarker({ pid: 900045, procStart: fixtureStart }, f.old.attemptMarker), "unavailable"); }
+      finally { delete markerOutputs[900045]; write(markersFile, markerOutputs); }
+    });
+    await t.test("backup-mac-marker-reader-preserves-argv-and-environment-value-boundaries", () => {
+      const marker = f.old.attemptMarker, row = { pid: 900046, procStart: fixtureStart };
+      const cases = [
+        [{ text: `node MONO_ATTEMPT=${marker} HOME=/tmp`, argv: ["node", `MONO_ATTEMPT=${marker}`], environ: "HOME=/tmp\0" }, "absent"],
+        [{ text: `node NOTE=contains MONO_ATTEMPT=${marker}`, environ: `NOTE=contains MONO_ATTEMPT=${marker}\0` }, "absent"],
+        [{ text: `node NOTE=contains MONO_ATTEMPT=${marker} MONO_ATTEMPT=${marker}`, environ: `NOTE=contains MONO_ATTEMPT=${marker}\0MONO_ATTEMPT=${marker}\0` }, "matched"],
+        [{ text: `node MONO_ATTEMPT=${marker}`, nativeUnavailable: true }, "unavailable"]
+      ];
+      try { for (const [output, expected] of cases) {
+        markerOutputs[row.pid] = output; write(markersFile, markerOutputs);
+        assert.equal(macRuntime.readProcessAttemptMarker(row, marker), expected);
+      } } finally { delete markerOutputs[row.pid]; write(markersFile, markerOutputs); }
+    });
     await t.test("backup-matched-attempt-marker-blocks-both-entries", () => ownershipCase(
       "900014 1 900014 S fixture-marker node\n", { outputs: { 900014: `SECRET_DECOY=must-not-escape\0MONO_ATTEMPT=${f.old.attemptMarker}\0` } }));
     await t.test("backup-unavailable-marker-without-other-signals-allows-and-records-count", async () => {
@@ -264,6 +328,10 @@ test("backup switch named launch contracts", async t => {
     });
     await t.test("backup-reused-pid-with-different-start-time-allows-both-entries", () =>
       ownershipCase(`${f.first.pid} 1 ${f.first.pid} S fixture-reused node\n`, {}, false));
+    await t.test("backup-legacy-reused-pid-born-after-protected-observation-allows-both-entries", () =>
+      ownershipCase(`${f.first.pid} 1 ${f.first.pid} S fixture-reused node\n`, {
+        marker: null, legacyStarts: true, observedAt: "2024-06-01T00:00:00.000Z"
+      }, false));
     await t.test("backup-previous-attempt-collector-and-active-gate-descendants-block-both-entries", async () => {
       const collector = { pid: 900019, procStart: fixtureStart, processGroup: 900019,
         gate: { pid: 900020, procStart: fixtureStart, processGroup: 900020 } };
@@ -509,6 +577,7 @@ test("backup switch named launch contracts", async t => {
     });
     await t.test("backup-subscription-exhausted-success", async () => {
       write(path.join(bin, "tree"), "900023 1 900023 S fixture-host browser\n");
+      markerOutputs[900023] = { fallback: "(browser)" }; write(markersFile, markerOutputs);
       const request = f.backup(); const launched = await runtime.spawnWorker(request); pids.add(launched.pid);
       const entry = json(path.join(f.root, "workers.json"))["MONO-999"];
       assert.equal(entry.attempt, 2); assert.equal(entry.transport, "claude-cli"); assert.equal(entry.model_policy.role, "worker-claude");
@@ -516,6 +585,7 @@ test("backup switch named launch contracts", async t => {
       assert.equal(entry.processOwnership.unavailableMarkerCount, 1);
       assert.notEqual(entry.attemptMarker, f.old.attemptMarker);
       assert.deepEqual(json(f.record).entry.processBaseline, f.old.processBaseline);
+      delete markerOutputs[900023]; write(markersFile, markerOutputs);
       write(path.join(bin, "tree"), "");
       assert.deepEqual(entry.workerWritableRoots, f.old.workerWritableRoots);
       assert.ok(fs.readFileSync(entry.log, "utf8").includes(request.backupSwitch.evidenceDigest));

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
-import { atomicJson, readJson, identity, requireCompatiblePack, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart, packLayout, runtimePackRoot } from "../runtime.mjs";
+import { atomicJson, readJson, identity, requireCompatiblePack, syncDir, withLock, deliveryConfig, canonical, resolvedLocation, validateEvidenceGrants, digest, resolveModelRoutes, baseModelConfig, processStart, processStartEpoch, packLayout, runtimePackRoot } from "../runtime.mjs";
 import { startGate } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
@@ -158,6 +158,7 @@ async function launchTransport(root, entry, prompt, resume, prepared) {
   if (transport.assertStopped) registry[entry.issue].processGroup = child.pid;
   const procStart = processStart(child.pid);
   registry[entry.issue].procStart = procStart;
+  registry[entry.issue].procStartEpoch = processStartEpoch(child.pid);
   if (resume) registry[entry.issue].last_resume = { pid: child.pid, thread_id: entry.thread_id,
     registeredAt: registry[entry.issue].last_activity_at, gateAckDigest, logOffset };
   atomicJson(registryPath, registry);
