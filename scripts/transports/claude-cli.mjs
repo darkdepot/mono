@@ -42,7 +42,7 @@ function assertStopped(entry) {
   throw new Error("Claude worker process group is still live; stop the previous worker and its commands before resume");
 }
 
-function environment(route, source = process.env, { githubToken, githubConfigDir, timeoutSec = 1800, tempDir } = {}) {
+function environment(route, source = process.env, { githubToken, githubConfigDir, timeoutSec = 1800, tempDir, attemptMarker } = {}) {
   validateRoute(route);
   const env = Object.fromEntries(environmentKeys.filter(key => typeof source[key] === "string").map(key => [key, source[key]]));
   env.USER ||= os.userInfo().username;
@@ -56,6 +56,7 @@ function environment(route, source = process.env, { githubToken, githubConfigDir
   env.CLAUDE_CODE_DISABLE_CLAUDE_AI_MCP = "1";
   if (githubToken) env.GH_TOKEN = githubToken;
   if (githubConfigDir) env.GH_CONFIG_DIR = githubConfigDir;
+  if (attemptMarker) env.MONO_ATTEMPT = attemptMarker;
   return env;
 }
 

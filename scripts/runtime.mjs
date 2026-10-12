@@ -86,6 +86,11 @@ export function canonical(value) {
   return JSON.stringify(value);
 }
 export const digest = (value) => crypto.createHash("sha256").update(canonical(value)).digest("hex");
+function processCommandEnvironment() {
+  const env = { ...process.env, LC_CTYPE: process.platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8" };
+  delete env.LC_ALL;
+  return env;
+}
 export function processStart(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try { return execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim() || null; }
@@ -112,12 +117,43 @@ export function atomicJson(file, value) {
 }
 // A dedicated process group preserves descendants after their parent exits.
 export function processTable() {
+  // Preserve the existing caller-locale start identity, including legacy
+  // records. Read commands separately so date parsing cannot consume argv.
   const output = execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const commandOutput = execFileSync("ps", ["-ww", "-axo", "pid=,command="],
+    { encoding: "utf8", env: processCommandEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
+  const commands = new Map(commandOutput.split("\n").filter(line => line.trim()).map(line => {
+    const match = /^\s*(\d+)(?:\s+(.*))?$/.exec(line);
+    if (!match) throw new Error("process commands unavailable");
+    return [Number(match[1]), match[2] ?? ""];
+  }));
   return output.trim().split("\n").filter(Boolean).map(line => {
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
     if (!match) throw new Error("process tree unavailable");
-    return { pid: Number(match[1]), ppid: Number(match[2]), group: Number(match[3]), state: match[4], procStart: match[5].trim() };
+    return { pid: Number(match[1]), ppid: Number(match[2]), group: Number(match[3]), state: match[4], procStart: match[5].trim(), command: commands.get(Number(match[1])) ?? "" };
   });
+}
+// Environment bytes stay inside this reader, including on errors. The caller
+// receives only a verdict bound to the observed process incarnation.
+export function readProcessAttemptMarker(row, marker) {
+  if (!Number.isSafeInteger(row?.pid) || row.pid <= 0 || !row.procStart || !marker) return "unavailable";
+  const sameStart = () => processStart(row.pid)?.replace(/\s+/g, " ") === row.procStart.replace(/\s+/g, " ");
+  try {
+    if (!sameStart()) return "unavailable";
+    let matched;
+    if (process.platform === "linux") {
+      const variables = fs.readFileSync(`/proc/${row.pid}/environ`, "utf8").split("\0");
+      matched = variables.includes(`MONO_ATTEMPT=${marker}`);
+    } else if (process.platform === "darwin") {
+      const output = execFileSync("ps", ["eww", "-p", String(row.pid), "-o", "uid=,command="],
+        { encoding: "utf8", env: processCommandEnvironment(), stdio: ["ignore", "pipe", "pipe"] });
+      const match = /^\s*(\d+)\s+([^\n]*)\n?$/.exec(output);
+      if (!match || Number(match[1]) !== process.getuid()) return "unavailable";
+      matched = match[2].split(/\s+/).includes(`MONO_ATTEMPT=${marker}`);
+    } else return "unavailable";
+    if (!sameStart()) return "unavailable";
+    return matched ? "matched" : "absent";
+  } catch { return "unavailable"; }
 }
 export function lockTreeDead(holder) {
   const processes = processTable().filter(row => !row.state.startsWith("Z"));

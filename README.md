@@ -228,9 +228,18 @@ then force-stops it without resuming it. The orchestrator proves exit and retire
 the registry entry. Captures remain across resumes; missing or incomplete stop
 evidence refuses switching. It then uses the
 ordinary dispatch command with `--backup-switch <absolute-decision-file>`.
-The previous launch retains a host PID/start-time baseline. A new live process
-whose ownership cannot be established blocks switching, including a descendant
-orphaned before stopping; reconcile ownership before retrying.
+The previous launch retains its host PID/start-time snapshot; missing proof still
+refuses switching, and the snapshot must never be erased or broadened. A live
+process blocks switching only when it retains a trace of that attempt: a captured
+process group, a parent chain reaching a captured process, a matching
+`MONO_ATTEMPT` marker, or an exact reference to that attempt's worktree or artifact.
+Verified control-caller processes are excluded. Unrelated host processes and
+collectors for other tasks, even under the same product root, do not block; the
+previous attempt's collector and active checks are checked separately.
+If marker reading is unavailable and no other trace exists, a marked attempt
+allows switching and records the count in the launch record for reconciliation.
+An uncaptured orphan outside the captured groups, with a cleared environment and
+neutral command, may go undetected; this is the accepted residual risk.
 If the writer already exited, the command records its stopped state only after
 the same process and ownership checks; it sends no signals.
 The backup must have been named on the old attempt's base and remain the same

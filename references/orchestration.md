@@ -746,21 +746,52 @@ entry. The backup launch separately rechecks every identity and group for surviv
 Retain captures across resumes; each incarnation requires this stop procedure.
 Missing/incomplete quiescence or stop evidence refuses switching, including an
 attempt that exited before its tree was captured. Reconcile missing evidence
-instead of claiming an unobserved tree stopped. Captured descendants, orphan
-group members and surviving thread processes all refuse switching while live.
-The launch record also retains the pre-launch host PID/start-time baseline when
-a backup is configured. After retirement, any live process absent from that
-baseline must belong to the current control caller or another registered worker
-in a different worktree. Otherwise launch refuses with the unattributed PIDs:
-this also catches descendants already orphaned before the stop snapshot. A new
-unrelated host process can conservatively block switching; reconcile its
-ownership without killing it or treating it as provider evidence. Missing
-baseline proof refuses switching. Do not erase or broaden the retained baseline.
+instead of claiming an unobserved tree stopped. Captured descendants and orphan group members refuse switching while live.
+Before spawning either managed transport, launch creates an opaque UUID v4
+marker, `MONO_ATTEMPT`, stored as `entry.attemptMarker` in the protected
+`attempt-records/<ISSUE>-a<N>.json` (and protected registry entry). Each attempt
+gets a different value; every continuation retains the same value. Both
+transports pass the pinned marker after environment filtering, replacing any
+inherited caller marker. The Claude journal runner and worker's child commands
+inherit it; managed settings do not override it. The marker identifies process
+ownership only: it grants no permissions and changes no sandbox, network or gate.
+Legacy attempts without a marker continue to use the other three traces.
+
+The process table returns PID, parent PID, group, start time, state and command,
+without environment. Start identities retain the legacy caller-locale format;
+full UTF-8 commands are read separately. A separate incarnation-checked reader returns only
+`matched`, `absent` or `unavailable`: macOS reads `ps` environment output for
+processes owned by the current user; Linux reads `/proc/<pid>/environ`. Environment
+bytes never leave that reader or appear in records, snapshots, journals or errors.
+An unavailable read is not evidence that the marker is absent.
+
+The launch record retains the pre-launch host PID/start-time baseline when a
+backup is configured. Missing baseline proof still refuses switching; never erase
+or broaden it. The snapshot does not make unrelated new processes remnants.
+At both stopped-tree reconciliation and backup launch, a live process blocks if
+it belongs to a captured group, its parent chain reaches a captured incarnation,
+its marker matches, or its command contains an exact reference to this attempt's
+worktree or artifact. A shared product root, incidental substring or longer path
+prefix is insufficient. Reused PIDs with different start times do not establish
+captured ownership. Verified processes of the current control invocation are
+excluded; another task's collector under the same root is not a remnant. The
+previous attempt's collector, its active gate and their descendants are checked
+separately. Refusals retain the existing text and identify the blocking PIDs.
+
+For a marked attempt, an unavailable marker read with no other trace allows the
+process to be ignored. The backup launch records
+`processOwnership.unavailableMarkerCount` in its protected launch/attempt entry;
+stopped-tree reconciliation records the same count in its retirement proof.
+No environment is recorded. This count is available for orchestrator
+reconciliation, as part of the accepted residual risk: an uncaptured orphan
+outside captured groups, with a cleared environment and neutral command, may
+remain undetected. Unrelated products, sessions, utilities and other tasks'
+collectors do not block switching.
 If the registered writer already exited, the command sends no signals: it
 requires all retained writer/descendant identities and groups to be absent and
-the baseline ownership check to pass, then records `proof: already-stopped`.
-Launch repeats these checks. A clean natural exit therefore needs no live
-writer, but cannot hide an orphan or incomplete earlier stop.
+the attempt-ownership check to pass, then records `proof: already-stopped`.
+Launch repeats these checks. A clean natural exit still requires complete stop
+proof and absence of every surviving trace of the old attempt.
 
 Create a decision file outside worker grants and an evidence file containing a
 nonempty, verbatim contiguous excerpt from the previous attempt's JSONL journal.

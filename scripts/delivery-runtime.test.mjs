@@ -17,6 +17,7 @@ const pass = result => { assert.equal(result.status, 0, result.stderr + result.s
 test("backup switch named launch contracts", async t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-backup-"));
   const savedPath = process.env.PATH;
+  const realRead = fs.readFileSync;
   const pack = path.join(scratch, "pack"), bin = path.join(scratch, "bin"), repo = path.join(scratch, "repo");
   const pids = new Set();
   const stop = async pid => {
@@ -31,18 +32,42 @@ test("backup switch named launch contracts", async t => {
     copyPluginFixture(pack);
     for (const dir of [bin, repo]) fs.mkdirSync(dir);
     const tool = (name, source) => { write(path.join(bin, name), `#!${process.execPath}\n${source}`); fs.chmodSync(path.join(bin, name), 0o700); };
-    tool("ps", `const a=process.argv; if(a.includes('-p')) console.log('fixture-start-'+a[a.indexOf('-p')+1]);
-      else if(!a.includes('command=')) {const fs=require('fs'),text=fs.readFileSync(${JSON.stringify(path.join(bin, "tree"))},'utf8');
+    const fixtureStart = "Mon Jan 1 00:00:00 2024";
+    const markersFile = path.join(bin, "marker-outputs");
+    const markerOutputs = {};
+    write(markersFile, markerOutputs);
+    // No /proc or ps of the host is inspected, on either supported platform.
+    fs.readFileSync = function(file, ...args) {
+      const match = /^\/proc\/(\d+)\/environ$/.exec(String(file));
+      if (!match) return realRead.call(fs, file, ...args);
+      const output = markerOutputs[match[1]];
+      if (output === undefined || output === null) throw new Error("unavailable marker fixture");
+      return output;
+    };
+    tool("ps", `const fs=require('fs'),a=process.argv;
+      const date=fs.existsSync(${JSON.stringify(path.join(bin, 'locale-mode'))})&&process.env.LC_ALL!=='C'&&process.env.LC_TIME!=='C'?'Mo. 01 Jan. 2024 00:00:00':${JSON.stringify(fixtureStart)};
+      if(a.includes('eww')) {const pid=a[a.indexOf('-p')+1],outputs=JSON.parse(fs.readFileSync(${JSON.stringify(markersFile)},'utf8'));
+        if(outputs[pid]===undefined||outputs[pid]===null)process.exit(1);
+        console.log(process.getuid()+' node '+outputs[pid].split('\\0').join(' '));}
+      else if(a.includes('-p')) console.log(date);
+      else {const commandOnly=a.includes('pid=,command='),text=fs.readFileSync(${JSON.stringify(path.join(bin, "tree"))},'utf8');
       const modeFile=${JSON.stringify(path.join(bin, "ps-mode"))},countFile=${JSON.stringify(path.join(bin, "ps-calls"))};
       const mode=fs.existsSync(modeFile)?fs.readFileSync(modeFile,'utf8'):'';
       const count=fs.existsSync(countFile)?Number(fs.readFileSync(countFile,'utf8'))+1:1;fs.writeFileSync(countFile,String(count));
       const state=mode==='running'||(mode==='running-then-stopped'&&count<3)?'S':'T';
-      process.stdout.write(text.split('\\n').map(line=>line.replace(/^(\\s*\\d+\\s+\\d+\\s+\\d+\\s+)\\S+/, '$1'+state)).join('\\n'));
+      for(const line of text.trim().split('\\n').filter(Boolean)) {const fields=line.trim().split(/\\s+/),raw=fields.slice(5).join(' '),encoding=process.env.LC_ALL||process.env.LC_CTYPE||process.env.LANG||'C',cmd=/UTF-?8/i.test(encoding)?raw:raw.replace(/[^\\x00-\\x7f]/g,'?');
+        console.log(commandOnly?fields[0]+' '+(fs.existsSync(${JSON.stringify(path.join(bin, 'locale-mode'))})&&!a.includes('-ww')?cmd.slice(0,24):cmd):fields.slice(0,3).join(' ')+' '+state+' '+(fields[4]==='fixture-reused'?'Tue Jan 1 00:00:00 2025':date));}
       const file=${JSON.stringify(path.join(bin, "claude-pids"))};if(fs.existsSync(file))for(const line of fs.readFileSync(file,'utf8').trim().split('\\n')){
-        const row=JSON.parse(line);if(text.split('\\n').some(line=>line.trim().startsWith(row.ppid+' ')))console.log(row.pid+' '+row.ppid+' '+row.ppid+' T fixture-start-'+row.pid);}
-      console.log(process.ppid+' 1 '+process.ppid+' T fixture-observer');}`);
+        const row=JSON.parse(line);if(text.split('\\n').some(line=>line.trim().startsWith(row.ppid+' ')))console.log(commandOnly?row.pid+' claude':row.pid+' '+row.ppid+' '+row.ppid+' T '+date);}
+      console.log(commandOnly?process.ppid+' fixture-control':process.ppid+' 1 '+process.ppid+' T '+date);}`);
     write(path.join(bin, "tree"), "");
-    tool("codex", `const fs=require('fs');if(fs.existsSync(${JSON.stringify(path.join(bin, "detach"))})){
+    const observations = path.join(bin, "launch-markers");
+    const markerObservation = `const roots=require('fs').readdirSync(${JSON.stringify(scratch)}).filter(n=>n.startsWith('control-'));
+      const persisted=roots.some(n=>{const f=require('path').join(${JSON.stringify(scratch)},n,'attempt-records/MONO-999-a1.json');
+        return require('fs').existsSync(f)&&JSON.parse(require('fs').readFileSync(f,'utf8')).entry.attemptMarker===process.env.MONO_ATTEMPT;});
+      require('fs').appendFileSync(${JSON.stringify(observations)},JSON.stringify({transport:process.argv[1].split('/').at(-1),marker:process.env.MONO_ATTEMPT,
+        childMarker:require('child_process').execFileSync(process.execPath,['-e','process.stdout.write(process.env.MONO_ATTEMPT||"")'],{encoding:'utf8'}),persisted})+'\\n');`;
+    tool("codex", `const fs=require('fs');${markerObservation}if(fs.existsSync(${JSON.stringify(path.join(bin, "detach"))})){
       const child=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});child.unref();
       fs.writeFileSync(${JSON.stringify(path.join(bin, "detached-pid"))},String(child.pid));}
       if(fs.existsSync(${JSON.stringify(path.join(bin, "double-fork"))})){
@@ -55,6 +80,7 @@ test("backup switch named launch contracts", async t => {
         fs.writeFileSync(${JSON.stringify(path.join(bin, "late-pid"))},String(child.pid));}},10);`);
     tool("gh", "process.stdout.write('fixture-auth');");
     tool("claude", `const a=process.argv; if(a.includes('auth')) {console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}));process.exit(0);}
+      ${markerObservation}
       let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{const val=k=>a[a.indexOf(k)+1],id=val(a.includes('--resume')?'--resume':'--session-id');
       require('fs').appendFileSync(${JSON.stringify(path.join(bin, "claude-pids"))},JSON.stringify({pid:process.pid,ppid:process.ppid})+'\\n');
       console.log(JSON.stringify({type:'system',subtype:'init',session_id:id,model:val('--model'),permissionMode:'dontAsk',apiKeySource:'none',mcp_servers:[],tools:['Bash','Read','Edit','Write','NotebookEdit','Glob','Grep']}));
@@ -134,12 +160,176 @@ test("backup switch named launch contracts", async t => {
     });
     write(path.join(f.root, "workers.json"), { [f.request.issue]: f.old });
     await f.retire();
+    await t.test("backup-process-telemetry-localized-caller-keeps-incarnation-and-full-command", () => {
+      const file = path.join(bin, "locale-mode"), command = "node " + "x".repeat(100) + " " + f.old.worktree + "/Тест-目录/check.mjs";
+      const oldLocale = process.env.LC_ALL;
+      write(file, "simulate localized ps and narrow default columns"); process.env.LC_ALL = "de_DE.UTF-8";
+      write(path.join(bin, "tree"), `900030 1 900030 S fixture-start ${command}\n`);
+      try {
+        const row = routes.processTable().find(row => row.pid === 900030);
+        assert.equal(row.procStart, "Mo. 01 Jan. 2024 00:00:00", "legacy caller-locale identity is preserved");
+        assert.equal(routes.processStart(row.pid), row.procStart);
+        assert.equal(row.command, command);
+      } finally {
+        if (oldLocale === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = oldLocale;
+        fs.unlinkSync(file); write(path.join(bin, "tree"), "");
+      }
+    });
+    await t.test("backup-unrelated-new-host-process-allows-stop-and-launch", async () => {
+      const before = fs.readFileSync(f.record, "utf8");
+      write(path.join(bin, "tree"), "900009 1 900009 S fixture-unrelated\n");
+      write(path.join(f.root, "workers.json"), { [f.request.issue]: f.old });
+      try {
+        const stopped = await switchRuntime.stopBackupProcessTree(f.root, f.request.issue);
+        assert.equal(stopped.retirement.proof, "already-stopped");
+        write(path.join(f.root, "workers.json"), {});
+        assert.ok(switchRuntime.validateBackupLaunch(f.backup(), 1, f.old.workerWritableRoots));
+        assert.deepEqual(json(f.record).entry.processBaseline, JSON.parse(before).entry.processBaseline);
+      } finally { write(f.record, before); write(path.join(f.root, "workers.json"), {}); write(path.join(bin, "tree"), ""); }
+    });
+    const ownershipCase = async (rows, { marker = f.old.attemptMarker, outputs = {}, capture = [], collector = null, baseline = f.old.processBaseline } = {}, refused = true) => {
+      const before = fs.readFileSync(f.record, "utf8"), old = structuredClone(f.old);
+      const entry = { ...old, processBaseline: baseline };
+      if (marker) entry.attemptMarker = marker; else delete entry.attemptMarker;
+      const record = JSON.parse(before); record.entry = entry;
+      record.retirement.processes.push(...capture);
+      const collectorFile = path.join(f.root, "reports", "MONO-999-collector-a1.lock");
+      Object.assign(markerOutputs, outputs); write(markersFile, markerOutputs);
+      write(f.record, record); write(path.join(bin, "tree"), rows);
+      write(path.join(f.root, "workers.json"), { [f.request.issue]: entry });
+      if (collector) write(collectorFile, collector);
+      try {
+        if (refused) {
+          await assert.rejects(switchRuntime.stopBackupProcessTree(f.root, f.request.issue), /(?:descendants still live|unattributed processes|process baseline missing).*?(?:switching|stopped tree)/);
+          write(path.join(f.root, "workers.json"), {});
+          assert.throws(() => switchRuntime.validateBackupLaunch(f.backup(), 1, old.workerWritableRoots), /(?:descendants still live|unattributed processes|process baseline missing).*?(?:refused|switching)/);
+        } else {
+          const stopped = await switchRuntime.stopBackupProcessTree(f.root, f.request.issue);
+          write(path.join(f.root, "workers.json"), {});
+          const proof = switchRuntime.validateBackupLaunch(f.backup(), 1, old.workerWritableRoots);
+          return { stopped, proof };
+        }
+      } finally {
+        write(f.record, before); write(path.join(f.root, "workers.json"), {}); write(path.join(bin, "tree"), "");
+        for (const pid of Object.keys(outputs)) delete markerOutputs[pid]; write(markersFile, markerOutputs);
+        if (collector) fs.unlinkSync(collectorFile);
+      }
+    };
+    for (const legacy of [false, true]) {
+      const label = legacy ? "legacy" : "marked", marker = legacy ? null : f.old.attemptMarker;
+      await t.test(`backup-${label}-captured-group-blocks-both-entries-marker-unavailable`, () =>
+        ownershipCase(`900010 1 ${f.first.pid} S fixture-start-900010 node\n`, { marker }));
+      await t.test(`backup-${label}-parent-chain-blocks-both-entries-marker-unavailable`, () =>
+        ownershipCase("900011 1 900111 S fixture-parent node\n900012 900011 900112 S fixture-child node\n", {
+          marker, capture: [{ pid: 900011, procStart: fixtureStart, processGroup: 900211 }],
+        }));
+      for (const reference of [f.old.worktree + "/scripts/check.mjs", f.old.log, f.old.pins.file])
+        await t.test(`backup-${label}-exact-reference-${path.basename(reference)}-blocks-both-entries-marker-unavailable`, () =>
+          ownershipCase(`900013 1 900013 S fixture-path node '${reference}'\n`, { marker }));
+    }
+    await t.test("backup-missing-and-invalid-baseline-refuse-both-entries", async () => {
+      await ownershipCase("", { baseline: null });
+      await ownershipCase("", { baseline: [{ pid: 0, procStart: fixtureStart }] });
+    });
+    await t.test("backup-legacy-localized-captured-group-is-not-pid-reuse-on-both-entries", async () => {
+      const file = path.join(bin, "locale-mode"), oldLocale = process.env.LC_ALL;
+      write(file, "localized legacy identities"); process.env.LC_ALL = "de_DE.UTF-8";
+      try {
+        await ownershipCase("900040 1 900040 S fixture-old node\n", { marker: null,
+          capture: [{ pid: 900040, procStart: "Mo. 01 Jan. 2024 00:00:00", processGroup: 900040 }] });
+      } finally {
+        if (oldLocale === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = oldLocale;
+        fs.unlinkSync(file);
+      }
+    });
+    await t.test("backup-exact-attempt-path-shell-separators-and-redirections-block-both-entries", async () => {
+      for (const command of [`sh -c 'cd ${f.old.worktree};sleep 600'`, `sh -c '(cd ${f.old.worktree})'`,
+        `sh -c 'cat<${f.old.log}>/dev/null'`, `sh -c 'cd ${f.old.worktree}&&sleep 600'`])
+        await ownershipCase(`900041 1 900041 S fixture-shell ${command}\n`, { marker: null });
+    });
+    await t.test("backup-matched-attempt-marker-blocks-both-entries", () => ownershipCase(
+      "900014 1 900014 S fixture-marker node\n", { outputs: { 900014: `SECRET_DECOY=must-not-escape\0MONO_ATTEMPT=${f.old.attemptMarker}\0` } }));
+    await t.test("backup-unavailable-marker-without-other-signals-allows-and-records-count", async () => {
+      const result = await ownershipCase("900015 1 900015 S fixture-unknown node\n", {}, false);
+      assert.equal(result.proof.ownership.unavailableMarkerCount, 1);
+      assert.equal(result.stopped.retirement.processOwnership.unavailableMarkerCount, 1);
+    });
+    await t.test("backup-control-caller-other-task-collector-prefix-and-unrelated-process-allow-both-entries", async () => {
+      const rows = `${process.pid} 1 ${process.pid} S fixture-control node '${f.old.worktree}' ${f.old.thread_id}\n` +
+        `900016 1 900016 S fixture-collector node '${pack}/scripts/orchestrator/collector.mjs' --root '${f.root}' --issue MONO-998 --attempt 1\n` +
+        `900017 1 900017 S fixture-prefix node '${f.old.worktree}-other/check'\n` +
+        "900018 1 900018 S fixture-host browser\n";
+      const result = await ownershipCase(rows, {}, false);
+      assert.equal(result.proof.ownership.unavailableMarkerCount, 3);
+    });
+    await t.test("backup-reused-pid-with-different-start-time-allows-both-entries", () =>
+      ownershipCase(`${f.first.pid} 1 ${f.first.pid} S fixture-reused node\n`, {}, false));
+    await t.test("backup-previous-attempt-collector-and-active-gate-descendants-block-both-entries", async () => {
+      const collector = { pid: 900019, procStart: fixtureStart, processGroup: 900019,
+        gate: { pid: 900020, procStart: fixtureStart, processGroup: 900020 } };
+      await ownershipCase("900019 1 900019 S fixture-collector node\n", { collector });
+      await ownershipCase("900021 1 900020 S fixture-check node\n", { collector });
+      const retained = { ...collector, descendants: [{ pid: 900025, procStart: fixtureStart, processGroup: 900025 }] };
+      await ownershipCase("900025 1 900125 S fixture-retained-check node\n", { collector: retained });
+      await ownershipCase("900026 1 900025 S fixture-retained-group node\n", { collector: retained });
+    });
+    await t.test("backup-marker-reader-tristate-and-secret-decoy-never-escapes", async () => {
+      const linuxRuntime = path.join(pack, "scripts/runtime-linux-fixture.mjs");
+      write(linuxRuntime, fs.readFileSync(path.join(pack, "scripts/runtime.mjs"), "utf8").replace('process.platform === "linux"', 'true'));
+      const linux = await import(pathToFileURL(linuxRuntime));
+      const row = { pid: 900022, procStart: fixtureStart }, secret = "UNRELATED_SECRET_DECOY_146";
+      for (const [output, verdict] of [[`SECRET=${secret}\0MONO_ATTEMPT=${f.old.attemptMarker}\0`, "matched"],
+        [`SECRET=${secret}\0MONO_ATTEMPT=other-attempt\0`, "absent"], [null, "unavailable"]]) {
+        markerOutputs[row.pid] = output; write(markersFile, markerOutputs);
+        assert.equal(routes.readProcessAttemptMarker(row, f.old.attemptMarker), verdict);
+        assert.equal(linux.readProcessAttemptMarker(row, f.old.attemptMarker), verdict);
+      }
+      assert.equal(routes.readProcessAttemptMarker({ ...row, procStart: "different incarnation" }, f.old.attemptMarker), "unavailable");
+      markerOutputs[row.pid] = `SECRET=${secret}\0MONO_ATTEMPT=${f.old.attemptMarker}\0`; write(markersFile, markerOutputs);
+      write(path.join(bin, "tree"), `${row.pid} 1 ${row.pid} S fixture-env node\n`);
+      const table = routes.processTable();
+      assert.equal(table.find(r => r.pid === row.pid).command, "node");
+      assert.ok(!JSON.stringify(table).includes(secret));
+      let failure;
+      try { switchRuntime.validateBackupLaunch(f.backup(), 1, f.old.workerWritableRoots); } catch (error) { failure = error; }
+      assert.match(failure.message, /900022/); assert.ok(!String(failure.stack).includes(secret));
+      const inspect = directory => { for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) inspect(file); else assert.ok(!fs.readFileSync(file, "utf8").includes(secret), file);
+      } };
+      inspect(f.root);
+      delete markerOutputs[row.pid]; write(markersFile, markerOutputs); write(path.join(bin, "tree"), "");
+    });
+    for (const primary of ["codex-cli", "claude-cli"]) await t.test(`backup-${primary}-attempt-marker-persisted-before-launch-and-inherited-on-resume`, async () => {
+      const fixture = await setup(primary);
+      const marker = json(fixture.record).entry.attemptMarker;
+      assert.match(marker, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
+      assert.notEqual(marker, f.old.attemptMarker);
+      await fixture.retire(); write(path.join(fixture.root, "workers.json"), { [fixture.request.issue]: fixture.old });
+      const resumeFile = path.join(fixture.root, "resume.md"); write(resumeFile, "resume fixture");
+      const resumed = await runtime.resumeWorker({ root: fixture.root, issue: fixture.request.issue, resumeFile }); pids.add(resumed.pid);
+      // Codex resume returns on spawn; wait for the stub's observation.
+      for (let n = 0; n < 200 && fs.readFileSync(observations, "utf8").split("\n").filter(line => line.includes(marker)).length < 2; n++)
+        await new Promise(resolve => setTimeout(resolve, 10));
+      const seen = fs.readFileSync(observations, "utf8").trim().split("\n").map(JSON.parse).filter(o => o.marker === marker);
+      assert.equal(seen.length, 2); assert.ok(seen.every(o => o.persisted && o.childMarker === marker));
+      assert.equal(json(fixture.record).entry.attemptMarker, marker);
+      if (primary === "claude-cli") {
+        const effective = json(json(fixture.record).entry.settingsFile);
+        assert.equal(effective.disableAllHooks, true);
+        assert.equal(effective.sandbox.allowUnsandboxedCommands, false);
+        assert.equal(effective.permissions.defaultMode, "dontAsk");
+        assert.equal(effective.env?.MONO_ATTEMPT, undefined, "managed settings do not replace the inherited marker");
+      }
+      await stop(resumed.pid); write(path.join(bin, "tree"), "");
+      git("reset", "--hard", base);
+    });
     await t.test("backup-failed-startup-retains-stoppable-registry-identity", async () => {
       write(path.join(bin, "no-thread"), "withhold startup identity");
       const starting = await setup("codex-cli", { deferStartup: true });
       try {
         assert.equal(starting.old.thread_id, null);
-        assert.equal(starting.old.procStart, `fixture-start-${starting.first.pid}`);
+        assert.equal(starting.old.procStart, fixtureStart);
         await switchRuntime.stopBackupProcessTree(starting.root, starting.request.issue);
         await stop(starting.first.pid);
         assert.match((await starting.startResult).error.message, /exited before thread.started/);
@@ -211,6 +401,7 @@ test("backup switch named launch contracts", async t => {
       const pidFile = path.join(bin, "orphan-pid");
       for (let n = 0; !fs.existsSync(pidFile) && n < 200; n++) await new Promise(resolve => setTimeout(resolve, 10));
       const childPid = Number(fs.readFileSync(pidFile, "utf8")); pids.add(childPid);
+      markerOutputs[childPid] = `MONO_ATTEMPT=${orphaned.old.attemptMarker}\0`; write(markersFile, markerOutputs);
       write(path.join(bin, "tree"), `${orphaned.first.pid} 1 ${orphaned.first.pid} S fixture-start-${orphaned.first.pid}\n${childPid} 1 ${childPid} S fixture-start-${childPid}\n`);
       try {
         await switchRuntime.stopBackupProcessTree(orphaned.root, orphaned.request.issue);
@@ -222,7 +413,7 @@ test("backup switch named launch contracts", async t => {
         await assert.rejects(runtime.spawnWorker(orphaned.backup()), /unattributed processes.*reconcile ownership/);
         assert.equal(json(path.join(orphaned.root, "attempts.json"))[orphaned.request.issue], 1);
         assert.deepEqual(json(path.join(orphaned.root, "workers.json")), {});
-      } finally { await stop(childPid); write(path.join(bin, "tree"), ""); }
+      } finally { await stop(childPid); delete markerOutputs[childPid]; write(markersFile, markerOutputs); write(path.join(bin, "tree"), ""); }
     });
     await t.test("backup-primary-already-exited-success", async () => {
       const exited = await setup();
@@ -317,10 +508,15 @@ test("backup switch named launch contracts", async t => {
       await assert.rejects(runtime.spawnWorker(req), /new attempt pins/);
     });
     await t.test("backup-subscription-exhausted-success", async () => {
+      write(path.join(bin, "tree"), "900023 1 900023 S fixture-host browser\n");
       const request = f.backup(); const launched = await runtime.spawnWorker(request); pids.add(launched.pid);
       const entry = json(path.join(f.root, "workers.json"))["MONO-999"];
       assert.equal(entry.attempt, 2); assert.equal(entry.transport, "claude-cli"); assert.equal(entry.model_policy.role, "worker-claude");
       assert.deepEqual(entry.backupSwitch, json(request.pins.file).backupSwitch);
+      assert.equal(entry.processOwnership.unavailableMarkerCount, 1);
+      assert.notEqual(entry.attemptMarker, f.old.attemptMarker);
+      assert.deepEqual(json(f.record).entry.processBaseline, f.old.processBaseline);
+      write(path.join(bin, "tree"), "");
       assert.deepEqual(entry.workerWritableRoots, f.old.workerWritableRoots);
       assert.ok(fs.readFileSync(entry.log, "utf8").includes(request.backupSwitch.evidenceDigest));
       assert.ok(fs.readFileSync(path.join(f.root, "ledger.md"), "utf8").includes("subscription-exhausted"));
@@ -413,7 +609,7 @@ test("backup switch named launch contracts", async t => {
     });
   } finally {
     for (const pid of pids) await stop(pid);
-    process.env.PATH = savedPath; fs.rmSync(scratch, { recursive: true, force: true });
+    process.env.PATH = savedPath; fs.readFileSync = realRead; fs.rmSync(scratch, { recursive: true, force: true });
   }
 });
 function controlledDarwinTemp(bin, root) {
