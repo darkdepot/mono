@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, readJson, baseModelConfig, canonical, digest, processTable, readProcessAttemptMarker, resolveRole, resolvedLocation, syncDir, withLock, flags, isMain } from "../runtime.mjs";
+import { atomicJson, readJson, baseModelConfig, canonical, digest, processTable, readProcessAttemptMarker, readProcessAttemptReference, matchesAttemptReference, resolveRole, resolvedLocation, syncDir, withLock, flags, isMain } from "../runtime.mjs";
 import { effectivePins } from "./command-state.mjs";
 
 const transports = ["codex-cli", "claude-cli"];
@@ -43,18 +43,6 @@ function processObservations(previous) {
 function capturedLive(row, captured, live) {
   return captured.some(old => sameCapturedIdentity(row, old) ||
     (row.group === old.processGroup && !groupReused(old.processGroup, captured, live)));
-}
-
-function exactAttemptReference(command, references) {
-  return references.filter(Boolean).some(reference => {
-    let start = 0, index;
-    while ((index = command.indexOf(reference, start)) !== -1) {
-      const next = command[index + reference.length];
-      if (next === undefined || next === "/" || !/[A-Za-z0-9._-]/.test(next)) return true;
-      start = index + reference.length;
-    }
-    return false;
-  });
 }
 
 function requireProcessOwnership(root, previous, live) {
@@ -109,7 +97,7 @@ function requireProcessOwnership(root, previous, live) {
     const collectorSignal = capturedLive(row, collectors, live) || reachesCapture(row, collectors);
     if (controls.has(row.pid) && !collectorSignal) continue;
     let otherSignal = collectorSignal || capturedLive(row, captured, live) || reachesCapture(row);
-    if (!otherSignal) otherSignal = exactAttemptReference(row.command ?? "", references);
+    if (!otherSignal) otherSignal = matchesAttemptReference(row.command ?? "", references) || readProcessAttemptReference(row, references) === "matched";
     const marker = previous.entry.attemptMarker ? readProcessAttemptMarker(row, previous.entry.attemptMarker) : "absent";
     if (otherSignal || marker === "matched") remnants.push(row.pid);
     else if (marker === "unavailable") unavailableMarkerCount++;

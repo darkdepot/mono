@@ -44,7 +44,7 @@ test("backup switch named launch contracts", async t => {
       for(const pid of request.pids??[request.pid]) {
         const output=outputs[pid],line=tree.find(row=>row.trim().startsWith(pid+' ')),command=line?.trim().split(/\\s+/).slice(5)??['fixture-control'];
         const argv=typeof output==='object'?(output.argv??command):command,env=output?.nativeEnvOmitted?'':typeof output==='string'?output:(output?.environ??'');
-        const argc=Buffer.alloc(4);argc.writeInt32LE(argv.length);
+        const argc=Buffer.alloc(4);argc.writeInt32LE(output?.claimedArgc??argv.length);
         const executable=Buffer.from('/usr/bin/node\\0'),padding=Buffer.alloc((8-executable.length%8)%8);
         rawByPid[pid]=Buffer.concat([argc,executable,padding,Buffer.from(argv.join('\\0')+'\\0'+env+'\\0')]).toString('hex');
         if(output?.nativeUnavailable)unavailable.push(pid);
@@ -54,6 +54,13 @@ test("backup switch named launch contracts", async t => {
       process.stdout.write(result.stdout||'');process.exit(result.status??1);`);
     // No /proc or ps of the host is inspected, on either supported platform.
     fs.readFileSync = function(file, ...args) {
+      const command = /^\/proc\/(\d+)\/cmdline$/.exec(String(file));
+      if (command) {
+        const rows = realRead.call(fs, path.join(bin, "tree"), "utf8").split("\n");
+        const row = rows.find(line => line.trim().startsWith(command[1] + " "));
+        if (!row) throw new Error("unavailable command fixture");
+        return row.trim().split(/\s+/).slice(5).join(" ") + "\0";
+      }
       const match = /^\/proc\/(\d+)\/environ$/.exec(String(file));
       if (!match) return realRead.call(fs, file, ...args);
       const output = markerOutputs[match[1]];
@@ -181,7 +188,7 @@ test("backup switch named launch contracts", async t => {
     });
     write(path.join(f.root, "workers.json"), { [f.request.issue]: f.old });
     await f.retire();
-    await t.test("backup-process-telemetry-localized-caller-keeps-incarnation-and-full-command", () => {
+    await t.test("backup-process-telemetry-localized-caller-keeps-incarnation-and-private-unicode-reference", () => {
       const file = path.join(bin, "locale-mode"), command = "node " + "x".repeat(100) + " " + f.old.worktree + "/Тест-目录/check.mjs";
       const oldLocale = process.env.LC_ALL;
       write(file, "simulate localized ps and narrow default columns"); process.env.LC_ALL = "de_DE.UTF-8";
@@ -190,7 +197,9 @@ test("backup switch named launch contracts", async t => {
         const row = routes.processTable().find(row => row.pid === 900030);
         assert.equal(row.procStart, "Mo. 01 Jan. 2024 00:00:00", "legacy caller-locale identity is preserved");
         assert.equal(routes.processStart(row.pid), row.procStart);
-        assert.equal(row.command, command);
+        if (process.platform === "darwin") assert.equal(path.basename(row.command), "node");
+        else assert.equal(row.command, command);
+        assert.equal(routes.readProcessAttemptReference(row, [f.old.worktree + "/Тест-目录/check.mjs"]), "matched");
       } finally {
         if (oldLocale === undefined) delete process.env.LC_ALL; else process.env.LC_ALL = oldLocale;
         fs.unlinkSync(file); write(path.join(bin, "tree"), "");
@@ -344,9 +353,62 @@ test("backup switch named launch contracts", async t => {
       write(path.join(bin, "tree"), `${pid} 1 ${pid} S fixture-empty node SECRET=${secret}\n`);
       try {
         const table = macRuntime.processTable();
-        assert.equal(table.find(row => row.pid === pid).command.trim(), "node");
+        assert.equal(path.basename(table.find(row => row.pid === pid).command), "node");
         assert.ok(!JSON.stringify(table).includes(secret));
       } finally { delete markerOutputs[pid]; write(markersFile, markerOutputs); write(path.join(bin, "tree"), ""); }
+    });
+    await t.test("backup-mac-rewritten-title-keeps-arguments-private-without-environment-export", async () => {
+      const secret = "REWRITTEN_TITLE_ENV_SECRET_DECOY_146", pid = 900086;
+      const output = { argv: ["x".repeat(128)], claimedArgc: 4, text: "rewritten-title",
+        environ: `SECRET=${secret}\0MONO_ATTEMPT=${f.old.attemptMarker}\0HOME=/tmp\0PATH=/usr/bin\0` };
+      markerOutputs[pid] = output; write(markersFile, markerOutputs);
+      write(path.join(bin, "tree"), `${pid} 1 ${pid} S fixture-title node\n`);
+      try {
+        const table = macRuntime.processTable();
+        assert.equal(path.basename(table.find(row => row.pid === pid).command), "node");
+        assert.ok(!JSON.stringify(table).includes(secret));
+        assert.equal(macRuntime.readProcessAttemptMarker({ pid, procStart: fixtureStart }, f.old.attemptMarker), "unavailable");
+      } finally { delete markerOutputs[pid]; write(markersFile, markerOutputs); write(path.join(bin, "tree"), ""); }
+      const result = await ownershipCase(`${pid} 1 ${pid} S fixture-title node\n`, { outputs: { [pid]: output } }, false);
+      assert.equal(result.proof.ownership.unavailableMarkerCount, 1);
+      assert.equal(result.stopped.retirement.processOwnership.unavailableMarkerCount, 1);
+    });
+    await t.test("backup-mac-inline-arrow-and-option-equals-retain-command-path", () => {
+      const pid = 900087, body = `setInterval(()=>require("fs").appendFileSync("${f.old.worktree}/out","x"),1000)`;
+      const output = { argv: ["node", "--stack-trace-limit=20", "-e", body], text: "node",
+        environ: "HOME=/tmp\0" };
+      return ownershipCase(`${pid} 1 ${pid} S fixture-arrow node --stack-trace-limit=20 -e ${body}\n`,
+        { marker: null, outputs: { [pid]: output } });
+    });
+    await t.test("backup-mac-unicode-environment-name-does-not-escape-rewritten-title", () => {
+      const secret = "UNICODE_ENV_NAME_SECRET_DECOY_146", pid = 900088;
+      markerOutputs[pid] = { argv: ["x".repeat(128)], claimedArgc: 2, text: "rewritten-title",
+        environ: `ЗАМЕТКА=${secret}\0MONO_ATTEMPT=${f.old.attemptMarker}\0HOME=/tmp\0` };
+      write(markersFile, markerOutputs); write(path.join(bin, "tree"), `${pid} 1 ${pid} S fixture-title node\n`);
+      try {
+        const table = macRuntime.processTable();
+        assert.equal(path.basename(table.find(row => row.pid === pid).command), "node");
+        assert.ok(!JSON.stringify(table).includes(secret));
+      } finally { delete markerOutputs[pid]; write(markersFile, markerOutputs); write(path.join(bin, "tree"), ""); }
+    });
+    await t.test("backup-mac-assignment-shaped-argument-preserves-marker-and-literal-traces", async () => {
+      const pid = 900089, body = `x=1; setInterval(()=>require("fs").appendFileSync("${f.old.worktree}/out","x"),1000)`;
+      const output = { argv: ["node", "-e", body], text: `node MONO_ATTEMPT=${f.old.attemptMarker}`,
+        environ: `HOME=/tmp\0MONO_ATTEMPT=${f.old.attemptMarker}\0` };
+      markerOutputs[pid] = output; write(markersFile, markerOutputs);
+      try { assert.equal(macRuntime.readProcessAttemptMarker({ pid, procStart: fixtureStart }, f.old.attemptMarker), "matched"); }
+      finally { delete markerOutputs[pid]; write(markersFile, markerOutputs); }
+      for (const marker of [f.old.attemptMarker, null]) {
+        await ownershipCase(`${pid} 1 ${pid} S fixture-assignment node -e ${body}\n`, { marker, outputs: { [pid]: output } });
+      }
+    });
+    await t.test("backup-mac-nonidentifier-environment-name-never-escapes-title", () => {
+      const secret = "NONIDENTIFIER_ENV_SECRET_DECOY_146", pid = 900090;
+      markerOutputs[pid] = { argv: ["x".repeat(128)], claimedArgc: 2, text: "rewritten-title",
+        environ: `SECRET/KEY=${secret}\0HOME=/tmp\0` };
+      write(markersFile, markerOutputs); write(path.join(bin, "tree"), `${pid} 1 ${pid} S fixture-title node\n`);
+      try { assert.ok(!JSON.stringify(macRuntime.processTable()).includes(secret)); }
+      finally { delete markerOutputs[pid]; write(markersFile, markerOutputs); write(path.join(bin, "tree"), ""); }
     });
     await t.test("backup-matched-attempt-marker-blocks-both-entries", () => ownershipCase(
       "900014 1 900014 S fixture-marker node\n", { outputs: { 900014: `SECRET_DECOY=must-not-escape\0MONO_ATTEMPT=${f.old.attemptMarker}\0` } }));
@@ -431,7 +493,7 @@ test("backup switch named launch contracts", async t => {
       markerOutputs[row.pid] = `SECRET=${secret}\0MONO_ATTEMPT=${f.old.attemptMarker}\0`; write(markersFile, markerOutputs);
       write(path.join(bin, "tree"), `${row.pid} 1 ${row.pid} S fixture-env node\n`);
       const table = routes.processTable();
-      assert.equal(table.find(r => r.pid === row.pid).command, "node");
+      assert.equal(path.basename(table.find(r => r.pid === row.pid).command), "node");
       assert.ok(!JSON.stringify(table).includes(secret));
       let failure;
       try { switchRuntime.validateBackupLaunch(f.backup(), 1, f.old.workerWritableRoots); } catch (error) { failure = error; }

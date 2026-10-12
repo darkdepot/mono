@@ -759,10 +759,12 @@ Legacy attempts without a marker continue to use the other three traces.
 
 The process table returns PID, parent PID, group, start time, state and command,
 without environment. Start identities retain the legacy caller-locale format;
-full UTF-8 commands are read separately. On macOS, the private kernel probe
-joins only argc-delimited arguments for the command column, preserving empty
-arguments so environment entries cannot be mistaken for commands. Unreadable
-commands remain empty; group, ancestry and marker checks remain independent.
+Linux reads full UTF-8 command text separately. On macOS, the command column
+contains only the executable label from the kernel's separate path area. Raw
+arguments stay inside a private probe: an incarnation-checked exact-path query
+returns only `matched`, `absent` or `unavailable`, preserving literal references
+without returning argument/environment bytes. The query scans the kernel-reported
+argument region conservatively; a rewritten title can make that region ambiguous.
 A separate incarnation-checked reader returns only
 `matched`, `absent` or `unavailable`: macOS reads `ps` environment output for
 processes owned by the current user; Linux reads `/proc/<pid>/environ`. Environment
@@ -773,13 +775,15 @@ Because macOS `ps` flattens arguments and environment values, a candidate match
 is confirmed against NUL-delimited `KERN_PROCARGS2` entries by a private `python3`
 probe using the standard `ctypes` library. Its isolated `-I -S` invocation excludes
 workspace/user startup imports and respects the kernel's `ARG_MAX`. Marker
-requests return only a verdict; command-table requests return only PID and
-command text from the argv region. A missing interpreter or denied kernel
-marker read returns `unavailable`, contributing to
-the same recorded residual-risk count. A marker-like argument or text inside
-another environment value is not a match. Empty/omitted environment data or a
-flattened candidate that cannot be confirmed is unavailable, rather than evidence
-of absence.
+and exact-path requests return only verdicts; command-table requests return only
+PID and executable label. A missing interpreter or denied kernel read returns
+`unavailable` for those queries. A marker-like argument or text inside another
+environment value is not a confirmed environment match. Empty/omitted environment
+data or a flattened candidate that cannot be confirmed is unavailable, rather
+than evidence of absence. Rewritten titles may remove argument separators while
+the kernel retains argc. An intact marker beyond that reported region still
+matches; a marker consumed into it is unavailable rather than absent. No raw
+arguments or environment leave the private probe, regardless of variable names.
 The fourth trace scans the whole command text for a literal worktree or
 attempt-artifact path. An occurrence counts when the character after the path
 is the end of the text, `/`, or outside `[A-Za-z0-9._-]`. Longer sibling paths

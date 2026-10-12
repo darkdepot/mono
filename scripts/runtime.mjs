@@ -184,6 +184,7 @@ def decode(raw):
     end = raw.find(b"\0", 4)
     if end < 0:
         return None
+    executable = raw[4:end]
     # Darwin's path area is pointer-aligned; modern macOS processes are 64-bit.
     # Skipping all NULs would consume empty argv entries and expose environment.
     pos = 4 + ((end + 1 - 4 + 7) // 8) * 8
@@ -197,7 +198,7 @@ def decode(raw):
         argv.append(raw[pos:end])
         pos = end + 1
     entries = [entry for entry in raw[pos:].split(b"\0") if entry]
-    return argv, entries
+    return executable, argv, entries
 def read(pid, libc, argmax):
     mib = (ctypes.c_int * 3)(1, 49, pid)
     size = ctypes.c_size_t(min(argmax, 1024 * 1024))
@@ -218,14 +219,36 @@ try:
         for pid in request["pids"]:
             parts = read(pid, libc, argmax.value)
             if parts is not None:
-                commands.append([pid, " ".join(arg.decode("utf8", errors="replace") for arg in parts[0])])
+                commands.append([pid, parts[0].decode("utf8", errors="replace")])
         print(json.dumps(commands))
     else:
         parts = read(request["pid"], libc, argmax.value)
-        if parts is None or not parts[1]:
+        if parts is None:
             print("unavailable")
+        elif "references" in request:
+            references = [path.encode("utf8") for path in request["references"]]
+            matched = False
+            for argument in parts[1]:
+                for reference in references:
+                    start = 0
+                    while True:
+                        index = argument.find(reference, start)
+                        if index < 0:
+                            break
+                        end = index + len(reference)
+                        if end == len(argument) or argument[end] == 47 or argument[end] not in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-":
+                            matched = True
+                            break
+                        start = end
+            print("matched" if matched else "absent")
         else:
-            print("matched" if b"MONO_ATTEMPT=" + request["marker"].encode() in parts[1] else "absent")
+            marker = b"MONO_ATTEMPT=" + request["marker"].encode()
+            if marker in parts[2]:
+                print("matched")
+            elif not parts[2] or marker in parts[1]:
+                print("unavailable")
+            else:
+                print("absent")
 except Exception:
     print("[]" if "pids" in locals().get("request", {}) else "unavailable")
 `;
@@ -258,6 +281,36 @@ export function readProcessAttemptMarker(row, marker) {
     } else return "unavailable";
     if (!sameStart()) return "unavailable";
     return matched ? "matched" : "absent";
+  } catch { return "unavailable"; }
+}
+export function matchesAttemptReference(command, references) {
+  return references.filter(Boolean).some(reference => {
+    let start = 0, index;
+    while ((index = command.indexOf(reference, start)) !== -1) {
+      const next = command[index + reference.length];
+      if (next === undefined || next === "/" || !/[A-Za-z0-9._-]/.test(next)) return true;
+      start = index + reference.length;
+    }
+    return false;
+  });
+}
+// Keep argument/environment bytes private. Callers receive a path-match verdict.
+export function readProcessAttemptReference(row, references) {
+  if (!Number.isSafeInteger(row?.pid) || row.pid <= 0 || !row.procStart) return "unavailable";
+  references = references.filter(value => typeof value === "string" && path.isAbsolute(value));
+  const sameStart = () => processStart(row.pid)?.replace(/\s+/g, " ") === row.procStart.replace(/\s+/g, " ");
+  try {
+    if (!sameStart()) return "unavailable";
+    let verdict;
+    if (process.platform === "linux") {
+      const command = fs.readFileSync(`/proc/${row.pid}/cmdline`, "utf8");
+      verdict = command.split("\0").some(argument => matchesAttemptReference(argument, references)) ? "matched" : "absent";
+    } else if (process.platform === "darwin") {
+      verdict = execFileSync("python3", ["-I", "-S", "-c", darwinProcessProbe], {
+        input: JSON.stringify({ pid: row.pid, references }), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"]
+      }).trim();
+    } else return "unavailable";
+    return ["matched", "absent", "unavailable"].includes(verdict) && sameStart() ? verdict : "unavailable";
   } catch { return "unavailable"; }
 }
 export function lockTreeDead(holder) {
