@@ -346,6 +346,57 @@ require comparable completed waves under the cost protocol.
 
 ## Plugin Installation
 
+### Users without an orchestrator
+
+Use this setup on a user machine where no Mono orchestrator runs tasks. Both
+tools track the GitHub marketplace's main branch:
+
+```bash
+claude plugin marketplace add darkdepot/mono
+claude plugin install mono@mono-marketplace
+codex plugin marketplace add darkdepot/mono
+codex plugin add mono@mono-marketplace
+```
+
+In Claude Code, enable automatic updates for `mono-marketplace` through
+`/plugin` → Marketplaces, or set `"autoUpdate": true` on that marketplace in
+`extraKnownMarketplaces`. Alternatively, update the marketplace and plugin
+manually:
+
+```bash
+claude plugin marketplace update mono-marketplace
+claude plugin update mono@mono-marketplace
+```
+
+In Codex, update the marketplace snapshot, then install the plugin from it:
+
+```bash
+codex plugin marketplace upgrade mono-marketplace
+codex plugin add mono@mono-marketplace
+```
+
+If your Codex marketplace was registered with `--ref v<VERSION>`, `upgrade`
+keeps it on that tag. Move it to main once, then use the two update commands
+above for future updates:
+
+```bash
+codex plugin marketplace remove mono-marketplace
+codex plugin marketplace add darkdepot/mono
+codex plugin add mono@mono-marketplace
+```
+
+Restart sessions after installation or an update so they load the installed
+skills. Follow the [GitHub release pages](https://github.com/darkdepot/mono/releases)
+for news about versions. A release page announces a release, but an update from
+main does **not** guarantee that the installed files match that release's tag:
+main may contain merged changes that have not yet been released.
+
+On a machine where an orchestrator runs tasks, use the procedure below instead:
+disable automatic updates, pin Codex to a release tag, check the update condition
+and compare the installed cache with the released Git tree.
+
+### Machines running an orchestrator
+
 Register [darkdepot/mono](https://github.com/darkdepot/mono) as the GitHub marketplace;
 no repository clone is needed to install. Replace `<VERSION>` below with the
 released `VERSION` whose tag points to the verified landing tip T. Claude Code
@@ -380,7 +431,8 @@ separate prerequisite in your tool's skills directory; pass that directory as
 `skills/`, `references/`, `templates/` and `scripts/` have the repository layout.
 In Claude Code, invoke skills as `/mono:idea`, `/mono:handoff`, and so on; in Codex, run `/skills` and select the corresponding Mono skill.
 
-Do not enable automatic updates for Mono. Update deliberately after a release.
+Do not enable automatic updates for Mono on a machine running an orchestrator.
+Update deliberately after a release.
 Before any install/update that replaces a plugin folder, have each affected
 product orchestrator pause new dispatch. Keep dispatch paused through the check
 and replacement. Check the folder against attempts of every product, including

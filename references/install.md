@@ -9,6 +9,9 @@ not. The plugin has the repository layout: `skills/`, `references/`, `templates/
 
 ## Plugin Updates
 
+This procedure is for machines running an orchestrator; user machines follow
+[Users without an orchestrator](../README.md#users-without-an-orchestrator).
+
 Only the installing orchestrator registers or updates the shared marketplace.
 Disable automatic updates. Install/update deliberately after a release task,
 when GitHub main equals the verified landing tip T. Without a new release, do
@@ -30,8 +33,9 @@ claude plugin marketplace update mono-marketplace
 claude plugin update mono@mono-marketplace
 ```
 
-Codex has no marketplace-update command. Remove its clone (the cache remains),
-register the new tag, then install:
+Codex has `codex plugin marketplace upgrade`, but it keeps a tag-pinned
+marketplace on the same tag. On the orchestrator machine, remove its clone
+(the cache remains), register the new release tag, then install:
 
 ```bash
 codex plugin marketplace remove mono-marketplace
