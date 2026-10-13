@@ -6,6 +6,26 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-13
+
+<!-- fragment: MONO-148 sha256:b6018a13929b4edcb1cd26694605774daebf0f097fc5550b980e9313616b2736 -->
+### Added
+
+- Publish GitHub release pages from the version tag's changelog section after validating the pack and both plugin versions; existing pages remain unchanged.
+- Document installation and updates from main for users without an orchestrator, including moving a tag-pinned Codex marketplace to main and the possibility of merged, unreleased changes.
+
+### Fixed
+
+- Correct Codex marketplace upgrade guidance while preserving the orchestrator machine's release-tag, update-condition and installed-cache verification procedure.
+
+<!-- fragment: MONO-149 sha256:c8d8a709e6ca197ad00e37af5a679c63683020ee58f9eb0771c16f11d0554c79 -->
+### Changed
+
+- The orchestrator runs on its owner-selected launch model and reports the authoritative model or «не удалось определить» without a policy verdict. Second Voice independence and other role routes remain unchanged (MONO-149).
+
+<!-- fragment: MONO-151 sha256:b5a43dcc3a60c6283332fc10aa6ee820e7aa87e1ecbf5fe85d2402f6a1e68619 -->
+- Release 0.29.0 with the owner-selected orchestrator launch model, automated GitHub release pages and user plugin-update guidance; assemble the task records and align the pack, plugin and README release versions.
+
 ## [0.28.0] - 2026-10-12
 
 <!-- fragment: MONO-142 sha256:cfbbc9b6faa59c4a254a78475e31000f8ff704a08ac341d42781a71683fab19c -->
