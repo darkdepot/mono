@@ -4929,7 +4929,7 @@ function policyRoles(text) {
     const effort = effortCell.replaceAll("`", "");
     if (roles.has(role)) throw new Error(`duplicate role ${role}`);
     if (!MODEL_ROLES.includes(role)) throw new Error(`unknown role ${role}`);
-    if (!isModelId(model)) throw new Error(`invalid model id for ${role}`);
+    if (role === "orchestrator" ? model !== "session-selected" : !isModelId(model)) throw new Error(`invalid model id for ${role}`);
     if (role === "orchestrator" ? effort !== "n/a" : role === "autoreview"
       ? effort !== "[Canonical Routes](autoreview-routing.md#canonical-routes)"
       : !MODEL_EFFORTS.includes(effort)) throw new Error(`invalid effort source for ${role}`);
@@ -5128,10 +5128,13 @@ function checkModelPolicy(base) {
       for (const error of modelRecordErrors(record)) errors.push(`${registryFile}: ${transport} template provenance: ${error}`);
     }
   } catch (error) { errors.push(`${registryFile}: invalid registry model shape: ${error.message}`); }
-  for (const file of ["skills/orchestrate/SKILL.md", "templates/orchestrator-brief.md"]) {
-    const text = body(file).replace(/\s+/g, " ");
-    const status = /Модель оркестратора: ([^\n]*?не удалось проверить)/.exec(text)?.[1] || "";
-    if (status !== "по политике | не по политике | не удалось проверить") errors.push(`${file}: missing three-outcome orchestrator status field`);
+  const statusLabel = "Модель оркестратора:";
+  const statusValues = ["<модель запуска>", "не удалось определить"];
+  for (const token of ["session-selected", statusLabel, ...statusValues]) requireMachineToken(token);
+  for (const file of [MODEL_POLICY_PATH, "skills/orchestrate/SKILL.md", "templates/orchestrator-brief.md"]) {
+    const status = body(file).split(statusLabel)[1]?.split(/[»\n]/)[0].trim().replace(/\.$/, "") || "";
+    const values = status.split("|").map((value) => value.trim());
+    if (values.length !== statusValues.length || values.some((value, index) => value !== statusValues[index])) errors.push(`${file}: invalid informational orchestrator status field`);
   }
   return errors;
 }
@@ -5183,6 +5186,7 @@ function validateModelPolicyFixtures() {
     const marker = (role) => `[role:${role}]`;
     const link = (role) => `[role:${role}](references/model-policy.md#roles)`;
     check();
+    console.log("PASS model-policy session-selected orchestrator marker");
     change(MODEL_POLICY_PATH, (text) => cell(text, "worker-default", 1, fabricated("gpt", "a")));
     check();
     console.log("PASS model-policy AE1: changed cell, unchanged fixtures");
@@ -5198,6 +5202,16 @@ function validateModelPolicyFixtures() {
         check();
       }
       if (failures.length === previousFailures) console.log(`PASS model-policy ${label}: red (${expected}), restored green`);
+    }
+    for (const role of MODEL_ROLES.filter((role) => role !== "orchestrator")) {
+      negative(`session-selected rejected for ${role}`, () => change(MODEL_POLICY_PATH,
+        (text) => cell(text, role, 1, "session-selected")), `invalid model id for ${role}`);
+    }
+    negative("orchestrator concrete model rejected", () => change(MODEL_POLICY_PATH,
+      (text) => cell(text, "orchestrator", 1, fabricated("claude", "orchestrator"))), "invalid model id for orchestrator");
+    for (const name of [MODEL_POLICY_PATH, "skills/orchestrate/SKILL.md", "templates/orchestrator-brief.md"]) {
+      negative(`orchestrator status ${name}`, () => change(name,
+        (text) => text.replace("<модель запуска>", "<missing-model>")), "invalid informational orchestrator status field");
     }
     negative("AE2 stale literal", () => {
       change(MODEL_POLICY_PATH, (text) => cell(text, "worker-default", 1, fabricated("gpt", "b")));
@@ -5851,6 +5865,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "session-selected", "Модель оркестратора:", "<модель запуска>", "не удалось определить",
   "git show",
   "landing-plan.mjs", "LANDING-PLAN", "LANDING-HEAD", "LANDING-REFRESH", "--sibling",
   "opened|sibling-merge|review-fix|docs|unknown", "HEAD_REF_FORCE_PUSHED_EVENT",

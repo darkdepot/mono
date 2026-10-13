@@ -117,7 +117,7 @@ never has to ask for a human version.
 
 Где мы к цели «<цель волны>»: готово — <части, простыми словами>; осталось — <части и их состояние>.
 
-Модель оркестратора: по политике | не по политике | не удалось проверить.
+Модель оркестратора: <модель запуска> | не удалось определить.
 
 Посадка: <какие готовящиеся изменения пересекаются | пересечений нет; что не удалось оценить и почему>.
 
@@ -177,9 +177,7 @@ Rules that bind every status:
   чего>» in «В работе сейчас:», with the blocker named in product words.
   «Стоит» is not a stage: it says the work is not moving and why, so a
   frozen line cannot masquerade as one still in progress.
-- «Модель оркестратора:» uses the three-outcome self-check in
-  `references/model-policy.md`; missing authoritative environment data means
-  «не удалось проверить». Do not infer a match from the prompt.
+- «Модель оркестратора:» follows `references/model-policy.md`. Report the authoritative launch model, or «не удалось определить» when unavailable; do not infer identity from the prompt.
 - «Можешь потрогать:» appears only when there is something to touch — the
   same condition as in `skills/orchestrate/SKILL.md`. With nothing
   the owner can open yet, the line is omitted, never filled with a
