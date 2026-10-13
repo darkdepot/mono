@@ -44,12 +44,34 @@ test("release notes: bracketed content headings do not end the version section",
   assert.equal(result.stdout, "First notes.\n\n## [Context]\n\nMore release notes.\n");
 });
 
+for (const [name, changelog, expected] of [
+  ["Unreleased heading inside task content", "## [1.2.3]\n\nFirst notes.\n\n## [Unreleased]\n\nTask example.\n\n## [1.2.2]\nOlder.\n", "First notes.\n\n## [Unreleased]\n\nTask example.\n"],
+  ["fenced version and reference examples", "## [1.2.3]\n\n```md\n## [1.2.2]\n[1.2.3]: https://example.invalid\n```\n\nMore notes.\n\n## [1.2.2]\nOlder.\n", "```md\n## [1.2.2]\n[1.2.3]: https://example.invalid\n```\n\nMore notes.\n"],
+  ["tilde fences and a shorter closing marker", "## [1.2.3]\n\n~~~~md\n~~~\n## [1.2.2]\n~~~~\n\nMore notes.\n\n## [1.2.2]\nOlder.\n", "~~~~md\n~~~\n## [1.2.2]\n~~~~\n\nMore notes.\n"],
+  ["fenced header before the real section", "```md\n## [1.2.3]\nExample only.\n```\n\n## [1.2.3]\n\nReal notes.\n\n## [1.2.2]\nOlder.\n", "Real notes.\n"],
+  ["used named reference", "## [1.2.3]\n\nSee [guide][guide].\n\n[guide]: https://example.invalid/guide\n\n## [1.2.2]\nOlder.\n", "See [guide][guide].\n\n[guide]: https://example.invalid/guide\n"],
+  ["used multiline named reference", "## [1.2.3]\n\nSee [guide][guide].\n\n[guide]:\n  https://example.invalid/guide\n  \"Guide title\"\n\n## [1.2.2]\nOlder.\n", "See [guide][guide].\n\n[guide]:\n  https://example.invalid/guide\n  \"Guide title\"\n"],
+  ["multiline version references removed", "## [1.2.3]\n\nRelease notes.\n\n[1.2.3]:\n  https://example.invalid/release\n  \"Release title\"\n", "Release notes.\n"],
+  ["escaped reference titles", "## [1.2.3]\n\nRelease notes.\n\n[1.2.3]: https://example.invalid/release \"Release \\\"title\\\"\"\n", "Release notes.\n"],
+  ["version title beginning on destination row", "## [1.2.3]\n\nRelease notes.\n\n[1.2.3]: https://example.invalid/release \"Release\n  title\"\n", "Release notes.\n"],
+]) {
+  test(`release notes: ${name}`, t => {
+    const result = fixture(t, { changelog }).run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, expected);
+  });
+}
+
 for (const [name, options, message] of [
   ["section absent", { changelog: "## [Unreleased]\nPending.\n## [1.2.2]\nOlder.\n" }, "missing changelog section"],
   ["section empty after links removed", { changelog: "## [1.2.3]\n\n[1.2.3]: https://example.invalid\n\n## [1.2.2]\nOlder.\n" }, "empty changelog section"],
   ["section empty after named links removed", { changelog: "## [1.2.3]\n\n[Unreleased]: https://example.invalid/compare\n[issue]: https://example.invalid/issue\n\n## [1.2.2]\nOlder.\n" }, "empty changelog section"],
   ["section empty after indented links removed", { changelog: "## [1.2.3]\n\n   [issue]: https://example.invalid/issue\n" }, "empty changelog section"],
   ["section empty after links without colon spacing removed", { changelog: "## [1.2.3]\n\n[issue]:https://example.invalid/issue\n" }, "empty changelog section"],
+  ["section contains only a multiline named reference", { changelog: "## [1.2.3]\n\n[guide]:\n  https://example.invalid/guide\n  \"Guide title\"\n" }, "empty changelog section"],
+  ["section contains only a reference with indented title", { changelog: "## [1.2.3]\n\n[guide]: https://example.invalid/guide\n    \"Guide title\"\n" }, "empty changelog section"],
+  ["section contains only a reference with multiline title", { changelog: "## [1.2.3]\n\n[guide]: https://example.invalid/guide\n  \"Guide\n  title\"\n" }, "empty changelog section"],
+  ["section contains only a title beginning on destination row", { changelog: "## [1.2.3]\n\n[guide]: https://example.invalid/guide \"Guide\n  title\"\n" }, "empty changelog section"],
   ["tag differs from VERSION", { version: "1.2.4" }, "tag/version mismatch"],
   ["Claude version differs", { claude: "1.2.4" }, ".claude-plugin/plugin.json version mismatch"],
   ["Codex version differs", { codex: "1.2.4" }, ".codex-plugin/plugin.json version mismatch"],

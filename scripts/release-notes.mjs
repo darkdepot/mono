@@ -6,20 +6,77 @@ import { fileURLToPath } from "node:url";
 
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
+function markdownRows(lines) {
+  let fence = null;
+  const code = lines.map(line => {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+      return true;
+    }
+    if (marker && !(marker[1][0] === "`" && marker[2].includes("`"))) {
+      fence = { char: marker[1][0], length: marker[1].length };
+      return true;
+    }
+    return false;
+  });
+  const definitions = new Set(), versionDefinitions = new Set();
+  const destination = /^(?:<[^<>]*>|[^\s]+)(?:[ \t]+(.+?))?[ \t]*$/;
+  const title = /^(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^)\\])*\))[ \t]*$/;
+  const finishTitle = (value, row) => {
+    if (!/^["'(]/.test(value)) return null;
+    while (!title.test(value)) {
+      row++;
+      if (row >= lines.length || code[row] || !lines[row].trim()) return null;
+      value += "\n" + lines[row].trim();
+    }
+    return row;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    if (code[i]) continue;
+    const definition = /^ {0,3}\[([^\]]+)\]:[ \t]*(.*)$/.exec(lines[i]);
+    if (!definition) continue;
+    const isVersion = versionPattern.test(definition[1].trim());
+    if (isVersion) { definitions.add(i); versionDefinitions.add(i); }
+    let end = i, value = definition[2].trim();
+    if (!value && i + 1 < lines.length && !code[i + 1]) {
+      value = lines[i + 1].trim();
+      if (destination.test(value)) end++;
+    }
+    const parsed = destination.exec(value);
+    if (!parsed) continue;
+    if (parsed[1]) {
+      const closing = finishTitle(parsed[1], end);
+      if (closing === null) continue;
+      end = closing;
+    } else if (end + 1 < lines.length && !code[end + 1]) {
+      const closing = finishTitle(lines[end + 1].trim(), end + 1);
+      if (closing !== null) end = closing;
+    }
+    for (let row = i; row <= end; row++) {
+      definitions.add(row);
+      if (isVersion) versionDefinitions.add(row);
+    }
+    i = end;
+  }
+  return { code, definitions, versionDefinitions };
+}
+
 export function extractReleaseNotes(changelog, version) {
   if (!versionPattern.test(version)) throw new Error(`invalid release version: ${version}`);
   const lines = changelog.split(/\r?\n/);
-  const start = lines.findIndex(line => line === `## [${version}]` || line.startsWith(`## [${version}] - `));
+  const { code, definitions, versionDefinitions } = markdownRows(lines);
+  const start = lines.findIndex((line, index) => !code[index] && !definitions.has(index) && (line === `## [${version}]` || line.startsWith(`## [${version}] - `)));
   if (start < 0) throw new Error(`missing changelog section: ${version}`);
   const next = lines.findIndex((line, index) => {
     const heading = /^## \[([^\]]+)\]/.exec(line);
-    return index > start && heading && (versionPattern.test(heading[1]) || heading[1] === "Unreleased");
+    return index > start && !code[index] && !definitions.has(index) && heading && versionPattern.test(heading[1]);
   });
-  const body = lines.slice(start + 1, next < 0 ? undefined : next)
-    .filter(line => !/^ {0,3}\[[^\]]+\]:/.test(line));
+  const end = next < 0 ? lines.length : next;
+  if (!lines.some((line, index) => index > start && index < end && !definitions.has(index) && line.trim())) throw new Error(`empty changelog section: ${version}`);
+  const body = lines.slice(start + 1, end).filter((line, index) => !versionDefinitions.has(start + 1 + index));
   while (body.length && !body[0].trim()) body.shift();
   while (body.length && !body.at(-1).trim()) body.pop();
-  if (!body.length) throw new Error(`empty changelog section: ${version}`);
   return body.join("\n") + "\n";
 }
 
