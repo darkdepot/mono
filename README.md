@@ -1,6 +1,6 @@
 # Mono Agent Workflow
 
-Current release: **0.28.0**. See the [release notes](CHANGELOG.md#0280---2026-10-12).
+Current release: **0.29.0**. See the [release notes](CHANGELOG.md#0290---2026-10-13).
 
 A reusable skill pack for owners and coding agents who deliver software through Linear and GitHub. Use it to turn a raw idea into approved work, run one delivery worker from code to a green pull request, and deploy with evidence. The owner decides the product; agents carry the work and show what they actually verified.
 
@@ -152,7 +152,7 @@ One setting decides who executes a product's Issues under the orchestrator:
 `orchestration.transport` in its `.agents/mono-workflow.config.json`. `codex-cli` is
 the default and needs no entry; `claude-cli` selects the managed Claude Code worker
 and its `worker-claude` role. Everything else about the product stays as it is, and
-the orchestrator itself runs on Claude either way.
+the orchestrator keeps the model selected at session launch either way.
 
 The value is read from the Issue's immutable base commit. Editing it therefore never
 changes a worker that is already running: an attempt keeps the worker, rights and
