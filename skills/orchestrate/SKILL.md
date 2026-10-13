@@ -104,12 +104,11 @@ do not vendor Mono skills, templates, hooks, or workflow runtime files into
 the product. The product repo still keeps only
 `.agents/mono-workflow.config.json` for this workflow.
 
-At session start, resolve [role:orchestrator](references/model-policy.md#roles)
-and perform the self-check from `references/model-policy.md` using authoritative
-launch-environment data. Report
-«Модель оркестратора: по политике | не по политике | не удалось проверить».
-Absent authoritative data means «не удалось проверить»; prompt self-identification
-never proves a match and this status does not switch the running session.
+At session start, report the informational self-check from
+[role:orchestrator](references/model-policy.md#roles):
+«Модель оркестратора: <модель запуска> | не удалось определить».
+Use authoritative launch-environment data, with no verdict; prompt
+self-identification is not evidence and this status never switches the session.
 
 Workflow states:
 

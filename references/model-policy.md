@@ -1,14 +1,14 @@
 # Model Policy
 
-The table supplies defaults; validated product config may override them below.
-Resolve roles before commands, dispatches and certificates. Normative references
-use a `role:<role>` link to `#roles`; outputs record values, not new defaults.
+Defaults accept validated product overrides. Resolve roles before
+commands/dispatches/certificates. Normative links use `role:<role>` → `#roles`;
+outputs record values, not defaults.
 
 ## Roles
 
 | Role | Model id | Reasoning effort | Applies to | Decided by |
 | --- | --- | --- | --- | --- |
-| `orchestrator` | `claude-fable-5-1` | n/a | Orchestrator session; effort unset. | Owner, 2026-09-06. |
+| `orchestrator` | `session-selected` | n/a | Launch model; no required model or effort. | Owner, 2026-10-13: «без жёстких ограничений». |
 | `second-voice` | `gpt-6-astra` | `high` | Second Voice for Claude; approved cross-vendor rule. | Owner, 2026-09-30. |
 | `second-voice-alt` | `claude-opus-5` | `high` | Second Voice for GPT; independent of worker role. | Owner, 2026-09-06. |
 | `worker-default` | `gpt-6.1-sol` | `high` | Default Codex worker. | Owner, 2026-09-30. |
@@ -18,18 +18,17 @@ use a `role:<role>` link to `#roles`; outputs record values, not new defaults.
 
 ## Reviewer and producer
 
-The table records owner-approved worker/reviewer pairs, not measured capability.
-Reviewer capability must be at least the producer's. Unestablished pairs require
-an owner decision; matching model IDs require same-model review disclosure.
+Pairs are owner-approved, not measured. Reviewers must be at least as capable
+as producers. Unestablished pairs need owner approval; matching model IDs need
+same-model review disclosure.
 
 ## Product overrides
 
-This replaces the table-only boundary. `.agents/mono-workflow.config.json` may
-set `models.roles`: role → `{engine|transport, model, effort|effortByRisk,
+`.agents/mono-workflow.config.json` may set `models.roles`: role → `{engine|transport, model, effort|effortByRisk,
 provider:{id,endpoint,credentialEnv}}`. Omitted fields inherit defaults;
-changing engine requires compatible effort and provider. Keys live only in the
-orchestrator environment; `credentialEnv` is its variable NAME. Endpoint and
-credentialEnv may be null for native authentication. Unknown fields are refused.
+changing engine requires compatible effort and provider. Keys stay in the
+orchestrator environment; `credentialEnv` names its variable. Native auth allows
+null endpoint/credentialEnv. Unknown fields are refused.
 
 Matrix: `worker-default|worker-complex` → codex; `worker-claude` → claude;
 `autoreview` → claude|kimi|pi|codex; `second-voice` → native Codex for the Claude
@@ -41,37 +40,40 @@ Claude/Codex efforts: low|medium|high|xhigh|max; Kimi: on|off; Pi:
 off|minimal|low|medium|high|xhigh, subject to model compatibility. Autoreview uses
 `effortByRisk` with tiny, standard, deep, risky, riskyCritical; all are required.
 
-For every non-table worker/reviewer pair, `models.pairingAccepted[]` records
-`{producer,reviewer,riskClasses,linearDecision,by,date}`. Producer includes role;
-both sides carry engine, model, effort/effortByRisk, provider{id,endpoint} and
-credentialEnv. Risk classes include all five effort keys. Compare every field;
-a changed pair requires renewed acceptance naming that pair. Validation binds the Linear decision; it never measures capability.
+Non-table pairs require `models.pairingAccepted[]`:
+`{producer,reviewer,riskClasses,linearDecision,by,date}`. Producer carries role; both sides carry
+engine/model/effort or effortByRisk/provider{id,endpoint}/credentialEnv. Risk
+classes cover all five effort keys. Compare every field; changed pairs need
+renewed acceptance. Validation binds the Linear decision, not capability.
 `requiredPairings(config)` prints the exact pair data for that decision.
 
 ## Audience profile
 
-`workerAudience` changes dispatch redundancy, not models; suitability for an
-unmeasured model remains an assumption.
+`workerAudience` changes dispatch redundancy, not models; unmeasured model
+suitability is assumed.
 
 ## Application boundary
 
 `resolveRole(role, config)` reads table → override and fingerprints the canonical
 route plus config digest. Resolve from the immutable BASE config at launch;
 record `modelRoutes{base,configDigest,roles}` in dispatch/request/registry.
-Keep launch routes on resume; never backfill. Config changes affect new launches
-only. [Pack compatibility](install.md#compatibility).
+Resume retains routes; no backfill. Config changes affect new launches only. [Pack compatibility](install.md#compatibility).
 
 ## Orchestrator self-check
 
-Compare the authoritative launch model with the orchestrator row once at start.
-Report «Модель оркестратора: по политике | не по политике | не удалось проверить».
-Match/difference/no authoritative ID select those outcomes respectively.
-Self-identification is not evidence; this check never switches a session.
+Report «Модель оркестратора: <модель запуска> | не удалось определить» at start,
+using authoritative launch data; no verdict. Self-identification is not evidence;
+no session switching. `session-selected` is unused by launch scripts.
+
+Second Voice follows the actual orchestrator family: Claude → `second-voice`,
+GPT → `second-voice-alt`; another known family → an existing role confirmed to
+have a different family. Unknown family never waives mandatory independent
+review. `ROLE_ENGINES.orchestrator` is not session-model evidence.
 
 ## Launch evidence
 
-Keep policy intent, launch parameters and served-model evidence separate.
-Codex reports requested parameters, not the actual served identity.
+Separate policy, launch parameters and served-model evidence. Codex parameters
+do not prove served identity.
 
 | Transport case | Model parameter | Effort parameter | Actual served model |
 | --- | --- | --- | --- |
