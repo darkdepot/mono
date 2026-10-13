@@ -11,7 +11,10 @@ export function extractReleaseNotes(changelog, version) {
   const lines = changelog.split(/\r?\n/);
   const start = lines.findIndex(line => line === `## [${version}]` || line.startsWith(`## [${version}] - `));
   if (start < 0) throw new Error(`missing changelog section: ${version}`);
-  const next = lines.findIndex((line, index) => index > start && /^## \[[^\]]+\]/.test(line));
+  const next = lines.findIndex((line, index) => {
+    const heading = /^## \[([^\]]+)\]/.exec(line);
+    return index > start && heading && (versionPattern.test(heading[1]) || heading[1] === "Unreleased");
+  });
   const body = lines.slice(start + 1, next < 0 ? undefined : next)
     .filter(line => !/^ {0,3}\[[^\]]+\]:/.test(line));
   while (body.length && !body[0].trim()) body.shift();

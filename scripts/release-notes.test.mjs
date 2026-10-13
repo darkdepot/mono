@@ -37,6 +37,13 @@ test("release notes: section found, links removed, subheadings retained", t => {
   assert.equal(result.stdout, "### Added\n\n- Release content.\n");
 });
 
+test("release notes: bracketed content headings do not end the version section", t => {
+  const f = fixture(t, { changelog: "## [1.2.3]\n\nFirst notes.\n\n## [Context]\n\nMore release notes.\n\n## [1.2.2]\nOld notes.\n" });
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "First notes.\n\n## [Context]\n\nMore release notes.\n");
+});
+
 for (const [name, options, message] of [
   ["section absent", { changelog: "## [Unreleased]\nPending.\n## [1.2.2]\nOlder.\n" }, "missing changelog section"],
   ["section empty after links removed", { changelog: "## [1.2.3]\n\n[1.2.3]: https://example.invalid\n\n## [1.2.2]\nOlder.\n" }, "empty changelog section"],
