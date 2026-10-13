@@ -40,6 +40,9 @@ test("release notes: section found, links removed, subheadings retained", t => {
 for (const [name, options, message] of [
   ["section absent", { changelog: "## [Unreleased]\nPending.\n## [1.2.2]\nOlder.\n" }, "missing changelog section"],
   ["section empty after links removed", { changelog: "## [1.2.3]\n\n[1.2.3]: https://example.invalid\n\n## [1.2.2]\nOlder.\n" }, "empty changelog section"],
+  ["section empty after named links removed", { changelog: "## [1.2.3]\n\n[Unreleased]: https://example.invalid/compare\n[issue]: https://example.invalid/issue\n\n## [1.2.2]\nOlder.\n" }, "empty changelog section"],
+  ["section empty after indented links removed", { changelog: "## [1.2.3]\n\n   [issue]: https://example.invalid/issue\n" }, "empty changelog section"],
+  ["section empty after links without colon spacing removed", { changelog: "## [1.2.3]\n\n[issue]:https://example.invalid/issue\n" }, "empty changelog section"],
   ["tag differs from VERSION", { version: "1.2.4" }, "tag/version mismatch"],
   ["Claude version differs", { claude: "1.2.4" }, ".claude-plugin/plugin.json version mismatch"],
   ["Codex version differs", { codex: "1.2.4" }, ".codex-plugin/plugin.json version mismatch"],

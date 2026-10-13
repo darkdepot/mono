@@ -13,7 +13,7 @@ export function extractReleaseNotes(changelog, version) {
   if (start < 0) throw new Error(`missing changelog section: ${version}`);
   const next = lines.findIndex((line, index) => index > start && /^## \[[^\]]+\]/.test(line));
   const body = lines.slice(start + 1, next < 0 ? undefined : next)
-    .filter(line => !/^\[\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?\]:\s/.test(line));
+    .filter(line => !/^ {0,3}\[[^\]]+\]:/.test(line));
   while (body.length && !body[0].trim()) body.shift();
   while (body.length && !body.at(-1).trim()) body.pop();
   if (!body.length) throw new Error(`empty changelog section: ${version}`);
