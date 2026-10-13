@@ -152,7 +152,7 @@ One setting decides who executes a product's Issues under the orchestrator:
 `orchestration.transport` in its `.agents/mono-workflow.config.json`. `codex-cli` is
 the default and needs no entry; `claude-cli` selects the managed Claude Code worker
 and its `worker-claude` role. Everything else about the product stays as it is, and
-the orchestrator itself runs on Claude either way.
+the orchestrator keeps the model selected at session launch either way.
 
 The value is read from the Issue's immutable base commit. Editing it therefore never
 changes a worker that is already running: an attempt keeps the worker, rights and
