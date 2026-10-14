@@ -1133,6 +1133,53 @@ new spawns/resumes, not running workers. Escalate only after the healing ladder
 Keep decisions/results in ledger. Delivery budget is guidance, not a gate.
 Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
 
+## Review decline approval
+
+Declines are normal admission records, separate from the experimental pilot.
+The worker proposes in its phase report; only the orchestrator writes
+`decisions/<KEY>.json` using installed `decisions.mjs record`. For standalone
+requests without pins, supply `issue` at collection: the receipt signs that
+identity and selects its journal; worktree directory names carry no authority. Never grant the
+worker evidence-root writes, edit a receipt or change its archived dataset.
+
+1. Read the signed immutable receipt and exact full finding. Compute SHA-256 of
+   canonical receipt and finding (runtime canonical JSON sorts object keys),
+   preserving array order. `findingIdentity(receipt, index)` yields
+   `{id: "<receipt digest>:<index>:<finding digest>", index, digest}`. Use the
+   zero-based index; equal titles at different locations remain distinct.
+2. Verify refutation command/output or unreachable-path citation independently.
+   Judge dangerous consequences: unreviewed code admission, security/secrets,
+   data corruption, money, irreversible action. P0/P1 or dangerous needs
+   refutation; likelihood is never proof. A boundary must already have been
+   approved before the receipt and remain current with its promised behavior.
+3. Append a `decline` with id/type/recordedAt, receipt
+   `{collectionId, runId, digest}`, head, datasetVersion, finding identity,
+   dangerous boolean, approvedBy=`orchestrator`, approvedAt and recordDigest.
+   `basis` is `{type:"refutation", evidence:{command,output}|{citation}, digest}`
+   or `{type:"boundary", decisionId:"d-NNN", digest, scope}`. Evidence digest is
+   SHA-256 of its canonical object. Boundary digest hashes the full decision;
+   scope equals its boundary.scope. That current `decision` has decision=`limit`,
+   boundary `{scope,remainingContract}`, approval `{by:"orchestrator",at}` and
+   validity.head matching the receipt. Inspect those contents; date alone fails.
+   `decisionDigest(entry)` hashes all canonical fields except recordDigest;
+   store that digest only after approving the unchanged contents. Conflicting
+   active approvals for one finding block; revoke before replacing one.
+4. Re-run preflight collect:false against the same receipt. Its result can be
+   `accepted-with-declines`; preserve the original verdict/overall_correctness/
+   findings, and confirm the worker's ready comment lists each identity, basis
+   and approver. Ship re-reads the same journal through the shared gate.
+5. New evidence appends `decline-revoke`: id/type/recordedAt, forId,
+   declineDigest (the original recordDigest), reason, evidence and evidenceDigest,
+   approvedBy=`orchestrator`, approvedAt, recordDigest. Never edit prior records.
+   Revocation blocks the next admission even on unchanged code. New code needs
+   a new receipt and approvals. Rebuild the review ledger to expose decline
+   events and revocation flags; they add no reviewer executions.
+
+After approval, a next dataset version may carry only a short active-decline
+summary as context “do not raise without a new fact”. Never repin or version the
+current receipt's dataset to manufacture admission. Old clean receipts keep
+working; findings receipts lacking recordedAt cannot use declines.
+
 ## Review decision pilot
 
 Enable the dispatch pilot block only for approved experimental Issues. Stage
@@ -1154,7 +1201,7 @@ decision on that findingKey. Only current entries apply, so superseding the
 decision also retires its waiver. Every entry
 has id/type. New evidence appends a new ID and a supersedes link to the current
 entry of the same type and invariant; old entries are retained, never edited.
-Refutation alone cannot clear a finding still required by the gate.
+Pilot matrix waivers do not satisfy the review decline gate.
 
 `version --source FILE` replaces the managed section in the source dataset,
 retaining other sections, and creates immutable

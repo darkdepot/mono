@@ -332,7 +332,7 @@ test("named collection fixtures through the gate CLI", async t => {
   const { spawnSync } = await import("node:child_process");
   const { atomicJson, canonical, digest, resolvedLocation } = await import("./runtime.mjs");
   const { sha256File } = await import("./orchestrator/command-state.mjs");
-  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collector-temp)-.*\.json$/u.test(name));
+  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collector-temp|collection-declines)-.*\.json$/u.test(name));
   for (const name of files) await t.test(name, () => {
     const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-u13-cli-"));
@@ -500,6 +500,19 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
         entry.worktree = path.join(scratch, "another-worktree"); register(); delete request.pins;
         expectedField = "registry"; expectedValue = "one registered attempt for worktree";
       }
+      if (fixture.mode === "declines") {
+        if (fixture.unpinned) { delete request.pins; request.issue='MONO-999'; fs.unlinkSync(registryFile); }
+        const envelope=collect(request),r=envelope.receipt,f=declineFixture();
+        r.review.json=f.receipt.review.json;r.review.status={...f.receipt.review.status,engine:r.route.engine??'claude'};
+        r.review.exitCode=1;r.review.output=`autoreview target: branch | engine: ${r.route.engine??'claude'} | model: ${r.route.model} | thinking: ${r.route.effort}\nautoreview findings: 1\noverall: patch is incorrect (0.9)\n`;
+        r.loop=f.receipt.loop;seal(envelope);
+        const findingDigest=digest(r.review.json.findings[0]),receiptDigest=digest(r),{recordDigest,...content}=f.entry;
+        const decline={...content,receipt:{collectionId:r.collectionId,runId:r.runId,digest:receiptDigest},head:r.head,
+          finding:{id:`${receiptDigest}:0:${findingDigest}`,index:0,digest:findingDigest},
+          recordedAt:r.recordedAt,approvedAt:r.recordedAt};
+        decline.recordDigest=digest(decline);
+        atomicJson(path.join(evidence,'decisions/MONO-999.json'),{issue:'MONO-999',entries:[decline]});expectedStatus=0;
+      }
       if (fixture.unregistered) fs.unlinkSync(registryFile);
       const registryBefore = fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null, receiptBefore = fs.existsSync(receiptFile) ? fs.readFileSync(receiptFile) : null;
       const result = call(request);
@@ -511,6 +524,16 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
         assert.deepEqual(result.stdout.trim().split("\n"), [`gate preflight: pending: ${request.collectionId}`, JSON.stringify({ publishRequest: request })]);
         if (receiptBefore) assert.deepEqual(fs.readFileSync(receiptFile), receiptBefore);
         else assert.equal(fs.existsSync(receiptFile), false);
+      }
+      if (fixture.mode === "declines") {
+        assert.match(result.stdout,/accepted-with-declines/);
+        assert.deepEqual(fs.readFileSync(receiptFile),receiptBefore,'declines never rewrite the sealed receipt');
+        const journalFile=path.join(evidence,'decisions/MONO-999.json'),j=JSON.parse(fs.readFileSync(journalFile)),e=j.entries[0],proof={citation:'New evidence'};
+        const revoke={type:'decline-revoke',id:'r-1',forId:e.id,declineDigest:e.recordDigest,reason:'new evidence',evidence:proof,
+          evidenceDigest:digest(proof),approvedBy:'orchestrator',approvedAt:new Date().toISOString(),recordedAt:new Date().toISOString()};
+        revoke.recordDigest=digest(revoke);j.entries.push(revoke);atomicJson(journalFile,j);
+        const revoked=call(request);assert.equal(revoked.status,1,revoked.stdout);assert.match(revoked.stdout,/decline/);
+        assert.deepEqual(fs.readFileSync(receiptFile),receiptBefore);
       }
       if (fixture.mode === "receipt-pins") assert.match(result.stdout, /receipt pins differs from dispatch request/u);
       if (fixture.mode === "collect") {
@@ -618,3 +641,86 @@ test("safeGitEnv removes inherited proxy parameters for non-fetch git even with 
   assert.equal(env.GIT_CONFIG_NOSYSTEM, "1");
   assert.equal(env.GIT_TERMINAL_PROMPT, "0");
 }));
+
+for (const basis of ['refutation','boundary']) test(`declines: valid ${basis} accepts without rewriting receipt`, async()=>{
+  const {declineFixture}=await import('./decline-fixtures.mjs');
+  const {receipt,journal}=declineFixture({basis}),before=JSON.stringify(receipt);
+  assert.match(validatePreflight(receipt,receipt.head,receipt.base,receipt.route,journal),/accepted-with-declines/);
+  assert.equal(JSON.stringify(receipt),before);
+});
+const declineFailures = {
+  'P1 boundary': (f)=>{Object.assign(f,declineFixtureForBoundaryP1());},
+  'finding without decline': f=>f.journal.entries=[],
+  'foreign receipt': f=>f.journal.entries[0].receipt.runId='other',
+  'different head': f=>f.journal.entries[0].head='d'.repeat(40),
+  'changed entry': f=>f.journal.entries[0].dangerous=true,
+  'missing_required_findings': f=>f.receipt.review.json.missing_required_findings=[{}],
+  'scope_rejected_findings': f=>f.receipt.review.json.scope_rejected_findings=[{}],
+  'attribution_rejected_findings': f=>f.receipt.review.json.attribution_rejected_findings=[{}],
+  'P2 priority filtered': f=>f.receipt.review.json.priority_filtered_findings=[{priority:'P2'}],
+  'incomplete status': f=>f.receipt.review.status.report_produced=false,
+  'timed out': f=>f.receipt.review.status.timed_out=true,
+  'contradictory exit': f=>f.receipt.review.status.exit_code=0,
+  'contradictory reason': f=>f.receipt.review.status.reason='engine_failed',
+  'invalid finding': f=>delete f.receipt.review.json.findings[0].body,
+};
+import {declineFixture, seal, sha} from './decline-fixtures.mjs';
+function declineFixtureForBoundaryP1(){return declineFixture({basis:'boundary',priority:'P1'});}
+const declineErrors = {
+  'P1 boundary': /requires refutation/, 'finding without decline': /exactly one valid unrevoked decline/,
+  'foreign receipt': /receipt\/head\/dataset mismatch/, 'different head': /receipt\/head\/dataset mismatch/,
+  'changed entry': /record digest mismatch/, 'missing_required_findings': /incomplete or priority-filtered/,
+  'scope_rejected_findings': /incomplete or priority-filtered/, 'attribution_rejected_findings': /incomplete or priority-filtered/,
+  'P2 priority filtered': /incomplete or priority-filtered/, 'incomplete status': /incomplete or contradictory/,
+  'timed out': /incomplete or contradictory/, 'contradictory exit': /incomplete or contradictory/,
+  'contradictory reason': /incomplete or contradictory/, 'invalid finding': /invalid nonempty findings/,
+};
+for(const [name,mutate] of Object.entries(declineFailures)) test(`declines: ${name} blocks`,()=>{
+  const f=declineFixture(),before=sha(f.receipt);mutate(f);
+  f.journal.entries=f.journal.entries.map(e=>{
+    if(e.type!=='decline'||name==='changed entry')return e;
+    const {recordDigest,...content}=e;
+    if(sha(f.receipt)!==before) {
+      const digest=sha(f.receipt),findingDigest=sha(f.receipt.review.json.findings[e.finding.index]);
+      content.receipt={...content.receipt,digest};
+      content.finding={id:`${digest}:${e.finding.index}:${findingDigest}`,index:e.finding.index,digest:findingDigest};
+    }
+    return seal(content);
+  });
+  assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),declineErrors[name]);
+});
+test('declines: revoked entry blocks at unchanged head',()=>{
+  const f=declineFixture(), evidence={citation:'New evidence proves the path reachable.'};
+  f.journal.entries.push(seal({type:'decline-revoke',id:'revoke-1',forId:f.entry.id,declineDigest:f.entry.recordDigest,evidence,evidenceDigest:sha(evidence),reason:'New evidence',approvedBy:'orchestrator',approvedAt:'2026-10-14T01:02:00Z',recordedAt:'2026-10-14T01:02:00Z'}));
+  assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/decline/);
+});
+test('declines: same title at different positions needs two exact declines',()=>{
+  const f=declineFixture();f.receipt.review.json.findings.push({...f.receipt.review.json.findings[0],code_location:{file_path:'scripts/example.mjs',line:9}});
+  f.receipt.review.output=f.receipt.review.output.replace('findings: 1','findings: 2');f.receipt.loop.residualFindings=f.receipt.review.json.findings;
+  const digest=sha(f.receipt),entry={...f.entry,receipt:{...f.entry.receipt,digest},finding:{...f.entry.finding,id:`${digest}:0:${f.entry.finding.digest}`}};delete entry.recordDigest;
+  f.journal.entries=[seal(entry)];
+  assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/decline/);
+  const secondDigest=sha(f.receipt.review.json.findings[1]);
+  f.journal.entries.push(seal({...entry,id:'decline-2',finding:{id:`${digest}:1:${secondDigest}`,index:1,digest:secondDigest}}));
+  assert.match(validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/accepted-with-declines/);
+});
+test('declines: dangerous P2 accepts only refutation',()=>{
+  for(const basis of ['boundary','refutation']) {
+    const f=declineFixture({basis,dangerous:true});
+    const run=()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal);
+    if(basis==='boundary')assert.throws(run,/refutation/);else assert.match(run(),/accepted-with-declines/);
+  }
+});
+
+test('declines: stale dataset, replaced boundary, changed boundary content and ambiguous approval block',()=>{
+  for(const mutate of [
+    f=>f.journal.entries.at(-1).datasetVersion=2,
+    f=>f.journal.entries[0].boundary.remainingContract='Changed contract',
+    f=>f.journal.entries.push({...f.boundary,id:'d-002',supersedes:'d-001',recordedAt:'2026-10-14T01:02:00Z'}),
+    f=>f.journal.entries.push({...f.entry,id:'decline-2'}),
+  ]) {
+    const f=declineFixture({basis:'boundary'});mutate(f);
+    f.journal.entries=f.journal.entries.map(e=>{const {recordDigest,...content}=e;return e.type==='decline'?seal(content):e;});
+    assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal));
+  }
+});

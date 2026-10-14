@@ -8,6 +8,8 @@ import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout } from "./runtime.mjs";
 import { checkCollectionRequest } from "./orchestrator/command-state.mjs";
 
+import { acceptedDeclines, readJournal } from './decisions.mjs';
+
 import { reviewEnvironment } from "./model-environment.mjs";
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -122,10 +124,11 @@ export function redactReviewCredentials(value, route, source = process.env) {
   return redact(value);
 }
 
-export function validatePreflight(receipt, head, base, route) {
+export function validatePreflight(receipt, head, base, route, journal = null) {
   requireThat(receipt?.head === head && receipt.base === base, "missing or stale autoreview artifact/head/base");
   requireThat(canonical(normalizeReceiptRoute(receipt.route)) === canonical(normalizeReceiptRoute(route)), "autoreview artifact has wrong policy route");
   requireThat(receipt.verification?.exitCode === 0, "local verification failed or missing");
+  if (receipt.review?.exitCode === 1 && journal) return validateDeclinedReview(receipt, route, journal);
   requireThat(receipt.review?.exitCode === 0, "autoreview failed or incomplete");
   const output = receipt.review.output ?? "";
   validateReviewLines(output, route);
@@ -140,12 +143,38 @@ export function validatePreflight(receipt, head, base, route) {
   return "local verification and tool autoreview verified on head";
 }
 
+function validateDeclinedReview(receipt, route, journal) {
+  const review=receipt.review,report=review.json,status=review.status;
+  requireThat(status?.schema_version===1&&status.status==='findings'&&status.exit_code===1&&status.engine===(route.engine??'claude')&&
+    status.report_produced===true&&status.timed_out===false&&status.reason==null&&!review.retentionError,'incomplete or contradictory findings result');
+  requireThat(report&&['patch is correct','patch is incorrect'].includes(report.overall_correctness)&&
+    typeof report.overall_explanation==='string'&&report.overall_explanation.trim()&&probability(report.overall_confidence)&&
+    (report.review_status===undefined||report.review_status==='findings')&&Array.isArray(report.findings)&&report.findings.length>0&&
+    report.findings.every(validFinding),'invalid nonempty findings report required');
+  requireThat(['missing_required_findings','scope_rejected_findings','attribution_rejected_findings'].every(key=>
+    report[key]===undefined||(Array.isArray(report[key])&&report[key].length===0))&&
+    (report.priority_filtered_findings===undefined||(Array.isArray(report.priority_filtered_findings)&&
+      report.priority_filtered_findings.every(f=>f?.priority==='P3'))),'incomplete or priority-filtered blocking findings');
+  requireThat(receipt.loop?.iterations>0&&receipt.loop.disposition==='failed'&&
+    canonical(receipt.loop.residualFindings)===canonical(report.findings),'contradictory findings loop');
+  validateReviewLines(review.output??'',route,report);
+  const declines=acceptedDeclines(receipt,journal);
+  return `accepted-with-declines: ${declines.map(d=>`${d.id} (${d.basis}; ${d.approvedBy})`).join(', ')}`;
+}
+const probability = n => typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1;
+function validFinding(f) {
+  return f&&typeof f==='object'&&typeof f.title==='string'&&f.title.trim()&&f.title.length<=140&&
+    typeof f.body==='string'&&f.body.trim()&&f.body.length<=2000&&['P0','P1','P2','P3'].includes(f.priority)&&probability(f.confidence)&&
+    ['bug','security','regression','test_gap','maintainability'].includes(f.category)&&
+    typeof f.code_location?.file_path==='string'&&f.code_location.file_path.trim()&&Number.isSafeInteger(f.code_location.line)&&f.code_location.line>0;
+}
+
 const verdictLines = new Set([
   "autoreview clean: no accepted/actionable findings reported",
   "autoreview filtered: no findings at the requested priority; not a correctness certificate",
   "autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority",
 ]);
-function validateReviewLines(output, route) {
+function validateReviewLines(output, route, report = null) {
   const lines = output.split("\n");
   const fields = lines.filter(line => /^(?:autoreview target|engine|model|thinking):/.test(line)).flatMap(line => line.split(" | "));
   for (const [key, expected] of Object.entries({ "autoreview target": "branch", engine: route.engine ?? "claude", model: route.model, thinking: route.effort })) {
@@ -153,9 +182,9 @@ function validateReviewLines(output, route) {
     requireThat(values.length === 1 && values[0] === `${key}: ${expected}`, "autoreview output route/scope incomplete or ambiguous");
   }
   requireThat(lines.filter(line => /^autoreview (?:clean|filtered|scoped-clean|findings|incorrect|incomplete):/.test(line)).length === 1 &&
-    lines.some(line => verdictLines.has(line)), "autoreview clean result missing or ambiguous");
+    (report ? lines.includes(`autoreview findings: ${report.findings.length}`) : lines.some(line => verdictLines.has(line))), "autoreview clean result missing or ambiguous");
   const overall = lines.filter(line => line.startsWith("overall:"));
-  requireThat(overall.length === 1 && /^overall: patch is correct \(/.test(overall[0]), "autoreview correctness result missing or ambiguous");
+  requireThat(overall.length === 1 && (report ? overall[0].startsWith(`overall: ${report.overall_correctness} (`) : /^overall: patch is correct \(/.test(overall[0])), "autoreview correctness result missing or ambiguous");
 }
 export function validReviewInvocation(actual, fixed) {
   return canonical(actual) === canonical(fixed) || canonical(actual) === canonical([...fixed, "--stream-engine-output"]);
@@ -448,9 +477,12 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       requireThat(!touched, `serial path touched: ${touched}; landing.serialPaths on ${policyBase}; ${action}`);
     }
   }
+  const pinnedIssue = request.pins ? /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(request.pins.file)))?.[1] : null;
+  if (request.issue !== undefined) requireThat(/^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(request.issue) &&
+    (!pinnedIssue || request.issue === pinnedIssue), "explicit Issue must match the pinned attempt");
   const receiptFile = path.join(evidenceRoot, `${head}.json`);
   const dataset = reviewDatasetBinding(request, evidenceRoot);
-  const binding = { ...dataset, ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
+  const binding = { ...dataset, ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
   let receipt, verifiedReceiptFile = receiptFile;
@@ -510,6 +542,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       "head or base changed during verification");
   };
   if (request.collect === true) {
+    const recordedAt = new Date().toISOString();
     const protectedPaths = { "orchestrator root": request.root, skillsRoot: request.skillsRoot,
       packRoot: request.packRoot ?? request.skillsRoot, "autoreview helper real path": helper };
     const archive = dataset.reviewDataset ? await archiveReviewDataset(dataset.reviewDataset.source, evidenceRoot) : null;
@@ -547,7 +580,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     requireThat(digest(fs.readFileSync(helper, "utf8")) === helperDigest, "autoreview helper changed during collection");
     checkConsistency();
     Object.assign(review, parseReviewUsage(review.output, route.engine ?? "claude"));
-    receipt = { producer: "gate-autoreview-v2", ...binding, runId: crypto.randomUUID(), head, base, route, helper, helperDigest, invocation: [...invocation, "--stream-engine-output"],
+    receipt = { producer: "gate-autoreview-v2", recordedAt, ...binding, runId: crypto.randomUUID(), head, base, route, helper, helperDigest, invocation: [...invocation, "--stream-engine-output"],
       verification, review, consistency, loop: { iterations: review.exitCode === null ? 0 : 1, disposition: review.exitCode === 0 && consistency.passed ? "clean" : "failed", residualFindings: review.json?.findings ?? ["missing structured report"] } };
     if (archive) receipt.reviewDataset = { ...receipt.reviewDataset, ...archive };
     if (fs.existsSync(path.join(evidenceRoot, "receipt.key"))) regularEvidence(path.join(evidenceRoot, "receipt.key"));
@@ -562,12 +595,16 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   requireThat(receipt.verification.exitCode === 0, "local verification failed or missing");
   requireThat(receipt.verification.sandbox?.mode === "workspace-write" && receipt.verification.sandbox.probed === true, "verification sandbox proof missing");
   requireThat(receipt.review.sandbox?.mode === "workspace-write" && receipt.review.sandbox.probed === true, "autoreview sandbox proof missing");
-  requireThat(receipt.review.exitCode === 0, "autoreview failed or incomplete");
-  requireThat(receipt.review.json && receipt.review.status?.schema_version === 1 && receipt.review.status.exit_code === 0 &&
-    receipt.review.status.engine === (route.engine ?? "claude") && ["clean", "scoped-clean", "filtered"].includes(receipt.review.status.status) &&
-    receipt.review.status.report_produced === true && receipt.review.status.timed_out === false, "incomplete or non-clean helper output/status artifact");
+  if (receipt.review.exitCode !== 1) {
+    requireThat(receipt.review.exitCode === 0, "autoreview failed or incomplete");
+    requireThat(receipt.review.json && receipt.review.status?.schema_version === 1 && receipt.review.status.exit_code === 0 &&
+      receipt.review.status.engine === (route.engine ?? "claude") && ["clean", "scoped-clean", "filtered"].includes(receipt.review.status.status) &&
+      receipt.review.status.report_produced === true && receipt.review.status.timed_out === false, "incomplete or non-clean helper output/status artifact");
+  }
   unchanged();
-  const reason = validatePreflight(receipt, head, base, route);
+  const issue = pinnedIssue ?? receipt.issue;
+  const journal = receipt.review.exitCode === 1 && issue ? readJournal({ evidenceRoot, issue }) : null;
+  const reason = validatePreflight(receipt, head, base, route, journal);
   return { reason, receipt: { path: verifiedReceiptFile, runId: receipt.runId, digest: digest(receipt) } };
 }
 
@@ -761,7 +798,7 @@ if (isMain(import.meta.url)) {
     const args = flags(rest);
     if (name === "--help" || args.help) console.log(`Usage: gate.mjs start|preflight|ship --request <json>
 start request: {worktree, branch, base, packRoot, skillsRoot, packVersion, sourceCommit, surfaceRevision}
-preflight request: {product,collectionId,root,worktree,head,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,reviewDatasetVersion?,pins?:{file,digest},modelRoutes?,collect,verification:{command,args}}
+preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,reviewDatasetVersion?,pins?:{file,digest},modelRoutes?,collect,verification:{command,args}}
   modelRoutes pins immutable base/configDigest/roles from resolveModelRoutes; overrides require pins.
   risk is the final approved/diff risk; critical is a concrete escalation reason or null.
   Pin every request field from dispatch. Orchestrator only: collect:true, outside worker sandboxes.

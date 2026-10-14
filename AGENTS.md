@@ -16,7 +16,7 @@ Write skills in English; Linear templates/examples in Russian.
 - `mono:handoff`: persists Project-first package/slicing before implementation; owns reviewed class 1–3 repair.
 - `mono:issue`: issue-only create-then-approve intake/body renewal; never handoff repair.
 - `mono:implement`: Delivery Start/code from approved Issues.
-- `mono:preflight`: local readiness/targeted verification/commit/certificate; mandatory clean `autoreview`, model from [role:autoreview](references/model-policy.md#roles), effort by risk.
+- `mono:preflight`: local readiness/targeted verification/commit/certificate; mandatory `autoreview` (clean or approved declines), model from [role:autoreview](references/model-policy.md#roles), effort by risk.
 - `mono:ship`: accepted pre-ship drift, formal review/check, PR/docs-before-green/feedback/certificate.
 - `mono:deploy`: deploy delegation/evidence/post-ship/closeout/durable learnings.
 - `mono:orchestrate`: product control plane, dispatch/monitor/decisions and sole orchestrated Linear writer; never stage work.

@@ -97,3 +97,12 @@ test('a stream runId aliases the already counted collection helper',async()=>{
  const l=buildReviewLedger({issue:'MONO-998',sources:[source('history',{receipt:r}),source('stream',{kind:'helper-invocation',runId:r.runId,head},'stream')]});
  assert.equal(summarizeLedger(l).invocations,1);assert.equal(l.attempts[0].events.find(e=>e.kind==='helper-invocation').sources.length,2);
 });
+
+test('decline events preserve finding identity and add no review executions',async()=>{
+  const {buildReviewLedger,summarizeLedger}=await api();
+  const {declineFixture}=await import('./decline-fixtures.mjs'),f=declineFixture();
+  const l=buildReviewLedger({issue:'MONO-999',sources:[source('receipt',{receipt:f.receipt}),source('journal',f.journal,'decisions')]});
+  const event=l.attempts[0].events.find(e=>e.kind==='decline');
+  assert.equal(event.findingId,f.entry.finding.id);assert.equal(event.basis,'refutation');assert.equal(event.approvedBy,'orchestrator');
+  assert.equal(summarizeLedger(l).declines,1);assert.equal(summarizeLedger(l).invocations,1);
+});
