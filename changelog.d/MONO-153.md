@@ -1,0 +1,1 @@
+- Stop repeated finding keys or recorded classes before another review collection; orchestrator class decisions resume the same withheld request. Require bounded whole-class fixes or verified behavior limits, and keep workers within simple Issue-scoped mechanisms.

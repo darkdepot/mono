@@ -5866,6 +5866,10 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  // MONO-153: journal/admission dictionary; no agent prose pins.
+  "class", "class-decision", "fix-class", "limit", "class-stop", "rule", "mechanism", "findingIds",
+  "classIds", "findingKeys", "nextStep", "checkpoint", "behaviorChange", "remainingVerification", "successor", "classStop",
+  "references/review-admission.md",
   "Autoreview declines:",
   "session-selected", "Модель оркестратора:", "<модель запуска>", "не удалось определить",
   "git show",

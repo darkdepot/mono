@@ -177,7 +177,9 @@ Publish only publishRequest in payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
 target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate even
 on failure; confirmation proves completion only. Verify collect:false.
-Findings: apply references/review-admission.md, fix/recommit/request or report decline proposals; transient: same head/route, increment n/sequence.
+Findings: apply references/review-admission.md. Repeated key/class parks needs-decision
+before edits/new requests; otherwise fix/recommit/request or propose decline.
+Transient: same head/route, increment n/sequence.
 Ready on pass.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed

@@ -5,9 +5,12 @@ description: Use for one approved Issue from code to a green PR in one worker co
 
 # Mono Deliver
 
-Shared files: here or pack root.
+Files: here or pack root.
 
-One Issue/context/worktree; implement/preflight/ship own phases; deploy outside.
+One Issue/context/worktree. Phase owners: implement/preflight/ship; deploy outside.
+Use existing tools or literal conservative solutions, no custom parsers/heuristics
+or extra mechanisms beyond the Issue. Correct the error class; repeated key/class
+parks needs-decision before edits/collection (`references/review-admission.md`).
 
 Read first:
 
@@ -20,34 +23,29 @@ Read when:
 - `skills/preflight/SKILL.md` — entering readiness or rechecking code changes.
 - `skills/ship/SKILL.md` — entering/resuming PR work.
 
-Resolve scripts from dispatched pack root.
+Scripts: dispatched pack root.
 
 ## Sequence and Recovery
 
-On work/resume/restart/compaction: identity, latest own capsule/confirmation,
-launch writable_roots and PR facts via gh; continue that phase.
-Missing/conflicting inputs park. New heads stale proof, never queues.
+Resume/restart/compaction: identity, own capsule/confirmation, grants, gh PR facts.
+Continue that phase; missing/conflicting inputs park. New head stales proof, not queues.
 Start: gate.mjs start --request <file>; implement handshake; wait mode runs wait-ack after ack.
 
-1. Implement; publish code result/full queue, confirm, enter readiness.
-2. Preflight/commit; publish one preflight-collect confirmation-request per
-   worker contract. After confirmation run gate.mjs preflight collect:false;
-   apply worker failure rules. Pass: publish ready certificate once, confirm
-   comment before formal review.
-3. Ship in order with all in-phase write barriers. Head changes
-   repeat checks/review and restart evidence. Run gate.mjs ship --request <file>
-   to pass/decision/deadline; confirm full ship queue/certificate.
+1. Implement; publish code/full queue, confirm, enter readiness.
+2. Preflight/commit; publish preflight-collect confirmation-request. Confirm,
+   gate.mjs preflight collect:false, worker failure rules. Pass: publish ready
+   certificate once; confirm before formal review.
+3. Ship with write barriers. New head repeats checks/review/evidence.
+   gate.mjs ship --request <file> → pass/decision/deadline; confirm queue/certificate.
    Orchestrator rechecks collect:false before ship.
 
-ready/implemented-needs-preflight: intermediate, preserve context/dispatch.
+ready/implemented-needs-preflight: intermediate; keep context/dispatch.
 Publish: delivery-state.mjs publish --report <candidate> --output <own phase path>.
-Dependencies use confirmation-request; log continuation in decisions.
-Wait through delivery-state.mjs wait --report <phase> --confirmation <path>
---config <project config>. Re-read capsule; only exit 0 permits progression.
-Apply worker queue/ID/timeout/recovery rules.
+Dependencies: confirmation-request, log continuation.
+Wait: delivery-state.mjs wait --report <phase> --confirmation <path>
+--config <project config>. Re-read capsule; progress only on exit 0. Worker rules apply.
 
-`claude-cli`: worker startup/foreground waits; preflight review/certificate rules.
+`claude-cli`: startup/foreground waits; preflight rules.
 
-Final: worker Report green/parked rules and every verification item.
-Report before stops except passed startup pause; orchestrator reflects parked
-in Linear this turn.
+Final: worker Report green/parked, every verification item.
+Report before stops except passed startup pause; orchestrator reflects parks.

@@ -106,3 +106,36 @@ test('decline events preserve finding identity and add no review executions',asy
   assert.equal(event.findingId,f.entry.finding.id);assert.equal(event.basis,'refutation');assert.equal(event.approvedBy,'orchestrator');
   assert.equal(summarizeLedger(l).declines,1);assert.equal(summarizeLedger(l).invocations,1);
 });
+
+import {classFixture,classSeal} from './class-fixtures.mjs';
+test('recorded class and explicit key repeats require a current decision after the latest receipt; a new class proceeds',async()=>{
+  const {buildReviewLedger,decideReview}=await api();
+  for(const sameKey of [false,true]) {
+    const f=classFixture({sameKey}),ledger=buildReviewLedger({issue:'MONO-999',sources:f.receipts.map(r=>source('history',{receipt:r},r.runId))});
+    const decide=journal=>decideReview({ledger,records:f.records,journal,attempt:1});
+    let result=decide(f.journal);
+    assert.equal(result.classStop.required,true);assert.deepEqual(result.classStop.findingKeys,sameKey?['same-key']:[]);
+    assert.deepEqual(result.classStop.classIds,sameKey?[]:[f.entry.id]);
+    for(const outcome of ['fix-class','limit']) {
+      result=decide({...f.journal,entries:[...f.journal.entries,...(outcome==='limit'?[f.boundary]:[]),f.decision(outcome)]});
+      assert.equal(result.classStop.required,false);assert.deepEqual(result.classStop.decisions,['cd-001']);
+    }
+    result=decide({...f.journal,entries:[...f.journal.entries,f.decision('fix-class',{approvedAt:'2026-10-14T01:01:30Z',recordedAt:'2026-10-14T01:01:30Z'})]});
+    assert.equal(result.classStop.required,true);
+  }
+  const f=classFixture(),ledger=buildReviewLedger({issue:'MONO-999',sources:f.receipts.map(r=>source('history',{receipt:r},r.runId))});
+  const onlyNew={...f.entry,findingIds:[f.entry.findingIds[1]]};
+  assert.equal(decideReview({ledger,records:[],journal:{issue:'MONO-999',entries:[classSeal(onlyNew)]},attempt:1}).classStop.required,false);
+});
+
+
+test('resumed withheld demand retains its stop and counts one actual reviewer execution',async()=>{
+  const {buildReviewLedger,summarizeLedger}=await api(),f=classFixture(),r=f.receipts[1];
+  const ledger=buildReviewLedger({issue:'MONO-999',sources:[
+    source('ledger',{kind:'collection-request',collectionId:r.collectionId,status:'withheld'}),
+    source('ledger',{kind:'class-stop',collectionId:r.collectionId,reason:'needs-decision'}),source('history',{receipt:r})]});
+  const summary=summarizeLedger(ledger);
+  assert.equal(summary.collections,1);assert.equal(summary.withheld,1);assert.equal(summary.classStops,1);assert.equal(summary.invocations,1);
+  assert.equal(ledger.attempts[0].events.find(e=>e.kind==='class-stop').status,'withheld');
+  assert.equal(ledger.attempts[0].events.find(e=>e.kind==='collection-request').status,'findings');
+});

@@ -100,7 +100,7 @@ test("amend collection pins-file contracts", async t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-amend-admission-"));
   const root = path.join(scratch, "root"), issue = "MONO-999", head = "a".repeat(40);
   const file = path.join(root, "dispatch", `${issue}-a1`, "pins.json");
-  const pins = { product: "fixture", root, worktree: scratch, workerWritableRoots: [scratch], reviewDatasetDigest: null, reviewDatasetVersion: 0 };
+  const pins = { product: "fixture", root, worktree: scratch, evidenceRoot: scratch, workerWritableRoots: [scratch], reviewDatasetDigest: null, reviewDatasetVersion: 0 };
   const entry = { issue, attempt: 1, stage: "mono-deliver", packVersion: "0.21.0", sourceCommit: head, surfaceRevision: 4,
     pins: { file, digest: null }, pinsVersion: 1 };
   const reportFor = number => {
@@ -952,8 +952,9 @@ test("collector admission refusal writes exactly one attention line and durable 
     const report = f.report(1, { reviewDatasetVersion: 7 }); atomicJson(f.reportFile, report);
     await f.poll();
     const value = readJson(f.attention);
-    assert.deepEqual(Object.keys(value).sort(), ["at", "collectionId", "pinsVersion", "reason", "reportDigest"]);
+    assert.deepEqual(Object.keys(value).sort(), ["at", "collectionId", "decisionDigest", "pinsVersion", "reason", "reportDigest"]);
     assert.equal(value.reportDigest, digest(report)); assert.equal(value.pinsVersion, 0);
+    assert.match(value.decisionDigest,/^[a-f0-9]{64}$/);
     assert.equal(value.collectionId, report.capsule.open_queue[0].id); assert.equal(value.reason, "collection pin mismatch: reviewDatasetVersion");
     assert.ok(Number.isFinite(Date.parse(value.at))); assert.equal(f.lines().length, 1);
     assert.deepEqual(fs.readdirSync(path.dirname(f.attention)).filter(name => name.includes("collect-attention")), [path.basename(f.attention)]);
@@ -1528,4 +1529,70 @@ test("preapply-whitespace-blank-lines: surrounding whitespace and raw content su
   assert.deepEqual(preapplyManifest(parsed.materialized, null, null, true).entries, parsed.entries);
   assert.equal(preapplyManifest(issue + parsed.materialized, prd, spec, false).alreadyMaterialized, true);
   assert.equal(extractSnapshot(issue, prd, spec).spec, spec);
+});
+
+test('repeated key/class admission is withheld with class-stop; fix-class/limit re-evaluate the identical request and concurrent replays are idempotent',async()=>{
+  const {classFixture,classSeal}=await import('./class-fixtures.mjs');
+  const {findingIdentity,recordDecision}=await import('./decisions.mjs');
+  const {buildReviewLedger}=await import('./review-ledger.mjs');
+  const {createHmac}=await import('node:crypto');
+  const {canonical}=await import('./runtime.mjs');
+  for(const sameKey of [false,true])for(const outcome of ['fix-class','limit']) {
+    await collectorAttentionFixture(async f=>{
+      const request=f.request(3),evidenceRoot=request.evidenceRoot,issue='MONO-999',x=classFixture({sameKey});
+      const key=Buffer.alloc(32,9);fs.writeFileSync(path.join(evidenceRoot,'receipt.key'),key);
+      for(const receipt of x.receipts) {
+        receipt.worktree=request.worktree;
+        atomicJson(path.join(evidenceRoot,'history',`${receipt.runId}.json`),{receipt,signature:createHmac('sha256',key).update(canonical(receipt)).digest('hex')});
+      }
+      x.entry=classSeal({...x.entry,findingIds:x.receipts.map(r=>findingIdentity(r,0).id)});
+      if(!sameKey)await recordDecision({evidenceRoot,issue,entry:x.entry});
+      else await recordDecision({evidenceRoot,issue,entry:x.journal.entries[0]});
+      atomicJson(path.join(evidenceRoot,'reviews',`${issue}-adjudications.json`),x.records);
+      const report={...f.report(3),sequence:1};atomicJson(f.reportFile,report);
+      await f.poll();assert.equal(fs.existsSync(f.attention),true);
+      assert.match(readJson(f.attention).reason,/needs-decision/);
+      const sources=[...x.receipts.map(receipt=>({type:'history',ref:receipt.runId,attempt:1,data:{receipt}})),
+        ...readJson(path.join(evidenceRoot,'reviews',`${issue}-class-stops.json`)).map(data=>({type:'ledger',ref:'stops',data})),
+        ...readJson(path.join(evidenceRoot,'reviews',`${issue}-withheld.json`)).map(data=>({type:'ledger',ref:'withheld',data}))];
+      const events=buildReviewLedger({issue,sources}).attempts[0].events;
+      assert.equal(events.filter(e=>e.kind==='class-stop').length,1);
+      assert.equal(events.filter(e=>e.kind==='collection-request'&&e.status==='withheld').length,1);
+      await f.poll();assert.equal(f.lines().length,1);
+      const binding={collectionId:x.receipts[1].collectionId,runId:x.receipts[1].runId,digest:digest(x.receipts[1])};
+      await recordDecision({evidenceRoot,issue,entry:classSeal({...x.decision(),id:'cd-other',receipt:binding,classIds:[],findingKeys:['unrelated']})});
+      await f.poll();assert.match(readJson(f.attention).reason,/needs-decision/);assert.equal(f.lines().length,2);
+      // The pending collection's history is independent of its failed admission.
+      await f.signedHistory(request);
+      if(outcome==='limit')await recordDecision({evidenceRoot,issue,entry:x.boundary});
+      const decision=classSeal({...x.decision(outcome),supersedes:'cd-other',receipt:{collectionId:x.receipts[1].collectionId,runId:x.receipts[1].runId,digest:digest(x.receipts[1])}});
+      await recordDecision({evidenceRoot,issue,entry:decision});
+      await f.poll();assert.equal(fs.existsSync(f.attention),false);
+      assert.equal(fs.existsSync(path.join(f.options.root,'confirmations',`${issue}-phase-preflight-a1-s1.confirmed.json`)),true);
+      const replay=await admitCollection(f.options.root,report);
+      const contenders=await Promise.allSettled([admitCollection(f.options.root,report),admitCollection(f.options.root,report)]);
+      assert.ok(contenders.some(r=>r.status==='fulfilled'&&canonical(r.value)===canonical(replay)));
+      for(const result of contenders)if(result.status==='rejected')assert.match(result.reason.message,/locked/);
+      assert.deepEqual(await admitCollection(f.options.root,report),replay);
+    });
+  }
+});
+
+
+test('a newly recorded unmatched class admits the next collection without a class-stop',async()=>{
+  const {classFixture,classSeal}=await import('./class-fixtures.mjs');
+  const {findingIdentity,recordDecision}=await import('./decisions.mjs');
+  const {createHmac}=await import('node:crypto'),{canonical}=await import('./runtime.mjs');
+  await collectorAttentionFixture(async f=>{
+    const request=f.request(3),x=classFixture(),key=Buffer.alloc(32,9);
+    fs.writeFileSync(path.join(request.evidenceRoot,'receipt.key'),key);
+    for(const receipt of x.receipts) {
+      receipt.worktree=request.worktree;
+      atomicJson(path.join(request.evidenceRoot,'history',`${receipt.runId}.json`),{receipt,signature:createHmac('sha256',key).update(canonical(receipt)).digest('hex')});
+    }
+    await recordDecision({evidenceRoot:request.evidenceRoot,issue:'MONO-999',entry:classSeal({...x.entry,findingIds:[findingIdentity(x.receipts[1],0).id]})});
+    const admitted=await admitCollection(f.options.root,{...f.report(3),sequence:1});
+    assert.equal(admitted.length,1);
+    assert.equal(fs.existsSync(path.join(request.evidenceRoot,'reviews','MONO-999-class-stops.json')),false);
+  });
 });

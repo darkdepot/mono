@@ -3,13 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import readline from 'node:readline';
-import { atomicJson, canonical, withLock, isMain } from './runtime.mjs';
-import { parseReviewUsage } from './gate.mjs';
-import { currentEntries, readJournal, validateJournal } from './decisions.mjs';
+import { atomicJson, canonical, digest, withLock, isMain } from './runtime.mjs';
+import { parseReviewUsage } from './review-usage.mjs';
+import { currentEntries, readJournal, validateJournal, findingIdentity } from './decisions.mjs';
 
 const causes = ['fix','head-change','retry','final-request','self-check','unknown'];
 const statuses = ['scoped-clean','findings','filtered','incorrect','incomplete','reviewer_unavailable','withheld','unknown'];
-const kinds = ['collection-request','helper-invocation','internal-pass','decline'];
+const kinds = ['collection-request','helper-invocation','internal-pass','decline','class-stop'];
 const issuePattern = /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/;
 const nonnegative = value => Number.isSafeInteger(value) && value >= 0;
 const alias = source => ({type:source.type,ref:source.ref});
@@ -96,6 +96,7 @@ export function buildReviewLedger({issue,sources}) {
       const data=source.data;
       if(data.kind==='collection-request')addCollection(source,data);
       else if(data.kind==='helper-invocation')locals.push({source,data:{...data,attempt}});
+      else if(data.kind==='class-stop')attemptState(attempt).events.push({...event('class-stop',data.collectionId,{...data,attempt},[alias(source)]),stop:data.stop,status:'withheld'});
       else unresolved(attempt,'unrecognized event kind',[alias(source)]);
     }
   }
@@ -106,14 +107,18 @@ export function buildReviewLedger({issue,sources}) {
     const receipts=[...new Map(group.receipts.map(r=>[canonical({...r,collectionId:key}),r])).values()];
     const conflict=runs.size>1 || heads.size>1 || receipts.length>1;
     const data={...group.claims[0],...group.receipts[0],attempt};
-    const collection=event('collection-request',key,data,group.sources);attemptState(attempt).events.push(collection);
+    const collection=event('collection-request',key,data,group.sources);
+    collection.wasWithheld=group.claims.some(r=>r.status==='withheld');attemptState(attempt).events.push(collection);
     if(conflict){unresolved(attempt,'ambiguous collection/history/receipt correlation; invocation count withheld',group.sources);continue;}
-    if(collection.status==='withheld') continue;
+    if(collection.status==='withheld'&&!group.receipts.length) continue;
     const receipt=group.receipts[0];
     if(!receipt){unresolved(attempt,'collection has no execution receipt',group.sources);continue;}
     const review=receipt.review;
     if(!review || (review.exitCode===null && !review.status && !review.output))continue;
-    const facts=reviewFacts(review);collection.status=facts.status;
+    const facts=reviewFacts(review);collection.status=facts.status;collection.findings=facts.findings;
+    collection.recordedAt=receipt.recordedAt ?? null;
+    collection.receipt={collectionId:receipt.collectionId,runId:receipt.runId,digest:digest(receipt)};
+    collection.findingIds=facts.findings===null?[]:review.json.findings.map((_,index)=>findingIdentity(receipt,index).id);
     const invocation=event('helper-invocation',key,{...data,...facts,parent:collection.id,threshold:receipt.invocation?.[receipt.invocation.indexOf('--max-priority')+1] ?? null},group.sources);
     attemptState(attempt).events.push(invocation);
     addPasses(invocation,attemptState(attempt));
@@ -185,7 +190,7 @@ function addPasses(invocation,state) {
 }
 export function summarizeLedger(ledger) {
   const events=ledger.attempts.flatMap(a=>a.events),collections=events.filter(e=>e.kind==='collection-request'),invocations=events.filter(e=>e.kind==='helper-invocation');
-  const summary={declines:events.filter(e=>e.kind==='decline').length,collections:collections.length,withheld:collections.filter(e=>e.status==='withheld').length,invocations:invocations.length,
+  const summary={classStops:events.filter(e=>e.kind==='class-stop').length,declines:events.filter(e=>e.kind==='decline').length,collections:collections.length,withheld:collections.filter(e=>e.status==='withheld'||e.wasWithheld).length,invocations:invocations.length,
     causes:Object.fromEntries(causes.map(c=>[c,invocations.filter(e=>e.launchCause===c).length])),
     announcedPasses:invocations.some(e=>e.announcedPasses!==null)?invocations.reduce((n,e)=>n+(e.announcedPasses??0),0):null,
     confirmedPasses:invocations.some(e=>e.confirmedPasses!==null)?invocations.reduce((n,e)=>n+(e.confirmedPasses??0),0):null,
@@ -231,6 +236,8 @@ function helperLaunch(command, knownCommands) {
 export async function readLedgerSources({issue,root,evidenceRoot}) {
   const sources=[],journalFile=path.join(evidenceRoot,'decisions',`${issue}.json`);
   if(fs.existsSync(journalFile))sources.push({type:'journal',ref:journalFile,data:readJournal({evidenceRoot,issue})});
+  const stopsFile=path.join(evidenceRoot,'reviews',`${issue}-class-stops.json`);
+  if(fs.existsSync(stopsFile))for(const data of jsonFile(stopsFile))sources.push({type:'ledger',ref:stopsFile,attempt:data.attempt,data});
   const withheldFile=path.join(evidenceRoot,'reviews',`${issue}-withheld.json`);
   if(fs.existsSync(withheldFile))for(const data of jsonFile(withheldFile))sources.push({type:'ledger',ref:withheldFile,attempt:data.attempt,data});
   for(const file of [...files(path.join(root,'consumed'),true),...files(path.join(root,'reports'),true)]) {
@@ -308,6 +315,41 @@ export async function adjudicate({evidenceRoot,issue,record}) {
     if(canonical(records)!==canonical(next))atomicJson(file,next);
     return file;});
 }
+// Keys are assigned through explicit adjudications; classes bind full receipt finding IDs.
+// Titles, locations and prose never classify a finding.
+export function repeatedClasses({ledger,records,journal}) {
+  const current=currentEntries(journal),classes=current.filter(e=>e.type==='class');
+  const rounds=ledger.attempts.flatMap(a=>a.events.filter(e=>e.kind==='collection-request'&&e.receipt&&e.recordedAt)
+    .map(e=>({...e,keys:new Set(),classes:new Set(classes.filter(c=>c.findingIds.some(id=>e.findingIds.includes(id))).map(c=>c.id))})))
+    .sort((a,b)=>Date.parse(a.recordedAt)-Date.parse(b.recordedAt)||a.id.localeCompare(b.id));
+  const events=new Map(ledger.attempts.flatMap(a=>a.events).map(e=>[e.id,e]));
+  for(const record of records) {
+    let event=events.get(record.eventId);
+    const visited=new Set();
+    while(event?.parent) {
+      if(visited.has(event.id))throw new Error('cyclic ledger parents');
+      visited.add(event.id);event=events.get(event.parent);
+    }
+    const round=rounds.find(r=>r.id===event?.id);
+    if(!round||round.status!=='findings'||!round.findings)continue;
+    for(const link of record.links) {
+      const decision=journal.entries.find(e=>e.type==='decision'&&e.id===link);
+      if(decision)round.keys.add(decision.findingKey);
+    }
+  }
+  const latest=rounds.at(-1),earlier=rounds.slice(0,-1);
+  const findingKeys=latest?.status==='findings'?[...latest.keys].filter(key=>earlier.some(r=>r.keys.has(key))).sort():[];
+  const classIds=latest?.status==='findings'?[...latest.classes].filter(id=>earlier.some(r=>r.status==='findings'&&r.classes.has(id))).sort():[];
+  const applicable=current.filter(e=>e.type==='class-decision'&&latest&&canonical(e.receipt)===canonical(latest.receipt)&&
+    Date.parse(e.approvedAt)>Date.parse(latest.recordedAt)&&Date.parse(e.recordedAt)<=Date.now()&&
+    e.classIds.every(id=>classes.some(c=>c.id===id))&&
+    (e.outcome!=='limit'||current.some(b=>b.type==='decision'&&b.id===e.boundary.decisionId&&digest(b)===e.boundary.digest&&
+      b.validity.head===latest.head)));
+  const uncoveredKeys=findingKeys.filter(key=>!applicable.some(e=>e.findingKeys.includes(key)));
+  const uncoveredClasses=classIds.filter(id=>!applicable.some(e=>e.classIds.includes(id)));
+  return {required:uncoveredKeys.length+uncoveredClasses.length>0,receipt:latest?.receipt??null,
+    findingKeys,classIds,decisions:applicable.map(e=>e.id),uncoveredKeys,uncoveredClasses};
+}
 export function decideReview({ledger,records,journal,attempt}) {
   validateJournal(journal);
   if(journal.issue!==ledger.issue)throw new Error('journal issue mismatch');
@@ -346,7 +388,7 @@ export function decideReview({ledger,records,journal,attempt}) {
   const required=[...counts].filter(([,n])=>n>=2).map(([key])=>key).sort();
   const waivedFindingKeys=required.filter(key=>waivers.has(key)).map(key=>waivers.get(key));
   const recent=[...rounds.values()].slice(-2);
-  return {issue:ledger.issue,attempt,matrixFindingKeys:required.filter(key=>!waivers.has(key)),waivedFindingKeys,
+  return {issue:ledger.issue,attempt,classStop:repeatedClasses({ledger,records,journal}),matrixFindingKeys:required.filter(key=>!waivers.has(key)),waivedFindingKeys,
     checkpointRequired:recent.length===2 && recent.every(r=>r.progress==='none'),
     rounds:[...rounds].map(([id,r])=>({id,eventIds:r.eventIds,progress:r.progress})),unresolvedLinks:unresolved};
 }
@@ -366,11 +408,21 @@ export async function withholdCollection({evidenceRoot,issue,record}) {
     return file;
   });
 }
+export function recordClassStop({evidenceRoot,issue,attempt,collectionId,stop}) {
+  const file=path.join(evidenceRoot,'reviews',`${issue}-class-stops.json`);
+  const records=fs.existsSync(file)?jsonFile(file):[];
+  const record={kind:'class-stop',attempt,collectionId,reason:'needs-decision',recordedBy:'orchestrator',stop};
+  if(!records.some(r=>r.attempt===attempt&&r.collectionId===collectionId))
+    atomicJson(file,[...records,record]);
+  const withheld=path.join(evidenceRoot,'reviews',`${issue}-withheld.json`),demands=fs.existsSync(withheld)?jsonFile(withheld):[];
+  if(!demands.some(r=>r.attempt===attempt&&r.collectionId===collectionId))
+    atomicJson(withheld,[...demands,{attempt,collectionId,reason:'needs-decision: repeated review class',recordedBy:'orchestrator',kind:'collection-request',status:'withheld'}]);
+}
 export function printLedger(ledger) {
   const summary=summarizeLedger(ledger);
   const lines=[`Review ledger ${ledger.issue}`,'| Attempt | Collections | Withheld | Invocations | Announced passes | Confirmed passes |','| --- | ---: | ---: | ---: | ---: | ---: |'];
   for(const attempt of ledger.attempts){const s=summarizeLedger({attempts:[attempt]});lines.push(`| ${attempt.attempt} | ${s.collections} | ${s.withheld} | ${s.invocations} | ${s.announcedPasses??'unknown'} | ${s.confirmedPasses??'unknown'} |`);}
-  lines.push(`Declines: ${summary.declines}`,`Causes: ${Object.entries(summary.causes).map(([k,v])=>`${k}=${v}`).join(', ')}`,`Usage: measured ${summary.measured} of ${summary.invocations}`,`Unresolved coverage: ${summary.unresolvedCoverage}`);
+  lines.push(`Class stops: ${summary.classStops}`,`Declines: ${summary.declines}`,`Causes: ${Object.entries(summary.causes).map(([k,v])=>`${k}=${v}`).join(', ')}`,`Usage: measured ${summary.measured} of ${summary.invocations}`,`Unresolved coverage: ${summary.unresolvedCoverage}`);
   for(const a of ledger.attempts)for(const gap of a.unresolvedCoverage)lines.push(`- attempt ${a.attempt}: ${gap.reason} (${gap.sources.map(s=>s.ref).join(', ')})`);
   return lines.join('\n');
 }

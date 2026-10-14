@@ -17,3 +17,12 @@ rejected, filtered P0–P2, incomplete/contradictory results or failed verificat
 block. Preserve review/receipt. New head needs review; new evidence needs
 orchestrator `decline-revoke`. Recheck after approval/revocation; list finding ID,
 basis, approver in `Autoreview declines:`. Clean unchanged.
+
+Repeated key or orchestrator-recorded class: park `needs-decision` before fixing,
+local review or another collection request. Propose the repeated findings and a
+bounded class fix/checkpoint. Only orchestrator `class-decision` permits resuming;
+unknown matching goes to the orchestrator. New unmatched classes proceed.
+A `limit` requires restricted/removed behavior, remaining-contract verification and
+successor Issue; a boundary alone never excuses a live defect. New residual risk
+or reduced approved outcome needs the owner. Correct the class with existing
+or literal conservative tools; no custom parsers, heuristics or extra mechanisms.

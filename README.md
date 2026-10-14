@@ -8,6 +8,15 @@ Canonical repository: [darkdepot/mono](https://github.com/darkdepot/mono).
 
 This README is the complete introduction and owner-rule index. Follow its links for executable instructions, artifact contracts, templates, and runtime commands. Keep it current in the same PR whenever described behavior changes, as required by [Change Discipline](AGENTS.md#change-discipline).
 
+Review repeats now stop collection before another reviewer runs. The orchestrator
+records exact finding classes and a bounded `fix-class` or `limit` decision;
+`limit` restricts/removes behavior, verifies the remaining contract and links a
+successor. Workers park `needs-decision` before further fixes/reviews and use
+existing tools or literal conservative solutions within the Issue contract.
+A decision change resumes the same withheld request automatically; defects,
+review routes and gate branches keep their existing requirements.
+See [class decisions](references/orchestration.md#repeated-review-class).
+
 ## Workflow
 
 Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot markup contract](references/orchestration.md#snapshot-markup-contract-u12): parse blocks, then select coverage; unknown IDs refuse, while duplicates or unclosed fences retain full documents.

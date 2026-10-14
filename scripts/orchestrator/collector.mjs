@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants, packLayout } from "../runtime.mjs";
 import { confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
-import { commandFlags, allowedFlags, registryEntry, correlatedPhase, validateReportBarriers, admitCollection, CollectionAdmissionRefusal, effectivePins, sha256File } from "./command-state.mjs";
+import { commandFlags, allowedFlags, registryEntry, correlatedPhase, validateReportBarriers, admitCollection, CollectionAdmissionRefusal, effectivePins, sha256File, collectionDecisionDigest } from "./command-state.mjs";
 
 const lockPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.lock`);
 const logPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.log`);
@@ -114,14 +114,15 @@ export async function collectOnce(options) {
     const attentionFile = attentionPath(options);
     const attention = report.capsule.open_queue.length && fs.existsSync(attentionFile) ? readJson(attentionFile) : null;
     const reportDigest = digest(report), pinsVersion = entry.pinsVersion ?? 0;
-    if (report.capsule.open_queue.length && attention?.reportDigest === reportDigest && attention.pinsVersion === pinsVersion) continue;
+    const decisionDigest=report.capsule.open_queue.length?collectionDecisionDigest(entry):null;
+    if (report.capsule.open_queue.length && attention?.reportDigest === reportDigest && attention.pinsVersion === pinsVersion && attention.decisionDigest === decisionDigest) continue;
     await validateReportBarriers(options.root, report, path.dirname(files[0]));
     let admissions = [];
     if (report.capsule.open_queue.length) {
       try { admissions = await admitCollection(options.root, report); }
       catch (error) {
         if (!(error instanceof CollectionAdmissionRefusal)) throw error;
-        atomicJson(attentionFile, { reportDigest, collectionId: report.capsule.open_queue[0].id, reason: error.message, pinsVersion, at: new Date().toISOString() });
+        atomicJson(attentionFile, { reportDigest, collectionId: report.capsule.open_queue[0].id, reason: error.message, pinsVersion, decisionDigest, at: new Date().toISOString() });
         log(options, `attention: ${error.message}`);
         continue;
       }

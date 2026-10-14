@@ -60,6 +60,32 @@ function validateDeclineEntry(entry) {
   if(b.type==='refutation')requireThat(evidenceValid(b.evidence)&&hash(canonical(b.evidence))===b.digest,'refutation evidence digest mismatch');
   else requireThat(/^d-[0-9]+$/.test(b.decisionId??'')&&sha256(b.digest)&&text(b.scope),'boundary decision/content digest required');
 }
+function validateClassEntry(entry) {
+  requireThat(entry.approvedBy==='orchestrator' && date(entry.approvedAt) &&
+    Date.parse(entry.approvedAt)<=Date.parse(entry.recordedAt),'class orchestrator approval required');
+  requireThat(sha256(entry.recordDigest)&&decisionDigest(entry)===entry.recordDigest,'class record digest mismatch');
+  requireThat(Object.hasOwn(entry,'supersedes'),'class supersedes required (null for first entry)');
+  const list=(value,valid)=>Array.isArray(value)&&value.every(valid)&&new Set(value).size===value.length;
+  if(entry.type==='class') {
+    requireThat(text(entry.rule)&&text(entry.mechanism)&&list(entry.findingIds,v=>/^[a-f0-9]{64}:[0-9]+:[a-f0-9]{64}$/.test(v))&&
+      entry.findingIds.length>0,'class rule, mechanism and exact finding identities required');
+    return;
+  }
+  requireThat(object(entry.receipt)&&text(entry.receipt.collectionId)&&text(entry.receipt.runId)&&sha256(entry.receipt.digest),
+    'class-decision receipt binding required');
+  requireThat(list(entry.classIds,v=>idPattern.test(v))&&list(entry.findingKeys,text)&&
+    entry.classIds.length+entry.findingKeys.length>0,'class-decision classes or finding keys required');
+  requireThat(['fix-class','limit'].includes(entry.outcome)&&text(entry.nextStep)&&text(entry.checkpoint),
+    'class-decision outcome, bounded nextStep and checkpoint required');
+  if(entry.outcome==='limit') {
+    requireThat(object(entry.boundary)&&/^d-[0-9]+$/.test(entry.boundary.decisionId??'')&&sha256(entry.boundary.digest),
+      'limit boundary binding required');
+    requireThat(text(entry.behaviorChange),'limit behavior restriction/removal required');
+    requireThat(evidenceValid(entry.remainingVerification),'limit remaining contract verification required');
+    requireThat(typeof entry.successor==='string'&&/^https:\/\/linear\.app\/[^/]+\/issue\/[A-Z][A-Z0-9]*-[1-9][0-9]*(?:\/|$)/.test(entry.successor),
+      'limit successor Issue link required');
+  }
+}
 export function acceptedDeclines(receipt,journal) {
   validateJournal(journal);
   const digest=hash(canonical(receipt)),revoked=new Set(journal.entries.filter(e=>e.type==='decline-revoke').map(e=>e.forId));
@@ -87,10 +113,12 @@ export function acceptedDeclines(receipt,journal) {
   });
 }
 export function validateEntry(entry) {
-  requireThat(object(entry) && ['decision','matrix','verification','decline','decline-revoke'].includes(entry.type),'invalid entry type');
+  requireThat(object(entry) && ['decision','matrix','verification','decline','decline-revoke','class','class-decision'].includes(entry.type),'invalid entry type');
   requireThat(idPattern.test(entry.id ?? '') && text(entry.recordedAt) && Number.isFinite(Date.parse(entry.recordedAt)),'entry id and recordedAt required');
   if(entry.supersedes!==undefined && entry.supersedes!==null)requireThat(idPattern.test(entry.supersedes),'invalid supersedes');
-  if(entry.type==='decline' || entry.type==='decline-revoke') {
+  if(entry.type==='class' || entry.type==='class-decision') {
+    validateClassEntry(entry);
+  } else if(entry.type==='decline' || entry.type==='decline-revoke') {
     validateDeclineEntry(entry);
   } else if(entry.type==='decision') {
     requireThat(['findingKey','problem','trigger','evidence','impact','origin','decision','verification','proposedBy'].every(k=>text(entry[k])),'decision fields required');
@@ -120,9 +148,19 @@ export function validateJournal(journal) {
       const prior=seen.get(entry.supersedes);
       requireThat(prior && prior.type===entry.type,'supersedes must reference an earlier entry of the same type');
       requireThat(!replaced.has(prior.id),'supersedes must reference a current entry');
-      const key=entry.type==='decision'?'findingKey':entry.type==='matrix'?'invariant':'forId';
-      requireThat(prior[key]===entry[key],`supersedes must preserve ${key}`);
+      const key=entry.type==='decision'?'findingKey':entry.type==='matrix'?'invariant':entry.type==='class'?'rule':entry.type==='class-decision'?'receipt':'forId';
+      requireThat(canonical(prior[key])===canonical(entry[key]),`supersedes must preserve ${key}`);
       replaced.add(prior.id);
+    }
+    if(entry.type==='class-decision') {
+      for(const id of entry.classIds)requireThat(seen.get(id)?.type==='class'&&!replaced.has(id),'class-decision must reference a current class');
+      if(entry.outcome==='limit') {
+        const boundary=seen.get(entry.boundary.decisionId);
+        requireThat(boundary?.type==='decision'&&boundary.decision==='limit'&&boundary.boundary&&
+          boundary.approval?.by==='orchestrator'&&Date.parse(boundary.approval.at)<=Date.parse(boundary.recordedAt)&&
+          !replaced.has(boundary.id)&&hash(canonical(boundary))===entry.boundary.digest,
+          'limit requires an unchanged current approved boundary');
+      }
     }
     if(entry.type==='decline-revoke') {
       const prior=seen.get(entry.forId);
@@ -248,7 +286,7 @@ export function materializeDataset(options) {
 }
 async function main() {
   const [command,...rest]=process.argv.slice(2),args=flags(rest);
-  if(command==='--help'||args.help){console.log('Usage: decisions.mjs record|render|version|materialize|list --issue KEY --evidence-root DIR [--record JSON_FILE] [--source DATASET] [--version N --worktree DIR --digest SHA256] [--remove true]\nrecord accepts typed decision, matrix, verification, decline or decline-revoke entries. version replaces the managed section in --source and publishes immutable bytes. materialize requires an ignored, untracked path; --remove true cleans that exact digest-checked file.');return;}
+  if(command==='--help'||args.help){console.log('Usage: decisions.mjs record|render|version|materialize|list --issue KEY --evidence-root DIR [--record JSON_FILE] [--source DATASET] [--version N --worktree DIR --digest SHA256] [--remove true]\nrecord accepts typed decision, matrix, verification, decline, decline-revoke, class or class-decision entries. version replaces the managed section in --source and publishes immutable bytes. materialize requires an ignored, untracked path; --remove true cleans that exact digest-checked file.');return;}
   const allowed=['issue','evidence-root',...({record:['record'],render:[],list:[],version:['source'],materialize:['version','worktree','digest','remove']}[command]??[])];
   requireThat(Object.keys(args).every(k=>allowed.includes(k)),'unknown option');
   const options={...args,evidenceRoot:args['evidence-root']};
