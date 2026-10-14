@@ -1263,6 +1263,11 @@ decision; park without one. Changes to current chain decisions re-evaluate an
 identical refused report/pins pair. Competing requests serialize; a lock refusal
 reserves nothing and may be retried with the original request identity.
 
+Registered collect:true requires the correlated admission before any helper runs;
+the collector owns it. Collect:false remains usable to obtain pending requests
+and reconcile history. Collection IDs bind the reviewed head. A completed signed
+history cannot be executed again with the same ID; reconcile it instead.
+
 Create a successor only through an orchestrator decision: either the existing
 class-decision limit's successor URL, or continue.successorIssue. Before dispatch,
 record in the successor journal type=successor, id, originalIssue (the original,

@@ -187,7 +187,7 @@ export function collectionPinMismatch(request, pins) {
 }
 const requestMismatch = (field, expected) => { throw new Error(`collection request mismatch: ${field}; expected ${canonical(expected)}`); };
 
-// Gate-side admission comparison: reads the registry/dispatch/admission only.
+// Gate-side admission comparison: reads registry/dispatch/admission/history.
 // No launch lock, admission record or worker phase is created here.
 export function checkCollectionRequest(request) {
   const root = request.pins?.file ? path.dirname(path.dirname(path.dirname(request.pins.file))) : request.root;
@@ -208,7 +208,7 @@ export function checkCollectionRequest(request) {
     throw new Error("landing policy requires pinned dispatch");
   const u13 = Object.hasOwn(launch, "reviewDatasetDigest");
   if (!u13 && !request.pins) return null;
-  if (!/^preflight-collect:[a-f0-9]{40}:[1-9][0-9]*$/u.test(request.collectionId ?? "")) requestMismatch("collectionId", "preflight-collect:<head>:<n>");
+  if (!/^[a-f0-9]{40}$/.test(request.head??'') || !new RegExp(`^preflight-collect:${request.head}:[1-9][0-9]*$`,'u').test(request.collectionId ?? "")) requestMismatch("collectionId", "preflight-collect:<head>:<n>");
   const admissionFile = path.join(attemptDirectory(root, entry), "admissions", `${request.collectionId}.json`);
   const admission = fs.existsSync(admissionFile) ? readJson(admissionFile) : null;
   const version = admission?.pinsVersion ?? entry.pinsVersion ?? 0;
@@ -225,6 +225,13 @@ export function checkCollectionRequest(request) {
   if (u13 && pins.reviewDataset === null && Object.hasOwn(request, "reviewDataset")) requestMismatch("reviewDataset", "omitted");
   if (u13 && (pins.reviewDataset ? sha256File(pins.reviewDataset) : null) !== pins.reviewDatasetDigest) requestMismatch("reviewDatasetDigest", pins.reviewDatasetDigest);
   if (request.collect !== false && request.collect !== true) requestMismatch("collect", false);
+  if(request.collect===true) {
+    if(!admission)requestMismatch('admission','orchestrator admission before collection');
+    const history=path.join(pins.evidenceRoot,'history');
+    if((fs.existsSync(history)?fs.readdirSync(history).filter(n=>n.endsWith('.json')):[])
+      .some(name=>readJson(path.join(history,name)).receipt?.collectionId===request.collectionId))
+      throw new Error('collection already executed; reconcile the same request with collect:false');
+  }
   return pins;
 }
 

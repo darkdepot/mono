@@ -12,7 +12,7 @@ import { renderDispatch } from "./orchestrator/dispatch.mjs";
 import { applyPreapply, preapplyManifest } from "./orchestrator/preapply.mjs";
 import { digest, readJson, atomicJson, withLock } from "./runtime.mjs";
 import { publishPhase, validateConfirmation, confirmQueue } from "./delivery-state.mjs";
-import { expandedWrite, effectivePins, admitCollection, collectionPinsBinding } from "./orchestrator/command-state.mjs";
+import { expandedWrite, effectivePins, admitCollection, collectionPinsBinding, checkCollectionRequest } from "./orchestrator/command-state.mjs";
 import { acceptAck, acceptReport, acceptAmend } from "./orchestrator/accept.mjs";
 import { reconcile } from "./orchestrator/linear-adapter.mjs";
 
@@ -1529,6 +1529,24 @@ test("preapply-whitespace-blank-lines: surrounding whitespace and raw content su
   assert.deepEqual(preapplyManifest(parsed.materialized, null, null, true).entries, parsed.entries);
   assert.equal(preapplyManifest(issue + parsed.materialized, prd, spec, false).alreadyMaterialized, true);
   assert.equal(extractSnapshot(issue, prd, spec).spec, spec);
+});
+
+test('review cap: direct collect:true needs admission; collect:false stays pending and old-head/repeated execution cannot reuse it',async()=>{
+  await collectorAttentionFixture(async f=>{
+    const file=path.join(f.options.root,'dispatch','MONO-999-a1','pins.json');
+    atomicJson(file,readJson(f.entry.pins.file));
+    const registry=readJson(f.registry);registry['MONO-999'].pins={file,digest:createHash('sha256').update(fs.readFileSync(file)).digest('hex')};
+    atomicJson(f.registry,registry);
+    const binding=collectionPinsBinding(registry['MONO-999']),request={...f.request(1),pins:binding};
+    assert.doesNotThrow(()=>checkCollectionRequest(request));
+    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/admission/);
+    const report=f.report(1,{pins:binding});await admitCollection(f.options.root,report);
+    assert.doesNotThrow(()=>checkCollectionRequest({...request,collect:true}));
+    assert.throws(()=>checkCollectionRequest({...request,head:'e'.repeat(40),collect:true}),/collectionId/);
+    await f.signedHistory(request);
+    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/already executed/);
+    assert.doesNotThrow(()=>checkCollectionRequest(request));
+  });
 });
 
 test('review cap: third external collection after two blocking receipts is refused across heads',async()=>{
