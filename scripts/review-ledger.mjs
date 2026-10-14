@@ -97,7 +97,8 @@ export function buildReviewLedger({issue,sources}) {
       if(data.kind==='collection-request')addCollection(source,data);
       else if(data.kind==='helper-invocation')locals.push({source,data:{...data,attempt}});
       else if(['class-stop','cap-stop'].includes(data.kind))attemptState(attempt).events.push({...event(data.kind,data.collectionId,{...data,attempt},[alias(source)]),stop:data.stop,status:'withheld'});
-      else if(data.kind==='internal-pass')attemptState(attempt).events.push(event('internal-pass',data.id,{...data,attempt},[alias(source)]));
+      else if(data.kind==='internal-pass')attemptState(attempt).events.push(event('internal-pass',data.id,{...data,attempt,
+        status:data.result==='clean'?'scoped-clean':data.result==='findings'?'findings':data.status},[alias(source)]));
       else unresolved(attempt,'unrecognized event kind',[alias(source)]);
     }
   }

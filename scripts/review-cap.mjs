@@ -83,8 +83,8 @@ export function syncLocalPasses({evidenceRoot,report}) {
   for(const pass of passes) {
     if(!/^[A-Za-z0-9:._-]{1,128}$/.test(pass.id??'')||!/^[a-f0-9]{40}$/.test(pass.head??'')||!['clean','findings'].includes(pass.result??'findings'))throw new Error('local pass id/head/result required');
     const event={kind:'internal-pass',issue:report.issue,attempt:report.attempt,id:pass.id,head:pass.head,result:pass.result??'findings'};
-    const previous=result.state.local.find(p=>p.issue===event.issue&&p.attempt===event.attempt&&p.id===event.id);
-    if(previous&&canonical({...previous,result:previous.result??'findings'})!==canonical(event))throw new Error('local pass identity changed');
+    const previous=result.state.local.find(p=>p.id===event.id);
+    if(previous&&(previous.head!==event.head||(previous.result??'findings')!==event.result))throw new Error('local pass identity changed');
     if(!previous)result.state.local.push(event);
   }
   const grants=continuations(chain,result.state);

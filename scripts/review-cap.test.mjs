@@ -96,6 +96,29 @@ test('external cap counts blocking findings after valid declines and re-counts a
   });
 });
 
+test('cumulative local report: a new attempt or authorized successor keeps stable pass IDs counted once',async()=>{
+  await fixture(async f=>{
+    const passes=[{id:'stable-1',head:'a'.repeat(40),result:'findings'},{id:'stable-2',head:'b'.repeat(40),result:'clean'}];
+    const sync=(attempt,owner=f.issue,reported=passes)=>syncLocalPasses({evidenceRoot:f.evidenceRoot,report:f.report(attempt,'c'.repeat(40),owner,reported)});
+    const original=sync(1).state.local;
+    for(const attempt of [2,3]) {
+      const replay=sync(attempt);assert.deepEqual(replay.state.local,original);assert.equal(replay.localStop,null);
+    }
+    assert.throws(()=>sync(2,f.issue,[{...passes[0],head:'e'.repeat(40)}]),/local pass identity changed/);
+    assert.throws(()=>sync(2,f.issue,[{...passes[0],result:'clean'}]),/local pass identity changed/);
+    for(const receipt of classFixture().receipts)f.receipt(receipt);
+    const stopped=await f.reserve(f.report(3,'c'.repeat(40),f.issue,passes),1);
+    const decision=await f.continuation(stopped.stop,`preflight-collect:${'f'.repeat(40)}:1`,{successorIssue:'MONO-1000'});
+    const now=new Date().toISOString();
+    await recordDecision({evidenceRoot:f.evidenceRoot,issue:'MONO-1000',entry:seal({type:'successor',id:'s-1',originalIssue:f.issue,
+      decision:{id:decision.id,digest:digest(decision)},approvedBy:'orchestrator',approvedAt:now,recordedAt:now})});
+    assert.deepEqual(sync(1,'MONO-1000').state.local,original);
+    const added=sync(1,'MONO-1000',[...passes,{id:'stable-3',head:'f'.repeat(40),result:'clean'}]);
+    assert.equal(added.state.local.length,3);assert.deepEqual(added.state.local.slice(0,2),original);
+    assert.equal(added.state.local[2].issue,'MONO-1000');assert.equal(added.state.local[2].attempt,1);
+  });
+});
+
 test('local stop: two findings withhold collection before and after the first external receipt; two clean passes admit',async()=>{
   for(const external of [false,true])for(const clean of [false,true])await fixture(async f=>{
     if(external)f.receipt(classFixture().receipts[0]);

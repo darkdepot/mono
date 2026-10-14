@@ -27,6 +27,9 @@ Receipt counts use issue/pins identity, never worktree attribution. See [review 
 Every collection requires a pinned request and correlated admission; unpinned
 legacy requests cannot start collections. Legacy receipt reads remain compatible.
 All pending admissions count when reserving and rechecking free capacity.
+Local passes use stable IDs across the Issue chain; cumulative reports do not
+recount passes in new attempts or successors. The ledger shows their clean or
+findings outcomes.
 
 ## Workflow
 
