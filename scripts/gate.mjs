@@ -600,7 +600,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   }
   unchanged();
   const issue = request.pins ? /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(request.pins.file)))?.[1] : path.basename(repo);
-  const journal = receipt.review.exitCode === 1 ? readJournal({ evidenceRoot, issue }) : null;
+  const journal = receipt.review.exitCode === 1 && /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(issue ?? "")
+    ? readJournal({ evidenceRoot, issue }) : null;
   const reason = validatePreflight(receipt, head, base, route, journal);
   return { reason, receipt: { path: verifiedReceiptFile, runId: receipt.runId, digest: digest(receipt) } };
 }
