@@ -1,4 +1,4 @@
-import { packLayout } from './runtime.mjs';
+import { packLayout, canonical } from './runtime.mjs';
 import { copyPluginFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -37,12 +37,13 @@ function installedAdmissionFixture(runtime, file, cwd, env) {
       write(admissionScript, `import fs from 'node:fs';import path from 'node:path';
 import {atomicJson,packLayout} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'runtime.mjs')).href)};
 import {admitCollection,sha256File} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'orchestrator/command-state.mjs')).href)};
-const request=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=request.root;
+const request=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=request.root;delete request.pins;request.reviewDatasetVersion??=0;
 fs.mkdirSync(request.evidenceRoot,{recursive:true});
 const identity=packLayout(request.skillsRoot).identity(),pinsFile=path.join(root,'dispatch',request.issue+'-a1','pins.json');
 atomicJson(pinsFile,{...request,base:request.head});
 const entry={issue:request.issue,attempt:1,stage:'mono-deliver',worktree:request.worktree,...identity,pins:{file:pinsFile,digest:sha256File(pinsFile)},pinsVersion:0};
 atomicJson(path.join(root,'workers.json'),{[entry.issue]:entry});
+request.pins=entry.pins;atomicJson(process.argv[2],request);
 const queue=[{id:request.collectionId,operation:'preflight-collect',target:request.head,payload:{request:{...request,collect:false}}}];
 await admitCollection(root,{...entry,phase:'preflight',sequence:1,kind:'confirmation-request',head:request.head,linear_mutations_pending:queue,
  capsule:{phase:'preflight',head:request.head,decisions:[],open_queue:queue,writable_roots:request.workerWritableRoots}});
@@ -55,7 +56,17 @@ await admitCollection(root,{...entry,phase:'preflight',sequence:1,kind:'confirma
       if (logicalIds.get(logicalId)?.has(receipt?.collectionId)) request.collectionId = receipt.collectionId;
       write(file, request);
     }
-    return run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', file], cwd, env);
+    const result=run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', file], cwd, env);
+    // Archive a legacy mutable fixture for old route/sandbox readback cases.
+    // Keep the native pinned immutable history untouched for admission/counting.
+    if(request.collect===true) {
+      const receiptFile=path.join(request.evidenceRoot,request.head+'.json');
+      if(fs.existsSync(receiptFile)) {
+        const envelope=json(receiptFile);delete envelope.receipt.pins;
+        envelope.signature=crypto.createHmac('sha256',fs.readFileSync(path.join(request.evidenceRoot,'receipt.key'))).update(canonical(envelope.receipt)).digest('hex');write(receiptFile,envelope);
+      }
+    }
+    return result;
   };
 }
 test("backup switch named launch contracts", async t => {
@@ -1022,7 +1033,8 @@ process.exit(r.status===null?1:r.status);
         writeFileRequest(write.payload.request);
         const answer = pass(preflightCall()).stdout.trim();
         const sealed = json(path.join(preflight.evidenceRoot, `${head}.json`));
-        collectionRuns++; collectionEvidence.set(write.id, { receipt: path.join(preflight.evidenceRoot, "history", `${sealed.receipt.runId}.json`), receiptDigest: receiptDigest(sealed), gate: answer });
+        const immutableReceipt = path.join(preflight.evidenceRoot, "history", `${sealed.receipt.runId}.json`);
+        collectionRuns++; collectionEvidence.set(write.id, { receipt: immutableReceipt, receiptDigest: receiptDigest(json(immutableReceipt)), gate: answer });
       }
       return collectionEvidence.has(write.id) ? { state: "present", evidence: collectionEvidence.get(write.id) } : { state: "missing" };
     };

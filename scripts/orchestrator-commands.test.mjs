@@ -1531,15 +1531,15 @@ test("preapply-whitespace-blank-lines: surrounding whitespace and raw content su
   assert.equal(extractSnapshot(issue, prd, spec).spec, spec);
 });
 
-test('review cap: registered legacy request without pins requires the same admission and replay controls',async()=>{
+test('review cap: unpinned collect:true is refused even with a registered admission',async()=>{
   await collectorAttentionFixture(async f=>{
     const request=f.request(1);
     assert.equal(checkCollectionRequest(request),null,'legacy receipt reads remain compatible');
     assert.throws(()=>checkCollectionRequest({...request,collect:true}),/admission/);
     await admitCollection(f.options.root,f.report(1));
-    assert.equal(checkCollectionRequest({...request,collect:true}),null);
+    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/pinned dispatch request/);
     await f.signedHistory(request);
-    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/already executed/);
+    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/pinned dispatch request/);
     assert.equal(checkCollectionRequest(request),null);
   });
 });
@@ -1742,10 +1742,13 @@ test('local cap collector: unresolved stop is withheld, later continue re-evalua
 test('pending admission: atomic contenders cannot exceed the free allowance and existing admission remains counted',async()=>{
   const {classFixture}=await import('./class-fixtures.mjs'),{createHmac}=await import('node:crypto'),{canonical}=await import('./runtime.mjs');
   await collectorAttentionFixture(async f=>{
-    const request=f.request(1),key=Buffer.alloc(32,9),receipt=classFixture().receipts[0];
+    const file=path.join(f.options.root,'dispatch','MONO-999-a1','pins.json');
+    atomicJson(file,readJson(f.entry.pins.file));
+    const registry=readJson(f.registry);registry['MONO-999'].pins={file,digest:createHash('sha256').update(fs.readFileSync(file)).digest('hex')};atomicJson(f.registry,registry);
+    const binding=collectionPinsBinding(registry['MONO-999']),request={...f.request(1),pins:binding},key=Buffer.alloc(32,9),receipt=classFixture().receipts[0];
     fs.writeFileSync(path.join(request.evidenceRoot,'receipt.key'),key);
     atomicJson(path.join(request.evidenceRoot,'history',receipt.runId+'.json'),{receipt,signature:createHmac('sha256',key).update(canonical(receipt)).digest('hex')});
-    const firstReport=f.report(1),first=await admitCollection(f.options.root,firstReport);
+    const firstReport=f.report(1,{pins:binding}),first=await admitCollection(f.options.root,firstReport);
     assert.doesNotThrow(()=>checkCollectionRequest({...request,collect:true}));
     await assert.rejects(admitCollection(f.options.root,f.report(2)),/review cap/);
     assert.deepEqual(await admitCollection(f.options.root,firstReport),first);
@@ -1788,7 +1791,9 @@ test('pending admission recovery: a revoked decline stops an existing free admis
     put(x.receipt);
     const entry=classSeal({...x.entry,receipt:{collectionId:x.receipt.collectionId,runId:x.receipt.runId,digest:digest(x.receipt)},finding:findingIdentity(x.receipt,0)});
     await recordDecision({evidenceRoot,issue:'MONO-999',entry});
-    const report=f.report(1),request=f.request(1);await admitCollection(f.options.root,report);
+    const file=path.join(f.options.root,'dispatch','MONO-999-a1','pins.json');atomicJson(file,readJson(f.entry.pins.file));
+    const registry=readJson(f.registry);registry['MONO-999'].pins={file,digest:createHash('sha256').update(fs.readFileSync(file)).digest('hex')};atomicJson(f.registry,registry);
+    const binding=collectionPinsBinding(registry['MONO-999']),report=f.report(1,{pins:binding}),request={...f.request(1),pins:binding};await admitCollection(f.options.root,report);
     // Two newly blocking receipts change the count after the free reservation.
     const second={...x.receipt,runId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',collectionId:`preflight-collect:${report.head}:99`};put(second);
     const now=new Date().toISOString(),evidence={citation:'New reproduction'};

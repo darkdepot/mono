@@ -1265,15 +1265,16 @@ decision; park without one. Changes to current chain decisions re-evaluate an
 identical refused report/pins pair. Competing requests serialize; a lock refusal
 reserves nothing and may be retried with the original request identity.
 
-Every collect:true requires registered correlated admission before any helper runs,
-including legacy requests without pins; the collector owns it. Collect:false remains
-usable to obtain pending requests
+Every collect:true requires a pinned request and registered correlated admission
+before any helper runs; unpinned legacy requests are refused. The collector owns
+admission. Collect:false remains usable to obtain pending requests
 and reconcile history. Collection IDs bind the reviewed head. A completed signed
 history cannot be executed again with the same ID; reconcile it instead.
 Every outstanding admission (no signed receipt yet) reserves free capacity under
 launch.lock. Blocking receipts plus outstanding admissions fill the free allowance;
 replay consumes no additional slot. Completion releases a pending slot, but a
-blocking receipt replaces it in the count. The gate rechecks the existing reservation;
+blocking receipt replaces it in the count. The gate rechecks all pending reservations,
+including continuations, against free capacity;
 a stopped free reservation requires a bound continue before promotion. Decision or
 counter changes re-evaluate a withheld request, including completion of a clean
 pending collection.
@@ -1281,6 +1282,9 @@ Attribute signed receipts by receipt.issue, otherwise the Issue key of the
 pins.file attempt directory. Ignore receipts with neither; there is no worktree
 fallback or persisted ownership table. Current receipts carry these identities,
 so head, attempt, successor and worktree changes preserve the chain count.
+Scope decision d-005 retains a fail-closed limitation: external-only receipt changes
+can invalidate a local continuation and create a new cap-stop requiring a decision.
+No collection or defect admission occurs; repair is deferred until after release.
 
 Create a successor only through an orchestrator decision: either the existing
 class-decision limit's successor URL, or continue.successorIssue. Before dispatch,

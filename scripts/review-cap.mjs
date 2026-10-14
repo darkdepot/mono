@@ -123,7 +123,7 @@ export function validateCapAdmission({evidenceRoot,issue,cap}) {
   if(!cap||!state.pending.some(r=>canonical(r)===canonical(cap)))throw new Error('review cap admission reservation missing');
   const localStop=state.stops.filter(s=>s.localCap).at(-1);
   if(cap.free) {
-    if(localStop||state.local.length>2||state.external.length+state.pending.filter(r=>r.free).length>2)throw new Error('needs-decision: review cap');
+    if(localStop||state.local.length>2||state.external.length+state.pending.length>2)throw new Error('needs-decision: review cap');
   } else {
     const permit=state.permits[cap.stopId],decision=continuations(chain,state).find(e=>e.stopId===cap.stopId);
     if(!decision||localStop&&localStop.id!==cap.stopId||permit?.collectionId!==decision.collectionId||

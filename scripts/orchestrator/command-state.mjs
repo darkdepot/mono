@@ -214,7 +214,10 @@ export function checkCollectionRequest(request) {
     throw new Error("landing policy requires pinned dispatch");
   const u13 = Object.hasOwn(launch, "reviewDatasetDigest");
   const legacy=!u13&&!request.pins;
-  if (legacy && request.collect!==true) return null;
+  if (legacy) {
+    if(request.collect===true)requestMismatch('admission','pinned dispatch request before collection');
+    return null;
+  }
   if (!/^[a-f0-9]{40}$/.test(request.head??'') || !new RegExp(`^preflight-collect:${request.head}:[1-9][0-9]*$`,'u').test(request.collectionId ?? "")) requestMismatch("collectionId", "preflight-collect:<head>:<n>");
   const admissionFile = path.join(attemptDirectory(root, entry), "admissions", `${request.collectionId}.json`);
   const admission = fs.existsSync(admissionFile) ? readJson(admissionFile) : null;

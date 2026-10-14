@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {atomicJson,canonical,digest,readJson} from './runtime.mjs';
 import {recordDecision,decisionDigest} from './decisions.mjs';
-import {reserveReviewCollection,syncLocalPasses,reviewChain} from './review-cap.mjs';
+import {reserveReviewCollection,syncLocalPasses,reviewChain,validateCapAdmission} from './review-cap.mjs';
 import {classFixture,classSeal} from './class-fixtures.mjs';
 import {declineFixture} from './decline-fixtures.mjs';
 
@@ -121,5 +121,21 @@ test('pending admissions: a blocking receipt plus one outstanding admission fill
     const sync=syncLocalPasses({evidenceRoot:f.evidenceRoot,report:r});
     assert.equal(sync.state.external.length,2);assert.equal(sync.state.pending.length,0);
     assert.equal((await f.reserve(r,2)).refused,true,'completed blocking receipt cannot restore the slot');
+  });
+});
+
+test('free admission recheck: a pending continuation also counts against free capacity',async()=>{
+  await fixture(async f=>{
+    f.receipt(classFixture().receipts[0]);
+    const r=f.report(),free=await f.reserve(r,1),stopped=await f.reserve(r,2);
+    assert.equal(free.free,true);assert.equal(stopped.refused,true);
+    await f.continuation(stopped.stop,`preflight-collect:${r.head}:2`);
+    const continued=await f.reserve(r,2);assert.equal(continued.decisionId,'continue-1');
+    const state=syncLocalPasses({evidenceRoot:f.evidenceRoot,report:r}).state;
+    assert.equal(state.external.length,1);assert.equal(state.pending.length,2);
+    assert.equal(state.pending.filter(p=>p.free).length,1);
+    assert.throws(()=>validateCapAdmission({evidenceRoot:f.evidenceRoot,issue:f.issue,cap:free}),/needs-decision/);
+    assert.doesNotThrow(()=>validateCapAdmission({evidenceRoot:f.evidenceRoot,issue:f.issue,cap:continued}));
+    assert.equal((await f.reserve(r,1)).refused,true,'replay cannot restore free capacity');
   });
 });

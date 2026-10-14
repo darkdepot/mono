@@ -24,9 +24,9 @@ atomic reservations and idempotent replay prevent refilling allowances. Defects
 still block the PR. Pending admissions reserve capacity before execution. A clean
 second local pass permits collection; a recorded local stop requires continuation.
 Receipt counts use issue/pins identity, never worktree attribution. See [review limits](references/orchestration.md#review-limits).
-Every collection path requires admission, including registered legacy requests
-without pins; legacy receipt reads remain compatible. Receipt ownership is kept
-with the Issue chain when worktrees move and when declines temporarily clear findings.
+Every collection requires a pinned request and correlated admission; unpinned
+legacy requests cannot start collections. Legacy receipt reads remain compatible.
+All pending admissions count when reserving and rechecking free capacity.
 
 ## Workflow
 
