@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants, packLayout } from "../runtime.mjs";
 import { confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
 import { commandFlags, allowedFlags, registryEntry, correlatedPhase, validateReportBarriers, admitCollection, CollectionAdmissionRefusal, effectivePins, sha256File, collectionDecisionDigest } from "./command-state.mjs";
-import {syncLocalPasses} from '../review-cap.mjs';
+import {syncLocalPasses,withholdReviewCap} from '../review-cap.mjs';
 
 const lockPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.lock`);
 const logPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.log`);
@@ -107,8 +107,8 @@ export async function collectOnce(options) {
     const files = [path.join(options.root, "reports", name), path.join(entry.worktree, ".orchestrator", name)].filter(file => fs.existsSync(file));
     if (!files.length) continue;
     const { report } = correlatedPhase(options.root, files[0]);
-    if(report.capsule.local_passes?.length)await withLock(path.join(options.root,'launch.lock'),()=>
-      syncLocalPasses({evidenceRoot:effectivePins(entry).evidenceRoot,report,worktree:fs.realpathSync(entry.worktree)}));
+    const local=report.phase==='preflight'||report.capsule.local_passes?.length?await withLock(path.join(options.root,'launch.lock'),()=>
+      syncLocalPasses({evidenceRoot:effectivePins(entry).evidenceRoot,report})):null;
     if (report.capsule.open_queue.some(write => write.operation !== "preflight-collect")) continue;
     if (report.capsule.open_queue.length && (report.phase !== "preflight" || report.kind !== "confirmation-request" || report.capsule.open_queue.length !== 1))
       throw new Error("collection requires a single preflight confirmation-request");
@@ -122,10 +122,20 @@ export async function collectOnce(options) {
     await validateReportBarriers(options.root, report, path.dirname(files[0]));
     let admissions = [];
     if (report.capsule.open_queue.length) {
-      try { admissions = await admitCollection(options.root, report); }
+      try {
+        if(local?.localStop&&!local.continued) {
+          const refused=await withLock(path.join(options.root,'launch.lock'),()=>{
+            const current=syncLocalPasses({evidenceRoot:effectivePins(entry).evidenceRoot,report});
+            return current.localStop&&!current.continued?withholdReviewCap({...current,evidenceRoot:effectivePins(entry).evidenceRoot,report,
+              collectionId:report.capsule.open_queue[0].id,stop:current.localStop}):null;
+          });
+          if(refused)throw new CollectionAdmissionRefusal('needs-decision: review cap');
+        }
+        admissions = await admitCollection(options.root, report);
+      }
       catch (error) {
         if (!(error instanceof CollectionAdmissionRefusal)) throw error;
-        atomicJson(attentionFile, { reportDigest, collectionId: report.capsule.open_queue[0].id, reason: error.message, pinsVersion, decisionDigest, at: new Date().toISOString() });
+        atomicJson(attentionFile, { reportDigest, collectionId: report.capsule.open_queue[0].id, reason: error.message, pinsVersion, decisionDigest:collectionDecisionDigest(entry), at: new Date().toISOString() });
         log(options, `attention: ${error.message}`);
         continue;
       }

@@ -43,7 +43,7 @@ comments/certificates; apply worker snapshot/queue rules.
 4. Commit before review. Full/final deep/risky: mandatory committed loop,
    --mode branch --base <actual base>; fix/check/commit before another pass.
    Short tiny/standard: local pass optional; checks/commit/collection mandatory.
-   Use review-admission caps; keep cumulative capsule.local_passes [{id,head}].
+   Use review-admission caps; keep cumulative capsule.local_passes [{id,head,result:clean|findings}].
    `claude-cli`: external collection only (nested sandbox unavailable); publish
    pinned collect:false gate's returned request, confirm, rerun gate.
 5. Certifying review: complete clean exit 0/no actionable residuals; P3-only

@@ -5869,7 +5869,7 @@ const MACHINE_TOKENS = new Set([
   // MONO-154: cap/chain dictionary and certificate label, no prose pins.
   "continue", "successor", "cap-stop", "stopId", "originalIssue", "successorIssue",
   "localPasses", "externalCollections", "local_passes", "Autoreview decisions:",
-  "receiptOwners", "collectionOwners",
+  "result", "clean", "findings", "pending", "free", "localCap",
   // MONO-153: journal/admission dictionary; no agent prose pins.
   "class", "class-decision", "fix-class", "limit", "class-stop", "rule", "mechanism", "findingIds",
   "classIds", "findingKeys", "nextStep", "checkpoint", "behaviorChange", "remainingVerification", "successor", "classStop",

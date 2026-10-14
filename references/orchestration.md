@@ -1234,10 +1234,12 @@ reservation lists; heads and attempts are not counter boundaries. Valid declines
 remove their exact blocking findings; revocation restores them. Filtered/rejected
 blocking findings remain blocking. Gates still require clean or accepted-with-declines.
 
-Workers report cumulative capsule.local_passes [{id,head}] with stable IDs for each
-actual local pass, including failures; do not count the passes inside an external
+Workers report cumulative capsule.local_passes [{id,head,result}] with stable IDs for each
+actual local pass (result=clean|findings; omitted means findings), including failures; do not count the passes inside an external
 receipt as worker-local passes. Collector persists them under launch.lock before
-queue handling. After two local passes, park needs-decision before another pass,
+queue handling. A recorded local stop withholds collection until a later bound
+continue. A clean last pass at two ends the local loop normally and permits collection.
+After two local passes, park needs-decision before another pass,
 both before and after the first external review. Deliver current chain totals and
 approved remaining local allowance in the resume amendment; a worker never writes
 or infers the allowance. Persist local passes before granting continuation.
@@ -1268,12 +1270,17 @@ including legacy requests without pins; the collector owns it. Collect:false rem
 usable to obtain pending requests
 and reconcile history. Collection IDs bind the reviewed head. A completed signed
 history cannot be executed again with the same ID; reconcile it instead.
-Admission records collection-to-Issue ownership in the chain's counters before
-execution. Signed receipt identity-to-Issue ownership persists separately from
-blocking counts, including when declines remove findings. Legacy receipts already
-attributed to the chain retain that ownership across new worktrees and attempts;
-worktree paths are not counter keys. Later counts resolve the established ownership
-or the admitted collection, rather than reassigning the receipt to the current path.
+Every outstanding admission (no signed receipt yet) reserves free capacity under
+launch.lock. Blocking receipts plus outstanding admissions fill the free allowance;
+replay consumes no additional slot. Completion releases a pending slot, but a
+blocking receipt replaces it in the count. The gate rechecks the existing reservation;
+a stopped free reservation requires a bound continue before promotion. Decision or
+counter changes re-evaluate a withheld request, including completion of a clean
+pending collection.
+Attribute signed receipts by receipt.issue, otherwise the Issue key of the
+pins.file attempt directory. Ignore receipts with neither; there is no worktree
+fallback or persisted ownership table. Current receipts carry these identities,
+so head, attempt, successor and worktree changes preserve the chain count.
 
 Create a successor only through an orchestrator decision: either the existing
 class-decision limit's successor URL, or continue.successorIssue. Before dispatch,

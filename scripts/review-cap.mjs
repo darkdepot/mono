@@ -32,7 +32,8 @@ export function reviewChain(evidenceRoot,issue) {
 }
 export function capDecisionDigest(evidenceRoot,issue) {
   const chain=reviewChain(evidenceRoot,issue);
-  return digest([...chain.journals].map(([key,journal])=>[key,currentEntries(journal)]));
+  const file=path.join(evidenceRoot,'reviews',`${chain.originalIssue}-counters.json`);
+  return digest({journals:[...chain.journals].map(([key,journal])=>[key,currentEntries(journal)]),counters:fs.existsSync(file)?readJson(file):null});
 }
 function blocking(receipt,journal) {
   const report=receipt.review?.json;
@@ -45,102 +46,116 @@ function blocking(receipt,journal) {
     try {acceptedDeclines(receipt,journal,[index]);return false;}catch{return true;}
   });
 }
-function counters(evidenceRoot,chain,worktree) {
+function counters(evidenceRoot,chain) {
   const file=path.join(evidenceRoot,'reviews',`${chain.originalIssue}-counters.json`);
-  const state=fs.existsSync(file)?readJson(file):{originalIssue:chain.originalIssue,external:[],local:[],stops:[],permits:{}};
-  if(state.originalIssue!==chain.originalIssue||!Array.isArray(state.external)||!Array.isArray(state.local)||!Array.isArray(state.stops)||!state.permits)throw new Error('invalid review counters');
-  // Ownership survives declines as well as new heads/attempts/worktrees.
-  state.receiptOwners??=[...state.external];state.collectionOwners??=[];
-  if(!Array.isArray(state.receiptOwners)||!Array.isArray(state.collectionOwners))throw new Error('invalid receipt ownership');
-  const external=[],history=path.join(evidenceRoot,'history');
+  const state=fs.existsSync(file)?readJson(file):{originalIssue:chain.originalIssue,external:[],local:[],stops:[],permits:{},pending:[]};
+  state.pending??=[];
+  if(state.originalIssue!==chain.originalIssue||!Array.isArray(state.external)||!Array.isArray(state.local)||!Array.isArray(state.stops)||!state.permits||!Array.isArray(state.pending))throw new Error('invalid review counters');
+  const external=[],completed=new Set(),history=path.join(evidenceRoot,'history');
   let key;
   for(const name of fs.existsSync(history)?fs.readdirSync(history).filter(n=>n.endsWith('.json')):[]) {
     const envelope=readJson(path.join(history,name)),receipt=envelope.receipt;
     const pinned=/^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(receipt?.pins?.file??'')))?.[1];
-    const known=state.receiptOwners.find(r=>r.runId===receipt?.runId);
-    const collection=state.collectionOwners.find(r=>r.collectionId===receipt?.collectionId);
-    const owner=receipt?.issue??pinned??known?.issue??collection?.issue??(receipt?.worktree===worktree?chain.currentIssue:null);
-    if(!chain.journals.has(owner)) {
-      if(known||collection)throw new Error('receipt ownership changed');
-      continue;
-    }
+    const owner=receipt?.issue??pinned;
+    if(!chain.journals.has(owner))continue;
     key??=fs.readFileSync(path.join(evidenceRoot,'receipt.key'));
     if(key.length!==32||envelope.signature!==crypto.createHmac('sha256',key).update(canonical(receipt)).digest('hex'))throw new Error('cap history signature mismatch');
-    const identity={issue:owner,runId:receipt.runId,digest:digest(receipt)};
-    if(known&&canonical(known)!==canonical(identity)||collection&&collection.issue!==owner)throw new Error('receipt ownership changed');
-    if(!known)state.receiptOwners.push(identity);
+    completed.add(receipt.collectionId);
     if(blocking(receipt,chain.journals.get(owner)))external.push({issue:owner,runId:receipt.runId,digest:digest(receipt)});
   }
   state.external=[...new Map(external.map(r=>[r.runId,r])).values()].sort((a,b)=>a.runId.localeCompare(b.runId));
-  return {file,state};
+  state.pending=state.pending.filter(r=>!completed.has(r.collectionId));
+  return {file,state,completed};
 }
-export function syncLocalPasses({evidenceRoot,report,worktree}) {
-  const chain={...reviewChain(evidenceRoot,report.issue),currentIssue:report.issue},result=counters(evidenceRoot,chain,worktree);
+function continuations(chain,state) {
+  const entries=[...chain.journals.values()].flatMap(j=>currentEntries(j).filter(e=>e.type==='continue'));
+  if(new Set(entries.map(e=>e.stopId)).size!==entries.length)throw new Error('conflicting chain continuations');
+  return entries.filter(e=>{
+    const stop=state.stops.find(s=>s.id===e.stopId);
+    return stop&&Date.parse(e.approvedAt)>=Date.parse(stop.recordedAt)&&Date.parse(e.recordedAt)<=Date.now();
+  });
+}
+export function syncLocalPasses({evidenceRoot,report}) {
+  const chain=reviewChain(evidenceRoot,report.issue),result=counters(evidenceRoot,chain);
   const prior=fs.existsSync(result.file)?digest(readJson(result.file)):null;
   const passes=report.capsule.local_passes??[];
   if(!Array.isArray(passes))throw new Error('local_passes must be an array');
   for(const pass of passes) {
-    if(!/^[A-Za-z0-9:._-]{1,128}$/.test(pass.id??'')||!/^[a-f0-9]{40}$/.test(pass.head??''))throw new Error('local pass id/head required');
-    const event={kind:'internal-pass',issue:report.issue,attempt:report.attempt,id:pass.id,head:pass.head};
+    if(!/^[A-Za-z0-9:._-]{1,128}$/.test(pass.id??'')||!/^[a-f0-9]{40}$/.test(pass.head??'')||!['clean','findings'].includes(pass.result??'findings'))throw new Error('local pass id/head/result required');
+    const event={kind:'internal-pass',issue:report.issue,attempt:report.attempt,id:pass.id,head:pass.head,result:pass.result??'findings'};
     const previous=result.state.local.find(p=>p.issue===event.issue&&p.attempt===event.attempt&&p.id===event.id);
-    if(previous&&canonical(previous)!==canonical(event))throw new Error('local pass identity changed');
+    if(previous&&canonical({...previous,result:previous.result??'findings'})!==canonical(event))throw new Error('local pass identity changed');
     if(!previous)result.state.local.push(event);
   }
-  const grants=[...chain.journals.values()].flatMap(j=>currentEntries(j).filter(e=>e.type==='continue'));
-  const localCeiling=Math.max(2,...grants.flatMap(e=>{
-    const stop=result.state.stops.find(s=>s.id===e.stopId);
-    return stop&&Date.parse(e.approvedAt)>=Date.parse(stop.recordedAt)&&Date.parse(e.recordedAt)<=Date.now()?[stop.local+e.localPasses]:[];
-  }));
-  if(result.state.local.length>=localCeiling) {
+  const grants=continuations(chain,result.state);
+  const localCeiling=Math.max(2,...grants.map(e=>result.state.stops.find(s=>s.id===e.stopId).local+e.localPasses));
+  if(result.state.local.length>localCeiling || result.state.local.length>=localCeiling&&result.state.local.at(-1)?.result!=='clean') {
     const id=digest({originalIssue:chain.originalIssue,external:result.state.external,local:result.state.local});
     if(!result.state.stops.some(s=>s.id===id))result.state.stops.push({id,external:result.state.external.length,local:result.state.local.length,recordedAt:new Date().toISOString()});
+    result.state.stops.find(s=>s.id===id).localCap=true;
     const file=path.join(evidenceRoot,'reviews',`${report.issue}-cap-stops.json`),records=fs.existsSync(file)?readJson(file):[];
     if(!records.some(r=>r.stop.id===id&&r.local))atomicJson(file,[...records,{kind:'cap-stop',local:true,
       attempt:report.attempt,collectionId:`local-cap:${id}`,reason:'needs-decision',recordedBy:'orchestrator',stop:result.state.stops.find(s=>s.id===id)}]);
   }
   if(prior!==digest(result.state))atomicJson(result.file,result.state);
-  return {...result,chain};
+  const localStop=result.state.stops.filter(s=>s.localCap).at(-1)??null;
+  return {...result,chain,localStop,continued:!!localStop&&grants.some(e=>e.stopId===localStop.id)};
 }
-export async function reserveReviewCollection({evidenceRoot,report,worktree,collectionId,reportDigest}) {
-  const {file,state,chain}=syncLocalPasses({evidenceRoot,report,worktree});
-  const rememberCollection=()=>{
-    const owner=state.collectionOwners.find(r=>r.collectionId===collectionId);
-    if(owner&&owner.issue!==report.issue)throw new Error('collection ownership changed');
-    if(!owner)state.collectionOwners.push({collectionId,issue:report.issue});
-  };
+export async function withholdReviewCap({evidenceRoot,report,state,file,collectionId,stop}) {
+  if(!stop) {
+    const id=digest({originalIssue:state.originalIssue,external:state.external,local:state.local,pending:state.pending});
+    stop=state.stops.find(s=>s.id===id);
+    if(!stop){stop={id,external:state.external.length,local:state.local.length,recordedAt:new Date().toISOString()};state.stops.push(stop);}
+  }
+  atomicJson(file,state);
+  const stopsFile=path.join(evidenceRoot,'reviews',`${report.issue}-cap-stops.json`),records=fs.existsSync(stopsFile)?readJson(stopsFile):[];
+  if(!records.some(r=>r.attempt===report.attempt&&r.collectionId===collectionId))atomicJson(stopsFile,[...records,
+    {kind:'cap-stop',attempt:report.attempt,collectionId,reason:'needs-decision',recordedBy:'orchestrator',stop}]);
+  const withheld=path.join(evidenceRoot,'reviews',`${report.issue}-withheld.json`);
+  if(!(fs.existsSync(withheld)?readJson(withheld):[]).some(r=>r.attempt===report.attempt&&r.collectionId===collectionId))
+    await withholdCollection({evidenceRoot,issue:report.issue,record:{attempt:report.attempt,collectionId,reason:'needs-decision: review cap',recordedBy:'orchestrator'}});
+  return {refused:true,stop};
+}
+// Read-only gate comparison; the admission transaction owns all reservations.
+export function validateCapAdmission({evidenceRoot,issue,cap}) {
+  const chain=reviewChain(evidenceRoot,issue),{state,completed}=counters(evidenceRoot,chain);
+  if(completed.has(cap?.collectionId))return;
+  if(!cap||!state.pending.some(r=>canonical(r)===canonical(cap)))throw new Error('review cap admission reservation missing');
+  const localStop=state.stops.filter(s=>s.localCap).at(-1);
+  if(cap.free) {
+    if(localStop||state.local.length>2||state.external.length+state.pending.filter(r=>r.free).length>2)throw new Error('needs-decision: review cap');
+  } else {
+    const permit=state.permits[cap.stopId],decision=continuations(chain,state).find(e=>e.stopId===cap.stopId);
+    if(!decision||localStop&&localStop.id!==cap.stopId||permit?.collectionId!==decision.collectionId||
+      permit.reservations.length>decision.externalCollections||state.local.length>state.stops.find(s=>s.id===cap.stopId).local+decision.localPasses)throw new Error('needs-decision: review cap');
+  }
+}
+export async function reserveReviewCollection({evidenceRoot,report,collectionId,reportDigest}) {
+  const synced=syncLocalPasses({evidenceRoot,report}),{file,state,chain,localStop}=synced;
   // Reservation replay survives an interrupted write of the admission file.
-  const replay=Object.values(state.permits).flatMap(p=>p.reservations).find(r=>r.collectionId===collectionId);
+  const replay=state.pending.find(r=>r.collectionId===collectionId)??Object.values(state.permits).flatMap(p=>p.reservations).find(r=>r.collectionId===collectionId);
   if(replay) {
     if(replay.issue!==report.issue||replay.attempt!==report.attempt||replay.reportDigest!==reportDigest)throw new Error('conflicting cap reservation');
-    return replay;
+    try {validateCapAdmission({evidenceRoot,issue:report.issue,cap:replay});return replay;}
+    catch(error) {
+      if(error.message!=='needs-decision: review cap')throw error;
+      if(!replay.free)return withholdReviewCap({...synced,evidenceRoot,report,collectionId,stop:localStop??state.stops.find(s=>s.id===replay.stopId)});
+    }
+    // A stopped free reservation can be promoted only by its bound continuation.
+
   }
-  if(state.external.length<2&&state.local.length<=2){rememberCollection();atomicJson(file,state);return null;}
-  const stopId=digest({originalIssue:state.originalIssue,external:state.external,local:state.local});
-  // A still-open allowance remains bound to its initial stop, not a fresh head.
-  const entries=[...chain.journals.values()].flatMap(j=>currentEntries(j).filter(e=>e.type==='continue'));
-  if(new Set(entries.map(e=>e.stopId)).size!==entries.length)throw new Error('conflicting chain continuations');
-  const decision=entries.find(e=>{
+  const reservation={issue:report.issue,attempt:report.attempt,collectionId,reportDigest};
+  if(state.external.length+state.pending.length<2&&state.local.length<=2&&!localStop) {
+    reservation.free=true;state.pending.push(reservation);atomicJson(file,state);return reservation;
+  }
+  const decision=continuations(chain,state).find(e=>{
     const stopped=state.stops.find(s=>s.id===e.stopId),permit=state.permits[e.stopId];
-    return stopped&&Date.parse(e.approvedAt)>=Date.parse(stopped.recordedAt)&&Date.parse(e.recordedAt)<=Date.now()&&
-      (permit?permit.collectionId===e.collectionId:e.collectionId===collectionId)&&
+    return (!localStop||e.stopId===localStop.id)&&(permit?permit.collectionId===e.collectionId:e.collectionId===collectionId)&&
       (permit?.reservations.length??0)<e.externalCollections&&state.local.length<=stopped.local+e.localPasses;
   });
-  if(!decision) {
-    let stop=state.stops.find(s=>s.id===stopId);
-    if(!stop){stop={id:stopId,external:state.external.length,local:state.local.length,recordedAt:new Date().toISOString()};state.stops.push(stop);}
-    atomicJson(file,state);
-    const stopsFile=path.join(evidenceRoot,'reviews',`${report.issue}-cap-stops.json`),records=fs.existsSync(stopsFile)?readJson(stopsFile):[];
-    if(!records.some(r=>r.attempt===report.attempt&&r.collectionId===collectionId))atomicJson(stopsFile,[...records,
-      {kind:'cap-stop',attempt:report.attempt,collectionId,reason:'needs-decision',recordedBy:'orchestrator',stop}]);
-    const withheld=path.join(evidenceRoot,'reviews',`${report.issue}-withheld.json`);
-    if(!(fs.existsSync(withheld)?readJson(withheld):[]).some(r=>r.attempt===report.attempt&&r.collectionId===collectionId))
-      await withholdCollection({evidenceRoot,issue:report.issue,record:{attempt:report.attempt,collectionId,reason:'needs-decision: review cap',recordedBy:'orchestrator'}});
-    return {refused:true,stop};
-  }
+  if(!decision)return withholdReviewCap({...synced,evidenceRoot,report,collectionId,stop:localStop});
   const permit=state.permits[decision.stopId]??={collectionId:decision.collectionId,reservations:[]};
-  const reservation={issue:report.issue,attempt:report.attempt,collectionId,reportDigest,decisionId:decision.id,decisionDigest:decision.recordDigest,stopId:decision.stopId};
-  permit.reservations.push(reservation);
-  rememberCollection();
-  atomicJson(file,state);
-  return reservation;
+  Object.assign(reservation,{decisionId:decision.id,decisionDigest:decision.recordDigest,stopId:decision.stopId});
+  permit.reservations.push(reservation);state.pending=state.pending.filter(r=>r.collectionId!==collectionId);state.pending.push(reservation);
+  atomicJson(file,state);return reservation;
 }

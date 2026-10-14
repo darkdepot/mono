@@ -925,7 +925,7 @@ async function collectorAttentionFixture(runFixture, plugin = false) {
     const signedHistory = async value => {
       const { createHmac, randomUUID } = await import("node:crypto"), { canonical } = await import("./runtime.mjs");
       const key = Buffer.alloc(32, 9); fs.writeFileSync(path.join(evidenceRoot, "receipt.key"), key);
-      const receipt = { ...value, root: fs.realpathSync(root), worktree: fs.realpathSync(repo), evidenceRoot: fs.realpathSync(evidenceRoot), workerWritableRoots: [fs.realpathSync(repo)],
+      const receipt = { issue, ...value, root: fs.realpathSync(root), worktree: fs.realpathSync(repo), evidenceRoot: fs.realpathSync(evidenceRoot), workerWritableRoots: [fs.realpathSync(repo)],
         producer: "gate-autoreview-v2", runId: randomUUID(), reviewDataset: null, modelRoutes: null };
       const file = path.join(evidenceRoot, "history", `${receipt.runId}.json`);
       const envelope = { receipt, signature: createHmac("sha256", key).update(canonical(receipt)).digest("hex") };
@@ -1072,7 +1072,7 @@ const request=readJson(process.argv[process.argv.indexOf('--request')+1]);
 if(!request.collect){if(readJson(${JSON.stringify(modeFile)}).holdValidation){atomicJson(${JSON.stringify(validationFile)},{pid:process.pid});while(readJson(${JSON.stringify(modeFile)}).holdValidation)await new Promise(r=>setTimeout(r,50));}const receipt=readJson(path.join(request.evidenceRoot,request.head+'.json')).receipt;console.log(receipt.verification.exitCode===0?'gate preflight: pass: fixture recovered':'gate preflight: fail: fixture verification failed');process.exit();}
 await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),async()=>{
  const countFile=${JSON.stringify(countFile)},mode=readJson(${JSON.stringify(modeFile)});const count=readJson(countFile);count.collections++;atomicJson(countFile,count);if(mode.noReceipt)process.exit(78);
- const receipt={producer:'gate-autoreview-v2',runId:crypto.randomUUID(),head:request.head,base:request.head,collectionId:request.collectionId,product:request.product,skillsRoot:request.skillsRoot,
+ const receipt={issue:${JSON.stringify(issue)},producer:'gate-autoreview-v2',runId:crypto.randomUUID(),head:request.head,base:request.head,collectionId:request.collectionId,product:request.product,skillsRoot:request.skillsRoot,
  root:fs.realpathSync(request.root),worktree:fs.realpathSync(request.worktree),evidenceRoot:fs.realpathSync(request.evidenceRoot),risk:request.risk,critical:request.critical,workerWritableRoots:request.workerWritableRoots.map(p=>fs.realpathSync(p)).sort(),reviewDataset:null,
  ...(request.pins?{pins:request.pins}:{}),verification:{...request.verification,exitCode:mode.failed?1:0}};
  if(mode.corrupt) receipt[mode.corrupt]=mode.value;
@@ -1722,5 +1722,100 @@ test('symlinked worktrees and pinned issue identity retain repeated-class admiss
     report.capsule.open_queue[0].payload.request.pins=collectionPinsBinding(registry[issue]);
     await assert.rejects(admitCollection(f.options.root,report),/needs-decision/);
     assert.equal(readJson(path.join(request.evidenceRoot,'reviews',`${issue}-class-stops.json`)).length,1);
+  });
+});
+
+test('local cap collector: unresolved stop is withheld, later continue re-evaluates the same report',async()=>{
+  const {recordDecision}=await import('./decisions.mjs'),{classSeal}=await import('./class-fixtures.mjs');
+  await collectorAttentionFixture(async f=>{
+    const report=f.report(1);report.capsule.local_passes=[{id:'one',head:report.head,result:'findings'},{id:'two',head:report.head,result:'findings'}];
+    atomicJson(f.reportFile,report);await f.poll();
+    assert.match(readJson(f.attention).reason,/needs-decision/);
+    const evidenceRoot=f.request(1).evidenceRoot,stop=readJson(path.join(evidenceRoot,'reviews','MONO-999-counters.json')).stops[0];
+    const withheld=readJson(path.join(evidenceRoot,'reviews','MONO-999-withheld.json'));assert.equal(withheld.length,1);
+    await f.poll();assert.equal(readJson(path.join(evidenceRoot,'reviews','MONO-999-withheld.json')).length,1);
+    const now=new Date().toISOString();await recordDecision({evidenceRoot,issue:'MONO-999',entry:classSeal({type:'continue',id:'local-continue',supersedes:null,
+      stopId:stop.id,collectionId:f.request(1).collectionId,localPasses:0,externalCollections:1,nextStep:'Collect corrected committed state',checkpoint:'One receipt',approvedBy:'orchestrator',approvedAt:now,recordedAt:now})});
+    await f.signedHistory(f.request(1));await f.poll();assert.equal(fs.existsSync(f.attention),false);
+  });
+});
+test('pending admission: atomic contenders cannot exceed the free allowance and existing admission remains counted',async()=>{
+  const {classFixture}=await import('./class-fixtures.mjs'),{createHmac}=await import('node:crypto'),{canonical}=await import('./runtime.mjs');
+  await collectorAttentionFixture(async f=>{
+    const request=f.request(1),key=Buffer.alloc(32,9),receipt=classFixture().receipts[0];
+    fs.writeFileSync(path.join(request.evidenceRoot,'receipt.key'),key);
+    atomicJson(path.join(request.evidenceRoot,'history',receipt.runId+'.json'),{receipt,signature:createHmac('sha256',key).update(canonical(receipt)).digest('hex')});
+    const firstReport=f.report(1),first=await admitCollection(f.options.root,firstReport);
+    assert.doesNotThrow(()=>checkCollectionRequest({...request,collect:true}));
+    await assert.rejects(admitCollection(f.options.root,f.report(2)),/review cap/);
+    assert.deepEqual(await admitCollection(f.options.root,firstReport),first);
+    fs.unlinkSync(path.join(f.options.root,'consumed','MONO-999-a1','admissions',request.collectionId+'.json'));
+    assert.deepEqual(await admitCollection(f.options.root,firstReport),first,'counter reservation recovers an interrupted admission write');
+    const second=classFixture().receipts[1];second.collectionId=request.collectionId;
+    atomicJson(path.join(request.evidenceRoot,'history',second.runId+'.json'),{receipt:second,signature:createHmac('sha256',key).update(canonical(second)).digest('hex')});
+    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/already executed/);
+    await assert.rejects(admitCollection(f.options.root,f.report(2)),/review cap/);
+  });
+});
+
+test('local cap normal flow: clean second pass admits collection before and after the first receipt',async()=>{
+  for(const external of [false,true])await collectorAttentionFixture(async f=>{
+    const request=f.request(1),report=f.report(1);
+    if(external)await f.signedHistory({...request,collectionId:`preflight-collect:${report.head}:99`,review:{json:{findings:[{priority:'P2',title:'First external finding'}]}}});
+    report.capsule.local_passes=[{id:'one',head:report.head,result:'findings'},{id:'two',head:report.head,result:'clean'}];
+    atomicJson(f.reportFile,report);await f.signedHistory(request);await f.poll();
+    assert.equal(fs.existsSync(f.attention),false);
+    assert.equal(fs.existsSync(path.join(f.options.root,'confirmations','MONO-999-phase-preflight-a1-s1.confirmed.json')),true);
+  });
+});
+test('pending admission recovery: clean completion releases capacity and re-evaluates the unchanged refused request',async()=>{
+  await collectorAttentionFixture(async f=>{
+    const first=f.report(1),second=f.report(2),third={...f.report(3),sequence:1};
+    await admitCollection(f.options.root,first);await admitCollection(f.options.root,second);
+    atomicJson(f.reportFile,third);await f.poll();assert.match(readJson(f.attention).reason,/review cap/);
+    await f.signedHistory(f.request(1));await f.signedHistory(f.request(3));await f.poll();
+    assert.equal(fs.existsSync(f.attention),false);
+    assert.equal(fs.existsSync(path.join(f.options.root,'confirmations','MONO-999-phase-preflight-a1-s1.confirmed.json')),true);
+  });
+});
+test('pending admission recovery: a revoked decline stops an existing free admission until bound continue',async()=>{
+  const {declineFixture}=await import('./decline-fixtures.mjs'),{classSeal}=await import('./class-fixtures.mjs');
+  const {recordDecision,findingIdentity}=await import('./decisions.mjs'),{createHmac}=await import('node:crypto'),{canonical}=await import('./runtime.mjs');
+  await collectorAttentionFixture(async f=>{
+    const evidenceRoot=f.request(1).evidenceRoot,key=Buffer.alloc(32,9),x=declineFixture();x.receipt.issue='MONO-999';
+    fs.writeFileSync(path.join(evidenceRoot,'receipt.key'),key);
+    const put=r=>atomicJson(path.join(evidenceRoot,'history',r.runId+'.json'),{receipt:r,signature:createHmac('sha256',key).update(canonical(r)).digest('hex')});
+    put(x.receipt);
+    const entry=classSeal({...x.entry,receipt:{collectionId:x.receipt.collectionId,runId:x.receipt.runId,digest:digest(x.receipt)},finding:findingIdentity(x.receipt,0)});
+    await recordDecision({evidenceRoot,issue:'MONO-999',entry});
+    const report=f.report(1),request=f.request(1);await admitCollection(f.options.root,report);
+    // Two newly blocking receipts change the count after the free reservation.
+    const second={...x.receipt,runId:'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',collectionId:`preflight-collect:${report.head}:99`};put(second);
+    const now=new Date().toISOString(),evidence={citation:'New reproduction'};
+    await recordDecision({evidenceRoot,issue:'MONO-999',entry:classSeal({type:'decline-revoke',id:'revoke-pending',forId:entry.id,declineDigest:entry.recordDigest,
+      reason:'New evidence',evidence,evidenceDigest:digest(evidence),approvedBy:'orchestrator',approvedAt:now,recordedAt:now})});
+    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/review cap/);
+    await assert.rejects(admitCollection(f.options.root,report),/review cap/);
+    const stop=readJson(path.join(evidenceRoot,'reviews','MONO-999-counters.json')).stops.at(-1),later=new Date().toISOString();
+    await recordDecision({evidenceRoot,issue:'MONO-999',entry:classSeal({type:'continue',id:'pending-continue',supersedes:null,stopId:stop.id,
+      collectionId:request.collectionId,localPasses:0,externalCollections:1,nextStep:'Review bounded correction',checkpoint:'One receipt',approvedBy:'orchestrator',approvedAt:later,recordedAt:later})});
+    const promoted=await admitCollection(f.options.root,report);assert.equal(promoted[0].cap.decisionId,'pending-continue');
+    assert.doesNotThrow(()=>checkCollectionRequest({...request,collect:true}));
+    assert.deepEqual(await admitCollection(f.options.root,report),promoted);
+  });
+});
+
+test('pending admission concurrency: one blocking receipt leaves exactly one atomic free reservation',async()=>{
+  await collectorAttentionFixture(async f=>{
+    const request=f.request(99);
+    await f.signedHistory({...request,review:{json:{findings:[{priority:'P2',title:'Blocking receipt'}]}}});
+    const reports=[f.report(1),f.report(2)];
+    const contenders=await Promise.allSettled(reports.map(r=>admitCollection(f.options.root,r)));
+    assert.equal(contenders.filter(r=>r.status==='fulfilled').length,1);
+    const rejected=contenders.findIndex(r=>r.status==='rejected');
+    assert.match(contenders[rejected].reason.message,/locked|review cap/);
+    await assert.rejects(admitCollection(f.options.root,reports[rejected]),/review cap/);
+    const state=readJson(path.join(request.evidenceRoot,'reviews','MONO-999-counters.json'));
+    assert.equal(state.pending.length,1);assert.equal(state.external.length,1);
   });
 });

@@ -211,7 +211,7 @@ verbatim verification, AFK stops.
   "question": "<question text, or null>",
   "recommendation": "<recommendation, or null>",
   "linear_mutations_pending": [],
-  "capsule": { "phase": "<code | preflight | ship>", "head": "<sha>", "open_queue": [], "decisions": [], "local_passes": [{"id":"<stable pass id>","head":"<reviewed sha>"}], "writable_roots": ["<dispatch grant>"] },
+  "capsule": { "phase": "<code | preflight | ship>", "head": "<sha>", "open_queue": [], "decisions": [], "local_passes": [{"id":"<stable pass id>","head":"<reviewed sha>","result":"<clean|findings>"}], "writable_roots": ["<dispatch grant>"] },
   "certificate": "<certificate text or null>",
   "notes": "<runtime facts or null>",
   "next": "<mono:deploy | named recovery owner>"

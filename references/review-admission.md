@@ -1,6 +1,6 @@
 # Review Admission
 
-Committed findings: fix or propose decline in phase report, bound to receipt
+Findings: fix or propose decline in phase report, bound to receipt
 runId/collectionId/digest, head, dataset version, finding index/full canonical
 SHA-256. ID: `<receipt digest>:<index>:<finding digest>`; never titles.
 
@@ -16,18 +16,18 @@ results or failed verification block. Preserve review/receipt. New head needs
 review; new evidence needs decline-revoke. Recheck approvals/revocations;
 Autoreview declines: lists finding ID/basis/approver. Clean unchanged.
 
-Repeated key/recorded class: park needs-decision before fixes/local review/collection.
-Propose repeated findings/bounded class fix/checkpoint; only orchestrator
+Repeated key/class: park needs-decision before fixes/review/collection.
+Propose class fix/checkpoint; only orchestrator
 class-decision resumes. Unknown matching needs judgment; unmatched classes proceed.
-Limit requires restricted/removed behavior, remaining-contract verification,
-successor; boundary alone cannot excuse a live defect. New residual risk/reduced
-approved outcome needs owner. Fix the class with existing/literal conservative
-tools; no custom parsers/heuristics/extra mechanisms.
+Limit: restrict/remove behavior, verify remaining contract, create successor.
+Boundary cannot excuse defects; new residual risk/reduced outcome needs owner.
+Fix the class with existing/literal tools; no custom parsers/heuristics/extra mechanisms.
 
-Counts survive heads/attempts/successors. Two local passes: park needs-decision
-before a third, before/after external review alike. Two blocking external receipts:
-no third collection without continue. Report stable id/head in capsule.local_passes;
+Counts survive heads/attempts/successors. After two local passes, stop before a third,
+before/after external review. A clean last pass permits collection; a stop needs
+continue. Two blocking receipts: no third collection without continue. Report
+id/head/result (clean|findings) in capsule.local_passes;
 orchestrator persists counts. Continue binds stop/next collection, finite
 local/external allowances, nextStep/checkpoint. Use confirmed limits; count once,
-park at exhaustion; replay never refills. Only orchestrator creates/links successor
-to original chain. Continue never certifies defects.
+park at exhaustion; replay never refills. Orchestrator alone links successors
+to original chain. Continue cannot certify defects.

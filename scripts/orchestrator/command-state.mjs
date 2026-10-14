@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, baseModelConfig, validateLanding, processStart } from "../runtime.mjs";
 import { readJournal, currentEntries } from '../decisions.mjs';
 import { buildReviewLedger, repeatedClasses, recordClassStop } from '../review-ledger.mjs';
-import { capDecisionDigest, reserveReviewCollection } from '../review-cap.mjs';
+import { capDecisionDigest, reserveReviewCollection, validateCapAdmission } from '../review-cap.mjs';
 import { validatePhase, confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
 
 export const sha256File = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -240,6 +240,7 @@ export function checkCollectionRequest(request) {
     if((fs.existsSync(history)?fs.readdirSync(history).filter(n=>n.endsWith('.json')):[])
       .some(name=>readJson(path.join(history,name)).receipt?.collectionId===request.collectionId))
       throw new Error('collection already executed; reconcile the same request with collect:false');
+    validateCapAdmission({evidenceRoot:pins.evidenceRoot,issue:entry.issue,cap:admission.cap});
   }
   return legacy?null:pins;
 }
@@ -284,6 +285,13 @@ export async function admitUnderLock(root, report) {
     if (fs.existsSync(file)) {
       const prior = readJson(file);
       if (prior.collectionId !== write.id || prior.reportDigest !== reportDigest) throw new CollectionAdmissionRefusal("conflicting collection admission");
+      try {validateCapAdmission({evidenceRoot:pins.evidenceRoot,issue:report.issue,cap:prior.cap});}
+      catch(error) {
+        if(error.message!=='needs-decision: review cap')throw error;
+        const cap=await reserveReviewCollection({evidenceRoot:pins.evidenceRoot,report,collectionId:write.id,reportDigest});
+        if(cap.refused)throw new CollectionAdmissionRefusal('needs-decision: review cap');
+        prior.cap=cap;atomicJson(file,prior);
+      }
       admitted.push(prior); continue;
     }
     const request = write.payload.request;
