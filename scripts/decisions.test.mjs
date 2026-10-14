@@ -152,3 +152,21 @@ test('decline journal binds full canonical finding and preserves the receipt dat
     assert.ok(!renderDecisions(readJournal({evidenceRoot,issue})).includes(f.entry.finding.id));
   }finally{fs.rmSync(evidenceRoot,{recursive:true,force:true});}
 });
+
+import {classFixture,classSeal} from './class-fixtures.mjs';
+test('class records and bounded class decisions are orchestrator-approved, immutable and reference current classes/boundaries',async()=>{
+  const evidenceRoot=scratch(),issue='MONO-999',f=classFixture(),add=entry=>recordDecision({evidenceRoot,issue,entry});
+  try {
+    await add(f.entry);await add(f.decision());
+    assert.equal(readJournal({evidenceRoot,issue}).entries.length,2);
+    await assert.rejects(add(classSeal({...f.entry,id:'c-002',approvedBy:'worker'})),/approval/);
+    await assert.rejects(add({...f.entry,id:'c-002'}),/digest/);
+    await assert.rejects(add(f.decision('fix-class',{id:'cd-002',checkpoint:''})),/checkpoint/);
+    await assert.rejects(add(f.decision('fix-class',{id:'cd-002',classIds:['missing']})),/class/);
+    await assert.rejects(add(f.decision('limit',{id:'cd-002'})),/boundary/);
+    await add(f.boundary);await add(f.decision('limit',{id:'cd-002',supersedes:'cd-001'}));
+    await assert.rejects(add(f.decision('limit',{id:'cd-003',behaviorChange:''})),/behavior/);
+    await assert.rejects(add(f.decision('limit',{id:'cd-003',remainingVerification:{}})),/verification/);
+    await assert.rejects(add(f.decision('limit',{id:'cd-003',successor:''})),/successor/);
+  }finally{fs.rmSync(evidenceRoot,{recursive:true,force:true});}
+});

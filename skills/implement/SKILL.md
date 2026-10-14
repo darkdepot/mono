@@ -5,11 +5,11 @@ description: Use when starting or running implementation from approved Linear Is
 
 # Mono Implement
 
-Find shared files here or at the pack root.
+Shared files: here or pack root.
 
 [Landing](references/landing.md).
 
-Own Delivery Start/code, then preflight. Ship owns PR; deploy owns closeout.
+Own start/code; preflight follows. Ship owns PR; deploy closeout.
 Config: `.agents/mono-workflow.config.json`.
 
 Read first:
@@ -25,67 +25,60 @@ Read when:
 - `references/issue-only-lane.md` — `lifecycle_state_entity=issue` or lane park/freeze/exit.
 - `skills/preflight/SKILL.md` — exiting implemented-needs-preflight.
 
-Inspect package/comments, approvals/review/checks, config/validation and git/base.
-Identity before work/resume; no discovery/chat-only start. Dispatch returns phase
-result/full queue for confirmation; standalone a stage report.
+Inspect package/checks, config/git/base. Identity before work/resume.
+Dispatch: phase/full queue; standalone: stage report.
 
 ## Workflow
 
-start-checkpoint validates package/start/handoff/seam/lifecycle below. Dispatch
-branch/snapshot wins. Consult gstack-learnings-search --limit 10 (scoped optional
-query/type); absence is advisory. Record start; implement one approved PR with
-incremental checks. AFK forbids sub-workers; interactive slices need Issue
-permission. Discovery only for missing/conflicting artifacts. Product/UX/business/
-access/dirty/risk decisions go to mailbox; material drift → scope-drift-needs-handoff.
-Return fields below; Russian comment for blocked/needs-human/drift. No PR or
-formal pre-ship review/check.
+start-checkpoint validates approved package/start/handoff/seam/lifecycle. Dispatch
+branch/snapshot wins. Consult gstack-learnings-search --limit 10; absence advisory.
+Record start; implement one PR with incremental checks. AFK forbids sub-workers;
+interactive slices need Issue permission. Missing/conflicting artifacts allow
+discovery. Product/access/dirty/risk decisions → mailbox; material drift →
+scope-drift-needs-handoff. Russian comment for stops. No PR/formal pre-ship checks.
+
+Do not build custom parsers, heuristics or mechanisms beyond the Issue contract.
+Use an existing tool or literal conservative solution; correct the error class.
+On repeated key/class apply `references/review-admission.md` before edits.
 
 ## Orchestration branch of `start-checkpoint`
 
-1. Run exact dispatch identity; mismatch/nonzero blocks.
-2. Read snapshot package, decisions and approvals.
-3. Require approved Issue, explicit start approval and resolved/accepted/deferred
-   handoff findings. Missing field blocks.
-4. Resolve the five-field seam from snapshot. Missing input blocks without moves.
-   Move-carrying dispatch runs worker handshake now; issue-only delivery check
-   precedes ack. Publish ack: wait-ack in wait mode; otherwise pause/exit.
-5. Wait: applied read-backs, no identity rerun. Legacy resume: all move read-backs
-   plus identity. No-move: current snapshot; never repeat moves. Project-first:
-   visible Delivery and delivery check on amended/current state. Issue-only:
-   started-state amendment/earlier pre-ack PASS; no-move rechecks started state.
-   Non-PASS → needs-human; missing → blocked before code. Report state/verdict,
-   permitted writes and lag; no deferred checks or unapplied-state claims.
-6. Keep dispatch worktree/branch; consult advisory learnings.
-7. Full: queue start comment. Short: empty code queue; start facts in
-   capsule.decisions and Russian ready-certificate lead. Confirm empty queues too.
-   Missing approval blocks; no re-asking.
+1. Dispatch identity; mismatch/nonzero blocks.
+2. Snapshot package/decisions/approval.
+3. Require approved Issue/start and resolved/accepted/deferred handoff findings;
+   missing blocks.
+4. Resolve five-field snapshot seam; missing blocks moves. Worker handshake now
+   if moves; issue-only check before ack. Publish ack; wait-ack or pause/exit.
+5. Wait uses applied read-backs, no identity rerun; legacy resume needs all
+   move read-backs plus identity. No-move uses current snapshot. Never repeat moves.
+   Project-first: Delivery/current-state delivery check. Issue-only: started
+   amendment/earlier pre-ack PASS; retry rechecks started. Non-PASS → needs-human;
+   missing → blocked. Report state/verdict/writes/lag; no deferred checks.
+6. Dispatch worktree/branch; advisory learnings.
+7. Full: queue start. Short: empty code queue, capsule.decisions/start in Russian
+   ready lead. Confirm empty queues. Missing approval blocks; no re-asking.
 
 ## Context-seam branch at Delivery Start
 
-Apply worker Context seam. Project-first: start approval, Delivery move,
-mono:check delivery, start comment. Missing prerequisites park/restart; integrity
-errors → needs-human. Issue-only: fresh authenticated fingerprint approval,
-pre-start delivery PASS; move only Issue to configured started state, record
-lifecycle/fingerprint/oracle IDs/engine/verification; implement one oracle PR.
-Lane scope/topology/risk exit parks, requires approved superseding marker and
-Project-first restart; never retrofit docs/Project onto parked Issue.
+Apply worker Context seam. Project-first: start approval, Delivery,
+mono:check delivery, start comment; missing → park/restart, integrity → needs-human.
+Issue-only: fresh authenticated fingerprint approval/pre-start PASS. Move only
+Issue to started; record lifecycle/fingerprint/oracle/engine/verification, one PR.
+Lane exit parks for superseding marker/Project-first restart; no retrofit.
 
-Interactive package/start approvals are separate; bundled handoff counts.
-Explicit Issue/start authority allows Delivery/branch/code, never PR/merge/deploy.
-Offer start or defer; «запускай реализацию» suffices. No inferred or repeated approval.
+Interactive: separate package/start approvals; bundled handoff counts.
+Start permits Delivery/branch/code. Offer start/defer; «запускай реализацию» suffices.
+Never infer/re-ask approval.
 
 ## Engine and Start Comment
 
-Use configured Implementation workflow; otherwise ce-work for general code,
-Superpowers executing-plans for an approved plan, test-driven-development for
-encodable acceptance, systematic-debugging for repros, gstack qa for browser proof.
-subagent-driven-development requires permitted slices/ownership; AFK forbids it.
-Unavailable engine: execute under `references/execution-quality.md`, record substitution.
+Implementation workflow first; otherwise ce-work (code), Superpowers executing-plans
+(plan), test-driven-development (acceptance), systematic-debugging (repro), gstack qa
+(browser). Subagents require permitted slices; AFK forbids. Unavailable: apply
+`references/execution-quality.md`, record substitution.
 
-Russian start comment: Issues, inspected Project/PRD/Spec/approval/review/checks,
-approved scope, workflow/reason, verification, learnings/helper absence and
-uninspected browser/manual/PR/deploy. Queue under dispatch.
+Russian queued start: Issue/package/approval/checks, scope, engine/reason,
+verification, learnings/helper absence, browser/manual/PR/deploy boundary.
 
-Statuses: implemented-needs-preflight, blocked, scope-drift-needs-handoff,
-needs-human. Final names Issue/sources, branch dirty/committed, files, checks,
-drift, comment outcome and preflight as next owner. Tiny output follows readiness.
+Statuses: implemented-needs-preflight, blocked, scope-drift-needs-handoff, needs-human.
+Final: Issue/sources/git/files/checks/drift/comment, preflight next. Tiny: readiness.

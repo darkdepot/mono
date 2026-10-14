@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, baseModelConfig, validateLanding, processStart } from "../runtime.mjs";
+import { readJournal, currentEntries } from '../decisions.mjs';
+import { buildReviewLedger, repeatedClasses, recordClassStop } from '../review-ledger.mjs';
 import { validatePhase, confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
 
 export const sha256File = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -225,13 +227,37 @@ export function checkCollectionRequest(request) {
   return pins;
 }
 
+export function collectionDecisionDigest(entry) {
+  const pins=effectivePins(entry),journal=readJournal({evidenceRoot:pins.evidenceRoot,issue:entry.issue});
+  const file=path.join(pins.evidenceRoot,'reviews',`${entry.issue}-adjudications.json`);
+  return digest({entries:currentEntries(journal).filter(e=>['class','class-decision','decision'].includes(e.type)),
+    records:fs.existsSync(file)?readJson(file):[]});
+}
+function collectionClassStop(entry,pins) {
+  const journal=readJournal({evidenceRoot:pins.evidenceRoot,issue:entry.issue});
+  const file=path.join(pins.evidenceRoot,'reviews',`${entry.issue}-adjudications.json`);
+  const records=fs.existsSync(file)?readJson(file):[],history=path.join(pins.evidenceRoot,'history'),sources=[];
+  const worktree=fs.realpathSync(pins.worktree);
+  let receiptKey;
+  for(const name of fs.existsSync(history)?fs.readdirSync(history).filter(n=>n.endsWith('.json')):[]) {
+    const envelope=readJson(path.join(history,name)),receipt=envelope.receipt;
+    const pinned=/^([A-Z][A-Z0-9]*-\d+)-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(receipt?.pins?.file??'')));
+    if(!receipt||(receipt.issue!==entry.issue&&pinned?.[1]!==entry.issue&&receipt.worktree!==worktree))continue;
+    receiptKey??=fs.readFileSync(path.join(pins.evidenceRoot,'receipt.key'));
+    if(receiptKey.length!==32||envelope.signature!==crypto.createHmac('sha256',receiptKey).update(canonical(receipt)).digest('hex'))
+      throw new Error('class admission history signature mismatch');
+    sources.push({type:'history',ref:name,attempt:receipt.attempt??(pinned?Number(pinned[2]):entry.attempt),data:envelope});
+  }
+  return repeatedClasses({ledger:buildReviewLedger({issue:entry.issue,sources}),records,journal});
+}
+
 // This exported seam is also the collector's admission transaction (MONO-96).
 // Both callers and amend serialize on launch.lock; callers must not nest it.
 export class CollectionAdmissionRefusal extends Error {}
 export async function admitCollection(root, report) {
   return withLock(path.join(root, "launch.lock"), () => admitUnderLock(root, report));
 }
-export function admitUnderLock(root, report) {
+export async function admitUnderLock(root, report) {
   validatePhase(report);
   const entry = registryEntry(root, report.issue, report.attempt);
   const pins = effectivePins(entry), admitted = [];
@@ -259,6 +285,11 @@ export function admitUnderLock(root, report) {
     }
     if (request.collect !== false || request.head !== report.head || canonical(report.capsule.writable_roots) !== canonical(pins.workerWritableRoots))
       throw new CollectionAdmissionRefusal("collection head/grants/collect mismatch");
+    const stop=collectionClassStop(entry,pins);
+    if(stop.required) {
+      await recordClassStop({evidenceRoot:pins.evidenceRoot,issue:report.issue,attempt:report.attempt,collectionId:write.id,stop});
+      throw new CollectionAdmissionRefusal('needs-decision: repeated review class');
+    }
     const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins) };
     atomicJson(file, record); admitted.push(record);
   }

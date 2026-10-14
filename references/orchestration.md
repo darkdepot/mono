@@ -1180,6 +1180,51 @@ summary as context “do not raise without a new fact”. Never repin or version
 current receipt's dataset to manufacture admission. Old clean receipts keep
 working; findings receipts lacking recordedAt cannot use declines.
 
+## Repeated review class
+
+Only the orchestrator appends `class` and `class-decision` through
+`decisions.mjs record`; evidence stays outside every worker grant. Never infer
+matching from titles or prose. Use explicit adjudication links for `findingKey`;
+use `findingIdentity(receipt,index)` for full canonical finding IDs.
+
+`class`: id, rule (violated invariant), mechanism, findingIds (nonempty exact IDs),
+supersedes (null initially), approvedBy=orchestrator, approvedAt, recordedAt,
+recordDigest=`decisionDigest(entry)`. A replacement preserves the rule; preserve
+history. Uncertain classification needs orchestrator judgment; a new unmatched
+class does not stop collection.
+
+`class-decision`: id, receipt {collectionId, runId, digest}, classIds, findingKeys
+(at least one), outcome=fix-class|limit, nextStep (one bounded step), checkpoint,
+supersedes, approvedBy=orchestrator, approvedAt, recordedAt, recordDigest. Approval
+must follow the latest receipt. Superseding preserves that receipt; only current
+entries and current referenced classes apply. `limit` additionally carries
+boundary {decisionId: d-NNN, digest: SHA-256 of full canonical boundary},
+behaviorChange (restriction/removal), remainingVerification {command, output} or
+{citation}, and successor (Linear Issue URL). The current approved limit boundary
+must match content and reviewed head. A boundary alone cannot excuse a live defect.
+
+Before another collection:
+1. Inspect the latest receipt and earlier receipt findings; record exact class
+   membership and key links. `review-ledger.mjs decide` returns `classStop`.
+2. Repeat without a current decision: park worker `needs-decision` before edits,
+   local review or new collection. Admission under launch.lock records `withheld`
+   and `class-stop`; no reviewer launches.
+3. Choose `fix-class`: one bounded correction of the whole error class/checkpoint;
+   or `limit`: restrict/remove behavior, verify the remaining approved contract,
+   link successor. Scope decisions stay within approved outcome/delegated bounds.
+   New residual risk or reduced promised outcome goes to owner before continuing;
+   already approved boundaries need no repeated approval.
+4. Deliver the decision/instructions to the parked worker; amend dispatch if it
+   adds a requirement. Append the decision. Collector automatically re-evaluates
+   the withheld request with unchanged reportDigest/pinsVersion when current
+   decision state changes. No manual restart/new request ID is needed. Admissions
+   remain immutable/idempotent; launch.lock serializes contenders.
+
+The fresh history receipts supply latest-round identity; journal/adjudications
+supply explicit classification. A class decision permits another review, never
+admits a defect or changes gate branches/model/effort/priority. Class-stop demand
+is retained after later admission and counts zero reviewer executions at stop.
+
 ## Review decision pilot
 
 Enable the dispatch pilot block only for approved experimental Issues. Stage
@@ -1277,7 +1322,7 @@ Run installed `scripts/orchestrator/collector.mjs start|stop|status --root DIR
 --issue KEY --attempt N` outside all worker sandboxes. Start once per attempt;
 stop at retirement. It confirms empty and collection-only phase queues, never
 connector queues. Inspect `reports/KEY-collector-aN.log` for refusals/results.
-`reports/KEY-collect-attention-aN.json` signals an admission refusal to the orchestrator once per report digest/current registry pinsVersion pair, persists across restarts, and clears when the current collection-only preflight report is admitted, including a replacement for the refused report.
+`reports/KEY-collect-attention-aN.json` signals an admission refusal to the orchestrator once per report digest/current registry pinsVersion/current decision digest tuple, persists across restarts, and clears when the current collection-only preflight report is admitted, including a replacement for the refused report.
 The attempt lock `reports/KEY-collector-aN.lock` stores pid/procStart and the
 active gate incarnation. Start reclaims only a dead holder and dead gate tree;
 unknown process telemetry refuses. Collector and gate use separate dedicated process groups. A gate waits on stdin
@@ -1365,7 +1410,7 @@ current registry version, and match the full file path, digest and effective
 request/grant fields, including reviewDatasetVersion and dataset path. The stale
 version refusal names the full expected pins path; no report version is required.
 Previously admitted requests recover before new-request checks; legacy admission
-and the U14 report-digest/registry-version attention pair are unchanged. Omitted
+and U14 report-digest/registry-version bindings remain; attention also tracks current decision state. Omitted
 reviewDatasetVersion means version 0 only for an unversioned baseline; it cannot
 bypass a newer amendment. Identical previously admitted requests remain recoverable under their
 original version. MONO-96 owns receipt collection/recovery, not these commands.
