@@ -303,8 +303,10 @@ and `decline-revoke` outside worker grants, following
 [approval and revocation](references/orchestration.md#review-decline-approval).
 The ready certificate lists finding identity, basis and approver in
 `Autoreview declines:`; the review ledger counts `decline` separately from review
-executions. New evidence revokes admission at the same head; new heads need new
-receipts. Dataset versions retain only short active decline context, leaving
+executions. Standalone requests without pins must supply `issue` when collecting a receipt
+for declines; it is signed with the receipt. Pinned attempts derive the Issue
+from their verified manifest. New evidence revokes admission at the same head;
+new heads need new receipts. Dataset versions retain only short active decline context, leaving
 the receipt's archived dataset intact.
 
 ### Review decision pilot

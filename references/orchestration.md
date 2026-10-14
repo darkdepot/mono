@@ -1137,7 +1137,9 @@ Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
 
 Declines are normal admission records, separate from the experimental pilot.
 The worker proposes in its phase report; only the orchestrator writes
-`decisions/<KEY>.json` using installed `decisions.mjs record`. Never grant the
+`decisions/<KEY>.json` using installed `decisions.mjs record`. For standalone
+requests without pins, supply `issue` at collection: the receipt signs that
+identity and selects its journal; worktree directory names carry no authority. Never grant the
 worker evidence-root writes, edit a receipt or change its archived dataset.
 
 1. Read the signed immutable receipt and exact full finding. Compute SHA-256 of

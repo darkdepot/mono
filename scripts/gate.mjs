@@ -477,9 +477,12 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       requireThat(!touched, `serial path touched: ${touched}; landing.serialPaths on ${policyBase}; ${action}`);
     }
   }
+  const pinnedIssue = request.pins ? /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(request.pins.file)))?.[1] : null;
+  if (request.issue !== undefined) requireThat(/^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(request.issue) &&
+    (!pinnedIssue || request.issue === pinnedIssue), "explicit Issue must match the pinned attempt");
   const receiptFile = path.join(evidenceRoot, `${head}.json`);
   const dataset = reviewDatasetBinding(request, evidenceRoot);
-  const binding = { ...dataset, ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
+  const binding = { ...dataset, ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
   let receipt, verifiedReceiptFile = receiptFile;
@@ -599,9 +602,8 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       receipt.review.status.report_produced === true && receipt.review.status.timed_out === false, "incomplete or non-clean helper output/status artifact");
   }
   unchanged();
-  const issue = request.pins ? /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(request.pins.file)))?.[1] : path.basename(repo);
-  const journal = receipt.review.exitCode === 1 && /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(issue ?? "")
-    ? readJournal({ evidenceRoot, issue }) : null;
+  const issue = pinnedIssue ?? receipt.issue;
+  const journal = receipt.review.exitCode === 1 && issue ? readJournal({ evidenceRoot, issue }) : null;
   const reason = validatePreflight(receipt, head, base, route, journal);
   return { reason, receipt: { path: verifiedReceiptFile, runId: receipt.runId, digest: digest(receipt) } };
 }
@@ -796,7 +798,7 @@ if (isMain(import.meta.url)) {
     const args = flags(rest);
     if (name === "--help" || args.help) console.log(`Usage: gate.mjs start|preflight|ship --request <json>
 start request: {worktree, branch, base, packRoot, skillsRoot, packVersion, sourceCommit, surfaceRevision}
-preflight request: {product,collectionId,root,worktree,head,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,reviewDatasetVersion?,pins?:{file,digest},modelRoutes?,collect,verification:{command,args}}
+preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,reviewDatasetVersion?,pins?:{file,digest},modelRoutes?,collect,verification:{command,args}}
   modelRoutes pins immutable base/configDigest/roles from resolveModelRoutes; overrides require pins.
   risk is the final approved/diff risk; critical is a concrete escalation reason or null.
   Pin every request field from dispatch. Orchestrator only: collect:true, outside worker sandboxes.

@@ -501,6 +501,7 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
         expectedField = "registry"; expectedValue = "one registered attempt for worktree";
       }
       if (fixture.mode === "declines") {
+        if (fixture.unpinned) { delete request.pins; request.issue='MONO-999'; fs.unlinkSync(registryFile); }
         const envelope=collect(request),r=envelope.receipt,f=declineFixture();
         r.review.json=f.receipt.review.json;r.review.status={...f.receipt.review.status,engine:r.route.engine??'claude'};
         r.review.exitCode=1;r.review.output=`autoreview target: branch | engine: ${r.route.engine??'claude'} | model: ${r.route.model} | thinking: ${r.route.effort}\nautoreview findings: 1\noverall: patch is incorrect (0.9)\n`;
@@ -665,10 +666,28 @@ const declineFailures = {
 };
 import {declineFixture, seal, sha} from './decline-fixtures.mjs';
 function declineFixtureForBoundaryP1(){return declineFixture({basis:'boundary',priority:'P1'});}
+const declineErrors = {
+  'P1 boundary': /requires refutation/, 'finding without decline': /exactly one valid unrevoked decline/,
+  'foreign receipt': /receipt\/head\/dataset mismatch/, 'different head': /receipt\/head\/dataset mismatch/,
+  'changed entry': /record digest mismatch/, 'missing_required_findings': /incomplete or priority-filtered/,
+  'scope_rejected_findings': /incomplete or priority-filtered/, 'attribution_rejected_findings': /incomplete or priority-filtered/,
+  'P2 priority filtered': /incomplete or priority-filtered/, 'incomplete status': /incomplete or contradictory/,
+  'timed out': /incomplete or contradictory/, 'contradictory exit': /incomplete or contradictory/,
+  'contradictory reason': /incomplete or contradictory/, 'invalid finding': /invalid nonempty findings/,
+};
 for(const [name,mutate] of Object.entries(declineFailures)) test(`declines: ${name} blocks`,()=>{
-  const f=declineFixture();mutate(f);
-  if(name!=='changed entry')f.journal.entries=f.journal.entries.map(e=>{const {recordDigest,...content}=e;return e.type==='decline'?seal(content):e;});
-  assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal));
+  const f=declineFixture(),before=sha(f.receipt);mutate(f);
+  f.journal.entries=f.journal.entries.map(e=>{
+    if(e.type!=='decline'||name==='changed entry')return e;
+    const {recordDigest,...content}=e;
+    if(sha(f.receipt)!==before) {
+      const digest=sha(f.receipt),findingDigest=sha(f.receipt.review.json.findings[e.finding.index]);
+      content.receipt={...content.receipt,digest};
+      content.finding={id:`${digest}:${e.finding.index}:${findingDigest}`,index:e.finding.index,digest:findingDigest};
+    }
+    return seal(content);
+  });
+  assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),declineErrors[name]);
 });
 test('declines: revoked entry blocks at unchanged head',()=>{
   const f=declineFixture(), evidence={citation:'New evidence proves the path reachable.'};
