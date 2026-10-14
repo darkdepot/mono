@@ -237,15 +237,16 @@ function collectionClassStop(entry,pins) {
   const journal=readJournal({evidenceRoot:pins.evidenceRoot,issue:entry.issue});
   const file=path.join(pins.evidenceRoot,'reviews',`${entry.issue}-adjudications.json`);
   const records=fs.existsSync(file)?readJson(file):[],history=path.join(pins.evidenceRoot,'history'),sources=[];
+  const worktree=fs.realpathSync(entry.worktree);
   let receiptKey;
   for(const name of fs.existsSync(history)?fs.readdirSync(history).filter(n=>n.endsWith('.json')):[]) {
     const envelope=readJson(path.join(history,name)),receipt=envelope.receipt;
-    if(!receipt||(receipt.issue!==entry.issue&&receipt.worktree!==entry.worktree))continue;
+    const pinned=/^([A-Z][A-Z0-9]*-\d+)-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(receipt?.pins?.file??'')));
+    if(!receipt||(receipt.issue!==entry.issue&&pinned?.[1]!==entry.issue&&receipt.worktree!==worktree))continue;
     receiptKey??=fs.readFileSync(path.join(pins.evidenceRoot,'receipt.key'));
     if(receiptKey.length!==32||envelope.signature!==crypto.createHmac('sha256',receiptKey).update(canonical(receipt)).digest('hex'))
       throw new Error('class admission history signature mismatch');
-    const pinned=/^.*-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(receipt.pins?.file??'')));
-    sources.push({type:'history',ref:name,attempt:receipt.attempt??(pinned?Number(pinned[1]):entry.attempt),data:envelope});
+    sources.push({type:'history',ref:name,attempt:receipt.attempt??(pinned?Number(pinned[2]):entry.attempt),data:envelope});
   }
   return repeatedClasses({ledger:buildReviewLedger({issue:entry.issue,sources}),records,journal});
 }
@@ -256,7 +257,7 @@ export class CollectionAdmissionRefusal extends Error {}
 export async function admitCollection(root, report) {
   return withLock(path.join(root, "launch.lock"), () => admitUnderLock(root, report));
 }
-export function admitUnderLock(root, report) {
+export async function admitUnderLock(root, report) {
   validatePhase(report);
   const entry = registryEntry(root, report.issue, report.attempt);
   const pins = effectivePins(entry), admitted = [];
@@ -286,7 +287,7 @@ export function admitUnderLock(root, report) {
       throw new CollectionAdmissionRefusal("collection head/grants/collect mismatch");
     const stop=collectionClassStop(entry,pins);
     if(stop.required) {
-      recordClassStop({evidenceRoot:pins.evidenceRoot,issue:report.issue,attempt:report.attempt,collectionId:write.id,stop});
+      await recordClassStop({evidenceRoot:pins.evidenceRoot,issue:report.issue,attempt:report.attempt,collectionId:write.id,stop});
       throw new CollectionAdmissionRefusal('needs-decision: repeated review class');
     }
     const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins) };

@@ -1,1 +1,2 @@
 - Stop repeated finding keys or recorded classes before another review collection; orchestrator class decisions resume the same withheld request. Require bounded whole-class fixes or verified behavior limits, and keep workers within simple Issue-scoped mechanisms.
+- Preserve class stops for symlinked worktrees and pinned Issue identities; share the withheld-history lock across admission and manual recording.

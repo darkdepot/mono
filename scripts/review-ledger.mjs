@@ -408,15 +408,14 @@ export async function withholdCollection({evidenceRoot,issue,record}) {
     return file;
   });
 }
-export function recordClassStop({evidenceRoot,issue,attempt,collectionId,stop}) {
+export async function recordClassStop({evidenceRoot,issue,attempt,collectionId,stop}) {
   const file=path.join(evidenceRoot,'reviews',`${issue}-class-stops.json`);
   const records=fs.existsSync(file)?jsonFile(file):[];
   const record={kind:'class-stop',attempt,collectionId,reason:'needs-decision',recordedBy:'orchestrator',stop};
   if(!records.some(r=>r.attempt===attempt&&r.collectionId===collectionId))
     atomicJson(file,[...records,record]);
-  const withheld=path.join(evidenceRoot,'reviews',`${issue}-withheld.json`),demands=fs.existsSync(withheld)?jsonFile(withheld):[];
-  if(!demands.some(r=>r.attempt===attempt&&r.collectionId===collectionId))
-    atomicJson(withheld,[...demands,{attempt,collectionId,reason:'needs-decision: repeated review class',recordedBy:'orchestrator',kind:'collection-request',status:'withheld'}]);
+  await withholdCollection({evidenceRoot,issue,record:{attempt,collectionId,
+    reason:'needs-decision: repeated review class',recordedBy:'orchestrator'}});
 }
 export function printLedger(ledger) {
   const summary=summarizeLedger(ledger);

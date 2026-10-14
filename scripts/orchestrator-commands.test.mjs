@@ -1596,3 +1596,32 @@ test('a newly recorded unmatched class admits the next collection without a clas
     assert.equal(fs.existsSync(path.join(request.evidenceRoot,'reviews','MONO-999-class-stops.json')),false);
   });
 });
+
+test('symlinked worktrees and pinned issue identity retain repeated-class admission stops',async()=>{
+  const {classFixture,classSeal}=await import('./class-fixtures.mjs');
+  const {findingIdentity,recordDecision}=await import('./decisions.mjs');
+  const {createHmac}=await import('node:crypto'),{canonical}=await import('./runtime.mjs');
+  for(const pinnedIdentity of [false,true])await collectorAttentionFixture(async f=>{
+    const request=f.request(3),x=classFixture(),key=Buffer.alloc(32,9),issue='MONO-999';
+    const registryFile=path.join(f.options.root,'workers.json'),registry=readJson(registryFile);
+    const real=fs.realpathSync(request.worktree),alias=path.join(path.dirname(real),'worktree-alias');
+    fs.symlinkSync(real,alias,'dir');
+    registry[issue].worktree=alias;atomicJson(registryFile,registry);
+    const pinsFile=registry[issue].pins.file,pins=readJson(pinsFile);
+    pins.worktree=alias;atomicJson(pinsFile,pins);
+    registry[issue].pins.digest=createHash('sha256').update(fs.readFileSync(pinsFile)).digest('hex');atomicJson(registryFile,registry);
+    fs.writeFileSync(path.join(request.evidenceRoot,'receipt.key'),key);
+    for(const receipt of x.receipts) {
+      delete receipt.issue;
+      receipt.worktree=pinnedIdentity?path.join(real,'previous-location'):real;
+      if(pinnedIdentity)receipt.pins={file:path.join(f.options.root,'dispatch','MONO-999-a1','pins.json')};
+      atomicJson(path.join(request.evidenceRoot,'history',`${receipt.runId}.json`),{receipt,signature:createHmac('sha256',key).update(canonical(receipt)).digest('hex')});
+    }
+    await recordDecision({evidenceRoot:request.evidenceRoot,issue,entry:classSeal({...x.entry,findingIds:x.receipts.map(r=>findingIdentity(r,0).id)})});
+    const report={...f.report(3),sequence:1};
+    report.capsule.open_queue[0].payload.request.worktree=alias;
+    report.capsule.open_queue[0].payload.request.pins=collectionPinsBinding(registry[issue]);
+    await assert.rejects(admitCollection(f.options.root,report),/needs-decision/);
+    assert.equal(readJson(path.join(request.evidenceRoot,'reviews',`${issue}-class-stops.json`)).length,1);
+  });
+});

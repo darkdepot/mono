@@ -139,3 +139,20 @@ test('resumed withheld demand retains its stop and counts one actual reviewer ex
   assert.equal(ledger.attempts[0].events.find(e=>e.kind==='class-stop').status,'withheld');
   assert.equal(ledger.attempts[0].events.find(e=>e.kind==='collection-request').status,'findings');
 });
+
+test('class stops share the withheld writer lock and preserve requests after contention',async()=>{
+ const {recordClassStop,withholdCollection}=await api();
+ const {withLock}=await import('./runtime.mjs');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-class-stop-lock-'));
+ const issue='MONO-998',file=path.join(root,'reviews',`${issue}-withheld.json`);
+ const stop={evidenceRoot:root,issue,attempt:1,collectionId:'stopped',stop:{required:true}};
+ try {
+  await withLock(file+'.lock',async()=>{
+   await assert.rejects(async()=>recordClassStop(stop),/operation locked/);
+   assert.equal(fs.existsSync(file),false);
+  });
+  await withholdCollection({evidenceRoot:root,issue,record:{attempt:1,collectionId:'other',reason:'manual stop',recordedBy:'orchestrator'}});
+  await recordClassStop(stop);await recordClassStop(stop);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')).map(r=>r.collectionId),['other','stopped']);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
