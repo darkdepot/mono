@@ -44,6 +44,29 @@ test('cap chain: head, attempt and authorized successor keep both counters; unau
     assert.throws(()=>reviewChain(f.evidenceRoot,'MONO-1001'),/orchestrator decision/);
   });
 });
+test('legacy receipt ownership: new worktree and attempt keep two blocking receipts in the original chain',async()=>{
+  await fixture(async f=>{
+    for(const r of classFixture().receipts){delete r.issue;delete r.pins;r.worktree=f.worktree;f.receipt(r);}
+    const first=syncLocalPasses({evidenceRoot:f.evidenceRoot,worktree:f.worktree,report:f.report()});
+    assert.equal(first.state.external.length,2);
+    const moved=syncLocalPasses({evidenceRoot:f.evidenceRoot,worktree:path.join(f.evidenceRoot,'new-worktree'),report:f.report(2)});
+    assert.equal(moved.state.external.length,2);
+    const request=f.report(2,'e'.repeat(40));
+    const stopped=await reserveReviewCollection({evidenceRoot:f.evidenceRoot,worktree:path.join(f.evidenceRoot,'new-worktree'),report:request,
+      reportDigest:digest(request),collectionId:`preflight-collect:${request.head}:1`});
+    assert.equal(stopped.refused,true);
+  });
+});
+test('legacy receipt ownership is bound before execution and does not depend on the next worktree',async()=>{
+  await fixture(async f=>{
+    const r=classFixture().receipts[0];delete r.issue;delete r.pins;r.worktree=f.worktree;
+    assert.equal(await f.reserve(f.report(1,r.head),1),null);
+    f.receipt(r);
+    const read=syncLocalPasses({evidenceRoot:f.evidenceRoot,worktree:path.join(f.evidenceRoot,'elsewhere'),report:f.report(2)});
+    assert.equal(read.state.external.length,1);assert.equal(read.state.external[0].issue,f.issue);
+  });
+});
+
 test('local cap: stable pass IDs survive head/attempt changes and bound continuation before and after external review',async()=>{
   for(const external of [false,true])await fixture(async f=>{
     if(external)f.receipt(classFixture().receipts[0]);
@@ -71,9 +94,10 @@ test('external cap counts blocking findings after valid declines and re-counts a
     const entry=classSeal({...x.entry,receipt:{collectionId:x.receipt.collectionId,runId:x.receipt.runId,digest:digest(x.receipt)},finding:findingIdentity(x.receipt,0)});
     await recordDecision({evidenceRoot:f.evidenceRoot,issue:f.issue,entry});
     result=syncLocalPasses({evidenceRoot:f.evidenceRoot,worktree:f.worktree,report:f.report()});assert.equal(result.state.external.length,0);
+    assert.equal(result.state.receiptOwners.length,1,'declines do not erase ownership');
     const now=new Date().toISOString();await recordDecision({evidenceRoot:f.evidenceRoot,issue:f.issue,entry:seal({type:'decline-revoke',id:'revoke-1',forId:entry.id,
       declineDigest:entry.recordDigest,reason:'New reproduction',evidence:{citation:'Reachable defect'},evidenceDigest:digest({citation:'Reachable defect'}),
       approvedBy:'orchestrator',approvedAt:now,recordedAt:now})});
-    result=syncLocalPasses({evidenceRoot:f.evidenceRoot,worktree:f.worktree,report:f.report()});assert.equal(result.state.external.length,1);
+    result=syncLocalPasses({evidenceRoot:f.evidenceRoot,worktree:path.join(f.evidenceRoot,'new-worktree'),report:f.report(2)});assert.equal(result.state.external.length,1);
   });
 });

@@ -458,7 +458,7 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
       const file = path.join(scratch, "request.json"), receiptFile = path.join(evidence, `${head}.json`);
       const call = value => { atomicJson(file, value); return spawnSync(process.execPath, [...(fixture.platform ? ["--require", preload] : []), "scripts/gate.mjs", "preflight", "--request", file], { env, encoding: "utf8" }); };
       const admit = async value => {
-        if(!value.pins)return;
+        if(!fs.existsSync(registryFile))return;
         const {admitCollection}=await import('./orchestrator/command-state.mjs');
         const request={...value,collect:false},queue=[{id:request.collectionId,operation:'preflight-collect',target:request.head,payload:{request}}];
         await admitCollection(root,{...entry,phase:'preflight',kind:'confirmation-request',sequence:1,head:request.head,
@@ -508,8 +508,12 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
         expectedField = "registry"; expectedValue = "one registered attempt for worktree";
       }
       if (fixture.mode === "declines") {
-        if (fixture.unpinned) { delete request.pins; request.issue='MONO-999'; fs.unlinkSync(registryFile); }
+        if (fixture.unpinned) {
+          delete request.pins;request.issue='MONO-999';delete pins.reviewDatasetDigest;
+          atomicJson(pinsFile,pins);binding.digest=sha256File(pinsFile);register();
+        }
         const envelope=await collect(request),r=envelope.receipt,f=declineFixture();
+        if(fixture.unpinned)fs.unlinkSync(registryFile);
         r.review.json=f.receipt.review.json;r.review.status={...f.receipt.review.status,engine:r.route.engine??'claude'};
         r.review.exitCode=1;r.review.output=`autoreview target: branch | engine: ${r.route.engine??'claude'} | model: ${r.route.model} | thinking: ${r.route.effort}\nautoreview findings: 1\noverall: patch is incorrect (0.9)\n`;
         r.loop=f.receipt.loop;seal(envelope);

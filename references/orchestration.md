@@ -1263,10 +1263,17 @@ decision; park without one. Changes to current chain decisions re-evaluate an
 identical refused report/pins pair. Competing requests serialize; a lock refusal
 reserves nothing and may be retried with the original request identity.
 
-Registered collect:true requires the correlated admission before any helper runs;
-the collector owns it. Collect:false remains usable to obtain pending requests
+Every collect:true requires registered correlated admission before any helper runs,
+including legacy requests without pins; the collector owns it. Collect:false remains
+usable to obtain pending requests
 and reconcile history. Collection IDs bind the reviewed head. A completed signed
 history cannot be executed again with the same ID; reconcile it instead.
+Admission records collection-to-Issue ownership in the chain's counters before
+execution. Signed receipt identity-to-Issue ownership persists separately from
+blocking counts, including when declines remove findings. Legacy receipts already
+attributed to the chain retain that ownership across new worktrees and attempts;
+worktree paths are not counter keys. Later counts resolve the established ownership
+or the admitted collection, rather than reassigning the receipt to the current path.
 
 Create a successor only through an orchestrator decision: either the existing
 class-decision limit's successor URL, or continue.successorIssue. Before dispatch,

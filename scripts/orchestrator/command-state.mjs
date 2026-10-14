@@ -192,7 +192,10 @@ const requestMismatch = (field, expected) => { throw new Error(`collection reque
 export function checkCollectionRequest(request) {
   const root = request.pins?.file ? path.dirname(path.dirname(path.dirname(request.pins.file))) : request.root;
   const registryFile = path.join(root, "workers.json");
-  if (!fs.existsSync(registryFile) && !request.pins) return null;
+  if (!fs.existsSync(registryFile) && !request.pins) {
+    if(request.collect===true)requestMismatch('admission','registered orchestrator admission before collection');
+    return null;
+  }
   const registered = readJson(registryFile);
   const named = request.pins?.file && /^([A-Z][A-Z0-9]*-\d+)-a([1-9][0-9]*)$/u.exec(path.basename(path.dirname(request.pins.file)));
   const entries = named ? [registered[named[1]]].filter(entry => entry?.attempt === Number(named[2])) :
@@ -201,24 +204,30 @@ export function checkCollectionRequest(request) {
     requestMismatch("registry", "one registered attempt for worktree");
   }
   const entry = registryEntry(root, entries[0].issue, entries[0].attempt);
-  if (!entry.pins && !request.pins) return null;
+  if (!entry.pins && !request.pins) {
+    if(request.collect===true)requestMismatch('admission','registered pins and orchestrator admission before collection');
+    return null;
+  }
   const launch = effectivePins({ ...entry, pinsVersion: 0 });
   if (!request.pins && /^[a-f0-9]{40}$/.test(launch.base ?? "") &&
       validateLanding(baseModelConfig(request.worktree, launch.base))?.serialPaths !== undefined)
     throw new Error("landing policy requires pinned dispatch");
   const u13 = Object.hasOwn(launch, "reviewDatasetDigest");
-  if (!u13 && !request.pins) return null;
+  const legacy=!u13&&!request.pins;
+  if (legacy && request.collect!==true) return null;
   if (!/^[a-f0-9]{40}$/.test(request.head??'') || !new RegExp(`^preflight-collect:${request.head}:[1-9][0-9]*$`,'u').test(request.collectionId ?? "")) requestMismatch("collectionId", "preflight-collect:<head>:<n>");
   const admissionFile = path.join(attemptDirectory(root, entry), "admissions", `${request.collectionId}.json`);
   const admission = fs.existsSync(admissionFile) ? readJson(admissionFile) : null;
   const version = admission?.pinsVersion ?? entry.pinsVersion ?? 0;
   const pins = effectivePins({ ...entry, pinsVersion: version });
   if (admission && (admission.collectionId !== request.collectionId || admission.manifestDigest !== digest(pins))) requestMismatch("admission", "registered manifest for collectionId");
-  const expected = collectionPinsBinding(entry, version);
-  if (expected.file !== path.join(root, "dispatch", `${entry.issue}-a${entry.attempt}`, version ? `pins.v${version}.json` : "pins.json")) requestMismatch("pins.file", "registered dispatch pins file");
-  if (!request.pins) requestMismatch("pins", expected);
-  if (request.pins.file !== expected.file) requestMismatch("pins.file", expected.file);
-  if (canonical(request.pins) !== canonical(expected)) requestMismatch("pins.digest", expected.digest);
+  if(!legacy) {
+    const expected = collectionPinsBinding(entry, version);
+    if (expected.file !== path.join(root, "dispatch", `${entry.issue}-a${entry.attempt}`, version ? `pins.v${version}.json` : "pins.json")) requestMismatch("pins.file", "registered dispatch pins file");
+    if (!request.pins) requestMismatch("pins", expected);
+    if (request.pins.file !== expected.file) requestMismatch("pins.file", expected.file);
+    if (canonical(request.pins) !== canonical(expected)) requestMismatch("pins.digest", expected.digest);
+  }
   if (u13 && !Object.hasOwn(request, "reviewDatasetVersion")) requestMismatch("reviewDatasetVersion", pins.reviewDatasetVersion);
   const mismatch = collectionPinMismatch(request, pins);
   if (mismatch) requestMismatch(mismatch.field, mismatch.expected);
@@ -232,7 +241,7 @@ export function checkCollectionRequest(request) {
       .some(name=>readJson(path.join(history,name)).receipt?.collectionId===request.collectionId))
       throw new Error('collection already executed; reconcile the same request with collect:false');
   }
-  return pins;
+  return legacy?null:pins;
 }
 
 export function collectionDecisionDigest(entry) {

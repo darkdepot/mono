@@ -22,6 +22,9 @@ passes. Counts follow the original Issue and orchestrator-authorized successors
 across commits and attempts. A bounded `continue` decision permits further work;
 atomic reservations and idempotent replay prevent refilling allowances. Defects
 still block the PR. See [review limits](references/orchestration.md#review-limits).
+Every collection path requires admission, including registered legacy requests
+without pins; legacy receipt reads remain compatible. Receipt ownership is kept
+with the Issue chain when worktrees move and when declines temporarily clear findings.
 
 ## Workflow
 

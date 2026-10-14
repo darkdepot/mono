@@ -1531,6 +1531,31 @@ test("preapply-whitespace-blank-lines: surrounding whitespace and raw content su
   assert.equal(extractSnapshot(issue, prd, spec).spec, spec);
 });
 
+test('review cap: registered legacy request without pins requires the same admission and replay controls',async()=>{
+  await collectorAttentionFixture(async f=>{
+    const request=f.request(1);
+    assert.equal(checkCollectionRequest(request),null,'legacy receipt reads remain compatible');
+    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/admission/);
+    await admitCollection(f.options.root,f.report(1));
+    assert.equal(checkCollectionRequest({...request,collect:true}),null);
+    await f.signedHistory(request);
+    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/already executed/);
+    assert.equal(checkCollectionRequest(request),null);
+  });
+});
+
+test('review cap: unregistered and unbound direct collection cannot skip admission',async()=>{
+  await collectorAttentionFixture(async f=>{
+    const request=f.request(1),registry=readJson(f.registry);
+    delete registry['MONO-999'].pins;atomicJson(f.registry,registry);
+    assert.equal(checkCollectionRequest(request),null);
+    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/admission/);
+    fs.unlinkSync(f.registry);
+    assert.equal(checkCollectionRequest(request),null);
+    assert.throws(()=>checkCollectionRequest({...request,collect:true}),/admission/);
+  });
+});
+
 test('review cap: direct collect:true needs admission; collect:false stays pending and old-head/repeated execution cannot reuse it',async()=>{
   await collectorAttentionFixture(async f=>{
     const file=path.join(f.options.root,'dispatch','MONO-999-a1','pins.json');

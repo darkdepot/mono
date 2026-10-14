@@ -48,16 +48,27 @@ function blocking(receipt,journal) {
 function counters(evidenceRoot,chain,worktree) {
   const file=path.join(evidenceRoot,'reviews',`${chain.originalIssue}-counters.json`);
   const state=fs.existsSync(file)?readJson(file):{originalIssue:chain.originalIssue,external:[],local:[],stops:[],permits:{}};
-  if(state.originalIssue!==chain.originalIssue||!Array.isArray(state.local)||!Array.isArray(state.stops)||!state.permits)throw new Error('invalid review counters');
+  if(state.originalIssue!==chain.originalIssue||!Array.isArray(state.external)||!Array.isArray(state.local)||!Array.isArray(state.stops)||!state.permits)throw new Error('invalid review counters');
+  // Ownership survives declines as well as new heads/attempts/worktrees.
+  state.receiptOwners??=[...state.external];state.collectionOwners??=[];
+  if(!Array.isArray(state.receiptOwners)||!Array.isArray(state.collectionOwners))throw new Error('invalid receipt ownership');
   const external=[],history=path.join(evidenceRoot,'history');
   let key;
   for(const name of fs.existsSync(history)?fs.readdirSync(history).filter(n=>n.endsWith('.json')):[]) {
     const envelope=readJson(path.join(history,name)),receipt=envelope.receipt;
     const pinned=/^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(receipt?.pins?.file??'')))?.[1];
-    const owner=receipt?.issue??pinned??(receipt?.worktree===worktree?chain.currentIssue:null);
-    if(!chain.journals.has(owner))continue;
+    const known=state.receiptOwners.find(r=>r.runId===receipt?.runId);
+    const collection=state.collectionOwners.find(r=>r.collectionId===receipt?.collectionId);
+    const owner=receipt?.issue??pinned??known?.issue??collection?.issue??(receipt?.worktree===worktree?chain.currentIssue:null);
+    if(!chain.journals.has(owner)) {
+      if(known||collection)throw new Error('receipt ownership changed');
+      continue;
+    }
     key??=fs.readFileSync(path.join(evidenceRoot,'receipt.key'));
     if(key.length!==32||envelope.signature!==crypto.createHmac('sha256',key).update(canonical(receipt)).digest('hex'))throw new Error('cap history signature mismatch');
+    const identity={issue:owner,runId:receipt.runId,digest:digest(receipt)};
+    if(known&&canonical(known)!==canonical(identity)||collection&&collection.issue!==owner)throw new Error('receipt ownership changed');
+    if(!known)state.receiptOwners.push(identity);
     if(blocking(receipt,chain.journals.get(owner)))external.push({issue:owner,runId:receipt.runId,digest:digest(receipt)});
   }
   state.external=[...new Map(external.map(r=>[r.runId,r])).values()].sort((a,b)=>a.runId.localeCompare(b.runId));
@@ -92,13 +103,18 @@ export function syncLocalPasses({evidenceRoot,report,worktree}) {
 }
 export async function reserveReviewCollection({evidenceRoot,report,worktree,collectionId,reportDigest}) {
   const {file,state,chain}=syncLocalPasses({evidenceRoot,report,worktree});
+  const rememberCollection=()=>{
+    const owner=state.collectionOwners.find(r=>r.collectionId===collectionId);
+    if(owner&&owner.issue!==report.issue)throw new Error('collection ownership changed');
+    if(!owner)state.collectionOwners.push({collectionId,issue:report.issue});
+  };
   // Reservation replay survives an interrupted write of the admission file.
   const replay=Object.values(state.permits).flatMap(p=>p.reservations).find(r=>r.collectionId===collectionId);
   if(replay) {
     if(replay.issue!==report.issue||replay.attempt!==report.attempt||replay.reportDigest!==reportDigest)throw new Error('conflicting cap reservation');
     return replay;
   }
-  if(state.external.length<2&&state.local.length<=2)return null;
+  if(state.external.length<2&&state.local.length<=2){rememberCollection();atomicJson(file,state);return null;}
   const stopId=digest({originalIssue:state.originalIssue,external:state.external,local:state.local});
   // A still-open allowance remains bound to its initial stop, not a fresh head.
   const entries=[...chain.journals.values()].flatMap(j=>currentEntries(j).filter(e=>e.type==='continue'));
@@ -124,6 +140,7 @@ export async function reserveReviewCollection({evidenceRoot,report,worktree,coll
   const permit=state.permits[decision.stopId]??={collectionId:decision.collectionId,reservations:[]};
   const reservation={issue:report.issue,attempt:report.attempt,collectionId,reportDigest,decisionId:decision.id,decisionDigest:decision.recordDigest,stopId:decision.stopId};
   permit.reservations.push(reservation);
+  rememberCollection();
   atomicJson(file,state);
   return reservation;
 }
