@@ -237,7 +237,7 @@ function collectionClassStop(entry,pins) {
   const journal=readJournal({evidenceRoot:pins.evidenceRoot,issue:entry.issue});
   const file=path.join(pins.evidenceRoot,'reviews',`${entry.issue}-adjudications.json`);
   const records=fs.existsSync(file)?readJson(file):[],history=path.join(pins.evidenceRoot,'history'),sources=[];
-  const worktree=fs.realpathSync(entry.worktree);
+  const worktree=fs.realpathSync(pins.worktree);
   let receiptKey;
   for(const name of fs.existsSync(history)?fs.readdirSync(history).filter(n=>n.endsWith('.json')):[]) {
     const envelope=readJson(path.join(history,name)),receipt=envelope.receipt;
