@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, baseModelConfig, validateLanding, processStart } from "../runtime.mjs";
 import { readJournal, currentEntries } from '../decisions.mjs';
 import { buildReviewLedger, repeatedClasses, recordClassStop } from '../review-ledger.mjs';
+import { capDecisionDigest, reserveReviewCollection } from '../review-cap.mjs';
 import { validatePhase, confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
 
 export const sha256File = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -231,7 +232,7 @@ export function collectionDecisionDigest(entry) {
   const pins=effectivePins(entry),journal=readJournal({evidenceRoot:pins.evidenceRoot,issue:entry.issue});
   const file=path.join(pins.evidenceRoot,'reviews',`${entry.issue}-adjudications.json`);
   return digest({entries:currentEntries(journal).filter(e=>['class','class-decision','decision'].includes(e.type)),
-    records:fs.existsSync(file)?readJson(file):[]});
+    cap:capDecisionDigest(pins.evidenceRoot,entry.issue),records:fs.existsSync(file)?readJson(file):[]});
 }
 function collectionClassStop(entry,pins) {
   const journal=readJournal({evidenceRoot:pins.evidenceRoot,issue:entry.issue});
@@ -290,7 +291,9 @@ export async function admitUnderLock(root, report) {
       await recordClassStop({evidenceRoot:pins.evidenceRoot,issue:report.issue,attempt:report.attempt,collectionId:write.id,stop});
       throw new CollectionAdmissionRefusal('needs-decision: repeated review class');
     }
-    const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins) };
+    const cap=await reserveReviewCollection({evidenceRoot:pins.evidenceRoot,report,worktree:fs.realpathSync(pins.worktree),collectionId:write.id,reportDigest});
+    if(cap?.refused)throw new CollectionAdmissionRefusal('needs-decision: review cap');
+    const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins),...(cap?{cap}: {}) };
     atomicJson(file, record); admitted.push(record);
   }
   return admitted;

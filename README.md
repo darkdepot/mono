@@ -17,6 +17,12 @@ A decision change resumes the same withheld request automatically; defects,
 review routes and gate branches keep their existing requirements.
 See [class decisions](references/orchestration.md#repeated-review-class).
 
+Review limits now stop automation after two blocking external reviews or two local
+passes. Counts follow the original Issue and orchestrator-authorized successors
+across commits and attempts. A bounded `continue` decision permits further work;
+atomic reservations and idempotent replay prevent refilling allowances. Defects
+still block the PR. See [review limits](references/orchestration.md#review-limits).
+
 ## Workflow
 
 Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot markup contract](references/orchestration.md#snapshot-markup-contract-u12): parse blocks, then select coverage; unknown IDs refuse, while duplicates or unclosed fences retain full documents.

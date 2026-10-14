@@ -9,7 +9,7 @@ import { currentEntries, readJournal, validateJournal, findingIdentity } from '.
 
 const causes = ['fix','head-change','retry','final-request','self-check','unknown'];
 const statuses = ['scoped-clean','findings','filtered','incorrect','incomplete','reviewer_unavailable','withheld','unknown'];
-const kinds = ['collection-request','helper-invocation','internal-pass','decline','class-stop'];
+const kinds = ['collection-request','helper-invocation','internal-pass','decline','class-stop','cap-stop'];
 const issuePattern = /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/;
 const nonnegative = value => Number.isSafeInteger(value) && value >= 0;
 const alias = source => ({type:source.type,ref:source.ref});
@@ -96,7 +96,8 @@ export function buildReviewLedger({issue,sources}) {
       const data=source.data;
       if(data.kind==='collection-request')addCollection(source,data);
       else if(data.kind==='helper-invocation')locals.push({source,data:{...data,attempt}});
-      else if(data.kind==='class-stop')attemptState(attempt).events.push({...event('class-stop',data.collectionId,{...data,attempt},[alias(source)]),stop:data.stop,status:'withheld'});
+      else if(['class-stop','cap-stop'].includes(data.kind))attemptState(attempt).events.push({...event(data.kind,data.collectionId,{...data,attempt},[alias(source)]),stop:data.stop,status:'withheld'});
+      else if(data.kind==='internal-pass')attemptState(attempt).events.push(event('internal-pass',data.id,{...data,attempt},[alias(source)]));
       else unresolved(attempt,'unrecognized event kind',[alias(source)]);
     }
   }
@@ -190,7 +191,7 @@ function addPasses(invocation,state) {
 }
 export function summarizeLedger(ledger) {
   const events=ledger.attempts.flatMap(a=>a.events),collections=events.filter(e=>e.kind==='collection-request'),invocations=events.filter(e=>e.kind==='helper-invocation');
-  const summary={classStops:events.filter(e=>e.kind==='class-stop').length,declines:events.filter(e=>e.kind==='decline').length,collections:collections.length,withheld:collections.filter(e=>e.status==='withheld'||e.wasWithheld).length,invocations:invocations.length,
+  const summary={capStops:events.filter(e=>e.kind==='cap-stop').length,classStops:events.filter(e=>e.kind==='class-stop').length,declines:events.filter(e=>e.kind==='decline').length,collections:collections.length,withheld:collections.filter(e=>e.status==='withheld'||e.wasWithheld).length,invocations:invocations.length,
     causes:Object.fromEntries(causes.map(c=>[c,invocations.filter(e=>e.launchCause===c).length])),
     announcedPasses:invocations.some(e=>e.announcedPasses!==null)?invocations.reduce((n,e)=>n+(e.announcedPasses??0),0):null,
     confirmedPasses:invocations.some(e=>e.confirmedPasses!==null)?invocations.reduce((n,e)=>n+(e.confirmedPasses??0),0):null,
@@ -238,6 +239,10 @@ export async function readLedgerSources({issue,root,evidenceRoot}) {
   if(fs.existsSync(journalFile))sources.push({type:'journal',ref:journalFile,data:readJournal({evidenceRoot,issue})});
   const stopsFile=path.join(evidenceRoot,'reviews',`${issue}-class-stops.json`);
   if(fs.existsSync(stopsFile))for(const data of jsonFile(stopsFile))sources.push({type:'ledger',ref:stopsFile,attempt:data.attempt,data});
+  const capFile=path.join(evidenceRoot,'reviews',`${issue}-cap-stops.json`);
+  if(fs.existsSync(capFile))for(const data of jsonFile(capFile))sources.push({type:'ledger',ref:capFile,attempt:data.attempt,data});
+  for(const file of files(path.join(evidenceRoot,'reviews')).filter(f=>f.endsWith('-counters.json')))
+    for(const data of jsonFile(file).local.filter(p=>p.issue===issue))sources.push({type:'ledger',ref:file,attempt:data.attempt,data});
   const withheldFile=path.join(evidenceRoot,'reviews',`${issue}-withheld.json`);
   if(fs.existsSync(withheldFile))for(const data of jsonFile(withheldFile))sources.push({type:'ledger',ref:withheldFile,attempt:data.attempt,data});
   for(const file of [...files(path.join(root,'consumed'),true),...files(path.join(root,'reports'),true)]) {

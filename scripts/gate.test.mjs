@@ -704,6 +704,15 @@ test('declines: same title at different positions needs two exact declines',()=>
   f.journal.entries.push(seal({...entry,id:'decline-2',finding:{id:`${digest}:1:${secondDigest}`,index:1,digest:secondDigest}}));
   assert.match(validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/accepted-with-declines/);
 });
+test('review cap continuation never admits a live defect or changes decline admission',()=>{
+  const f=declineFixture(),continuation=seal({type:'continue',id:'continue-1',supersedes:null,stopId:'e'.repeat(64),
+    collectionId:f.receipt.collectionId,localPasses:1,externalCollections:1,nextStep:'Fix the defect',checkpoint:'External review',
+    approvedBy:'orchestrator',approvedAt:'2026-10-14T01:01:00Z',recordedAt:'2026-10-14T01:01:00Z'});
+  assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,{issue:'MONO-999',entries:[continuation]}),/decline/);
+  f.journal.entries.push(continuation);
+  assert.match(validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/accepted-with-declines/);
+});
+
 test('declines: dangerous P2 accepts only refutation',()=>{
   for(const basis of ['boundary','refutation']) {
     const f=declineFixture({basis,dangerous:true});

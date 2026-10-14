@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants, packLayout } from "../runtime.mjs";
 import { confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
 import { commandFlags, allowedFlags, registryEntry, correlatedPhase, validateReportBarriers, admitCollection, CollectionAdmissionRefusal, effectivePins, sha256File, collectionDecisionDigest } from "./command-state.mjs";
+import {syncLocalPasses} from '../review-cap.mjs';
 
 const lockPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.lock`);
 const logPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.log`);
@@ -106,6 +107,8 @@ export async function collectOnce(options) {
     const files = [path.join(options.root, "reports", name), path.join(entry.worktree, ".orchestrator", name)].filter(file => fs.existsSync(file));
     if (!files.length) continue;
     const { report } = correlatedPhase(options.root, files[0]);
+    if(report.capsule.local_passes?.length)await withLock(path.join(options.root,'launch.lock'),()=>
+      syncLocalPasses({evidenceRoot:effectivePins(entry).evidenceRoot,report,worktree:fs.realpathSync(entry.worktree)}));
     if (report.capsule.open_queue.some(write => write.operation !== "preflight-collect")) continue;
     if (report.capsule.open_queue.length && (report.phase !== "preflight" || report.kind !== "confirmation-request" || report.capsule.open_queue.length !== 1))
       throw new Error("collection requires a single preflight confirmation-request");

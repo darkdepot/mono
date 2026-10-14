@@ -1531,6 +1531,57 @@ test("preapply-whitespace-blank-lines: surrounding whitespace and raw content su
   assert.equal(extractSnapshot(issue, prd, spec).spec, spec);
 });
 
+test('review cap: third external collection after two blocking receipts is refused across heads',async()=>{
+  const {classFixture}=await import('./class-fixtures.mjs');
+  const {createHmac}=await import('node:crypto'),{canonical}=await import('./runtime.mjs');
+  await collectorAttentionFixture(async f=>{
+    const request=f.request(3),x=classFixture(),key=Buffer.alloc(32,9);
+    fs.writeFileSync(path.join(request.evidenceRoot,'receipt.key'),key);
+    for(const receipt of x.receipts) {
+      receipt.worktree=request.worktree;
+      atomicJson(path.join(request.evidenceRoot,'history',`${receipt.runId}.json`),{receipt,signature:createHmac('sha256',key).update(canonical(receipt)).digest('hex')});
+    }
+    await assert.rejects(admitCollection(f.options.root,{...f.report(3),sequence:1}),/needs-decision: review cap/);
+  });
+});
+
+test('review cap: continue re-evaluates a refused request, reserves exact allowances and never refills on replay',async()=>{
+  const {classFixture,classSeal}=await import('./class-fixtures.mjs');
+  const {recordDecision}=await import('./decisions.mjs');
+  const {createHmac}=await import('node:crypto'),{canonical}=await import('./runtime.mjs');
+  await collectorAttentionFixture(async f=>{
+    const request=f.request(3),evidenceRoot=request.evidenceRoot,x=classFixture(),key=Buffer.alloc(32,9),issue='MONO-999';
+    fs.writeFileSync(path.join(evidenceRoot,'receipt.key'),key);
+    for(const receipt of x.receipts) {
+      receipt.worktree=request.worktree;
+      atomicJson(path.join(evidenceRoot,'history',`${receipt.runId}.json`),{receipt,signature:createHmac('sha256',key).update(canonical(receipt)).digest('hex')});
+    }
+    const report={...f.report(3),sequence:1};atomicJson(f.reportFile,report);
+    await f.poll();assert.match(readJson(f.attention).reason,/review cap/);
+    const counterFile=path.join(evidenceRoot,'reviews',`${issue}-counters.json`),stop=readJson(counterFile).stops[0];
+    const now=new Date().toISOString(),decision=classSeal({type:'continue',id:'continue-1',supersedes:null,stopId:stop.id,collectionId:request.collectionId,
+      localPasses:1,externalCollections:2,nextStep:'Fix the bounded admission unit',checkpoint:'Cap fixtures and external review',approvedBy:'orchestrator',approvedAt:now,recordedAt:now});
+    await recordDecision({evidenceRoot,issue,entry:decision});
+    await f.signedHistory(request);await f.poll();assert.equal(fs.existsSync(f.attention),false);
+    const first=await admitCollection(f.options.root,report);
+    assert.equal(first[0].cap.decisionId,decision.id);
+    assert.deepEqual(await admitCollection(f.options.root,report),first);
+    const contenders=await Promise.allSettled([admitCollection(f.options.root,{...f.report(4),sequence:2}),
+      admitCollection(f.options.root,{...f.report(5),sequence:3})]);
+    assert.equal(contenders.filter(r=>r.status==='fulfilled').length,1);
+    for(const result of contenders)if(result.status==='rejected')assert.match(result.reason.message,/locked|review cap/);
+    await assert.rejects(admitCollection(f.options.root,{...f.report(5),sequence:3}),/review cap/);
+    assert.equal(readJson(counterFile).permits[stop.id].reservations.length,2);
+    // Superseding the text does not add another two uses.
+    await recordDecision({evidenceRoot,issue,entry:classSeal({...decision,id:'continue-2',supersedes:decision.id,nextStep:'Updated bounded step'})});
+    await assert.rejects(admitCollection(f.options.root,{...f.report(5),sequence:3}),/review cap/);
+    // Recovery after the counter write but before the admission write is idempotent.
+    fs.unlinkSync(path.join(f.options.root,'consumed',`${issue}-a1`,'admissions',request.collectionId+'.json'));
+    assert.deepEqual(await admitCollection(f.options.root,report),first);
+    assert.equal(readJson(counterFile).permits[stop.id].reservations.length,2);
+  });
+});
+
 test('repeated key/class admission is withheld with class-stop; fix-class/limit re-evaluate the identical request and concurrent replays are idempotent',async()=>{
   const {classFixture,classSeal}=await import('./class-fixtures.mjs');
   const {findingIdentity,recordDecision}=await import('./decisions.mjs');
@@ -1567,6 +1618,11 @@ test('repeated key/class admission is withheld with class-stop; fix-class/limit 
       if(outcome==='limit')await recordDecision({evidenceRoot,issue,entry:x.boundary});
       const decision=classSeal({...x.decision(outcome),supersedes:'cd-other',receipt:{collectionId:x.receipts[1].collectionId,runId:x.receipts[1].runId,digest:digest(x.receipts[1])}});
       await recordDecision({evidenceRoot,issue,entry:decision});
+      await f.poll();assert.match(readJson(f.attention).reason,/review cap/,'class decision does not bypass the independent cap');
+      const stop=readJson(path.join(evidenceRoot,'reviews',`${issue}-counters.json`)).stops[0],now=new Date().toISOString();
+      await recordDecision({evidenceRoot,issue,entry:classSeal({type:'continue',id:'continue-1',supersedes:null,stopId:stop.id,
+        collectionId:request.collectionId,localPasses:0,externalCollections:1,nextStep:'Review the corrected class',checkpoint:'One external receipt',
+        approvedBy:'orchestrator',approvedAt:now,recordedAt:now})});
       await f.poll();assert.equal(fs.existsSync(f.attention),false);
       assert.equal(fs.existsSync(path.join(f.options.root,'confirmations',`${issue}-phase-preflight-a1-s1.confirmed.json`)),true);
       const replay=await admitCollection(f.options.root,report);
@@ -1586,7 +1642,7 @@ test('a newly recorded unmatched class admits the next collection without a clas
   await collectorAttentionFixture(async f=>{
     const request=f.request(3),x=classFixture(),key=Buffer.alloc(32,9);
     fs.writeFileSync(path.join(request.evidenceRoot,'receipt.key'),key);
-    for(const receipt of x.receipts) {
+    for(const receipt of x.receipts.slice(1)) {
       receipt.worktree=request.worktree;
       atomicJson(path.join(request.evidenceRoot,'history',`${receipt.runId}.json`),{receipt,signature:createHmac('sha256',key).update(canonical(receipt)).digest('hex')});
     }
