@@ -28,16 +28,78 @@ function journalFile({evidenceRoot,issue}, create = false) {
   requireThat(issuePattern.test(issue ?? ''),'invalid issue');
   return path.join(directory(evidenceRoot,'decisions',create),`${issue}.json`);
 }
+const date = value => text(value) && Number.isFinite(Date.parse(value));
+const sha256 = value => /^[a-f0-9]{64}$/.test(value ?? '');
+export function decisionDigest(entry) {
+  const {recordDigest,...content}=entry;
+  return hash(canonical(content));
+}
+export function findingIdentity(receipt, index) {
+  requireThat(Number.isSafeInteger(index)&&index>=0&&index<receipt.review.json.findings.length,'invalid finding index');
+  const receiptDigest=hash(canonical(receipt)),digest=hash(canonical(receipt.review.json.findings[index]));
+  return {id:`${receiptDigest}:${index}:${digest}`,index,digest};
+}
+function evidenceValid(evidence) {
+  return object(evidence) && ((text(evidence.command)&&text(evidence.output)) || text(evidence.citation));
+}
+function validateDeclineEntry(entry) {
+  requireThat(entry.supersedes===undefined && entry.approvedBy==='orchestrator' && date(entry.approvedAt) &&
+    Date.parse(entry.approvedAt)<=Date.parse(entry.recordedAt),'decline orchestrator approval required; append a new entry');
+  requireThat(sha256(entry.recordDigest)&&decisionDigest(entry)===entry.recordDigest,'decline record digest mismatch');
+  if(entry.type==='decline-revoke') {
+    requireThat(idPattern.test(entry.forId??'')&&sha256(entry.declineDigest)&&text(entry.reason)&&evidenceValid(entry.evidence)&&
+      hash(canonical(entry.evidence))===entry.evidenceDigest,'decline-revoke reference, reason and evidence digest required');
+    return;
+  }
+  const r=entry.receipt,f=entry.finding,b=entry.basis;
+  requireThat(object(r)&&text(r.collectionId)&&text(r.runId)&&sha256(r.digest)&&/^[a-f0-9]{40}$/.test(entry.head??'')&&
+    Number.isSafeInteger(entry.datasetVersion)&&entry.datasetVersion>0,'decline receipt/head/dataset binding required');
+  requireThat(object(f)&&Number.isSafeInteger(f.index)&&f.index>=0&&sha256(f.digest)&&
+    f.id===`${r.digest}:${f.index}:${f.digest}`,'decline exact finding identity required');
+  requireThat(typeof entry.dangerous==='boolean'&&object(b)&&['refutation','boundary'].includes(b.type),'decline basis and dangerous flag required');
+  if(b.type==='refutation')requireThat(evidenceValid(b.evidence)&&hash(canonical(b.evidence))===b.digest,'refutation evidence digest mismatch');
+  else requireThat(/^d-[0-9]+$/.test(b.decisionId??'')&&sha256(b.digest)&&text(b.scope),'boundary decision/content digest required');
+}
+export function acceptedDeclines(receipt,journal) {
+  validateJournal(journal);
+  const digest=hash(canonical(receipt)),revoked=new Set(journal.entries.filter(e=>e.type==='decline-revoke').map(e=>e.forId));
+  const current=currentEntries(journal),version=receipt.reviewDataset?.version;
+  requireThat(Number.isSafeInteger(version)&&version>0,'decline receipt dataset version required');
+  return receipt.review.json.findings.map((finding,index)=>{
+    const identity=findingIdentity(receipt,index);
+    const matches=current.filter(e=>e.type==='decline'&&!revoked.has(e.id)&&e.finding.id===identity.id);
+    requireThat(matches.length===1,'exactly one valid unrevoked decline required for every finding');
+    const entry=matches[0];
+    requireThat(date(receipt.recordedAt)&&Date.parse(entry.approvedAt)>=Date.parse(receipt.recordedAt)&&
+      Date.parse(entry.recordedAt)<=Date.now(),'decline approval must follow the receipt and precede admission');
+    requireThat(entry.receipt.collectionId===receipt.collectionId&&entry.receipt.runId===receipt.runId&&entry.receipt.digest===digest&&
+      entry.head===receipt.head&&entry.datasetVersion===version,'decline receipt/head/dataset mismatch');
+    requireThat(!(['P0','P1'].includes(finding.priority)||entry.dangerous) || entry.basis.type==='refutation','dangerous/P0/P1 decline requires refutation');
+    if(entry.basis.type==='boundary') {
+      const boundary=current.find(e=>e.type==='decision'&&e.id===entry.basis.decisionId);
+      requireThat(boundary?.boundary&&boundary.approval?.by==='orchestrator'&&boundary.decision==='limit'&&
+        boundary.validity.head===receipt.head&&hash(canonical(boundary))===entry.basis.digest&&
+        boundary.boundary.scope===entry.basis.scope&&date(receipt.recordedAt)&&
+        Date.parse(boundary.recordedAt)<Date.parse(receipt.recordedAt)&&Date.parse(boundary.approval.at)<=Date.parse(boundary.recordedAt),
+        'decline boundary is not an in-force approved boundary with matching content');
+    }
+    return {id:identity.id,decisionId:entry.id,basis:entry.basis.type,approvedBy:entry.approvedBy};
+  });
+}
 export function validateEntry(entry) {
-  requireThat(object(entry) && ['decision','matrix','verification'].includes(entry.type),'invalid entry type');
+  requireThat(object(entry) && ['decision','matrix','verification','decline','decline-revoke'].includes(entry.type),'invalid entry type');
   requireThat(idPattern.test(entry.id ?? '') && text(entry.recordedAt) && Number.isFinite(Date.parse(entry.recordedAt)),'entry id and recordedAt required');
   if(entry.supersedes!==undefined && entry.supersedes!==null)requireThat(idPattern.test(entry.supersedes),'invalid supersedes');
-  if(entry.type==='decision') {
+  if(entry.type==='decline' || entry.type==='decline-revoke') {
+    validateDeclineEntry(entry);
+  } else if(entry.type==='decision') {
     requireThat(['findingKey','problem','trigger','evidence','impact','origin','decision','verification','proposedBy'].every(k=>text(entry[k])),'decision fields required');
     const v=entry.validity;
     requireThat(object(v) && ['head','base'].every(k=>/^[a-f0-9]{40}$/.test(v[k] ?? '')) &&
       ['contracts','assumptions'].every(k=>Array.isArray(v[k]) && v[k].every(text)),'invalid decision validity');
     requireThat(Object.hasOwn(entry,'supersedes'),'decision supersedes required (null for first entry)');
+    if(entry.boundary!==undefined)requireThat(object(entry.boundary)&&text(entry.boundary.scope)&&text(entry.boundary.remainingContract)&&
+      entry.approval?.by==='orchestrator'&&date(entry.approval.at),'boundary content and orchestrator approval required');
   } else if(entry.type==='matrix') {
     requireThat(text(entry.invariant) && text(entry.verification) && Array.isArray(entry.states) && entry.states.length>0 &&
       entry.states.every(s=>object(s)&&text(s.state)&&text(s.expected)),'matrix invariant, states and verification required');
@@ -62,9 +124,15 @@ export function validateJournal(journal) {
       requireThat(prior[key]===entry[key],`supersedes must preserve ${key}`);
       replaced.add(prior.id);
     }
+    if(entry.type==='decline-revoke') {
+      const prior=seen.get(entry.forId);
+      requireThat(prior?.type==='decline' && prior.recordDigest===entry.declineDigest &&
+        Date.parse(entry.recordedAt)>=Date.parse(prior.recordedAt),'decline-revoke must reference an earlier unchanged decline');
+      requireThat(!journal.entries.some(e=>e!==entry&&e.type==='decline-revoke'&&e.forId===entry.forId),'duplicate decline revocation');
+    }
     if(entry.type==='verification') {
       const target=seen.get(entry.forId);
-      requireThat(target && target.type!=='verification','verification forId must reference an earlier decision or matrix');
+      requireThat(target && ['decision','matrix'].includes(target.type),'verification forId must reference an earlier decision or matrix');
       if(entry.waiver!==undefined)requireThat(target.type==='decision'&&!replaced.has(entry.forId)&&target.findingKey===entry.waiver.findingKey,'verification waiver forId must reference a current decision with the same findingKey');
     }
     seen.set(entry.id,entry);
@@ -94,7 +162,10 @@ export function currentEntries(journal) {
   return journal.entries.filter(e=>!replaced.has(e.id) && (e.type!=='verification'||!replaced.has(e.forId)));
 }
 export function renderDecisions(journal) {
-  const entries=currentEntries(journal).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+  const revoked=new Set(journal.entries.filter(e=>e.type==='decline-revoke').map(e=>e.forId));
+  const entries=currentEntries(journal).filter(e=>e.type!=='decline-revoke' && (e.type!=='decline'||!revoked.has(e.id)))
+    .map(e=>e.type==='decline'?{type:'decline',id:e.id,finding:e.finding.id,basis:e.basis.type,approvedBy:e.approvedBy,
+      context:'Do not raise again without a new fact'}:e).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
   // Canonical JSON keeps evidence verbatim without interpreting it as Markdown structure.
   return `${DECISION_SECTION}\n\n\`\`\`json\n${canonical(entries)}\n\`\`\`\n`;
 }
@@ -177,7 +248,7 @@ export function materializeDataset(options) {
 }
 async function main() {
   const [command,...rest]=process.argv.slice(2),args=flags(rest);
-  if(command==='--help'||args.help){console.log('Usage: decisions.mjs record|render|version|materialize|list --issue KEY --evidence-root DIR [--record JSON_FILE] [--source DATASET] [--version N --worktree DIR --digest SHA256] [--remove true]\nrecord accepts typed decision, matrix or verification entries. version replaces the managed section in --source and publishes immutable bytes. materialize requires an ignored, untracked path; --remove true cleans that exact digest-checked file.');return;}
+  if(command==='--help'||args.help){console.log('Usage: decisions.mjs record|render|version|materialize|list --issue KEY --evidence-root DIR [--record JSON_FILE] [--source DATASET] [--version N --worktree DIR --digest SHA256] [--remove true]\nrecord accepts typed decision, matrix, verification, decline or decline-revoke entries. version replaces the managed section in --source and publishes immutable bytes. materialize requires an ignored, untracked path; --remove true cleans that exact digest-checked file.');return;}
   const allowed=['issue','evidence-root',...({record:['record'],render:[],list:[],version:['source'],materialize:['version','worktree','digest','remove']}[command]??[])];
   requireThat(Object.keys(args).every(k=>allowed.includes(k)),'unknown option');
   const options={...args,evidenceRoot:args['evidence-root']};

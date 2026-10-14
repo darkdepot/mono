@@ -23,53 +23,48 @@ Read now:
 
 Read when:
 
-- `references/issue-only-lane.md` — when lifecycle_state_entity=issue, or a lane freeze/follow-up/cancel decision is in play.
+- `references/issue-only-lane.md` — Issue lifecycle or lane decisions.
+- `references/review-admission.md` — findings or decline proposals.
 
-Before work/resume: identity, package/config/validation, git/diff/base and start
-comments/certificates; apply worker snapshot/queue/confirmation rules.
+Before work/resume: identity, package/config/checks, git/diff/base, start
+comments/certificates; apply worker snapshot/queue rules.
 
 ## Workflow
 
-1. Require approved Issue and Delivery or explicit proceed approval. Before
-   scope comparison apply worker Context seam: full package for Project-first;
-   current oracle/fingerprint and re-read approval/marker/emit-fingerprint for
-   issue-only. Candidate/missing artifacts/deep-risky escalation → drift-candidate/
-   fallback; stale/unresolved context cannot ready.
-2. Run targeted checks; report unavailable/manual/browser/mobile/prod/acceptance
-   surfaces honestly. Compare final diff risk with approved risk; higher wins.
+1. Require approved Issue and Delivery/proceed approval. Apply worker Context
+   seam before scope comparison: Project-first full package; issue-only current
+   oracle/fingerprint, re-read approval/marker/emit-fingerprint. Candidate/missing
+   artifacts/deep-risky escalation → drift-candidate/fallback; stale context blocks.
+2. Targeted checks; disclose unavailable/manual/browser/mobile/prod/acceptance.
+   Final diff/approved risk: higher wins.
 3. `autoreview`: resolve installed helper path; missing → blocked. Read
    Classification/Invocation in references/autoreview-routing.md; resolve
    [role:autoreview](references/model-policy.md#roles), explicit engine/model/
    thinking effort. Never substitute reviews/defaults.
-4. Full/final deep or risky: mandatory --mode local helper loop, fix accepted
-   findings, safely commit. Short tiny/standard: optional local pass;
-   mandatory targeted checks/commit/collection. Local clean never certifies
-   committed scope: --mode branch --base <actual base>, or --mode commit --commit
-   <ref> for single/already-landed scope. Record commands; failures block.
-   `claude-cli`, every risk/profile: external collection only, no in-worker pass
-   (nested sandbox unavailable). Check/commit; publish pinned collect:false gate's
-   returned request, await confirmation, rerun gate. Fix/recheck/recommit/recollect
-   to pass under unchanged model/effort/clean-result rules. Codex keeps local loop.
-5. Certifying review: exit 0, complete clean result, no actionable residuals.
-   --max-priority P2 accepts clean/scoped-clean or exit-0 filtered/correct with no
-   accepted/missing findings and only P3 filtered. Record P3 advisory; no P3-only
-   loops. Check findings against contracts/code; reject with evidence or apply
-   small defensible owner-scoped fixes. No broad/release-sensitive rewrites or
-   weakened/deleted/rewritten tests for green. Changes repeat targeted checks and
-   required local loop; tooling/decision blockers park.
-6. Reclassify after fixes. Sequencer: orchestrator preflight-collect, then
-   gate.mjs preflight collect:false; never worker collection. Missing/hand-made/
-   incomplete/stale committed-scope proof fails. Keep failed runs/dispositions;
-   receipt supplies iterations. Short may report 0 local passes + N collections.
-7. Safe commit through ce-commit/repo convention; otherwise name remaining action.
+4. Commit before review. Full/final deep or risky: mandatory helper loop on
+   committed bytes, --mode branch --base <actual base>; fix/recheck/recommit
+   before another pass. Short tiny/standard: optional local pass; checks, commit
+   and collection mandatory. Record commands; failures block.
+   `claude-cli`: external collection only (nested sandbox unavailable); publish
+   pinned collect:false gate's returned request, confirm, rerun gate.
+5. Certifying review: complete clean exit 0, no actionable residuals; P3-only
+   filtered/correct is advisory, never another loop. For findings apply
+   references/review-admission.md: fix or propose a decline with proof in the
+   phase report. Only the orchestrator approves; a local proposal cannot certify.
+   No broad/release-sensitive rewrites or weakened tests for green. Fixes repeat
+   checks and the committed loop; tooling/decision blockers park.
+6. Reclassify fixes. Sequencer: orchestrator preflight-collect, then gate.mjs
+   preflight collect:false; no worker collection. Missing/hand-made/incomplete/
+   stale proof fails. Keep failures/dispositions; receipt supplies iterations.
+   Short may report 0 local passes + N collections.
+7. Record the safe commit under repo convention; otherwise name remaining action.
    Record full `mono-preflight certificate` in Linear; dispatch queues
    append #/certificate (single copy). Keep every Issue verification line and
    worker recovery/lead rules.
 
 Statuses: ready, blocked, drift-candidate, needs-human. Ship judges unconfirmed
-drift; outside-package work → handoff/atomic repair before PR. Issue-only freeze:
-fingerprint-matching independently shippable scope; expansion → follow-up Project, else cancel.
-New follow-up lead/assignee: acting user; preserve owners. Apply lane/Tiny Output.
+drift; package expansion needs handoff/atomic repair. Apply lane freeze/exit and
+Tiny Output; acting user leads new follow-ups, existing owners remain.
 
 Certificate:
 
@@ -80,7 +75,8 @@ Issue(s): <keys>
 Branch: <branch>; commit state: <clean/dirty/committed>
 Changed files: <count/list/summary>
 Local verification: <commands/outcomes>
-Autoreview: <clean|blocked|needs-human|unavailable>; final command: <scope helper command>; clean result: <exit 0 + clean line|none>
+Autoreview: <clean|accepted-with-declines|blocked|needs-human|unavailable>; final command: <scope helper command>; result: <exit 0 + clean line|accepted-with-declines + receipt|none>
+Autoreview declines: <none|finding id; basis; approvedBy for each>
 Autoreview route: risk=<tiny|standard|deep|risky>; source=<Linear|diff>; critical=<none|signal>; model=<resolved model id>; effort=<low|medium|high|xhigh>; reclassified=<no|summary>
 Autoreview loop: <iterations>; accepted findings fixed: <none/list>; residual actionable findings: <none/list; ready: none>
 Drift candidate: <none/summary>
@@ -89,8 +85,7 @@ Not checked: <manual QA/browser/mobile/deploy/...>
 Next: <mono:ship | mono:handoff | needs-human>
 ```
 
-Final: certificate with Russian decision/unblock, git, boundary, review proof,
-drift and next owner.
+Final: certificate, Russian decision/unblock, git/boundary/review proof/drift/next.
 
 Claude ready certificate adds `Delivery differences:`: same-session startup
 stop/resume; external committed-head pre-PR review, no in-worker pass.

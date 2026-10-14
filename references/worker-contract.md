@@ -4,21 +4,20 @@
 
 ## AFK Contract
 
-Use dispatch Issue/branch/worktree. No branch changes/sub-workers/session
-management/other-Issue edits or orchestrator state access (workers.json/ledger.md/
-control.json/dispatch/consumed/logs/other reports), except own
-consumed/<KEY>-gate-ack-a<N>.json reads. No secrets/.orchestrator commits or user
-questions: mailbox question/recommendation, stop. Only gates read registry/dispatch.
+Use dispatch Issue/branch/worktree. No branch changes, sub-workers, session
+management, other-Issue edits or orchestrator state access (workers.json/ledger.md/
+control.json/dispatch/consumed/logs/other reports); own
+consumed/<KEY>-gate-ack-a<N>.json reads only. No secrets/.orchestrator commits or
+user questions: mailbox recommendation, stop. Only gates read registry/dispatch.
 Report before stops; passed pause ack only. Sequenced stops park; standalone
 keeps statuses.
 
 ## Orchestration Mode Precedence
 
-Snapshot replaces Linear/resolver; skill owns rules, dispatch facts/pins/paths.
-Queue after gates; confirm orchestrator application/read-back before progress.
-Disclose lag; no application claims or judgment of unapplied state. Missing inputs
-block; never infer/skip/defer checks. Standalone parks needs-decision; interactive
-keeps direct access/approval, lifecycle handshake.
+Snapshot replaces Linear/resolver; skill owns rules, dispatch facts. Queue after
+gates; confirm application/read-back before progress. Disclose lag; never judge
+unapplied state or infer/skip checks. Missing inputs block. Standalone parks
+needs-decision; interactive retains direct access/approval and handshake.
 
 ## Pack identity gate invocation
 
@@ -56,13 +55,13 @@ denial: same name in <worktree>/.orchestrator, never both.
 }
 ```
 
-Gate names unique/nonempty; gates-passed: exact set/all pass; blocked: nonempty
-subset/one blocked. Blocked ack precedes report (missing blocked; adverse
-needs-human), no move. Passed: no code/move/queue/report. Codex wait-ack deadline:
-ack mtime + ackWaitSec; expiry parks write-unconfirmed. Applied read-backs amend
-state: delivery check, no identity rerun. Resume: Codex exits, desktop/fallback
-keeps session; all move read-backs plus identity/check rerun. Never repeat moves.
-No-move retry: current snapshot, no ack/amendment. Consumption is not approval.
+Unique/nonempty gate names. gates-passed: exact set/all pass; blocked: nonempty
+subset/one blocked. Blocked ack before report (missing blocked; adverse needs-human),
+no move. Passed: no code/move/queue/report. Codex wait-ack expires at ack mtime +
+ackWaitSec → write-unconfirmed. Applied read-backs amend state; delivery check,
+no identity rerun. Resume: Codex exits; desktop/fallback retains session; all move
+read-backs and identity/check rerun. Never repeat moves. No-move retry: current
+snapshot, no ack/amendment. Consumption is not approval.
 
 `claude-cli`: passed startup ack stops; orchestrator applies/read-backs, resumes
 same session. Phase/collection waits: plain pack command, foreground, full existing
@@ -86,8 +85,8 @@ fallback.
 Before lifecycle/scope gates resolve Issue/marker/config/verified label/
 authenticated approval/emit-fingerprint from dispatch snapshot. Whole-body
 SHA-256 only; no inferred oracle/lane/sixth field. Retain parent/marker/label/
-approval provenance for fallback. Project-first requires approved
-Project/PRD/Spec-or-exception/Issue; escaped candidate proves nothing.
+approval provenance for fallback. Project-first needs approved
+Project/PRD/Spec-or-exception/Issue; candidate escape is not proof.
 Apply `references/issue-only-lane.md` Context Contract/Resolver/fallback,
 candidate/freeze/exit: `approval_status=approved-fresh`, matching fingerprints/
 owner, eligible risk, oracle acceptance/verification. Valid lane needs no Project
@@ -99,7 +98,7 @@ outside lane. Ship bad approval stops gates/PR → no-promotion handoff.
 ## Delivery and pre-ship gates
 
 Readiness-only: no findings/mutations/repair/install. PASS inspected/no blockers;
-FAIL violation; BLOCKED inputs unavailable. Return mode/meaning/boundary/unblock;
+FAIL violation; BLOCKED unavailable inputs. Return mode/meaning/boundary/unblock;
 failure: FAIL - Linear <mode> not ready.
 Project delivery: Delivery/current PRD/Spec-or-exception/approved Issues/set and
 start approval/coherent risk-review; docs alone fail. Issue-only pre-activation:
@@ -113,36 +112,35 @@ package creation.
 
 ## Review contract
 
-Package/config and branch/PR review is report-only: no artifact/comment/
-Issue/PR/lifecycle/approval/worker writes. Outcomes: ready, advisory-ready,
-needs-fixes, blocked. Apply artifact/execution quality, coherence/feasibility/
-one-PR/durable AFK-HITL and applicable UI/security/data/ship/deep-risky architecture.
-Valid lane needs no Project/docs. Return verdict/meaning/mode/risk/gate-reason/
-inspected/boundary/next; blocking/proposed-fix/decision/fyi each carry artifact/
-evidence/impact/recommendation/owner. Missing context/disposition blocks. Accepted
-repair routes handoff/issue renewal/ship drift, never review.
+Review package/config/branch/PR read-only: no artifact/comment/Issue/PR/lifecycle/
+approval/worker writes. Outcomes: ready, advisory-ready, needs-fixes, blocked.
+Apply artifact/execution quality, coherence, feasibility, one PR, durable AFK-HITL
+and applicable UI/security/data/ship/deep-risky architecture. Valid lane needs no
+Project/docs. Return verdict/meaning/mode/risk/gate-reason/inspected/boundary/next;
+each blocking/proposed-fix/decision/fyi: artifact/evidence/impact/recommendation/owner.
+Missing context/disposition blocks. Repairs: handoff/issue renewal/ship drift.
 
 ## Execution and artifact handling
 
 Apply `references/execution-quality.md`/`references/artifact-quality.md`.
-Intake: explicit paths → fresh Linear package/reviews → decisions → configured
-narrow roots → scoped gstack; no broad scans, absent roots unavailable. Newer
-approved Linear outranks scratch; stale evidence supports compatible decisions
-only. Missing/conflicting scope/proof/risk/slicing: boundary/stop before writes;
-no stale contracts/certificates. Notes: read/unavailable/stale_or_ignored/
-conflicts/decisions_carried_forward/confidence_boundary (none if empty), one Russian
-chat sentence. Translate roles; never paste local bodies.
+Intake order: explicit paths, fresh snapshot package/reviews, decisions,
+configured narrow roots, scoped gstack. No broad scans; absent roots unavailable.
+Newer approved Linear outranks scratch; stale evidence carries compatible
+choices only. Missing/conflicting scope, proof, risk or slicing: stop before
+writes; no stale certificates. Notes: read/unavailable/stale_or_ignored/conflicts/
+decisions_carried_forward/confidence_boundary (omit empty), one Russian sentence.
+Translate roles; no local body copies.
 
 ## Certificate recovery
 
-Use latest marker-bearing Linear comment/resource; never quote markers elsewhere.
-Apply Machine Blocks In Linear Comments in `references/human-friendly-output.md`;
+Recover latest marker-bearing Linear comment/resource; quote markers only there.
+Apply `references/human-friendly-output.md` Machine Blocks In Linear Comments;
 report/chat omit human lead.
 
 ## Delivery Reports and Capsule
 
-Mono-deliver: one dispatch, terminal green/parked, intermediate ready/
-implemented-needs-preflight; park stops, no stage respawn. Standalone keeps
+Mono-deliver: one dispatch; terminal green/parked, intermediate ready/
+implemented-needs-preflight. Stops park; no stage respawn. Standalone retains
 statuses/certificates.
 
 Phase: reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json; denial: same name in
@@ -179,7 +177,7 @@ Publish only publishRequest in payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
 target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate even
 on failure; confirmation proves completion only. Verify collect:false.
-Findings: fix/recommit/request; transient: same head/route, increment n/sequence.
+Findings: apply references/review-admission.md, fix/recommit/request or report decline proposals; transient: same head/route, increment n/sequence.
 Ready on pass.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
@@ -224,6 +222,7 @@ scope-drift-needs-handoff, write-unconfirmed, evidence-limit (предел до�
 Decisions: exact question/recommendation. Orchestrator reflects parked in Linear
 this turn/read-back. Green: confirmed queues/current-head gates pass.
 
-Keep Issue «Как проверить» verbatim/in order; pass/deferred/not-run, never unrun
-pass; name later-stage owner. Evidence: judgment check: + inspected state.
-Repeat pins. Standalone: dispatched path/status; sequenced: intermediate.
+Keep every Issue «Как проверить» line verbatim/in order in verification_items;
+pass | deferred | not-run, never unrun pass; name deferred owner. Evidence names
+judgment check and inspected state. Repeat pins; standalone dispatched status,
+sequenced intermediate.

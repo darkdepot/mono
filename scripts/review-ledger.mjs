@@ -9,7 +9,7 @@ import { currentEntries, readJournal, validateJournal } from './decisions.mjs';
 
 const causes = ['fix','head-change','retry','final-request','self-check','unknown'];
 const statuses = ['scoped-clean','findings','filtered','incorrect','incomplete','reviewer_unavailable','withheld','unknown'];
-const kinds = ['collection-request','helper-invocation','internal-pass'];
+const kinds = ['collection-request','helper-invocation','internal-pass','decline'];
 const issuePattern = /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/;
 const nonnegative = value => Number.isSafeInteger(value) && value >= 0;
 const alias = source => ({type:source.type,ref:source.ref});
@@ -158,6 +158,23 @@ export function buildReviewLedger({issue,sources}) {
     const invocation=event('helper-invocation',key,{...data,...(data.review?reviewFacts(data.review):{})},refs);
     state.events.push(invocation);addPasses(invocation,state);
   }
+  const declineIds=new Set();
+  for(const source of sources.filter(s=>s.type==='journal')) {
+    validateJournal(source.data);
+    if(source.data.issue!==issue)throw new Error('decline journal issue mismatch');
+    const revoked=new Set(source.data.entries.filter(e=>e.type==='decline-revoke').map(e=>e.forId));
+    for(const entry of source.data.entries.filter(e=>e.type==='decline')) {
+      if(declineIds.has(entry.id))continue;
+      declineIds.add(entry.id);
+      const candidates=[...collections.values()].filter(g=>g.receipts.some(r=>r.runId===entry.receipt.runId&&
+        r.collectionId===entry.receipt.collectionId));
+      if(candidates.length!==1){unresolved(source.attempt??1,'decline collection correlation unavailable',[alias(source)]);continue;}
+      const attempt=candidates[0].attempt;
+      attemptState(attempt).events.push({...event('decline',entry.id,{attempt,head:entry.head,datasetVersion:entry.datasetVersion},[alias(source)]),
+        findingId:entry.finding.id,receipt:entry.receipt,basis:entry.basis.type,approvedBy:entry.approvedBy,
+        recordedAt:entry.recordedAt,revoked:revoked.has(entry.id)});
+    }
+  }
   return {issue,attempts:[...attempts.values()].sort((a,b)=>a.attempt-b.attempt)};
 }
 function addPasses(invocation,state) {
@@ -168,7 +185,7 @@ function addPasses(invocation,state) {
 }
 export function summarizeLedger(ledger) {
   const events=ledger.attempts.flatMap(a=>a.events),collections=events.filter(e=>e.kind==='collection-request'),invocations=events.filter(e=>e.kind==='helper-invocation');
-  const summary={collections:collections.length,withheld:collections.filter(e=>e.status==='withheld').length,invocations:invocations.length,
+  const summary={declines:events.filter(e=>e.kind==='decline').length,collections:collections.length,withheld:collections.filter(e=>e.status==='withheld').length,invocations:invocations.length,
     causes:Object.fromEntries(causes.map(c=>[c,invocations.filter(e=>e.launchCause===c).length])),
     announcedPasses:invocations.some(e=>e.announcedPasses!==null)?invocations.reduce((n,e)=>n+(e.announcedPasses??0),0):null,
     confirmedPasses:invocations.some(e=>e.confirmedPasses!==null)?invocations.reduce((n,e)=>n+(e.confirmedPasses??0),0):null,
@@ -212,7 +229,8 @@ function helperLaunch(command, knownCommands) {
   return python || shell || clone;
 }
 export async function readLedgerSources({issue,root,evidenceRoot}) {
-  const sources=[];
+  const sources=[],journalFile=path.join(evidenceRoot,'decisions',`${issue}.json`);
+  if(fs.existsSync(journalFile))sources.push({type:'journal',ref:journalFile,data:readJournal({evidenceRoot,issue})});
   const withheldFile=path.join(evidenceRoot,'reviews',`${issue}-withheld.json`);
   if(fs.existsSync(withheldFile))for(const data of jsonFile(withheldFile))sources.push({type:'ledger',ref:withheldFile,attempt:data.attempt,data});
   for(const file of [...files(path.join(root,'consumed'),true),...files(path.join(root,'reports'),true)]) {
@@ -352,7 +370,7 @@ export function printLedger(ledger) {
   const summary=summarizeLedger(ledger);
   const lines=[`Review ledger ${ledger.issue}`,'| Attempt | Collections | Withheld | Invocations | Announced passes | Confirmed passes |','| --- | ---: | ---: | ---: | ---: | ---: |'];
   for(const attempt of ledger.attempts){const s=summarizeLedger({attempts:[attempt]});lines.push(`| ${attempt.attempt} | ${s.collections} | ${s.withheld} | ${s.invocations} | ${s.announcedPasses??'unknown'} | ${s.confirmedPasses??'unknown'} |`);}
-  lines.push(`Causes: ${Object.entries(summary.causes).map(([k,v])=>`${k}=${v}`).join(', ')}`,`Usage: measured ${summary.measured} of ${summary.invocations}`,`Unresolved coverage: ${summary.unresolvedCoverage}`);
+  lines.push(`Declines: ${summary.declines}`,`Causes: ${Object.entries(summary.causes).map(([k,v])=>`${k}=${v}`).join(', ')}`,`Usage: measured ${summary.measured} of ${summary.invocations}`,`Unresolved coverage: ${summary.unresolvedCoverage}`);
   for(const a of ledger.attempts)for(const gap of a.unresolvedCoverage)lines.push(`- attempt ${a.attempt}: ${gap.reason} (${gap.sources.map(s=>s.ref).join(', ')})`);
   return lines.join('\n');
 }

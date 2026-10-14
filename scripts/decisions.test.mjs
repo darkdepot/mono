@@ -130,3 +130,25 @@ test('interrupted archive publication recovers only an identical retry under the
     assert.equal((await versionDataset(options)).version,2);
   }finally{fs.rmSync(evidenceRoot,{recursive:true,force:true});}
 });
+
+import {declineFixture,seal,sha} from './decline-fixtures.mjs';
+import {findingIdentity} from './decisions.mjs';
+test('decline journal binds full canonical finding and preserves the receipt dataset',async()=>{
+  const evidenceRoot=scratch(),issue='MONO-999',source=path.join(evidenceRoot,'scope.md'),f=declineFixture();
+  try {
+    fs.writeFileSync(source,'# Original review scope\n');
+    const before=await versionDataset({evidenceRoot,issue,source}),bytes=fs.readFileSync(before.archive);
+    assert.deepEqual(findingIdentity(f.receipt,0),f.entry.finding);
+    await recordDecision({evidenceRoot,issue,entry:f.entry});
+    const rendered=renderDecisions(readJournal({evidenceRoot,issue}));
+    assert.ok(rendered.includes(f.entry.finding.id));assert.ok(!rendered.includes(f.entry.basis.evidence.output));
+    assert.deepEqual(fs.readFileSync(before.archive),bytes);
+    const after=await versionDataset({evidenceRoot,issue,source});assert.equal(after.version,2);
+    await assert.rejects(recordDecision({evidenceRoot,issue,entry:{...f.entry,dangerous:true}}),/digest/);
+    const bad={...f.entry,id:'decline-2',approvedBy:'worker'};delete bad.recordDigest;
+    await assert.rejects(recordDecision({evidenceRoot,issue,entry:seal(bad)}),/approval/);
+    const evidence={citation:'New proof'},revoke=seal({type:'decline-revoke',id:'r-1',forId:f.entry.id,declineDigest:f.entry.recordDigest,evidence,evidenceDigest:sha(evidence),reason:'new proof',approvedBy:'orchestrator',approvedAt:'2026-10-14T01:02:00Z',recordedAt:'2026-10-14T01:02:00Z'});
+    await recordDecision({evidenceRoot,issue,entry:revoke});
+    assert.ok(!renderDecisions(readJournal({evidenceRoot,issue})).includes(f.entry.finding.id));
+  }finally{fs.rmSync(evidenceRoot,{recursive:true,force:true});}
+});

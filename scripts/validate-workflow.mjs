@@ -5585,6 +5585,7 @@ const STRING_PINS = [
   ["skills/preflight/SKILL.md","Local verification:"],
   ["skills/preflight/SKILL.md","Autoreview:"],
   ["skills/preflight/SKILL.md","Autoreview loop:"],
+  ["skills/preflight/SKILL.md","Autoreview declines:"],
   ["skills/preflight/SKILL.md","Drift candidate:"],
   ["skills/preflight/SKILL.md","Not checked:"],
   ["skills/preflight/SKILL.md","Next:"],
@@ -5865,6 +5866,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "Autoreview declines:",
   "session-selected", "Модель оркестратора:", "<модель запуска>", "не удалось определить",
   "git show",
   "landing-plan.mjs", "LANDING-PLAN", "LANDING-HEAD", "LANDING-REFRESH", "--sibling",
