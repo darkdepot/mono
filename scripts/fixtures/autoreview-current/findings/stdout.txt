@@ -1,0 +1,17 @@
+autoreview target: branch
+branch: fixture
+engine: claude
+model: fixture-model
+thinking: medium
+tools: on
+web_search: on
+ref: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bundle: 269 bytes; review passes: 1
+review plan: 1 passes; 4713 total prompt bytes
+autoreview findings: 1
+[P2] Preserve the required value
+example.py:1
+The changed branch drops the required value.
+
+overall: patch is incorrect (0.9)
+The required value is lost.

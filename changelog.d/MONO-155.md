@@ -1,0 +1,2 @@
+- Pin the external autoreview helper source and installation proof; test current upstream status/report output through clean and approved-decline gates.
+- Split expected changes above roughly 1,000 lines in critical paths during handoff; retain the worker reading ceiling and existing model policy.

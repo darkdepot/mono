@@ -202,6 +202,7 @@ Execution-mode workflow:
    - Tech Spec as implementation truth that traces HOW decisions back to PRD requirements.
    - Apply [landing slicing](references/landing.md#scheduling) when forming Issue dependencies.
    - Proposed Issue slicing with one-PR default, `AFK`/`HITL` readiness, and explicit dependencies if split.
+   - Split work expected to exceed roughly 1,000 changed lines in a critical path (gates, release, security, data) into smaller one-PR Issues during package assembly; give each a verifiable contract and dependencies.
    - Risk classification and whether the review gate is required, advisory, skipped, or blocked.
    - Remaining assumptions, if any, that the user should see before Issue creation.
 4. Run a content-shape review on the package:

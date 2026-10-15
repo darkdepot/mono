@@ -1,0 +1,13 @@
+autoreview target: branch
+branch: fixture
+engine: claude
+model: fixture-model
+thinking: medium
+tools: on
+web_search: on
+ref: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bundle: 269 bytes; review passes: 1
+review plan: 1 passes; 4713 total prompt bytes
+autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority
+overall: patch is correct (0.9)
+No actionable findings in the selected branch.

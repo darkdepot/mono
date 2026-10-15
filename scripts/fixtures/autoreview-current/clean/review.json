@@ -1,0 +1,13 @@
+{
+  "findings": [],
+  "overall_correctness": "patch is correct",
+  "overall_explanation": "No actionable findings in the selected branch.",
+  "overall_confidence": 0.9,
+  "provider_report": {
+    "findings": [],
+    "overall_correctness": "patch is correct",
+    "overall_explanation": "No actionable findings in the selected branch.",
+    "overall_confidence": 0.9
+  },
+  "review_status": "scoped-clean"
+}
