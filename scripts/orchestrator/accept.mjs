@@ -15,15 +15,6 @@ const run = (script, args, options = {}) => {
   catch (error) { throw new Error([error.stdout, error.stderr, error.message].filter(Boolean).join("\n"), { cause: error }); }
 };
 
-// Capture only the launch identity/state whose stability proves this invocation
-// was refused before spawn. Activity timestamps may advance independently.
-const resumeBoundary = entry => canonical({ issue: entry.issue, attempt: entry.attempt,
-  thread_id: entry.thread_id, pid: entry.pid, procStart: entry.procStart,
-  handshake: entry.handshake, pins: entry.pins, pinsVersion: entry.pinsVersion ?? 0,
-  last_resume: entry.last_resume ?? null, last_wait: entry.last_wait ?? null });
-const liveWaitRefusal = error => error.cause?.status === 1 && !error.cause.signal &&
-  error.cause.stdout === "" && error.cause.stderr === "resume: worker process is still live; resume refused\n";
-
 function validatedAck(root, issue, attempt, outcome) {
   const entry = registryEntry(root, issue, attempt);
   if (path.basename(entry.log) !== `${issue}-mono-deliver-a${attempt}.jsonl`) throw new Error("ack log not registry-correlated");
@@ -229,35 +220,18 @@ export async function acceptAmend(args) {
       let { record, resumed } = prepared;
       if (prepared.state !== "registered") {
         if (prepared.state === "prepared") {
-          let boundary;
-          await withLock(path.join(root, "launch.lock"), () => {
-            const entry = registryEntry(root, issue, attempt); validateAmendment(entry, record);
-            if ((entry.pinsVersion ?? 0) !== record.currentVersion || canonical(entry.last_resume ?? null) !== canonical(record.previousResume))
-              throw new Error("resume state changed before launch; preserve amendment evidence");
-            boundary = resumeBoundary(entry);
-            record = { ...record, launchMayHaveStartedAt: new Date().toISOString() };
-            atomicJson(prepared.pendingFile, record);
-          });
           try { run("resume.mjs", ["--request", record.resumeRequest]); }
           catch (error) {
-            if (liveWaitRefusal(error)) {
-              const absent = await withLock(path.join(root, "launch.lock"), () => {
-                const entry = registryEntry(root, issue, attempt);
-                if (entry.handshake !== "wait" || resumeBoundary(entry) !== boundary ||
-                    canonical(readJson(prepared.pendingFile)) !== canonical(record) ||
-                    validateAmendment(entry, record).state !== "prepared") return false;
-                const unstarted = { ...record }; delete unstarted.launchMayHaveStartedAt;
-                restoreAmendmentGrants(root, entry, unstarted);
-                atomicJson(prepared.pendingFile, unstarted); record = unstarted;
-                return true;
-              });
-              if (absent) throw new Error(`${error.message}\nproven non-delivery; prior grants restored; retry identical request after worker exit`);
-            }
-            // Command exit status is not delivery evidence. A later identical
-            // retry can register a correlated delivery, but never relaunch blindly.
-            state = amendmentState(registryEntry(root, issue, attempt), record).state;
-            throw new Error(`${error.message}\n${state === "delivered" ? "correlated delivery awaits registration; retry identical request" : "launch may have started without correlated delivery; preserve evidence; automatic restart refused"}`);
+            await withLock(path.join(root, "launch.lock"), () => {
+              const entry = registryEntry(root, issue, attempt); record = readJson(prepared.pendingFile);
+              state = validateAmendment(entry, record).state;
+              if (state === "prepared" && !record.launchMayHaveStartedAt) restoreAmendmentGrants(root, entry, record);
+            });
+            throw new Error(`${error.message}\n${state === "delivered" ? "correlated delivery awaits registration; retry identical request" :
+              record.launchMayHaveStartedAt ? "launch may have started without correlated delivery; preserve evidence; automatic restart refused" :
+                "proven non-delivery; prior grants restored; retry identical request after refusal is resolved"}`);
           }
+          record = readJson(prepared.pendingFile);
         }
         await withLock(path.join(root, "launch.lock"), () => {
           const entry = registryEntry(root, issue, attempt), verified = validateAmendment(entry, record);

@@ -1,5 +1,5 @@
 import { packLayout, canonical } from './runtime.mjs';
-import { copyPluginFixture } from './plugin-fixture.mjs';
+import { copyPluginFixture, writeWatcherFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import crypto from "node:crypto";
@@ -191,7 +191,7 @@ test("backup switch named launch contracts", async t => {
         git("add", "."); git("commit", "--allow-empty", "-m", "reverse backup mandate"); setupBase = git("rev-parse", "HEAD");
       }
       const root = path.join(scratch, "control-" + ++serial), temp = path.join(scratch, "temp-" + serial);
-      fs.mkdirSync(temp); write(path.join(root, "workers.json"), {}); write(path.join(root, "control.json"), { state: "active" });
+      fs.mkdirSync(temp); write(path.join(root, "workers.json"), {}); write(path.join(root, "control.json"), { state: "active" }); writeWatcherFixture(root);
       const roots = [repo, path.join(repo, ".git"), path.join(root, "reports"), temp].sort();
       const request = { root, issue: "MONO-999", worktree: repo, branch: "fixture", base: setupBase, packRoot: pack, skillsRoot: pack, ...identity,
         role: primary === "codex-cli" ? "worker-default" : "worker-claude", transport: primary, dispatchFile: path.join(root, "task.md"), evidenceRoot: path.join(root, "evidence"),
@@ -849,7 +849,7 @@ test("backup switch named launch contracts", async t => {
       const snapshot = path.join(scratch, "snapshot"), writable = path.join(scratch, "writable.json"); write(writable, [temp]);
       write(path.join(snapshot, "issue-MONO-998.md"), "# Backup fixture\n# Что сделать\nSwitch worker.\n# Готовность агента\nAFK\n# Ключевые контракты\nRetain gates.\n# Как проверить\nNamed fixtures.\nРиск: risky\n");
       for (const [name, text] of [["approval.md", "Approved package/start; Project Delivery."], ["project-brief.md", "Fixture"], ["prd.md", "## Кратко\nFixture"], ["tech-spec.md", "## Кратко\nFixture"]]) write(path.join(snapshot, name), text);
-      write(path.join(root, "workers.json"), {}); write(path.join(root, "control.json"), { state: "active" });
+      write(path.join(root, "workers.json"), {}); write(path.join(root, "control.json"), { state: "active" }); writeWatcherFixture(root);
       const { dispatch } = await import(pathToFileURL(path.join(pack, "scripts/orchestrator/dispatch.mjs")));
       const args = { root, issue: "MONO-998", config: path.join(dispatchRepo, ".agents/mono-workflow.config.json"), snapshot,
         profile: "full", handshake: "resume", "worker-writable-roots": writable };
@@ -1520,7 +1520,7 @@ console.log(JSON.stringify(result));
     write(githubFile, { github, checks: checks.map(c => c.name === "validate" ? { ...c, conclusion: "FAILURE" } : c) });
     assert.match(shipCall().stdout, /fail: check validate not green/);
 
-    write(path.join(state, "control.json"), { state: "active", halt: false }); write(path.join(state, "workers.json"), {});
+    write(path.join(state, "control.json"), { state: "active", halt: false }); writeWatcherFixture(state, env); write(path.join(state, "workers.json"), {});
     const capture = path.join(root, "codex-args.json"), threadReady = path.join(root, "thread-ready");
     write(path.join(bin, "codex"), `#!/usr/bin/env node
 const fs=require('node:fs'); fs.writeFileSync(${JSON.stringify(capture)},JSON.stringify(process.argv.slice(2)));
@@ -1568,7 +1568,7 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     process.kill(livePid, 0);
     const watch = pass(run(process.execPath, [path.join(runtime, "watch-workers.mjs"), "--root", state, "--once"], root, env));
     assert.match(watch.stdout, /EVENT:halt/);
-    write(path.join(state, "control.json"), { state: "active", halt: false });
+    write(path.join(state, "control.json"), { state: "active", halt: false }); writeWatcherFixture(state, env);
     write(path.join(state, "reports/MONO-999-gate-ack-a1.json"), { issue: request.issue, phase: "gate", status: "gates-passed",
       gates: request.gates.map(gate => ({ gate, status: "pass", evidence: "fixture" })) });
     const { consumeAck } = await import(pathToFileURL(path.join(runtime, "orchestrator/consume-gate-ack.mjs")));
@@ -1578,6 +1578,7 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     await assert.rejects(consumeAck({ root: state, issue: request.issue, attempt: 1, outcome: "applied", readback: [] }), /resumed writer registration for this ack/);
     const ackPath = path.join(state, "reports/MONO-999-gate-ack-a1.json"), ackBytes = fs.readFileSync(ackPath);
     fs.unlinkSync(ackPath);
+    writeWatcherFixture(state);
     const gateRecovery = await resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile }); livePid = gateRecovery.pid;
     assert.equal(json(path.join(state, "workers.json"))[request.issue].last_resume.gateAckDigest, null);
     fs.writeFileSync(ackPath, ackBytes);
@@ -1620,6 +1621,7 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     await new Promise(resolve => setTimeout(resolve, 100));
     write(path.join(repo, "recovery-dirty.txt"), "preserve recovery work");
     const extra = path.join(root, "extra"); fs.mkdirSync(extra);
+    writeWatcherFixture(state);
     await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [root], workerWritableRoots: [repo, mailbox, root] }), /evidenceRoot must be outside/);
     await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [extra] }), /effective write grants differ/);
     await assert.rejects(resumeWorker({ root: state, issue: request.issue, resumeFile: dispatchFile, extraWritable: [state], workerWritableRoots: [repo, mailbox, state] }), /only reports may be worker-writable/);
@@ -1670,13 +1672,14 @@ test("launch and resume derive exact Git grants from the requested worktree", as
     pass(run("git", ["worktree", "add", "-b", "linked", worktree], main, env));
     const pins = packLayout(skills).identity();
     const dispatchFile = path.join(root, "prompt.md"), capture = path.join(root, "starts.jsonl");
-    write(dispatchFile, "fixture"); write(path.join(state, "control.json"), { state: "active", halt: false });
+    write(dispatchFile, "fixture"); write(path.join(state, "control.json"), { state: "active", halt: false }); writeWatcherFixture(state, env);
     write(path.join(state, "workers.json"), {}); fs.mkdirSync(mailbox);
     write(path.join(bin, "codex"), `#!/usr/bin/env node
 const fs=require('node:fs');fs.appendFileSync(${JSON.stringify(capture)},JSON.stringify({args:process.argv.slice(2),gitDir:process.env.GIT_DIR,gitSentinel:process.env.GIT_MONO_SENTINEL,credentialDigests:Object.fromEntries(['GITHUB_TOKEN','PRODUCT_API_KEY','OPENAI_API_KEY'].map(k=>[k,require('node:crypto').createHash('sha256').update(process.env[k]??'').digest('hex')]))})+'\\n');
 console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
 `); fs.chmodSync(path.join(bin, "codex"), 0o700);
     process.env.PATH = `${bin}:${process.env.PATH}`;
+    writeWatcherFixture(state);
     const { spawnWorker, resumeWorker } = await import(pathToFileURL(path.join(skills, "scripts/orchestrator/launch.mjs")));
     const expected = [worktree, mailbox, common, metadata].sort();
     const request = { root: state, issue: "MONO-997", worktree, branch: "linked", base: head, packRoot: skills, skillsRoot: skills,
@@ -2200,6 +2203,7 @@ test('scratch short launch pins profile, handshake, pins digest, version and pro
     write(path.join(bin, 'ps'), '#!/usr/bin/env node\nconsole.log("Mon Jan  1 00:00:00 2024");\n');
     for (const tool of ['codex', 'ps']) fs.chmodSync(path.join(bin, tool), 0o700);
     process.env.PATH = bin + path.delimiter + oldPath;
+    writeWatcherFixture(state);
     const request = { root: state, issue: 'MONO-993', worktree: repo, branch: 'delivery', base, packRoot: skills, skillsRoot: skills, ...identity,
       role: 'worker-default', dispatchFile, evidenceRoot: path.join(root, 'evidence'), writable_roots: [],
       workerWritableRoots: [repo, path.join(repo, '.git'), path.join(state, 'reports')], lifecycle_moves: [],

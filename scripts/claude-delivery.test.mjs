@@ -46,6 +46,22 @@ const withFixture = async run => {
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 };
 
+test('watch-phase-regress selects the current confirmation wait by publishedAt, then sequence', () => withFixture(f => {
+  const now = new Date().toISOString();
+  put(path.join(f.root, 'workers.json'), { [f.entry.issue]: { ...f.entry, confirmationTimeoutSec: 1800 } });
+  const shipFile = path.join(f.root, 'reports', `${f.entry.issue}-phase-ship.json`);
+  const code = { ...f.report, publishedAt: now, sequence: 3 };
+  put(f.reportFile, code);
+  f.journal(JSON.parse(JSON.stringify(f.events).replaceAll('-s1.confirmed.json', '-s3.confirmed.json')));
+  for (const publishedAt of [new Date(Date.now() - 2_000_000).toISOString(), now]) {
+    put(shipFile, { ...code, phase: 'ship', sequence: 2, publishedAt, capsule: { ...code.capsule, phase: 'ship' } });
+    const stale = new Date(Date.now() - 181_000); fs.utimesSync(f.entry.log, stale, stale);
+    const result = f.watch();
+    assert.ok(!result.includes('EVENT:stall') && !result.includes('EVENT:dead'), result);
+    assert.ok(result.includes('phase code sequence 3') && result.includes('phase ship sequence 2'), result);
+  }
+}));
+
 test("Claude foreground phase wait binds session, attempt, process instance and call ID", () => withFixture(f => {
   assert.equal(transport.waitingPhase(f.entry, f.reportFile, f.confirmation)?.callId, "fixture-call");
   for (const change of [{ thread_id: "other" }, { attempt: 2 }, { pid: 42 }, { procStart: "other" }]) {

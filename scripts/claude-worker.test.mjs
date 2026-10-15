@@ -6,7 +6,7 @@ import crypto from "node:crypto";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
-import { copyPluginFixture } from "./plugin-fixture.mjs";
+import { copyPluginFixture, writeWatcherFixture } from "./plugin-fixture.mjs";
 import { workerTransport } from "./worker-transport.mjs";
 import { requiredPairings } from "./runtime.mjs";
 
@@ -180,6 +180,7 @@ async function fixture(run, { auth, config, missingTool = false, shortWindow = f
       evidenceRoot: path.join(scratch, "evidence"), writable_roots: [temp], workerWritableRoots: roots,
       gates: [], lifecycle_moves: [], config: path.join(repo, ".agents/mono-workflow.config.json"),
       product_name: "fixture", handshake: "resume", profile: "full" };
+    writeWatcherFixture(root);
     const start = mode => { write(request.dispatchFile, JSON.stringify({ mode })); return runtime.spawnWorker(request); };
     const registry = () => JSON.parse(fs.readFileSync(path.join(root, "workers.json")));
     await run({ scratch, repo, root, bin, pack, request, start, registry, runtime, secret, git });

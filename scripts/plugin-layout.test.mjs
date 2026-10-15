@@ -7,6 +7,7 @@ import { packLayout, identity } from './runtime.mjs';
 import { checkPlugin } from './validate-plugin.mjs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { writeWatcherFixture } from './plugin-fixture.mjs';
 
 test('plugin layout shares the repository paths and reads VERSION identity', () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-layout-')));
@@ -111,6 +112,7 @@ test('dispatch pins the plugin script folder and refuses resume when that folder
     write(config, { projectName: 'Fixture', orchestration: { transport: 'codex-cli', dispatch: { product: 'fixture', evidenceRoot: path.join(scratch, 'evidence'), openDecisions: 0, verification: { command: 'node', args: ['verify.mjs'] }, lifecycle_moves: [] } } });
     write(path.join(repo, '.gitignore'), '.worktrees/\n'); run('git', ['add', '.']); run('git', ['commit', '-m', 'fixture']); run('git', ['push', 'origin', 'main']);
     write(path.join(root, 'control.json'), { state: 'active', halt: false }); write(path.join(root, 'workers.json'), {});
+    writeWatcherFixture(root, env);
     const snapshot = path.join(scratch, 'snapshot');
     write(path.join(snapshot, 'issue-MONO-999.md'), '# Fixture\n# Что сделать\nPlugin dispatch\n# Готовность агента\nAFK\n# Как проверить\nRun verification\n# Ключевые контракты\nKeep roots\nРиск: risky\n');
     for (const file of ['approval.md', 'project-brief.md', 'prd.md', 'tech-spec.md']) write(path.join(snapshot, file), 'Approved fixture');

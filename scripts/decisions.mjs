@@ -269,6 +269,11 @@ export async function versionDataset(options) {
       const v=versionAt(dir,issue,Number(match[1]));highest=Math.max(highest,v.version);
       if(v.bytes.equals(bytes))existing=v;
     }
+    if(options.initialOnly && highest) {
+      const first=fs.existsSync(path.join(dir,`${issue}-review-scope.v1.md`))?versionAt(dir,issue,1):null;
+      const selected=first?.bytes.equals(bytes)?first:versionAt(dir,issue,highest);
+      return {version:selected.version,digest:selected.digest,archive:selected.archive,created:false};
+    }
     if(existing)return {version:existing.version,digest,archive:existing.archive,created:false};
     const version=highest+1,archive=path.join(dir,`${issue}-review-scope.v${version}.md`);
     requireThat(!fs.existsSync(archive+'.sha256'),'refusing to overwrite orphan dataset digest');
