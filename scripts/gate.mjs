@@ -754,6 +754,7 @@ export function validateShipBotPolicy(policy = {}, trusted) {
 }
 export async function shipGate(request) {
   const config = deliveryConfig(request.config);
+  requireThat(request.preflight?.collect === false, "ship requires preflight collect:false request");
   const trusted = pinnedShipPolicy(request.preflight) ?? {
     botChecks: shipBotChecks(baseModelConfig(request.preflight.worktree, request.preflight.modelRoutes?.base ??
       git(request.preflight.worktree, "merge-base", request.preflight.head, request.preflight.baseRef))), botUnavailable: null };
