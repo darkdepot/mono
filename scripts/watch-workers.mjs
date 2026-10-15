@@ -1134,7 +1134,7 @@ function checkPhase(log, entry, nowMs) {
 
 function scan() {
   const nowMs = Date.now();
-  atomicJson(path.join(args.root, "watcher.json"), { pid: process.pid, procStart, packVersion, startedAt,
+  if (!args.once) atomicJson(path.join(args.root, "watcher.json"), { pid: process.pid, procStart, packVersion, startedAt,
     beatAt: new Date(nowMs).toISOString(), intervalSec: args.intervalSec });
   const registrySnapshot = loadRegistry(path.join(args.root, "workers.json"));
   const registry = registrySnapshot.entries;

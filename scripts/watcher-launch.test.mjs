@@ -133,6 +133,20 @@ test('watch-phase-regress', async () => {
   } finally { if (watcher) await stopped(watcher.pid); await f.cleanup(); }
 });
 
+test('watch-phase-regress one-shot scan preserves the live observer pulse', async () => {
+  const f = fixture(); let watcher;
+  try {
+    watcher = spawn(process.execPath, [path.join(f.pack, 'scripts/watch-workers.mjs'), '--root', f.root, '--interval-sec', '30'],
+      { env: f.env, stdio: 'ignore' });
+    const file = path.join(f.root, 'watcher.json'), deadline = Date.now() + 10000;
+    while (!fs.existsSync(file) && Date.now() < deadline) await new Promise(r => setTimeout(r, 25));
+    const before = fs.readFileSync(file);
+    assert.equal(read(file).pid, watcher.pid);
+    pass(f.call('watch-workers.mjs', '--root', f.root, '--once'));
+    assert.deepEqual(fs.readFileSync(file), before, 'one-shot observation must preserve the persistent watcher identity and pulse');
+  } finally { if (watcher) await stopped(watcher.pid); await f.cleanup(); }
+});
+
 test('launch-watcher-required through amendment resume', async t => {
   for (const name of ['missing', 'stale', 'future', 'dead', 'reused']) await t.test(name, async () => {
     const f = fixture();

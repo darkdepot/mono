@@ -1554,7 +1554,7 @@ The Monitoring Protocol defines when to intervene; the heartbeat is the
 external pulse that notices dying workers without spending orchestrator
 turns. The runtime is `scripts/watch-workers.mjs`, resolved from the dispatched
 pack root; the same source serves development and fixtures. It reads worker
-state and atomically writes only its own `watcher.json` each tick: pid,
+state and, in persistent mode, atomically writes its own `watcher.json` each tick: pid,
 procStart, packVersion, startedAt, beatAt, intervalSec. It emits one stable
 line per watcher event to stdout —
 `<ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
