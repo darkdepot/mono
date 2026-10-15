@@ -1,0 +1,37 @@
+{
+  "findings": [
+    {
+      "title": "Preserve the required value",
+      "body": "The changed branch drops the required value.",
+      "priority": "P2",
+      "confidence": 0.9,
+      "category": "bug",
+      "code_location": {
+        "file_path": "example.py",
+        "line": 1
+      }
+    }
+  ],
+  "overall_correctness": "patch is incorrect",
+  "overall_explanation": "The required value is lost.",
+  "overall_confidence": 0.9,
+  "provider_report": {
+    "findings": [
+      {
+        "title": "Preserve the required value",
+        "body": "The changed branch drops the required value.",
+        "priority": "P2",
+        "confidence": 0.9,
+        "category": "bug",
+        "code_location": {
+          "file_path": "example.py",
+          "line": 1
+        }
+      }
+    ],
+    "overall_correctness": "patch is incorrect",
+    "overall_explanation": "The required value is lost.",
+    "overall_confidence": 0.9
+  },
+  "review_status": "findings"
+}

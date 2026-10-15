@@ -67,6 +67,8 @@ raw idea → Project in Idea → discovery → reviewed and approved package
 
 Keep whole PRD and Tech Spec bodies out of Issues. Link them through Project resources and Issue chips/snapshots. Use stable requirement and acceptance IDs when required by risk. Prefer one Issue; split only into independently demonstrable vertical slices with explicit dependencies. Mark **AFK** when an agent can execute alone, or **HITL** when a named human action remains. For a bug or performance issue, carry reproduction/baseline and fix-proof expectations, or an explicit reason that the symptom cannot yet be reproduced.
 
+Handoff splits changes expected to exceed roughly 1,000 lines in critical paths (gates, release, security, data) into smaller one-PR Issues with verifiable contracts and dependencies.
+
 ### Issue-only work and repair
 
 Use `mono:issue` only when [all nine eligibility conditions](skills/issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) hold: an enabled lane, a genuinely one-PR self-contained request, eligible risk, and authenticated owner approval are essential parts of that boundary. Create the non-startable Issue first, then approve its exact whole-body fingerprint. The five-field seam selects the lane; a marker is an approval receipt, never a routing shortcut. Missing, broken or stale trust evidence fails closed. Renew an edited issue-only body through `mono:issue`; park and restart Project-first when required, without inventing Project documents inside the lane.
@@ -472,7 +474,7 @@ the mismatch, corrects the source and repeats the full verification of both tool
 Only the installing orchestrator registers or updates the shared marketplaces.
 
 Restart sessions after installation. The external `autoreview` helper remains a
-separate prerequisite in your tool's skills directory; pass that directory as
+separate prerequisite in your tool's skills directory; its [pinned upstream source, installation and output-contract proof](references/install.md#external-autoreview-helper) are documented separately. Model/effort come from pack policy, with `--max-priority P2`. Pass the external directory as
 `--skills-root` when dispatching. The plugin contains one copy of shared files:
 `skills/`, `references/`, `templates/` and `scripts/` have the repository layout.
 In Claude Code, invoke skills as `/mono:idea`, `/mono:handoff`, and so on; in Codex, run `/skills` and select the corresponding Mono skill.

@@ -119,6 +119,34 @@ migration and `--check` for shape, required fields, placeholders and forbidden f
 Config fields/policies: [README](../README.md#project-config). Use null for absent
 workflows; absent deploy blocks. `workflows.deploy` has no Land alias.
 
+## External Autoreview Helper
+
+Source: [openclaw/agent-skills, skills/autoreview](https://github.com/openclaw/agent-skills/tree/05d42d1fe0a76d00e339d7b80d248c27b0ea34d9/skills/autoreview).
+Verified upstream main on 2026-10-15: commit
+`05d42d1fe0a76d00e339d7b80d248c27b0ea34d9`; helper SHA-256
+`73ea6d7835a50c5348a52571f648be70cdd026a07139e7701237b0fec8a9cd80`.
+The helper is an external prerequisite, never vendored in Mono. The installing
+orchestrator updates it at release, after affected attempts stop; workers do not.
+Use a fresh source checkout and set `skills_root` to the external directory passed
+as `--skills-root` (normally `$HOME/.codex/skills`):
+
+```bash
+git clone https://github.com/openclaw/agent-skills.git /path/to/fresh/agent-skills
+git -C /path/to/fresh/agent-skills checkout --detach 05d42d1fe0a76d00e339d7b80d248c27b0ea34d9
+rsync -a --delete /path/to/fresh/agent-skills/skills/autoreview/ "$skills_root/autoreview/"
+diff -r /path/to/fresh/agent-skills/skills/autoreview "$skills_root/autoreview"
+"$skills_root/autoreview/scripts/autoreview" --version
+"$skills_root/autoreview/scripts/autoreview" --help
+```
+
+Require a matching tree and `autoreview source-sha256:` followed by the hash above.
+Use Python 3; install the selected engine CLI and its native authentication.
+The gate still binds the installed helper digest to each receipt. A new upstream
+version needs renewed output-fixture proof before updating this pin. The named
+`collection-helper-*` tests replay its `status.json`/`review.json` for clean and
+findings outcomes, including approved/revoked declines:
+`node --test --test-name-pattern='named collection fixtures' scripts/gate.test.mjs`.
+
 ## Project Policy
 
 External review is mandatory: missing helper blocks preflight. Pass the explicit

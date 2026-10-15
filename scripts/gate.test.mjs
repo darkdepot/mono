@@ -332,7 +332,7 @@ test("named collection fixtures through the gate CLI", async t => {
   const { spawnSync } = await import("node:child_process");
   const { atomicJson, canonical, digest, resolvedLocation } = await import("./runtime.mjs");
   const { sha256File } = await import("./orchestrator/command-state.mjs");
-  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collector-temp|collection-declines)-.*\.json$/u.test(name));
+  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collector-temp|collection-declines|collection-helper)-.*\.json$/u.test(name));
   for (const name of files) await t.test(name, async () => {
     const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-u13-cli-"));
@@ -367,6 +367,16 @@ fs.writeFileSync(val('--status-output'),JSON.stringify({schema_version:1,status:
 console.log('autoreview target: branch | engine: claude | model: '+val('--model')+' | thinking: '+val('--thinking'));
 console.log('autoreview clean: no accepted/actionable findings reported');console.log('overall: patch is correct (0.9)');
 `); fs.chmodSync(helper, 0o700);
+      if (fixture.helperOutput) {
+        const captured = path.resolve("scripts/fixtures/autoreview-current", fixture.helperOutput);
+        write(helper, `#!/usr/bin/env node
+const fs=require('node:fs'),path=require('node:path'),a=process.argv.slice(2),val=k=>a[a.indexOf(k)+1],dir=${JSON.stringify(captured)};
+for(const [flag,file] of [['--json-output','review.json'],['--status-output','status.json']])fs.copyFileSync(path.join(dir,file),val(flag));
+// Only policy header operands vary in scratch model-policy tests; JSON is verbatim.
+process.stdout.write(fs.readFileSync(path.join(dir,'stdout.txt'),'utf8').replace(/^model: .+$/m,'model: '+val('--model')).replace(/^thinking: .+$/m,'thinking: '+val('--thinking')));
+process.exit(JSON.parse(fs.readFileSync(path.join(dir,'status.json'))).exit_code);
+`); fs.chmodSync(helper, 0o700);
+      }
       const descendant = path.resolve("scripts/fixtures/collector-review-descendant.cjs");
       if (fixture.mode === "temp-descendant") write(helper, `#!${process.execPath}\nprocess.argv.splice(2,0,'review');require(${JSON.stringify(descendant)});\n`);
       if (fixture.helperSymlink) {
@@ -464,7 +474,7 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
         await admitCollection(root,{...entry,phase:'preflight',kind:'confirmation-request',sequence:1,head:request.head,
           linear_mutations_pending:queue,capsule:{phase:'preflight',head:request.head,decisions:[],open_queue:queue,writable_roots:request.workerWritableRoots}});
       };
-      const collect = async value => { await admit(value); const r = call({ ...value, collect: true }); assert.equal(r.status, 0, r.stdout + r.stderr); return JSON.parse(fs.readFileSync(receiptFile, "utf8")); };
+      const collect = async (value, expected = 0) => { await admit(value); const r = call({ ...value, collect: true }); assert.equal(r.status, expected, r.stdout + r.stderr); return JSON.parse(fs.readFileSync(receiptFile, "utf8")); };
       const seal = envelope => { envelope.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(envelope.receipt)).digest("hex"); atomicJson(receiptFile, envelope); };
       let expectedField = null, expectedValue = null, expectedStatus = 2;
       if (fixture.mode === "mismatch") { expectedField = fixture.field; expectedValue = pins[fixture.field]; if (fixture.omit) delete request[fixture.field]; else request[fixture.field] = fixture.value; }
@@ -507,6 +517,26 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
         entry.worktree = path.join(scratch, "another-worktree"); register(); delete request.pins;
         expectedField = "registry"; expectedValue = "one registered attempt for worktree";
       }
+      if (fixture.mode === "helper") {
+        const envelope = await collect(request, fixture.helperOutput === "clean" ? 0 : 1);
+        const captured = path.resolve("scripts/fixtures/autoreview-current", fixture.helperOutput);
+        assert.deepEqual(envelope.receipt.review.status, JSON.parse(fs.readFileSync(path.join(captured, "status.json"))));
+        assert.deepEqual(envelope.receipt.review.json, JSON.parse(fs.readFileSync(path.join(captured, "review.json"))));
+        assert.equal(envelope.receipt.helperDigest, digest(fs.readFileSync(helper, "utf8")));
+        expectedStatus = 0;
+        if (fixture.helperOutput === "findings") {
+          const denied = call(request);
+          assert.equal(denied.status, 1, denied.stdout);
+          assert.match(denied.stdout, /decline/);
+          const r = envelope.receipt, { recordDigest, ...content } = declineFixture().entry;
+          const receiptDigest = digest(r), findingDigest = digest(r.review.json.findings[0]);
+          const decline = { ...content, receipt: { collectionId: r.collectionId, runId: r.runId, digest: receiptDigest },
+            head: r.head, finding: { id: `${receiptDigest}:0:${findingDigest}`, index: 0, digest: findingDigest },
+            recordedAt: r.recordedAt, approvedAt: r.recordedAt };
+          decline.recordDigest = digest(decline);
+          atomicJson(path.join(evidence, 'decisions/MONO-999.json'), { issue: 'MONO-999', entries: [decline] });
+        }
+      }
       if (fixture.mode === "declines") {
         if (fixture.unpinned) {
           delete request.pins;request.issue='MONO-999';delete pins.reviewDatasetDigest;
@@ -538,7 +568,7 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
         if (receiptBefore) assert.deepEqual(fs.readFileSync(receiptFile), receiptBefore);
         else assert.equal(fs.existsSync(receiptFile), false);
       }
-      if (fixture.mode === "declines") {
+      if (fixture.mode === "declines" || fixture.helperOutput === "findings") {
         assert.match(result.stdout,/accepted-with-declines/);
         assert.deepEqual(fs.readFileSync(receiptFile),receiptBefore,'declines never rewrite the sealed receipt');
         const journalFile=path.join(evidence,'decisions/MONO-999.json'),j=JSON.parse(fs.readFileSync(journalFile)),e=j.entries[0],proof={citation:'New evidence'};
