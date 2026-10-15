@@ -1,6 +1,6 @@
 # Mono Agent Workflow
 
-Current release: **0.30.0**. See the [release notes](CHANGELOG.md#0300---2026-10-15).
+Current release: **0.30.1**. See the [release notes](CHANGELOG.md#0301---2026-10-15).
 
 **Incompatible update:** review journal and collection admission formats change.
 Install 0.30.0 only under [cross-product quiescence](references/install.md#quiescence):

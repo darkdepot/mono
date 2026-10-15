@@ -6,6 +6,17 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-10-15
+
+<!-- fragment: MONO-157 sha256:1f7f4b0e4bcdc92473c616f48e400980326efeaf1fa68c611b046fca4995b9b8 -->
+- Recheck repeated review keys/classes when replaying an unexecuted collection admission and immediately before collection; preserve completed receipt reconciliation without a reviewer rerun.
+- Add named late-class/key replay, direct-execution and completed-collection fixtures, plus the rollback procedure for a separate 0.29.0 journal view and fresh clean review.
+
+<!-- fragment: MONO-158 sha256:b283489eebebe94bc8eb2967d26f0c8d1077423afde75b582e5a55e0588d99b7 -->
+- Release 0.30.1 with the repeated-class collection admission fix and journal
+  rollback procedure; assemble the task records and align the pack, plugin and
+  README release versions.
+
 ## [0.30.0] - 2026-10-15
 
 <!-- fragment: MONO-152 sha256:34004798a8f49983eddccec56da88fb010d50a7ae7100e81ac2aa3b008aab653 -->

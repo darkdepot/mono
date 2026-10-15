@@ -1,2 +1,0 @@
-- Recheck repeated review keys/classes when replaying an unexecuted collection admission and immediately before collection; preserve completed receipt reconciliation without a reviewer rerun.
-- Add named late-class/key replay, direct-execution and completed-collection fixtures, plus the rollback procedure for a separate 0.29.0 journal view and fresh clean review.
