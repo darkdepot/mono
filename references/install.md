@@ -218,8 +218,10 @@ Verify both actual version-cache trees against `v0.30.1`, including paths, types
 modes, hashes and symlinks; both installed versions must read `0.30.1`. No journal
 projection is required for this rollback: retain all evidence, pins and history
 byte-for-byte, including the new files ignored by 0.30.1. Recheck their saved
-hashes. Restart each product's watcher from the verified 0.30.1 pack, observe its
-fresh pulse, then release launch halts. New attempts use fresh 0.30.1 dispatch
+hashes. Restart each product's watcher from the verified 0.30.1 pack as a tracked
+background process; verify that it stays running and monitor its normal event
+output. Version 0.30.1 does not write `watcher.json`, so no fresh pulse is required
+for rollback. Then release launch halts. New attempts use fresh 0.30.1 dispatch
 pins; never redirect archived attempts or reuse a newer certificate as proof.
 
 ### Roll Back To 0.29.0
