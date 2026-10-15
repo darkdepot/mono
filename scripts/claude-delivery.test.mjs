@@ -89,7 +89,7 @@ test("Claude foreground phase wait binds session, attempt, process instance and 
 
 test("Claude watcher recognizes bounded foreground waits, expiry, progress and completion without report", () => withFixture(f => {
   const report = publishPhase(f.report, f.reportFile);
-  put(path.join(f.root, "workers.json"), { [f.entry.issue]: { ...f.entry, confirmationTimeoutSec: 1200 } });
+  put(path.join(f.root, "workers.json"), { [f.entry.issue]: { ...f.entry, confirmationTimeoutSec: 1200, collectionTimeoutSec: 1000 } });
   const silence = () => { const past = new Date(Date.now() - 150_000); fs.utimesSync(f.entry.log, past, past); };
   silence();
   assert.doesNotMatch(f.watch(), /EVENT:(stall|dead)/);

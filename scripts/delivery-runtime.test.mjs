@@ -217,6 +217,9 @@ test("backup switch named launch contracts", async t => {
       pids.add(first.pid);
       write(path.join(bin, "tree"), `${first.pid} 1 ${first.pid} S fixture-start-${first.pid}\n`);
       const old = json(path.join(root, "workers.json"))[request.issue];
+      assert.equal(old.confirmationTimeoutSec, 1800);
+      assert.equal(old.collectionTimeoutSec, 1500);
+      assert.equal(old.collectionRetries, 1);
       const logLine = JSON.stringify({ type: "error", message: "fixture refusal (training data)" });
       fs.appendFileSync(old.log, logLine + "\n");
       const evidenceFile = path.join(root, "evidence.txt"); write(evidenceFile, logLine + "\n");
@@ -1313,7 +1316,7 @@ console.log(JSON.stringify(result));
 `); fs.chmodSync(path.join(bin, "gh"), 0o700);
     const judgmentFile = path.join(root, "judgment.json"), config = path.join(root, "config.json");
     write(judgmentFile, { head, preShipReview: "выполнено", readinessCheck: "пройдена", documentation: "без изменений", closures: [], botRemarks: [] });
-    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 20, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 30 } } });
+    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 20, collectionTimeoutSec: 10, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 30 } } });
     const shipRequest = { preflight, repo: "fixture/repo", number: 87, attempt: 1, stateFile: path.join(root, "ship-state.json"), judgmentFile, config, watch: true };
     write(gateRequest, shipRequest);
     const shipCall = () => run(process.execPath, [path.join(runtime, "gate.mjs"), "ship", "--request", gateRequest], root, env);
@@ -1392,7 +1395,7 @@ console.log(JSON.stringify(result));
     const errorConfig = path.join(root, "rules-timeout-config.json");
     // Preserve the first HTTP failure until expiry, rather than race another
     // process startup in the final millisecond of this deliberately short window.
-    write(errorConfig, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 1, evidenceLimitSec: 1 } } });
+    write(errorConfig, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, collectionTimeoutSec: 0.1, quietSec: 0.01, pollSec: 1, evidenceLimitSec: 1 } } });
     const errorState = path.join(root, "rules-timeout.json");
     write(gateRequest, { ...shipRequest, config: errorConfig, stateFile: errorState });
     write(githubFile, { github, checks, rulesStatus: 500 });
@@ -1494,7 +1497,7 @@ console.log(JSON.stringify(result));
     }
     // A full paginated snapshot must finish before the pending-state assertion;
     // the watched cases below still prove expiry at this configured deadline.
-    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 5 } } });
+    write(config, { orchestration: { delivery: { confirmationTimeoutSec: 0.5, collectionTimeoutSec: 0.1, quietSec: 0.01, pollSec: 0.01, evidenceLimitSec: 5 } } });
     for (const state of ["BLOCKED", "UNKNOWN"]) {
       const pendingChecks = state === "UNKNOWN" ? [] : checks.map(c => c.name === "validate" ? { ...c, status: "IN_PROGRESS", conclusion: null } : c);
       write(githubFile, { github: { ...github, mergeStateStatus: state, mergeable: state === "UNKNOWN" ? "UNKNOWN" : "MERGEABLE" }, checks: pendingChecks });

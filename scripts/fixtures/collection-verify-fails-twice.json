@@ -1,0 +1,4 @@
+{
+  "mode": "verify-fails-twice",
+  "failRuns": 2
+}

@@ -1419,8 +1419,14 @@ new stale-version requests refuse. Before collection, find signed history by
 collectionId and compare actual receipt bindings (including risk/critical, dataset,
 grants and verification) against the admitted request. Under the per-head lock,
 restore the mutable head envelope from history and confirm completion, including
-failed runs, without repeating review. A durable collection-start record without
-a history receipt requires orchestrator reconciliation, never an automatic rerun. Reclaim a stale per-head lock only through
+failed runs, without repeating review. A durable collection-start record in
+`consumed/KEY-aN/collections/<collectionId>.json` stores launches and the active
+gate incarnation alongside the attempt's admissions. Before a receipt exists,
+a dead group permits a bounded retry of the same collectionId/admission. Recheck
+current class/cap on every launch without reserving new capacity. The counter
+survives collector restarts. Any signed receipt, including provider failure,
+ends collection retries; immutable history wins over mutable head evidence.
+Reclaim a stale per-head lock only through
 its exclusive `.reclaim` marker after proving holder/group descendants dead.
 Live or unverified holders refuse. History-first receipt order and gate semantics
 remain unchanged; all queue confirmations use delivery-state's existing barriers.
@@ -1522,7 +1528,31 @@ reviews are completed runs too, not missing actions. Return present evidence as
 and confirm through the same runtime. Publish and confirm enforce code → preflight → ship: read the latest earlier phase reports and every earlier sequence confirmation for the attempt before proceeding. Confirmations retain the report snapshot, so overwritten phase files do not erase sequence evidence. Missing or mismatched predecessors refuse before adapter calls. Fallback publication supplies --root; confirmation reads the report directory and root mailbox and refuses conflicting copies. Worker collect:false must pass before ready;
 A review fix uses a new head/write ID. Use write.id=request.collectionId=preflight-collect:<head>:<n>. Increment n for each collection request on that head, including transient retries after a recorded failure; also advance the phase sequence. Never reuse the failed collection ID for a new run; a lost response retains its original ID. Bind confirmation evidence to the immutable history receipt as well as the current head receipt. Never let a worker collect or select new
 pins. Preserve failed receipts. Configure confirmationTimeoutSec BEFORE dispatch
-to cover verification plus review; the 1800-second default may still park a longer run.
+to cover verification plus review. Defaults: `confirmationTimeoutSec=1800`,
+`collectionTimeoutSec=1500`, `collectionRetries=1` (nonnegative integer).
+Require `collectionTimeoutSec < confirmationTimeoutSec < evidenceLimitSec`.
+Launch pins all three collection/confirmation settings in the registry; old
+attempts retain their existing confirmation timeout and use the new collection
+defaults, so an old 1200-second window refuses collection without adequate budget.
+One deadline is phase `publishedAt + confirmationTimeoutSec`; config changes and
+collector restarts never reset it. Before a collection launch reserve its full
+run limit plus 30 seconds for teardown, reconciliation and confirmation. A
+receipt reconciliation uses the remaining window (at most the run limit),
+reserving 10 seconds for teardown/confirmation; it requires at least 30 seconds
+to start. Confirmation requires 5 seconds left and checks the deadline again
+before publication. No new run starts without its budget. An early crash may
+leave enough time to retry; a full-length timeout normally will not.
+The released gate also holds its original deadline watchdog, including at most
+2 seconds of teardown reserve; it kills its group even if the collector dies. After the gate finishes, the watchdog remains until
+descendant telemetry proves its group empty.
+On timeout signal the isolated group with TERM, then KILL if necessary, and
+verify no live descendants remain before retry. Unknown/live groups refuse.
+Exhausted retries, insufficient time or stalled reconciliation write `timed-out`
+with the technical reason to the collector log and attention file; preserve
+history for explicit orchestrator recovery. Project verification retries once
+only with a proved sandbox and unchanged head/base; both numbered outputs are
+signed in `verification.output`, with the last exit code. Sandbox or consistency
+failures do not retry; the reviewer still runs at most once per collection.
 Keep it below evidenceLimitSec as a configuration consistency rule. The evidence
 limit runs from the ship attempt's startedAt, while confirmation waiting runs
 separately from the phase report's publishedAt; the inequality does not prove

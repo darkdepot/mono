@@ -133,20 +133,20 @@ test("lost confirmation and partial application recover without duplicates", asy
     const target = path.join(root, "reports/MONO-75-phase-code.json");
     report = publishPhase(report, target);
     const adapterFile = path.join(root, "slow-adapter"), adapterConfig = path.join(root, "config.json");
-    fs.writeFileSync(adapterFile, `#!/usr/bin/env node\nsetTimeout(()=>console.log(JSON.stringify({state:'present',evidence:'already-applied'})),150);\n`);
-    fs.chmodSync(adapterFile, 0o700);
+    fs.writeFileSync(adapterFile, `if(!process.argv[1]){Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,150);console.log(JSON.stringify({state:'present',evidence:'already-applied'}));process.exit();}\n`);
     const confirmCLI = (stateRoot = path.join(root, "cli-state")) => spawnSync(process.execPath, [fileURLToPath(new URL("./delivery-state.mjs", import.meta.url)),
-      "confirm", "--report", target, "--root", stateRoot, "--adapter", adapterFile, "--config", adapterConfig], { encoding: "utf8" });
-    fs.writeFileSync(adapterConfig, JSON.stringify({ orchestration: { delivery: { confirmationTimeoutSec: 0.03 } } }));
+      "confirm", "--report", target, "--root", stateRoot, "--adapter", process.execPath, "--config", adapterConfig], { encoding: "utf8", env: { ...process.env, NODE_OPTIONS: '--require ' + JSON.stringify(adapterFile) } });
+    fs.writeFileSync(adapterConfig, JSON.stringify({ orchestration: { delivery: { confirmationTimeoutSec: 0.03, collectionTimeoutSec: 0.01 } } }));
     assert.equal(confirmCLI().status, 1);
-    fs.writeFileSync(adapterConfig, JSON.stringify({ orchestration: { delivery: { confirmationTimeoutSec: 2 } } }));
+    fs.writeFileSync(adapterConfig, JSON.stringify({ orchestration: { delivery: { confirmationTimeoutSec: 10, collectionTimeoutSec: 1 } } }));
     const confirmedCLI = confirmCLI(); assert.equal(confirmedCLI.status, 0, confirmedCLI.stderr);
     const remoteFile = path.join(root, "remote.json");
-    fs.writeFileSync(adapterFile, `#!/usr/bin/env node
+    fs.writeFileSync(adapterFile, `if(!process.argv[1]){
 const fs=require('node:fs'),p=JSON.parse(fs.readFileSync(0,'utf8')),file=${JSON.stringify(remoteFile)};
 const state=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{};
 if(p.action==='apply'){state[p.write.id]=(state[p.write.id]||0)+1;fs.writeFileSync(file,JSON.stringify(state));}
 else console.log(JSON.stringify(state[p.write.id]?{state:'present',evidence:p.write.id}:{state:'missing'}));
+process.exit();}
 `);
     const silentState = path.join(root, "silent-cli-state");
     const silent = confirmCLI(silentState); assert.equal(silent.status, 0, silent.stderr);

@@ -162,8 +162,9 @@ function resolveWrite(write, report) {
   }
   return resolve(write);
 }
-export async function confirmQueue(report, root, adapter, reportsDir = path.join(root, "reports")) {
+export async function confirmQueue(report, root, adapter, reportsDir = path.join(root, "reports"), deadline = Infinity) {
   validatePhase(report);
+  const inTime = () => { if (Date.now() >= deadline) throw new Error("timed-out: collection confirmation deadline expired"); };
   const dir = path.join(root, "consumed", `${report.issue}-a${report.attempt}`);
   return withLock(path.join(dir, "queue.lock"), async () => {
     requirePredecessors(report, root, reportsDir, "confirming");
@@ -176,12 +177,16 @@ export async function confirmQueue(report, root, adapter, reportsDir = path.join
       if (prior && (prior.writeDigest !== hash || prior.issue !== report.issue || prior.attempt !== report.attempt)) throw new Error(`write ${write.id} changed within attempt`);
       // Reconcile even a durable success: a lost response or deleted Linear object
       // must not turn a local receipt into proof of the current remote state.
+      inTime();
       let observed = await adapter("reconcile", write, report);
+      inTime();
       if (observed?.state === "missing") {
         atomicJson(file, { issue: report.issue, attempt: report.attempt, id: write.id, writeDigest: hash, state: "applying" });
         await adapter("apply", write, report);
+        inTime();
         observed = await adapter("reconcile", write, report);
       }
+      inTime();
       if (observed?.state !== "present" || !observed.evidence) throw new Error(`write ${write.id} not confirmed by Linear read-back`);
       validateCollectionEvidence(write, observed.evidence, report);
       const result = { issue: report.issue, attempt: report.attempt, id: write.id, writeDigest: hash, state: "present", evidence: observed.evidence };
@@ -190,6 +195,7 @@ export async function confirmQueue(report, root, adapter, reportsDir = path.join
     requirePredecessors(report, root, reportsDir, "confirming");
     const confirmation = { report, issue: report.issue, attempt: report.attempt, phase: report.phase, sequence: report.sequence,
       reportDigest: digest(report), status: "confirmed", results };
+    inTime();
     atomicJson(confirmationPath(report, root), confirmation);
     return confirmation;
   });

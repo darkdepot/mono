@@ -914,7 +914,7 @@ async function collectorAttentionFixture(runFixture, plugin = false) {
     atomicJson(registry, { [issue]: entry });
     atomicJson(path.join(root, "reports", `${issue}-phase-code.json`), phase("code", 1)); await poll();
     const bin = path.join(scratch, "bin");
-    write(path.join(bin, "ps"), "#!/usr/bin/env node\nconsole.log('fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
+    write(path.join(bin, "ps"), "#!" + process.execPath + "\nconsole.log(process.argv.includes('-axo')?process.ppid+' 1 '+process.ppid+' S fixture-start':'fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
     process.env.PATH = `${bin}:${oldPath}`;
     if (plugin) write(path.join(pins.packRoot, 'VERSION'), '0.22.0\n');
     write(plugin ? path.join(pins.packRoot, 'scripts/gate.mjs') : path.join(skillsRoot, "scripts/gate.mjs"), "console.log('gate preflight: pass: fixture admission');\n");
@@ -936,6 +936,7 @@ test("plugin collector executes the task folder gate with a separate helper root
   await collectorAttentionFixture(async f => {
     const report = f.report(1); atomicJson(f.reportFile, report);
     await f.signedHistory(f.request(1)); await f.poll();
+    assert.equal(fs.existsSync(f.attention), false, fs.existsSync(f.attention) ? readJson(f.attention).reason : '');
     const confirmed = readJson(path.join(f.options.root, 'confirmations', 'MONO-999-phase-preflight-a1-s1.confirmed.json'));
     assert.equal(confirmed.status, 'confirmed');
     assert.equal(confirmed.results[0].evidence.gate, 'gate preflight: pass: fixture admission');
@@ -1164,15 +1165,16 @@ await withLock(path.join(request.evidenceRoot,request.head+'.collect.lock'),asyn
       assert.equal(readJson(countFile).collections, number);
       await collectOnce(options); assert.equal(readJson(countFile).collections, number);
     });
-    await t.test("a started run without a receipt blocks automatic repetition", async () => {
+    await t.test("a started run without a receipt retries only within its original allowance", async () => {
       const number = readJson(countFile).collections + 1, id = `preflight-collect:${head}:${number}`;
       const current = { ...request, risk: "deep", collectionId: id };
       const incomplete = { ...phase("preflight", 3, [{ ...queued, id, payload: { request: current } }]), pinsVersion: 1 };
       atomicJson(reportFile, incomplete); atomicJson(modeFile, { noReceipt: true });
-      await assert.rejects(collectOnce(options), /without an answer/u);
-      await assert.rejects(collectOnce(options), /orchestrator reconciliation required/u);
-      assert.equal(fs.existsSync(path.join(root, "reports", `${issue}-collect-attention-a1.json`)), false);
-      assert.equal(readJson(countFile).collections, number);
+      await collectOnce(options);
+      const attention = path.join(root, "reports", `${issue}-collect-attention-a1.json`);
+      assert.match(readJson(attention).reason, /timed-out.*retries exhausted/);
+      await collectOnce(options);
+      assert.equal(readJson(countFile).collections, number + 1);
       assert.equal(fs.existsSync(path.join(root, "confirmations", `${issue}-phase-preflight-a1-s3.confirmed.json`)), false);
     });
   } finally {
@@ -1224,7 +1226,7 @@ test("collector recovers a baseline dataset with a separately numbered signed ar
     assert.equal(fs.existsSync(path.join(evidenceRoot, head + ".json")), false);
     atomicJson(history, sign(receipt));
     const bin = path.join(scratch, "bin"), oldPath = process.env.PATH;
-    write(path.join(bin, "ps"), "#!/usr/bin/env node\nconsole.log('fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
+    write(path.join(bin, "ps"), "#!" + process.execPath + "\nconsole.log(process.argv.includes('-axo')?process.ppid+' 1 '+process.ppid+' S fixture-start':'fixture-start');\n"); fs.chmodSync(path.join(bin, "ps"), 0o700);
     write(path.join(skillsRoot, "scripts/gate.mjs"), "console.log('gate preflight: pass: fixture baseline recovered');\n");
     try {
       process.env.PATH = `${bin}:${oldPath}`;
@@ -1818,5 +1820,213 @@ test('pending admission concurrency: one blocking receipt leaves exactly one ato
     await assert.rejects(admitCollection(f.options.root,reports[rejected]),/review cap/);
     const state=readJson(path.join(request.evidenceRoot,'reviews','MONO-999-counters.json'));
     assert.equal(state.pending.length,1);assert.equal(state.external.length,1);
+  });
+});
+
+async function collectionRetryFixture(mode, run) {
+  await collectorAttentionFixture(async f => {
+    const request = f.request(1), report = f.report(1);
+    const template = await f.signedHistory(request), envelope = readJson(template.receipt);
+    fs.unlinkSync(template.receipt);
+    const stateFile = path.join(f.scratch, 'retry-state.json');
+    const script = path.join(request.skillsRoot, 'scripts/gate.mjs');
+    const startFile = path.join(f.options.root, 'consumed/MONO-999-a1/collections', request.collectionId + '.json');
+    const admissionFile = path.join(f.options.root, 'consumed/MONO-999-a1/admissions', request.collectionId + '.json');
+    const confirmation = path.join(f.options.root, 'confirmations/MONO-999-phase-preflight-a1-s1.confirmed.json');
+    const runtime = new URL('./runtime.mjs', import.meta.url).href;
+    atomicJson(stateFile, { collections: 0, reconciles: 0 });
+    f.entry.confirmationTimeoutSec = 60; f.entry.collectionTimeoutSec = 2; f.entry.collectionRetries = 1;
+    atomicJson(f.registry, { [f.options.issue]: f.entry });
+    write(script, `import fs from 'node:fs';import path from 'node:path';import {spawn} from 'node:child_process';
+import {atomicJson,readJson,withLock} from ${JSON.stringify(runtime)};
+const q=readJson(process.argv.at(-1)),stateFile=${JSON.stringify(stateFile)},mode=${JSON.stringify(mode)};
+const state=readJson(stateFile);state[q.collect?'collections':'reconciles']++;atomicJson(stateFile,state);
+if(!q.collect){if(mode==='slow-reconcile')await new Promise(r=>setTimeout(r,5000));console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: reconciled'));}
+else await withLock(path.join(q.evidenceRoot,q.head+'.collect.lock'),async()=>{
+ if(mode==='crash-always'||(mode==='crash-once'&&state.collections===1))process.exit(78);
+ if(mode==='late-class'&&state.collections===1){for(const [file,data] of readJson(${JSON.stringify(path.join(f.scratch, 'late-writes.json'))}))atomicJson(file,data);process.exit(78);}
+ if(mode==='timeout'||mode==='orphan'){
+  const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+  child.unref();atomicJson(stateFile,{...state,descendant:child.pid,group:process.pid});
+  if(mode==='timeout'){
+   process.on('SIGTERM',()=>{child.once('exit',()=>process.exit());});
+   await new Promise(()=>{});
+  }
+ }
+ const envelope=${JSON.stringify(envelope)};
+ atomicJson(${JSON.stringify(template.receipt)},envelope);console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: collected'));
+});
+`);
+    // Model host process telemetry inside the worker sandbox. Group signals and
+    // fixture processes are real; only the denied ps query is replaced.
+    const ps = path.join(f.scratch, 'bin/ps');
+    write(ps, `#!${process.execPath}
+const fs=require('node:fs'),{execFileSync}=require('node:child_process'),state=JSON.parse(fs.readFileSync(${JSON.stringify(stateFile)}));
+if(!process.argv.includes('-axo')){console.log('fixture-start');process.exit();}
+const live=pid=>{try{process.kill(pid,0);return true}catch{return false}};
+const file=${JSON.stringify(startFile)},gate=fs.existsSync(file)?JSON.parse(fs.readFileSync(file)).gate:null;
+for(const row of [gate, state.descendant?{pid:state.descendant,processGroup:state.group}:null].filter(Boolean))
+ if(live(row.pid))console.log(row.pid+' 1 '+row.processGroup+' S fixture-start');
+if(process.argv.at(-1)==='pid=,ppid=,pgid=,stat=,lstart='){
+ const group=Number(execFileSync('python3',['-I','-S','-c','import os;print(os.getpgrp())'],{encoding:'utf8'}).trim());
+ console.log(process.pid+' '+process.ppid+' '+group+' S fixture-start');
+}
+`);
+    const started = launches => atomicJson(startFile, { ...readJson(admissionFile), launches, startedAt: new Date().toISOString() });
+    const publish = () => atomicJson(f.reportFile, report);
+    await run({ ...f, request, report, publish, stateFile, startFile, admissionFile, confirmation, started, template });
+  });
+}
+
+test('retry-normal-completion: both collection and collect:false clear the watchdog with self-observing telemetry', async () => {
+  await collectionRetryFixture('complete', async f => {
+    f.entry.collectionTimeoutSec = 8; atomicJson(f.registry, { [f.options.issue]: f.entry });
+    f.publish(); await f.poll();
+    assert.deepEqual(readJson(f.stateFile), { collections: 1, reconciles: 1 });
+    assert.equal(readJson(f.confirmation).status, 'confirmed');
+    assert.equal(fs.existsSync(f.attention), false);
+    assert.doesNotMatch(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /timed out|retry refused/);
+  });
+});
+
+test('retry-crash-before-receipt: retry uses the same admission and collectionId; late history wins', async () => {
+  await collectionRetryFixture('crash-once', async f => {
+    f.publish(); await f.poll();
+    assert.equal(readJson(f.stateFile).collections, 2); assert.equal(readJson(f.startFile).launches, 2);
+    assert.equal(readJson(f.confirmation).results[0].evidence.receipt, f.template.receipt);
+    const admission = readJson(f.admissionFile); await f.poll();
+    assert.deepEqual(readJson(f.admissionFile), admission);
+    assert.equal(readJson(f.stateFile).collections, 2);
+  });
+});
+test('retry-provider-signed-failure: a signed failure is reconciled without another collection', async () => {
+  await collectionRetryFixture('signed-failure', async f => {
+    f.publish(); await f.poll();
+    assert.equal(readJson(f.stateFile).collections, 1);
+    assert.match(readJson(f.confirmation).results[0].evidence.gate, /fail: provider unavailable/);
+    const bytes = fs.readFileSync(f.template.receipt); await f.poll();
+    assert.deepEqual(fs.readFileSync(f.template.receipt), bytes);
+  });
+});
+test('retry-budget-after-restart: persisted launches and publication deadline cannot refill', async () => {
+  await collectionRetryFixture('crash-always', async f => {
+    f.publish(); await admitCollection(f.options.root, f.report); f.started(2);
+    const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
+    pass(spawnSync(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { encoding: 'utf8' }));
+    assert.equal(readJson(f.stateFile).collections, 0);
+    assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
+    assert.equal(readJson(f.startFile).launches, 2);
+    await f.signedHistory(f.request); await f.poll();
+    assert.equal(readJson(f.stateFile).collections, 0, 'late first receipt is never executed again');
+    assert.equal(fs.existsSync(f.confirmation), true);
+  });
+});
+test('retry-late-start: no launch without the pinned run budget and reserve', async () => {
+  await collectionRetryFixture('crash-once', async f => {
+    f.report.publishedAt = new Date(Date.now() - 29_000).toISOString();
+    f.entry.spawned_at = new Date(Date.now() - 60_000).toISOString(); atomicJson(f.registry, { [f.options.issue]: f.entry });
+    f.publish(); await f.poll();
+    assert.equal(readJson(f.stateFile).collections, 0);
+    assert.match(readJson(f.attention).reason, /timed-out.*budget/);
+  });
+});
+test('retry-live-descendant: a live prior group blocks every retry', async () => {
+  await collectionRetryFixture('crash-once', async f => {
+    f.publish(); await admitCollection(f.options.root, f.report); f.started(1);
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+    const closed = new Promise(resolve => child.once('close', resolve));
+    try {
+      atomicJson(f.startFile, { ...readJson(f.startFile), gate: { pid: child.pid, procStart: 'fixture-start', processGroup: child.pid } });
+      await f.poll(); assert.equal(readJson(f.stateFile).collections, 0);
+      assert.match(readJson(f.attention).reason, /timed-out.*descendants live/);
+    } finally { child.kill('SIGTERM'); await closed; }
+  });
+});
+test('retry-slow-reconcile: reconciliation cannot extend the original deadline', async () => {
+  await collectionRetryFixture('slow-reconcile', async f => {
+    f.entry.collectionTimeoutSec = 1; atomicJson(f.registry, { [f.options.issue]: f.entry });
+    await f.signedHistory(f.request); f.publish(); const before = Date.now(); await f.poll();
+    assert.match(readJson(f.attention).reason, /timed-out.*reconciliation/);
+    assert.equal(readJson(f.stateFile).collections, 0); assert.equal(fs.existsSync(f.confirmation), false);
+    assert.ok(Date.now() - before < 10_000);
+  });
+});
+test('retry-timeout-group: timeout signals and verifies the whole group before retry', async () => {
+  await collectionRetryFixture('timeout', async f => {
+    f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry });
+    f.publish(); await f.poll();
+    assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
+    const { descendant } = readJson(f.stateFile);
+    assert.ok(descendant); assert.throws(() => process.kill(descendant, 0), { code: 'ESRCH' });
+    assert.equal(fs.existsSync(f.confirmation), false);
+  });
+});
+test('retry-late-class-stop: a class recorded by the first failed launch stops the second', async () => {
+  const { classFixture, classSeal } = await import('./class-fixtures.mjs');
+  const { findingIdentity, recordDecision } = await import('./decisions.mjs');
+  const { canonical } = await import('./runtime.mjs'); const { createHmac } = await import('node:crypto');
+  await collectionRetryFixture('late-class', async f => {
+    const x = classFixture(), evidenceRoot = f.request.evidenceRoot;
+    const key = fs.readFileSync(path.join(evidenceRoot, 'receipt.key'));
+    for (const receipt of x.receipts) receipt.worktree = f.request.worktree;
+    x.entry = classSeal({ ...x.entry, findingIds: x.receipts.map(r => findingIdentity(r, 0).id) });
+    await recordDecision({ evidenceRoot, issue: 'MONO-999', entry: x.entry });
+    atomicJson(path.join(evidenceRoot, 'reviews/MONO-999-adjudications.json'), x.records);
+    const writes = x.receipts.map(receipt => {
+      receipt.worktree = f.request.worktree;
+      return [path.join(evidenceRoot, 'history', receipt.runId + '.json'), { receipt, signature: createHmac('sha256', key).update(canonical(receipt)).digest('hex') }];
+    });
+    atomicJson(path.join(f.scratch, 'late-writes.json'), writes);
+    f.publish(); await f.poll();
+    assert.equal(readJson(f.stateFile).collections, 1);
+    assert.match(readJson(f.attention).reason, /needs-decision: repeated review class/);
+  });
+});
+
+test('retry-old-config-1200: legacy attempts use defaults without extending their confirmation window', async () => {
+  await collectionRetryFixture('crash-once', async f => {
+    delete f.entry.collectionTimeoutSec; delete f.entry.collectionRetries;
+    f.entry.confirmationTimeoutSec = 1200; atomicJson(f.registry, { [f.options.issue]: f.entry });
+    f.publish(); await f.poll();
+    assert.equal(readJson(f.stateFile).collections, 0);
+    assert.match(readJson(f.attention).reason, /timed-out.*budget/);
+  });
+});
+test('retry-budget-after-restart: elapsed time still blocks a remaining retry', async () => {
+  await collectionRetryFixture('crash-once', async f => {
+    f.report.publishedAt = new Date(Date.now() - 29_000).toISOString();
+    f.entry.spawned_at = new Date(Date.now() - 60_000).toISOString(); atomicJson(f.registry, { [f.options.issue]: f.entry });
+    f.publish(); await admitCollection(f.options.root, f.report); f.started(1);
+    const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
+    pass(spawnSync(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { encoding: 'utf8' }));
+    assert.equal(readJson(f.stateFile).collections, 0); assert.equal(readJson(f.startFile).launches, 1);
+    assert.match(readJson(f.attention).reason, /timed-out.*budget/);
+  });
+});
+
+for (const mode of ['timeout', 'orphan']) test(`retry-collector-death-deadline: ${mode} group remains bounded after its collector dies`, async () => {
+  await collectionRetryFixture(mode, async f => {
+    f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry }); f.publish();
+    const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
+    const parent = spawn(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { stdio: 'ignore', detached: true });
+    const closed = new Promise(resolve => parent.once('close', resolve));
+    let gate;
+    const groupLive = () => { try { process.kill(-gate.processGroup, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
+    try {
+      const ready = Date.now() + 8000;
+      while (!readJson(f.stateFile).descendant && Date.now() < ready) await new Promise(resolve => setTimeout(resolve, 25));
+      assert.ok(readJson(f.stateFile).descendant, 'the real descendant starts before collector death');
+      gate = readJson(f.startFile).gate; parent.kill('SIGKILL'); await closed;
+      const deadline = Date.now() + 4500;
+      while (groupLive() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+      assert.equal(groupLive(), false, 'the gate must enforce its own original deadline after collector death');
+      await f.poll(); assert.equal(readJson(f.stateFile).collections, 1);
+      assert.equal(readJson(f.startFile).launches, 1);
+      if (mode === 'timeout') assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
+      else assert.equal(readJson(f.confirmation).status, 'confirmed', 'signed receipt reconciles after surviving descendants stop');
+    } finally {
+      parent.kill('SIGKILL'); await closed;
+      if (gate && groupLive()) process.kill(-gate.processGroup, 'SIGKILL');
+    }
   });
 });

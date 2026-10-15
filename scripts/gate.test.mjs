@@ -332,7 +332,7 @@ test("named collection fixtures through the gate CLI", async t => {
   const { spawnSync } = await import("node:child_process");
   const { atomicJson, canonical, digest, resolvedLocation } = await import("./runtime.mjs");
   const { sha256File } = await import("./orchestrator/command-state.mjs");
-  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collector-temp|collection-declines|collection-helper|collection-class)-.*\.json$/u.test(name));
+  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collector-temp|collection-declines|collection-helper|collection-class|collection-verify)-.*\.json$/u.test(name));
   for (const name of files) await t.test(name, async () => {
     const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-u13-cli-"));
@@ -438,6 +438,7 @@ process.kill=function(pid,signal){
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path'),a=process.argv.slice(2);
 if(a[0]!=='sandbox')process.exit(71);const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1));
 fs.appendFileSync(process.env.MONO_FIXTURE_SANDBOX_LOG,'sandbox\\n');
+if(${JSON.stringify(fixture.sandboxFailure)} && !p.args.includes('--json-output'))process.exit(73);
 if(p.args.includes('--json-output'))fs.appendFileSync(process.env.MONO_FIXTURE_SANDBOX_LOG,'review\\n');
 const protectedRoot=path.dirname(p.probe);fs.chmodSync(protectedRoot,0o500);let r;
 const profile=a[a.indexOf('-c')+1],grants=[...profile.matchAll(/("(?:\\\\.|[^"\\\\])*")="write"/g)].map(m=>JSON.parse(m[1]));
@@ -459,6 +460,12 @@ assert.equal(process.env.TMPDIR,process.env.TMP);assert.equal(process.env.TMPDIR
 assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
 `];
       if (fixture.mode === "temp-descendant") pins.verification.args = [descendant, "verification"];
+      if (fixture.mode.startsWith('verify-')) pins.verification.args = ['-e', `
+const fs=require('node:fs'),p='.orchestrator/verify-count';fs.mkdirSync('.orchestrator',{recursive:true});
+const n=fs.existsSync(p)?Number(fs.readFileSync(p,'utf8'))+1:1;fs.writeFileSync(p,String(n));console.log('project verification '+n);
+if(${JSON.stringify(fixture.changeHead)})require('node:child_process').execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','changed']);
+process.exit(n<=${fixture.failRuns ?? 0}?1:0);
+`];
       atomicJson(pinsFile, pins);
       const binding = { file: pinsFile, digest: sha256File(pinsFile) };
       const entry = { issue: "MONO-999", attempt: 1, stage: "mono-deliver", worktree: repo,
@@ -566,6 +573,7 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
         const envelope = await collect(request); envelope.receipt.collectionId = `preflight-collect:${head}:2`; seal(envelope);
         request.collectionId = `preflight-collect:${head}:3`;
       }
+      if (fixture.mode.startsWith('verify-')) { expectedStatus = fixture.failRuns > 1 || fixture.sandboxFailure || fixture.changeHead ? 1 : 0; request.collect = true; }
       if (fixture.mode === "collect") { expectedStatus = 0; request.collect = true; }
       if (fixture.mode.startsWith("temp-")) { expectedStatus = fixture.protected || fixture.reviewOverlap || fixture.mode === "temp-descendant" ? 1 : 0; request.collect = true; }
       if (fixture.mode === "legacy") {
@@ -631,6 +639,26 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
       assert.equal(result.status, expectedStatus, result.stdout + result.stderr);
       assert.deepEqual(fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null, registryBefore, "gate never writes the registry");
       assert.equal(fs.existsSync(path.join(root, "reports/MONO-999-phase-preflight.json")), false);
+      if (fixture.mode.startsWith('verify-')) {
+        const envelope = JSON.parse(fs.readFileSync(receiptFile)), receipt = envelope.receipt;
+        const history = path.join(evidence, 'history', receipt.runId + '.json');
+        assert.deepEqual(JSON.parse(fs.readFileSync(history)), envelope);
+        assert.equal(envelope.signature, crypto.createHmac('sha256', fs.readFileSync(path.join(evidence, 'receipt.key'))).update(canonical(receipt)).digest('hex'));
+        const retried = !fixture.sandboxFailure && !fixture.changeHead;
+        assert.equal(fs.existsSync(path.join(repo, '.orchestrator/verify-count')) ? Number(fs.readFileSync(path.join(repo, '.orchestrator/verify-count'))) : 0, fixture.sandboxFailure ? 0 : retried ? 2 : 1);
+        assert.equal(fs.readFileSync(sandboxLog, 'utf8').split('review\n').length - 1, expectedStatus ? 0 : 1);
+        if (retried) {
+          assert.match(receipt.verification.output, /Verification run 1 \(exit 1\):[\s\S]*project verification 1[\s\S]*Verification run 2/);
+          assert.equal(receipt.verification.exitCode, fixture.failRuns > 1 ? 1 : 0);
+        }
+        if (!fixture.changeHead) {
+          write(path.join(root, 'reports/collector.log'), 'edited ordinary log');
+          const bytes = fs.readFileSync(history), reread = call({ ...request, collect: false });
+          assert.equal(reread.status, expectedStatus, reread.stdout + reread.stderr);
+          assert.deepEqual(fs.readFileSync(history), bytes, 'signed output survives a fresh gate process and ordinary log edits');
+        }
+        return;
+      }
       if (expectedStatus === 2) {
         assert.deepEqual(result.stdout.trim().split("\n"), [`gate preflight: pending: ${request.collectionId}`, JSON.stringify({ publishRequest: request })]);
         if (receiptBefore) assert.deepEqual(fs.readFileSync(receiptFile), receiptBefore);
@@ -647,6 +675,7 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
         assert.deepEqual(fs.readFileSync(receiptFile),receiptBefore);
       }
       if (fixture.mode === "receipt-pins") assert.match(result.stdout, /receipt pins differs from dispatch request/u);
+      if (fixture.mode.startsWith('verify-')) { expectedStatus = fixture.failRuns > 1 || fixture.sandboxFailure || fixture.changeHead ? 1 : 0; request.collect = true; }
       if (fixture.mode === "collect") {
         const envelope = JSON.parse(fs.readFileSync(receiptFile, "utf8")); assert.deepEqual(envelope.receipt.pins, binding);
         assert.equal(fs.existsSync(path.join(evidence, "history", `${envelope.receipt.runId}.json`)), true);

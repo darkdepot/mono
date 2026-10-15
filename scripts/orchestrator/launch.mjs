@@ -333,6 +333,8 @@ export async function spawnWorker(request, preparation = {}) {
         modelRoutes, model_policy, model_launch, model: model_policy.model, effort: model_policy.effort,
         writable_roots: roots, workerWritableRoots: roots, evidenceRoot: resolvedLocation(request.evidenceRoot), network_access: true, lifecycle_moves: request.lifecycle_moves,
         confirmationTimeoutSec: deliveryConfig(request.config).confirmationTimeoutSec,
+        collectionTimeoutSec: deliveryConfig(request.config).collectionTimeoutSec,
+        collectionRetries: deliveryConfig(request.config).collectionRetries,
         capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
           open_queue: [], decisions: [], writable_roots: roots } };
       if (configuredBackup(baseModelConfig(request.worktree, request.base))) entry.processBaseline = backupProcessBaseline();

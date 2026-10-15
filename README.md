@@ -41,6 +41,13 @@ Local passes use stable IDs across the Issue chain; cumulative reports do not
 recount passes in new attempts or successors. The ledger shows their clean or
 findings outcomes.
 
+Collections now share one deadline from phase publication through confirmation.
+A run is bounded to 1500 seconds by default; a crash before a signed receipt may
+retry once with the same admission, after class/cap and remaining-budget checks.
+Signed failures reconcile without another review. Failed project verification
+reruns once inside the same collection, with both outputs signed.
+See [collection recovery](references/orchestration.md#delivery-write-barriers).
+
 ## Workflow
 
 Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot markup contract](references/orchestration.md#snapshot-markup-contract-u12): parse blocks, then select coverage; unknown IDs refuse, while duplicates or unclosed fences retain full documents.
@@ -399,7 +406,9 @@ current registry pins version; polling resumes admission when either changes,
 and admission of the current preflight collection clears the attempt's file.
 Signed history restores interrupted head receipts without a second review,
 including failed collections. Incarnation/group checks refuse live or unverified
-locks. This removes manual confirmation work; measured time/token savings still
+locks. Process-table probes run in a separate group so completed collection and
+reconciliation gates clear their watchdog without mistaking the probe for a child.
+This removes manual confirmation work; measured time/token savings still
 require comparable completed waves under the cost protocol.
 
 ## Plugin Installation
