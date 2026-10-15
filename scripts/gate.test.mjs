@@ -873,3 +873,71 @@ test('declines: stale dataset, replaced boundary, changed boundary content and a
     assert.throws(()=>validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal));
   }
 });
+
+test('ship-bot-policy: worker fields cannot remove or replace trusted bot requirements', async () => {
+  const { validateShipBotPolicy } = await import('./gate.mjs');
+  const trusted = { botChecks: ['Greptile Review'], botUnavailable: null };
+  for (const policy of [{ botChecks: [] }, { botChecks: ['Other Bot'] }, { botUnavailable: 'worker says unavailable' }])
+    assert.throws(() => validateShipBotPolicy(policy, trusted), /bot/);
+  const s = sample(); s.checks.pop();
+  assert.throws(() => evaluateShip(s, judgment(), validateShipBotPolicy({}, trusted)), /bot Greptile Review pending/);
+  const unavailable = { ...trusted, botUnavailable: 'orchestrator confirmed service outage' };
+  assert.doesNotThrow(() => evaluateShip(s, judgment(), validateShipBotPolicy({}, unavailable)));
+  assert.throws(() => validateShipBotPolicy({ botUnavailable: 'different reason' }, unavailable), /bot/);
+});
+
+test('ship-next-attempt-after-fix: new head/state opens a window in the same task attempt', async () => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-ship-next-'));
+  try {
+    const scripts = path.join(scratch, 'scripts');
+    fs.cpSync(path.dirname(fileURLToPath(import.meta.url)), scripts, { recursive: true });
+    const gate = path.join(scripts, 'gate.mjs');
+    // Isolate GitHub and sealed-preflight I/O; run the actual window/state loop.
+    let source = fs.readFileSync(gate, 'utf8');
+    source = source.replace('const snapshot = readShipSnapshot(request.repo, request.number, deadline);', 'const snapshot = readJson(request.fixtureSnapshot);');
+    source = source.replace('const proof = await verifyPreflight(request.preflight, snapshot);', 'const proof = { receipt: { path: "fixture-sealed-proof" } };');
+    fs.writeFileSync(gate, source);
+    const { shipGate } = await import(pathToFileURL(gate));
+    const { atomicJson } = await import('./runtime.mjs');
+    const root = path.join(scratch, 'root'), issue = 'MONO-162';
+    const file = path.join(root, 'dispatch', `${issue}-a1`, 'pins.json');
+    const pins = { root, worktree: scratch, reviewDatasetDigest: null, reviewDatasetVersion: 0, workerWritableRoots: [scratch] };
+    const crypto = await import('node:crypto');
+    atomicJson(file, pins);
+    const binding = { file, digest: crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') };
+    atomicJson(path.join(root, 'workers.json'), { [issue]: { issue, worktree: scratch, stage: 'mono-deliver', attempt: 1, packVersion: 'test', surfaceRevision: 4, pins: binding } });
+    const config = path.join(scratch, 'config.json');
+    atomicJson(config, { orchestration: { delivery: { quietSec: 0.001, pollSec: 0.005 } } });
+    const request = { preflight: { ...pins, pins: binding, head, collect: false, collectionId: `preflight-collect:${head}:1` },
+      repo: 'owner/repo', number: 162, attempt: 1, config, watch: true,
+      stateFile: path.join(scratch, 'ship-1.json'), judgmentFile: path.join(scratch, 'judgment.json'), fixtureSnapshot: path.join(scratch, 'github.json') };
+    atomicJson(request.stateFile, { scope: { repo: request.repo, number: 162, attempt: 1 }, head, startedAt: Date.now() - 2401000, lastEventAt: Date.now() - 2401000 });
+    for (const policy of [{ botChecks: [] }, { botChecks: ['Other Bot'] }, { botUnavailable: 'worker outage' }])
+      await assert.rejects(shipGate({ ...request, policy }), /bot/);
+    const previous = fs.readFileSync(request.stateFile);
+    await assert.rejects(shipGate(request), /evidence-limit/);
+    const nextHead = 'b'.repeat(40), snapshot = sample(); snapshot.head = nextHead;
+    snapshot.checks.forEach(check => check.head = nextHead);
+    atomicJson(request.fixtureSnapshot, snapshot); atomicJson(request.judgmentFile, { ...judgment(), head: nextHead });
+    const next = { ...request, attempt: 2, stateFile: path.join(scratch, 'ship-2.json'), preflight: { ...request.preflight, head: nextHead, collectionId: `preflight-collect:${nextHead}:1` } };
+    assert.match(await shipGate(next), /evidence complete and quiet period passed/);
+    assert.deepEqual(fs.readFileSync(request.stateFile), previous);
+    assert.equal(JSON.parse(fs.readFileSync(next.stateFile)).head, nextHead);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'workers.json')))[issue].attempt, 1);
+    snapshot.checks.pop(); atomicJson(request.fixtureSnapshot, snapshot);
+    atomicJson(config, { orchestration: { delivery: { quietSec: 0.001, pollSec: 0.005,
+      collectionTimeoutSec: 0.005, confirmationTimeoutSec: 0.01, evidenceLimitSec: 0.06 } } });
+    const waiting = { ...next, attempt: 3, stateFile: path.join(scratch, 'ship-3.json') };
+    await assert.rejects(shipGate(waiting), /evidence-limit/);
+    assert.match(JSON.parse(fs.readFileSync(waiting.stateFile)).pendingReason, /bot Greptile Review pending/);
+
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+});
+
+test('ship-bot-policy: project configuration requires nonempty unique check names', async () => {
+  const { shipBotChecks } = await import('./runtime.mjs');
+  assert.deepEqual(shipBotChecks(), ['Greptile Review']);
+  assert.deepEqual(shipBotChecks({ orchestration: { ship: { botChecks: ['Custom Review'] } } }), ['Custom Review']);
+  for (const botChecks of [[], null, 'Greptile Review', [' '], ['Bot', 'Bot'], [' Bot']])
+    assert.throws(() => shipBotChecks({ orchestration: { ship: { botChecks } } }), /botChecks/);
+});

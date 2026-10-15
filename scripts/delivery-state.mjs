@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import { validateShipCertificate } from "./ship-certificate.mjs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -176,6 +177,7 @@ export function classifyQueue(report, root) {
 export function publishPhase(report, output, previousConfirmation, root = previousConfirmation
   ? path.dirname(path.dirname(previousConfirmation)) : path.dirname(path.dirname(output))) {
   validatePhase(report);
+  if (report.phase === "ship" && report.kind === "phase" && report.status === "green") validateShipCertificate(report);
   const content = value => { const { publishedAt, ...rest } = value; return rest; };
   const previous = fs.existsSync(output) ? validatePhase(readJson(output)) : null;
   const identical = previous && canonical(content(previous)) === canonical(content(report));

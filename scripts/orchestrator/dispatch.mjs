@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { atomicJson, readJson, isMain, deliveryConfig, RISK_KEYS, withLock, baseModelConfig, validateLanding, validateEvidenceGrants, packLayout, runtimePackRoot } from "../runtime.mjs";
+import { atomicJson, readJson, isMain, deliveryConfig, shipBotChecks, RISK_KEYS, withLock, baseModelConfig, validateLanding, validateEvidenceGrants, packLayout, runtimePackRoot } from "../runtime.mjs";
 import { commandFlags, allowedFlags, sha256File } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
 import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
@@ -123,7 +123,7 @@ async function prepareDispatch(args) {
   const modelFile = path.join(output, "model-request.json"); atomicJson(modelFile, { ...gate, role,
     ...(backupSwitch ? { root: args.root, issue, backupSwitch } : {}) });
   const modelRoutes = JSON.parse(run("spawn.mjs", ["--pins", modelFile]));
-  const pins = { ...gate, release, modelRoutes, ...(backupSwitch ? { backupSwitch } : {}), product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
+  const pins = { ...gate, release, modelRoutes, shipBotChecks: shipBotChecks(baseConfig), ...(backupSwitch ? { backupSwitch } : {}), product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
     risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind,
     reviewDataset: args["review-dataset"] ?? settings.reviewDataset ?? null, reviewDatasetVersion: Number(args["review-dataset-version"] ?? settings.reviewDatasetVersion ?? 0) };
   if (!pins.reviewDataset) {

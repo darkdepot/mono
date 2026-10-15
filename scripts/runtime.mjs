@@ -393,6 +393,13 @@ export function positive(value, fallback, name) {
   if (!Number.isFinite(value) || value <= 0) throw new Error(`invalid ${name}`);
   return value;
 }
+export function shipBotChecks(config = {}) {
+  const checks = config.orchestration?.ship?.botChecks === undefined ? ["Greptile Review"] : config.orchestration.ship.botChecks;
+  if (!Array.isArray(checks) || !checks.length || checks.some(name => typeof name !== "string" || !name.trim() || name !== name.trim()) ||
+      new Set(checks).size !== checks.length) throw new Error("orchestration.ship.botChecks must be a nonempty list of unique bot names");
+  return [...checks];
+}
+
 export function deliveryConfig(source) {
   const root = typeof source === "string" ? readJson(source) : source ?? {};
   const configured = root?.orchestration?.delivery;

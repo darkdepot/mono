@@ -1,78 +1,90 @@
 # Ship Feedback Loop
 
-Own PR stabilization in `mono:ship`; delegate configured ship/docs/resolvers. Leave merge/deploy/post-ship/closeout/learnings to deploy.
+`mono:ship` stabilizes PRs through configured ship/docs/resolvers; deploy owns merge/post-ship/closeout/learnings.
 
 ## Inputs
 
-Gather package, preflight certificate, PR number/URL/head and configured docs/feedback. Use dispatch snapshot for Linear.
+Inputs: package/preflight, PR number/URL/head, docs/feedback, Linear snapshot.
 
 ## Review Bot Configuration Check
 
-Before first resolver cycle inspect bot re-review-on-push/re-request settings. Fix repeated-adjudicated-finding behavior through config or record as environment fact; never spend code resolver cycles on bot configuration.
+Before resolving, inspect bot re-review-on-push/re-request. Fix repetition through config or record environment; never spend resolver cycles on bot config.
 
 ## Loop
 
-1. Confirm PR maps to Issue and scope matches package/preflight; perform bot config check before first resolver.
-2. Detect latest head before each wait/docs/resolver run. Run configured documentation if not run at current head. After docs/resolver push, record new head and restart documentation/review there.
-3. Poll checks, review, unresolved threads and Greptile to terminal/timeout. Prefer Greptile MCP; otherwise identifying GitHub checks/statuses.
-4. Inspect threads and actionable Greptile comments; classify novel/re-emitted under Finding Dedup.
-5. No actionable feedback: start quiet period. Otherwise invoke configured resolver; absent resolver is `needs-human` with feedback summary/missing-workflow note.
-6. Repeat to terminal outcome; after authorized final novel-finding cycle apply Non-Blocking Convergence.
+1. Match PR to Issue/package/preflight; check bot config before resolving.
+2. Refresh head before waits/docs/resolver. Run docs on each head; docs/resolver pushes restart docs/review.
+3. Poll checks/reviews/threads/Greptile to terminal/timeout; prefer Greptile MCP, else identifying GitHub checks/statuses.
+4. Classify actionable comments/threads as novel/re-emitted under Finding Dedup.
+5. No actionable feedback: quiet period. Otherwise invoke configured resolver; absent resolver → needs-human with feedback/missing-workflow note.
+6. Repeat to terminal; after the authorized final novel-finding cycle apply Non-Blocking Convergence.
 
 ## Defaults
 
-Use orchestration.delivery configuration: pollSec (10), quietSec (120), evidenceLimitSec (2400), all positive seconds. Keep the maximum 3 novel resolver rounds and Non-Blocking Convergence; dedup consumes no round. The evidence deadline is per PR attempt and survives head changes; a new head or new inspected evidence restarts the quiet pause. Run the installed gate script, never a second timer in prose.
+orchestration.delivery: pollSec=10, quietSec=120, evidenceLimitSec=2400 (positive
+seconds). Keep the maximum 3 novel resolver rounds and Non-Blocking Convergence;
+dedup consumes no round. The PR-attempt deadline survives heads; head/evidence
+changes restart quiet time. Use the installed gate, never another prose timer.
+
+## Authorized Ship Fix
+
+Orchestrator's ship-fix amendment names the next ship-gate attempt: new
+head/stateFile/preflight proof, preserved old state, same task attempt. No machine bound on ship-gate attempts; the unchanged window waives nothing, costing time.
+Review thresholds/declines/class stops/caps stay unchanged; never reset old deadlines.
+
+Required bots: attempt pins from orchestration.ship.botChecks (default
+["Greptile Review"]). Only orchestrator accept.mjs amend --bot-unavailable "<reason>"
+grants unavailability for this task attempt. Worker policy cannot weaken these
+requirements; absent a decision, wait for head bot evidence until the deadline.
 
 ## Finding Dedup
 
-Close later re-emissions of accepted/fixed or evidence-rejected findings with published reply citing prior thread/commit/decline rationale. Dedup consumes no round; its published reply is a new evidence event; a cosmetic target that keeps changing remains one adjudicated finding. Treat uncertainty or a new angle as novel and keep open. Never weaken/delete/bypass tests to reach green; autoreview's no-test-edits rule applies here.
+Close re-emitted accepted/fixed or evidence-rejected findings with a published reply citing prior thread/commit/decline. Dedup consumes no round; replies are evidence events. A changing cosmetic target remains one adjudicated finding. Uncertainty/new angles stay novel/open. Never weaken/delete/bypass tests; autoreview's no-test-edits rule applies.
 
 ## Non-Blocking Convergence
 
-After final authorized resolver round, reply deferring new cosmetic/nit findings (naming/style/phrasing/optional refactor), file follow-up when warranted, then reach terminal status. Never defer correctness/security/data-loss/contract blockers; escalate, including uncertain severity. Record deferrals and published-replies check in green certificate.
+After the final authorized resolver round, publish deferrals for new cosmetic/nit findings (naming/style/phrasing/optional refactor); file warranted follow-ups. Escalate correctness/security/data-loss/contract blockers or uncertain severity. Record deferrals/published-replies check in the green certificate.
 
 ## Published Replies
 
-Closure rationale must be published; unsubmitted drafts count unresolved. Before green check own reviews:
+Publish closure rationale; drafts remain unresolved. Before green check own reviews:
 
 ```bash
 gh api repos/<owner>/<repo>/pulls/<n>/reviews --jq '.[] | select(.state=="PENDING")'
 ```
 
-Require empty output for worker-owned reviews.
+Worker-owned output must be empty.
 
 ## Green Exit
 
-Run installed gate.mjs ship --request <json>: live open PR/stable head;
-docs on head/no changes/intentionally unavailable; mandatory pre-ship review
-performed/readiness passed; head CI green or accepted terminal non-blocking;
-Head Greptile completed/intentionally unavailable; zero unresolved threads,
-own drafts, requested changes or unaddressed bot remarks; public closure rationales;
-evidence pause before deadline. Require MERGEABLE with CLEAN, or UNSTABLE
-only with accepted terminal non-blocking failures and nothing pending.
-Await UNKNOWN/empty rollups. Parse CheckRun/StatusContext; require head bot checks,
-not old reviews after force-push. Before judgment require sealed preflight proof
-for PR head/merge-base; record its path. New heads invalidate proofs; return gate reason.
-Rules API 403/404: record unavailability; retain other gates. Retry other read failures
-until deadline; evidence-limit parks, waiving nothing.
+Run installed gate.mjs ship --request <json>: open PR/stable head; docs on head,
+unchanged or authorized unavailable; pre-ship review/readiness passed; head CI
+green/accepted terminal non-blocking; head Greptile complete/authorized unavailable;
+no unresolved threads, own drafts, change requests or unaddressed bot remarks;
+published closure rationale; quiet pause before deadline. Require MERGEABLE/CLEAN,
+or UNSTABLE only for accepted terminal failures with nothing pending. Await
+UNKNOWN/empty rollups. CheckRun/StatusContext must prove head bot checks, not old
+reviews. Before judgment record sealed head/merge-base preflight proof; heads stale
+proof. Return gate reason. Record Rules API 403/404 unavailable; keep other gates.
+Retry other reads to deadline; evidence-limit parks, waiving nothing.
 
 ## Green Certificate
 
 Store full `mono-ship green certificate` from `skills/ship/SKILL.md`
-in Linear for deploy recovery: convergence deferrals/published replies included.
+in Linear for recovery, including deferrals/published replies.
 
 ## Review Status Reporting
 
-PR exits report preflight/pre-ship outcomes or missing/skipped; docs/head; reviewers; separate blockers/nits/product-UX-scope; fixes/commit; threads/count or unknown; latest head/rechecked merge/CI; certificate recorded/not. Show actual review/findings/fix/re-check timeline, remaining actionable feedback and deploy review-safety. Name unrun manual/browser/prod/mobile/deploy/acceptance; green proves none of them.
+Report preflight/pre-ship (including missing/skipped), docs/head/reviewers, fixes/commit, thread count/unknown, refreshed head/merge/CI, certificate recorded/not. Separate blockers/nits/product-UX-scope. Show review/findings/fix/recheck timeline, remaining feedback and deploy review-safety. Name unrun manual/browser/prod/mobile/deploy/acceptance; green proves none.
 
 ## Needs-Human Exit
 
-Return `needs-human` for exhausted resolver rounds (subject to convergence), repeated failed/skipped Greptile, merge conflict, product/UX/business/scope decision, resolver needs-human, unrelated dirty files or another actor changing head during fixes. Deploy approval is never a ship gate; deploy owns it.
+`needs-human`: exhausted resolver rounds (subject to convergence), repeated failed/skipped Greptile, merge conflicts, product/UX/business/scope decisions, resolver needs-human, unrelated dirty files or another actor changing head during fixes. Deploy owns approval; it never gates ship.
 
 ## Blocked Or Timed Out
 
-Return `blocked` for unavailable tools/auth/PR/Linear context, naming next action. Return `timed-out` when checks/reviews/Greptile/loop exceed wall-clock; expiry precedes needs-human unless resolver already returned it or a required human decision is known.
+`blocked`: missing tools/auth/PR/Linear context; name next action. `timed-out`: checks/reviews/Greptile/loop expire; expiry precedes needs-human unless returned by resolver or a human decision is known.
 
 ## Linear Comments
 
-Use concise Russian comments for PR/review transition, docs outcome/head changes, loop completion/stop, certificate recorded/blocked and decisions. For human feedback decisions include exact question and linked PR context. Under dispatch queue comments.
+Queue Russian comments: PR/review, docs/head, completion/stop, certificate recorded/blocked, decisions. Human decisions need exact question/PR link.

@@ -7,8 +7,8 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout } from "./runtime.mjs";
-import { checkCollectionRequest } from "./orchestrator/command-state.mjs";
+import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout } from "./runtime.mjs";
+import { checkCollectionRequest, pinnedShipPolicy } from "./orchestrator/command-state.mjs";
 
 import { acceptedDeclines, readJournal } from './decisions.mjs';
 
@@ -746,8 +746,19 @@ export function advanceEvidence(previous, snapshot, now) {
   return { head: snapshot.head, fingerprint, startedAt: previous?.startedAt ?? now,
     lastEventAt: previous?.head === snapshot.head && previous.fingerprint === fingerprint ? previous.lastEventAt : now };
 }
+export function validateShipBotPolicy(policy = {}, trusted) {
+  if (Object.hasOwn(policy, "botChecks")) requireThat(canonical(policy.botChecks) === canonical(trusted.botChecks), "worker botChecks differs from required bot policy");
+  if (policy.botUnavailable != null && policy.botUnavailable !== "")
+    requireThat(policy.botUnavailable === trusted.botUnavailable, "worker botUnavailable requires the current attempt orchestrator decision");
+  return { ...policy, ...trusted };
+}
 export async function shipGate(request) {
   const config = deliveryConfig(request.config);
+  requireThat(request.preflight?.collect === false, "ship requires preflight collect:false request");
+  const trusted = pinnedShipPolicy(request.preflight) ?? {
+    botChecks: shipBotChecks(baseModelConfig(request.preflight.worktree, request.preflight.modelRoutes?.base ??
+      git(request.preflight.worktree, "merge-base", request.preflight.head, request.preflight.baseRef))), botUnavailable: null };
+  const policy = validateShipBotPolicy(request.policy, trusted);
   requireThat(path.isAbsolute(request.stateFile ?? ""), "absolute evidence state file required");
   const scope = { repo: request.repo, number: request.number, attempt: request.attempt };
   requireThat(Number.isInteger(scope.attempt) && scope.attempt > 0, "attempt required");
@@ -765,10 +776,10 @@ export async function shipGate(request) {
       requireThat(request.preflight?.collect === false, "ship requires preflight collect:false request");
       const proof = await verifyPreflight(request.preflight, snapshot);
       const judgment = readJson(request.judgmentFile);
-      const now = Date.now(); const state = { ...advanceEvidence(previous, { ...snapshot, preflightReceipt: proof.receipt, judgment, policy: request.policy ?? {} }, now), scope, preflightReceipt: proof.receipt, rules: snapshot.rules };
+      const now = Date.now(); const state = { ...advanceEvidence(previous, { ...snapshot, preflightReceipt: proof.receipt, judgment, policy }, now), scope, preflightReceipt: proof.receipt, rules: snapshot.rules };
       atomicJson(request.stateFile, state); previous = state;
       requireThat(now - state.startedAt < config.evidenceLimitSec * 1000, "evidence-limit: предел доказательств");
-      evaluateShip(snapshot, judgment, request.policy);
+      evaluateShip(snapshot, judgment, policy);
       if (now - state.lastEventAt >= config.quietSec * 1000) return `current-head evidence complete and quiet period passed; preflight receipt: ${proof.receipt.path}`;
       requireThat(request.watch === true, "current-head evidence quiet period pending");
     } catch (error) {
@@ -803,12 +814,15 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
 ship request: {preflight:<complete preflight collect:false request>, repo:"owner/repo", number:123, attempt:1, stateFile:"/absolute/file", judgmentFile:"/absolute/file", config:"/project/.agents/mono-workflow.config.json", watch:true, policy:{requiredChecks:[],nonBlockingChecks:[{name,reason}],botChecks:["Greptile Review"],botUnavailable:null}}
   Refresh remote-tracking baseRef; bind receipts to head/merge-base, not the moving base tip.
   Ship uses the live PR base tip for merge-base; require that sealed proof before judgment and record its path.
-  policy exceptions must come from the repository's accepted policy, never worker convenience.
+  Required bots come from immutable attempt pins (orchestration.ship.botChecks, default Greptile Review).
+  Worker botChecks must match; botUnavailable requires accept.mjs amend --bot-unavailable for this task attempt.
+  Other policy exceptions must come from the repository's accepted policy, never worker convenience.
   judgment: {head,preShipReview:"выполнено",readinessCheck:"пройдена",documentation:"выполнен на этой голове|без изменений|намеренно недоступен",documentationReason,closures:[{threadId,replyId}],botRemarks:[{id,commentDigest,outcome:"fixed|rejected|deferred|informational",evidence}]}
   Compute commentDigest with exported botRemarkDigest(comment) on each latest readShipSnapshot bot comment; re-inspect any edited comment.
   config.orchestration.delivery: confirmationTimeoutSec=1800, quietSec=120,
   evidenceLimitSec=2400, pollSec=10, attemptCap=3. Positive seconds/counts only.
-  Never delete stateFile to reset a deadline. Start a new attempt only through orchestrator recovery.`);
+  Never delete stateFile to reset a deadline. An orchestrator ship-fix amendment names the next ship-gate attempt;
+  use a new stateFile for the new head, preserve the old file, and keep the same task attempt. No ship-gate attempt cap.`);
     else {
       requireThat(["start", "preflight", "ship"].includes(name), "unknown gate");
       const request = readJson(args.request);
