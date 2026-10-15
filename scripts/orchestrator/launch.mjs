@@ -24,7 +24,7 @@ export function guard(root, resume = false) {
   if (control.halt === true) throw new Error("halt: new spawns and resumes are disabled; running workers are untouched");
   if (control.state !== "active" && !(resume && control.state === "draining")) throw new Error(`control state ${control.state} refuses ${resume ? "resume" : "spawn"}`);
 }
-function requireWatcher(root) {
+export function requireWatcher(root) {
   try {
     const pulse = readJson(path.join(root, "watcher.json")), beat = Date.parse(pulse.beatAt), now = Date.now();
     if (!Number.isSafeInteger(pulse.pid) || pulse.pid <= 0 || typeof pulse.procStart !== "string" || !pulse.procStart.trim() ||

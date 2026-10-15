@@ -1,2 +1,3 @@
 - Emit watcher events for every changed phase report and select confirmation waits by publication time. Record an atomic persistent-watcher pulse each tick, preserve it during one-shot scans, and require a fresh, live matching observer before worker launch or resume, without consuming attempts on refusal.
 - Prepare the evidence directory and immutable default review dataset at dispatch; preserve existing archives, digests and explicit dataset versions. Document session restart and observer supervision boundaries.
+- Check the observer before amendment launch bookkeeping so a refused amendment can retry after the observer is restored, retaining uncertain-launch protection.

@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { atomicJson, readJson, digest, canonical, withLock, isMain, validateEvidenceGrants } from "../runtime.mjs";
 import { registryEntry, effectivePins, correlatedPhase, expandedWrite, attemptDirectory, admitUnderLock, commandFlags, allowedFlags, sha256File, validateReportBarriers, amendmentState, amendmentChange, amendmentDocuments, validateAmendment, restoreAmendmentGrants } from "./command-state.mjs";
 import { consumeAck } from "./consume-gate-ack.mjs";
+import { requireWatcher } from "./launch.mjs";
 import { recordObservation, sessionContext, reconcile } from "./linear-adapter.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -234,6 +235,7 @@ export async function acceptAmend(args) {
             const entry = registryEntry(root, issue, attempt); validateAmendment(entry, record);
             if ((entry.pinsVersion ?? 0) !== record.currentVersion || canonical(entry.last_resume ?? null) !== canonical(record.previousResume))
               throw new Error("resume state changed before launch; preserve amendment evidence");
+            requireWatcher(root);
             boundary = resumeBoundary(entry);
             record = { ...record, launchMayHaveStartedAt: new Date().toISOString() };
             atomicJson(prepared.pendingFile, record);

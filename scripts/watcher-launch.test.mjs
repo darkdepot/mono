@@ -165,6 +165,12 @@ test('launch-watcher-required through amendment resume', async t => {
       assert.notEqual(r.status, 0); assert.match(r.stdout + r.stderr, /watcher-required:/);
       assert.equal(f.entry().pid, entry.pid); assert.equal(f.entry().last_resume, undefined);
       assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1);
+      const pending = path.join(f.root, 'dispatch', `${f.issue}-a1`, 'amendment.pending.json');
+      assert.equal(read(pending).launchMayHaveStartedAt, undefined, 'observer refusal happens before possible-launch bookkeeping');
+      pulse(f.root);
+      const retried = f.call('orchestrator/accept.mjs', 'amend', '--root', f.root, '--issue', f.issue, '--attempt', '1', '--text', 'Resume the approved scope.');
+      pass(retried);
+      assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1, 'restoring the watcher resumes the same attempt');
     } finally { await f.cleanup(); }
   });
 });
