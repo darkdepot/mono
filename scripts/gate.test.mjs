@@ -332,7 +332,7 @@ test("named collection fixtures through the gate CLI", async t => {
   const { spawnSync } = await import("node:child_process");
   const { atomicJson, canonical, digest, resolvedLocation } = await import("./runtime.mjs");
   const { sha256File } = await import("./orchestrator/command-state.mjs");
-  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collector-temp|collection-declines|collection-helper)-.*\.json$/u.test(name));
+  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collector-temp|collection-declines|collection-helper|collection-class)-.*\.json$/u.test(name));
   for (const name of files) await t.test(name, async () => {
     const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-u13-cli-"));
@@ -367,8 +367,8 @@ fs.writeFileSync(val('--status-output'),JSON.stringify({schema_version:1,status:
 console.log('autoreview target: branch | engine: claude | model: '+val('--model')+' | thinking: '+val('--thinking'));
 console.log('autoreview clean: no accepted/actionable findings reported');console.log('overall: patch is correct (0.9)');
 `); fs.chmodSync(helper, 0o700);
-      if (fixture.helperOutput) {
-        const captured = path.resolve("scripts/fixtures/autoreview-current", fixture.helperOutput);
+      if (fixture.helperOutput || fixture.mode === "class-after-admission") {
+        const captured = path.resolve("scripts/fixtures/autoreview-current", fixture.helperOutput ?? "findings");
         write(helper, `#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path'),a=process.argv.slice(2),val=k=>a[a.indexOf(k)+1],dir=${JSON.stringify(captured)};
 for(const [flag,file] of [['--json-output','review.json'],['--status-output','status.json']])fs.copyFileSync(path.join(dir,file),val(flag));
@@ -438,6 +438,7 @@ process.kill=function(pid,signal){
 const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path'),a=process.argv.slice(2);
 if(a[0]!=='sandbox')process.exit(71);const command=a.slice(a.indexOf('--')+1),p=JSON.parse(command.at(-1));
 fs.appendFileSync(process.env.MONO_FIXTURE_SANDBOX_LOG,'sandbox\\n');
+if(p.args.includes('--json-output'))fs.appendFileSync(process.env.MONO_FIXTURE_SANDBOX_LOG,'review\\n');
 const protectedRoot=path.dirname(p.probe);fs.chmodSync(protectedRoot,0o500);let r;
 const profile=a[a.indexOf('-c')+1],grants=[...profile.matchAll(/("(?:\\\\.|[^"\\\\])*")="write"/g)].map(m=>JSON.parse(m[1]));
 const env={...process.env,MONO_FIXTURE_GRANTS:JSON.stringify(grants),MONO_FIXTURE_PHASE:p.args.includes('--json-output')?'review':'verification',NODE_OPTIONS:'--require '+JSON.stringify(${JSON.stringify(boundary)})};
@@ -471,11 +472,78 @@ assert.ok(path.basename(process.env.TMPDIR).startsWith('mono-sandbox-temp-'));
         if(!fs.existsSync(registryFile))return;
         const {admitCollection}=await import('./orchestrator/command-state.mjs');
         const request={...value,collect:false},queue=[{id:request.collectionId,operation:'preflight-collect',target:request.head,payload:{request}}];
-        await admitCollection(root,{...entry,phase:'preflight',kind:'confirmation-request',sequence:1,head:request.head,
+        return admitCollection(root,{...entry,phase:'preflight',kind:'confirmation-request',sequence:1,head:request.head,
           linear_mutations_pending:queue,capsule:{phase:'preflight',head:request.head,decisions:[],open_queue:queue,writable_roots:request.workerWritableRoots}});
       };
       const collect = async (value, expected = 0) => { await admit(value); const r = call({ ...value, collect: true }); assert.equal(r.status, expected, r.stdout + r.stderr); return JSON.parse(fs.readFileSync(receiptFile, "utf8")); };
       const seal = envelope => { envelope.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(envelope.receipt)).digest("hex"); atomicJson(receiptFile, envelope); };
+      if (fixture.mode === "class-after-admission") {
+        const { recordDecision, findingIdentity } = await import('./decisions.mjs');
+        const { classFixture, classSeal } = await import('./class-fixtures.mjs');
+        const { repeatedClasses, buildReviewLedger } = await import('./review-ledger.mjs');
+        const { readJournal } = await import('./decisions.mjs');
+        const receipts = [];
+        for (const number of [1, 2]) receipts.push((await collect({ ...request, collectionId: `preflight-collect:${head}:${number}` }, 1)).receipt);
+        request = { ...request, collectionId: `preflight-collect:${head}:3` };
+        await assert.rejects(admit(request), /needs-decision: review cap/);
+        const counterFile = path.join(evidence, 'reviews/MONO-999-counters.json'), stop = JSON.parse(fs.readFileSync(counterFile)).stops.at(-1);
+        const now = new Date().toISOString();
+        await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: classSeal({ type: 'continue', id: 'continue-3', supersedes: null,
+          stopId: stop.id, collectionId: request.collectionId, localPasses: 0, externalCollections: 1,
+          nextStep: 'Review the bounded admission correction', checkpoint: 'One external receipt', approvedBy: 'orchestrator', approvedAt: now, recordedAt: now }) });
+        const admission = await admit(request), reviewCalls = () => fs.readFileSync(sandboxLog, 'utf8').split('review\n').length - 1;
+        assert.equal(reviewCalls(), 2);
+        if (fixture.path === 'executed') {
+          const result = call({ ...request, collect: true }); assert.equal(result.status, 1, result.stdout);
+          receipts.push(JSON.parse(fs.readFileSync(receiptFile)).receipt); assert.equal(reviewCalls(), 3);
+        }
+        const x = classFixture({ sameKey: fixture.sameKey });
+        const classEntry = classSeal({ ...x.entry, findingIds: receipts.map(r => findingIdentity(r, 0).id) });
+        if (fixture.sameKey) {
+          await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: x.journal.entries[0] });
+          atomicJson(path.join(evidence, 'reviews/MONO-999-adjudications.json'), receipts.map(r => ({
+            eventId: `1:helper-invocation:${r.collectionId}`, links: [x.journal.entries[0].id], progress: 'fixed' })));
+        } else await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: classEntry });
+        const latest = receipts.at(-1), journalFile = path.join(evidence, 'decisions/MONO-999.json');
+        const stopAfterClass = repeatedClasses({ ledger: buildReviewLedger({ issue: entry.issue, sources: receipts.map(receipt => ({
+          type: 'history', ref: receipt.runId, attempt: 1, data: { receipt } })) }),
+          records: fixture.sameKey ? JSON.parse(fs.readFileSync(path.join(evidence, 'reviews/MONO-999-adjudications.json'))) : [],
+          journal: readJournal({ evidenceRoot: evidence, issue: entry.issue }) });
+        assert.equal(stopAfterClass.required, true, 'late classification creates a current stop');
+        const sealedReceipt = fs.readFileSync(receiptFile), historyFile = path.join(evidence, 'history', `${latest.runId}.json`);
+        if (fixture.path === 'executed') {
+          // A valid decline makes this findings receipt pass under the current gate rules.
+          const d = declineFixture().entry, finding = findingIdentity(latest, 0);
+          await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: classSeal({ ...d, head,
+            receipt: { collectionId: latest.collectionId, runId: latest.runId, digest: digest(latest) }, finding,
+            recordedAt: new Date().toISOString(), approvedAt: new Date().toISOString() }) });
+          assert.deepEqual(await admit(request), admission, 'completed admission remains idempotent');
+          const result = call(request); assert.equal(result.status, 0, result.stdout); assert.match(result.stdout, /accepted-with-declines/);
+          assert.deepEqual(fs.readFileSync(receiptFile), sealedReceipt); assert.deepEqual(fs.readFileSync(historyFile), sealedReceipt);
+          assert.equal(reviewCalls(), 3);
+          // Reconciliation still authenticates the receipt; a class never substitutes for receipt proof.
+          const envelope = JSON.parse(sealedReceipt); envelope.signature = '0'.repeat(64); atomicJson(receiptFile, envelope);
+          const denied = call(request); assert.equal(denied.status, 1); assert.match(denied.stdout, /hand-made or modified/);
+          assert.equal(reviewCalls(), 3);
+          return;
+        }
+        if (fixture.path === 'replay') await assert.rejects(admit(request), /needs-decision: repeated review class/);
+        else {
+          const denied = call({ ...request, collect: true }); assert.equal(denied.status, 1, denied.stdout);
+          assert.match(denied.stdout, /needs-decision: repeated review class/);
+        }
+        assert.equal(reviewCalls(), 2); assert.deepEqual(fs.readFileSync(receiptFile), sealedReceipt);
+        await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: classSeal({ ...x.decision(),
+          receipt: { collectionId: latest.collectionId, runId: latest.runId, digest: digest(latest) },
+          approvedAt: new Date().toISOString(), recordedAt: new Date().toISOString() }) });
+        assert.deepEqual(await admit(request), admission, 'class decision preserves the existing cap reservation');
+        const allowed = call({ ...request, collect: true }); assert.equal(allowed.status, 1, allowed.stdout);
+        assert.doesNotMatch(allowed.stdout, /needs-decision/); assert.equal(reviewCalls(), 3);
+        const counters = JSON.parse(fs.readFileSync(counterFile));
+        assert.equal(counters.permits[stop.id].reservations.length, 1, 'continuation is consumed once');
+        assert.equal(fs.existsSync(journalFile), true);
+        return;
+      }
       let expectedField = null, expectedValue = null, expectedStatus = 2;
       if (fixture.mode === "mismatch") { expectedField = fixture.field; expectedValue = pins[fixture.field]; if (fixture.omit) delete request[fixture.field]; else request[fixture.field] = fixture.value; }
       if (fixture.mode === "pins-digest") { request.pins = { ...binding, digest: "0".repeat(64) }; expectedField = "pins.digest"; expectedValue = binding.digest; }

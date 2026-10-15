@@ -239,13 +239,17 @@ export function checkCollectionRequest(request) {
   if (request.collect !== false && request.collect !== true) requestMismatch("collect", false);
   if(request.collect===true) {
     if(!admission)requestMismatch('admission','orchestrator admission before collection');
-    const history=path.join(pins.evidenceRoot,'history');
-    if((fs.existsSync(history)?fs.readdirSync(history).filter(n=>n.endsWith('.json')):[])
-      .some(name=>readJson(path.join(history,name)).receipt?.collectionId===request.collectionId))
+    if(collectionExecuted(pins,request.collectionId))
       throw new Error('collection already executed; reconcile the same request with collect:false');
+    if(collectionClassStop(entry,pins).required)throw new Error('needs-decision: repeated review class');
     validateCapAdmission({evidenceRoot:pins.evidenceRoot,issue:entry.issue,cap:admission.cap});
   }
   return legacy?null:pins;
+}
+function collectionExecuted(pins,collectionId) {
+  const history=path.join(pins.evidenceRoot,'history');
+  return (fs.existsSync(history)?fs.readdirSync(history).filter(n=>n.endsWith('.json')):[])
+    .some(name=>readJson(path.join(history,name)).receipt?.collectionId===collectionId);
 }
 
 export function collectionDecisionDigest(entry) {
@@ -288,6 +292,8 @@ export async function admitUnderLock(root, report) {
     if (fs.existsSync(file)) {
       const prior = readJson(file);
       if (prior.collectionId !== write.id || prior.reportDigest !== reportDigest) throw new CollectionAdmissionRefusal("conflicting collection admission");
+      if(!collectionExecuted(pins,write.id)&&collectionClassStop(entry,pins).required)
+        throw new CollectionAdmissionRefusal('needs-decision: repeated review class');
       try {validateCapAdmission({evidenceRoot:pins.evidenceRoot,issue:report.issue,cap:prior.cap});}
       catch(error) {
         if(error.message!=='needs-decision: review cap')throw error;
