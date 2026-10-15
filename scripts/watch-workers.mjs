@@ -38,15 +38,14 @@
 // active until deploy closeout removes them; control active/draining never
 // retires a remaining entry.
 //
-// Read-only by contract: no LLM calls, no writes anywhere — it reads
-// logs/*.jsonl, reports/*.json, workers.json, and control.json, and emits to
-// stdout only (diagnostics go to stderr). Zero dependencies: node:fs/path/process.
+// Reads worker state without changing it; writes only its own watcher.json pulse.
+// Events go to stdout and diagnostics to stderr.
 
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { validatePhase, validateConfirmation, confirmationPath, correlatedDeliveryReport } from "./delivery-state.mjs";
-import { deliveryConfig, processStart, IDENTITY_FIELDS, identity } from "./runtime.mjs";
+import { atomicJson, deliveryConfig, processStart, IDENTITY_FIELDS, identity, packLayout, runtimePackRoot } from "./runtime.mjs";
 
 import { workerTransport } from "./worker-transport.mjs";
 
@@ -173,6 +172,9 @@ function parseArgs(argv) {
 }
 
 const args = parseArgs(process.argv.slice(2));
+const startedAt = new Date().toISOString();
+const procStart = processStart(process.pid);
+const packVersion = packLayout(runtimePackRoot()).identity().packVersion;
 
 if (!fs.existsSync(args.root) || !fs.statSync(args.root).isDirectory()) {
   console.error(`Orchestrator root is not a directory: ${args.root}`);
@@ -1111,14 +1113,15 @@ function checkPhase(log, entry, nowMs) {
       phases.push({ file, stat, report, publishedAtMs });
     } catch { continue; }
   }
-  const order = ["code", "preflight", "ship"];
-  phases.sort((a, b) => order.indexOf(b.report.phase) - order.indexOf(a.report.phase) || b.report.sequence - a.report.sequence);
-  const latest = phases[0]; if (!latest) return false;
-  const version = `${latest.stat.mtimeMs}:${latest.stat.size}`;
-  if (emittedReportVersions.get(latest.file) !== version) {
-    emittedReportVersions.set(latest.file, version);
-    emitEvent("phase", log.issue, `phase ${latest.report.phase} sequence ${latest.report.sequence}: ${latest.file}`, `phase:${latest.file}:${version}`, nowMs);
+  for (const { file, stat, report } of phases) {
+    const version = `${stat.mtimeMs}:${stat.size}`;
+    if (emittedReportVersions.get(file) !== version) {
+      emittedReportVersions.set(file, version);
+      emitEvent("phase", log.issue, `phase ${report.phase} sequence ${report.sequence}: ${file}`, `phase:${file}:${version}`, nowMs);
+    }
   }
+  phases.sort((a, b) => b.publishedAtMs - a.publishedAtMs || b.report.sequence - a.report.sequence);
+  const latest = phases[0]; if (!latest) return false;
   const confirmation = confirmationPath(latest.report, args.root);
   try { validateConfirmation(latest.report, JSON.parse(fs.readFileSync(confirmation, "utf8"))); return false; } catch { /* still awaiting whole queue */ }
   const timeout = entry.confirmationTimeoutSec ?? deliveryConfig().confirmationTimeoutSec;
@@ -1131,6 +1134,8 @@ function checkPhase(log, entry, nowMs) {
 
 function scan() {
   const nowMs = Date.now();
+  atomicJson(path.join(args.root, "watcher.json"), { pid: process.pid, procStart, packVersion, startedAt,
+    beatAt: new Date(nowMs).toISOString(), intervalSec: args.intervalSec });
   const registrySnapshot = loadRegistry(path.join(args.root, "workers.json"));
   const registry = registrySnapshot.entries;
   const controlState = loadControlState(path.join(args.root, "control.json"));

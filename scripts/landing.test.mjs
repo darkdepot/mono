@@ -1,4 +1,4 @@
-import { copyPluginFixture } from './plugin-fixture.mjs';
+import { copyPluginFixture, writeWatcherFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -115,6 +115,7 @@ test("landing U2 installed dispatch validates release and reserves a single rele
     copyPluginFixture(skills);
     write(path.join(bin, "codex"), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"landing-fixture"}));setInterval(()=>{},1000);\n'); fs.chmodSync(path.join(bin, "codex"), 0o700);
     atomicJson(path.join(root, "control.json"), { state: "active" }); atomicJson(path.join(root, "workers.json"), {});
+    writeWatcherFixture(root, env);
     git("init", "-b", "main"); const origin = path.join(scratch, "origin.git"); pass(run("git", ["init", "--bare", origin])); git("remote", "add", "origin", origin);
     const config = JSON.parse(fs.readFileSync(".agents/mono-workflow.config.json"));
     config.orchestration.transport = "codex-cli";

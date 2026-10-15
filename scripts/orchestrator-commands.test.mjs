@@ -1,4 +1,4 @@
-import { copyPluginFixture } from './plugin-fixture.mjs';
+import { copyPluginFixture, writeWatcherFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -334,7 +334,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.ok(budget.bytes <= 98_373, "worker corpus must not grow from the MONO-121 baseline");
     write(path.join(bin, "codex"), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"fixture-thread"}));setInterval(()=>{},1000);\n'); fs.chmodSync(path.join(bin, "codex"), 0o700);
     write(path.join(bin, "ps"), '#!/usr/bin/env node\nconsole.log("fixture-start");\n'); fs.chmodSync(path.join(bin, "ps"), 0o700);
-    atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); atomicJson(path.join(root, "workers.json"), {});
+    atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); atomicJson(path.join(root, "workers.json"), {}); writeWatcherFixture(root, env);
     git("init", "-b", "main");
     const origin = path.join(scratch, "origin.git"); pass(run("git", ["init", "--bare", origin])); git("remote", "add", "origin", origin);
     const config = path.join(repo, ".agents/mono-workflow.config.json");
@@ -379,7 +379,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     write(path.join(snapshot, "issue-MONO-999.md"), body);
     const laneRoot = path.join(scratch, "lane-orchestrator"), laneSnapshot = path.join(scratch, "lane-snapshot");
     fs.mkdirSync(path.join(laneRoot, "reports"), { recursive: true });
-    atomicJson(path.join(laneRoot, "control.json"), { state: "active", halt: false }); atomicJson(path.join(laneRoot, "workers.json"), {});
+    writeWatcherFixture(laneRoot, env); atomicJson(path.join(laneRoot, "control.json"), { state: "active", halt: false }); atomicJson(path.join(laneRoot, "workers.json"), {});
     const laneBody = body.replaceAll("MONO-999", "MONO-998"), fingerprint = createHash("sha256").update(laneBody).digest("hex");
     write(path.join(laneSnapshot, "issue-MONO-998.md"), laneBody); write(path.join(laneSnapshot, "approval.md"), "Approved issue-only fixture.");
     const lane = { marker: "fixture marker", label: "issue-only", fingerprint, config: "enabled=true; ownerPrincipal=fixture", ownerApproval: "approved fixture fingerprint",
@@ -410,15 +410,17 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.equal(entry.attempt, 1); assert.equal(entry.pinsVersion, 0); assert.equal(entry.profile, "short"); assert.equal(entry.handshake, "wait");
     assert.equal(entry.pins.digest, (await import("./orchestrator/command-state.mjs")).sha256File(entry.pins.file));
     const launchedPins = readJson(entry.pins.file);
-    assert.equal(launchedPins.reviewDataset, null); assert.equal(launchedPins.reviewDatasetVersion, 0); assert.equal(launchedPins.reviewDatasetDigest, null);
+    assert.equal(launchedPins.reviewDataset, fs.realpathSync(path.join(scratch, "evidence/datasets/MONO-999-review-scope.v1.md")));
+    assert.equal(launchedPins.reviewDatasetVersion, 1);
+    assert.equal(launchedPins.reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(launchedPins.reviewDataset)).digest("hex"));
     assert.equal(readJson(launched.gateFile).worktree, worktree); assert.deepEqual(readJson(launched.spawnFile).gates, entry.gates);
     assert.ok(!fs.readFileSync(launched.dispatchFile, "utf8").includes("{{")); assert.match(fs.readFileSync(path.join(root, "ledger.md"), "utf8"), /\d{4}-\d\d-\d\dT.*Z DISPATCHED MONO-999/u);
     const rendered = fs.readFileSync(launched.dispatchFile, "utf8");
     assert.ok(rendered.includes(`--ack '${path.join(root, "reports/MONO-999-gate-ack-a1.json")}'`));
     assert.ok(rendered.includes(`--ack '${path.join(worktree, ".orchestrator/MONO-999-gate-ack-a1.json")}'`), "wait instructions use the actual fallback ack location");
     const collectionSample = JSON.parse(/## Запрос сбора[\s\S]*?```json\n([\s\S]*?)```/u.exec(rendered)[1]);
-    assert.deepEqual(collectionSample.pins, entry.pins); assert.equal(collectionSample.reviewDatasetVersion, 0);
-    assert.equal(Object.hasOwn(collectionSample, "reviewDataset"), false); assert.equal(collectionSample.collect, false);
+    assert.deepEqual(collectionSample.pins, entry.pins); assert.equal(collectionSample.reviewDatasetVersion, 1);
+    assert.equal(collectionSample.reviewDataset, launchedPins.reviewDataset); assert.equal(collectionSample.collect, false);
     assert.throws(() => renderDispatch("{{collection_request}}", { collection_request: "" }), /unfilled dispatch placeholder/u);
     assert.ok(fs.existsSync(path.join(launched.snapshot, "prd-extract.md"))); assert.equal(fs.existsSync(path.join(launched.snapshot, "prd.md")), false);
     const baseline = JSON.parse(fixture("snapshot-u12-package-bytes.json")).find(item => item.coverage === "R4, U5");
@@ -544,7 +546,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       assert.equal(fs.readFileSync(amended.resumeFile, "utf8"), originalResume, "the already registered version is immutable");
       await processes.stop(livePid); livePid = null;
       const dataset = path.join(scratch, "evidence/datasets/fixture.md"); write(dataset, "Approved review decisions.");
-      const laterAmendment = await acceptAmend({ root, issue: ack.issue, attempt: "1", text: "Resume after an independent dataset clarification.", "review-dataset": dataset, "review-dataset-version": "1" }); livePid = processes.track(laterAmendment.pid);
+      const laterAmendment = await acceptAmend({ root, issue: ack.issue, attempt: "1", text: "Resume after an independent dataset clarification.", "review-dataset": dataset, "review-dataset-version": "2" }); livePid = processes.track(laterAmendment.pid);
       assert.equal(readJson(laterAmendment.pinsFile).reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(dataset)).digest("hex"));
       assert.equal(laterAmendment.pinsVersion, 3, "an independent amendment does not require resupplying the full snapshot");
       assert.match(fs.readFileSync(laterAmendment.resumeFile, "utf8"), /Additional approved snapshot context/u, "persisted full documents are retained through later resumes");
@@ -560,7 +562,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       };
       await assert.rejects(admitCollection(root, datasetVersionReport(3, 0)), /reviewDatasetVersion/u, "current pinsVersion cannot admit an older dataset at the same path");
       await assert.rejects(admitCollection(root, datasetVersionReport(4, undefined)), /reviewDatasetVersion/u, "omitting the version cannot bypass an amended dataset pin");
-      assert.equal((await admitCollection(root, datasetVersionReport(5, 1)))[0].manifestDigest, digest(currentPins));
+      assert.equal((await admitCollection(root, datasetVersionReport(5, 2)))[0].manifestDigest, digest(currentPins));
       assert.deepEqual((await admitCollection(root, collectReport))[0], admission, "prior admission is recoverable under its original version");
       await t.test("amend-resume-registration-recovery: finish a delivered amendment without a second launch", async () => {
         await processes.stop(livePid); livePid = null;
@@ -797,7 +799,7 @@ entry.workerWritableRoots=roots;entry.writable_roots=roots;entry.capsule.writabl
         const evolved = path.join(scratch, "evolved-snapshot"); fs.mkdirSync(evolved);
         for (const name of [`issue-${ack.issue}.md`, "approval.md", "project-brief.md", "prd.md", "tech-spec.md"]) fs.copyFileSync(path.join(snapshot, name), path.join(evolved, name));
         fs.appendFileSync(path.join(evolved, "prd.md"), "\nA later approved snapshot.\n");
-        const secondArgs = [...args, "--review-dataset-version", "2", "--full-snapshot", "--snapshot", evolved];
+        const secondArgs = [...args, "--review-dataset-version", "3", "--full-snapshot", "--snapshot", evolved];
         const second = JSON.parse(pass(run(process.execPath, secondArgs))); livePid = processes.track(second.pid);
         assert.equal(second.version, first.version + 1);
         const registryFile = path.join(root, "workers.json"), registry = fs.readFileSync(registryFile), output = path.dirname(first.pinsFile), names = fs.readdirSync(output);
@@ -805,7 +807,7 @@ entry.workerWritableRoots=roots;entry.writable_roots=roots;entry.capsule.writabl
         const refusal = JSON.parse(ambiguous.stdout); assert.equal(refusal.version, null); assert.equal(refusal.outcome, "refused");
         assert.deepEqual(refusal.candidates, [first.version, second.version]);
         assert.deepEqual(fs.readFileSync(registryFile), registry); assert.deepEqual(fs.readdirSync(output), names);
-        assert.deepEqual(JSON.parse(pass(run(process.execPath, [...args, "--review-dataset-version", "1"]))), first, "resolve omissions using each candidate, even though current dataset is newer");
+        assert.deepEqual(JSON.parse(pass(run(process.execPath, [...args, "--review-dataset-version", "2"]))), first, "resolve omissions using each candidate, even though current dataset is newer");
         assert.deepEqual(JSON.parse(pass(run(process.execPath, secondArgs))), second);
         await processes.stop(livePid); livePid = null;
       });
@@ -1273,7 +1275,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     copyPluginFixture(skills);
     const runtime = path.join(skills, "scripts");
     write(path.join(bin, "codex"), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"ae12"}));setInterval(()=>{},1000);\n'); fs.chmodSync(path.join(bin, "codex"), 0o700);
-    atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); atomicJson(path.join(root, "workers.json"), {});
+    atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); atomicJson(path.join(root, "workers.json"), {}); writeWatcherFixture(root, env);
     git(repo, "init", "-b", "main"); const origin = path.join(scratch, "origin.git"); git(scratch, "init", "--bare", origin); git(repo, "remote", "add", "origin", origin);
     const config = path.join(repo, ".agents/mono-workflow.config.json"), policy = readJson(path.join(checkout, ".agents/mono-workflow.config.json"));
     policy.orchestration.transport = "codex-cli";

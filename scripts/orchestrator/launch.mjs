@@ -24,6 +24,20 @@ export function guard(root, resume = false) {
   if (control.halt === true) throw new Error("halt: new spawns and resumes are disabled; running workers are untouched");
   if (control.state !== "active" && !(resume && control.state === "draining")) throw new Error(`control state ${control.state} refuses ${resume ? "resume" : "spawn"}`);
 }
+function requireWatcher(root) {
+  try {
+    const pulse = readJson(path.join(root, "watcher.json")), beat = Date.parse(pulse.beatAt), now = Date.now();
+    if (!Number.isSafeInteger(pulse.pid) || pulse.pid <= 0 || typeof pulse.procStart !== "string" || !pulse.procStart.trim() ||
+        typeof pulse.packVersion !== "string" || !pulse.packVersion.trim() || !Number.isFinite(Date.parse(pulse.startedAt)) ||
+        !Number.isFinite(pulse.intervalSec) || pulse.intervalSec <= 0 || !Number.isFinite(beat) ||
+        beat > now + 1000 || now - beat > 3 * pulse.intervalSec * 1000) throw new Error("missing or stale pulse");
+    process.kill(pulse.pid, 0);
+    if (processStart(pulse.pid) !== pulse.procStart) throw new Error("watcher process changed");
+  } catch {
+    const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+    throw new Error(`watcher-required: start node ${quote(path.join(runtimePackRoot(), "scripts/watch-workers.mjs"))} --root ${quote(root)}`);
+  }
+}
 function checkRequest(request) {
   if (!path.isAbsolute(request.root ?? "") || !/^[A-Z][A-Z0-9]*-\d+$/.test(request.issue)) throw new Error("root/issue required");
 }
@@ -267,6 +281,8 @@ export async function spawnWorker(request, preparation = {}) {
   const modelRoutes = resolveWorkerPins(request);
   guard(request.root);
   const launched = await withLock(path.join(request.root, "launch.lock"), async () => {
+    guard(request.root);
+    requireWatcher(request.root);
     const { file, registry, attemptsFile, attempts, used } = checkSpawnAvailability(request);
     try {
       await preparation.beforeStart?.();
@@ -337,6 +353,7 @@ export async function resumeWorker(request) {
   checkRequest(request); guard(request.root, true);
   const launched = await withLock(path.join(request.root, "launch.lock"), async () => {
     guard(request.root, true);
+    requireWatcher(request.root);
     const entry = readJson(path.join(request.root, "workers.json"))[request.issue];
     if (!entry || !identity(entry) || !entry.thread_id || entry.stage !== "mono-deliver") throw new Error("no resumable delivery thread");
     if (entry.pid) {

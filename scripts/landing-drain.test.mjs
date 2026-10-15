@@ -1,4 +1,4 @@
-import { copyPluginFixture } from './plugin-fixture.mjs';
+import { copyPluginFixture, writeWatcherFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -449,6 +449,7 @@ test("landing U7 default verify output includes per-task installation evidence",
 test("landing U7 resuming a landed release cannot bypass another active release", async t => {
   const f = fixture(t), priorPath = process.env.PATH; process.env.PATH = f.env.PATH;
   t.after(() => { process.env.PATH = priorPath; });
+  writeWatcherFixture(f.root);
   const skills = path.join(f.scratch, "skills"); fs.mkdirSync(skills); fs.mkdirSync(path.join(f.scratch, "evidence"));
   copyPluginFixture(skills); f.entry.packRoot = skills; f.entry.skillsRoot = skills;
   f.entry.surfaceRevision = 4; f.entry.model_launch = { model_parameter: "fixture", effort_parameter: "high" }; f.entry.model_policy = { role: "worker-default" };

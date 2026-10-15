@@ -1,0 +1,2 @@
+- Emit watcher events for every changed phase report and select confirmation waits by publication time. Record an atomic watcher pulse each tick and require a fresh, live matching observer before worker launch or resume, without consuming attempts on refusal.
+- Prepare the evidence directory and immutable default review dataset at dispatch; preserve existing archives, digests and explicit dataset versions. Document session restart and observer supervision boundaries.

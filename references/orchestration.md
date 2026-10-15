@@ -1136,6 +1136,11 @@ Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
 ## Review decline approval
 
 Declines are normal admission records, separate from the experimental pilot.
+Dispatch creates immutable review dataset v1 by default under evidenceRoot and
+pins its path/version/digest. It reuses matching v1 bytes; otherwise it selects
+the latest existing version without rewriting archives or digests. Explicit
+datasets retain their path/version. A decline needs a version and a linked,
+approved decision in the journal; the default dataset grants no decline itself.
 The worker proposes in its phase report; only the orchestrator writes
 `decisions/<KEY>.json` using installed `decisions.mjs record`. For standalone
 requests without pins, supply `issue` at collection: the receipt signs that
@@ -1548,10 +1553,10 @@ never a hidden stop. No report → recovery, never implicit green.
 The Monitoring Protocol defines when to intervene; the heartbeat is the
 external pulse that notices dying workers without spending orchestrator
 turns. The runtime is `scripts/watch-workers.mjs`, resolved from the dispatched
-pack root; the same source serves development and fixtures. It is
-a zero-dependency, read-only watcher over the orchestrator root: it reads
-`logs/`, `reports/`, `workers.json`, and `control.json`, writes nothing, and
-emits one stable line per watcher event to stdout —
+pack root; the same source serves development and fixtures. It reads worker
+state and atomically writes only its own `watcher.json` each tick: pid,
+procStart, packVersion, startedAt, beatAt, intervalSec. It emits one stable
+line per watcher event to stdout —
 `<ISO time> EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle> <ISSUE-KEY|-> <detail>`.
 `phase-rejected` names the task and mismatched identity fields when a phase
 report fails strict report-to-task correlation. It never accepts the report or
@@ -1559,16 +1564,24 @@ suppresses liveness on its strength.
 The watcher observes the active registry (`workers.json`), not the
 directory's history; retired Issues' logs are outside its scope.
 
-- At wave start — before the first worker spawn — the orchestrator must
+- At session start/restart, before any worker spawn or resume, the orchestrator must
   start the watcher against the mailbox root:
   `node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product> --config <cfg>`.
   Use the absolute product config path so watcher and worker share delivery clocks.
   Substitute `<pack-root>` with the dispatch pin or loaded plugin root;
   never use the product/worktree current directory.
-  Run it through the runtime's monitor primitive (Claude Code: the Monitor
-  tool with `persistent: true`); a runtime without one falls back to a
-  background process plus a periodic wakeup that reads its stdout. Record
-  the degraded binding in the ledger.
+  Keep it as a tracked background process of the session, with its stdout
+  observed by the runtime's monitor primitive (Claude Code: Monitor with
+  `persistent: true`) or periodic wakeups; record the latter binding in the ledger.
+  Under `launch.lock`, spawn/resume require a pulse no older than three intervals,
+  no more than one second in the future, and a live pid with matching procStart.
+  `watcher-required` gives the start command; refusal registers no attempt and
+  consumes no attempt allowance. Read-only `spawn --pins` is exempt.
+  If the session and watcher disappear together while a worker runs, the pack
+  cannot detect that loss; the orchestrator environment owns that supervision.
+- Each changed phase report file emits `phase`, regardless of stage order.
+  Deduplication stays per file/mtime/size; the confirmation wait uses the latest
+  publishedAt, then sequence, rather than the furthest stage.
 - Watcher liveness events are Monitoring Protocol triggers: treat `stall`,
   `dead`, and `spawn-fail` lines exactly like a worker-reported blocker — read
   the worker's latest state first, then act. `spawn-fail` feeds the spawn

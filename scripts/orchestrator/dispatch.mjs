@@ -4,13 +4,14 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { atomicJson, readJson, isMain, deliveryConfig, RISK_KEYS, withLock, baseModelConfig, validateLanding, packLayout, runtimePackRoot } from "../runtime.mjs";
+import { atomicJson, readJson, isMain, deliveryConfig, RISK_KEYS, withLock, baseModelConfig, validateLanding, validateEvidenceGrants, packLayout, runtimePackRoot } from "../runtime.mjs";
 import { commandFlags, allowedFlags, sha256File } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
 import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
 import { workerTransport } from "../worker-transport.mjs";
 import { spawnWorker } from "./launch.mjs";
 import { configuredBackup, resolveBackupSwitch } from "./backup-switch.mjs";
+import { versionDataset } from "../decisions.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const q = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -113,6 +114,8 @@ async function prepareDispatch(args) {
   if (!Array.isArray(extras) || extras.some(root => !path.isAbsolute(root))) throw new Error("absolute worker writable roots required");
   fs.mkdirSync(path.join(args.root, "reports"), { recursive: true });
   const roots = [...new Set([path.join(args.root, "reports"), worktree, git(worktree, "rev-parse", "--absolute-git-dir"), git(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"), ...extras].map(value => fs.realpathSync(value)))].sort();
+  validateEvidenceGrants(evidenceRoot, [args.root, ...roots]);
+  fs.mkdirSync(evidenceRoot, { recursive: true });
   const output = path.join(args.root, "dispatch", `${issue}-a${attempt}`);
   fs.mkdirSync(output, { recursive: true });
   const gateFile = path.join(output, "start-gate.json"), spawnFile = path.join(output, "spawn.json"), pinsFile = path.join(output, "pins.json"), dispatchFile = path.join(output, "dispatch.md"), movesFile = path.join(output, "moves.json");
@@ -123,8 +126,15 @@ async function prepareDispatch(args) {
   const pins = { ...gate, release, modelRoutes, ...(backupSwitch ? { backupSwitch } : {}), product, root: args.root, skillsRoot, evidenceRoot, verification, baseRef: "origin/main", handshake, profile,
     risk, critical, afk, openDecisions, workerWritableRoots: roots, packageKind: seam.package_kind,
     reviewDataset: args["review-dataset"] ?? settings.reviewDataset ?? null, reviewDatasetVersion: Number(args["review-dataset-version"] ?? settings.reviewDatasetVersion ?? 0) };
-  pins.reviewDatasetDigest = pins.reviewDataset ? sha256File(pins.reviewDataset) : null;
-  if (!pins.reviewDataset) pins.reviewDatasetVersion = 0;
+  if (!pins.reviewDataset) {
+    const source = path.join(output, "default-review-scope.md");
+    fs.writeFileSync(source, `# ${issue}: ${body.split("\n")[0].replace(/^#+\s*/u, "")}\n`);
+    try {
+      const dataset = await versionDataset({ evidenceRoot, issue, source, initialOnly: true });
+      pins.reviewDataset = dataset.archive; pins.reviewDatasetVersion = dataset.version;
+    } finally { fs.unlinkSync(source); }
+  }
+  pins.reviewDatasetDigest = sha256File(pins.reviewDataset);
   atomicJson(pinsFile, pins); const pinsDigest = sha256File(pinsFile);
   fs.writeFileSync(path.join(output, "pins.sha256"), `${pinsDigest}\n`);
   atomicJson(gateFile, gate); atomicJson(movesFile, moves);
