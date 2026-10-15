@@ -1,0 +1,2 @@
+- Keep denied process-group probes unknown while waiting for the collector watchdog within the existing deadline; require group, leader and descendant termination, and preserve the primary failure separately from cleanup diagnostics.
+- Make collection retry telemetry propagate non-ESRCH probe errors; cover refusal to retry live or unverified groups, real surviving descendants with watchdog termination disabled, and cleanup failures that must not mask the scenario assertion.
