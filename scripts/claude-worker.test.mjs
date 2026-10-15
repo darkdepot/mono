@@ -151,7 +151,7 @@ async function fixture(run, { auth, config, missingTool = false, shortWindow = f
     }
     runtime = await import(pathToFileURL(path.join(pack, "scripts/orchestrator/launch.mjs")));
     const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-    const cfg = config ?? { orchestration: { transport: "claude-cli", delivery: { confirmationTimeoutSec: 1200 } } };
+    const cfg = config ?? { orchestration: { transport: "claude-cli", delivery: { confirmationTimeoutSec: 1200, collectionTimeoutSec: 1000 } } };
     write(path.join(repo, ".agents/mono-workflow.config.json"), cfg);
     git("init", "-b", "fixture");
     git("add", ".");

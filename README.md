@@ -41,6 +41,13 @@ Local passes use stable IDs across the Issue chain; cumulative reports do not
 recount passes in new attempts or successors. The ledger shows their clean or
 findings outcomes.
 
+Collections now share one deadline from phase publication through confirmation.
+A run is bounded to 1500 seconds by default; a crash before a signed receipt may
+retry once with the same admission, after class/cap and remaining-budget checks.
+Signed failures reconcile without another review. Failed project verification
+reruns once inside the same collection, with both outputs signed.
+See [collection recovery](references/orchestration.md#delivery-write-barriers).
+
 ## Workflow
 
 Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot markup contract](references/orchestration.md#snapshot-markup-contract-u12): parse blocks, then select coverage; unknown IDs refuse, while duplicates or unclosed fences retain full documents.

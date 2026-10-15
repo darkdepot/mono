@@ -401,6 +401,8 @@ export function deliveryConfig(source) {
   const config = configured ?? {};
   const result = {
     confirmationTimeoutSec: positive(config.confirmationTimeoutSec, 1800, "confirmationTimeoutSec"),
+    collectionTimeoutSec: positive(config.collectionTimeoutSec, 1500, "collectionTimeoutSec"),
+    collectionRetries: config.collectionRetries ?? 1,
     quietSec: positive(config.quietSec, 120, "quietSec"),
     evidenceLimitSec: positive(config.evidenceLimitSec, 2400, "evidenceLimitSec"),
     pollSec: positive(config.pollSec, 10, "pollSec"),
@@ -408,6 +410,10 @@ export function deliveryConfig(source) {
     ackWaitSec: positive(config.ackWaitSec, 420, "ackWaitSec"),
     attemptCap: positive(config.attemptCap, 3, "attemptCap"),
   };
+  if (!Number.isSafeInteger(result.collectionRetries) || result.collectionRetries < 0)
+    throw new Error("invalid collectionRetries");
+  if (result.collectionTimeoutSec >= result.confirmationTimeoutSec)
+    throw new Error("collectionTimeoutSec must be less than confirmationTimeoutSec");
   if (result.confirmationTimeoutSec >= result.evidenceLimitSec) {
     throw new Error(`confirmationTimeoutSec (${result.confirmationTimeoutSec}) must be less than evidenceLimitSec (${result.evidenceLimitSec})`);
   }

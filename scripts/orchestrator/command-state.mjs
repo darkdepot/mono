@@ -276,6 +276,22 @@ function collectionClassStop(entry,pins) {
   return repeatedClasses({ledger:buildReviewLedger({issue:entry.issue,sources}),records,journal});
 }
 
+// Retries reuse the admission; never reserve another review allowance.
+export async function recheckCollection(root, report, admission) {
+  return withLock(path.join(root, "launch.lock"), () => {
+    const entry = registryEntry(root, report.issue, report.attempt);
+    const pins = effectivePins({ ...entry, pinsVersion: admission.pinsVersion });
+    if (collectionExecuted(pins, admission.collectionId)) return;
+    if (collectionClassStop(entry, pins).required)
+      throw new CollectionAdmissionRefusal('needs-decision: repeated review class');
+    try { validateCapAdmission({ evidenceRoot: pins.evidenceRoot, issue: report.issue, cap: admission.cap }); }
+    catch (error) {
+      if (error.message === 'needs-decision: review cap') throw new CollectionAdmissionRefusal(error.message);
+      throw error;
+    }
+  });
+}
+
 // This exported seam is also the collector's admission transaction (MONO-96).
 // Both callers and amend serialize on launch.lock; callers must not nest it.
 export class CollectionAdmissionRefusal extends Error {}
