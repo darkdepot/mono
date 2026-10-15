@@ -8,6 +8,7 @@ import { atomicJson, readJson, digest, canonical, withLock, isMain, validateEvid
 import { registryEntry, effectivePins, correlatedPhase, expandedWrite, attemptDirectory, admitUnderLock, commandFlags, allowedFlags, sha256File, validateReportBarriers, amendmentState, amendmentChange, amendmentDocuments, validateAmendment, restoreAmendmentGrants } from "./command-state.mjs";
 import { consumeAck } from "./consume-gate-ack.mjs";
 import { recordObservation, sessionContext, reconcile } from "./linear-adapter.mjs";
+import { classifyQueue } from "../delivery-state.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const run = (script, args, options = {}) => {
@@ -71,23 +72,24 @@ export async function acceptAck(args, print = value => console.log(JSON.stringif
 export async function acceptReport(args, print = value => console.log(JSON.stringify(value))) {
   allowedFlags(args, ["report", "root", "config", "session", "observe"]);
   const reportFile = path.resolve(args.report), root = args.root;
-  let context;
+  let context, instructions = {};
   if (!args.session) {
     if (args.observe?.length) throw new Error("--observe requires the opened --session");
     await withLock(path.join(root, "launch.lock"), async () => {
       const { report } = correlatedPhase(root, reportFile);
       await validateReportBarriers(root, report, path.dirname(reportFile));
-      await admitUnderLock(root, report);
+      if (classifyQueue(report, root).collection) await admitUnderLock(root, report);
       const dir = attemptDirectory(root, report);
       await withLock(path.join(dir, "session.lock"), () => {
         const reportDigest = digest(report), sessions = path.join(dir, "sessions"), activeFile = path.join(sessions, `current-${reportDigest}.json`);
-        if (fs.existsSync(activeFile)) print({ reread: report.capsule.open_queue.map(write => ({ id: write.id, target: write.target,
-          instruction: write.operation === "comment" ? "Find the existing comment by marker/idempotency key before any republication." : "Read the desired effect through its source before retrying." })) });
+        const queue = classifyQueue(report, root);
+        const writes = report.capsule.open_queue.filter(write => !queue.carried.has(write.id)).map(write => expandedWrite(write, report));
+        const reread = fs.existsSync(activeFile) ? writes.map(write => ({ id: write.id, target: write.target,
+          instruction: write.operation === "comment" ? "Find the existing comment by marker/idempotency key before any republication." : "Read the desired effect through its source before retrying." })) : [];
         const session = { sessionId: crypto.randomUUID(), openedAt: new Date().toISOString(), reportDigest };
         atomicJson(path.join(sessions, session.sessionId, "session.json"), session); atomicJson(activeFile, session);
         context = sessionContext(root, reportFile, session.sessionId);
-        const writes = report.capsule.open_queue.map(write => expandedWrite(write, report));
-        print({ session, writes, writeDigests: Object.fromEntries(writes.map(write => [write.id, digest(write)])) });
+        instructions = { writes, writeDigests: Object.fromEntries(writes.map(write => [write.id, digest(write)])), reread };
       });
     });
   } else context = sessionContext(root, reportFile, args.session);
@@ -100,9 +102,11 @@ export async function acceptReport(args, print = value => console.log(JSON.strin
   }
   // Reopening a session and confirming it share session.lock. No old session can
   // create a confirmation while a new session invalidates its observations.
-  return withLock(path.join(attemptDirectory(root, context.report), "session.lock"), () => {
+  const result = await withLock(path.join(attemptDirectory(root, context.report), "session.lock"), () => {
     context = sessionContext(root, reportFile, context.session.sessionId);
+    const { carried } = classifyQueue(context.report, root);
     const complete = context.report.capsule.open_queue.every(queued => {
+      if (carried.has(queued.id)) return true;
       const write = expandedWrite(queued, context.report);
       return reconcile({ action: "reconcile", issue: context.report.issue, attempt: context.report.attempt, idempotencyKey: `${context.report.issue}:${write.id}`, write },
         { root, reportFile, sessionId: context.session.sessionId }).state === "present";
@@ -110,8 +114,10 @@ export async function acceptReport(args, print = value => console.log(JSON.strin
     if (!complete) return { session: context.session, status: "observations-pending" };
     run("../delivery-state.mjs", ["confirm", "--report", reportFile, "--root", root, "--adapter", path.join(directory, "linear-adapter.mjs"), ...(args.config ? ["--config", args.config] : [])],
       { env: { ...process.env, MONO_ACCEPT_ROOT: root, MONO_ACCEPT_REPORT: reportFile, MONO_ACCEPT_SESSION: context.session.sessionId } });
-    const result = { session: context.session, status: "confirmed" }; print(result); return result;
+    return { session: context.session, status: "confirmed" };
   });
+  const response = { ...instructions, ...result };
+  print(response); return response;
 }
 
 export async function acceptAmend(args) {

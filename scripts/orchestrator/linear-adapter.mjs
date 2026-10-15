@@ -12,7 +12,8 @@ export function sessionContext(root, reportFile, sessionId) {
   const sessions = path.join(attemptDirectory(root, report), "sessions");
   const active = readJson(path.join(sessions, `current-${reportDigest}.json`));
   const session = readJson(path.join(sessions, sessionId, "session.json"));
-  if (active.sessionId !== sessionId || active.reportDigest !== reportDigest || session.sessionId !== sessionId || session.reportDigest !== reportDigest)
+  if (active.closedAt || session.closedAt || active.status === 'closed' || session.status === 'closed' ||
+      active.sessionId !== sessionId || active.reportDigest !== reportDigest || session.sessionId !== sessionId || session.reportDigest !== reportDigest)
     throw new Error("stale reconciliation session/report");
   const opened = Date.parse(session.openedAt);
   if (!Number.isFinite(opened) || opened < Date.parse(report.publishedAt) || opened > Date.now()) throw new Error("invalid session opening time");
@@ -23,8 +24,10 @@ function validateObservation(observation, context, write) {
   if (observation.sessionId !== context.session.sessionId || observation.writeId !== write.id ||
       observation.reportDigest !== context.reportDigest || observation.writeDigest !== digest(write)) throw new Error("observation session/report/write digest mismatch");
   const time = Date.parse(observation.observedAt);
-  if (!Number.isFinite(time) || time < Date.parse(context.report.publishedAt) || time < Date.parse(context.session.openedAt) || time > Date.now())
-    throw new Error("observation older than report/session or future-dated");
+  if (!Number.isFinite(time)) throw new Error("observation observedAt is not a valid time");
+  if (time < Date.parse(context.report.publishedAt)) throw new Error("observation older than report publication boundary");
+  if (time < Date.parse(context.session.openedAt)) throw new Error("observation older than session opening boundary");
+  if (time > Date.now()) throw new Error("observation in the future: later than current time boundary");
   if (!["present", "missing"].includes(observation.state) || !observation.evidence || (observation.state === "missing" && observation.absent !== true))
     throw new Error("observation must contain read-back evidence; missing requires explicit absent=true");
 }
