@@ -6,6 +6,48 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-15
+
+<!-- fragment: MONO-152 sha256:34004798a8f49983eddccec56da88fb010d50a7ae7100e81ac2aa3b008aab653 -->
+# MONO-152
+
+- Accept completed review findings through exact, evidence-backed orchestrator
+  declines; re-read revocations for preflight and ship without rewriting receipts.
+- Review committed worker bytes, list approved declines in readiness certificates,
+  and count decline events separately from reviewer executions.
+
+<!-- fragment: MONO-153 sha256:1c8e08ef60580be4e7e311245f6bb628e04f39a59c9c5f3fe19bf417b36a3e96 -->
+- Stop repeated finding keys or recorded classes before another review collection; orchestrator class decisions resume the same withheld request. Require bounded whole-class fixes or verified behavior limits, and keep workers within simple Issue-scoped mechanisms.
+- Preserve class stops for symlinked worktrees and pinned Issue identities; share the withheld-history lock across admission and manual recording.
+
+<!-- fragment: MONO-154 sha256:52aae8978207cdef1e8c3312aed9de1b3ae44b606094a7fcefe8336646e68e60 -->
+Review limits now park automation after two blocking external reviews or two local
+passes. Chain counters survive commits, attempts and orchestrator-authorized
+successors. Bounded continuation decisions use atomic, idempotent reservations;
+they never admit unresolved defects.
+Collections require pinned requests and correlated admission. Unpinned legacy
+collections are refused. All pending admissions count on reservation and recheck.
+Local stops withhold the
+queue until continuation; a clean second pass keeps the normal collection flow.
+Receipt issue/pins identity preserves chain counts across worktree changes;
+anonymous historical receipts are ignored by scope decision.
+Stable local pass IDs prevent cumulative reports in new attempts or successors
+from counting earlier passes again. Internal-pass ledger events retain clean or
+findings outcomes.
+
+<!-- fragment: MONO-155 sha256:491721d58b03794029eb244b13b544be0d3cb6841bde5365af6f321563128a42 -->
+- Pin the external autoreview helper source and installation proof; test current upstream status/report output through clean and approved-decline gates.
+- Split expected changes above roughly 1,000 lines in critical paths during handoff; retain the worker reading ceiling and existing model policy.
+
+<!-- fragment: MONO-156 sha256:700b1970853175d021d64eebbe56fd562744a7bf2d3aea830902e315949a422c -->
+- Release 0.30.0 with evidence-backed review declines, repeated-class stops,
+  bounded review automation and current autoreview compatibility; assemble the
+  task records and align the pack, plugin and README release versions.
+- **Incompatible update:** review journal and collection admission formats change.
+  Install 0.30.0 only under cross-product quiescence: stop launches and have each
+  product's orchestrator confirm idle control and an empty worker registry before
+  cut-over, then restart sessions. See [Quiescence](references/install.md#quiescence).
+
 ## [0.29.0] - 2026-10-13
 
 <!-- fragment: MONO-148 sha256:b6018a13929b4edcb1cd26694605774daebf0f097fc5550b980e9313616b2736 -->

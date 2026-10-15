@@ -1,6 +1,11 @@
 # Mono Agent Workflow
 
-Current release: **0.29.0**. See the [release notes](CHANGELOG.md#0290---2026-10-13).
+Current release: **0.30.0**. See the [release notes](CHANGELOG.md#0300---2026-10-15).
+
+**Incompatible update:** review journal and collection admission formats change.
+Install 0.30.0 only under [cross-product quiescence](references/install.md#quiescence):
+stop launches, have each product’s orchestrator confirm idle control and an empty
+worker registry, then restart sessions after cut-over.
 
 A reusable skill pack for owners and coding agents who deliver software through Linear and GitHub. Use it to turn a raw idea into approved work, run one delivery worker from code to a green pull request, and deploy with evidence. The owner decides the product; agents carry the work and show what they actually verified.
 
@@ -84,7 +89,7 @@ A gate proves only its stated boundary. `mono:review` returns quality/risk findi
 | Package review and approval | The draft was reviewed at the required risk level before writing, and the owner accepted the package; implementation still needs start authorization |
 | Pack identity / `gate.mjs start` | Installed pack is compatible under [the versioning rule](references/install.md#compatibility); branch, base and clean worktree match the start request |
 | Start handshake / delivery check | The worker checked snapshot, approvals, resolved findings and context seam; the orchestrator applied/read back lifecycle changes; the amended package is ready for code |
-| `gate.mjs preflight` | Current committed head/merge-base has successful verification and authentic clean review evidence on the required model/effort route; missing, stale, fabricated or incomplete evidence fails |
+| `gate.mjs preflight` | Current committed head/merge-base has successful verification and authentic clean or accepted-with-declines review evidence on the required model/effort route; missing, stale, fabricated or incomplete evidence fails |
 | Pre-ship review and check | Diff matches the Issue, readiness is recoverable, required review is complete, artifacts are current and accepted drift is synchronized |
 | `gate.mjs ship` | PR is open on the certified head, checks and bot review cover that head, threads and bot remarks are resolved/disposed, closure replies are published, no own review draft or outstanding change request remains, and mergeability is acceptable under policy |
 | Deploy verification and live QA | Certified change was merged and delivered to the target; acceptance was checked where consumed, with explicit evidence or a permitted recorded skip |
