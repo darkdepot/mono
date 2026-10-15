@@ -21,6 +21,10 @@ existing tools or literal conservative solutions within the Issue contract.
 A decision change resumes the same withheld request automatically; defects,
 review routes and gate branches keep their existing requirements.
 See [class decisions](references/orchestration.md#repeated-review-class).
+Pending collection admissions recheck the current key/class stop on replay and
+before execution. Completed collections reconcile their signed receipt without
+another reviewer call. See [rollback to 0.29.0](references/install.md#roll-back-to-0290)
+for the separate compatible journal view and fresh clean-review requirement.
 
 Review limits now stop automation after two blocking external reviews or two local
 passes. Counts follow the original Issue and orchestrator-authorized successors
