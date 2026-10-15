@@ -112,6 +112,19 @@ A gate proves only its stated boundary. `mono:review` returns quality/risk findi
 
 Ship also requires recorded valid outcomes for pre-ship review, readiness, and documentation. Apply only the repository's accepted check exceptions. Pending or unknown evidence is not success; terminal failures stop the gate. A new head invalidates its old proof. The gate accumulates evidence on the current head, waits the configured quiet interval after events, and stops at its deadline rather than waiting forever.
 
+Configure required PR bots with `orchestration.ship.botChecks` in the project
+config: a nonempty list of unique check names, default `["Greptile Review"]`.
+Dispatch pins the policy from the immutable base. Workers cannot empty, replace
+or disable it. The orchestrator may record a confirmed outage for the current task
+attempt with `accept.mjs amend --root DIR --issue KEY --attempt N --text TEXT
+--bot-unavailable "<reason>"`; another attempt needs its own decision.
+
+After an authorized ship fix, the amendment names the next ship-gate attempt:
+run it for the new head with a new state file, preserving the previous one in the
+same task attempt. Ship-gate attempts have no machine limit; the evidence window
+and review strictness remain unchanged. Green phase reports require the same
+issue/head/PR certificate validation as landing, which also requires confirmation.
+
 ### Write barriers and recovery
 
 Installed `orchestrator/dispatch.mjs` launches an approved Issue from snapshot

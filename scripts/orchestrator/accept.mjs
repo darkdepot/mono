@@ -123,8 +123,9 @@ export async function acceptReport(args, print = value => console.log(JSON.strin
 export async function acceptAmend(args) {
   let version = null, state = null;
   try {
-    allowedFlags(args, ["root", "issue", "attempt", "risk", "critical", "review-dataset", "review-dataset-version", "worker-writable-roots", "text", "full-snapshot", "snapshot", "preapply"]);
+    allowedFlags(args, ["root", "issue", "attempt", "risk", "critical", "review-dataset", "review-dataset-version", "worker-writable-roots", "text", "full-snapshot", "snapshot", "preapply", "bot-unavailable"]);
     if (args.preapply) throw new Error("--preapply requires a new dispatch (новый запуск) after artifact-owner repair; never amend/resume");
+    if (args["bot-unavailable"] !== undefined && (typeof args["bot-unavailable"] !== "string" || !args["bot-unavailable"].trim())) throw new Error("--bot-unavailable requires a nonempty reason");
     if (!args.text?.trim()) throw new Error("--text with the snapshot amendment and recovery instructions required");
     const root = args.root, issue = args.issue, attempt = Number(args.attempt);
     return await withLock(path.join(root, "amend.lock"), async () => {
@@ -177,7 +178,7 @@ export async function acceptAmend(args) {
         }
         version = null; state = null;
         const current = effectivePins(entry), change = amendmentChange(args, current, supplied);
-        const { risk, critical, reviewDataset, reviewDatasetVersion, workerWritableRoots } = change;
+        const { risk, critical, reviewDataset, reviewDatasetVersion, workerWritableRoots, botUnavailable } = change;
         const rank = ["tiny", "standard", "deep", "risky"];
         if (!rank.includes(risk) || rank.indexOf(risk) < rank.indexOf(current.risk) || (current.critical && critical !== current.critical) ||
             (critical !== null && (risk !== "risky" || !critical.trim()))) throw new Error("risk/critical amendments may only escalate; existing critical reason is retained");
@@ -208,7 +209,7 @@ export async function acceptAmend(args) {
           for (const [name, body] of Object.entries(documents)) { fs.writeFileSync(path.join(target, name), body); text += `\n\n## ${name}\n${body}`; }
           fullSnapshot = { directory: target, digest: digest(documents) };
         }
-        atomicJson(pinsFile, { pinsVersion: version, risk, critical, reviewDataset, reviewDatasetVersion,
+        atomicJson(pinsFile, { pinsVersion: version, risk, critical, reviewDataset, reviewDatasetVersion, botUnavailable,
           reviewDatasetDigest: reviewDataset ? sha256File(reviewDataset) : null, workerWritableRoots, fullSnapshot });
         text += `\n\n## Effective attempt pins\npinsVersion: ${version}\npins file: ${pinsFile}\nSHA-256: ${sha256File(pinsFile)}\n${JSON.stringify({ ...current, ...readJson(pinsFile) }, null, 2)}\nPreserve the full queue and wait for its confirmation before advancing. Risk determines required local review even when the immutable launch profile was short.`;
         fs.writeFileSync(resumeFile, text + "\n");
@@ -265,7 +266,7 @@ export async function acceptAmend(args) {
 if (isMain(import.meta.url)) {
   try {
     const [command, ...argv] = process.argv.slice(2), args = commandFlags(argv, ["full-snapshot", "preapply"], ["observe"]);
-    if (command === "--help" || args.help) console.log("Usage: accept.mjs ack --root DIR --issue KEY --attempt N [--outcome applied|blocked|rejected] [--readback FILE]\naccept.mjs report --root DIR --report FILE [--config FILE] [--session UUID --observe 'writeId=JSON']\nObservation: {sessionId,writeId,reportDigest,writeDigest,observedAt,state:'present|missing',evidence,absent?:true}; repeat --observe for multiple writes; @file is supported. Without --session open a new session, invalidate prior observations and print expanded writes (reread first on retry).\naccept.mjs amend --root DIR --issue KEY --attempt N --text TEXT [--risk CLASS] [--critical TEXT] [--review-dataset FILE --review-dataset-version N] [--worker-writable-roots JSON] [--full-snapshot --snapshot DIR]\nAdmission files: consumed/KEY-aN/admissions/collectionId.json; launch.lock serializes admissions and amendments. --preapply requires a new dispatch after artifact-owner repair. No script writes to Linear.");
+    if (command === "--help" || args.help) console.log("Usage: accept.mjs ack --root DIR --issue KEY --attempt N [--outcome applied|blocked|rejected] [--readback FILE]\naccept.mjs report --root DIR --report FILE [--config FILE] [--session UUID --observe 'writeId=JSON']\nObservation: {sessionId,writeId,reportDigest,writeDigest,observedAt,state:'present|missing',evidence,absent?:true}; repeat --observe for multiple writes; @file is supported. Without --session open a new session, invalidate prior observations and print expanded writes (reread first on retry).\naccept.mjs amend --root DIR --issue KEY --attempt N --text TEXT [--risk CLASS] [--critical TEXT] [--bot-unavailable REASON] [--review-dataset FILE --review-dataset-version N] [--worker-writable-roots JSON] [--full-snapshot --snapshot DIR]\nAdmission files: consumed/KEY-aN/admissions/collectionId.json; launch.lock serializes admissions and amendments. --preapply requires a new dispatch after artifact-owner repair. No script writes to Linear.");
     else if (command === "ack") await acceptAck(args);
     else if (command === "report") await acceptReport(args);
     else if (command === "amend") console.log(JSON.stringify(await acceptAmend(args)));

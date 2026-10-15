@@ -1,0 +1,3 @@
+- Validate green ship certificates at publication with the same issue/head/PR check used for landing; landing still requires confirmation.
+- Pin required PR bot checks from `orchestration.ship.botChecks` (default Greptile Review). Only an orchestrator `accept amend --bot-unavailable` decision for the current task attempt can waive unavailable bot evidence; worker policy cannot weaken it.
+- Document authorized ship fixes using the next named ship-gate attempt and a new state file in the same task attempt, preserving prior state without changing evidence windows or review strictness.

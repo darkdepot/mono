@@ -1451,6 +1451,15 @@ The adapter recomputes the report/write digests, verifies the active session and
 returns unknown for absent/stale/foreign observations. apply prints a connector
 instruction on stderr and returns no success result. No command writes to Linear.
 
+Ship pins capture orchestration.ship.botChecks from the immutable project base
+(default ["Greptile Review"], nonempty unique names). A worker cannot override this
+list. For a confirmed bot outage, use accept.mjs amend --bot-unavailable "<reason>"
+with the current --issue/--attempt and recovery --text; the decision is scoped to
+that task attempt and does not carry into another attempt. A ship-fix amendment
+names the next ship-gate attempt number; the worker keeps the old state and uses
+a new stateFile for the new head within the same task attempt. Ship-gate attempts
+have no machine bound; review/class/cap gates and evidence-window code are unchanged.
+
 Launch pins are immutable. `accept.mjs amend --root DIR --issue KEY --attempt N
 --text TEXT` writes `pins.v<n>.json` and prepares a resume file/request before
 calling resume.mjs; only a successful resume advances pinsVersion in the registry.

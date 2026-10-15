@@ -182,7 +182,10 @@ Ready on pass.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
 head/merge-base receipt before judgment; no string substitutes.
-Orchestrator rechecks preflight before ship.
+Orchestrator rechecks preflight before ship. A ship-fix amendment names the next ship-gate attempt:
+new head/new stateFile, preserve old state, same task attempt. No machine bound on
+ship-gate attempts; the unchanged window waives nothing, costing time. Review
+thresholds/declines/class stops/caps stay unchanged.
 
 ## Worker Report
 

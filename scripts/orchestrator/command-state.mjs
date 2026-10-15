@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import { validateShipCertificate } from "../ship-certificate.mjs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, baseModelConfig, validateLanding, processStart } from "../runtime.mjs";
+import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, shipBotChecks, baseModelConfig, validateLanding, processStart } from "../runtime.mjs";
 import { readJournal, currentEntries } from '../decisions.mjs';
 import { buildReviewLedger, repeatedClasses, recordClassStop } from '../review-ledger.mjs';
 import { capDecisionDigest, reserveReviewCollection, validateCapAdmission } from '../review-cap.mjs';
@@ -86,35 +87,8 @@ export function landedShip(root, entry, repo) {
   if (report.issue !== entry.issue || report.attempt !== entry.attempt || report.phase !== "ship" || report.status !== "green")
     throw new Error("ship report is not green for this attempt");
   validateConfirmation(report, readJson(confirmationPath(report, root)));
-  const certificate = report.certificate;
-  if (typeof certificate !== "string" || certificate.split("mono-ship green certificate").length !== 2)
-    throw new Error("one green ship certificate required");
-  const field = name => {
-    const values = certificate.split("\n").filter(line => line.startsWith(`${name}: `)).map(line => line.slice(name.length + 2).trim());
-    if (values.length !== 1) throw new Error(`ship certificate ${name} missing or ambiguous`);
-    return values[0];
-  };
-  if (field("Ship") !== "green" || field("Issue(s)") !== entry.issue || field("Head SHA") !== report.head)
-    throw new Error("ship certificate issue/head mismatch");
-  if (repo !== undefined && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("invalid record repository");
-  let remaining = field("PR"), pr, urlRepo;
-  const component = /^(?:https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)|#?([1-9][0-9]*))(?=$|[\s/,\[\]()])/;
-  while (remaining) {
-    remaining = remaining.replace(/^[\s/,\[\]()]+/, "");
-    if (!remaining) break;
-    const match = component.exec(remaining);
-    if (!match) throw new Error("ship certificate PR must contain only GitHub PR URLs and numbers");
-    const number = Number(match[2] ?? match[3]);
-    if (!Number.isSafeInteger(number)) throw new Error("invalid ship certificate PR number");
-    if (pr !== undefined && number !== pr) throw new Error("ship certificate PR numbers mismatch");
-    if (match[1] && urlRepo !== undefined && match[1] !== urlRepo) throw new Error("ship certificate URL repositories mismatch");
-    pr = number;
-    urlRepo ??= match[1];
-    remaining = remaining.slice(match[0].length);
-  }
-  if (pr === undefined) throw new Error("ship certificate PR requires a GitHub PR URL or number");
-  if (urlRepo && repo !== undefined && urlRepo !== repo) throw new Error("ship certificate repository mismatch");
-  repo ??= urlRepo;
+  const { repo: certificateRepo, pr } = validateShipCertificate(report, repo);
+  repo = certificateRepo;
   if (!repo) throw new Error("numeric ship certificate requires the record repository");
   const pins = effectivePins(entry);
   const branch = pins.baseRef?.replace(/^refs\/remotes\//, "").replace(/^origin\//, "").replace(/^refs\/heads\//, "");
@@ -229,6 +203,21 @@ export function checkCollectionRequest(request) {
     validateCapAdmission({evidenceRoot:pins.evidenceRoot,issue:entry.issue,cap:admission.cap});
   }
   return legacy?null:pins;
+}
+// Read current attempt decisions even when preflight recovers an older admission.
+export function pinnedShipPolicy(request) {
+  if (!checkCollectionRequest(request)) return null;
+  const root = request.pins?.file ? path.dirname(path.dirname(path.dirname(request.pins.file))) : request.root;
+  const entries = Object.values(readJson(path.join(root, "workers.json"))).filter(entry => entry.worktree === request.worktree && entry.stage === "mono-deliver");
+  if (entries.length !== 1) throw new Error("ship policy requires one registered attempt");
+  const entry = registryEntry(root, entries[0].issue, entries[0].attempt), pins = effectivePins(entry);
+  const config = pins.shipBotChecks === undefined ? (pins.base ? baseModelConfig(request.worktree, pins.base) : {}) :
+    { orchestration: { ship: { botChecks: pins.shipBotChecks } } };
+  const botChecks = shipBotChecks(config);
+  const decision = pins.botUnavailable;
+  if (decision != null && (decision.issue !== entry.issue || decision.attempt !== entry.attempt ||
+      typeof decision.reason !== "string" || !decision.reason.trim())) throw new Error("bot unavailability decision belongs to another attempt or is invalid");
+  return { botChecks, botUnavailable: decision?.reason ?? null };
 }
 function collectionExecuted(pins,collectionId) {
   const history=path.join(pins.evidenceRoot,'history');
@@ -353,6 +342,9 @@ export function amendmentChange(args, inputs, supplied) {
     reviewDataset,
     reviewDatasetVersion: !reviewDataset && (inputs.reviewDatasetVersion ?? 0) === 0 && Object.hasOwn(inputs, "reviewDatasetDigest") ? 0 : Number(args["review-dataset-version"] ?? inputs.reviewDatasetVersion ?? 0),
     workerWritableRoots: supplied.roots ?? inputs.workerWritableRoots, text: args.text,
+    ...(args["bot-unavailable"] !== undefined || inputs.botUnavailable !== undefined ? { botUnavailable:
+      args["bot-unavailable"] === undefined ? inputs.botUnavailable :
+        { issue: args.issue, attempt: Number(args.attempt), reason: args["bot-unavailable"] } } : {}),
     fullSnapshot: args["full-snapshot"] ? { digest: digest(supplied.documents) } :
       (inputs.fullSnapshot ? { digest: inputs.fullSnapshot.digest } : null) };
 }

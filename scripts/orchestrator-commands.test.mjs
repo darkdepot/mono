@@ -12,7 +12,7 @@ import { renderDispatch } from "./orchestrator/dispatch.mjs";
 import { applyPreapply, preapplyManifest } from "./orchestrator/preapply.mjs";
 import { digest, readJson, atomicJson, withLock } from "./runtime.mjs";
 import { publishPhase, validateConfirmation, confirmQueue } from "./delivery-state.mjs";
-import { expandedWrite, effectivePins, admitCollection, collectionPinsBinding, checkCollectionRequest } from "./orchestrator/command-state.mjs";
+import { expandedWrite, effectivePins, admitCollection, collectionPinsBinding, checkCollectionRequest, pinnedShipPolicy } from "./orchestrator/command-state.mjs";
 import { acceptAck, acceptReport, acceptAmend } from "./orchestrator/accept.mjs";
 import { reconcile, recordObservation } from "./orchestrator/linear-adapter.mjs";
 
@@ -414,6 +414,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.equal(launchedPins.reviewDatasetVersion, 1);
     assert.equal(launchedPins.reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(launchedPins.reviewDataset)).digest("hex"));
     assert.equal(readJson(launched.gateFile).worktree, worktree); assert.deepEqual(readJson(launched.spawnFile).gates, entry.gates);
+    assert.deepEqual(readJson(launched.pins.file).shipBotChecks, ["Greptile Review"]);
     assert.ok(!fs.readFileSync(launched.dispatchFile, "utf8").includes("{{")); assert.match(fs.readFileSync(path.join(root, "ledger.md"), "utf8"), /\d{4}-\d\d-\d\dT.*Z DISPATCHED MONO-999/u);
     const rendered = fs.readFileSync(launched.dispatchFile, "utf8");
     assert.ok(rendered.includes(`--ack '${path.join(root, "reports/MONO-999-gate-ack-a1.json")}'`));
@@ -655,6 +656,16 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
           fs.unlinkSync(lock);
         }
       };
+      await t.test("ship-bot-policy: amend records attempt-scoped unavailability and preserves it on replay", () => isolatedPreparation(async ({ registryFile, before }) => {
+        const result = JSON.parse(pass(run(process.execPath, [...amendArgs("Confirmed bot service outage for this attempt."), "--bot-unavailable", "Greptile service outage confirmed"])));
+        processes.track(result.pid);
+        const worker = readJson(registryFile)[ack.issue], decision = effectivePins(worker).botUnavailable;
+        assert.deepEqual(decision, { issue: ack.issue, attempt: 1, reason: "Greptile service outage confirmed" });
+        assert.equal(effectivePins(before[ack.issue]).botUnavailable, undefined, "previous pins are preserved");
+        assert.deepEqual(JSON.parse(pass(run(process.execPath, [...amendArgs("Confirmed bot service outage for this attempt."), "--bot-unavailable", "Greptile service outage confirmed"]))), result);
+        const blank = run(process.execPath, [...amendArgs("Invalid bot decision."), "--bot-unavailable", " "]);
+        assert.notEqual(blank.status, 0); assert.match(blank.stderr, /nonempty reason/);
+      }));
       await t.test("amend-legacy-no-dataset-nonzero-version: preserve version across unrelated amendments", () => isolatedPreparation(async ({ registryFile, before }) => {
         const launchFile = before[ack.issue].pins.file, launchBytes = fs.readFileSync(launchFile);
         try {
@@ -2300,4 +2311,28 @@ test('retry-collector-cleanup-error: a cleanup refusal does not mask the primary
       await stopFixtureProcess(result.afterCleanup.descendant.pid);
     }
   }
+});
+
+test('ship-bot-policy: current pins override recovered admission; foreign attempt decision is refused', () => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-ship-policy-'));
+  const root = path.join(scratch, 'root'), issue = 'MONO-162', head = 'a'.repeat(40);
+  const file = path.join(root, 'dispatch', `${issue}-a1`, 'pins.json');
+  const pins = { root, worktree: scratch, reviewDatasetDigest: null, reviewDatasetVersion: 0, workerWritableRoots: [scratch], shipBotChecks: ['Custom Review'] };
+  const entry = { issue, worktree: scratch, attempt: 1, stage: 'mono-deliver', packVersion: 'test', surfaceRevision: 4, pins: { file }, pinsVersion: 0 };
+  try {
+    atomicJson(file, pins); entry.pins.digest = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    atomicJson(path.join(root, 'workers.json'), { [issue]: entry });
+    const request = { ...pins, pins: collectionPinsBinding(entry), head, collect: false, collectionId: `preflight-collect:${head}:1` };
+    assert.deepEqual(pinnedShipPolicy(request), { botChecks: ['Custom Review'], botUnavailable: null });
+    const admission = path.join(root, 'consumed', `${issue}-a1`, 'admissions', `${request.collectionId}.json`);
+    atomicJson(admission, { collectionId: request.collectionId, pinsVersion: 0, manifestDigest: digest({ ...pins, pinsVersion: 0 }) });
+    entry.pinsVersion = 1; atomicJson(path.join(root, 'workers.json'), { [issue]: entry });
+    const amendment = path.join(path.dirname(file), 'pins.v1.json');
+    atomicJson(amendment, { pinsVersion: 1, botUnavailable: { issue, attempt: 1, reason: 'confirmed outage' } });
+    assert.equal(pinnedShipPolicy(request).botUnavailable, 'confirmed outage', 'ship uses the current decision despite an older admitted preflight');
+    for (const foreign of [{ issue: 'MONO-999', attempt: 1 }, { issue, attempt: 2 }]) {
+      atomicJson(amendment, { pinsVersion: 1, botUnavailable: { ...foreign, reason: 'confirmed outage' } });
+      assert.throws(() => pinnedShipPolicy(request), /another attempt/);
+    }
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });

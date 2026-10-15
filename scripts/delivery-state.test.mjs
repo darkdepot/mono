@@ -385,3 +385,31 @@ test('scratch wait-ack CLI scenario refuses foreign digest, accepts own read-bac
     const invalid = run(command); assert.notEqual(invalid.status, 0); assert.match(invalid.stderr, /ackWaitSec.*stallSec/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('ship-green-certificate: publication and landing share issue/head/PR validation', async () => {
+  const { landedShip } = await import('./orchestrator/command-state.mjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-ship-certificate-'));
+  const head = 'a'.repeat(40), issue = 'MONO-162';
+  const entry = { issue, attempt: 1, stage: 'mono-deliver', packVersion: 'test', surfaceRevision: 4,
+    worktree: root, spawned_at: new Date(Date.now() - 1000).toISOString(), pinsVersion: 0 };
+  const file = phase => path.join(root, 'reports', `${issue}-phase-${phase}.json`);
+  const candidate = phase => ({ ...entry, phase, sequence: 1, kind: 'phase', head,
+    linear_mutations_pending: [], capsule: { phase, head, open_queue: [], decisions: [], writable_roots: [root] } });
+  const certificate = `mono-ship green certificate\nShip: green\nIssue(s): ${issue}\nHead SHA: ${head}\nPR: https://github.com/owner/repo/pull/162\n`;
+  try {
+    for (const phase of ['code', 'preflight']) await confirmQueue(publishPhase(candidate(phase), file(phase)), root, () => {});
+    for (const invalid of [null, ' ', 'arbitrary text', certificate.replace(head, 'b'.repeat(40)),
+      certificate.replace(issue, 'MONO-999'), certificate.replace('/pull/162', '/pull/162 #163')]) {
+      assert.throws(() => publishPhase({ ...candidate('ship'), status: 'green', certificate: invalid }, file('ship')), /certificate/);
+      assert.equal(fs.existsSync(file('ship')), false);
+    }
+    const report = publishPhase({ ...candidate('ship'), status: 'green', certificate }, file('ship'));
+    const pinsFile = path.join(root, 'dispatch', `${issue}-a1`, 'pins.json');
+    fs.mkdirSync(path.dirname(pinsFile), { recursive: true }); fs.writeFileSync(pinsFile, JSON.stringify({ baseRef: 'origin/main' }));
+    entry.pins = { file: pinsFile, digest: createHash('sha256').update(fs.readFileSync(pinsFile)).digest('hex') };
+    fs.writeFileSync(path.join(root, 'workers.json'), JSON.stringify({ [issue]: entry }));
+    assert.throws(() => landedShip(root, entry), /ENOENT/);
+    await confirmQueue(report, root, () => {});
+    assert.deepEqual(landedShip(root, entry), { repo: 'owner/repo', pr: 162, head, branch: 'main' });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
