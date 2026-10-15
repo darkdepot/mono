@@ -1,12 +1,21 @@
 # Mono Agent Workflow
 
-Current release: **0.30.1**. See the [release notes](CHANGELOG.md#0301---2026-10-15).
+Current release: **0.31.0**. See the [release notes](CHANGELOG.md#0310---2026-10-16).
 
-**Incompatible update:** review journal and collection admission formats change.
-When upgrading from 0.29.x or earlier to 0.30.x, use
+**Incompatible update:** 0.31.0 requires a live watcher before worker launch or
+resume. Use
 [cross-product quiescence](references/install.md#quiescence):
 stop launches, have each product’s orchestrator confirm idle control and an empty
 worker registry, then restart sessions after cut-over.
+Decision journals and signed-receipt formats remain unchanged from 0.30.1;
+new watcher pulses and collection retry files are ignored by that version.
+An open attempt keeps its original absolute `packRoot` and finishes there;
+never replace that folder or redirect it to the new code. A separate staged
+cache can coexist, but activation of this incompatible release waits for quiescence.
+After installation, restart each product's watcher **from the new version before
+the first launch or resume**. A missing, stale or dead watcher causes
+`watcher-required`, with a start command, without consuming an attempt.
+See [rollback to 0.30.1](references/install.md#roll-back-to-0301) after attempts drain.
 
 A reusable skill pack for owners and coding agents who deliver software through Linear and GitHub. Use it to turn a raw idea into approved work, run one delivery worker from code to a green pull request, and deploy with evidence. The owner decides the product; agents carry the work and show what they actually verified.
 
@@ -42,6 +51,9 @@ recount passes in new attempts or successors. The ledger shows their clean or
 findings outcomes.
 
 Collections now share one deadline from phase publication through confirmation.
+Configure `orchestration.delivery.collectionTimeoutSec` (default 1500),
+`collectionRetries` (default 1) and `confirmationTimeoutSec` (default 1800)
+before dispatch; require `collectionTimeoutSec < confirmationTimeoutSec < evidenceLimitSec`.
 A run is bounded to 1500 seconds by default; a crash before a signed receipt may
 retry once with the same admission, after class/cap and remaining-budget checks.
 Signed failures reconcile without another review. Failed project verification

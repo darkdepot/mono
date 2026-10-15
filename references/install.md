@@ -66,6 +66,19 @@ Any mismatch blocks wave close, removing launch halts and starting tasks from
 the new installation. Record/correct the source, then repeat the full comparison
 and version/tag proof of **both** tools. Accept proof only when both match.
 
+After installation and cache verification, stop the previous watcher and restart
+it **from the newly installed version before the first worker launch or resume**
+in each product. Its own orchestrator runs the watcher as a tracked background
+process, using that product's absolute config path:
+
+```bash
+node '<new-pack-root>/scripts/watch-workers.mjs' --root /path/to/own/product-state --config /path/to/product/.agents/mono-workflow.config.json
+```
+
+Observe a fresh `watcher.json` pulse from that process. Keep launch halts until
+verification and watcher restart finish; `watcher-required` names the start
+command if the pulse is absent, stale or does not match a live process.
+
 ## Compatibility
 
 Identity is `packVersion` from `VERSION`, positive integer `surfaceRevision` from
@@ -165,6 +178,49 @@ sandbox.
 
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
 equal `VERSION`; only release tasks change them. Try unreleased code per README.
+
+0.31.0 is a breaking minor because a live watcher is now required for launch and
+resume; activate it using cross-product quiescence. Decision journals, signed
+receipts and surface revision 4 remain compatible with 0.30.1. The new
+`watcher.json` and collection retry files are optional to 0.30.1 and are ignored
+there. Stage a new cache beside an open attempt only without replacing its
+pinned folder or activating the incompatible release; the attempt finishes with
+its saved `packRoot`. Each product's own orchestrator establishes quiescence;
+the installer changes only the shared pack installation, never another product's
+control, registry, configuration or evidence.
+
+### Roll Back To 0.30.1
+
+The installing orchestrator owns rollback after every attempt using the outgoing
+pack has finished and stopped, including paused attempts. Pause launches and
+collections in affected products and keep them paused through verification.
+Preserve complete decision journals, signed receipts/history and receipt key,
+datasets, all dispatch pin versions, reports, confirmations and product history;
+record their hashes before and after rollback. Do not delete records to evade
+`before-update` and do not resume an outgoing-version attempt on 0.30.1.
+
+Select GitHub tag `v0.30.1` in both tools, with automatic updates disabled. Before
+any command replacing a cache folder, run `before-update` against that exact
+folder across all products as described above; a refusal blocks replacement.
+Use separate tool profiles/cache directories if a pinned folder must remain.
+In clean profiles the installation commands are:
+
+```bash
+claude plugin marketplace add 'https://github.com/darkdepot/mono.git#v0.30.1'
+claude plugin install mono@mono-marketplace
+codex plugin marketplace add darkdepot/mono --ref v0.30.1
+codex plugin add mono@mono-marketplace
+```
+
+For an existing Codex marketplace, remove its registration and register the tag
+as in Plugin Updates; protect the replaced cache with `before-update` first.
+Verify both actual version-cache trees against `v0.30.1`, including paths, types,
+modes, hashes and symlinks; both installed versions must read `0.30.1`. No journal
+projection is required for this rollback: retain all evidence, pins and history
+byte-for-byte, including the new files ignored by 0.30.1. Recheck their saved
+hashes. Restart each product's watcher from the verified 0.30.1 pack, observe its
+fresh pulse, then release launch halts. New attempts use fresh 0.30.1 dispatch
+pins; never redirect archived attempts or reuse a newer certificate as proof.
 
 ### Roll Back To 0.29.0
 
