@@ -7,8 +7,63 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { confirmQueue, validateConfirmation, publishPhase, waitForConfirmation, confirmationPath } from "./delivery-state.mjs";
+import { confirmQueue, validateConfirmation, publishPhase, waitForConfirmation, confirmationPath, classifyQueue } from "./delivery-state.mjs";
 import { consumeAck } from "./orchestrator/consume-gate-ack.mjs";
+
+test('queue-carried-confirmed: only whole same-attempt confirmations authorize reuse without apply', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-carried-'));
+  const file = path.join(root, 'reports/MONO-161-phase-code.json');
+  const write = { id: 'comment', operation: 'comment', target: 'MONO-161', payload: 'once' };
+  const candidate = { issue: 'MONO-161', stage: 'mono-deliver', attempt: 1, packVersion: 'test', surfaceRevision: 4,
+    phase: 'code', sequence: 1, kind: 'phase', head: 'a'.repeat(40), linear_mutations_pending: [write],
+    capsule: { phase: 'code', head: 'a'.repeat(40), decisions: [], writable_roots: [path.join(root, 'reports')], open_queue: [write] } };
+  try {
+    const first = publishPhase(candidate, file);
+    const confirmation = await confirmQueue(first, root, () => ({ state: 'present', evidence: 'verified comment' }));
+    const next = publishPhase({ ...candidate, sequence: 2 }, file);
+    const ack = await confirmQueue(next, root, () => { throw new Error('carried write reached adapter'); });
+    assert.equal(validateConfirmation(next, ack), true);
+    assert.deepEqual(ack.results, confirmation.results);
+    const changed = structuredClone(next);
+    changed.capsule.open_queue[0].payload = 'changed'; changed.linear_mutations_pending = changed.capsule.open_queue;
+    await assert.rejects(confirmQueue(changed, root, () => {}), /changed within attempt/);
+    fs.unlinkSync(path.join(root, 'consumed/MONO-161-a1/comment.json'));
+    assert.throws(() => classifyQueue(changed, root), /changed within attempt/, 'confirmation identity survives a missing per-write result');
+    assert.throws(() => validateConfirmation(first, { ...confirmation, results: [{ ...confirmation.results[0], attempt: 2 }] }), /unverified write/);
+    assert.equal(classifyQueue({ ...candidate, attempt: 2 }, root).carried.size, 0, 'other attempts do not inherit proof');
+    const firstAck = confirmationPath(first, root), nextAck = confirmationPath(next, root);
+    fs.unlinkSync(nextAck); fs.unlinkSync(firstAck);
+    assert.equal(classifyQueue(candidate, root).carried.size, 0, 'a durable present result without whole confirmation is not proof');
+    fs.writeFileSync(firstAck, JSON.stringify({ ...confirmation, results: [] }));
+    assert.throws(() => classifyQueue(next, root), /confirmation/, 'incomplete confirmation is not proof');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('collection-id-reuse: publication refuses changed reports immediately and preserves the prior bytes', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-collection-id-'));
+  const file = phase => path.join(root, 'reports', `MONO-161-phase-${phase}.json`);
+  const candidate = { issue: 'MONO-161', stage: 'mono-deliver', attempt: 1, packVersion: 'test', surfaceRevision: 4,
+    phase: 'code', sequence: 1, kind: 'phase', head: 'a'.repeat(40), linear_mutations_pending: [],
+    capsule: { phase: 'code', head: 'a'.repeat(40), decisions: [], writable_roots: [path.join(root, 'reports')], open_queue: [] } };
+  try {
+    const code = publishPhase(candidate, file('code')); await confirmQueue(code, root, () => {});
+    const id = `preflight-collect:${candidate.head}:1`;
+    const queue = [{ id, operation: 'preflight-collect', target: candidate.head, payload: { request: { collectionId: id } } }];
+    const preflight = { ...candidate, phase: 'preflight', kind: 'confirmation-request', linear_mutations_pending: queue,
+      capsule: { ...candidate.capsule, phase: 'preflight', open_queue: queue } };
+    const published = publishPhase(preflight, file('preflight'));
+    const bytes = fs.readFileSync(file('preflight'), 'utf8');
+    assert.deepEqual(publishPhase(preflight, file('preflight')), published, 'lost response preserves publication');
+    for (const change of [{ sequence: 2 }, { text: 'changed' }]) {
+      assert.throws(() => publishPhase({ ...preflight, ...change }, file('preflight')), /нужен новый идентификатор сбора/);
+      assert.equal(fs.readFileSync(file('preflight'), 'utf8'), bytes);
+    }
+    const two = structuredClone(preflight);
+    const second = structuredClone(queue[0]); second.id = second.payload.request.collectionId = `preflight-collect:${candidate.head}:2`;
+    two.capsule.open_queue.push(second); two.linear_mutations_pending = two.capsule.open_queue;
+    assert.throws(() => classifyQueue(two, root), /single preflight/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test("both publication and confirmation enforce the complete phase and sequence chain", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-phase-order-"));

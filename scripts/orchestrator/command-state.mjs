@@ -5,7 +5,7 @@ import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, wit
 import { readJournal, currentEntries } from '../decisions.mjs';
 import { buildReviewLedger, repeatedClasses, recordClassStop } from '../review-ledger.mjs';
 import { capDecisionDigest, reserveReviewCollection, validateCapAdmission } from '../review-cap.mjs';
-import { validatePhase, confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
+import { validatePhase, requirePredecessors, classifyQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
 
 export const sha256File = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 export function commandFlags(argv, booleans = [], repeat = []) {
@@ -59,27 +59,11 @@ export function expandedWrite(write, report) {
   return expand(write);
 }
 
-// Reuse the phase owner's existing barrier validation without duplicating its
-// predecessor rules. Nonempty queues stop at the adapter boundary, before any
-// result or external write. Empty queues are checked by the real confirmation
-// after session setup: probing confirmQueue on them would publish a confirmation.
+// Validate the full queue without adapter calls or confirmation side effects.
 export async function validateReportBarriers(root, report, reportsDir) {
-  if (!report.capsule.open_queue.length) return;
-  const stopBeforeAdapter = Symbol("validated report barriers");
-  try { await confirmQueue(report, root, () => { throw stopBeforeAdapter; }, reportsDir); }
-  catch (error) { if (error !== stopBeforeAdapter) throw error; }
-  // The adapter boundary stops at the first write. Check the remaining durable
-  // identities before any connector instructions can expose the full queue.
+  requirePredecessors(report, root, reportsDir, "confirming");
   const dir = attemptDirectory(root, report);
-  await withLock(path.join(dir, "queue.lock"), () => {
-    for (const queued of report.capsule.open_queue) {
-      const write = expandedWrite(queued, report), file = path.join(dir, `${write.id}.json`);
-      if (!fs.existsSync(file)) continue;
-      const prior = readJson(file);
-      if (prior.writeDigest !== digest(write) || prior.issue !== report.issue || prior.attempt !== report.attempt)
-        throw new Error(`write ${write.id} changed within attempt`);
-    }
-  });
+  await withLock(path.join(dir, "queue.lock"), () => classifyQueue(report, root));
 }
 
 export function effectivePins(entry) {

@@ -102,12 +102,13 @@ export function validateConfirmation(report, confirmation) {
       !Array.isArray(confirmation.results) || confirmation.results.length !== report.capsule.open_queue.length) throw new Error("confirmation does not cover this report");
   for (const [index, write] of report.capsule.open_queue.entries()) {
     const result = confirmation.results[index];
-    if (result.id !== write.id || result.writeDigest !== digest(resolveWrite(write, report)) || result.state !== "present" || !result.evidence) throw new Error("confirmation has an unverified write");
+    if (result.issue !== report.issue || result.attempt !== report.attempt || result.id !== write.id ||
+        result.writeDigest !== digest(resolveWrite(write, report)) || result.state !== "present" || !result.evidence) throw new Error("confirmation has an unverified write");
     validateCollectionEvidence(write, result.evidence, report);
   }
   return true;
 }
-function requirePredecessors(report, root, reportsDir, action) {
+export function requirePredecessors(report, root, reportsDir, action) {
   const sameAttempt = candidate => candidate.issue === report.issue && candidate.attempt === report.attempt &&
     IDENTITY_FIELDS.every(field => candidate[field] === report[field]);
   function confirmed(phase, sequence, published) {
@@ -132,20 +133,69 @@ function requirePredecessors(report, root, reportsDir, action) {
   }
   for (let sequence = 1; sequence < report.sequence; sequence++) confirmed(report.phase, sequence);
 }
+function previousConfirmations(report, root) {
+  const dir = path.join(root, "confirmations");
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter(name => PHASES.some(phase =>
+    name.startsWith(`${report.issue}-phase-${phase}-a${report.attempt}-s`) && name.endsWith('.confirmed.json')))
+    .map(name => {
+      const ack = readJson(path.join(dir, name)), prior = validatePhase(ack.report);
+      if (prior.issue !== report.issue || prior.attempt !== report.attempt || IDENTITY_FIELDS.some(key => prior[key] !== report[key]))
+        throw new Error('previous confirmation attempt/identity mismatch');
+      validateConfirmation(prior, ack);
+      return ack;
+    }).filter(ack => ack.reportDigest !== digest(report) &&
+      (ack.report.phase !== report.phase || ack.report.sequence < report.sequence));
+}
+// Only a verified whole-report confirmation can carry evidence. Durable write
+// results and unfinished session observations retain identity checks, not proof.
+export function classifyQueue(report, root) {
+  validatePhase(report);
+  const confirmed = new Map();
+  for (const ack of previousConfirmations(report, root)) for (const result of ack.results) {
+    if (confirmed.has(result.id) && confirmed.get(result.id).writeDigest !== result.writeDigest)
+      throw new Error(`write ${result.id} changed within attempt`);
+    confirmed.set(result.id, result);
+  }
+  const carried = new Map(), connectors = [], collections = [];
+  for (const queued of report.capsule.open_queue) {
+    const write = resolveWrite(queued, report), hash = digest(write), prior = confirmed.get(write.id);
+    const file = path.join(root, 'consumed', `${report.issue}-a${report.attempt}`, `${write.id}.json`);
+    const durable = fs.existsSync(file) ? readJson(file) : null;
+    if ((prior && prior.writeDigest !== hash) || (durable &&
+        (durable.writeDigest !== hash || durable.issue !== report.issue || durable.attempt !== report.attempt)))
+      throw new Error(`write ${write.id} changed within attempt`);
+    if (prior) carried.set(write.id, prior);
+    else (write.operation === 'preflight-collect' ? collections : connectors).push(write);
+  }
+  if (collections.length > 1 || (collections.length && (report.phase !== 'preflight' || report.kind !== 'confirmation-request')))
+    throw new Error('collection requires a single preflight confirmation-request');
+  return { carried, connectors, collection: collections[0] ?? null };
+}
 export function publishPhase(report, output, previousConfirmation, root = previousConfirmation
   ? path.dirname(path.dirname(previousConfirmation)) : path.dirname(path.dirname(output))) {
   validatePhase(report);
-  requirePredecessors(report, root, path.dirname(output), "publishing");
   const content = value => { const { publishedAt, ...rest } = value; return rest; };
+  const previous = fs.existsSync(output) ? validatePhase(readJson(output)) : null;
+  const identical = previous && canonical(content(previous)) === canonical(content(report));
+  const published = { ...report, publishedAt: new Date().toISOString() };
+  if (!identical) {
+    const used = previousConfirmations(published, root).map(ack => ack.report);
+    if (previous?.issue === report.issue && previous.attempt === report.attempt) used.push(previous);
+    for (const write of report.capsule.open_queue.filter(write => write.operation === 'preflight-collect')) {
+      if (used.some(prior => prior.capsule.open_queue.some(item => item.operation === 'preflight-collect' &&
+          item.payload.request.collectionId === write.payload.request.collectionId)))
+        throw new Error('нужен новый идентификатор сбора: collectionId already used with another reportDigest');
+    }
+  }
+  requirePredecessors(report, root, path.dirname(output), "publishing");
   if (fs.existsSync(output)) {
-    const previous = validatePhase(readJson(output));
-    if (canonical(content(previous)) === canonical(content(report))) return previous;
+    if (identical) return previous;
     const ackPath = previousConfirmation ?? confirmationPath(previous, root);
     if (!fs.existsSync(ackPath)) throw new Error("previous phase report is unconfirmed");
     validateConfirmation(previous, readJson(ackPath));
     if (report.attempt !== previous.attempt || report.sequence <= previous.sequence) throw new Error("phase report sequence must advance in the same attempt; archive reconciled old attempts first");
   }
-  const published = { ...report, publishedAt: new Date().toISOString() };
   atomicJson(output, published);
   return published;
 }
@@ -168,8 +218,10 @@ export async function confirmQueue(report, root, adapter, reportsDir = path.join
   const dir = path.join(root, "consumed", `${report.issue}-a${report.attempt}`);
   return withLock(path.join(dir, "queue.lock"), async () => {
     requirePredecessors(report, root, reportsDir, "confirming");
+    const { carried } = classifyQueue(report, root);
     const results = [];
     for (const queuedWrite of report.capsule.open_queue) {
+      if (carried.has(queuedWrite.id)) { inTime(); results.push(carried.get(queuedWrite.id)); continue; }
       const write = resolveWrite(queuedWrite, report);
       const file = path.join(dir, `${write.id}.json`);
       const hash = digest(write);

@@ -147,7 +147,8 @@ worktree .orchestrator, never both. Final fields plus phase/positive increasing
 sequence/kind (phase/confirmation-request)/head/phase_result.
 Capsule phase/head match; open_queue = ordered linear_mutations_pending.
 Writes: stable id/operation/target/payload; changed payload → new ID; obligations
-survive heads. Certificate: append #/certificate, one copy. Short:
+survive heads. Do not carry confirmed writes into a new queue. A new report needs
+a new collectionId; retain the ID only when reconciling the unchanged report. Certificate: append #/certificate, one copy. Short:
 confirm empty code queue; start facts in capsule.decisions/Russian ready lead
 before unchanged machine core.
 
