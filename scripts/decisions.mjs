@@ -270,7 +270,8 @@ export async function versionDataset(options) {
       if(v.bytes.equals(bytes))existing=v;
     }
     if(options.initialOnly && highest) {
-      const first=versionAt(dir,issue,1),selected=first.bytes.equals(bytes)?first:versionAt(dir,issue,highest);
+      const first=fs.existsSync(path.join(dir,`${issue}-review-scope.v1.md`))?versionAt(dir,issue,1):null;
+      const selected=first?.bytes.equals(bytes)?first:versionAt(dir,issue,highest);
       return {version:selected.version,digest:selected.digest,archive:selected.archive,created:false};
     }
     if(existing)return {version:existing.version,digest,archive:existing.archive,created:false};

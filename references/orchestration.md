@@ -1138,7 +1138,8 @@ Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
 Declines are normal admission records, separate from the experimental pilot.
 Dispatch creates immutable review dataset v1 by default under evidenceRoot and
 pins its path/version/digest. It reuses matching v1 bytes; otherwise it selects
-the latest existing version without rewriting archives or digests. Explicit
+the latest existing version, including histories without v1, without creating
+v1 beside later versions or rewriting archives or digests. Explicit
 datasets retain their path/version. A decline needs a version and a linked,
 approved decision in the journal; the default dataset grants no decline itself.
 The worker proposes in its phase report; only the orchestrator writes
@@ -1577,6 +1578,10 @@ directory's history; retired Issues' logs are outside its scope.
   no more than one second in the future, and a live pid with matching procStart.
   `watcher-required` gives the start command; refusal registers no attempt and
   consumes no attempt allowance. Read-only `spawn --pins` is exempt.
+  The common launch path rechecks the pulse before spawn under the same lock.
+  Amendments record possible delivery only at that boundary; pre-spawn refusals
+  and failed process creation leave no marker, while an indeterminate real
+  launch retains its recovery evidence and refuses an automatic duplicate.
   If the session and watcher disappear together while a worker runs, the pack
   cannot detect that loss; the orchestrator environment owns that supervision.
 - Each changed phase report file emits `phase`, regardless of stage order.

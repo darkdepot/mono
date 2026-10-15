@@ -221,3 +221,57 @@ test('dispatch-default-dataset', async () => {
     assert.equal(fs.readFileSync(explicit, 'utf8'), '# Explicit source\n');
   } finally { await f.cleanup(); }
 });
+
+test('launch-watcher-required after launch preparation and before amendment resume', async t => {
+  for (const mode of ['spawn', 'resume', 'amend']) await t.test(mode, async () => {
+    const f = fixture();
+    try {
+      pulse(f.root);
+      if (mode !== 'spawn') { pass(f.dispatch()); await stopped(f.entry().pid); }
+      const launch = path.join(f.pack, 'scripts/orchestrator/launch.mjs'), source = fs.readFileSync(launch, 'utf8');
+      const resume = path.join(f.pack, 'scripts/orchestrator/resume.mjs'), resumeSource = fs.readFileSync(resume, 'utf8');
+      const anchor = mode === 'spawn' ? 'const gates = request.gates ?? [];' : 'const updated = { ...entry, capsule:';
+      if (mode === 'amend') {
+        const prefix = `import fs from 'node:fs';\nconst input=JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--request')+1]));fs.unlinkSync(input.root+'/watcher.json');\n`;
+        put(resume, prefix + resumeSource.replace(/^#![^\n]*\n/u, ''));
+      } else {
+        assert.ok(source.includes(anchor));
+        put(launch, source.replace(anchor, `fs.unlinkSync(path.join(request.root, 'watcher.json')); ${anchor}`));
+      }
+      const resumeFile = path.join(f.scratch, 'race-resume.md'); put(resumeFile, 'Continue.');
+      const request = path.join(f.scratch, 'race-resume.json'); atomicJson(request, { root: f.root, issue: f.issue, resumeFile });
+      const run = () => mode === 'spawn' ? f.dispatch() : mode === 'resume' ? f.call('orchestrator/resume.mjs', '--request', request) :
+        f.call('orchestrator/accept.mjs', 'amend', '--root', f.root, '--issue', f.issue, '--attempt', '1', '--text', 'Retry watcher race.');
+      const refused = run(); assert.notEqual(refused.status, 0); assert.match(refused.stdout + refused.stderr, /watcher-required:/);
+      if (mode === 'spawn') {
+        assert.deepEqual(read(path.join(f.root, 'workers.json')), {});
+        assert.equal(fs.existsSync(path.join(f.root, 'attempts.json')), false);
+      } else {
+        assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1);
+        assert.equal(f.entry().last_resume, undefined);
+      }
+      if (mode === 'amend') {
+        const pending = path.join(f.root, 'dispatch', `${f.issue}-a1`, 'amendment.pending.json');
+        assert.equal(read(pending).launchMayHaveStartedAt, undefined);
+        put(resume, resumeSource);
+      }
+      put(launch, source); pulse(f.root); pass(run());
+      assert.equal(read(path.join(f.root, 'attempts.json'))[f.issue], 1);
+    } finally { await f.cleanup(); }
+  });
+});
+
+test('dispatch-default-dataset with sparse immutable history', async () => {
+  const f = fixture();
+  try {
+    fs.mkdirSync(f.evidence); const source = path.join(f.evidence, `${f.issue}-review-scope.v9.md`);
+    put(source, '# Explicit historical scope\n');
+    const prior = await archiveReviewDataset(source, f.evidence);
+    const bytes = fs.readFileSync(prior.archive), digest = fs.readFileSync(prior.archive + '.sha256');
+    pulse(f.root); const result = JSON.parse(pass(f.dispatch())), pins = read(result.pins.file);
+    assert.equal(pins.reviewDataset, prior.archive); assert.equal(pins.reviewDatasetVersion, 9);
+    assert.equal(pins.reviewDatasetDigest, prior.digest);
+    assert.equal(fs.existsSync(path.join(f.evidence, 'datasets', `${f.issue}-review-scope.v1.md`)), false);
+    assert.deepEqual(fs.readFileSync(prior.archive), bytes); assert.deepEqual(fs.readFileSync(prior.archive + '.sha256'), digest);
+  } finally { await f.cleanup(); }
+});

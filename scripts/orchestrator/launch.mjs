@@ -6,7 +6,7 @@ import { startGate } from "../gate.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
-import { effectivePins, attemptState } from "./command-state.mjs";
+import { effectivePins, attemptState, validateAmendment } from "./command-state.mjs";
 import { configuredBackup, resolveBackupSwitch, validateBackupLaunch, recordAttempt, recordBackupSwitch, backupProcessBaseline } from "./backup-switch.mjs";
 
 function releasePin(request) {
@@ -131,7 +131,7 @@ function managedSettings(entry, root, roots, transport) {
 function temporaryDirectory(transport, entry, roots) {
   return transport.temporaryDirectory?.(roots) ?? roots.find(root => root === resolvedLocation(os.tmpdir())) ?? entry.worktree;
 }
-async function launchTransport(root, entry, prompt, resume, prepared) {
+async function launchTransport(root, entry, prompt, resume, prepared, lifecycle = {}) {
   const registryPath = path.join(root, "workers.json");
   const readRegistry = () => readJson(registryPath);
   const roots = effectiveGrants(entry, root);
@@ -144,27 +144,33 @@ async function launchTransport(root, entry, prompt, resume, prepared) {
   }
   const transport = workerTransport(entry.transport) ?? workerTransport("codex-cli");
   managedSettings(entry, root, roots, transport);
-  recordAttempt(root, entry);
   const invocation = transport.invocation(entry, { reportsDir: path.join(root, "reports"), roots, prompt, resume });
   guard(root, resume);
   const logOffset = fs.statSync(entry.log).size;
   const piped = invocation.stdin !== undefined;
   const stdout = piped ? null : fs.openSync(entry.log, "a"), stderr = piped ? null : fs.openSync(entry.log.replace(/\.jsonl$/, ".stderr.log"), "a", 0o600);
-  let child;
+  let child, spawned = false;
   try {
     const command = piped ? process.execPath : invocation.command;
     const args = piped ? [path.join(entry.packRoot, transport.journalRunner), entry.log,
       entry.log.replace(/\.jsonl$/, ".stderr.log"), invocation.command, ...invocation.args] : invocation.args;
-    child = spawn(command, args, { cwd: entry.worktree, detached: true,
+    const options = { cwd: entry.worktree, detached: true,
       stdio: piped ? ["pipe", "ignore", "ignore"] : ["ignore", stdout, stderr],
       env: { ...transport.environment(entry.modelRoutes?.roles[entry.model_policy.role], process.env,
         { ...prepared, attemptMarker: entry.attemptMarker, timeoutSec: entry.confirmationTimeoutSec, tempDir: temporaryDirectory(transport, entry, roots) }),
-        ...(piped ? { MONO_WORKER_JOURNAL_IDENTITY: JSON.stringify({ issue: entry.issue, attempt: entry.attempt, thread_id: entry.thread_id }) } : {}) } });
-    await new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
+        ...(piped ? { MONO_WORKER_JOURNAL_IDENTITY: JSON.stringify({ issue: entry.issue, attempt: entry.attempt, thread_id: entry.thread_id }) } : {}) } };
+    guard(root, resume);
+    requireWatcher(root);
+    lifecycle.beforeSpawn?.();
+    child = spawn(command, args, options);
+    await new Promise((resolve, reject) => { child.once("spawn", () => { spawned = true; resolve(); }); child.once("error", reject); });
     if (piped) {
       child.stdin.on("error", error => { if (error.code !== "EPIPE") child.kill("SIGTERM"); });
       child.stdin.end(invocation.stdin);
     }
+  } catch (error) {
+    if (!spawned) lifecycle.onRefusal?.();
+    throw error;
   } finally { if (stdout !== null) fs.closeSync(stdout); if (stderr !== null) fs.closeSync(stderr); }
   child.unref();
   const registry = readRegistry();
@@ -334,14 +340,15 @@ export async function spawnWorker(request, preparation = {}) {
       if (gates.length) entry.gates = gates;
       if (prepared?.credentialPaths) entry.githubCredentialPaths = prepared.credentialPaths;
       if (prepared?.githubConfigDir) entry.githubConfigDir = prepared.githubConfigDir;
-      managedSettings(entry, request.root, roots, transport);
-      if (backupSwitch) recordBackupSwitch(request.root, backupSwitch);
-      attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);
-      registry[request.issue] = entry; atomicJson(file, registry);
-      recordAttempt(request.root, entry);
-      appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, modelRoutes, model_policy, model_launch,
-        model: entry.model, effort: entry.effort, ...(backupSwitch ? { backupSwitch, modelReason: entry.modelReason } : {}) });
-      return { entry, ...await launchTransport(request.root, entry, prompt, false, prepared) };
+      try { return { entry, ...await launchTransport(request.root, entry, prompt, false, prepared, { beforeSpawn() {
+        if (backupSwitch) recordBackupSwitch(request.root, backupSwitch);
+        attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);
+        registry[request.issue] = entry; atomicJson(file, registry);
+        recordAttempt(request.root, entry);
+        appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, modelRoutes, model_policy, model_launch,
+          model: entry.model, effort: entry.effort, ...(backupSwitch ? { backupSwitch, modelReason: entry.modelReason } : {}) });
+      } }) }; }
+      catch (error) { if (!registry[request.issue]) fs.unlinkSync(log); throw error; }
     } catch (error) {
       await preparation.onRefusal?.();
       throw error;
@@ -356,6 +363,15 @@ export async function resumeWorker(request) {
     requireWatcher(request.root);
     const entry = readJson(path.join(request.root, "workers.json"))[request.issue];
     if (!entry || !identity(entry) || !entry.thread_id || entry.stage !== "mono-deliver") throw new Error("no resumable delivery thread");
+    let amendment;
+    const amendmentFile = entry.pins ? path.join(path.dirname(entry.pins.file), "amendment.pending.json") : null;
+    if (amendmentFile && fs.existsSync(amendmentFile)) {
+      amendment = readJson(amendmentFile);
+      if (canonical(request) !== canonical(readJson(amendment.resumeRequest)) ||
+          validateAmendment(entry, amendment).state !== "prepared" || amendment.launchMayHaveStartedAt ||
+          (entry.pinsVersion ?? 0) !== amendment.currentVersion || canonical(entry.last_resume ?? null) !== canonical(amendment.previousResume))
+        throw new Error("amendment launch boundary mismatch; preserve evidence");
+    }
     if (entry.pid) {
       try { process.kill(entry.pid, 0); throw new Error("worker process is still live; resume refused"); }
       catch (error) { if (error.code !== "ESRCH") throw error; }
@@ -382,7 +398,20 @@ export async function resumeWorker(request) {
     if (prepared?.credentialPaths) updated.githubCredentialPaths = [...new Set([...(entry.githubCredentialPaths ?? []), ...prepared.credentialPaths])];
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;
     atomicJson(path.join(request.root, "workers.json"), registry);
-    return { entry: updated, ...await launchTransport(request.root, updated, prompt, true, prepared) };
+    return { entry: updated, ...await launchTransport(request.root, updated, prompt, true, prepared, { beforeSpawn() {
+      recordAttempt(request.root, updated);
+      if (amendment) {
+        if (canonical(readJson(amendmentFile)) !== canonical(amendment)) throw new Error("amendment changed before spawn");
+        amendment = { ...amendment, launchMayHaveStartedAt: new Date().toISOString() };
+        atomicJson(amendmentFile, amendment);
+      }
+    }, onRefusal() {
+      if (amendment?.launchMayHaveStartedAt) {
+        if (canonical(readJson(amendmentFile)) !== canonical(amendment)) throw new Error("amendment changed during refused spawn; preserve evidence");
+        delete amendment.launchMayHaveStartedAt;
+        atomicJson(amendmentFile, amendment);
+      }
+    } }) };
   });
   if (workerTransport(launched.entry.transport)?.startupEvent) return confirmStartup(request.root, launched.entry, launched);
   return { pid: launched.pid, thread_id: launched.thread_id, procStart: launched.procStart };

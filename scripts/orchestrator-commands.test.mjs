@@ -621,12 +621,13 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         const names = new Set(fs.readdirSync(output));
         const resumeScript = path.join(runtime, "orchestrator/resume.mjs"), resumeSource = fs.readFileSync(resumeScript, "utf8");
         const acceptScript = path.join(runtime, "orchestrator/accept.mjs"), acceptSource = fs.readFileSync(acceptScript, "utf8");
-        try { await callback({ registryFile, before, output, resumeScript, resumeSource, acceptScript, acceptSource }); }
+        const launchScript = path.join(runtime, "orchestrator/launch.mjs"), launchSource = fs.readFileSync(launchScript, "utf8");
+        try { await callback({ registryFile, before, output, resumeScript, resumeSource, acceptScript, acceptSource, launchScript, launchSource }); }
         finally {
           const pid = readJson(registryFile)[ack.issue].pid;
           if (pid !== before[ack.issue].pid) await processes.stop(processes.track(pid));
           livePid = null; atomicJson(registryFile, before);
-          write(resumeScript, resumeSource); write(acceptScript, acceptSource);
+          write(resumeScript, resumeSource); write(acceptScript, acceptSource); write(launchScript, launchSource);
           for (const name of fs.readdirSync(output)) if (!names.has(name)) fs.rmSync(path.join(output, name), { recursive: true, force: true });
           if (fs.existsSync(path.join(root, "amend.lock"))) fs.unlinkSync(path.join(root, "amend.lock"));
         }
@@ -636,6 +637,8 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         assert.equal(result.signal, "SIGKILL");
         assert.throws(() => process.kill(result.pid, 0), { code: "ESRCH" });
         const lock = path.join(root, "amend.lock"); assert.equal(readJson(lock).pid, result.pid); fs.unlinkSync(lock);
+        const launchLock = path.join(root, "launch.lock");
+        if (fs.existsSync(launchLock)) { assert.throws(() => process.kill(readJson(launchLock).pid, 0), { code: "ESRCH" }); fs.unlinkSync(launchLock); }
       };
       await t.test("amend-legacy-no-dataset-nonzero-version: preserve version across unrelated amendments", () => isolatedPreparation(async ({ registryFile, before }) => {
         const launchFile = before[ack.issue].pins.file, launchBytes = fs.readFileSync(launchFile);
@@ -670,7 +673,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
           assert.ok(readJson(registryFile)[ack.issue].workerWritableRoots.includes(fs.realpathSync(extra)));
         } finally { child.kill("SIGTERM"); await exited; await processes.stop(child.pid); }
       }));
-      await t.test("amend-mark-kept-on-changed-state", () => isolatedPreparation(({ registryFile, resumeScript, resumeSource }) => {
+      await t.test("amend-pre-spawn-refusal-with-changed-wait-state-remains-retryable", () => isolatedPreparation(({ registryFile, resumeScript, resumeSource }) => {
         write(resumeScript, `import path from "node:path";import {readJson,atomicJson} from "../runtime.mjs";
 const request=readJson(process.argv[process.argv.indexOf("--request")+1]),file=path.join(request.root,"workers.json"),registry=readJson(file);
 registry[request.issue].last_wait={changed:true};atomicJson(file,registry);
@@ -678,13 +681,12 @@ console.error("resume: worker process is still live; resume refused");process.ex
 `);
         const args = amendArgs("Changed wait state retains boundary.");
         const failed = run(process.execPath, args); assert.notEqual(failed.status, 0);
-        assert.ok(readJson(pendingFile).launchMayHaveStartedAt);
-        const evidence = fs.readFileSync(pendingFile), registry = fs.readFileSync(registryFile);
+        assert.equal(readJson(pendingFile).launchMayHaveStartedAt, undefined);
+        assert.deepEqual(readJson(registryFile)[ack.issue].last_wait, { changed: true });
         write(resumeScript, resumeSource);
-        const retry = run(process.execPath, args); assert.notEqual(retry.status, 0); assert.match(retry.stderr, /automatic restart refused/u);
-        assert.deepEqual(fs.readFileSync(pendingFile), evidence); assert.deepEqual(fs.readFileSync(registryFile), registry);
+        pass(run(process.execPath, args));
       }));
-      await t.test("amend-launch-failure-restores-grants: uncertain delivery preserves evidence and refuses restart", () => isolatedPreparation(({ registryFile, before }) => {
+      await t.test("amend-spawn-error-restores-grants: ENOENT clears the marker and permits retry", () => isolatedPreparation(({ registryFile, before }) => {
         const extra = path.join(scratch, "amend-grant"), grantsFile = path.join(scratch, "expanded-grants.json");
         fs.mkdirSync(extra); write(grantsFile, [...before[ack.issue].workerWritableRoots, extra]);
         fs.symlinkSync(process.execPath, path.join(bin, "node")); fs.symlinkSync("/usr/bin/git", path.join(bin, "git"));
@@ -694,23 +696,19 @@ console.error("resume: worker process is still live; resume refused");process.ex
           const failed = spawnSync(process.execPath, args, { cwd: checkout, env: { ...env, PATH: bin }, encoding: "utf8" });
           assert.notEqual(failed.status, 0); assert.match(failed.stderr, /ENOENT/u);
           assert.equal(JSON.parse(failed.stdout).state, "prepared");
-          assert.ok(readJson(pendingFile).launchMayHaveStartedAt);
-          assert.ok(readJson(registryFile)[ack.issue].workerWritableRoots.includes(fs.realpathSync(extra)));
+          const version = readJson(pendingFile).pinsVersion;
+          assert.equal(readJson(pendingFile).launchMayHaveStartedAt, undefined);
+          assert.deepEqual(readJson(registryFile)[ack.issue].workerWritableRoots, before[ack.issue].workerWritableRoots);
           assert.equal(readJson(registryFile)[ack.issue].pinsVersion, before[ack.issue].pinsVersion);
-          const evidence = fs.readFileSync(pendingFile), registry = fs.readFileSync(registryFile);
           fs.renameSync(saved, codex);
-          const retried = run(process.execPath, args); assert.notEqual(retried.status, 0); assert.match(retried.stderr, /automatic restart refused/u);
-          assert.deepEqual(fs.readFileSync(pendingFile), evidence); assert.deepEqual(fs.readFileSync(registryFile), registry);
+          const retried = JSON.parse(pass(run(process.execPath, args))); assert.equal(retried.version, version);
         } finally { if (fs.existsSync(saved)) fs.renameSync(saved, codex); }
       }));
-      await t.test("amend-pending-replacement-restores-original-grants: uncertain delivery refuses replacement", () => isolatedPreparation(({ registryFile, before, resumeScript }) => {
+      await t.test("amend-pending-replacement-restores-original-grants: real uncorrelated spawn refuses replacement", () => isolatedPreparation(({ registryFile, before, launchScript, launchSource }) => {
         const extra = path.join(scratch, "interrupted-amend-grant"), grantsFile = path.join(scratch, "interrupted-grants.json");
         fs.mkdirSync(extra); write(grantsFile, [...effectivePins(before[ack.issue]).workerWritableRoots, fs.realpathSync(extra)]);
         const args = [...amendArgs("Interrupted undelivered amendment."), "--worker-writable-roots", grantsFile];
-        write(resumeScript, `import fs from "node:fs";import path from "node:path";import {readJson,atomicJson} from "../runtime.mjs";
-const request=readJson(process.argv[process.argv.indexOf("--request")+1]),file=path.join(request.root,"workers.json"),registry=readJson(file),entry=registry[request.issue],roots=request.workerWritableRoots.map(value=>fs.realpathSync(value));
-entry.workerWritableRoots=roots;entry.writable_roots=roots;entry.capsule.writable_roots=roots;atomicJson(file,registry);process.kill(process.ppid,"SIGKILL");
-`);
+        write(launchScript, launchSource.replace('child.unref();', 'child.unref(); const partial = readRegistry(); partial[entry.issue].pid = child.pid; atomicJson(registryPath, partial); process.kill(process.ppid, "SIGKILL"); process.exit(1);'));
         removeDeadLock(run(process.execPath, args));
         const evidence = fs.readFileSync(pendingFile), registry = fs.readFileSync(registryFile);
         assert.ok(readJson(pendingFile).launchMayHaveStartedAt);
@@ -718,46 +716,42 @@ entry.workerWritableRoots=roots;entry.writable_roots=roots;entry.capsule.writabl
         assert.notEqual(replacement.status, 0); assert.match(replacement.stderr, /replacement refused/u);
         assert.deepEqual(fs.readFileSync(pendingFile), evidence); assert.deepEqual(fs.readFileSync(registryFile), registry);
       }));
-      await t.test("amend-interrupted-before-launch-marker: identical retry resumes the same prepared version", () => isolatedPreparation(({ acceptScript, acceptSource }) => {
-        write(acceptScript, acceptSource.replace('record = { ...record, launchMayHaveStartedAt:', 'process.kill(process.pid, "SIGKILL"); record = { ...record, launchMayHaveStartedAt:'));
+      await t.test("amend-interrupted-before-launch-marker: identical retry resumes the same prepared version", () => isolatedPreparation(({ launchScript, launchSource }) => {
+        write(launchScript, launchSource.replace('amendment = { ...amendment, launchMayHaveStartedAt:', 'process.kill(process.ppid, "SIGKILL"); process.exit(1); amendment = { ...amendment, launchMayHaveStartedAt:'));
         const args = amendArgs("Retry proven unstarted preparation."); removeDeadLock(run(process.execPath, args));
-        // SIGKILL held launch.lock as well; fixture owner verifies its holder died.
-        const launchLock = path.join(root, "launch.lock"); assert.throws(() => process.kill(readJson(launchLock).pid, 0), { code: "ESRCH" }); fs.unlinkSync(launchLock);
         const pending = readJson(pendingFile), bytes = fs.readFileSync(pending.resumeFile);
         assert.equal(pending.launchMayHaveStartedAt, undefined);
-        write(acceptScript, acceptSource);
+        write(launchScript, launchSource);
         const resumed = JSON.parse(pass(run(process.execPath, args))); assert.equal(resumed.version, pending.pinsVersion); assert.equal(resumed.state, "registered");
         assert.deepEqual(fs.readFileSync(pending.resumeFile), bytes);
       }));
-      await t.test("amend-interrupted-after-marker-before-resume: preserve evidence and refuse both retry and replacement", () => isolatedPreparation(({ acceptScript, acceptSource, registryFile }) => {
-        write(acceptScript, acceptSource.replace('try { run("resume.mjs",', 'process.kill(process.pid, "SIGKILL"); try { run("resume.mjs",'));
+      await t.test("amend-interrupted-at-real-spawn-boundary: preserve evidence and refuse both retry and replacement", () => isolatedPreparation(({ launchScript, launchSource, registryFile }) => {
+        write(launchScript, launchSource.replace('child = spawn(command, args, options);', 'process.kill(process.ppid, "SIGKILL"); process.exit(1); child = spawn(command, args, options);'));
         const args = amendArgs("Launch boundary recorded, command not called."); removeDeadLock(run(process.execPath, args));
         assert.ok(readJson(pendingFile).launchMayHaveStartedAt);
-        const bytes = fs.readFileSync(pendingFile), registry = fs.readFileSync(registryFile); write(acceptScript, acceptSource);
+        const bytes = fs.readFileSync(pendingFile), registry = fs.readFileSync(registryFile); write(launchScript, launchSource);
         for (const command of [args, amendArgs("Replacement after uncertain launch.")]) {
           const refused = run(process.execPath, command); assert.notEqual(refused.status, 0); assert.match(refused.stderr, /launch may have started/u);
           assert.deepEqual(fs.readFileSync(pendingFile), bytes); assert.deepEqual(fs.readFileSync(registryFile), registry);
         }
       }));
-      await t.test("amend-proven-nondelivery-restores-grants-before-replacement: marker absent", () => isolatedPreparation(({ registryFile, before, acceptScript, acceptSource, resumeScript }) => {
-        write(acceptScript, acceptSource.replace('record = { ...record, launchMayHaveStartedAt:', 'process.kill(process.pid, "SIGKILL"); record = { ...record, launchMayHaveStartedAt:'));
+      await t.test("amend-proven-nondelivery-restores-grants-before-replacement: marker absent", () => isolatedPreparation(({ registryFile, before, launchScript, launchSource, resumeScript }) => {
+        write(launchScript, launchSource.replace('amendment = { ...amendment, launchMayHaveStartedAt:', 'process.kill(process.ppid, "SIGKILL"); process.exit(1); amendment = { ...amendment, launchMayHaveStartedAt:'));
         const args = amendArgs("Preparation before launch marker."); removeDeadLock(run(process.execPath, args));
-        const launchLock = path.join(root, "launch.lock"); assert.throws(() => process.kill(readJson(launchLock).pid, 0), { code: "ESRCH" }); fs.unlinkSync(launchLock);
         const old = readJson(pendingFile); assert.equal(old.launchMayHaveStartedAt, undefined);
         const provisional = readJson(registryFile), extra = path.join(scratch, "proven-unstarted-grant"); fs.mkdirSync(extra);
         for (const key of ["workerWritableRoots", "writable_roots"]) provisional[ack.issue][key].push(extra);
         provisional[ack.issue].capsule.writable_roots.push(extra); atomicJson(registryFile, provisional);
-        write(acceptScript, acceptSource); write(resumeScript, 'console.error("fixture launch unavailable");process.exitCode=1;\n');
+        write(launchScript, launchSource); write(resumeScript, 'console.error("fixture launch unavailable");process.exitCode=1;\n');
         const replacement = run(process.execPath, amendArgs("Different prepared request.")); assert.notEqual(replacement.status, 0);
         assert.deepEqual(readJson(registryFile), before, "restore original grants before replacing preparation");
-        assert.ok(readJson(pendingFile).pinsVersion > old.pinsVersion); assert.ok(readJson(pendingFile).launchMayHaveStartedAt);
+        assert.ok(readJson(pendingFile).pinsVersion > old.pinsVersion); assert.equal(readJson(pendingFile).launchMayHaveStartedAt, undefined);
         assert.equal(fs.readFileSync(old.resumeFile, "utf8").includes("Preparation before launch marker."), true);
       }));
       await t.test("amend-incomplete-snapshot-preparation-reserves-version: retry preserves orphaned bytes", () => isolatedPreparation(({ before, output, acceptScript, acceptSource }) => {
         write(acceptScript, acceptSource.replace('fs.mkdirSync(target);', 'fs.mkdirSync(target); process.kill(process.pid, "SIGKILL");'));
         const args = [...amendArgs("Recover interrupted snapshot staging."), "--full-snapshot", "--snapshot", snapshot];
         removeDeadLock(run(process.execPath, args));
-        const launchLock = path.join(root, "launch.lock"); assert.throws(() => process.kill(readJson(launchLock).pid, 0), { code: "ESRCH" }); fs.unlinkSync(launchLock);
         const version = before[ack.issue].pinsVersion + 1, orphan = path.join(output, `snapshot.v${version}`);
         assert.ok(fs.existsSync(orphan)); assert.equal(fs.existsSync(path.join(output, `pins.v${version}.json`)), false);
         assert.equal(fs.existsSync(pendingFile), false);
