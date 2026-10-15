@@ -20,6 +20,8 @@ test('queue-carried-confirmed: only whole same-attempt confirmations authorize r
   try {
     const first = publishPhase(candidate, file);
     const confirmation = await confirmQueue(first, root, () => ({ state: 'present', evidence: 'verified comment' }));
+    const reopened = await confirmQueue(first, root, () => { throw new Error('confirmed report reached adapter again'); });
+    assert.deepEqual(reopened.results, confirmation.results, 'a confirmed report retry also skips its writes');
     const next = publishPhase({ ...candidate, sequence: 2 }, file);
     const ack = await confirmQueue(next, root, () => { throw new Error('carried write reached adapter'); });
     assert.equal(validateConfirmation(next, ack), true);

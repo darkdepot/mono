@@ -474,8 +474,9 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     });
     const observations = queue.map(item => { const write = expandedWrite(item, report); return { sessionId: session.sessionId, writeId: write.id, reportDigest: digest(report), writeDigest: output[0].writeDigests[write.id], observedAt: new Date().toISOString(), state: "present", evidence: "fresh connector read-back" }; });
     const args = { root, report: reportFile, session: session.sessionId, observe: observations.map(item => `${item.writeId}=${JSON.stringify(item)}`) };
-    const confirmed = await acceptReport(args, () => {}); assert.equal(confirmed.status, "confirmed");
-    const confirmationFile = path.join(root, "confirmations/MONO-999-phase-code-a1-s1.confirmed.json"); validateConfirmation(report, readJson(confirmationFile));
+    for (const item of observations) await recordObservation(root, reportFile, session.sessionId, item.writeId, item);
+    const confirmationFile = path.join(root, "confirmations/MONO-999-phase-code-a1-s1.confirmed.json");
+    assert.equal(fs.existsSync(confirmationFile), false, 'unfinished observations do not become inherited confirmation');
     const secondOutput = [], second = await acceptReport({ root, report: reportFile }, value => secondOutput.push(value)); assert.ok(secondOutput[0].reread);
     assert.equal(output.length, 1, 'cli-single-object: opening prints one response');
     assert.equal(secondOutput.length, 1, 'cli-single-object: reopening includes reread in that response');
@@ -492,6 +493,10 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     const secondObservations = fresh.map(item => `${item.writeId}=${JSON.stringify(item)}`);
     assert.equal((await acceptReport({ ...secondArgs, observe: secondObservations }, () => {})).status, "confirmed");
     assert.equal((await acceptReport(secondArgs, () => {})).status, "confirmed", "same session/effects confirmation is idempotent");
+    const retryOutput = [], retry = await acceptReport({ root, report: reportFile }, value => retryOutput.push(value));
+    assert.equal(retry.status, 'confirmed'); assert.equal(retryOutput.length, 1);
+    assert.deepEqual(retry.writes, [], 'confirmed writes never become application instructions on report retry');
+    validateConfirmation(report, readJson(confirmationFile));
     await t.test("confirm-after-session-open: session failure leaves an empty queue unconfirmed", async () => {
       const empty = publishPhase({ ...report, sequence: 2, linear_mutations_pending: [], capsule: { ...report.capsule, open_queue: [] } }, reportFile);
       const sessions = path.join(root, "consumed/MONO-999-a1/sessions"), backup = sessions + ".saved";
@@ -1916,6 +1921,8 @@ test('queue-carried-confirmed: mixed queue collects and inherits only verified s
     const ack = readJson(f.confirmation); validateConfirmation(f.report, ack);
     assert.deepEqual(ack.results[0], prior.results[0]);
     assert.equal(ack.results[1].evidence.receipt, f.template.receipt);
+    const replay = await acceptReport({ root: f.options.root, report: f.reportFile }, () => {});
+    assert.equal(replay.status, 'confirmed'); assert.deepEqual(replay.writes, []);
   });
 });
 

@@ -122,11 +122,10 @@ Missing context/disposition blocks; repair: handoff/issue renewal/ship drift.
 ## Execution and artifact handling
 
 Apply `references/execution-quality.md`/`references/artifact-quality.md`.
-Intake: explicit paths → current snapshot/reviews → decisions → narrow configured
-roots → scoped gstack; no broad scans, absent roots unavailable.
-Newer approved Linear outranks scratch; stale evidence carries compatible
-choices only. Missing/conflicting scope, proof, risk or slicing: stop before
-writes; no stale certificates. Notes: read/unavailable/stale_or_ignored/conflicts/
+Intake: explicit paths → snapshot/reviews → decisions → configured roots → gstack;
+no broad scans; absent roots unavailable. Approved Linear outranks scratch;
+carry only compatible stale choices. Stop before writes on missing/conflicting
+scope/proof/risk/slicing; no stale certificates. Notes: read/unavailable/stale_or_ignored/conflicts/
 decisions_carried_forward/confidence_boundary (omit empty), one Russian sentence.
 Translate roles; no local body copies.
 
@@ -147,10 +146,9 @@ worktree .orchestrator, never both. Final fields plus phase/positive increasing
 sequence/kind (phase/confirmation-request)/head/phase_result.
 Capsule phase/head match; open_queue = ordered linear_mutations_pending.
 Writes: stable id/operation/target/payload; changed payload → new ID; obligations
-survive heads. Do not carry confirmed writes into a new queue. A new report needs
-a new collectionId; retain the ID only when reconciling the unchanged report. Certificate: append #/certificate, one copy. Short:
-confirm empty code queue; start facts in capsule.decisions/Russian ready lead
-before unchanged machine core.
+survive heads. Omit confirmed writes; new report needs new collectionId. Keep
+ID only for an unchanged report. Certificate: append #/certificate once. Short: confirm empty code queue; start
+facts in capsule.decisions/Russian ready lead; unchanged machine core.
 
 Publish/wait through delivery-state.mjs. Confirmation path:
 confirmations/<ISSUE-KEY>-phase-<phase>-a<N>-s<sequence>.confirmed.json.

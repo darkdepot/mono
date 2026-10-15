@@ -78,7 +78,7 @@ export async function acceptReport(args, print = value => console.log(JSON.strin
     await withLock(path.join(root, "launch.lock"), async () => {
       const { report } = correlatedPhase(root, reportFile);
       await validateReportBarriers(root, report, path.dirname(reportFile));
-      await admitUnderLock(root, report);
+      if (classifyQueue(report, root).collection) await admitUnderLock(root, report);
       const dir = attemptDirectory(root, report);
       await withLock(path.join(dir, "session.lock"), () => {
         const reportDigest = digest(report), sessions = path.join(dir, "sessions"), activeFile = path.join(sessions, `current-${reportDigest}.json`);

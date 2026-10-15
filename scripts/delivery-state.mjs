@@ -133,7 +133,7 @@ export function requirePredecessors(report, root, reportsDir, action) {
   }
   for (let sequence = 1; sequence < report.sequence; sequence++) confirmed(report.phase, sequence);
 }
-function previousConfirmations(report, root) {
+function verifiedConfirmations(report, root) {
   const dir = path.join(root, "confirmations");
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir).filter(name => PHASES.some(phase =>
@@ -144,15 +144,14 @@ function previousConfirmations(report, root) {
         throw new Error('previous confirmation attempt/identity mismatch');
       validateConfirmation(prior, ack);
       return ack;
-    }).filter(ack => ack.reportDigest !== digest(report) &&
-      (ack.report.phase !== report.phase || ack.report.sequence < report.sequence));
+    }).filter(ack => ack.report.phase !== report.phase || ack.report.sequence <= report.sequence);
 }
 // Only a verified whole-report confirmation can carry evidence. Durable write
 // results and unfinished session observations retain identity checks, not proof.
 export function classifyQueue(report, root) {
   validatePhase(report);
   const confirmed = new Map();
-  for (const ack of previousConfirmations(report, root)) for (const result of ack.results) {
+  for (const ack of verifiedConfirmations(report, root)) for (const result of ack.results) {
     if (confirmed.has(result.id) && confirmed.get(result.id).writeDigest !== result.writeDigest)
       throw new Error(`write ${result.id} changed within attempt`);
     confirmed.set(result.id, result);
@@ -180,7 +179,7 @@ export function publishPhase(report, output, previousConfirmation, root = previo
   const identical = previous && canonical(content(previous)) === canonical(content(report));
   const published = { ...report, publishedAt: new Date().toISOString() };
   if (!identical) {
-    const used = previousConfirmations(published, root).map(ack => ack.report);
+    const used = verifiedConfirmations(published, root).map(ack => ack.report);
     if (previous?.issue === report.issue && previous.attempt === report.attempt) used.push(previous);
     for (const write of report.capsule.open_queue.filter(write => write.operation === 'preflight-collect')) {
       if (used.some(prior => prior.capsule.open_queue.some(item => item.operation === 'preflight-collect' &&
