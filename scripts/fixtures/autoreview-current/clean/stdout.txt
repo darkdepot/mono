@@ -1,7 +1,7 @@
 autoreview target: branch
 branch: fixture
 engine: claude
-model: claude-opus-5
+model: fixture-model
 thinking: medium
 tools: on
 web_search: on

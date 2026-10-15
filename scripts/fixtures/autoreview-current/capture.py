@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory(prefix='mono-helper-capture-') as scratch:
             destination = output / outcome
             destination.mkdir(exist_ok=True)
             argv = ['autoreview', '--mode', 'branch', '--base', base, '--engine', 'claude',
-                    '--model', 'claude-opus-5', '--thinking', 'medium', '--max-priority', 'P2',
+                    '--model', 'fixture-model', '--thinking', 'medium', '--max-priority', 'P2',
                     '--json-output', str(destination / 'review.json'),
                     '--status-output', str(destination / 'status.json')]
             stream = io.StringIO()
