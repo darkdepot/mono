@@ -526,14 +526,22 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       packRoot: request.packRoot ?? request.skillsRoot, "autoreview helper real path": helper };
     const archive = dataset.reviewDataset ? await archiveReviewDataset(dataset.reviewDataset.source, evidenceRoot) : null;
     if (archive) requireThat(archive.digest === dataset.reviewDataset.digest, "review dataset changed before archive");
-    const verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot, { protectedPaths });
+    let verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot, { protectedPaths });
     let review = { exitCode: null, output: "", json: null, status: null };
     const consistency = { passed: true, error: null };
     const checkConsistency = () => {
       try { unchanged(); } catch (error) { consistency.passed = false; consistency.error ??= error.message; }
     };
     checkConsistency();
-    if (verification.exitCode === 0 && consistency.passed) {
+    if (verification.exitCode !== 0 && verification.sandbox?.mode === 'workspace-write' && verification.sandbox.probed === true && consistency.passed) {
+      const first = verification;
+      verification = await runSandboxed(request.verification.command, request.verification.args, repo, evidenceRoot, { protectedPaths });
+      verification.output = `Verification run 1 (exit ${first.exitCode}):\n${first.output}\nVerification run 2 (exit ${verification.exitCode}):\n${verification.output}`;
+      // A successful rerun cannot attest an unprobed boundary.
+      verification.sandbox.probed = first.sandbox.probed && verification.sandbox.probed;
+      checkConsistency();
+    }
+    if (verification.exitCode === 0 && verification.sandbox?.probed === true && consistency.passed) {
       const env = reviewEnvironment(route, safeGitEnv());
       const copy = dataset.reviewDataset ? path.join(repo, dataset.reviewDataset.copy) : null;
       const checkCopy = () => {

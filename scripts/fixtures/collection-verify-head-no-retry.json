@@ -1,0 +1,5 @@
+{
+  "mode": "verify-head-no-retry",
+  "failRuns": 1,
+  "changeHead": true
+}
