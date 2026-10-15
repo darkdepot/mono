@@ -17,6 +17,20 @@ A decision change resumes the same withheld request automatically; defects,
 review routes and gate branches keep their existing requirements.
 See [class decisions](references/orchestration.md#repeated-review-class).
 
+Review limits now stop automation after two blocking external reviews or two local
+passes. Counts follow the original Issue and orchestrator-authorized successors
+across commits and attempts. A bounded `continue` decision permits further work;
+atomic reservations and idempotent replay prevent refilling allowances. Defects
+still block the PR. Pending admissions reserve capacity before execution. A clean
+second local pass permits collection; a recorded local stop requires continuation.
+Receipt counts use issue/pins identity, never worktree attribution. See [review limits](references/orchestration.md#review-limits).
+Every collection requires a pinned request and correlated admission; unpinned
+legacy requests cannot start collections. Legacy receipt reads remain compatible.
+All pending admissions count when reserving and rechecking free capacity.
+Local passes use stable IDs across the Issue chain; cumulative reports do not
+recount passes in new attempts or successors. The ledger shows their clean or
+findings outcomes.
+
 ## Workflow
 
 Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot markup contract](references/orchestration.md#snapshot-markup-contract-u12): parse blocks, then select coverage; unknown IDs refuse, while duplicates or unclosed fences retain full documents.

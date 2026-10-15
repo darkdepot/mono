@@ -86,12 +86,13 @@ function validateClassEntry(entry) {
       'limit successor Issue link required');
   }
 }
-export function acceptedDeclines(receipt,journal) {
+export function acceptedDeclines(receipt,journal,indices=receipt.review.json.findings.map((_,index)=>index)) {
   validateJournal(journal);
   const digest=hash(canonical(receipt)),revoked=new Set(journal.entries.filter(e=>e.type==='decline-revoke').map(e=>e.forId));
   const current=currentEntries(journal),version=receipt.reviewDataset?.version;
   requireThat(Number.isSafeInteger(version)&&version>0,'decline receipt dataset version required');
-  return receipt.review.json.findings.map((finding,index)=>{
+  return indices.map(index=>{
+    const finding=receipt.review.json.findings[index];
     const identity=findingIdentity(receipt,index);
     const matches=current.filter(e=>e.type==='decline'&&!revoked.has(e.id)&&e.finding.id===identity.id);
     requireThat(matches.length===1,'exactly one valid unrevoked decline required for every finding');
@@ -113,10 +114,20 @@ export function acceptedDeclines(receipt,journal) {
   });
 }
 export function validateEntry(entry) {
-  requireThat(object(entry) && ['decision','matrix','verification','decline','decline-revoke','class','class-decision'].includes(entry.type),'invalid entry type');
+  requireThat(object(entry) && ['decision','matrix','verification','decline','decline-revoke','class','class-decision','continue','successor'].includes(entry.type),'invalid entry type');
   requireThat(idPattern.test(entry.id ?? '') && text(entry.recordedAt) && Number.isFinite(Date.parse(entry.recordedAt)),'entry id and recordedAt required');
   if(entry.supersedes!==undefined && entry.supersedes!==null)requireThat(idPattern.test(entry.supersedes),'invalid supersedes');
-  if(entry.type==='class' || entry.type==='class-decision') {
+  if(entry.type==='continue' || entry.type==='successor') {
+    requireThat(entry.approvedBy==='orchestrator'&&date(entry.approvedAt)&&Date.parse(entry.approvedAt)<=Date.parse(entry.recordedAt)&&
+      sha256(entry.recordDigest)&&decisionDigest(entry)===entry.recordDigest,'cap decision orchestrator approval and digest required');
+    if(entry.type==='continue') {
+      requireThat(sha256(entry.stopId)&&/^preflight-collect:[a-f0-9]{40}:[1-9][0-9]*$/.test(entry.collectionId??'')&&text(entry.nextStep)&&text(entry.checkpoint)&&
+        ['localPasses','externalCollections'].every(k=>Number.isSafeInteger(entry[k])&&entry[k]>=0)&&
+        entry.localPasses+entry.externalCollections>0&&Object.hasOwn(entry,'supersedes'),'continue stop, next collection, bounded allowances and checkpoint required');
+      if(entry.successorIssue!==undefined)requireThat(issuePattern.test(entry.successorIssue),'invalid successor Issue');
+    } else requireThat(entry.supersedes===undefined&&issuePattern.test(entry.originalIssue)&&object(entry.decision)&&
+      idPattern.test(entry.decision.id??'')&&sha256(entry.decision.digest),'successor original Issue and authorizing decision required');
+  } else if(entry.type==='class' || entry.type==='class-decision') {
     validateClassEntry(entry);
   } else if(entry.type==='decline' || entry.type==='decline-revoke') {
     validateDeclineEntry(entry);
@@ -148,7 +159,7 @@ export function validateJournal(journal) {
       const prior=seen.get(entry.supersedes);
       requireThat(prior && prior.type===entry.type,'supersedes must reference an earlier entry of the same type');
       requireThat(!replaced.has(prior.id),'supersedes must reference a current entry');
-      const key=entry.type==='decision'?'findingKey':entry.type==='matrix'?'invariant':entry.type==='class'?'rule':entry.type==='class-decision'?'receipt':'forId';
+      const key=entry.type==='decision'?'findingKey':entry.type==='matrix'?'invariant':entry.type==='class'?'rule':entry.type==='class-decision'?'receipt':entry.type==='continue'?'stopId':'forId';
       requireThat(canonical(prior[key])===canonical(entry[key]),`supersedes must preserve ${key}`);
       replaced.add(prior.id);
     }
@@ -175,6 +186,10 @@ export function validateJournal(journal) {
     }
     seen.set(entry.id,entry);
   }
+  const successors=journal.entries.filter(e=>e.type==='successor');
+  requireThat(successors.length<=1&&successors.every(e=>e.originalIssue!==journal.issue),'one immutable original Issue link required');
+  const continuations=journal.entries.filter(e=>e.type==='continue'&&!replaced.has(e.id));
+  requireThat(new Set(continuations.map(e=>e.stopId)).size===continuations.length,'one current continue per stop required');
   return journal;
 }
 export function readJournal(options) {
@@ -286,7 +301,7 @@ export function materializeDataset(options) {
 }
 async function main() {
   const [command,...rest]=process.argv.slice(2),args=flags(rest);
-  if(command==='--help'||args.help){console.log('Usage: decisions.mjs record|render|version|materialize|list --issue KEY --evidence-root DIR [--record JSON_FILE] [--source DATASET] [--version N --worktree DIR --digest SHA256] [--remove true]\nrecord accepts typed decision, matrix, verification, decline, decline-revoke, class or class-decision entries. version replaces the managed section in --source and publishes immutable bytes. materialize requires an ignored, untracked path; --remove true cleans that exact digest-checked file.');return;}
+  if(command==='--help'||args.help){console.log('Usage: decisions.mjs record|render|version|materialize|list --issue KEY --evidence-root DIR [--record JSON_FILE] [--source DATASET] [--version N --worktree DIR --digest SHA256] [--remove true]\nrecord accepts typed decision, matrix, verification, decline, decline-revoke, class, class-decision, continue or successor entries. version replaces the managed section in --source and publishes immutable bytes. materialize requires an ignored, untracked path; --remove true cleans that exact digest-checked file.');return;}
   const allowed=['issue','evidence-root',...({record:['record'],render:[],list:[],version:['source'],materialize:['version','worktree','digest','remove']}[command]??[])];
   requireThat(Object.keys(args).every(k=>allowed.includes(k)),'unknown option');
   const options={...args,evidenceRoot:args['evidence-root']};

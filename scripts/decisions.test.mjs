@@ -154,6 +154,21 @@ test('decline journal binds full canonical finding and preserves the receipt dat
 });
 
 import {classFixture,classSeal} from './class-fixtures.mjs';
+test('continue journal requires orchestrator approval, exact stop/collection and finite non-additive allowances',async()=>{
+  const evidenceRoot=scratch(),issue='MONO-999',now=new Date().toISOString();
+  const entry=classSeal({type:'continue',id:'continue-1',supersedes:null,stopId:'c'.repeat(64),collectionId:`preflight-collect:${'a'.repeat(40)}:3`,
+    localPasses:1,externalCollections:1,nextStep:'One bounded fix',checkpoint:'Review once',approvedBy:'orchestrator',approvedAt:now,recordedAt:now});
+  const add=value=>recordDecision({evidenceRoot,issue,entry:value});
+  try {
+    for(const extra of [{approvedBy:'worker'},{stopId:''},{collectionId:'any'},{localPasses:-1},{externalCollections:1.5},{checkpoint:''}])
+      await assert.rejects(add(classSeal({...entry,...extra})));
+    await add(entry);
+    await assert.rejects(add(classSeal({...entry,id:'continue-2'})),/one current continue/);
+    await add(classSeal({...entry,id:'continue-2',supersedes:entry.id,nextStep:'Changed bounded fix'}));
+    assert.equal(readJournal({evidenceRoot,issue}).entries.length,2);
+  }finally{fs.rmSync(evidenceRoot,{recursive:true,force:true});}
+});
+
 test('class records and bounded class decisions are orchestrator-approved, immutable and reference current classes/boundaries',async()=>{
   const evidenceRoot=scratch(),issue='MONO-999',f=classFixture(),add=entry=>recordDecision({evidenceRoot,issue,entry});
   try {

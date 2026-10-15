@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, baseModelConfig, validateLanding, processStart } from "../runtime.mjs";
 import { readJournal, currentEntries } from '../decisions.mjs';
 import { buildReviewLedger, repeatedClasses, recordClassStop } from '../review-ledger.mjs';
+import { capDecisionDigest, reserveReviewCollection, validateCapAdmission } from '../review-cap.mjs';
 import { validatePhase, confirmQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
 
 export const sha256File = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -186,12 +187,15 @@ export function collectionPinMismatch(request, pins) {
 }
 const requestMismatch = (field, expected) => { throw new Error(`collection request mismatch: ${field}; expected ${canonical(expected)}`); };
 
-// Gate-side admission comparison: reads the registry/dispatch/admission only.
+// Gate-side admission comparison: reads registry/dispatch/admission/history.
 // No launch lock, admission record or worker phase is created here.
 export function checkCollectionRequest(request) {
   const root = request.pins?.file ? path.dirname(path.dirname(path.dirname(request.pins.file))) : request.root;
   const registryFile = path.join(root, "workers.json");
-  if (!fs.existsSync(registryFile) && !request.pins) return null;
+  if (!fs.existsSync(registryFile) && !request.pins) {
+    if(request.collect===true)requestMismatch('admission','registered orchestrator admission before collection');
+    return null;
+  }
   const registered = readJson(registryFile);
   const named = request.pins?.file && /^([A-Z][A-Z0-9]*-\d+)-a([1-9][0-9]*)$/u.exec(path.basename(path.dirname(request.pins.file)));
   const entries = named ? [registered[named[1]]].filter(entry => entry?.attempt === Number(named[2])) :
@@ -200,38 +204,55 @@ export function checkCollectionRequest(request) {
     requestMismatch("registry", "one registered attempt for worktree");
   }
   const entry = registryEntry(root, entries[0].issue, entries[0].attempt);
-  if (!entry.pins && !request.pins) return null;
+  if (!entry.pins && !request.pins) {
+    if(request.collect===true)requestMismatch('admission','registered pins and orchestrator admission before collection');
+    return null;
+  }
   const launch = effectivePins({ ...entry, pinsVersion: 0 });
   if (!request.pins && /^[a-f0-9]{40}$/.test(launch.base ?? "") &&
       validateLanding(baseModelConfig(request.worktree, launch.base))?.serialPaths !== undefined)
     throw new Error("landing policy requires pinned dispatch");
   const u13 = Object.hasOwn(launch, "reviewDatasetDigest");
-  if (!u13 && !request.pins) return null;
-  if (!/^preflight-collect:[a-f0-9]{40}:[1-9][0-9]*$/u.test(request.collectionId ?? "")) requestMismatch("collectionId", "preflight-collect:<head>:<n>");
+  const legacy=!u13&&!request.pins;
+  if (legacy) {
+    if(request.collect===true)requestMismatch('admission','pinned dispatch request before collection');
+    return null;
+  }
+  if (!/^[a-f0-9]{40}$/.test(request.head??'') || !new RegExp(`^preflight-collect:${request.head}:[1-9][0-9]*$`,'u').test(request.collectionId ?? "")) requestMismatch("collectionId", "preflight-collect:<head>:<n>");
   const admissionFile = path.join(attemptDirectory(root, entry), "admissions", `${request.collectionId}.json`);
   const admission = fs.existsSync(admissionFile) ? readJson(admissionFile) : null;
   const version = admission?.pinsVersion ?? entry.pinsVersion ?? 0;
   const pins = effectivePins({ ...entry, pinsVersion: version });
   if (admission && (admission.collectionId !== request.collectionId || admission.manifestDigest !== digest(pins))) requestMismatch("admission", "registered manifest for collectionId");
-  const expected = collectionPinsBinding(entry, version);
-  if (expected.file !== path.join(root, "dispatch", `${entry.issue}-a${entry.attempt}`, version ? `pins.v${version}.json` : "pins.json")) requestMismatch("pins.file", "registered dispatch pins file");
-  if (!request.pins) requestMismatch("pins", expected);
-  if (request.pins.file !== expected.file) requestMismatch("pins.file", expected.file);
-  if (canonical(request.pins) !== canonical(expected)) requestMismatch("pins.digest", expected.digest);
+  if(!legacy) {
+    const expected = collectionPinsBinding(entry, version);
+    if (expected.file !== path.join(root, "dispatch", `${entry.issue}-a${entry.attempt}`, version ? `pins.v${version}.json` : "pins.json")) requestMismatch("pins.file", "registered dispatch pins file");
+    if (!request.pins) requestMismatch("pins", expected);
+    if (request.pins.file !== expected.file) requestMismatch("pins.file", expected.file);
+    if (canonical(request.pins) !== canonical(expected)) requestMismatch("pins.digest", expected.digest);
+  }
   if (u13 && !Object.hasOwn(request, "reviewDatasetVersion")) requestMismatch("reviewDatasetVersion", pins.reviewDatasetVersion);
   const mismatch = collectionPinMismatch(request, pins);
   if (mismatch) requestMismatch(mismatch.field, mismatch.expected);
   if (u13 && pins.reviewDataset === null && Object.hasOwn(request, "reviewDataset")) requestMismatch("reviewDataset", "omitted");
   if (u13 && (pins.reviewDataset ? sha256File(pins.reviewDataset) : null) !== pins.reviewDatasetDigest) requestMismatch("reviewDatasetDigest", pins.reviewDatasetDigest);
   if (request.collect !== false && request.collect !== true) requestMismatch("collect", false);
-  return pins;
+  if(request.collect===true) {
+    if(!admission)requestMismatch('admission','orchestrator admission before collection');
+    const history=path.join(pins.evidenceRoot,'history');
+    if((fs.existsSync(history)?fs.readdirSync(history).filter(n=>n.endsWith('.json')):[])
+      .some(name=>readJson(path.join(history,name)).receipt?.collectionId===request.collectionId))
+      throw new Error('collection already executed; reconcile the same request with collect:false');
+    validateCapAdmission({evidenceRoot:pins.evidenceRoot,issue:entry.issue,cap:admission.cap});
+  }
+  return legacy?null:pins;
 }
 
 export function collectionDecisionDigest(entry) {
   const pins=effectivePins(entry),journal=readJournal({evidenceRoot:pins.evidenceRoot,issue:entry.issue});
   const file=path.join(pins.evidenceRoot,'reviews',`${entry.issue}-adjudications.json`);
   return digest({entries:currentEntries(journal).filter(e=>['class','class-decision','decision'].includes(e.type)),
-    records:fs.existsSync(file)?readJson(file):[]});
+    cap:capDecisionDigest(pins.evidenceRoot,entry.issue),records:fs.existsSync(file)?readJson(file):[]});
 }
 function collectionClassStop(entry,pins) {
   const journal=readJournal({evidenceRoot:pins.evidenceRoot,issue:entry.issue});
@@ -267,6 +288,13 @@ export async function admitUnderLock(root, report) {
     if (fs.existsSync(file)) {
       const prior = readJson(file);
       if (prior.collectionId !== write.id || prior.reportDigest !== reportDigest) throw new CollectionAdmissionRefusal("conflicting collection admission");
+      try {validateCapAdmission({evidenceRoot:pins.evidenceRoot,issue:report.issue,cap:prior.cap});}
+      catch(error) {
+        if(error.message!=='needs-decision: review cap')throw error;
+        const cap=await reserveReviewCollection({evidenceRoot:pins.evidenceRoot,report,collectionId:write.id,reportDigest});
+        if(cap.refused)throw new CollectionAdmissionRefusal('needs-decision: review cap');
+        prior.cap=cap;atomicJson(file,prior);
+      }
       admitted.push(prior); continue;
     }
     const request = write.payload.request;
@@ -290,7 +318,9 @@ export async function admitUnderLock(root, report) {
       await recordClassStop({evidenceRoot:pins.evidenceRoot,issue:report.issue,attempt:report.attempt,collectionId:write.id,stop});
       throw new CollectionAdmissionRefusal('needs-decision: repeated review class');
     }
-    const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins) };
+    const cap=await reserveReviewCollection({evidenceRoot:pins.evidenceRoot,report,worktree:fs.realpathSync(pins.worktree),collectionId:write.id,reportDigest});
+    if(cap?.refused)throw new CollectionAdmissionRefusal('needs-decision: review cap');
+    const record = { collectionId: write.id, reportDigest, pinsVersion: pins.pinsVersion, manifestDigest: digest(pins),...(cap?{cap}: {}) };
     atomicJson(file, record); admitted.push(record);
   }
   return admitted;

@@ -97,34 +97,33 @@ outside lane. Ship bad approval stops gates/PR → no-promotion handoff.
 
 ## Delivery and pre-ship gates
 
-Readiness-only: no findings/mutations/repair/install. PASS inspected/no blockers;
-FAIL violation; BLOCKED unavailable inputs. Return mode/meaning/boundary/unblock;
+Readiness-only, no findings/writes/repair/install. PASS inspected/unblocked; FAIL
+violation; BLOCKED unavailable. Return mode/meaning/boundary/unblock;
 failure: FAIL - Linear <mode> not ready.
-Project delivery: Delivery/current PRD/Spec-or-exception/approved Issues/set and
-start approval/coherent risk-review; docs alone fail. Issue-only pre-activation:
-oracle/marker/label/fresh authenticated approval/review; started/terminal fails.
-After read-back/no-move retry: configured started state, never terminal; no Project.
-Pre-ship: diff/Issue match, recoverable current preflight/review/artifacts, synced
-accepted drift, no obsolete PR chips/raw URLs; lane oracle/fingerprint substitutes
-docs. Bad approval stops PR/gates. Reject wrong roles, workflow mechanics/full
-copies/brittle scripts, premature code/Delivery/missing review. No fail-closed
-package creation.
+Delivery: Delivery Project/current PRD/Spec-or-exception/approved Issues/start/
+coherent risk-review; docs alone fail. Issue-only pre-activation: oracle/marker/
+label/fresh authenticated approval/review; started/terminal fails. Read-back/retry:
+configured started/nonterminal, no Project for issue-only.
+Pre-ship: diff/Issue match, current recoverable preflight/review/artifacts, synced
+drift, no stale PR chips/raw URLs; lane oracle/fingerprint replaces docs. Bad
+approval stops PR/gates. Reject wrong roles, mechanics/full copies/brittle scripts,
+premature code/Delivery/missing review; no fail-closed package creation.
 
 ## Review contract
 
-Review package/config/branch/PR read-only: no artifact/comment/Issue/PR/lifecycle/
-approval/worker writes. Outcomes: ready, advisory-ready, needs-fixes, blocked.
-Apply artifact/execution quality, coherence, feasibility, one PR, durable AFK-HITL
-and applicable UI/security/data/ship/deep-risky architecture. Valid lane needs no
+Review package/config/branch/PR read-only, no artifact/comment/Issue/PR/lifecycle/
+approval/worker writes. Outcomes: ready/advisory-ready/needs-fixes/blocked. Apply
+artifact/execution quality, coherence/feasibility/one-PR/durable AFK-HITL,
+applicable UI/security/data/ship/deep-risky architecture. Valid lane needs no
 Project/docs. Return verdict/meaning/mode/risk/gate-reason/inspected/boundary/next;
-each blocking/proposed-fix/decision/fyi: artifact/evidence/impact/recommendation/owner.
-Missing context/disposition blocks. Repairs: handoff/issue renewal/ship drift.
+blocking/proposed-fix/decision/fyi: artifact/evidence/impact/recommendation/owner.
+Missing context/disposition blocks; repair: handoff/issue renewal/ship drift.
 
 ## Execution and artifact handling
 
 Apply `references/execution-quality.md`/`references/artifact-quality.md`.
-Intake order: explicit paths, fresh snapshot package/reviews, decisions,
-configured narrow roots, scoped gstack. No broad scans; absent roots unavailable.
+Intake: explicit paths → current snapshot/reviews → decisions → narrow configured
+roots → scoped gstack; no broad scans, absent roots unavailable.
 Newer approved Linear outranks scratch; stale evidence carries compatible
 choices only. Missing/conflicting scope, proof, risk or slicing: stop before
 writes; no stale certificates. Notes: read/unavailable/stale_or_ignored/conflicts/
@@ -212,7 +211,7 @@ verbatim verification, AFK stops.
   "question": "<question text, or null>",
   "recommendation": "<recommendation, or null>",
   "linear_mutations_pending": [],
-  "capsule": { "phase": "<code | preflight | ship>", "head": "<sha>", "open_queue": [], "decisions": [], "writable_roots": ["<dispatch grant>"] },
+  "capsule": { "phase": "<code | preflight | ship>", "head": "<sha>", "open_queue": [], "decisions": [], "local_passes": [{"id":"<stable pass id>","head":"<reviewed sha>","result":"<clean|findings>"}], "writable_roots": ["<dispatch grant>"] },
   "certificate": "<certificate text or null>",
   "notes": "<runtime facts or null>",
   "next": "<mono:deploy | named recovery owner>"

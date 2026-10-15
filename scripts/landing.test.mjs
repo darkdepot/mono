@@ -6,13 +6,13 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { atomicJson, changedPaths, withLock } from "./runtime.mjs";
-import { effectivePins, sha256File } from "./orchestrator/command-state.mjs";
+import { effectivePins, sha256File, admitCollection } from "./orchestrator/command-state.mjs";
 import { checkSpawnAvailability } from "./orchestrator/launch.mjs";
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
 
 const scenarios = ["clean-branch", "file-edit", "prefix-edit", "rename", "release", "forged-release", "branch-removes-policy", "inherited-after-rebase", "no-pins", "no-policy", "branch-introduces-policy"];
 test("landing U2 named gate fixtures", async t => {
-  for (const scenario of scenarios) await t.test(scenario, () => {
+  for (const scenario of scenarios) await t.test(scenario, async () => {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-landing-gate-"));
     try {
       const repo = path.join(scratch, "repo"), root = path.join(scratch, "root"), evidence = path.join(scratch, "evidence"), skills = path.join(scratch, "skills");
@@ -45,6 +45,12 @@ test("landing U2 named gate fixtures", async t => {
       if (scenario === "no-pins") delete request.pins;
       const file = path.join(scratch, "request.json");
       const refused = ["file-edit", "prefix-edit", "rename", "forged-release", "branch-removes-policy", "no-pins"].includes(scenario);
+      if (refused && scenario !== "no-pins") {
+        const queue = [{ id: request.collectionId, operation: "preflight-collect", target: head, payload: { request } }];
+        await admitCollection(root, { issue: "MONO-999", attempt: 1, stage: "mono-deliver", packVersion: "fixture", sourceCommit: launchBase, surfaceRevision: 4,
+          phase: "preflight", sequence: 1, kind: "confirmation-request", head, linear_mutations_pending: queue,
+          capsule: { phase: "preflight", head, decisions: [], open_queue: queue, writable_roots: pins.workerWritableRoots } });
+      }
       for (const collect of refused ? [false, true] : [false]) {
         atomicJson(file, { ...request, collect });
         const r = spawnSync(process.execPath, ["scripts/gate.mjs", "preflight", "--request", file], { encoding: "utf8" });

@@ -11,6 +11,16 @@ const receipt=()=>({head,base,collectionId,runId:'run-1',route:{model:'opus',eff
 const source=(type,data,ref=type)=>({type,ref,attempt:1,data});
 async function api(){const m=await import('./review-ledger.mjs').catch(()=>({}));assert.equal(typeof m.buildReviewLedger,'function');return m;}
 
+test('internal pass outcomes: clean and findings remain visible in the ledger',async()=>{
+ const {buildReviewLedger}=await api();
+ const sources=['clean','findings'].map((result,i)=>source('ledger',{kind:'internal-pass',id:`pass-${i}`,head,result},result));
+ sources.push(source('ledger',{kind:'internal-pass',id:'legacy',head,status:'findings'},'legacy-status'));
+ sources.push(source('ledger',{kind:'internal-pass',id:'unknown',head},'unknown'));
+ const events=buildReviewLedger({issue:'MONO-998',sources}).attempts[0].events;
+ assert.deepEqual(events.map(e=>e.status),['scoped-clean','findings','findings','unknown']);
+ assert.ok(events.every(e=>e.kind==='internal-pass'));
+});
+
 test('one collection and invocation seen in history receipt and report are counted once',async()=>{
  const {buildReviewLedger,summarizeLedger}=await api();
  const r=receipt();

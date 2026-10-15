@@ -1,4 +1,4 @@
-import { packLayout } from './runtime.mjs';
+import { packLayout, canonical } from './runtime.mjs';
 import { copyPluginFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -14,6 +14,61 @@ const write = (file, value) => { fs.mkdirSync(path.dirname(file), { recursive: t
 const json = file => JSON.parse(fs.readFileSync(file, "utf8"));
 const run = (command, args, cwd, env) => spawnSync(command, args, { cwd, env, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
 const pass = result => { assert.equal(result.status, 0, result.stderr + result.stdout); return result; };
+// Each collection experiment has its own registered Issue and a real admission.
+// Logical IDs in these older sandbox/route fixtures follow their current receipt;
+// recollection gets a new ID, while an unknown ID still exercises missing proof.
+let fixtureIssueSequence = 0;
+function installedAdmissionFixture(runtime, file, cwd, env) {
+  let sequence = 0;
+  const logicalIds = new Map();
+  return () => {
+    const request = json(file);
+    const logicalId = [...logicalIds].find(([, ids]) => ids.has(request.collectionId))?.[0] ?? request.collectionId;
+    if (request.collect === true) {
+      sequence = ++fixtureIssueSequence;
+      const history = path.join(request.evidenceRoot, 'history');
+      const used = fs.existsSync(history) && fs.readdirSync(history).filter(n => n.endsWith('.json'))
+        .some(n => json(path.join(history, n)).receipt?.collectionId === logicalId);
+      if (used) request.collectionId = `preflight-collect:${request.head}:${1000 + sequence}`;
+      request.issue = `FIXTURE-${sequence}`;
+      const known = logicalIds.get(logicalId) ?? new Set(); known.add(request.collectionId); logicalIds.set(logicalId, known);
+      write(file, request);
+      const admissionScript = path.join(path.dirname(file), 'fixture-admission.mjs');
+      write(admissionScript, `import fs from 'node:fs';import path from 'node:path';
+import {atomicJson,packLayout} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'runtime.mjs')).href)};
+import {admitCollection,sha256File} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'orchestrator/command-state.mjs')).href)};
+const request=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=request.root;delete request.pins;request.reviewDatasetVersion??=0;
+fs.mkdirSync(request.evidenceRoot,{recursive:true});
+const identity=packLayout(request.skillsRoot).identity(),pinsFile=path.join(root,'dispatch',request.issue+'-a1','pins.json');
+atomicJson(pinsFile,{...request,base:request.head});
+const entry={issue:request.issue,attempt:1,stage:'mono-deliver',worktree:request.worktree,...identity,pins:{file:pinsFile,digest:sha256File(pinsFile)},pinsVersion:0};
+atomicJson(path.join(root,'workers.json'),{[entry.issue]:entry});
+request.pins=entry.pins;atomicJson(process.argv[2],request);
+const queue=[{id:request.collectionId,operation:'preflight-collect',target:request.head,payload:{request:{...request,collect:false}}}];
+await admitCollection(root,{...entry,phase:'preflight',sequence:1,kind:'confirmation-request',head:request.head,linear_mutations_pending:queue,
+ capsule:{phase:'preflight',head:request.head,decisions:[],open_queue:queue,writable_roots:request.workerWritableRoots}});
+`);
+      pass(run(process.execPath, [admissionScript, file], cwd, env));
+    } else {
+      const receiptFile = path.join(request.evidenceRoot, `${request.head}.json`);
+      const receipt = fs.existsSync(receiptFile) ? json(receiptFile).receipt : null;
+      if (receipt?.issue) request.issue = receipt.issue;
+      if (logicalIds.get(logicalId)?.has(receipt?.collectionId)) request.collectionId = receipt.collectionId;
+      write(file, request);
+    }
+    const result=run(process.execPath, [path.join(runtime, 'gate.mjs'), 'preflight', '--request', file], cwd, env);
+    // Archive a legacy mutable fixture for old route/sandbox readback cases.
+    // Keep the native pinned immutable history untouched for admission/counting.
+    if(request.collect===true) {
+      const receiptFile=path.join(request.evidenceRoot,request.head+'.json');
+      if(fs.existsSync(receiptFile)) {
+        const envelope=json(receiptFile);delete envelope.receipt.pins;
+        envelope.signature=crypto.createHmac('sha256',fs.readFileSync(path.join(request.evidenceRoot,'receipt.key'))).update(canonical(envelope.receipt)).digest('hex');write(receiptFile,envelope);
+      }
+    }
+    return result;
+  };
+}
 test("backup switch named launch contracts", async t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-backup-"));
   const savedPath = process.env.PATH;
@@ -932,7 +987,7 @@ process.exit(r.status===null?1:r.status);
     const preflight = { product: "fixture", collectionId: `preflight-collect:${head}:1`, root: state, worktree: repo, head, skillsRoot: skills, risk: "risky", critical: null, baseRef: "HEAD", evidenceRoot: path.join(root, "evidence"), workerWritableRoots: [repo, mailbox], collect: false,
       verification: { command: process.execPath, args: ["-e", "const fs=require('node:fs'),os=require('node:os');fs.writeFileSync(fs.mkdtempSync(os.tmpdir()+'/fixture-')+'/temp','ok')"] } };
     write(gateRequest, preflight);
-    const preflightCall = () => run(process.execPath, [path.join(runtime, "gate.mjs"), "preflight", "--request", gateRequest], root, env);
+    const preflightCall = installedAdmissionFixture(runtime, gateRequest, root, env);
     assert.equal(preflightCall().status, 1, "missing artifact must refuse");
     const submoduleReason = "submodules unsupported by the collector (executable-filter inspection covers the superproject only)";
     const refusesSubmodules = () => {
@@ -978,7 +1033,8 @@ process.exit(r.status===null?1:r.status);
         writeFileRequest(write.payload.request);
         const answer = pass(preflightCall()).stdout.trim();
         const sealed = json(path.join(preflight.evidenceRoot, `${head}.json`));
-        collectionRuns++; collectionEvidence.set(write.id, { receipt: path.join(preflight.evidenceRoot, "history", `${sealed.receipt.runId}.json`), receiptDigest: receiptDigest(sealed), gate: answer });
+        const immutableReceipt = path.join(preflight.evidenceRoot, "history", `${sealed.receipt.runId}.json`);
+        collectionRuns++; collectionEvidence.set(write.id, { receipt: immutableReceipt, receiptDigest: receiptDigest(json(immutableReceipt)), gate: answer });
       }
       return collectionEvidence.has(write.id) ? { state: "present", evidence: collectionEvidence.get(write.id) } : { state: "missing" };
     };
@@ -1074,7 +1130,7 @@ process.exit(r.status===null?1:r.status);
     assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "failed copy verification still cleans up");
     delete env.MONO_FIXTURE_ALTER_DATASET;
     env.MONO_FIXTURE_REVIEW_FINDINGS = "1";
-    assert.equal(preflightCall().stdout.trim(), "gate preflight: fail: autoreview failed or incomplete");
+    assert.equal(preflightCall().stdout.trim(), "gate preflight: fail: invalid nonempty findings report required");
     assert.equal(fs.existsSync(path.join(repo, datasetCopy)), false, "review findings still clean up the copy");
     delete env.MONO_FIXTURE_REVIEW_FINDINGS;
     write(receiptFile, datasetEnvelope); write(gateRequest, datasetRequest); pass(preflightCall());
@@ -1106,14 +1162,14 @@ process.exit(r.status===null?1:r.status);
     write(gateRequest, { ...preflight, collect: true });
     const findingResult = preflightCall();
     assert.equal(findingResult.status, 1);
-    assert.equal(findingResult.stdout.trim(), "gate preflight: fail: autoreview failed or incomplete");
+    assert.equal(findingResult.stdout.trim(), "gate preflight: fail: invalid nonempty findings report required");
     const failedReview = json(receiptFile).receipt;
     assert.equal(failedReview.review.exitCode, 1);
     assert.equal(failedReview.review.sandbox.probed, true);
     assert.equal(failedReview.loop.residualFindings[0].priority, "P2");
     delete env.MONO_FIXTURE_REVIEW_FINDINGS;
     write(gateRequest, preflight);
-    assert.equal(preflightCall().stdout.trim(), "gate preflight: fail: autoreview failed or incomplete");
+    assert.equal(preflightCall().stdout.trim(), "gate preflight: fail: invalid nonempty findings report required");
     write(receiptFile, envelope);
     const tree = pass(run("git", ["rev-parse", "HEAD^{tree}"], repo, env)).stdout.trim();
     const alternate = pass(run("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit-tree", tree, "-m", "alternate"], repo, env)).stdout.trim();
@@ -1301,7 +1357,7 @@ console.log(JSON.stringify(result));
       [r => { r.head = alternate; }, /missing or stale autoreview artifact\/head\/base/],
       [r => { r.base = alternate; }, /missing or stale autoreview artifact\/head\/base/],
       [r => { r.route.effort = "low"; }, /wrong policy route/],
-      [r => { r.review.exitCode = 1; }, /autoreview failed or incomplete/],
+      [r => { r.review.exitCode = 1; }, /incomplete or contradictory findings result/],
     ]) {
       const invalid = structuredClone(envelope.receipt); change(invalid); saveFixtureReceipt(invalid);
       assert.match(shipCall().stdout, reason);
@@ -1356,9 +1412,10 @@ console.log(JSON.stringify(result));
     const fetchEnv = { ...env, GIT_CONFIG_GLOBAL: rewriteConfig };
     pass(run("git", ["-c", "core.fsmonitor=false", "config", "core.fsmonitor", fsmonitor], repo, env));
     write(gateRequest, remotePreflight);
+    const credentialedCall = installedAdmissionFixture(runtime, gateRequest, root, fetchEnv);
     const credentialedPreflight = collect => {
       write(gateRequest, { ...remotePreflight, collect });
-      return run(process.execPath, [path.join(runtime, "gate.mjs"), "preflight", "--request", gateRequest], root, fetchEnv);
+      return credentialedCall();
     };
     pass(credentialedPreflight(false));
     pass(credentialedPreflight(true));
@@ -2020,7 +2077,7 @@ console.log('autoreview scoped-clean: no accepted/actionable findings in the sel
       const request={product:'fixture',collectionId:`preflight-collect:${head}:1`,root:state,worktree:repo,head,skillsRoot:skills,risk:'risky',critical:null,baseRef:base,evidenceRoot:path.join(root,'evidence'),workerWritableRoots:[repo,state],collect:true,modelRoutes,verification:{command:process.execPath,args:['-e','process.exit(0)']}};
       const file=path.join(root,'request.json');write(file,request);
       const secret=crypto.randomBytes(24).toString('hex'),callEnv={...env,REVIEW_CREDENTIAL:secret,ANTHROPIC_DEFAULT_OPUS_MODEL:'external',ANTHROPIC_AUTH_TOKEN:'external',XAI_API_KEY:'external',KIMI_BASE_URL:'https://external.invalid',OPENAI_API_KEY:'external'};
-      const call=()=>run(process.execPath,[path.join(runtime,'gate.mjs'),'preflight','--request',file],repo,callEnv);
+      const call=installedAdmissionFixture(runtime,file,repo,callEnv);
       pass(call());
       const receiptPath=path.join(request.evidenceRoot,head+'.json'),envelope=json(receiptPath),receipt=envelope.receipt;
       assert.equal(receipt.route.engine,engine);assert.equal(receipt.route.fingerprint,modelRoutes.roles.autoreview.fingerprint);

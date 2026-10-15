@@ -1225,6 +1225,76 @@ supply explicit classification. A class decision permits another review, never
 admits a defect or changes gate branches/model/effort/priority. Class-stop demand
 is retained after later admission and counts zero reviewer executions at stop.
 
+## Review limits
+
+Only the orchestrator records `continue` or `successor` through decisions.mjs.
+No worker writes evidence. `reviews/<original>-counters.json` stores chain-wide
+blocking signed receipt identities, local internal-pass events, stops and finite
+reservation lists; heads and attempts are not counter boundaries. Valid declines
+remove their exact blocking findings; revocation restores them. Filtered/rejected
+blocking findings remain blocking. Gates still require clean or accepted-with-declines.
+
+Workers report cumulative capsule.local_passes [{id,head,result}] with stable IDs for each
+actual local pass (result=clean|findings; omitted means findings), including failures; do not count the passes inside an external
+receipt as worker-local passes. Collector persists them under launch.lock before
+queue handling. A recorded local stop withholds collection until a later bound
+continue. A clean last pass at two ends the local loop normally and permits collection.
+After two local passes, park needs-decision before another pass,
+both before and after the first external review. Deliver current chain totals and
+approved remaining local allowance in the resume amendment; a worker never writes
+or infers the allowance. Persist local passes before granting continuation.
+
+After two receipts still containing blocking findings, command-state refuses the
+next external collection under launch.lock, records cap-stop and withheld demand,
+and returns needs-decision. Read its stop id from evidence. Continue fields:
+type=continue, id, supersedes (null initially), stopId, collectionId (the exact next
+preflight-collect:<head>:<n>), localPasses/externalCollections (nonnegative integer
+additional budgets), nextStep/checkpoint (bounded action and verification point),
+approvedBy=orchestrator, approvedAt/recordedAt, recordDigest=decisionDigest(entry).
+Approval follows the persisted stop. Local grants count from that stop's total;
+external grants count durable reservations for it. Include decisions/remaining
+allowances in Autoreview decisions:. No decision permits a gate to accept a defect.
+
+The first use binds the stop to its designated next collection. Each later use
+atomically reserves one of the same finite external budget. Request replay retains
+its reservation, including recovery between counter and admission writes. New heads,
+attempts and successors share the reservation list. Reusing or superseding a decision
+does not add budgets: replacement values are total allowances for that same stop,
+and consumed reservations remain consumed. Exhaustion requires a fresh bounded
+decision; park without one. Changes to current chain decisions re-evaluate an
+identical refused report/pins pair. Competing requests serialize; a lock refusal
+reserves nothing and may be retried with the original request identity.
+
+Every collect:true requires a pinned request and registered correlated admission
+before any helper runs; unpinned legacy requests are refused. The collector owns
+admission. Collect:false remains usable to obtain pending requests
+and reconcile history. Collection IDs bind the reviewed head. A completed signed
+history cannot be executed again with the same ID; reconcile it instead.
+Every outstanding admission (no signed receipt yet) reserves free capacity under
+launch.lock. Blocking receipts plus outstanding admissions fill the free allowance;
+replay consumes no additional slot. Completion releases a pending slot, but a
+blocking receipt replaces it in the count. The gate rechecks all pending reservations,
+including continuations, against free capacity;
+a stopped free reservation requires a bound continue before promotion. Decision or
+counter changes re-evaluate a withheld request, including completion of a clean
+pending collection.
+Attribute signed receipts by receipt.issue, otherwise the Issue key of the
+pins.file attempt directory. Ignore receipts with neither; there is no worktree
+fallback or persisted ownership table. Current receipts carry these identities,
+so head, attempt, successor and worktree changes preserve the chain count.
+Scope decision d-005 retains a fail-closed limitation: external-only receipt changes
+can invalidate a local continuation and create a new cap-stop requiring a decision.
+No collection or defect admission occurs; repair is deferred until after release.
+
+Create a successor only through an orchestrator decision: either the existing
+class-decision limit's successor URL, or continue.successorIssue. Before dispatch,
+record in the successor journal type=successor, id, originalIssue (the original,
+never an intermediate successor), decision {id,digest} identifying that original
+journal's authorizing entry, approvedBy=orchestrator, approvedAt/recordedAt and
+recordDigest. One immutable relation per successor; historical creation authority
+survives later decision replacement. The relation inherits all counters and grants;
+it does not excuse a defect, expand approved scope, or reset the chain.
+
 ## Review decision pilot
 
 Enable the dispatch pilot block only for approved experimental Issues. Stage
