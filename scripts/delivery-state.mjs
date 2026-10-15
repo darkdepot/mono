@@ -152,19 +152,21 @@ export function classifyQueue(report, root) {
   validatePhase(report);
   const confirmed = new Map();
   for (const ack of verifiedConfirmations(report, root)) for (const result of ack.results) {
-    if (confirmed.has(result.id) && confirmed.get(result.id).writeDigest !== result.writeDigest)
+    if (confirmed.has(result.id) && confirmed.get(result.id).result.writeDigest !== result.writeDigest)
       throw new Error(`write ${result.id} changed within attempt`);
-    confirmed.set(result.id, result);
+    confirmed.set(result.id, { result, reportDigest: ack.reportDigest });
   }
   const carried = new Map(), connectors = [], collections = [];
   for (const queued of report.capsule.open_queue) {
     const write = resolveWrite(queued, report), hash = digest(write), prior = confirmed.get(write.id);
     const file = path.join(root, 'consumed', `${report.issue}-a${report.attempt}`, `${write.id}.json`);
     const durable = fs.existsSync(file) ? readJson(file) : null;
-    if ((prior && prior.writeDigest !== hash) || (durable &&
+    if ((prior && prior.result.writeDigest !== hash) || (durable &&
         (durable.writeDigest !== hash || durable.issue !== report.issue || durable.attempt !== report.attempt)))
       throw new Error(`write ${write.id} changed within attempt`);
-    if (prior) carried.set(write.id, prior);
+    if (prior && write.operation === 'preflight-collect' && prior.reportDigest !== digest(report))
+      throw new Error('нужен новый идентификатор сбора: collection proof belongs to another reportDigest');
+    if (prior) carried.set(write.id, prior.result);
     else (write.operation === 'preflight-collect' ? collections : connectors).push(write);
   }
   if (collections.length > 1 || (collections.length && (report.phase !== 'preflight' || report.kind !== 'confirmation-request')))

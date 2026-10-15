@@ -137,7 +137,7 @@ evidence and grants are preserved, automatic restart and replacement refuse. Eve
 names its version (or `null` before allocation), state and reason. `amend.lock`
 serializes completion; registry changes and collection admissions use `launch.lock`.
 Connector queues confirm after their reconciliation session opens; the collector
-confirms empty queues through the existing runtime barriers. Repeated writes inherit evidence only from verified whole-report confirmations in the same attempt; changed contents still fail. Workers omit confirmed writes from new queues and use a new collection identifier for every new report. `accept report` prints one response object, with retry instructions in `reread`; observation-time errors name the violated boundary.
+confirms empty queues through the existing runtime barriers. Connector writes inherit evidence across reports only from verified whole-report confirmations in the same attempt; collection receipts remain bound to the exact report. Changed contents still fail. Workers omit confirmed writes from new queues and use a new collection identifier for every new report. `accept report` prints one response object, with retry instructions in `reread`; observation-time errors name the violated boundary.
 The pack `linear-adapter.mjs` only
 reads current-session observations; printing an apply instruction is never proof
 of a write. See [command inputs and snapshot composition](references/orchestration.md#orchestrator-dispatch-command)

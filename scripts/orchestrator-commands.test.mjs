@@ -2031,6 +2031,12 @@ test('collection-id-reuse: older confirmed reports remain reserved after a newer
     const reused = f.report(3); reused.capsule.open_queue = first.capsule.open_queue; reused.linear_mutations_pending = reused.capsule.open_queue;
     assert.throws(() => publishPhase(reused, f.reportFile), /нужен новый идентификатор сбора/);
     assert.equal(fs.readFileSync(f.reportFile, 'utf8'), bytes);
+    atomicJson(f.reportFile, reused); // Mailboxes are writable without invoking publish.
+    const printed = [];
+    await assert.rejects(acceptReport({ root: f.options.root, report: f.reportFile }, value => printed.push(value)), /нужен новый идентификатор сбора/);
+    assert.deepEqual(printed, [], 'carried collection proof cannot bypass report admission');
+    await assert.rejects(f.poll(), /нужен новый идентификатор сбора/);
+    assert.equal(fs.existsSync(path.join(f.options.root, 'confirmations/MONO-999-phase-preflight-a1-s3.confirmed.json')), false);
   });
 });
 
