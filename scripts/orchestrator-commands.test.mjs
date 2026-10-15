@@ -1990,3 +1990,28 @@ test('retry-budget-after-restart: elapsed time still blocks a remaining retry', 
     assert.match(readJson(f.attention).reason, /timed-out.*budget/);
   });
 });
+
+test('retry-collector-death-deadline: a hung group remains bounded after its collector dies', async () => {
+  await collectionRetryFixture('timeout', async f => {
+    f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry }); f.publish();
+    const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
+    const parent = spawn(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { stdio: 'ignore', detached: true });
+    const closed = new Promise(resolve => parent.once('close', resolve));
+    let gate;
+    const groupLive = () => { try { process.kill(-gate.processGroup, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
+    try {
+      const ready = Date.now() + 8000;
+      while (!readJson(f.stateFile).descendant && Date.now() < ready) await new Promise(resolve => setTimeout(resolve, 25));
+      assert.ok(readJson(f.stateFile).descendant, 'the real descendant starts before collector death');
+      gate = readJson(f.startFile).gate; parent.kill('SIGKILL'); await closed;
+      const deadline = Date.now() + 4500;
+      while (groupLive() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+      assert.equal(groupLive(), false, 'the gate must enforce its own original deadline after collector death');
+      await f.poll(); assert.equal(readJson(f.stateFile).collections, 1);
+      assert.equal(readJson(f.startFile).launches, 1); assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
+    } finally {
+      parent.kill('SIGKILL'); await closed;
+      if (gate && groupLive()) process.kill(-gate.processGroup, 'SIGKILL');
+    }
+  });
+});

@@ -1536,6 +1536,9 @@ reserving 10 seconds for teardown/confirmation; it requires at least 30 seconds
 to start. Confirmation requires 5 seconds left and checks the deadline again
 before publication. No new run starts without its budget. An early crash may
 leave enough time to retry; a full-length timeout normally will not.
+The released gate also holds its original deadline watchdog, including at most
+2 seconds of teardown reserve; it kills its group even if the collector dies. After the gate finishes, the watchdog remains until
+descendant telemetry proves its group empty.
 On timeout signal the isolated group with TERM, then KILL if necessary, and
 verify no live descendants remain before retry. Unknown/live groups refuse.
 Exhausted retries, insufficient time or stalled reconciliation write `timed-out`

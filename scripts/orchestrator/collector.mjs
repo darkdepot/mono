@@ -60,9 +60,10 @@ export function collectionBudget(entry, report) {
 async function stopGate(gate) {
   const signal = name => {
     try { process.kill(-gate.processGroup, name); }
-    catch (error) { if (error.code !== 'ESRCH') throw error; }
+    catch (error) { if (error.code !== 'ESRCH' && !lockTreeDead(gate)) throw error; }
   };
   for (const name of ['SIGTERM', 'SIGKILL']) {
+    try { if (lockTreeDead(gate)) return; } catch {} // Unknown telemetry still requires termination.
     signal(name);
     const until = Date.now() + 2000;
     do {
@@ -83,8 +84,18 @@ async function runGate(options, request, budget, heldLock = null, startedFile = 
   // Parent death before release closes stdin, so no unregistered gate can run.
   const runner = `let token=""; for await (const chunk of process.stdin) token += chunk;
 if (token !== "go\\n") process.exit(1);
+const killGroup = () => { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); } };
+const watchdog = setTimeout(killGroup, Math.max(1, ${Math.min(runDeadline + 2000, budget.deadline - 5000)} - Date.now()));
+process.on('SIGTERM', () => {}); // Survive TERM grace until descendants exit or the watchdog kills the group.
 process.argv = ${JSON.stringify([process.execPath, script, "preflight", "--request", file])};
-await import(${JSON.stringify(pathToFileURL(script).href)});`;
+try { await import(${JSON.stringify(pathToFileURL(script).href)}); }
+catch (error) { console.error(error); process.exitCode = 1; }
+finally {
+  try {
+    const {processTable} = await import(${JSON.stringify(new URL('../runtime.mjs', import.meta.url).href)});
+    if (!processTable().some(row => row.group === process.pid && row.pid !== process.pid && !row.state.startsWith('Z'))) clearTimeout(watchdog);
+  } catch {} // Retain the watchdog when descendant telemetry is unavailable.
+}`;
   const child = spawn(process.execPath, ["--input-type=module", "-e", runner], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
   const locks = [lockPath(options), heldLock].filter(Boolean);
   child.stdin.on("error", () => {}); // Child exit may close the release pipe.
