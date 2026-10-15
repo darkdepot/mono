@@ -1,3 +1,4 @@
 - Bound collection runs and retries to the attempt's publication deadline; terminate and verify process groups, preserve retry counts, and recheck class/cap without another admission.
 - Reconcile signed receipts without rerunning reviews; retry project verification once with both outputs signed, preserving sandbox and head/base refusals.
 - Pin collection timeout/retry settings, align Mono's confirmation window, and remove fresh executable startup timing from short confirmation fixtures.
+- Isolate process-table observers from the gate group so successful collection/reconciliation clears its watchdog; cover self-observing telemetry and collector death.

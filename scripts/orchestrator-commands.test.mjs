@@ -1845,15 +1845,17 @@ async function collectionRetryFixture(mode, run) {
 import {atomicJson,readJson,withLock} from ${JSON.stringify(runtime)};
 const q=readJson(process.argv.at(-1)),stateFile=${JSON.stringify(stateFile)},mode=${JSON.stringify(mode)};
 const state=readJson(stateFile);state[q.collect?'collections':'reconciles']++;atomicJson(stateFile,state);
-if(!q.collect){if(mode==='slow-reconcile')await new Promise(r=>setTimeout(r,5000));console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: reconciled'));process.exit();}
-await withLock(path.join(q.evidenceRoot,q.head+'.collect.lock'),async()=>{
+if(!q.collect){if(mode==='slow-reconcile')await new Promise(r=>setTimeout(r,5000));console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: reconciled'));}
+else await withLock(path.join(q.evidenceRoot,q.head+'.collect.lock'),async()=>{
  if(mode==='crash-always'||(mode==='crash-once'&&state.collections===1))process.exit(78);
  if(mode==='late-class'&&state.collections===1){for(const [file,data] of readJson(${JSON.stringify(path.join(f.scratch, 'late-writes.json'))}))atomicJson(file,data);process.exit(78);}
- if(mode==='timeout'){
+ if(mode==='timeout'||mode==='orphan'){
   const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
-  atomicJson(stateFile,{...state,descendant:child.pid,group:process.pid});
-  process.on('SIGTERM',()=>{child.once('exit',()=>process.exit());});
-  await new Promise(()=>{});
+  child.unref();atomicJson(stateFile,{...state,descendant:child.pid,group:process.pid});
+  if(mode==='timeout'){
+   process.on('SIGTERM',()=>{child.once('exit',()=>process.exit());});
+   await new Promise(()=>{});
+  }
  }
  const envelope=${JSON.stringify(envelope)};
  atomicJson(${JSON.stringify(template.receipt)},envelope);console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: collected'));
@@ -1863,18 +1865,33 @@ await withLock(path.join(q.evidenceRoot,q.head+'.collect.lock'),async()=>{
     // fixture processes are real; only the denied ps query is replaced.
     const ps = path.join(f.scratch, 'bin/ps');
     write(ps, `#!${process.execPath}
-const fs=require('node:fs'),state=JSON.parse(fs.readFileSync(${JSON.stringify(stateFile)}));
+const fs=require('node:fs'),{execFileSync}=require('node:child_process'),state=JSON.parse(fs.readFileSync(${JSON.stringify(stateFile)}));
 if(!process.argv.includes('-axo')){console.log('fixture-start');process.exit();}
 const live=pid=>{try{process.kill(pid,0);return true}catch{return false}};
 const file=${JSON.stringify(startFile)},gate=fs.existsSync(file)?JSON.parse(fs.readFileSync(file)).gate:null;
 for(const row of [gate, state.descendant?{pid:state.descendant,processGroup:state.group}:null].filter(Boolean))
  if(live(row.pid))console.log(row.pid+' 1 '+row.processGroup+' S fixture-start');
+if(process.argv.at(-1)==='pid=,ppid=,pgid=,stat=,lstart='){
+ const group=Number(execFileSync('python3',['-I','-S','-c','import os;print(os.getpgrp())'],{encoding:'utf8'}).trim());
+ console.log(process.pid+' '+process.ppid+' '+group+' S fixture-start');
+}
 `);
     const started = launches => atomicJson(startFile, { ...readJson(admissionFile), launches, startedAt: new Date().toISOString() });
     const publish = () => atomicJson(f.reportFile, report);
     await run({ ...f, request, report, publish, stateFile, startFile, admissionFile, confirmation, started, template });
   });
 }
+
+test('retry-normal-completion: both collection and collect:false clear the watchdog with self-observing telemetry', async () => {
+  await collectionRetryFixture('complete', async f => {
+    f.entry.collectionTimeoutSec = 8; atomicJson(f.registry, { [f.options.issue]: f.entry });
+    f.publish(); await f.poll();
+    assert.deepEqual(readJson(f.stateFile), { collections: 1, reconciles: 1 });
+    assert.equal(readJson(f.confirmation).status, 'confirmed');
+    assert.equal(fs.existsSync(f.attention), false);
+    assert.doesNotMatch(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /timed out|retry refused/);
+  });
+});
 
 test('retry-crash-before-receipt: retry uses the same admission and collectionId; late history wins', async () => {
   await collectionRetryFixture('crash-once', async f => {
@@ -1991,8 +2008,8 @@ test('retry-budget-after-restart: elapsed time still blocks a remaining retry', 
   });
 });
 
-test('retry-collector-death-deadline: a hung group remains bounded after its collector dies', async () => {
-  await collectionRetryFixture('timeout', async f => {
+for (const mode of ['timeout', 'orphan']) test(`retry-collector-death-deadline: ${mode} group remains bounded after its collector dies`, async () => {
+  await collectionRetryFixture(mode, async f => {
     f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry }); f.publish();
     const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
     const parent = spawn(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { stdio: 'ignore', detached: true });
@@ -2008,7 +2025,9 @@ test('retry-collector-death-deadline: a hung group remains bounded after its col
       while (groupLive() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
       assert.equal(groupLive(), false, 'the gate must enforce its own original deadline after collector death');
       await f.poll(); assert.equal(readJson(f.stateFile).collections, 1);
-      assert.equal(readJson(f.startFile).launches, 1); assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
+      assert.equal(readJson(f.startFile).launches, 1);
+      if (mode === 'timeout') assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
+      else assert.equal(readJson(f.confirmation).status, 'confirmed', 'signed receipt reconciles after surviving descendants stop');
     } finally {
       parent.kill('SIGKILL'); await closed;
       if (gate && groupLive()) process.kill(-gate.processGroup, 'SIGKILL');

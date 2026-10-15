@@ -135,8 +135,9 @@ export function atomicJson(file, value) {
 // A dedicated process group preserves descendants after their parent exits.
 export function processTable() {
   // Preserve the existing caller-locale start identity, including legacy
-  // records. Read commands separately so date parsing cannot consume argv.
-  const output = execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart="], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  // records. Isolate the probe so group observers never see their own child.
+  // Read commands separately so date parsing cannot consume argv.
+  const output = execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart="], { detached: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   let commands;
   if (process.platform === "darwin") {
     const pids = output.trim().split("\n").filter(Boolean).map(line => Number(line.trim().split(/\s+/)[0]));

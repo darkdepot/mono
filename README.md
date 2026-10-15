@@ -406,7 +406,9 @@ current registry pins version; polling resumes admission when either changes,
 and admission of the current preflight collection clears the attempt's file.
 Signed history restores interrupted head receipts without a second review,
 including failed collections. Incarnation/group checks refuse live or unverified
-locks. This removes manual confirmation work; measured time/token savings still
+locks. Process-table probes run in a separate group so completed collection and
+reconciliation gates clear their watchdog without mistaking the probe for a child.
+This removes manual confirmation work; measured time/token savings still
 require comparable completed waves under the cost protocol.
 
 ## Plugin Installation
