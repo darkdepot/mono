@@ -1831,7 +1831,7 @@ test('pending admission concurrency: one blocking receipt leaves exactly one ato
   });
 });
 
-async function collectionRetryFixture(mode, run) {
+async function collectionRetryFixture(mode, run, { disableWatchdog = false } = {}) {
   await collectorAttentionFixture(async f => {
     const request = f.request(1), report = f.report(1);
     const template = await f.signedHistory(request), envelope = readJson(template.receipt);
@@ -1849,6 +1849,15 @@ async function collectionRetryFixture(mode, run) {
 import {atomicJson,readJson,withLock} from ${JSON.stringify(runtime)};
 const q=readJson(process.argv.at(-1)),stateFile=${JSON.stringify(stateFile)},mode=${JSON.stringify(mode)};
 const state=readJson(stateFile);state[q.collect?'collections':'reconciles']++;atomicJson(stateFile,state);
+if(${disableWatchdog}){
+ const kill=process.kill.bind(process);
+ process.kill=(pid,signal)=>{
+  if(pid===-process.pid&&signal==='SIGKILL'){
+   atomicJson(stateFile,{...readJson(stateFile),watchdogSuppressedAt:Date.now()});return true;
+  }
+  return kill(pid,signal);
+ };
+}
 if(!q.collect){if(mode==='slow-reconcile')await new Promise(r=>setTimeout(r,5000));console.log('gate preflight: '+(mode==='signed-failure'?'fail: provider unavailable':'pass: reconciled'));}
 else await withLock(path.join(q.evidenceRoot,q.head+'.collect.lock'),async()=>{
  if(mode==='crash-always'||(mode==='crash-once'&&state.collections===1))process.exit(78);
@@ -1871,7 +1880,10 @@ else await withLock(path.join(q.evidenceRoot,q.head+'.collect.lock'),async()=>{
     write(ps, `#!${process.execPath}
 const fs=require('node:fs'),{execFileSync}=require('node:child_process'),state=JSON.parse(fs.readFileSync(${JSON.stringify(stateFile)}));
 if(!process.argv.includes('-axo')){console.log('fixture-start');process.exit();}
-const live=pid=>{try{process.kill(pid,0);return true}catch{return false}};
+const live=pid=>{try{
+ if(state.probeError)throw Object.assign(new Error('fixture telemetry '+state.probeError),{code:state.probeError});
+ process.kill(pid,0);return true;
+}catch(error){if(error.code==='ESRCH')return false;throw error}};
 const file=${JSON.stringify(startFile)},gate=fs.existsSync(file)?JSON.parse(fs.readFileSync(file)).gate:null;
 for(const row of [gate, state.descendant?{pid:state.descendant,processGroup:state.group}:null].filter(Boolean))
  if(live(row.pid))console.log(row.pid+' 1 '+row.processGroup+' S fixture-start');
@@ -1950,6 +1962,22 @@ test('retry-live-descendant: a live prior group blocks every retry', async () =>
     } finally { child.kill('SIGTERM'); await closed; }
   });
 });
+for (const probeError of ['EPERM', 'unavailable']) test(`retry-unverified-group: ${probeError} telemetry refuses a relaunch`, async () => {
+  await collectionRetryFixture('crash-once', async f => {
+    f.publish(); await admitCollection(f.options.root, f.report); f.started(1);
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', detached: true });
+    const closed = new Promise(resolve => child.once('close', resolve));
+    try {
+      atomicJson(f.startFile, { ...readJson(f.startFile), gate: { pid: child.pid, procStart: 'fixture-start', processGroup: child.pid } });
+      atomicJson(f.stateFile, { ...readJson(f.stateFile), probeError });
+      await assert.rejects(f.poll(), /fixture telemetry/);
+      assert.equal(readJson(f.stateFile).collections, 0);
+      assert.equal(readJson(f.startFile).launches, 1);
+      assert.equal(fs.existsSync(f.confirmation), false);
+    } finally { child.kill('SIGKILL'); await closed; }
+  });
+});
+
 test('retry-slow-reconcile: reconciliation cannot extend the original deadline', async () => {
   await collectionRetryFixture('slow-reconcile', async f => {
     f.entry.collectionTimeoutSec = 1; atomicJson(f.registry, { [f.options.issue]: f.entry });
@@ -2012,29 +2040,121 @@ test('retry-budget-after-restart: elapsed time still blocks a remaining retry', 
   });
 });
 
-for (const mode of ['timeout', 'orphan']) test(`retry-collector-death-deadline: ${mode} group remains bounded after its collector dies`, async () => {
+async function collectorDeathScenario(mode, t, { disableWatchdog = false, signalCleanup = gate => process.kill(-gate.processGroup, 'SIGKILL') } = {}) {
   await collectionRetryFixture(mode, async f => {
     f.entry.collectionRetries = 0; atomicJson(f.registry, { [f.options.issue]: f.entry }); f.publish();
     const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
     const parent = spawn(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`], { stdio: 'ignore', detached: true });
     const closed = new Promise(resolve => parent.once('close', resolve));
-    let gate;
-    const groupLive = () => { try { process.kill(-gate.processGroup, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
+    let gate, primaryError, cleanupError;
+    const observations = [];
+    const probe = pid => {
+      try { process.kill(pid, 0); return 'live'; }
+      catch (error) { return error.code === 'ESRCH' ? 'dead' : `unknown:${error.code}`; }
+    };
+    const observe = stage => {
+      let state = {}, telemetryError;
+      try { state = readJson(f.stateFile); } catch (error) { telemetryError = error.message; }
+      const sample = { stage, at: Date.now(), group: gate?.processGroup, telemetryError,
+        groupState: gate ? probe(-gate.processGroup) : 'unknown:unregistered',
+        leader: gate ? { pid: gate.pid, state: probe(gate.pid) } : null,
+        descendant: state.descendant ? { pid: state.descendant, state: probe(state.descendant) } : null };
+      const previous = observations.at(-1);
+      if (!['waiting-for-watchdog', 'waiting-for-cleanup'].includes(stage) || !previous ||
+          JSON.stringify([sample.groupState, sample.leader, sample.descendant]) !==
+          JSON.stringify([previous.groupState, previous.leader, previous.descendant])) observations.push(sample);
+      return sample;
+    };
+    const terminated = sample => sample.groupState === 'dead' && sample.leader?.state === 'dead' && sample.descendant?.state === 'dead';
     try {
       const ready = Date.now() + 8000;
       while (!readJson(f.stateFile).descendant && Date.now() < ready) await new Promise(resolve => setTimeout(resolve, 25));
       assert.ok(readJson(f.stateFile).descendant, 'the real descendant starts before collector death');
-      gate = readJson(f.startFile).gate; parent.kill('SIGKILL'); await closed;
+      gate = readJson(f.startFile).gate;
+      observe('before-collector-death');
+      parent.kill('SIGKILL'); await closed;
       const deadline = Date.now() + 4500;
-      while (groupLive() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
-      assert.equal(groupLive(), false, 'the gate must enforce its own original deadline after collector death');
+      let sample;
+      do {
+        sample = observe('waiting-for-watchdog');
+        if (terminated(sample)) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      } while (Date.now() < deadline);
+      sample = observe('after-deadline-before-cleanup');
+      assert.equal(sample.groupState, 'dead', 'the gate must enforce its own original deadline after collector death; unknown is not dead');
+      assert.equal(sample.leader.state, 'dead', 'the gate leader must have terminated');
+      assert.equal(sample.descendant.state, 'dead', 'the gate descendant must have terminated');
       await f.poll(); assert.equal(readJson(f.stateFile).collections, 1);
       assert.equal(readJson(f.startFile).launches, 1);
       if (mode === 'timeout') assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
       else assert.equal(readJson(f.confirmation).status, 'confirmed', 'signed receipt reconciles after surviving descendants stop');
-    } finally {
-      parent.kill('SIGKILL'); await closed;
-      if (gate && groupLive()) process.kill(-gate.processGroup, 'SIGKILL');
+    } catch (error) { primaryError = error; }
+    finally {
+      try {
+        parent.kill('SIGKILL'); await closed;
+        if (gate) {
+          if (!terminated(observe('before-cleanup'))) signalCleanup(gate);
+          const until = Date.now() + 2000;
+          let sample;
+          do {
+            sample = observe('waiting-for-cleanup');
+            if (terminated(sample)) break;
+            await new Promise(resolve => setTimeout(resolve, 25));
+          } while (Date.now() < until);
+          assert.ok(terminated(sample), 'cleanup must prove gate group, leader and descendant termination');
+        }
+      } catch (error) { cleanupError = error; }
+      let watchdogSuppressedAt;
+      try { watchdogSuppressedAt = readJson(f.stateFile).watchdogSuppressedAt ?? null; } catch {}
+      t.diagnostic(JSON.stringify({ mode, watchdogSuppressedAt, observations, primaryError: primaryError?.message ?? null,
+        cleanup: cleanupError ? { code: cleanupError.code, message: cleanupError.message } : 'completed',
+        afterCleanup: gate ? observe('after-cleanup') : null }));
     }
+    if (primaryError) throw primaryError;
+    if (cleanupError) throw cleanupError;
+  }, { disableWatchdog });
+}
+
+for (const mode of ['timeout', 'orphan']) {
+  test(`retry-collector-death-deadline: ${mode} group remains bounded after its collector dies`, async t => {
+    await collectorDeathScenario(mode, t);
   });
+
+  test(`retry-collector-death-negative-control: ${mode} detects a live descendant before cleanup when watchdog termination is disabled`, async t => {
+    let result;
+    await assert.rejects(collectorDeathScenario(mode, { diagnostic(line) { result = JSON.parse(line); t.diagnostic(line); } }, { disableWatchdog: true }), error => {
+      assert.equal(error.code, 'ERR_ASSERTION');
+      assert.match(error.message, /the gate must enforce its own original deadline/);
+      const sample = result.observations.find(row => row.stage === 'after-deadline-before-cleanup');
+      assert.equal(sample.groupState, 'live');
+      assert.equal(sample.descendant.state, 'live');
+      assert.ok(result.watchdogSuppressedAt && sample.at >= result.watchdogSuppressedAt);
+      assert.equal(result.cleanup, 'completed');
+      assert.equal(result.afterCleanup.groupState, 'dead');
+      return true;
+    });
+  });
+}
+
+test('retry-collector-cleanup-error: a cleanup refusal does not mask the primary live-group assertion', async t => {
+  let result;
+  try {
+    await assert.rejects(collectorDeathScenario('timeout', { diagnostic(line) { result = JSON.parse(line); t.diagnostic(line); } }, {
+      disableWatchdog: true,
+      signalCleanup() { throw Object.assign(new Error('fixture cleanup refused'), { code: 'EPERM' }); }
+    }), error => {
+      assert.equal(error.code, 'ERR_ASSERTION');
+      assert.match(error.message, /the gate must enforce its own original deadline/);
+      assert.equal(result.cleanup.code, 'EPERM');
+      assert.equal(result.cleanup.message, 'fixture cleanup refused');
+      assert.equal(result.afterCleanup.descendant.state, 'live');
+      return true;
+    });
+  } finally {
+    // Recover the deliberately denied test cleanup only for this registered gate group.
+    if (result?.afterCleanup?.group) {
+      process.kill(-result.afterCleanup.group, 'SIGKILL');
+      await stopFixtureProcess(result.afterCleanup.descendant.pid);
+    }
+  }
 });

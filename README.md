@@ -46,6 +46,10 @@ A run is bounded to 1500 seconds by default; a crash before a signed receipt may
 retry once with the same admission, after class/cap and remaining-budget checks.
 Signed failures reconcile without another review. Failed project verification
 reruns once inside the same collection, with both outputs signed.
+The collector-death regression waits through denied process probes within its
+existing deadline, fails on live or unverified groups, and reports scenario and
+cleanup failures separately. Negative controls leave a real descendant alive
+past the watchdog deadline to verify that the regression still detects leaks.
 See [collection recovery](references/orchestration.md#delivery-write-barriers).
 
 ## Workflow
