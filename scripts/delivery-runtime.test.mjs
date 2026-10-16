@@ -2283,8 +2283,15 @@ test('watcher consumption between scans suppresses only one fixed continuation w
   const config = path.join(root, 'config.json'), ack = path.join(root, 'reports', `${issue}-gate-ack-a1.json`);
   const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1, packVersion: 'test', sourceCommit: 'a'.repeat(40), surfaceRevision: 4,
     handshake: 'wait', pid: process.pid, procStart: 'fixture-start', thread_id: 'fixture-thread', log, worktree: path.join(root, 'repo'), gates: ['identity'] };
-  let watcher; let output = '';
-  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  let watcher; let output = ''; let errors = ''; let launchError;
+  const waitFor = async (predicate, description) => {
+    const deadline = Date.now() + 5000;
+    while (!predicate()) {
+      assert.ok(!launchError && watcher.exitCode === null && watcher.signalCode === null && Date.now() < deadline,
+        `Timed out or watcher stopped waiting for ${description}\n${launchError ?? ''}\nstdout:\n${output}\nstderr:\n${errors}`);
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  };
   try {
     const events = json(path.join(checkout, 'scripts/fixtures/blocked-command-events.json'));
     write(log, events.slice(0, 3).map(e=>JSON.stringify(e)).join('\n')+'\n');
@@ -2292,16 +2299,40 @@ test('watcher consumption between scans suppresses only one fixed continuation w
     write(config, { orchestration: { delivery: { stallSec: 120, ackWaitSec: 420, pollSec: 10 } } });
     write(path.join(root, 'workers.json'), { [issue]: entry }); write(path.join(root, 'control.json'), { state: 'active' });
     write(ack, { issue, phase: 'gate', status: 'gates-passed', gates: [{ gate: 'identity', status: 'pass', evidence: 'fixture' }] });
-    watcher = spawn(process.execPath, ['scripts/watch-workers.mjs', '--root', root, '--config', config, '--interval-sec', '1'], { cwd: checkout, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    // The pulse is written at scan START. A callback in the watcher's event loop
+    // sees it only after that synchronous scan returns; its stdout marker also
+    // orders delivery of every event emitted by that scan before our assertion.
+    const runner = path.join(root, 'watcher-runner.mjs');
+    write(runner, `import fs from 'node:fs';
+await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-workers.mjs')).href)});
+let previousBeat;
+setInterval(() => {
+  const { beatAt } = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(root, 'watcher.json'))}, 'utf8'));
+  if (beatAt !== previousBeat) { previousBeat = beatAt; console.log('fixture:scan-complete ' + beatAt); }
+}, 25);
+`);
+    watcher = spawn(process.execPath, [runner, '--root', root, '--config', config, '--interval-sec', '1'], { cwd: checkout, env, stdio: ['ignore', 'pipe', 'pipe'] });
     watcher.stdout.on('data', chunk => { output += chunk.toString(); });
-    await pause(200); assert.match(output, /EVENT:gate-ack/); assert.doesNotMatch(output, /EVENT:(stall|dead)/);
+    watcher.stderr.on('data', chunk => { errors += chunk.toString(); });
+    watcher.on('error', error => { launchError = error; });
+    await waitFor(() => /EVENT:gate-ack/.test(output), 'EVENT:gate-ack');
+    assert.doesNotMatch(output, /EVENT:(stall|dead)/);
     // The consumer publishes last_wait before renaming, between watcher scans.
     const consumedAt = new Date().toISOString();
-    write(path.join(root, 'workers.json'), { [issue]: { ...entry, gates: undefined, last_wait: { pid: entry.pid, procStart: entry.procStart, thread_id: entry.thread_id, consumedAt } } });
+    const continued = { ...entry, gates: undefined, last_wait: { pid: entry.pid, procStart: entry.procStart,
+      thread_id: entry.thread_id, gateAckDigest: crypto.createHash('sha256').update(fs.readFileSync(ack)).digest('hex'), consumedAt } };
+    write(path.join(root, 'workers.json'), { [issue]: continued });
     fs.renameSync(ack, ack.replace('.json', '.applied.json'));
-    await pause(1200); assert.doesNotMatch(output, /EVENT:(stall|dead)/);
-    write(path.join(root, 'workers.json'), { [issue]: { ...entry, gates: undefined, last_wait: { consumedAt: new Date(Date.now()-121_000).toISOString() } } });
-    await pause(1200); assert.match(output, /EVENT:stall/);
+    const publishedAt = Date.now();
+    await waitFor(() => {
+      assert.doesNotMatch(output, /EVENT:(stall|dead)/);
+      return [...output.matchAll(/^fixture:scan-complete (.+)\n/gm)].some(([, beat]) => Date.parse(beat) > publishedAt);
+    }, 'completed scan of consumed state and its stdout');
+    assert.doesNotMatch(output, /EVENT:(stall|dead)/);
+    assert.equal(json(path.join(root, 'workers.json'))[issue].last_wait.consumedAt, consumedAt);
+    write(path.join(root, 'workers.json'), { [issue]: { ...continued,
+      last_wait: { ...continued.last_wait, consumedAt: new Date(Date.now()-121_000).toISOString() } } });
+    await waitFor(() => /EVENT:stall/.test(output), 'EVENT:stall after continuation expiry');
   } finally {
     if (watcher && watcher.exitCode === null) { watcher.kill('SIGTERM'); await new Promise(resolve=>watcher.once('exit',resolve)); }
     fs.rmSync(root, { recursive: true, force: true });
