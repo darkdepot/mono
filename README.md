@@ -512,10 +512,17 @@ codex plugin add mono@mono-marketplace
 Do not register a local folder as the marketplace: Claude Code reads such a
 plugin in place without pinning its version, and both tools copy the entire
 local folder, including unrelated files.
-Immediately after each installation or update, compare each tool's version
-cache folder with T's Git tree: paths, types, executable modes, object hashes
-of contents and symlink targets must match, with no changed, missing or additional
-files; only Codex's copied administrative `.git` directory may be additional.
+Immediately after each installation or update:
+
+Compare each tool's version cache with T's Git tree: paths, types, executable
+modes, content object hashes and symlink targets must match. Only extra service
+objects at these exact paths relative to the version-folder root are allowed:
+Codex directory `.git/` and regular file `.codex-marketplace-install.json`;
+Claude Code directory `.in_use/`. These tool-specific exceptions never exclude
+released files from comparison. The Codex file must be valid JSON with `revision`
+equal to the full tag commit; invalid JSON, absent/different revision or another
+object type fails. Every other extra, missing or changed object fails. Do not
+substitute clone proof.
 If either comparison differs, do not close the wave, release launch halts or
 start tasks from the new installation. The installing orchestrator records
 the mismatch, corrects the source and repeats the full verification of both tools.
@@ -618,10 +625,18 @@ After migration, the pack's deploy live pass uses [plugin installation proof](re
    Before any command that replaces a version folder, run `before-update` against
    that actual folder across **all** products, even for a same-version reinstall;
    keep launches halted and wait for any named attempts. Immediately after
-   installation, compare each tool's version cache folder with T's Git tree
-   by path, type, executable mode, content object hash and symlink target:
-   no changed, missing or additional files, except Codex's administrative `.git`
-   directory copied from the marketplace clone. Follow
+   installation:
+
+   Compare each tool's version cache with T's Git tree: paths, types, executable
+   modes, content object hashes and symlink targets must match. Only extra service
+   objects at these exact paths relative to the version-folder root are allowed:
+   Codex directory `.git/` and regular file `.codex-marketplace-install.json`;
+   Claude Code directory `.in_use/`. These tool-specific exceptions never exclude
+   released files from comparison. The Codex file must be valid JSON with `revision`
+   equal to the full tag commit; invalid JSON, absent/different revision or another
+   object type fails. Every other extra, missing or changed object fails. Do not
+   substitute clone proof.
+   Follow
    [Plugin Updates](references/install.md#plugin-updates) for later releases.
 5. **Verify installation before closing the wave.** Check every legacy skills
    root for any name beginning with `mono-`, plus the private directory and

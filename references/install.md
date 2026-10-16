@@ -58,10 +58,17 @@ Claude puts new versions beside old ones and does not copy an unchanged version.
 Codex deletes the previous folder; same-version reinstall overwrites in place,
 so it needs the condition too. Tasks keep their original absolute `packRoot`.
 
-Immediately after each install/update compare **each tool's version cache** with
-T's Git tree: paths, types, executable modes, content object hashes and symlink
-targets; no changed, missing or extra files. Only Codex's administrative `.git`
-directory may be extra; the pack does not read it. Do not substitute clone proof.
+Immediately after each install/update:
+
+Compare each tool's version cache with T's Git tree: paths, types, executable
+modes, content object hashes and symlink targets must match. Only extra service
+objects at these exact paths relative to the version-folder root are allowed:
+Codex directory `.git/` and regular file `.codex-marketplace-install.json`;
+Claude Code directory `.in_use/`. These tool-specific exceptions never exclude
+released files from comparison. The Codex file must be valid JSON with `revision`
+equal to the full tag commit; invalid JSON, absent/different revision or another
+object type fails. Every other extra, missing or changed object fails. Do not
+substitute clone proof.
 Any mismatch blocks wave close, removing launch halts and starting tasks from
 the new installation. Record/correct the source, then repeat the full comparison
 and version/tag proof of **both** tools. Accept proof only when both match.
