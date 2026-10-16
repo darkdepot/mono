@@ -89,6 +89,25 @@ raw idea → Project in Idea → discovery → reviewed and approved package
 
 ### Artifacts and truth
 
+The snapshot-only `scripts/idea-gate.mjs` checks an approved idea record without
+network access. `check --mode fresh --snapshot DIR --config CONFIG` compares the
+live What/Why/Target outcome with the recorded Unknowns; `--mode approved` checks
+record integrity without requiring the current body to match. It accepts the
+newest valid project record, or a verified package approval before the cutoff.
+An old project without a record can enter packaging (`legacy-migrate`) only in
+`fresh`; an issue-only seam requires `approved-fresh`. Dispatch/receipt/skill
+integration follows separately; the default cutoff remains unset until release.
+
+Set optional `ideaGate.since` to a valid `YYYY-MM-DD` in the project config;
+without it checks currently refuse `bad-since`. Optional `ideaGate.headings`
+replaces all four names, for example
+`{"what":"Что","why":"Зачем","outcome":"Образ результата","unknowns":"Неизвестные"}`.
+Defaults are `ru`/`en` from normalized `project.language`. Snapshot examples and
+live Linear serialization samples: [fixtures](scripts/fixtures/idea-gate/README.md).
+`fingerprint --snapshot FILE` hashes the four sections as canonical UTF-8 bytes;
+inline code and fences remain literal. The project body stays unchanged.
+Known limitation: inline code spanning multiple source lines refuses `unsupported-format`.
+
 | Surface | What belongs there |
 | --- | --- |
 | Linear Project body | What, why, target outcome, in scope, out of scope |

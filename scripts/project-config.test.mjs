@@ -7,6 +7,30 @@ import { spawnSync } from 'node:child_process';
 import * as runtime from './runtime.mjs';
 
 const risks = ['tiny', 'standard', 'deep', 'risky', 'riskyCritical'];
+test('ideaGate validates optional cutoff and four custom heading names', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-idea-config-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    for (const [ideaGate, valid] of [
+      [undefined, true], [{}, true], [{ since: '2026-10-17' }, true],
+      [{ headings: { what: 'A', why: 'B', outcome: 'C', unknowns: 'D' } }, true],
+      [null, false], [[], false], [{ unknown: true }, false], [{ since: null }, false],
+      [{ since: '2026-02-30' }, false], [{ since: '2026-10-17T00:00:00Z' }, false],
+      [{ headings: ['A', 'B', 'C', 'D'] }, false], [{ headings: { what: 'A' } }, false],
+      [{ headings: 'ru' }, false],
+      ...[' A', 'A ', '', ' ', '\tA', 'A\t'].map(what => [{ headings: { what, why: 'B', outcome: 'C', unknowns: 'D' } }, false]),
+      [{ headings: { what: 'A', why: 'A', outcome: 'C', unknowns: 'D' } }, false],
+      [{ headings: { what: 'A\nB', why: 'B', outcome: 'C', unknowns: 'D' } }, false],
+    ]) {
+      config.ideaGate = ideaGate;
+      fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify(config));
+      const result = spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+      assert.equal(result.status, valid ? 0 : 1, `${JSON.stringify(ideaGate)}: ${result.stderr}`);
+      if (!valid) assert.match(result.stderr, /ideaGate/);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 test('backup transport config accepts only distinct managed CLI workers', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-backup-config-'));
   try {

@@ -1,0 +1,2 @@
+- Add the snapshot-only idea gate with canonical text fingerprints, fresh/approved checks, project-bound approval cutoff handling, issue-only seam acceptance, configurable headings and live Linear regression fixtures. Integration gates and the release cutoff are deferred to the following Issues.
+- Known limitation (d-004): inline code spanning multiple source lines in an idea section refuses `unsupported-format`; single-line inline code remains literal.

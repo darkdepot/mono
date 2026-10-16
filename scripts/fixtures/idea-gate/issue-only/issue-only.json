@@ -1,0 +1,32 @@
+{
+  "seam": {
+    "package_kind": "issue-only",
+    "lifecycle_state_entity": "issue",
+    "behavioral_oracle": {
+      "acceptanceIds": [
+        "AC1"
+      ],
+      "verifySteps": [
+        "node --test example.test.mjs"
+      ]
+    },
+    "risk_class": "standard",
+    "approval_status": "approved-fresh"
+  },
+  "marker": {
+    "kind": "issue-only"
+  },
+  "label": {
+    "id": "label-1",
+    "name": "issue-only"
+  },
+  "ownerApproval": {
+    "id": "owner-approval-1",
+    "body": "approved"
+  },
+  "config": {
+    "enabled": true,
+    "ownerPrincipal": "owner-1"
+  },
+  "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
