@@ -66,14 +66,23 @@ function blocks(markdown) {
 }
 
 function ordinary(text) {
-  const lines = [{ parts: [], projection: '', literal: false }];
+  const sourceLines = text.split('\n');
+  // Block structure uses source lines, before inline spans can hide markers or
+  // introduce synthetic whitespace. Fences and headings were handled by blocks/sections.
+  for (const raw of sourceLines) {
+    if (/^(?: {2,}|[ \t]*\t[ \t]*)(?:[*+-]|\d+[.)])[ \t]+/.test(raw)) fail('unsupported-format');
+    if (raw.includes('|')) {
+      const cells = raw.trim().replace(/^\||\|$/g, '').split('|');
+      if (cells.every(cell => /^\s*:?-+:?\s*$/.test(cell))) fail('unsupported-format');
+    }
+  }
+  const lines = [{ parts: [], literal: false }];
   function append(value, literal = false) {
     const pieces = value.split('\n');
     for (const [index, piece] of pieces.entries()) {
-      if (index) lines.push({ parts: [], projection: '', literal });
+      if (index) lines.push({ parts: [], literal });
       const line = lines.at(-1);
       line.parts.push({ text: piece, literal });
-      line.projection += literal ? ' '.repeat(piece.length) : piece;
       line.literal ||= literal;
     }
   }
@@ -93,13 +102,8 @@ function ordinary(text) {
     } else { append(text[i++]); }
   }
   let inList = false;
-  return lines.map(line => {
-    const raw = line.projection;
-    if (/^(?: {2,}|[ \t]*\t[ \t]*)(?:[*+-]|\d+[.)])[ \t]+/.test(raw)) fail('unsupported-format');
-    if (raw.includes('|')) {
-      const cells = raw.trim().replace(/^\||\|$/g, '').split('|');
-      if (cells.every(cell => /^\s*:?-+:?\s*$/.test(cell))) fail('unsupported-format');
-    }
+  return lines.map((line, index) => {
+    const raw = sourceLines[index];
     while (line.parts.length && !line.parts.at(-1).literal) {
       const last = line.parts.at(-1);
       last.text = last.text.replace(/[ \t\r]+$/, '');

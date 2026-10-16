@@ -244,3 +244,18 @@ test('inline backtick runs cannot open fences; prohibited Markdown variants fail
     expectCode(options, 'unsupported-format');
   }
 });
+
+test('a nested list is rejected before multiline inline-code matching', () => {
+  const body = idea('- `parent\n  - child`');
+  assert.throws(() => ideaFingerprint(body), { code: 'unsupported-format' });
+  const options = { ...input(), mode: 'fresh' }; options.project.body = body;
+  expectCode(options, 'unsupported-format');
+});
+
+test('inline code followed by a prose hyphen does not create list indentation', () => {
+  const body = idea('`--flag` - optional');
+  assert.match(ideaFingerprint(body), /^[a-f0-9]{64}$/);
+  const options = { ...input(), mode: 'fresh' };
+  options.project.body = body; options.records.comments = [record(body)];
+  expectCode(options, 'pass');
+});
