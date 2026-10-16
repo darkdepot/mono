@@ -190,7 +190,7 @@ const logInspectionStates = new Map();
 const commandObservations = new Map();
 const warnedOnce = new Set();
 let lastEventAtMs = null;
-let logNeedsRescan = false;
+let oneShotNeedsRescan = false;
 let immediateScanScheduled = false;
 
 function warnOnce(message) {
@@ -906,7 +906,7 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
         inspection.observedSize !== undefined &&
         logInspectionStates.has(log.filePath)
       ) {
-        logNeedsRescan = true;
+        oneShotNeedsRescan = true;
       }
       return;
     }
@@ -1053,7 +1053,7 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
   // A large completion record must not leave a stale start in the command set.
   if (!pausedOnAck && !continuationPending && !phasePending &&
       inspection.caughtUp === false && pidState === "alive") {
-    logNeedsRescan = true;
+    oneShotNeedsRescan = true;
     return;
   }
   const ordinaryCommand = !pausedOnAck && !continuationPending && !phasePending ? command : null;
@@ -1180,7 +1180,7 @@ function checkPhase(log, entry, nowMs) {
 }
 
 function scan() {
-  logNeedsRescan = false;
+  oneShotNeedsRescan = false;
   const nowMs = Date.now();
   if (!args.once) atomicJson(path.join(args.root, "watcher.json"), { pid: process.pid, procStart, packVersion, startedAt,
     beatAt: new Date(nowMs).toISOString(), intervalSec: args.intervalSec });
@@ -1251,7 +1251,7 @@ function scan() {
   }
   checkRegistry(registry, nowMs);
   checkIdle(registrySnapshot, controlState, nowMs);
-  if (!args.once && logNeedsRescan && !immediateScanScheduled) {
+  if (!args.once && oneShotNeedsRescan && !immediateScanScheduled) {
     immediateScanScheduled = true;
     setImmediate(() => { immediateScanScheduled = false; scan(); });
   }
@@ -1263,7 +1263,7 @@ console.error(
 
 do {
   scan();
-} while (args.once && logNeedsRescan);
+} while (args.once && oneShotNeedsRescan);
 if (!args.once) {
   setInterval(scan, args.intervalSec * 1000);
 }
