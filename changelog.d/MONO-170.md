@@ -1,0 +1,1 @@
+- Add the snapshot-only idea gate with canonical text fingerprints, fresh/approved checks, project-bound approval cutoff handling, issue-only seam acceptance, configurable headings and live Linear regression fixtures. Integration gates and the release cutoff are deferred to the following Issues.

@@ -1,0 +1,15 @@
+{
+  "complete": true,
+  "comments": [
+    {
+      "id": "idea-1",
+      "createdAt": "2026-10-17T01:00:00Z",
+      "body": "```text\nmono-idea: approved project=59c079b6-fc26-40a6-ba19-9467674fa637 sha256=ad46f6db73abc64521a749918822136acf7428667f89a54e4443a63fcb8f51e8\n```\n\n```mono-idea-snapshot\n## Что\n\nОписание\n\n## Зачем\n\nПроблема\n\n## Образ результата\n\nРезультат\n\n## Неизвестные\n\n1. Важный вопрос\n```"
+    },
+    {
+      "id": "approval-1",
+      "createdAt": "2026-10-16T23:00:00Z",
+      "body": "Пакет одобрен"
+    }
+  ]
+}
