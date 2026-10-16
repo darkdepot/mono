@@ -6,3 +6,4 @@
 ### Known limitations
 
 - The 60-minute ceiling is a best-effort diagnostic, not a precise execution deadline. Observation, bounded log scans and watcher restarts can affect its timing; no command timestamp is recovered from the journal. A hung command that keeps writing heartbeat/progress events still has a fresh log and remains outside this change.
+- When one command ends and another starts between watcher scans, the later command can inherit the earlier observation time or already-alerted state. Its ceiling alert may therefore be early or absent until observation resets. This is accepted as part of the best-effort timing diagnostic; ordinary no-command stalls, dead-writer checks and protocol deadlines remain required.
