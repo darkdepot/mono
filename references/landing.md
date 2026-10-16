@@ -315,10 +315,18 @@ before installing the wave.
 Before each plugin installation/update command, follow
 [Plugin Updates](install.md#plugin-updates): check all products for attempts
 using any folder the tool deletes or overwrites, wait for the named attempts,
-then immediately after installation/update compare each tool's version cache
-with T's Git tree by path, type, executable mode, content object hash and symlink
-target, with no changed, missing or additional files except Codex's administrative
-`.git` directory. Do not register a local folder as a marketplace. On any mismatch,
+then immediately after installation/update:
+
+Compare each tool's version cache with T's Git tree: paths, types, executable
+modes, content object hashes and symlink targets must match. Only extra service
+objects at these exact paths relative to the version-folder root are allowed:
+Codex directory `.git/` and regular file `.codex-marketplace-install.json`;
+Claude Code directory `.in_use/`. These tool-specific exceptions never exclude
+released files from comparison. The Codex file must be valid JSON with `revision`
+equal to the full tag commit; invalid JSON, absent/different revision or another
+object type fails. Every other extra, missing or changed object fails. Do not
+substitute clone proof.
+Do not register a local folder as a marketplace. On any mismatch,
 do not close the wave, release launch halts or start tasks from the new installation;
 the installing orchestrator records it, corrects the source and repeats the full
 verification of both tools. Only that orchestrator registers or updates the marketplace.
