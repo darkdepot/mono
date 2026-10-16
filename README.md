@@ -1,20 +1,21 @@
 # Mono Agent Workflow
 
-Current release: **0.31.0**. See the [release notes](CHANGELOG.md#0310---2026-10-16).
+Current release: **0.31.1**. See the [release notes](CHANGELOG.md#0311---2026-10-17).
+Private vulnerability reports: [SECURITY.md](SECURITY.md).
 
-**Incompatible update:** 0.31.0 requires a live watcher before worker launch or
-resume. Use
-[cross-product quiescence](references/install.md#quiescence):
-stop launches, have each product’s orchestrator confirm idle control and an empty
-worker registry, then restart sessions after cut-over.
-Decision journals and signed-receipt formats remain unchanged from 0.30.1;
-new watcher pulses and collection retry files are ignored by that version.
-An open attempt keeps its original absolute `packRoot` and finishes there;
-never replace that folder or redirect it to the new code. A separate staged
-cache can coexist, but activation of this incompatible release waits for quiescence.
-After installation, restart each product's watcher **from the new version before
-the first launch or resume**. A missing, stale or dead watcher causes
-`watcher-required`, with a start command, without consuming an attempt.
+0.31.1 is a compatible patch to 0.31.0; workflow, decision-journal and signed-receipt
+formats are unchanged. Follow the [update conditions](references/install.md#plugin-updates).
+
+**Upgrading from 0.30.1 or earlier:** since 0.31.0, worker launch and resume require
+a live watcher. Use [cross-product quiescence](references/install.md#quiescence):
+stop launches, have each product's orchestrator confirm idle control and an empty
+worker registry, then restart sessions after cut-over. Open attempts finish on
+their original absolute `packRoot`; never replace or redirect that folder.
+A separate staged cache can coexist until activation. Restart each product's
+watcher from the new version before the first launch or resume. Missing, stale
+or dead watchers refuse with `watcher-required` without consuming an attempt.
+Decision journals, signed receipts and surface revision 4 remain compatible with
+0.30.1; that version ignores watcher pulses and collection retry files.
 See [rollback to 0.30.1](references/install.md#roll-back-to-0301) after attempts drain.
 
 A reusable skill pack for owners and coding agents who deliver software through Linear and GitHub. Use it to turn a raw idea into approved work, run one delivery worker from code to a green pull request, and deploy with evidence. The owner decides the product; agents carry the work and show what they actually verified.

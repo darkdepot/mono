@@ -6,6 +6,70 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-10-17
+
+<!-- fragment: MONO-165 sha256:1ba7194435ad93272f01929f9ac7db282955574d26e0c0d56b3707f1e5a6fba0 -->
+- MONO-165: allow only tool-specific extra cache objects during release-tree comparison: Codex `.git/` and a regular `.codex-marketplace-install.json` with the full tag revision, and Claude Code `.in_use/`. Preserve comparison of every released path, type, executable mode, content hash and symlink target; reject all other differences.
+
+<!-- fragment: MONO-166 sha256:4fdd8b7912323550a3309e211b789a5b40c0ad07211c2520b84271c76c0ccbad -->
+### Security
+
+- Limit validation CI to read-only repository contents, pin its GitHub Actions to
+  full commits, and disable persisted checkout credentials.
+- Check for GitHub Actions updates weekly through one Dependabot group.
+- Document supported versions and private vulnerability reporting in SECURITY.md.
+
+<!-- fragment: MONO-167 sha256:637aeec8034d75e56aa3832ee14c55c3abe82d0c0848d5f1faff5d99a0ad3631 -->
+### Fixed
+
+- Reject invalid issue keys before exported review-ledger reads, class-stop writes,
+  and CLI decision-record reads. Keep `^[A-Z][A-Z0-9]*-[1-9][0-9]*$` unchanged;
+  additionally quote the two interpolated regular-expression prefixes.
+- Pass the collector timeout fixture's lock path as a Node process argument.
+- Scan original line segments when removing comments from issue context, so a
+  closed comment cannot synthesize an opener that hides a following marker.
+  Cover both an ordinary line and the suffix after a multiline comment closes.
+
+### CodeQL triage (MONO-167)
+
+Numbers refer to `darkdepot/mono` GitHub code-scanning alerts, inspected on
+2026-10-16. No alert is dismissed by this PR; the orchestrator owns closeout.
+The CI permissions alert belongs to the separate CI issue.
+
+| GitHub alert | Rule | Location | Disposition and evidence |
+| --- | --- | --- | --- |
+| #2 | `js/incomplete-multi-character-sanitization` | `resolve-issue-context.mjs`, comment-closing line suffix in `contentTokens` | **исправлено**. Input: `<!-- prior line` followed by `--><!<!-- x -->--` and a valid marker. Consumer: marker/section scans over visible tokens. Expected: the original comment closes; the next marker remains recognized. The scanner examines original segments once; the regression compares the complete context with the valid-marker result. |
+| #3 | `js/incomplete-multi-character-sanitization` | `resolve-issue-context.mjs`, ordinary line in `contentTokens` | **исправлено**. Input: `<!<!-- x -->--` before a valid marker. Consumer: marker/section scans. Expected: removing the closed inner comment must not create comment state and hide the next marker. The regression compares route, approval and complete acceptance/verification oracle; baseline comparison also checks exit codes and fingerprints. |
+| #4 | `js/incomplete-multi-character-sanitization` | `resolve-issue-context.mjs`, `isSubstantiveText` | **неприменимо**. Input: criterion, verification-step or section text, including fenced examples and comment-only placeholders. The sole result is a Boolean letter/digit test; consumers decide whether content is substantive. No stripped string reaches an HTML renderer or another comment parser. Expected: `<!-- TODO -->` and `<!<!-- x -->--` alone are not substantive; visible letters/digits count. Residual delimiter punctuation has no letters/digits and cannot execute or hide later lines. Existing empty/comment-only criterion and section fixtures exercise this contract; full resolver baseline comparison preserves their results. |
+| #5 | `js/incomplete-multi-character-sanitization` | `validate-workflow.mjs`, `markdownHeadings` | **неприменимо**. Input: tracked Markdown from README and linked documentation. Consumer: `forEachMarkdownLine`, then anchored heading extraction, title/slug checks and link addressability. Expected: closed comments contribute no headings; visible headings retain their titles/slugs. This is structure validation, not HTML sanitization. `<!<!-- x -->--` leaves punctuation that matches no heading; the consumer neither reparses comments nor renders HTML. The heading-comment fixture and unchanged README checks verify the boundary. |
+| #6 | `js/incomplete-multi-character-sanitization` | `validate-workflow.mjs`, README Owner Rules extraction | **неприменимо**. Input: tracked README Markdown. Consumer: `documentSection`, then anchored rule-ID/link/target validation. Expected: closed commented-out rules contribute no entries; visible Owner Rules remain checkable. Residual delimiters cannot become an anchored heading or rule. No HTML rendering or second comment scan occurs. The owner-rule-comment fixture feeds a residual opener to the actual section consumer and verifies that a following visible rule remains visible; README is unchanged. |
+| #7 | `js/bad-code-sanitization` | `orchestrator-commands.test.mjs`, collector startup timeout | **исправлено**. Input: temporary lock-file path. Consumer: detached `node -e` fixture. The program is constant; the path is a separate argv value read through `process.argv[1]`. Startup timeout still terminates the child before it can create a late lock. |
+| #8 | `js/regex-injection` | `decisions.mjs`, dataset version filename matching | **исправлено**. Inputs: CLI and exported journal/dataset APIs. `journalFile` already checks the unchanged key pattern before filesystem access on every path to version matching. Added early CLI validation before reading a decision record and literal regex quoting. Invalid-key scenarios trap filesystem access for all exported journal/dataset entry points and check every CLI command. Existing valid dataset reuse/versioning expectations are unchanged. |
+| #9 | `js/regex-injection` | `review-ledger.mjs`, `belongs` | **исправлено**. Inputs: CLI plus exported `readLedgerSources`. Added key validation before its first evidence access, and before exported class-stop access; added literal regex quoting in `belongs`. CLI, `buildReviewLedger`, adjudication and withholding already validate keys. Scenarios trap evidence access for invalid keys and preserve valid receipt filename matching. |
+
+No CommonMark compatibility or HTML sanitization guarantee is introduced. Existing
+marker examples are compared against the original resolver for complete stdout,
+stderr and exit code, including route, marker recognition, fingerprints and oracle.
+Only the two documented synthetic-opener inputs may differ. Existing expectations
+and contract fingerprints are unchanged; no machine-token pin was removed.
+
+<!-- fragment: MONO-169 sha256:1bb1898e1b93ca066d769186a326533ca192f5166147056a8fb4b15b628f6f74 -->
+### Fixed
+
+- Replace fixed watcher-event startup sleeps with bounded output polling in the between-scan continuation regression. Confirm a completed scan and its delivered output before expiring the fixed continuation window; retain writer identity, the consumed acknowledgement and the quiet log when changing only `consumedAt`. Watcher behavior and clocks are unchanged.
+
+<!-- fragment: MONO-181 sha256:5909236ad9ddfaa71c2ccd2b82036134b645b2097ce0be52debf341bee040409 -->
+## MONO-181 — Quiet monitoring during commands and no-change wakeups
+
+- Defer ordinary stall alerts for a live writer with outstanding Codex command executions or Claude Bash calls, tracking parallel commands independently. The fixed 60-minute allowance starts on watcher observation, resets on watcher restart, and emits one marked stall at expiry. Dead writers and protocol deadlines keep their existing behavior.
+- Require continuous watcher-output monitoring throughout the wave; periodic wakeups are a recorded degradation. False alarms, already-consumed reports and empty wakeups produce no owner message or routine ledger entry; actual monitoring recovery and healing remain recorded.
+- Continue bounded log catch-up without waiting for regular interval ticks, so quiet history does not delay ordinary stall alerts by one interval per chunk. Retain only a bounded prefix and file position for unfinished records; completed records still use native JSON parsing to match command IDs after large output.
+
+### Known limitations
+
+- The 60-minute ceiling is a best-effort diagnostic, not a precise execution deadline. Observation, bounded log scans and watcher restarts can affect its timing; no command timestamp is recovered from the journal. A hung command that keeps writing heartbeat/progress events still has a fresh log and remains outside this change.
+- When one command ends and another starts between watcher scans, the later command can inherit the earlier observation time or already-alerted state. Its ceiling alert may therefore be early or absent until observation resets. This is accepted as part of the best-effort timing diagnostic; ordinary no-command stalls, dead-writer checks and protocol deadlines remain required.
+
 ## [0.31.0] - 2026-10-16
 
 <!-- fragment: MONO-159 sha256:41d1020d1b4c597e68c979ab1fdba94d3a8f6705bd85ae3a448761facf608be2 -->

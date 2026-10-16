@@ -1,1 +1,0 @@
-- MONO-165: allow only tool-specific extra cache objects during release-tree comparison: Codex `.git/` and a regular `.codex-marketplace-install.json` with the full tag revision, and Claude Code `.in_use/`. Preserve comparison of every released path, type, executable mode, content hash and symlink target; reject all other differences.
