@@ -190,7 +190,8 @@ const logInspectionStates = new Map();
 const commandObservations = new Map();
 const warnedOnce = new Set();
 let lastEventAtMs = null;
-let oneShotNeedsRescan = false;
+let logNeedsRescan = false;
+let immediateScanScheduled = false;
 
 function warnOnce(message) {
   if (warnedOnce.has(message)) return;
@@ -252,6 +253,7 @@ function inspectLog(filePath, transport) {
         dev: stat.dev,
         ino: stat.ino,
         offset: 0,
+        lineStart: 0,
         pending: "",
         pendingOverflow: false,
         firstLine: null,
@@ -273,30 +275,35 @@ function inspectLog(filePath, transport) {
     );
     while (remaining > 0) {
       const requested = Math.min(LOG_READ_BYTES, remaining);
+      const chunkStart = state.offset;
       const bytesRead = fs.readSync(descriptor, buffer, 0, requested, state.offset);
       if (bytesRead === 0) break;
       state.offset += bytesRead;
       remaining -= bytesRead;
-      state.pending += buffer.toString("utf8", 0, bytesRead);
-
-      if (state.pendingOverflow) {
-        const overflowEnd = state.pending.indexOf("\n");
-        if (overflowEnd < 0) {
-          state.pending = "";
-          continue;
+      let consumed = 0;
+      while (consumed < bytesRead) {
+        const newline = buffer.subarray(0, bytesRead).indexOf(10, consumed);
+        const end = newline < 0 ? bytesRead : newline;
+        if (!state.pendingOverflow) {
+          state.pending += buffer.toString("utf8", consumed, end);
+          if (state.pending.length > LOG_PENDING_MAX_CHARS) {
+            if (state.firstLine === null) state.firstLine = state.pending.slice(0, DETAIL_SNIPPET_LENGTH);
+            state.pending = state.pending.slice(0, LOG_PENDING_MAX_CHARS);
+            state.pendingOverflow = true;
+          }
+        }
+        if (newline < 0) break;
+        let line = state.pending;
+        if (state.pendingOverflow && state.hasThreadStarted) {
+          // Keep only the prefix/offset while a record is unfinished. Once it
+          // ends, native JSON parsing still sees IDs after arbitrarily long output.
+          const record = Buffer.alloc(chunkStart + newline - state.lineStart);
+          const count = fs.readSync(descriptor, record, 0, record.length, state.lineStart);
+          line = record.toString("utf8", 0, count);
         }
         state.completeLineCount += 1;
-        state.pending = state.pending.slice(overflowEnd + 1);
-        state.pendingOverflow = false;
-      }
-
-      let newlineIndex;
-      while ((newlineIndex = state.pending.indexOf("\n")) >= 0) {
-        const line = state.pending.slice(0, newlineIndex);
-        state.pending = state.pending.slice(newlineIndex + 1);
-        state.completeLineCount += 1;
-        if (state.firstLine === null) state.firstLine = line;
-        const event = parseJsonEventLine(line);
+        if (state.firstLine === null) state.firstLine = line.slice(0, LOG_PENDING_MAX_CHARS);
+        const event = !state.pendingOverflow || state.hasThreadStarted ? parseJsonEventLine(line) : null;
         if (event !== null) {
           state.hasJsonEvent = true;
         }
@@ -313,14 +320,10 @@ function inspectLog(filePath, transport) {
               state.hasThreadStarted && typeof event.item.id === "string" && event.item.id) state.commands.add(event.item.id);
           if (event?.type === "item.completed") state.commands.delete(event.item?.id);
         }
-      }
-
-      if (!state.hasThreadStarted && state.pending.length > LOG_PENDING_MAX_CHARS) {
-        if (state.firstLine === null) {
-          state.firstLine = state.pending.slice(0, DETAIL_SNIPPET_LENGTH);
-        }
         state.pending = "";
-        state.pendingOverflow = true;
+        state.pendingOverflow = false;
+        state.lineStart = chunkStart + newline + 1;
+        consumed = newline + 1;
       }
     }
 
@@ -345,7 +348,7 @@ function inspectLog(filePath, transport) {
       hasTrailingPartial: state.pendingOverflow || state.pending.length > 0,
       observedSize: stat.size,
       caughtUp: state.offset >= stat.size,
-      commandRun: state.offset >= stat.size && !state.pendingOverflow && !state.pending.trim() && state.commands.size
+      commandRun: state.offset >= stat.size && state.commands.size
         ? state.commandRun : null,
       scanComplete:
         state.hasThreadStarted || state.offset >= scanTargetSize,
@@ -903,7 +906,7 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
         inspection.observedSize !== undefined &&
         logInspectionStates.has(log.filePath)
       ) {
-        oneShotNeedsRescan = true;
+        logNeedsRescan = true;
       }
       return;
     }
@@ -1050,7 +1053,7 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
   // A large completion record must not leave a stale start in the command set.
   if (!pausedOnAck && !continuationPending && !phasePending &&
       inspection.caughtUp === false && pidState === "alive") {
-    if (args.once) oneShotNeedsRescan = true;
+    logNeedsRescan = true;
     return;
   }
   const ordinaryCommand = !pausedOnAck && !continuationPending && !phasePending ? command : null;
@@ -1177,6 +1180,7 @@ function checkPhase(log, entry, nowMs) {
 }
 
 function scan() {
+  logNeedsRescan = false;
   const nowMs = Date.now();
   if (!args.once) atomicJson(path.join(args.root, "watcher.json"), { pid: process.pid, procStart, packVersion, startedAt,
     beatAt: new Date(nowMs).toISOString(), intervalSec: args.intervalSec });
@@ -1247,6 +1251,10 @@ function scan() {
   }
   checkRegistry(registry, nowMs);
   checkIdle(registrySnapshot, controlState, nowMs);
+  if (!args.once && logNeedsRescan && !immediateScanScheduled) {
+    immediateScanScheduled = true;
+    setImmediate(() => { immediateScanScheduled = false; scan(); });
+  }
 }
 
 console.error(
@@ -1254,9 +1262,8 @@ console.error(
 );
 
 do {
-  oneShotNeedsRescan = false;
   scan();
-} while (args.once && oneShotNeedsRescan);
+} while (args.once && logNeedsRescan);
 if (!args.once) {
   setInterval(scan, args.intervalSec * 1000);
 }

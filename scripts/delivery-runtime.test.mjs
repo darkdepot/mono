@@ -2556,3 +2556,69 @@ await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-w
       'parallel completion must not renew the original command allowance');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('watcher catches up a quiet no-command log without waiting for interval ticks', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-quiet-catchup-'));
+  const env = watcherProcessFixture(root), issue = 'MONO-994';
+  try {
+    const log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+    const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1,
+      pid: process.pid, procStart: 'fixture-start', thread_id: 'fixture-thread', log };
+    const event = value => JSON.stringify(value) + '\n';
+    write(log, event({ type: 'thread.started', thread_id: entry.thread_id }) +
+      event({ type: 'item.completed', item: { type: 'agent_message', text: 'x'.repeat(1000) } }).repeat(4000));
+    const quiet = new Date(Date.now() - 600_000); fs.utimesSync(log, quiet, quiet);
+    write(path.join(root, 'workers.json'), { [issue]: entry }); write(path.join(root, 'control.json'), { state: 'active' });
+    const runner = path.join(root, 'catchup.mjs');
+    write(runner, `// Do not deliver ordinary interval ticks: catch-up must make progress independently.
+globalThis.setInterval = () => {};
+await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-workers.mjs')).href)});
+`);
+    const result = spawnSync(process.execPath, [runner, '--root', root], { cwd: checkout, env,
+      encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024 });
+    pass(result);
+    assert.match(result.stdout, /EVENT:stall/, 'quiet idle history must not cost one interval per 256 KiB');
+    assert.doesNotMatch(result.stdout, /EVENT:(dead|spawn-fail)/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('watcher bounds unfinished record retention and still matches a large parallel completion', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-record-retention-'));
+  const env = watcherProcessFixture(root), issue = 'MONO-994';
+  try {
+    const log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+    const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1,
+      pid: process.pid, procStart: 'fixture-start', thread_id: 'fixture-thread', log };
+    const event = value => JSON.stringify(value) + '\n';
+    const start = id => ({ type: 'item.started', item: { type: 'command_execution', id } });
+    // Put the completion ID after the large output; a prefix-only heuristic loses it.
+    const completion = JSON.stringify({ type: 'item.completed', item: {
+      type: 'command_execution', aggregated_output: 'x'.repeat(4 * 1024 * 1024), id: 'one' } });
+    write(log, event({ type: 'thread.started', thread_id: entry.thread_id }) +
+      event(start('one')) + event(start('two')) + completion.slice(0, -1));
+    const quiet = new Date(Date.now() - 600_000); fs.utimesSync(log, quiet, quiet);
+    write(path.join(root, 'workers.json'), { [issue]: entry }); write(path.join(root, 'control.json'), { state: 'active' });
+    const runner = path.join(root, 'retention.mjs');
+    write(runner, `import fs from 'node:fs';
+const log = ${JSON.stringify(log)}, quiet = new Date(${JSON.stringify(quiet)});
+globalThis.setInterval = scan => {
+  globalThis.gc(); const before = process.memoryUsage().heapUsed;
+  for (let i = 0; i < 40; i++) scan();
+  globalThis.gc(); console.log('fixture:retained:' + (process.memoryUsage().heapUsed - before));
+  fs.appendFileSync(log, '}\\n'); fs.utimesSync(log, quiet, quiet);
+  scan(); console.log('fixture:one-completed');
+  fs.appendFileSync(log, ${JSON.stringify(event({ type: 'item.completed', item: { type: 'command_execution', id: 'two' } }))});
+  fs.utimesSync(log, quiet, quiet);
+  scan(); console.log('fixture:all-completed');
+};
+await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-workers.mjs')).href)});
+`);
+    const output = pass(run(process.execPath, ['--expose-gc', runner, '--root', root], checkout, env)).stdout;
+    const retained = Number(output.match(/fixture:retained:(-?\d+)/)?.[1]);
+    assert.ok(retained < 2 * 1024 * 1024, `unfinished record retained ${retained} bytes`);
+    assert.doesNotMatch(output.split('fixture:one-completed')[0], /EVENT:(stall|dead)/,
+      'unfinished and completed first command must leave the parallel command pending');
+    assert.match(output.split('fixture:one-completed')[1], /EVENT:stall/,
+      'both completions restore ordinary no-command stall');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
