@@ -232,3 +232,19 @@ test("Claude result usage sums resumed turns, normalizes caches and keeps missin
   assert.equal(wave.worker.usage.input_tokens, 20);
   assert.equal(wave.worker.usage_status, "measured");
 }));
+
+test('Claude silent Bash calls defer stalls until every matching result arrives', () => withFixture(f => {
+  put(path.join(f.root, 'workers.json'), { [f.entry.issue]: f.entry });
+  const command = id => ({ ...f.call, message: { content: [{ type: 'tool_use', name: 'Bash', id, input: { command: 'node scripts/verify.mjs' } }] } });
+  const result = id => ({ type: 'user', session_id: f.entry.thread_id, message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'done' }] } });
+  const watch = events => {
+    f.journal([f.instance, f.init, ...events]);
+    const quiet = new Date(Date.now() - 400_000); fs.utimesSync(f.entry.log, quiet, quiet);
+    return f.watch();
+  };
+  assert.doesNotMatch(watch([command('one')]), /EVENT:(stall|dead)/);
+  assert.doesNotMatch(watch([command('one'), command('two'), result('one')]), /EVENT:(stall|dead)/);
+  assert.match(watch([command('one'), result('one')]), /EVENT:stall/);
+  assert.match(watch([command('one'), { ...f.instance, pid: 42 }]), /EVENT:stall/);
+  assert.match(watch([]), /EVENT:stall/);
+}));

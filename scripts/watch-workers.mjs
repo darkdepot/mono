@@ -55,6 +55,7 @@ const DEFAULT_REPEAT_SEC = 300;
 const DEFAULT_INTERVAL_SEC = 15;
 const DEFAULT_IDLE_SEC = 300;
 const LOG_READ_BYTES = 4096;
+const RUNNING_COMMAND_LIMIT_MS = 60 * 60 * 1000;
 // A busy or faulty worker can append forever while startup is incomplete.
 // Bound synchronous work per watcher pass; the cursor below resumes on the
 // next pass so a later thread.started event remains discoverable.
@@ -186,9 +187,11 @@ const emittedReportVersions = new Map();
 const emittedRejectedPhaseVersions = new Map();
 const emittedGateAckVersions = new Map();
 const logInspectionStates = new Map();
+const commandObservations = new Map();
 const warnedOnce = new Set();
 let lastEventAtMs = null;
 let oneShotNeedsRescan = false;
+let immediateScanScheduled = false;
 
 function warnOnce(message) {
   if (warnedOnce.has(message)) return;
@@ -250,6 +253,7 @@ function inspectLog(filePath, transport) {
         dev: stat.dev,
         ino: stat.ino,
         offset: 0,
+        lineStart: 0,
         pending: "",
         pendingOverflow: false,
         firstLine: null,
@@ -257,6 +261,8 @@ function inspectLog(filePath, transport) {
         hasJsonEvent: false,
         hasThreadStarted: false,
         terminalTargetSize: null,
+        commands: new Set(),
+        commandRun: {},
       };
       logInspectionStates.set(filePath, state);
     }
@@ -267,47 +273,57 @@ function inspectLog(filePath, transport) {
       LOG_SCAN_MAX_BYTES,
       Math.max(0, scanTargetSize - state.offset)
     );
-    while (remaining > 0 && !state.hasThreadStarted) {
+    while (remaining > 0) {
       const requested = Math.min(LOG_READ_BYTES, remaining);
+      const chunkStart = state.offset;
       const bytesRead = fs.readSync(descriptor, buffer, 0, requested, state.offset);
       if (bytesRead === 0) break;
       state.offset += bytesRead;
       remaining -= bytesRead;
-      state.pending += buffer.toString("utf8", 0, bytesRead);
-
-      if (state.pendingOverflow) {
-        const overflowEnd = state.pending.indexOf("\n");
-        if (overflowEnd < 0) {
-          state.pending = "";
-          continue;
+      let consumed = 0;
+      while (consumed < bytesRead) {
+        const newline = buffer.subarray(0, bytesRead).indexOf(10, consumed);
+        const end = newline < 0 ? bytesRead : newline;
+        if (!state.pendingOverflow) {
+          state.pending += buffer.toString("utf8", consumed, end);
+          if (state.pending.length > LOG_PENDING_MAX_CHARS) {
+            if (state.firstLine === null) state.firstLine = state.pending.slice(0, DETAIL_SNIPPET_LENGTH);
+            state.pending = state.pending.slice(0, LOG_PENDING_MAX_CHARS);
+            state.pendingOverflow = true;
+          }
+        }
+        if (newline < 0) break;
+        let line = state.pending;
+        if (state.pendingOverflow && state.hasThreadStarted) {
+          // Keep only the prefix/offset while a record is unfinished. Once it
+          // ends, native JSON parsing still sees IDs after arbitrarily long output.
+          const record = Buffer.alloc(chunkStart + newline - state.lineStart);
+          const count = fs.readSync(descriptor, record, 0, record.length, state.lineStart);
+          line = record.toString("utf8", 0, count);
         }
         state.completeLineCount += 1;
-        state.pending = state.pending.slice(overflowEnd + 1);
-        state.pendingOverflow = false;
-      }
-
-      let newlineIndex;
-      while ((newlineIndex = state.pending.indexOf("\n")) >= 0) {
-        const line = state.pending.slice(0, newlineIndex);
-        state.pending = state.pending.slice(newlineIndex + 1);
-        state.completeLineCount += 1;
-        if (state.firstLine === null) state.firstLine = line;
-        const event = parseJsonEventLine(line);
+        if (state.firstLine === null) state.firstLine = line.slice(0, LOG_PENDING_MAX_CHARS);
+        const event = !state.pendingOverflow || state.hasThreadStarted ? parseJsonEventLine(line) : null;
         if (event !== null) {
           state.hasJsonEvent = true;
         }
         if (event !== null && transport.startIdentity(event) !== null) {
           state.hasThreadStarted = true;
-          break;
+          state.terminalTargetSize = null;
         }
-      }
-
-      if (state.pending.length > LOG_PENDING_MAX_CHARS) {
-        if (state.firstLine === null) {
-          state.firstLine = state.pending.slice(0, DETAIL_SNIPPET_LENGTH);
+        if (transport.transport === "codex-cli") {
+          if (event?.type === "thread.started") {
+            state.commands.clear();
+            state.commandRun = {};
+          }
+          if (event?.type === "item.started" && event.item?.type === "command_execution" &&
+              state.hasThreadStarted && typeof event.item.id === "string" && event.item.id) state.commands.add(event.item.id);
+          if (event?.type === "item.completed") state.commands.delete(event.item?.id);
         }
         state.pending = "";
-        state.pendingOverflow = true;
+        state.pendingOverflow = false;
+        state.lineStart = chunkStart + newline + 1;
+        consumed = newline + 1;
       }
     }
 
@@ -318,6 +334,7 @@ function inspectLog(filePath, transport) {
       }
       if (event !== null && transport.startIdentity(event) !== null) {
         state.hasThreadStarted = true;
+        state.terminalTargetSize = null;
       }
     }
 
@@ -330,6 +347,9 @@ function inspectLog(filePath, transport) {
       hasCompleteLine: state.completeLineCount > 0,
       hasTrailingPartial: state.pendingOverflow || state.pending.length > 0,
       observedSize: stat.size,
+      caughtUp: state.offset >= stat.size,
+      commandRun: state.offset >= stat.size && state.commands.size
+        ? state.commandRun : null,
       scanComplete:
         state.hasThreadStarted || state.offset >= scanTargetSize,
     };
@@ -838,13 +858,24 @@ function waitingContinuation(log, entry, nowMs) {
   return candidates.some(file => readGateAckAt(file, log)?.status === "gates-passed");
 }
 
-function checkLog(log, gateAck, report, registry, nowMs) {
+function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
   const registryEntry = registry[log.issue];
   const transport = workerTransport(registryEntry?.transport) ?? workerTransport("codex-cli");
   const inspection = inspectLog(log.filePath, transport);
   const { firstLine, hasJsonEvent } = inspection;
   const ageSec = Math.round((nowMs - transport.activityTime(log.stat)) / 1000);
   const inactiveSpawn = inactiveGateSpawnState(log, registryEntry, nowMs);
+  const pidState = writerPidState(registryEntry);
+  const commandRun = transport.runningCommandState?.(registryEntry) ?? inspection.commandRun;
+  let command = commandObservations.get(log.filePath);
+  const commandInspectionPending = transport.transport === "codex-cli" && inspection.caughtUp === false;
+  if ((!commandRun && !commandInspectionPending) || pidState !== "alive") {
+    commandObservations.delete(log.filePath);
+    command = null;
+  } else if (commandRun && (!command || command.run !== commandRun || command.pid !== registryEntry.pid || command.procStart !== registryEntry.procStart)) {
+    command = { run: commandRun, pid: registryEntry.pid, procStart: registryEntry.procStart, since: nowMs };
+    commandObservations.set(log.filePath, command);
+  }
 
   // The producer barrier intentionally exposes an inactive registry entry
   // before Codex can emit thread.started. Any output without a valid
@@ -1014,7 +1045,20 @@ function checkLog(log, gateAck, report, registry, nowMs) {
     }
   }
 
-  const pidState = writerPidState(registry[log.issue]);
+  // An unfinished protocol wait never buys another command allowance after
+  // its own deadline. Once the log continues, last_wait becomes history.
+  const continuationPending = registryEntry?.last_wait &&
+    !(log.stat.mtimeMs >= Date.parse(registryEntry.last_wait.consumedAt));
+  // Catch-up may defer only ordinary classification, never a protocol deadline.
+  // A large completion record must not leave a stale start in the command set.
+  if (!pausedOnAck && !continuationPending && !phasePending &&
+      inspection.caughtUp === false && pidState === "alive") {
+    oneShotNeedsRescan = true;
+    return;
+  }
+  const ordinaryCommand = !pausedOnAck && !continuationPending && !phasePending ? command : null;
+  if (ordinaryCommand && nowMs - command.since < RUNNING_COMMAND_LIMIT_MS) return;
+
   if (pidState === "dead") {
     emitEvent(
       "dead",
@@ -1032,10 +1076,12 @@ function checkLog(log, gateAck, report, registry, nowMs) {
       nowMs
     );
   } else {
+    if (ordinaryCommand?.expiredEmitted) return;
+    if (ordinaryCommand) ordinaryCommand.expiredEmitted = true;
     emitEvent(
       "stall",
       log.issue,
-      `log ${log.name} last event ${ageSec}s ago (stall threshold ${args.stallSec}s)`,
+      `log ${log.name} last event ${ageSec}s ago (stall threshold ${args.stallSec}s)${ordinaryCommand ? "; идёт команда дольше 60 минут" : ""}`,
       `stall:${log.name}`,
       nowMs
     );
@@ -1127,12 +1173,14 @@ function checkPhase(log, entry, nowMs) {
   const timeout = entry.confirmationTimeoutSec ?? deliveryConfig().confirmationTimeoutSec;
   const withinDeadline = Number.isFinite(timeout) && timeout > 0 && nowMs - latest.publishedAtMs >= 0 && nowMs - latest.publishedAtMs <= timeout * 1000;
   const transport = workerTransport(entry.transport);
-  if (!withinDeadline || !transport?.waitingPhase) return withinDeadline;
-  return writerPidState(entry) === "alive" && processStart(entry.pid) === entry.procStart &&
+  const waiting = !withinDeadline || !transport?.waitingPhase ? withinDeadline :
+    writerPidState(entry) === "alive" && processStart(entry.pid) === entry.procStart &&
     transport.waitingPhase(entry, latest.file, confirmation) !== null;
+  return { waiting, pending: true };
 }
 
 function scan() {
+  oneShotNeedsRescan = false;
   const nowMs = Date.now();
   if (!args.once) atomicJson(path.join(args.root, "watcher.json"), { pid: process.pid, procStart, packVersion, startedAt,
     beatAt: new Date(nowMs).toISOString(), intervalSec: args.intervalSec });
@@ -1199,10 +1247,14 @@ function scan() {
     checkGateAck(attemptLog, gateAck, nowMs);
     checkReport(log, report, nowMs);
     const waitingOnPhase = checkPhase(attemptLog, registryEntry, nowMs);
-    if (!waitingOnPhase) checkLog(attemptLog, gateAck, report, registry, nowMs);
+    if (!waitingOnPhase?.waiting) checkLog(attemptLog, gateAck, report, registry, nowMs, waitingOnPhase?.pending);
   }
   checkRegistry(registry, nowMs);
   checkIdle(registrySnapshot, controlState, nowMs);
+  if (!args.once && oneShotNeedsRescan && !immediateScanScheduled) {
+    immediateScanScheduled = true;
+    setImmediate(() => { immediateScanScheduled = false; scan(); });
+  }
 }
 
 console.error(
@@ -1210,7 +1262,6 @@ console.error(
 );
 
 do {
-  oneShotNeedsRescan = false;
   scan();
 } while (args.once && oneShotNeedsRescan);
 if (!args.once) {
