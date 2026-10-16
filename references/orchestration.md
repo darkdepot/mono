@@ -1089,7 +1089,11 @@ never report it as applied.
 Do not steer progressing workers, raise proof mid-flight or intervene for polling
 alone. Intervene on reported questions/blockers, exhausted work, repeated failures
 without progress, gross scope divergence or unsafe mutation; inspect latest state
-first. Check startup registry gates before ack/report routing: malformed/absent
+first. An unconfirmed watcher alarm is a prompt to inspect, not an owner blocker.
+A no-change wakeup (false alarm after inspection, already-consumed report, or no
+events) produces no owner message and no routine ledger entry. Record actual
+observation recovery and every healing step/result; retain escalation after the
+healing ladder or an Always-ask decision. Check startup registry gates before ack/report routing: malformed/absent
 with ack is a producer contract error; reconcile/retire and create a verified new
 attempt with correct gates, never same-attempt nudge. After consumption, gates
 must be absent. Finish private journal recovery before phase routing.
@@ -1118,7 +1122,21 @@ Startup suppression remains stallSec × 4 from log silence. With --config, watch
 also validates against its effective threshold. For wait + .applied, while log
 mtime < last_wait.consumedAt, continuation is ≤ ONE stallSec from consumedAt:
 finite, not future, 0 ≤ age < stallSec. Never renewable; log continuation or
-expiry restores ordinary monitoring.
+expiry restores ordinary monitoring. These protocol deadlines take priority over
+unfinished commands, including when a child process remains alive.
+
+In ordinary work, a silent log with a live writer (`writerPidState`) and an
+unfinished command defers stall for at most a fixed 60 minutes from the watcher's
+first observation of that state. Codex tracks every `command_execution`
+`item.started` by `item.id` until its `item.completed`, resetting on
+`thread.started`; Claude reuses current-instance Bash `tool_use.id` /
+`tool_result.tool_use_id` tracking. Completing one parallel command leaves the
+others pending. Process descendants alone prove no command. No log timestamp
+backdates this allowance; watcher restart starts it again. At the limit emit one
+stall marked «идёт команда дольше 60 минут», then inspect progress as usual.
+No unfinished command means ordinary stall; missing writer evidence and `dead`
+remain unchanged. A hung command that keeps writing progress still has a fresh
+log: detecting it remains outside this rule.
 
 No-ack/no-report exit: resume the same thread once demanding its capsule/report;
 second reportless exit or failed resume rebuilds from Linear plus capsule/worktree
@@ -1130,7 +1148,7 @@ discard changes or bypass the mandatory clean-tree start gate. A clean recovery
 checkpoint needs the preflight owner before a verified new attempt. Halt refuses
 new spawns/resumes, not running workers. Escalate only after the healing ladder
 (nudge → respawn → session rotation) is exhausted or an Always-ask decision exists.
-Keep decisions/results in ledger. Delivery budget is guidance, not a gate.
+Keep actual decisions/results in ledger; a no-change wakeup is neither. Delivery budget is guidance, not a gate.
 Material scope drift parks scope-drift-needs-handoff and goes to owner decision.
 
 ## Review decline approval
@@ -1612,7 +1630,9 @@ directory's history; retired Issues' logs are outside its scope.
   never use the product/worktree current directory.
   Keep it as a tracked background process of the session, with its stdout
   observed by the runtime's monitor primitive (Claude Code: Monitor with
-  `persistent: true`) or periodic wakeups; record the latter binding in the ledger.
+  `persistent: true` or equivalent) continuously for the whole wave.
+  Periodic wakeups are a fallback only as an explicitly recorded degradation;
+  record the cause and binding in the ledger, and record actual monitoring recovery.
   Under `launch.lock`, spawn/resume require a pulse no older than three intervals,
   no more than one second in the future, and a live pid with matching procStart.
   `watcher-required` gives the start command; refusal registers no attempt and
@@ -1627,8 +1647,9 @@ directory's history; retired Issues' logs are outside its scope.
   Deduplication stays per file/mtime/size; the confirmation wait uses the latest
   publishedAt, then sequence, rather than the furthest stage.
 - Watcher liveness events are Monitoring Protocol triggers: treat `stall`,
-  `dead`, and `spawn-fail` lines exactly like a worker-reported blocker — read
-  the worker's latest state first, then act. `spawn-fail` feeds the spawn
+  `dead`, and `spawn-fail` lines as inspection triggers — read the worker's
+  latest state first, then act on confirmed need. An alarm alone is no owner
+  blocker; false alarms and other no-change wakeups stay silent in chat and ledger. `spawn-fail` feeds the spawn
   verification kill+retry rule in Worker Transports. Non-JSON contamination
   before later valid JSON events produces one diagnostic warning on stderr,
   not a repeated watcher event, and does not suppress stall/dead checks.
@@ -1747,7 +1768,8 @@ directory's history; retired Issues' logs are outside its scope.
   on the first stall.
 - Forced worker termination is a process-tree operation: starting from the worker PID recorded in the registry, enumerate descendants recursively with `pgrep -P`, terminate the captured tree leaf-to-root and the wrapper last (never kill only the wrapper PID), then prove from the captured PID set plus an exact transport-thread-id process search that no survivor remains before resume, respawn, or session rotation. A survivor can retain the transport thread and hang every later resume.
 - Every healing step and its result are mandatory ledger entries — a
-  watcher event that triggered intervention is never routine polling.
+  confirmed intervention is never routine polling. An inspected alarm with no
+  change creates neither a routine ledger entry nor an owner message.
 
 ## Decision Briefs
 

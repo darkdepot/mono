@@ -153,7 +153,8 @@ Workflow states:
      `references/install.md`; each product owns its launch halt and read-back.
    - Start the heartbeat watcher before the first spawn of a wave:
      `node '<pack-root>/scripts/watch-workers.mjs' --root ~/.mono-agent-workflow/orchestrator/<product>`
-     via the runtime Monitor primitive (Heartbeat in
+     via continuous runtime monitoring (`persistent: true` or equivalent) for
+     the whole wave (Heartbeat in
      `references/orchestration.md`); no worker spawns until it is running.
      Substitute `<pack-root>` with the loaded pack root;
      never use the product/worktree current directory.
@@ -195,7 +196,10 @@ Workflow states:
      Keep attempts.json when an entry retires; never reset the cap.
 5. `monitor`
    - Record PR-opening and accepted ship heads with `head`, then collect force-push events with `harvest` after landing, per [landing accounting](references/landing.md#head-observations-and-refresh-history).
-   - Apply Monitoring Protocol before every event/poll. Validate startup gates,
+   - Apply Monitoring Protocol before every event/poll. No-change wakeups
+     (false alarm after inspection, already-consumed report, or no events) create
+     no owner message or routine ledger entry. Record actual observation recovery
+     and healing steps/results. An unconfirmed alarm is no owner blocker. Validate startup gates,
      ack status and current-attempt provenance before report routing. Private
      consumed records guide crash recovery; mailbox tombstones never authorize it.
      Ack/report ambiguity requires transport/worktree reconciliation. A blocked
@@ -231,7 +235,11 @@ Workflow states:
      pause is not death; reconcile unconsumed ack first. Wait consumption keeps
      suppression until log continues, at most one stallSec from fixed consumedAt.
      Phase confirmation wait
-     is bounded by config. No report: same-thread resume once to demand capsule
+     is bounded by config. These deadlines take priority over unfinished commands.
+     Ordinary silent live writers with pending commands defer stall for a fixed
+     60 minutes from first watcher observation; process descendants alone prove
+     nothing. At «идёт команда дольше 60 минут», inspect progress as before.
+     Missing writer evidence and dead remain unchanged. No report: same-thread resume once to demand capsule
      and report; failed recovery uses a new attempt within cap, not a restarted
      Issue. Record every healing step/result. Do not steer progressing workers.
    - Backup switching is an orchestrator decision, never failure classification.
@@ -312,10 +320,11 @@ Rules:
   report; continue the stage, do not restart the Issue.
 - The heartbeat watcher (`scripts/watch-workers.mjs` from the pack root)
   is started before the first spawn and runs for
-  the whole wave; running a wave without it is a degradation recorded in the
-  ledger (Heartbeat in
+  the whole wave with continuously monitored stdout (`persistent: true` or
+  equivalent). Periodic wakeups are only an explicitly recorded degradation,
+  with cause/binding and actual recovery recorded in the ledger (Heartbeat in
   `references/orchestration.md`).
-- Keep the ledger free of secrets and routine polling entries.
+- Keep the ledger free of secrets and routine polling/no-change wakeup entries.
 - Keep user-facing output in the project config language (Russian by
   default); ledger and mailbox stay English except the fixed «Решил сам:»
   term.

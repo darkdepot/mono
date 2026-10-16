@@ -2338,3 +2338,80 @@ setInterval(() => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('watcher defers a silent live Codex command but still detects an idle CLI and dead writer', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-command-watch-'));
+  const env = watcherProcessFixture(root), issue = 'MONO-994';
+  const log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+  const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1,
+    pid: process.pid, procStart: 'fixture-start', thread_id: 'fixture-thread', log };
+  const start = id => ({ type: 'item.started', item: { type: 'command_execution', id } });
+  const done = id => ({ type: 'item.completed', item: { type: 'command_execution', id } });
+  const thread = { type: 'thread.started', thread_id: entry.thread_id };
+  const journal = (events, change = {}) => {
+    write(log, events.map(e => JSON.stringify(e)).join('\n') + '\n');
+    const quiet = new Date(Date.now() - 400_000); fs.utimesSync(log, quiet, quiet);
+    write(path.join(root, 'workers.json'), { [issue]: { ...entry, ...change } });
+  };
+  const watch = () => pass(run(process.execPath, ['scripts/watch-workers.mjs', '--root', root, '--once'], checkout, env)).stdout;
+  try {
+    write(path.join(root, 'control.json'), { state: 'active' });
+    journal([thread, start('one')]); assert.doesNotMatch(watch(), /EVENT:(stall|dead)/);
+    journal([thread, start('one'), start('two'), done('one')]); assert.doesNotMatch(watch(), /EVENT:(stall|dead)/);
+    journal([thread, start('one'), done('one')]); assert.match(watch(), /EVENT:stall/);
+    const largeDone = { ...done('one'), item: { ...done('one').item, aggregated_output: 'x'.repeat(300_000) } };
+    journal([thread, start('one'), start('two'), largeDone]); assert.doesNotMatch(watch(), /EVENT:(stall|dead)/);
+    journal([thread, start('one'), largeDone]); assert.match(watch(), /EVENT:stall/);
+    journal([thread, start('one'), thread]); assert.match(watch(), /EVENT:stall/);
+    journal([thread]); assert.match(watch(), /EVENT:stall/);
+    journal([thread, start('one')], { pid: 2147483647 }); assert.match(watch(), /EVENT:dead/);
+    journal([thread, start('one')], { pid: null }); assert.match(watch(), /EVENT:dead/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('watcher command allowance uses observation time, expires once and restarts with the watcher', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-command-clock-'));
+  const env = watcherProcessFixture(root), pack = path.join(root, 'pack'), issue = 'MONO-994';
+  try {
+    copyPluginFixture(pack);
+    const watcher = path.join(pack, 'scripts/watch-workers.mjs');
+    write(watcher, fs.readFileSync(watcher, 'utf8').replace('const RUNNING_COMMAND_LIMIT_MS = 60 * 60 * 1000;', 'const RUNNING_COMMAND_LIMIT_MS = 2000;'));
+    const log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+    const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1, pid: process.pid,
+      procStart: 'fixture-start', thread_id: 'fixture-thread', log };
+    write(log, [{ type: 'thread.started', thread_id: entry.thread_id },
+      { type: 'item.started', item: { id: 'command', type: 'command_execution' } }].map(e => JSON.stringify(e)).join('\n') + '\n');
+    const quiet = new Date(Date.now() - 7200_000); fs.utimesSync(log, quiet, quiet);
+    const claudeIssue = 'MONO-995', claudeLog = path.join(root, 'logs', `${claudeIssue}-mono-deliver-a1.jsonl`);
+    const claudeEntry = { ...entry, issue: claudeIssue, transport: 'claude-cli', log: claudeLog };
+    write(claudeLog, [{ type: 'mono.worker-instance', ...claudeEntry },
+      { type: 'system', subtype: 'init', session_id: entry.thread_id },
+      { type: 'assistant', session_id: entry.thread_id, message: { content: [
+        { type: 'tool_use', id: 'bash', name: 'Bash', input: { command: 'node scripts/verify.mjs' } }] } }
+    ].map(e => JSON.stringify(e)).join('\n') + '\n');
+    fs.utimesSync(claudeLog, quiet, quiet);
+    write(path.join(root, 'workers.json'), { [issue]: entry, [claudeIssue]: claudeEntry });
+    write(path.join(root, 'control.json'), { state: 'active' });
+    const runner = path.join(root, 'clock.mjs');
+    write(runner, `let clock = Date.now(); Date.now = () => clock;
+// Run actual scan callbacks with a controlled observer clock; no production flag.
+globalThis.setInterval = scan => {
+  clock += 1999; scan(); console.log('fixture:before-limit');
+  clock += 1; scan(); console.log('fixture:at-limit');
+  clock += 301000; scan(); console.log('fixture:after-repeat');
+};
+await import(${JSON.stringify(pathToFileURL(watcher).href)});
+`);
+    const watch = () => pass(run(process.execPath, [runner, '--root', root], checkout, env)).stdout;
+    for (let restart = 0; restart < 2; restart++) {
+      const output = watch();
+      assert.doesNotMatch(output.split('fixture:before-limit')[0], /EVENT:stall/, 'old log cannot backdate the observation clock');
+      assert.match(output.split('fixture:at-limit')[0], /EVENT:stall.*идёт команда дольше 60 минут/);
+      for (const key of [issue, claudeIssue]) {
+        assert.equal((output.match(new RegExp('EVENT:stall ' + key, 'g')) ?? []).length, 1,
+          'each transport emits one timeout for the same unfinished command');
+        assert.match(output.split('fixture:at-limit')[0], new RegExp('EVENT:stall ' + key + '.*идёт команда дольше 60 минут'));
+      }
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

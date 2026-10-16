@@ -269,6 +269,11 @@ function currentState(entry) {
   finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
+function runningCommandState(entry) {
+  const state = currentState(entry);
+  return state?.calls.size ? state.instance : null;
+}
+
 function waitingPhase(entry, reportFile, confirmationFile) {
   const calls = new Map();
   for (const [id, input] of currentState(entry)?.calls ?? []) {
@@ -356,7 +361,7 @@ export const claudeCli = Object.freeze({
   handshakeModes: Object.freeze(["resume"]), correlatesReports: true, logLiveness: true,
   deliveryDifferences: Object.freeze(["Start acknowledgement stops the worker; the orchestrator applies/read-backs moves and resumes the same session.",
     "Pre-PR review uses external collection on committed heads only; no in-worker review pass."]),
-  waitingPhase, turnState, activityTime: stat => stat.mtimeMs, readLog: readJsonLines, attemptUsage, readingInputs, commandOutput,
+  waitingPhase, runningCommandState, turnState, activityTime: stat => stat.mtimeMs, readLog: readJsonLines, attemptUsage, readingInputs, commandOutput,
   modelMetadata: (event, source) => event.type === "mono.launch" ? { model: event.model, effort: event.effort, source }
     : startIdentity(event) ? { model: event.model, effort: "unavailable: effort is requested, not observed", source } : null,
   journalRunner: "scripts/transports/claude-runner.mjs",
