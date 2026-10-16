@@ -214,8 +214,17 @@ test('complete snapshot examples pass through CLI and exported API with the same
   }
 });
 
-test('multiline inline code and escaped backticks stay literal during normalization', () => {
-  const body = idea('`first\n\\* second  \nlast`');
+test('multiline inline code in an idea section refuses unsupported-format (d-004)', () => {
+  for (const code of ['`first\n\\* second  \nlast`', '`first\n- \nlast`', '`first\n+ \nlast`', '``first\nlast``']) {
+    const body = idea(code);
+    assert.throws(() => ideaFingerprint(body), { code: 'unsupported-format' });
+    const options = { ...input(), mode: 'fresh' }; options.project.body = body;
+    expectCode(options, 'unsupported-format');
+  }
+});
+
+test('editing single-line inline code changes its literal fingerprint', () => {
+  const body = idea('`first \\* second  `');
   assert.notEqual(ideaFingerprint(body), ideaFingerprint(body.replace('\\* second', '* second')));
   assert.notEqual(ideaFingerprint(body), ideaFingerprint(body.replace('second  ', 'second')));
   assert.equal(ideaFingerprint(idea('\\`ordinary \\* text')), ideaFingerprint(idea('\\`ordinary * text')));

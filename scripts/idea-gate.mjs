@@ -94,7 +94,11 @@ function ordinary(text) {
         if (text[end - 1] !== '`' && text[end + run.length] !== '`') break;
         end += run.length;
       }
-      if (end !== -1) { append(text.slice(i, end + run.length), true); i = end + run.length; continue; }
+      if (end !== -1) {
+        const span = text.slice(i, end + run.length);
+        if (span.includes('\n')) fail('unsupported-format');
+        append(span, true); i = end + run.length; continue;
+      }
       append(run); i += run.length;
     } else if (text[i] === '\\' && text[i + 1] && /[\\`*\[\]_#>]/.test(text[i + 1])) {
       const next = text[i + 1];

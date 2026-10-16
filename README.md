@@ -106,6 +106,7 @@ Defaults are `ru`/`en` from normalized `project.language`. Snapshot examples and
 live Linear serialization samples: [fixtures](scripts/fixtures/idea-gate/README.md).
 `fingerprint --snapshot FILE` hashes the four sections as canonical UTF-8 bytes;
 inline code and fences remain literal. The project body stays unchanged.
+Known limitation: inline code spanning multiple source lines refuses `unsupported-format`.
 
 | Surface | What belongs there |
 | --- | --- |
