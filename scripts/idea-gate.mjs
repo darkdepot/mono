@@ -50,7 +50,9 @@ function blocks(markdown) {
   const lines = markdown.split('\n'), result = [];
   for (let i = 0; i < lines.length; i++) {
     const open = lines[i].match(/^ {0,3}(`{3,}|~{3,})([^\r]*)\r?$/);
-    if (!open) { result.push({ text: lines[i], fenced: false }); continue; }
+    if (!open || (open[1][0] === '`' && open[2].includes('`'))) {
+      result.push({ text: lines[i], fenced: false }); continue;
+    }
     const fence = open[1], start = i, content = [];
     for (i++; i < lines.length; i++) {
       const close = lines[i].match(/^ {0,3}(`+|~+)[ \t]*\r?$/);
@@ -93,8 +95,11 @@ function ordinary(text) {
   let inList = false;
   return lines.map(line => {
     const raw = line.projection;
-    if (/^(?: {2,}|\t)(?:[*+-]|\d+[.)])[ \t]+/.test(raw) ||
-        /^ {0,3}\|?\s*:?-+:?\s*\|(?:\s*:?-+:?\s*\|?)+\s*$/.test(raw)) fail('unsupported-format');
+    if (/^(?: {2,}|[ \t]*\t[ \t]*)(?:[*+-]|\d+[.)])[ \t]+/.test(raw)) fail('unsupported-format');
+    if (raw.includes('|')) {
+      const cells = raw.trim().replace(/^\||\|$/g, '').split('|');
+      if (cells.every(cell => /^\s*:?-+:?\s*$/.test(cell))) fail('unsupported-format');
+    }
     while (line.parts.length && !line.parts.at(-1).literal) {
       const last = line.parts.at(-1);
       last.text = last.text.replace(/[ \t\r]+$/, '');

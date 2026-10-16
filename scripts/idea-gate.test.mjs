@@ -234,3 +234,13 @@ test('package approval hashes bind both snapshot file bytes and project comment 
   options.approval.body += '\n'; expectCode(options, 'read-failed');
   options.approval.body = body; options.records.comments.at(-1).body += '\n'; expectCode(options, 'read-failed');
 });
+
+test('inline backtick runs cannot open fences; prohibited Markdown variants fail closed', () => {
+  const inline = idea('```a`b```');
+  assert.notEqual(ideaFingerprint(inline), ideaFingerprint(inline.replace('a`b', 'a`c')));
+  for (const text of ['| H |\n| --- |\n| x |', '- parent\n \t- child']) {
+    assert.throws(() => ideaFingerprint(idea(text)), { code: 'unsupported-format' });
+    const options = { ...input(), mode: 'fresh' }; options.project.body = idea(text);
+    expectCode(options, 'unsupported-format');
+  }
+});
