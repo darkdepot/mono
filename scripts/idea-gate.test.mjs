@@ -198,6 +198,25 @@ test('CLI fingerprint and configured custom headings use the same canonical text
   assert.equal(custom.status, 0, custom.stdout + custom.stderr);
 }));
 
+test('CLI config loading rejects empty or whitespace-padded heading names', () => tempSnapshot(root => {
+  const options = input();
+  writeJson(root, 'idea/project.json', options.project);
+  writeJson(root, 'idea/idea-records.json', options.records);
+  const file = path.join(root, 'idea.md'); fs.writeFileSync(file, idea());
+  for (const what of [' What', 'What ', '', ' ', '\tWhat', 'What\t']) {
+    writeJson(root, 'config.json', { ideaGate: { since: options.since,
+      headings: { what, why: 'Why', outcome: 'Target outcome', unknowns: 'Unknowns' } } });
+    for (const args of [
+      ['check', '--mode', 'fresh', '--snapshot', root],
+      ['fingerprint', '--snapshot', file],
+    ]) {
+      const result = cli([...args, '--config', path.join(root, 'config.json')]);
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.equal(result.stdout.trim(), `idea-gate: fail: read-failed project=${args[0] === 'check' ? projectId : null}`);
+    }
+  }
+}));
+
 test('complete snapshot examples pass through CLI and exported API with the same verdicts', () => {
   for (const [name, code] of [['project', 'pass'], ['legacy', 'legacy-before-cutoff'], ['issue-only', 'issue-only']]) {
     const root = path.join(import.meta.dirname, 'fixtures/idea-gate', name);

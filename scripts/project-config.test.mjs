@@ -19,6 +19,7 @@ test('ideaGate validates optional cutoff and four custom heading names', () => {
       [{ since: '2026-02-30' }, false], [{ since: '2026-10-17T00:00:00Z' }, false],
       [{ headings: ['A', 'B', 'C', 'D'] }, false], [{ headings: { what: 'A' } }, false],
       [{ headings: 'ru' }, false],
+      ...[' A', 'A ', '', ' ', '\tA', 'A\t'].map(what => [{ headings: { what, why: 'B', outcome: 'C', unknowns: 'D' } }, false]),
       [{ headings: { what: 'A', why: 'A', outcome: 'C', unknowns: 'D' } }, false],
       [{ headings: { what: 'A\nB', why: 'B', outcome: 'C', unknowns: 'D' } }, false],
     ]) {

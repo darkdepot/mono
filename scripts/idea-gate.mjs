@@ -26,7 +26,7 @@ function date(value, cutoff = false) {
 function headingDictionary(headings = 'ru') {
   const dictionary = typeof headings === 'string' ? DEFAULT_HEADINGS[headings] : headings;
   if (!object(dictionary) || Object.keys(dictionary).length !== 4 ||
-      KEYS.some(key => typeof dictionary[key] !== 'string' || !dictionary[key].trim() || /[\r\n]/.test(dictionary[key])) ||
+      KEYS.some(key => typeof dictionary[key] !== 'string' || !dictionary[key] || dictionary[key] !== dictionary[key].trim() || /[\r\n]/.test(dictionary[key])) ||
       new Set(Object.values(dictionary)).size !== 4) fail('read-failed');
   return dictionary;
 }
