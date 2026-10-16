@@ -939,12 +939,6 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
     emitEvent(event, log.issue, `${turn.status} turn without an attempt-correlated terminal report; resume the same session for a report`, `${event}:${log.name}`, nowMs);
     return;
   }
-  // Finish the bounded journal scan before judging outstanding commands.
-  // A large completion record must not leave a stale start in the command set.
-  if (inspection.caughtUp === false && pidState === "alive") {
-    if (args.once) oneShotNeedsRescan = true;
-    return;
-  }
   if (ageSec < args.stallSec) return;
   // One fixed post-consumption window, only while the waiting command's log
   // has not resumed. Reading the tombstone never renews consumedAt.
@@ -1049,6 +1043,13 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
   // its own deadline. Once the log continues, last_wait becomes history.
   const continuationPending = registryEntry?.last_wait &&
     !(log.stat.mtimeMs >= Date.parse(registryEntry.last_wait.consumedAt));
+  // Catch-up may defer only ordinary classification, never a protocol deadline.
+  // A large completion record must not leave a stale start in the command set.
+  if (!pausedOnAck && !continuationPending && !phasePending &&
+      inspection.caughtUp === false && pidState === "alive") {
+    if (args.once) oneShotNeedsRescan = true;
+    return;
+  }
   const ordinaryCommand = !pausedOnAck && !continuationPending && !phasePending ? command : null;
   if (ordinaryCommand && nowMs - command.since < RUNNING_COMMAND_LIMIT_MS) return;
 

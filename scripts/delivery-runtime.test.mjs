@@ -2415,3 +2415,45 @@ await import(${JSON.stringify(pathToFileURL(watcher).href)});
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('watcher protocol deadlines take priority on the first scan of a large command log', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-command-deadline-'));
+  const env = watcherProcessFixture(root), issue = 'MONO-994';
+  try {
+    const log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+    const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1,
+      packVersion: 'test', sourceCommit: 'a'.repeat(40), surfaceRevision: 4,
+      pid: process.pid, procStart: 'fixture-start', thread_id: 'fixture-thread', log,
+      worktree: path.join(root, 'repo'), gates: ['identity'] };
+    write(log, [{ type: 'thread.started', thread_id: entry.thread_id },
+      { type: 'item.started', item: { type: 'command_execution', id: 'running' } },
+      { type: 'item.completed', item: { type: 'agent_message', id: 'message', text: 'x'.repeat(600_000) } }
+    ].map(e => JSON.stringify(e)).join('\n') + '\n');
+    const quiet = new Date(Date.now() - 600_000); fs.utimesSync(log, quiet, quiet);
+    write(path.join(root, 'workers.json'), { [issue]: entry }); write(path.join(root, 'control.json'), { state: 'active' });
+    write(path.join(root, 'reports', `${issue}-gate-ack-a1.json`), { issue, phase: 'gate', status: 'gates-passed',
+      gates: [{ gate: 'identity', status: 'pass', evidence: 'fixture' }] });
+    const runner = path.join(root, 'first-scan.mjs');
+    write(runner, `globalThis.setInterval = () => console.log('fixture:after-first-scan');
+await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-workers.mjs')).href)});
+`);
+    const check = description => {
+      const output = pass(run(process.execPath, [runner, '--root', root], checkout, env)).stdout;
+      assert.match(output.split('fixture:after-first-scan')[0], /EVENT:stall/,
+        description + ' must not wait for log catch-up');
+    };
+    check('expired gate wait');
+    const ackFile = path.join(root, 'reports', `${issue}-gate-ack-a1.json`);
+    fs.renameSync(ackFile, ackFile.replace('.json', '.applied.json'));
+    write(path.join(root, 'workers.json'), { [issue]: { ...entry, gates: undefined, handshake: 'wait',
+      last_wait: { pid: entry.pid, procStart: entry.procStart, thread_id: entry.thread_id,
+        consumedAt: new Date(Date.now() - 121_000).toISOString() } } });
+    check('expired continuation window');
+    write(path.join(root, 'workers.json'), { [issue]: { ...entry, gates: undefined, confirmationTimeoutSec: 1200 } });
+    const head = 'b'.repeat(40);
+    write(path.join(root, 'reports', `${issue}-phase-code.json`), { ...entry, head, phase: 'code', sequence: 1,
+      kind: 'phase', publishedAt: new Date(Date.now() - 1_300_000).toISOString(), linear_mutations_pending: [],
+      capsule: { phase: 'code', head, decisions: [], open_queue: [], writable_roots: [entry.worktree] } });
+    check('expired phase confirmation');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
