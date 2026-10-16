@@ -166,6 +166,22 @@ function* contentTokens(text) {
   const lines = text.split(/\r?\n/);
   let fence = null;
   let inComment = false;
+  // Scan the original line once; joined visible fragments must never open a
+  // comment that was absent from the input (for example <!<!-- x -->--).
+  const stripLineComments = (raw) => {
+    let visible = "", cursor = 0;
+    while (true) {
+      const open = raw.indexOf("<!--", cursor);
+      if (open < 0) return visible + raw.slice(cursor);
+      visible += raw.slice(cursor, open);
+      const close = raw.indexOf("-->", open + 4);
+      if (close < 0) {
+        inComment = true;
+        return visible;
+      }
+      cursor = close + 3;
+    }
+  };
   for (let index = 0; index < lines.length; index += 1) {
     const rawLine = lines[index];
     if (inComment) {
@@ -176,12 +192,7 @@ function* contentTokens(text) {
       }
       let line = rawLine.slice(close + 3);
       inComment = false;
-      line = line.replace(/<!--[^]*?-->/g, "");
-      const open = line.indexOf("<!--");
-      if (open >= 0) {
-        line = line.slice(0, open);
-        inComment = true;
-      }
+      line = stripLineComments(line);
       yield { text: line, inFence: false, index };
       continue;
     }
@@ -195,12 +206,7 @@ function* contentTokens(text) {
       yield { text: rawLine, inFence: true, index };
       continue;
     }
-    let line = rawLine.replace(/<!--[^]*?-->/g, "");
-    const open = line.indexOf("<!--");
-    if (open >= 0) {
-      line = line.slice(0, open);
-      inComment = true;
-    }
+    const line = stripLineComments(rawLine);
     yield { text: line, inFence: false, index };
   }
 }

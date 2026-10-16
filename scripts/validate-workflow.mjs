@@ -391,6 +391,15 @@ function markdownHeadings(text) {
 }
 
 function validateReadme() {
+  const headingCommentFixture = markdownHeadings("## Before\n<!--\n## Hidden\n-->\n<!<!-- x -->--\n## After\n");
+  if (JSON.stringify(headingCommentFixture.map(({ title, slug }) => [title, slug])) !== JSON.stringify([["Before", "before"], ["After", "after"]])) {
+    fail("heading-comment fixture must preserve visible headings without reparsing delimiter punctuation");
+  }
+  const ownerRuleCommentFixture = "## Owner Rules\n<!--\n- **K-01.** Visible [link](visible.md)\n## Next\n";
+  const visibleRuleLines = documentSection(ownerRuleCommentFixture, "Owner Rules");
+  if (JSON.stringify(visibleRuleLines?.filter((line) => line.startsWith("- "))) !== JSON.stringify(["- **K-01.** Visible [link](visible.md)"])) {
+    fail("owner-rule-comment fixture must keep only the visible rule");
+  }
   const text = read("README.md");
   const headings = markdownHeadings(text);
   for (const title of README_SECTIONS) {
@@ -981,6 +990,19 @@ function validateIssueOnlyLaneBehavior() {
     if (happy.approval_status !== "approved-fresh") {
       fail("resolve-issue-context issue-only approval must be approved-fresh when the fingerprint matches");
     }
+
+    const validMarker = fs.readFileSync(markerPath, "utf8");
+    for (const prefix of ["<!<!-- x -->--\n", "<!-- prior line\n--><!<!-- x -->--\n"]) {
+      fs.writeFileSync(markerPath, prefix + validMarker);
+      const visibleAfterClosedComment = JSON.parse(runNode([
+        "scripts/resolve-issue-context.mjs", "--issue", issuePath, "--marker", markerPath,
+        "--config", enableConfigPath, ...issueOnlyArgs,
+      ]));
+      if (JSON.stringify(visibleAfterClosedComment) !== JSON.stringify(happy)) {
+        fail("closed comments must not synthesize an opener that hides the next marker");
+      }
+    }
+    fs.writeFileSync(markerPath, validMarker);
 
     const upstreamDisabled = JSON.parse(
       runNode(["scripts/resolve-issue-context.mjs", "--issue", issuePath, "--marker", markerPath, "--config", ".agents/mono-workflow.config.json", ...issueOnlyArgs])
