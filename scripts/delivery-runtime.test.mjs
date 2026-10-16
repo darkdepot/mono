@@ -2320,7 +2320,7 @@ setInterval(() => {
     // The consumer publishes last_wait before renaming, between watcher scans.
     const consumedAt = new Date().toISOString();
     const continued = { ...entry, gates: undefined, last_wait: { pid: entry.pid, procStart: entry.procStart,
-      thread_id: entry.thread_id, gateAckDigest: crypto.createHash('sha256').update(fs.readFileSync(ack)).digest('hex'), consumedAt } };
+      thread_id: entry.thread_id, gateAckDigest: crypto.createHash('sha256').update(canonical(json(ack))).digest('hex'), consumedAt } };
     write(path.join(root, 'workers.json'), { [issue]: continued });
     fs.renameSync(ack, ack.replace('.json', '.applied.json'));
     const publishedAt = Date.now();
