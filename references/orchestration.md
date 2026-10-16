@@ -1126,8 +1126,9 @@ expiry restores ordinary monitoring. These protocol deadlines take priority over
 unfinished commands, including when a child process remains alive.
 
 In ordinary work, a silent log with a live writer (`writerPidState`) and an
-unfinished command defers stall for at most a fixed 60 minutes from the watcher's
-first observation of that state. Codex tracks every `command_execution`
+unfinished command defers stall using a fixed 60-minute best-effort diagnostic
+from the watcher's first observation of that state. This is not a precise execution
+deadline: observation, bounded scanning and restart effects can affect its timing. Codex tracks every `command_execution`
 `item.started` by `item.id` until its `item.completed`, resetting on
 `thread.started`; Claude reuses current-instance Bash `tool_use.id` /
 `tool_result.tool_use_id` tracking. Completing one parallel command leaves the

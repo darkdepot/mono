@@ -237,7 +237,7 @@ Workflow states:
      Phase confirmation wait
      is bounded by config. These deadlines take priority over unfinished commands.
      Ordinary silent live writers with pending commands defer stall for a fixed
-     60 minutes from first watcher observation; process descendants alone prove
+     60-minute best-effort diagnostic from first watcher observation; process descendants alone prove
      nothing. At «идёт команда дольше 60 минут», inspect progress as before.
      Missing writer evidence and dead remain unchanged. No report: same-thread resume once to demand capsule
      and report; failed recovery uses a new attempt within cap, not a restarted

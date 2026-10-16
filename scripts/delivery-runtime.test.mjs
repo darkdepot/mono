@@ -2520,3 +2520,39 @@ console.log('fixture:once-exited');
     assert.doesNotMatch(result.stdout, /EVENT:(dead|spawn-fail)/);
   }));
 });
+
+test('watcher preserves a command observation across bounded catch-up at minute 59', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-command-original-clock-'));
+  const env = watcherProcessFixture(root), issue = 'MONO-994';
+  try {
+    const log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+    const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1,
+      pid: process.pid, procStart: 'fixture-start', thread_id: 'fixture-thread', log };
+    const event = value => JSON.stringify(value) + '\n';
+    const start = id => ({ type: 'item.started', item: { type: 'command_execution', id } });
+    write(log, event({ type: 'thread.started', thread_id: entry.thread_id }) + event(start('long')));
+    const quiet = new Date(Date.now() - 600_000); fs.utimesSync(log, quiet, quiet);
+    write(path.join(root, 'workers.json'), { [issue]: entry }); write(path.join(root, 'control.json'), { state: 'active' });
+    const outputBurst = event(start('parallel')) + event({ type: 'item.completed', item: {
+      type: 'command_execution', id: 'parallel', aggregated_output: 'x'.repeat(300_000) } });
+    const runner = path.join(root, 'original-clock.mjs');
+    write(runner, `import fs from 'node:fs';
+let clock = Date.now(); Date.now = () => clock;
+const log = ${JSON.stringify(log)}, quiet = new Date(${JSON.stringify(quiet)});
+globalThis.setInterval = scan => {
+  clock += 59 * 60 * 1000;
+  fs.appendFileSync(log, ${JSON.stringify(outputBurst)}); fs.utimesSync(log, quiet, quiet);
+  scan(); // The large completion exceeds one bounded pass.
+  scan(); // Reconcile the still-running original command after catch-up.
+  console.log('fixture:minute-59');
+  clock += 60 * 1000;
+  scan(); console.log('fixture:original-minute-60');
+};
+await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-workers.mjs')).href)});
+`);
+    const output = pass(run(process.execPath, [runner, '--root', root], checkout, env)).stdout;
+    assert.doesNotMatch(output.split('fixture:minute-59')[0], /EVENT:(stall|dead)/);
+    assert.match(output.split('fixture:minute-59')[1], /EVENT:stall.*идёт команда дольше 60 минут/,
+      'parallel completion must not renew the original command allowance');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

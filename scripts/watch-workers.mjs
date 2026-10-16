@@ -865,10 +865,11 @@ function checkLog(log, gateAck, report, registry, nowMs, phasePending = false) {
   const pidState = writerPidState(registryEntry);
   const commandRun = transport.runningCommandState?.(registryEntry) ?? inspection.commandRun;
   let command = commandObservations.get(log.filePath);
-  if (!commandRun || pidState !== "alive") {
+  const commandInspectionPending = transport.transport === "codex-cli" && inspection.caughtUp === false;
+  if ((!commandRun && !commandInspectionPending) || pidState !== "alive") {
     commandObservations.delete(log.filePath);
     command = null;
-  } else if (!command || command.run !== commandRun || command.pid !== registryEntry.pid || command.procStart !== registryEntry.procStart) {
+  } else if (commandRun && (!command || command.run !== commandRun || command.pid !== registryEntry.pid || command.procStart !== registryEntry.procStart)) {
     command = { run: commandRun, pid: registryEntry.pid, procStart: registryEntry.procStart, since: nowMs };
     commandObservations.set(log.filePath, command);
   }
