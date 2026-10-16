@@ -302,6 +302,7 @@ function inspectLog(filePath, transport) {
         }
         if (event !== null && transport.startIdentity(event) !== null) {
           state.hasThreadStarted = true;
+          state.terminalTargetSize = null;
         }
         if (transport.transport === "codex-cli") {
           if (event?.type === "thread.started") {
@@ -330,6 +331,7 @@ function inspectLog(filePath, transport) {
       }
       if (event !== null && transport.startIdentity(event) !== null) {
         state.hasThreadStarted = true;
+        state.terminalTargetSize = null;
       }
     }
 

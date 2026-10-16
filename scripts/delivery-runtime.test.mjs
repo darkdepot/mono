@@ -2457,3 +2457,66 @@ await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-w
     check('expired phase confirmation');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('watcher releases the bounded startup snapshot after thread.started', async t => {
+  const fixture = runCase => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-startup-transition-'));
+    const env = watcherProcessFixture(root), issue = 'MONO-994';
+    try {
+      const log = path.join(root, 'logs', `${issue}-mono-deliver-a1.jsonl`);
+      const entry = { issue, stage: 'mono-deliver', transport: 'codex-cli', attempt: 1,
+        packVersion: 'test', sourceCommit: 'a'.repeat(40), surfaceRevision: 4,
+        pid: process.pid, procStart: 'fixture-start', thread_id: null, log,
+        worktree: path.join(root, 'repo'), gates: ['identity'], spawned_at: new Date(Date.now() - 600_000).toISOString() };
+      const event = value => JSON.stringify(value) + '\n';
+      write(log, event({ type: 'startup-progress', text: 'x'.repeat(300_000) }) +
+        event({ type: 'thread.started', thread_id: 'fixture-thread' }) +
+        event({ type: 'item.completed', item: { type: 'agent_message', id: 'large', text: 'x'.repeat(400_000) } }));
+      const quiet = new Date(Date.now() - 600_000); fs.utimesSync(log, quiet, quiet);
+      write(path.join(root, 'workers.json'), { [issue]: entry }); write(path.join(root, 'control.json'), { state: 'active' });
+      const start = event({ type: 'item.started', item: { type: 'command_execution', id: 'later' } });
+      const done = event({ type: 'item.completed', item: { type: 'command_execution', id: 'later' } });
+      const runner = path.join(root, 'transition.mjs');
+      runCase({ root, env, issue, log, entry, quiet, start, done, runner });
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  };
+  await t.test('reads new command starts and completions after the frozen scan', () => fixture(f => {
+    write(f.runner, `import fs from 'node:fs';
+const log = ${JSON.stringify(f.log)}, quiet = new Date(${JSON.stringify(f.quiet)});
+globalThis.setInterval = scan => {
+  scan(); // Discover thread.started inside the fixed startup snapshot.
+  fs.writeFileSync(${JSON.stringify(path.join(f.root, 'workers.json'))}, JSON.stringify({[${JSON.stringify(f.issue)}]: ${JSON.stringify({ ...f.entry, gates: undefined, thread_id: 'fixture-thread' })}}));
+  fs.appendFileSync(log, ${JSON.stringify(f.start)}); fs.utimesSync(log, quiet, quiet);
+  scan(); scan(); console.log('fixture:command-running');
+  fs.appendFileSync(log, ${JSON.stringify(f.done)}); fs.utimesSync(log, quiet, quiet);
+  scan(); console.log('fixture:command-completed');
+};
+await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-workers.mjs')).href)});
+`);
+    const output = pass(run(process.execPath, [f.runner, '--root', f.root], checkout, f.env)).stdout;
+    assert.doesNotMatch(output.split('fixture:command-running')[0], /EVENT:(stall|dead|spawn-fail)/);
+    assert.match(output.split('fixture:command-running')[1], /EVENT:stall/, 'completed new command restores real idle detection');
+  }));
+  await t.test('--once terminates when a new write follows thread.started during startup catch-up', () => fixture(f => {
+    write(f.runner, `import fs from 'node:fs';
+const read = fs.readSync; let appended = false;
+fs.readSync = (fd, buffer, offset, length, position) => {
+  const count = read(fd, buffer, offset, length, position);
+  if (!appended && buffer.subarray(offset, offset + count).includes(Buffer.from('"type":"thread.started"'))) {
+    appended = true;
+    fs.appendFileSync(${JSON.stringify(f.log)}, ${JSON.stringify(f.start + f.done)});
+    fs.utimesSync(${JSON.stringify(f.log)}, new Date(${JSON.stringify(f.quiet)}), new Date(${JSON.stringify(f.quiet)}));
+  }
+  return count;
+};
+await import(${JSON.stringify(pathToFileURL(path.join(checkout, 'scripts/watch-workers.mjs')).href)});
+console.log('fixture:once-exited');
+`);
+    const result = spawnSync(process.execPath, [f.runner, '--root', f.root, '--once'], { cwd: checkout, env: f.env,
+      encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024 });
+    pass(result);
+    assert.match(result.stdout, /fixture:once-exited/);
+    assert.match(result.stdout, /EVENT:stall/, 'completed appended command must not hide ordinary idle');
+    assert.doesNotMatch(result.stdout, /EVENT:(dead|spawn-fail)/);
+  }));
+});
