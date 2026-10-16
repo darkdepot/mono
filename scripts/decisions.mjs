@@ -259,7 +259,7 @@ export async function versionDataset(options) {
     const digest=hash(bytes);
     let highest=0, existing=null;
     for(const name of fs.readdirSync(dir).sort()) {
-      const match=new RegExp(`^${issue}-review-scope\\.v([1-9][0-9]*)\\.md$`).exec(name);
+      const match=new RegExp(`^${issue.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}-review-scope\\.v([1-9][0-9]*)\\.md$`).exec(name);
       if(!match)continue;
       const archive=path.join(dir,name);regular(archive);
       if(!fs.existsSync(archive+'.sha256')) {
@@ -307,6 +307,7 @@ export function materializeDataset(options) {
 async function main() {
   const [command,...rest]=process.argv.slice(2),args=flags(rest);
   if(command==='--help'||args.help){console.log('Usage: decisions.mjs record|render|version|materialize|list --issue KEY --evidence-root DIR [--record JSON_FILE] [--source DATASET] [--version N --worktree DIR --digest SHA256] [--remove true]\nrecord accepts typed decision, matrix, verification, decline, decline-revoke, class, class-decision, continue or successor entries. version replaces the managed section in --source and publishes immutable bytes. materialize requires an ignored, untracked path; --remove true cleans that exact digest-checked file.');return;}
+  requireThat(issuePattern.test(args.issue ?? ''),'invalid issue');
   const allowed=['issue','evidence-root',...({record:['record'],render:[],list:[],version:['source'],materialize:['version','worktree','digest','remove']}[command]??[])];
   requireThat(Object.keys(args).every(k=>allowed.includes(k)),'unknown option');
   const options={...args,evidenceRoot:args['evidence-root']};

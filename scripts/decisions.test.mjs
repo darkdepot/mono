@@ -185,3 +185,38 @@ test('class records and bounded class decisions are orchestrator-approved, immut
     await assert.rejects(add(f.decision('limit',{id:'cd-003',successor:''})),/successor/);
   }finally{fs.rmSync(evidenceRoot,{recursive:true,force:true});}
 });
+
+
+test('invalid issue keys fail before evidence access in journal and dataset entry points', async t => {
+  const methods=['existsSync','readFileSync','readdirSync','realpathSync','lstatSync','mkdirSync','openSync'];
+  const calls=[];
+  for(const name of methods)t.mock.method(fs,name,()=>{calls.push(name);throw new Error('evidence accessed');});
+  for(const issue of ['MONO-.*','MONO-0','MONO-01','mono-1','1MONO-1','MONO-1/../../other','MONO-1|OTHER-2','']) {
+    const options={issue,evidenceRoot:'/unused',source:'/unused',worktree:'/unused',version:1};
+    for(const operation of [readJournal,materializeDataset])assert.throws(()=>operation(options),/invalid issue/);
+    for(const operation of [recordDecision,versionDataset])await assert.rejects(operation(options),/invalid issue/);
+  }
+  assert.deepEqual(calls,[]);
+});
+
+test('decisions CLI rejects invalid keys before reading a record or evidence', () => {
+  for(const command of ['record','render','list','version','materialize']) {
+    assert.throws(()=>execFileSync(process.execPath,['scripts/decisions.mjs',command,'--issue','MONO-.*','--evidence-root','/unused',...(command==='record'?['--record','/missing-record']:[])],{encoding:'utf8',stdio:['ignore','pipe','pipe']}),error=>error.status===1 && error.stderr.includes('invalid issue') && !error.stderr.includes('ENOENT'));
+  }
+});
+
+
+test('valid boundary keys keep literal dataset version matching', async () => {
+  const evidenceRoot=scratch(),source=path.join(evidenceRoot,'source.md');
+  try {
+    fs.writeFileSync(source,'# Scope\n\nFrozen contract.\n');
+    for(const issue of ['A-1','A0-10']) {
+      const options={evidenceRoot,issue,source};
+      const first=await versionDataset(options);
+      assert.equal(path.basename(first.archive),`${issue}-review-scope.v1.md`);
+      assert.deepEqual(await versionDataset(options),{...first,created:false});
+      fs.appendFileSync(source,'\nNext version.\n');
+      assert.equal((await versionDataset(options)).version,2);
+    }
+  }finally{fs.rmSync(evidenceRoot,{recursive:true,force:true});}
+});

@@ -1269,7 +1269,7 @@ test("collector startup timeout stops its detached child before reporting failur
   const { spawn } = await import("node:child_process");
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-collector-timeout-"));
   const lock = path.join(scratch, "late.lock");
-  const child = spawn(process.execPath, ["-e", `setTimeout(() => {require('fs').writeFileSync(${JSON.stringify(lock)}, JSON.stringify({pid:process.pid,ready:true}));}, 800);setInterval(()=>{},1000);`], { detached: true, stdio: "ignore" });
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {require('fs').writeFileSync(process.argv[1], JSON.stringify({pid:process.pid,ready:true}));}, 800);setInterval(()=>{},1000);", lock], { detached: true, stdio: "ignore" });
   try {
     await assert.rejects(awaitCollectorReady(child, lock, 100), /did not acquire attempt lock/u);
     assert.ok(child.signalCode || child.exitCode !== null, "the child has exited before the rejection reaches the caller");

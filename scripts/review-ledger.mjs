@@ -217,7 +217,7 @@ function files(directory,recursive=false) {
   return fs.readdirSync(directory,{withFileTypes:true}).flatMap(e=>e.isFile()?[path.join(directory,e.name)]:recursive&&e.isDirectory()?files(path.join(directory,e.name),true):[]).sort();
 }
 function belongs(receipt,issue) {
-  return receipt.issue===issue || path.basename(receipt.worktree ?? '')===issue || new RegExp(`^${issue}-review-scope(?:\\.v[0-9]+)?\\.md$`).test(path.basename(receipt.reviewDataset?.source ?? ''));
+  return receipt.issue===issue || path.basename(receipt.worktree ?? '')===issue || new RegExp(`^${issue.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}-review-scope(?:\\.v[0-9]+)?\\.md$`).test(path.basename(receipt.reviewDataset?.source ?? ''));
 }
 // Recognize explicit shell helper calls and Python argv launches, not excerpts
 // of helper source, read-back commands or files that merely contain a command.
@@ -236,6 +236,7 @@ function helperLaunch(command, knownCommands) {
   return python || shell || clone;
 }
 export async function readLedgerSources({issue,root,evidenceRoot}) {
+  if(!issuePattern.test(issue))throw new Error('invalid issue');
   const sources=[],journalFile=path.join(evidenceRoot,'decisions',`${issue}.json`);
   if(fs.existsSync(journalFile))sources.push({type:'journal',ref:journalFile,data:readJournal({evidenceRoot,issue})});
   const stopsFile=path.join(evidenceRoot,'reviews',`${issue}-class-stops.json`);
@@ -415,6 +416,7 @@ export async function withholdCollection({evidenceRoot,issue,record}) {
   });
 }
 export async function recordClassStop({evidenceRoot,issue,attempt,collectionId,stop}) {
+  if(!issuePattern.test(issue))throw new Error('invalid issue');
   const file=path.join(evidenceRoot,'reviews',`${issue}-class-stops.json`);
   const records=fs.existsSync(file)?jsonFile(file):[];
   const record={kind:'class-stop',attempt,collectionId,reason:'needs-decision',recordedBy:'orchestrator',stop};

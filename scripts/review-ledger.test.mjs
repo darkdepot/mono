@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {test} from 'node:test';
+import {execFileSync} from 'node:child_process';
 
 const head='a'.repeat(40), base='b'.repeat(40), collectionId=`preflight-collect:${head}:1`;
 const report={findings:[],overall_correctness:'patch is correct'};
@@ -165,4 +166,42 @@ test('class stops share the withheld writer lock and preserve requests after con
   await recordClassStop(stop);await recordClassStop(stop);
   assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')).map(r=>r.collectionId),['other','stopped']);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+
+test('invalid issue keys are rejected before evidence access by every ledger entry point', async t => {
+ const {readLedgerSources,buildReviewLedger,adjudicate,withholdCollection,recordClassStop}=await api();
+ const invalid=['MONO-.*','MONO-0','MONO-01','mono-1','1MONO-1','MONO-1/../../other','MONO-1|OTHER-2','MONO-1\nOTHER-2',''];
+ const methods=['existsSync','readFileSync','readdirSync','realpathSync','lstatSync','mkdirSync','openSync'];
+ const calls=[];
+ for(const name of methods)t.mock.method(fs,name,()=>{calls.push(name);throw new Error('evidence accessed');});
+ for(const issue of invalid) {
+  const options={issue,root:'/unused',evidenceRoot:'/unused'};
+  assert.throws(()=>buildReviewLedger({...options,sources:[]}),/invalid issue/);
+  for(const operation of [readLedgerSources,adjudicate,withholdCollection,recordClassStop])
+   await assert.rejects(operation(options),operation===withholdCollection?/withheld requires issue/:/invalid issue/,`${operation.name}: ${issue}`);
+ }
+ assert.deepEqual(calls,[]);
+});
+
+test('valid issue keys retain receipt dataset matching', async () => {
+ const {readLedgerSources}=await api();
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-ledger-keys-'));
+ try {
+  fs.mkdirSync(path.join(root,'history'));
+  for(const issue of ['A-1','A0-10','MONO-999']) {
+   const file=path.join(root,'history','receipt.json');
+   fs.writeFileSync(file,JSON.stringify({reviewDataset:{source:`/dataset/${issue}-review-scope.v2.md`}}));
+   assert.equal((await readLedgerSources({issue,root,evidenceRoot:root})).filter(s=>s.type==='history').length,1);
+   fs.writeFileSync(file,JSON.stringify({reviewDataset:{source:`/dataset/${issue}0-review-scope.v2.md`}}));
+   assert.equal((await readLedgerSources({issue,root,evidenceRoot:root})).filter(s=>s.type==='history').length,0);
+  }
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+
+test('ledger CLI rejects invalid keys before reading records or evidence', () => {
+ for(const command of ['build','print','adjudicate','decide','withhold']) {
+  assert.throws(()=>execFileSync(process.execPath,['scripts/review-ledger.mjs',command,'--issue','MONO-.*','--root','/unused','--evidence-root','/unused','--record','/missing-record'],{encoding:'utf8',stdio:['ignore','pipe','pipe']}),error=>error.status===1 && error.stderr.includes('valid --issue required') && !error.stderr.includes('ENOENT'));
+ }
 });
