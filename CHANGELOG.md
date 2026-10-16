@@ -6,6 +6,57 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-16
+
+<!-- fragment: MONO-159 sha256:41d1020d1b4c597e68c979ab1fdba94d3a8f6705bd85ae3a448761facf608be2 -->
+- Emit watcher events for every changed phase report and select confirmation waits by publication time. Record an atomic persistent-watcher pulse each tick, preserve it during one-shot scans, and require a fresh, live matching observer before worker launch or resume, without consuming attempts on refusal.
+- Prepare the evidence directory and immutable default review dataset at dispatch; preserve existing archives, digests and explicit dataset versions. Document session restart and observer supervision boundaries.
+- Recheck the observer in the shared locked launch path, record possible amendment delivery only at the actual spawn boundary, and clear it on failed process creation. Refusals remain retryable while indeterminate launches retain duplicate-launch protection. Reuse sparse immutable dataset histories without creating v1 beside later versions.
+- Wait for the interrupted resume process to exit before removing its fixture lock; retain the dead-holder and unchanged-lock proofs, including delayed child teardown.
+
+<!-- fragment: MONO-160 sha256:ad91b9d8c4e66a6118a680f374aa0fd6bb9660591c6390ee832db39cd4ebc41c -->
+- Bound collection runs and retries to the attempt's publication deadline; terminate and verify process groups, preserve retry counts, and recheck class/cap without another admission.
+- Reconcile signed receipts without rerunning reviews; retry project verification once with both outputs signed, preserving sandbox and head/base refusals.
+- Pin collection timeout/retry settings, align Mono's confirmation window, and remove fresh executable startup timing from short confirmation fixtures.
+- Isolate process-table observers from the gate group so successful collection/reconciliation clears its watchdog; cover self-observing telemetry and collector death.
+
+<!-- fragment: MONO-161 sha256:731bac27d0aa0f69897a3e4bf4b12bcabb5c9ff484667378270702ea26245f35 -->
+# MONO-161
+
+- Unblock mixed confirmation queues: reuse verified same-attempt confirmations without applying their writes again, and collect after all new connector writes have present observations in the active report session.
+- Reject collection identifier reuse for another report at publication and mailbox acceptance; keep lost-response retries idempotent.
+- Return one `accept report` response object and identify the violated observation-time boundary.
+
+<!-- fragment: MONO-162 sha256:b4de2d1904ef28f0cf17ccb3a3575bc2b87dc1ebdf232668e2c8ac079a66305b -->
+- Validate green ship certificates at publication with the same issue/head/PR check used for landing; landing still requires confirmation.
+- Pin required PR bot checks from `orchestration.ship.botChecks` (default Greptile Review). Only an orchestrator `accept amend --bot-unavailable` decision for the current task attempt can waive unavailable bot evidence; worker policy cannot weaken it.
+- Document authorized ship fixes using the next named ship-gate attempt and a new state file in the same task attempt, preserving prior state without changing evidence windows or review strictness.
+
+<!-- fragment: MONO-163 sha256:3ca31f71baf6f8cc058f0b8891fee8a57a72a6a73b85a12b86922b8b750538c5 -->
+- Release 0.31.0: a **breaking pre-1.0 minor** because worker launch and resume
+  now refuse with `watcher-required` without a fresh live watcher. Activate only
+  after cross-product quiescence; each product's orchestrator confirms its own
+  state. After installation and cache verification, restart each watcher from
+  the new version before the first launch or resume.
+- Decision journals, signed receipts and surface revision 4 remain unchanged
+  from 0.30.1. New `watcher.json` and collection retry files are ignored by
+  0.30.1. Open attempts finish on their original pinned `packRoot`; do not replace
+  a used folder. A staged cache can coexist until activation. Roll back to
+  0.30.1 in both tools after outgoing attempts finish, preserving evidence,
+  dispatch pins and history and restarting the old watcher.
+- Operator settings: `orchestration.delivery.collectionTimeoutSec` defaults to
+  1500 seconds, `collectionRetries` to 1 and `confirmationTimeoutSec` to 1800;
+  configure before dispatch with `collectionTimeoutSec < confirmationTimeoutSec
+  < evidenceLimitSec`. One deadline covers collection through confirmation.
+- Required PR bots come from pinned `orchestration.ship.botChecks` (default
+  `["Greptile Review"]`). Only the orchestrator may record an outage for the
+  current attempt with `accept.mjs amend --bot-unavailable "<reason>"`; workers
+  cannot disable the requirement. Review strictness is unchanged.
+
+<!-- fragment: MONO-164 sha256:028e5c3ef074bc0116846c784f2b3e5f1b2850f2e179a9986244068eb207de53 -->
+- Keep denied process-group probes unknown while waiting for the collector watchdog within the existing deadline; require group, leader and descendant termination, and preserve the primary failure separately from cleanup diagnostics.
+- Make collection retry telemetry propagate non-ESRCH probe errors; cover refusal to retry live or unverified groups, real surviving descendants with watchdog termination disabled, and cleanup failures that must not mask the scenario assertion.
+
 ## [0.30.1] - 2026-10-15
 
 <!-- fragment: MONO-157 sha256:1f7f4b0e4bcdc92473c616f48e400980326efeaf1fa68c611b046fca4995b9b8 -->
