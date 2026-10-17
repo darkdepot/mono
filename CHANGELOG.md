@@ -6,6 +6,35 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-10-17
+
+<!-- fragment: MONO-170 sha256:6e34dc285af768b4afd7778b96ef6db7c95261d28c4933a92d745aa9d68903f1 -->
+- Add the snapshot-only idea gate with canonical text fingerprints, fresh/approved checks, project-bound approval cutoff handling, issue-only seam acceptance, configurable headings and live Linear regression fixtures. Integration gates and the release cutoff are deferred to the following Issues.
+- Known limitation (d-004): inline code spanning multiple source lines in an idea section refuses `unsupported-format`; single-line inline code remains literal.
+
+<!-- fragment: MONO-171 sha256:0d58ebe26947f7c59c54e535a96928b15437f4dd7a1b383cfa43aa571f625949 -->
+### Changed
+
+- Require a project-matching approved idea and verified package approval before orchestrator dispatch; refusals do not consume attempts. Preserve issue-only and pre-0.32.0 attempt compatibility.
+- Pin the saved idea, selected record and canonical artifact digest through collection requests, signed preflight receipts and ship verification; amendments and resumes retain the original binding.
+
+<!-- fragment: MONO-172 sha256:a1663cf7905417a2f78cc057acac6d53362d51dec0f6104015e72c9911e7f5c5 -->
+### Changed
+
+- Rebuild `mono:idea` in Russian: linked facts from a host-selected `idea-helper`, at most three meaning questions, explicit owner approval recorded and read back, then a verified move to Discovery.
+- Require idea-gate checks at idea/discovery, handoff and implementation boundaries; migrate old discovery and refreshed ideas through the package approval touch.
+- Add host-specific `idea-helper` policy defaults and project overrides with fixtures preserving other role routes; keep rebuilt-stage prose Russian and machine tokens English.
+
+<!-- fragment: MONO-173 sha256:667f6745a872866b40faf6e65b5e30fb330469d619cdb96dd10924343a4f972e -->
+### Выпуск и обновление
+
+- Выпустить 0.32.0 с отсечкой `2026-10-18`, первым полным днём после выпуска: проекты с пакетами, одобренными до отсечки, проходят без отдельной записи идеи. Новые проекты и старые проекты без такого одобрения требуют запись «да» перед запуском и проверкой PR.
+- Сохранять `packRoot` старых попыток; выполнять `before-update` по всем продуктам перед заменой каталога. Чтение старых receipt не переносит попытку, а `ideaGate.since` меняет только классификацию.
+- Добавлять `models.roles.idea-helper` только после установки 0.32.0 везде. Для отката сохранить и убрать переопределение во всех затронутых конфигах, проверить штатные роли старым пакетом и установить закреплённый `v0.31.1` из маркетплейса.
+
+<!-- fragment: MONO-182 sha256:8e747eece861db6ca5c1b3c5b0913adc357d9cee420f1b4f09544edfb2c0f6e6 -->
+- Use English stage names Idea and Research in the Russian Idea skill; keep ordinary research wording, workflow rules and required reading unchanged.
+
 ## [0.31.1] - 2026-10-17
 
 <!-- fragment: MONO-165 sha256:1ba7194435ad93272f01929f9ac7db282955574d26e0c0d56b3707f1e5a6fba0 -->
