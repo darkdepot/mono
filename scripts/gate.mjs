@@ -8,7 +8,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout } from "./runtime.mjs";
-import { checkCollectionRequest, pinnedShipPolicy } from "./orchestrator/command-state.mjs";
+import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact } from "./orchestrator/command-state.mjs";
 
 import { acceptedDeclines, readJournal } from './decisions.mjs';
 
@@ -459,9 +459,10 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   const pinnedIssue = request.pins ? /^([A-Z][A-Z0-9]*-[1-9][0-9]*)-a[1-9][0-9]*$/.exec(path.basename(path.dirname(request.pins.file)))?.[1] : null;
   if (request.issue !== undefined) requireThat(/^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(request.issue) &&
     (!pinnedIssue || request.issue === pinnedIssue), "explicit Issue must match the pinned attempt");
+  const idea = pins?.idea ? verifyIdeaArtifact(pins.idea, pinnedIssue ?? request.issue) : null;
   const receiptFile = path.join(evidenceRoot, `${head}.json`);
   const dataset = reviewDatasetBinding(request, evidenceRoot);
-  const binding = { ...dataset, ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
+  const binding = { ...dataset, ...(idea ? { idea } : {}), ...(request.issue !== undefined ? { issue: request.issue } : {}), ...(request.packRoot ? { packRoot: request.packRoot } : {}), ...(request.pins ? { pins: request.pins } : {}), ...(request.modelRoutes ? { modelRoutes: request.modelRoutes } : {}), product: request.product, collectionId: request.collectionId, skillsRoot: request.skillsRoot, risk: request.risk,
     critical: request.critical, root: fs.realpathSync(request.root), worktree: repo, evidenceRoot,
     workerWritableRoots: request.workerWritableRoots.map(resolvedLocation).sort() };
   let receipt, verifiedReceiptFile = receiptFile;
@@ -487,6 +488,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       return { publishRequest: { ...request, collect: false } };
     }
     if (!request.pins && receipt.pins) throw new Error(`collection request mismatch: pins; expected ${canonical(receipt.pins)}`);
+    requireThat(canonical(receipt.idea ?? null) === canonical(idea), 'receipt idea differs from dispatch pins');
     for (const [key, value] of Object.entries(binding)) {
       // Legacy receipts predate pins; below, validate them and require both bases to be override-free.
       if (key === "modelRoutes" && receipt.route && receipt.route.engine === undefined && receipt.modelRoutes === undefined) continue;
@@ -515,6 +517,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   const invocation = reviewInvocation(route, base);
   if (dataset.reviewDataset) invocation.push("--dataset", dataset.reviewDataset.copy);
   const unchanged = () => {
+    if (idea) verifyIdeaArtifact(idea, pinnedIssue ?? request.issue);
     requireThat(canonical(reviewDatasetBinding(request, evidenceRoot)) === canonical(dataset), "review dataset changed during collection/verification");
     cleanTree(repo);
     requireThat(git(repo, "rev-parse", "HEAD") === head && git(repo, "merge-base", head, live?.baseRefOid ?? request.baseRef) === base,

@@ -5,13 +5,14 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { atomicJson, readJson, isMain, deliveryConfig, shipBotChecks, RISK_KEYS, withLock, baseModelConfig, validateLanding, validateEvidenceGrants, packLayout, runtimePackRoot } from "../runtime.mjs";
-import { commandFlags, allowedFlags, sha256File } from "./command-state.mjs";
+import { commandFlags, allowedFlags, sha256File, dispatchIdea, ideaBinding } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
 import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
 import { workerTransport } from "../worker-transport.mjs";
 import { spawnWorker } from "./launch.mjs";
 import { configuredBackup, resolveBackupSwitch } from "./backup-switch.mjs";
 import { versionDataset } from "../decisions.mjs";
+import { IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const q = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -86,9 +87,10 @@ async function prepareDispatch(args) {
   if (typeof verification?.command !== "string" || !verification.command.trim() || !Array.isArray(verification.args) || verification.args.some(arg => typeof arg !== "string")) throw new Error("explicit verification command/args required");
   if (!approval.trim()) throw new Error("nonempty approval record required");
   const seam = lane?.seam ?? { package_kind: "project-first", lifecycle_state_entity: "project", behavioral_oracle: null, risk_class: risk,
-    approval_status: /approval_status\s*=\s*(approved|pending|rejected)/u.exec(body + "\n" + approval)?.[1] ?? "approved" };
+    approval_status: 'approved' };
   if (issueOnly && (seam.package_kind !== "issue-only" || seam.approval_status !== "approved-fresh" || !lane.marker || !lane.label || !lane.ownerApproval || !lane.config ||
       typeof lane.fingerprint !== "string" || !lane.fingerprint.trim())) throw new Error("complete issue-only snapshot with nonempty fingerprint required");
+  const ideaResult = dispatchIdea(args.snapshot, config, issue, lane);
   const attemptsFile = path.join(args.root, "attempts.json"), attempt = (fs.existsSync(attemptsFile) ? readJson(attemptsFile)[issue] ?? 0 : 0) + 1;
   const worktree = path.join(repo, ".worktrees", issue), branch = `mono/${issue.toLowerCase()}`;
   git(repo, "fetch", "origin", "main");
@@ -135,18 +137,28 @@ async function prepareDispatch(args) {
     } finally { fs.unlinkSync(source); }
   }
   pins.reviewDatasetDigest = sha256File(pins.reviewDataset);
-  atomicJson(pinsFile, pins); const pinsDigest = sha256File(pinsFile);
-  fs.writeFileSync(path.join(output, "pins.sha256"), `${pinsDigest}\n`);
   atomicJson(gateFile, gate); atomicJson(movesFile, moves);
   const snapshot = path.join(output, "snapshot"), preparedSnapshot = fs.mkdtempSync(path.join(output, "snapshot-"));
   try {
     for (const name of [`issue-${issue}.md`, "approval.md", ...(issueOnly ? ["issue-only.json"] : ["project-brief.md", ...(profile === "full" ? ["prd.md", "tech-spec.md"] : [])])]) fs.copyFileSync(path.join(args.snapshot, name), path.join(preparedSnapshot, name));
+    if (!issueOnly) {
+      fs.cpSync(path.join(args.snapshot, 'idea'), path.join(preparedSnapshot, 'idea'), { recursive: true });
+      for (const name of ['approval.json', 'issue-context.json']) fs.copyFileSync(path.join(args.snapshot, name), path.join(preparedSnapshot, name));
+    }
+    atomicJson(path.join(preparedSnapshot, 'idea/gate-config.json'), { ideaGate: { since: config.ideaGate?.since ?? IDEA_GATE_DEFAULT_SINCE, ...(config.ideaGate?.headings ? { headings: config.ideaGate.headings } : {}) } });
+    const selected = ideaResult.recordId ? readJson(path.join(preparedSnapshot, 'idea/idea-records.json')).comments.find(comment => comment.id === ideaResult.recordId) : null;
+    atomicJson(path.join(preparedSnapshot, 'idea/selected-record.json'), selected);
+    const savedResult = dispatchIdea(preparedSnapshot, config, issue, lane);
+    if (savedResult.digest !== ideaResult.digest) throw new Error('idea snapshot changed during dispatch');
     fs.writeFileSync(path.join(preparedSnapshot, `issue-${issue}.md`), body);
     if (!issueOnly && profile === "short") { fs.writeFileSync(path.join(preparedSnapshot, "prd-extract.md"), extracts.prd); fs.writeFileSync(path.join(preparedSnapshot, "spec-extract.md"), extracts.spec); }
     // A refused attempt reuses its directory. Replace its complete composition
     // only after capturing inputs, which may themselves be the prior snapshot.
     fs.rmSync(snapshot, { recursive: true, force: true }); fs.renameSync(preparedSnapshot, snapshot);
   } finally { fs.rmSync(preparedSnapshot, { recursive: true, force: true }); }
+  pins.idea = ideaBinding(snapshot, ideaResult);
+  atomicJson(pinsFile, pins); const pinsDigest = sha256File(pinsFile);
+  fs.writeFileSync(path.join(output, "pins.sha256"), `${pinsDigest}\n`);
   const request = { ...gate, root: args.root, issue, role, modelRoutes, modelReason: reason, transport: transport.transport, dispatchFile, evidenceRoot,
     ...(backupSwitch ? { backupSwitch } : {}),
     writable_roots: extras, workerWritableRoots: roots, gates, lifecycle_moves: moves, config: args.config, product_name: product, handshake, profile,
@@ -158,7 +170,7 @@ async function prepareDispatch(args) {
   const waitCommand = location => `node ${q(path.join(directory, "../delivery-state.mjs"))} wait-ack --root ${q(args.root)} --issue ${q(issue)} --attempt ${q(attempt)} --ack ${q(location)} --moves ${q(movesFile)} --config ${q(args.config)}`;
   const collectionRequest = { product, root: pins.root, worktree, head: "HEAD", collectionId: "preflight-collect:HEAD:1", packRoot, skillsRoot,
     baseRef: pins.baseRef, evidenceRoot, modelRoutes: pins.modelRoutes, verification: pins.verification, risk: pins.risk, critical: pins.critical,
-    workerWritableRoots: pins.workerWritableRoots, ...(pins.reviewDataset ? { reviewDataset: pins.reviewDataset } : {}),
+    workerWritableRoots: pins.workerWritableRoots, idea: pins.idea, ...(pins.reviewDataset ? { reviewDataset: pins.reviewDataset } : {}),
     reviewDatasetVersion: pins.reviewDatasetVersion, pins: { file: pinsFile, digest: pinsDigest }, collect: false };
   const values = { issue, title: body.split("\n")[0].replace(/^#+\s*/u, ""), attempt, handshake, profile, pins_file: pinsFile, pins_digest: pinsDigest,
     collection_request: JSON.stringify(collectionRequest, null, 2),

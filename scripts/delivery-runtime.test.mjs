@@ -1,6 +1,7 @@
 import { packLayout, canonical } from './runtime.mjs';
 import { copyPluginFixture, writeWatcherFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
+import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import fs from "node:fs";
 import crypto from "node:crypto";
 import os from "node:os";
@@ -839,7 +840,7 @@ test("backup switch named launch contracts", async t => {
     await t.test("backup-installed-dispatch-pins-and-default-role", async () => {
       const dispatchRepo = path.join(scratch, "dispatch-repo"), origin = path.join(scratch, "origin.git"), root = path.join(scratch, "dispatch-control");
       const temp = path.join(scratch, "dispatch-temp"); fs.mkdirSync(temp);
-      const cfg = { orchestration: { transport: "claude-cli", backupTransport: "codex-cli", dispatch: {
+      const cfg = { ideaGate: { since: '2026-10-17' }, orchestration: { transport: "claude-cli", backupTransport: "codex-cli", dispatch: {
         product: "fixture", evidenceRoot: path.join(scratch, "dispatch-evidence"), openDecisions: 0,
         lifecycle_moves: [], verification: { command: "node", args: ["scripts/verify.mjs"] },
       } } };
@@ -849,6 +850,7 @@ test("backup switch named launch contracts", async t => {
       const snapshot = path.join(scratch, "snapshot"), writable = path.join(scratch, "writable.json"); write(writable, [temp]);
       write(path.join(snapshot, "issue-MONO-998.md"), "# Backup fixture\n# Что сделать\nSwitch worker.\n# Готовность агента\nAFK\n# Ключевые контракты\nRetain gates.\n# Как проверить\nNamed fixtures.\nРиск: risky\n");
       for (const [name, text] of [["approval.md", "Approved package/start; Project Delivery."], ["project-brief.md", "Fixture"], ["prd.md", "## Кратко\nFixture"], ["tech-spec.md", "## Кратко\nFixture"]]) write(path.join(snapshot, name), text);
+      ideaDispatchFixture(snapshot, 'MONO-998');
       write(path.join(root, "workers.json"), {}); write(path.join(root, "control.json"), { state: "active" }); writeWatcherFixture(root);
       const { dispatch } = await import(pathToFileURL(path.join(pack, "scripts/orchestrator/dispatch.mjs")));
       const args = { root, issue: "MONO-998", config: path.join(dispatchRepo, ".agents/mono-workflow.config.json"), snapshot,

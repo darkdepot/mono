@@ -269,23 +269,43 @@ both audiences. Facts are never compressed for either column.
 
 ### Orchestrator dispatch command
 
-Run installed `scripts/orchestrator/dispatch.mjs --issue KEY --root DIR --config
-FILE --snapshot DIR`; optional risk/critical, profile, handshake and role/reason
-flags pin the attempt. Supply --moves JSON, --open-decisions N and --verification
-JSON, or their `orchestration.dispatch` defaults. Additional defaults are product,
-evidenceRoot, reviewDataset/reviewDatasetVersion and budget. --gates JSON overrides
-the four implement startup gate names (issue-only adds delivery check).
---worker-writable-roots JSON supplies additional roots, including temporary roots;
-the command derives worktree/Git/mailbox roots. --skills-root selects an installed
-pack explicitly for scratch tests; normal execution resolves its installed root.
+Installed command: `scripts/orchestrator/dispatch.mjs --issue KEY --root DIR
+--config FILE --snapshot DIR`. Optional risk/critical, profile, handshake and
+role/reason pin the attempt. --moves JSON, --open-decisions N, --verification JSON
+or `orchestration.dispatch` defaults are required; defaults also cover product,
+evidenceRoot, reviewDataset/reviewDatasetVersion, budget. --gates JSON overrides
+the four startup gates (issue-only adds delivery check). --worker-writable-roots
+JSON adds roots including temp; worktree/Git/mailbox roots are derived.
+--skills-root overrides the installed root for scratch tests.
 
 The config is at the project repo's `.agents/mono-workflow.config.json`.
 The command fetches origin/main, creates `.worktrees/KEY` on `mono/key` from it
-or verifies that existing worktree branch. It reads `issue-KEY.md`, `approval.md`,
-`project-brief.md`, `prd.md`, `tech-spec.md` from --snapshot. Issue-only replaces
-Project docs with `issue-only.json` containing marker, label, fingerprint, config,
-ownerApproval and the five-field seam. The orchestrator provides authenticated
-facts; the worker still judges approval and delivery readiness at its gates.
+or verifies that existing worktree branch. Snapshot: `issue-KEY.md`, `approval.md`,
+`project-brief.md`, `prd.md`, `tech-spec.md`. Before dispatch, read the Issue's
+project relation and Project, then paginate every Project comment. Normalize:
+`idea/project.json` = {id,createdAt,status,body,language}; language from
+languages.linear (Russian→ru, English→en; otherwise configure ideaGate.headings).
+`idea/idea-records.json` = {complete:true,comments:[{id,createdAt,body}]}; true only
+after all pages. `issue-context.json` = {issueId,issueKey,projectId} from the Issue.
+`approval.md` is the exact package approval comment; `approval.json` =
+{commentId,createdAt,bodySha256}, SHA-256 of its UTF-8 bytes. That comment must
+appear in this Project's comments with matching timestamp/body hash.
+Require exactly one approval_status=approved and no other approval markers;
+unmarked approval is allowed only before ideaGate.since, reported as
+legacy-before-cutoff. `checkIdea` approved runs before attempt registration;
+refusal names code/project and consumes no attempt. Issue-only keeps its existing
+`issue-only.json` envelope (marker,label,fingerprint,config,ownerApproval,seam),
+passes seam to checkIdea and needs no Project files.
+
+Dispatch saves idea files, approval/context and selected-record.json plus the
+cutoff/headings policy; pins.idea binds path/projectId/recordId/fingerprint/digest/
+artifactDigest/verdict. artifactDigest covers canonical contents of every saved
+idea file and its approval/context (or issue-only envelope). Amend/resume keeps
+this binding unchanged; a new idea record needs a new attempt. Collection requests
+must carry the same idea. Preflight collection and ship reread files and require
+the semantic/artifact digests and signed receipt binding to match. Launch pins
+before 0.32.0 may omit idea; newer launches cannot. The worker still judges
+authenticated approval and delivery readiness at its gates.
 
 Artifacts live in `dispatch/KEY-aN/`: pins.json, pins.sha256, start-gate.json,
 spawn.json, dispatch.md, moves.json and snapshot/. The command resolves modelRoutes
@@ -350,20 +370,16 @@ against that baseline. The delivery reading corpus does not grow.
 ## Two-Phase Dispatch Handshake
 
 **No dispatch-moment lifecycle move is applied before the worker's gate-ack.**
-This section is the single home of that rule and of the protocol that carries
-it; the dispatch template, `mono:implement`, and `mono:orchestrate` point here
-instead of restating it. The only exception is an explicit owner mandate
-naming the move, recorded in `ledger.md` as a deviation with that mandate
-quoted — and it is NOT available under «Решил сам:», so the orchestrator can
-never grant it to itself.
+This section owns the protocol referenced by dispatch, `mono:implement` and
+`mono:orchestrate`. Only an explicit owner mandate naming the move permits a
+deviation; quote it in `ledger.md`. «Решил сам:» cannot authorize one.
 
-Dispatch-moment lifecycle moves are the moves a dispatch itself carries: the
-Project → Delivery move of a project's first delivery dispatch, and
-the Issue-to-started move that activates an issue-only Issue. Applicability
-follows from that: only a dispatch carrying such a move runs the handshake.
-Preflight and ship are internal phases, with no new dispatch or lifecycle gate pause. The startup dispatch is mono:deliver, including activation of a Project-first Issue while its Project is already Delivery.
+Only dispatch-carried moves need the handshake: Project → Delivery, issue-only
+Issue activation, or Project-first Issue activation while its Project is Delivery.
+The startup dispatch is mono:deliver; preflight/ship stay internal, without new
+dispatches or lifecycle gate pauses.
 
-Order, and it is the whole protocol:
+Protocol:
 
 1. Gate-phase dispatch. The orchestrator emits the dispatch with the pre-move
    snapshot — Project not yet in Delivery, or Issue not yet started — and the
@@ -393,12 +409,9 @@ Order, and it is the whole protocol:
    `ackWaitSec`; expiry parks `write-unconfirmed`, then exit/resume recovery.
    Validate own issue/attempt, ackDigest and each dispatched moveDigest/read-back.
    Applied read-backs amend the snapshot; run the post-move delivery check,
-   without rerunning the identity gate in the same process. On `blocked` the gate phase is over rather than paused, so it
-   writes the stage report the Blocked path below requires — ack first, then
-   report — and stops only after both exist. Leaving a blocked ack with no
-   report would strand the Issue: the orchestrator would wait for a report that
-   never comes while the watcher's bounded ack handoff eventually expires and
-   drives the worker into liveness healing instead:
+   without rerunning identity in the same process. On `blocked`, write ack then
+   the Blocked-path stage report before stopping; ack alone strands the Issue
+   until the watcher expires and enters liveness healing:
 
    ```json
    {
@@ -411,18 +424,9 @@ Order, and it is the whole protocol:
    }
    ```
 
-   `gates` is non-empty and carries each reported gate name exactly once.
-   For `gates-passed`, its set of names equals this dispatch's gate list
-   exactly. For `blocked`, it may be a non-empty subset of that list because
-   later gates may not have run, but it must contain no foreign name. A
-   repeated name is invalid in both branches.
-   `gates-passed` requires every entry to be `pass`, so an ack that claims
-   `gates-passed` while carrying a blocked, duplicated, or missing gate
-   is self-contradictory
-   and is treated as no ack at all. The invariant runs both ways: `blocked`
-   requires at least one entry that is not `pass`, because an ack claiming
-   `blocked` over gates that all passed is consumed as a real refusal and
-   strands a dispatch whose gates actually passed.
+   `gates` is nonempty with unique names from the dispatched list.
+   `gates-passed` needs the exact full set, all `pass`; `blocked` permits a
+   subset but requires a blocked entry. A contradictory ack counts as no ack.
 
    The gate-ack is not a stage report: it has its own path, its own two-value
    `status`, and it neither uses nor extends the `verification_items` enum.
@@ -439,12 +443,9 @@ Order, and it is the whole protocol:
    mailbox one, because an ack the watcher cannot see reads as a dead worker
    and would send the healing ladder against a worker that is merely waiting.
 
-   An attempt has exactly ONE ack. The two locations are two places it may
-   live, never two acks to choose between: if a file for that attempt exists in
-   both, that is a contradiction about which gates ran, and it resolves to no
-   ack at all. Do not rank them — not by freshness, not by recency, not by
-   which one parses. Every such rule hands the gate to whichever artifact
-   scores best, which is how a stale, half-written, or future-dated file comes
+   An attempt has exactly ONE ack. Files in both locations contradict each
+   other and count as no ack; never rank them by freshness or parseability.
+   Choosing a preferred artifact could admit a stale, partial or future-dated file
    to authorize a lifecycle move. Reading nothing costs a stall event that
    reconciles; reading the wrong one costs the gate.
    Consumption is per ATTEMPT, not per file: consuming an ack renames every

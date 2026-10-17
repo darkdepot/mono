@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -470,6 +471,7 @@ test("installed dispatch selects Claude role and transport from immutable BASE",
   await fixture(async ({ scratch, repo, root, pack, request, registry, git }) => {
     const config = JSON.parse(fs.readFileSync(request.config));
     config.projectName = "Fixture";
+    config.ideaGate = { since: '2026-10-17' };
     config.orchestration.dispatch = { product: "fixture", evidenceRoot: request.evidenceRoot, openDecisions: 0,
       verification: { command: "node", args: ["scripts/verify.mjs"] }, lifecycle_moves: [] };
     write(request.config, config);
@@ -481,6 +483,7 @@ test("installed dispatch selects Claude role and transport from immutable BASE",
     const snapshot = path.join(scratch, "snapshot");
     write(path.join(snapshot, "issue-MONO-999.md"), "# Fixture\n# Что сделать\nLaunch fixture.\n# Как проверить\nFixture only.\n# Ключевые контракты\nNo live model.\n# Готовность агента\nAFK\nРиск: standard\n");
     for (const name of ["approval.md", "project-brief.md", "prd.md", "tech-spec.md"]) write(path.join(snapshot, name), "Approved fixture.");
+    ideaDispatchFixture(snapshot);
     const extras = path.join(scratch, "extras.json"); write(extras, request.writable_roots);
     const result = spawnSync(process.execPath, [path.join(pack, "scripts/orchestrator/dispatch.mjs"),
       "--issue", request.issue, "--root", root, "--config", request.config, "--snapshot", snapshot,

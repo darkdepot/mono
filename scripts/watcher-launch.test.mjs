@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { copyPluginFixture } from './plugin-fixture.mjs';
+import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import { atomicJson } from './runtime.mjs';
 import { versionDataset, recordDecision, readJournal, acceptedDeclines } from './decisions.mjs';
 import { archiveReviewDataset } from './gate.mjs';
@@ -42,6 +43,7 @@ function fixture() {
   put(path.join(bin, 'ps'), `#!${process.execPath}\nconsole.log('fixture-start');\n`); fs.chmodSync(path.join(bin, 'ps'), 0o700);
   const policy = read(path.join(checkout, '.agents/mono-workflow.config.json'));
   policy.orchestration.transport = 'codex-cli'; delete policy.orchestration.backupTransport;
+  policy.ideaGate = { since: '2026-10-17' };
   policy.orchestration.delivery.attemptCap = 10;
   policy.orchestration.dispatch = { product: 'watcher-fixture', evidenceRoot: evidence, openDecisions: 0, lifecycle_moves: [], verification: { command: 'node', args: ['scripts/verify.mjs'] } };
   atomicJson(config, policy); put(path.join(repo, '.gitignore'), '.worktrees/\n.orchestrator/\n');
@@ -52,6 +54,7 @@ function fixture() {
   atomicJson(path.join(root, 'control.json'), { state: 'active' }); atomicJson(path.join(root, 'workers.json'), {});
   put(path.join(snapshot, `issue-${issue}.md`), '# Watcher fixture\n# Что сделать\nWatch.\n# Готовность агента\nAFK\n# Как проверить\nWatch.\n# Ключевые контракты\nNo lost events.\nРиск: risky\n');
   for (const name of ['approval', 'project-brief', 'prd', 'tech-spec']) put(path.join(snapshot, name + '.md'), 'Approved fixture\n');
+  ideaDispatchFixture(snapshot, issue);
   const writable = path.join(scratch, 'writable.json'); atomicJson(writable, []);
   const args = ['--issue', issue, '--root', root, '--config', config, '--snapshot', snapshot, '--skills-root', pack, '--worker-writable-roots', writable];
   const dispatch = (...extra) => call('orchestrator/dispatch.mjs', ...args, ...extra);

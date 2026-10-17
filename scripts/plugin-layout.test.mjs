@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -109,13 +110,14 @@ test('dispatch pins the plugin script folder and refuses resume when that folder
     for (const tool of ['codex', 'ps']) fs.chmodSync(path.join(bin, tool), 0o700);
     run('git', ['init', '-b', 'main']); run('git', ['init', '--bare', path.join(scratch, 'origin.git')]); run('git', ['remote', 'add', 'origin', path.join(scratch, 'origin.git')]);
     const config = path.join(repo, '.agents/mono-workflow.config.json');
-    write(config, { projectName: 'Fixture', orchestration: { transport: 'codex-cli', dispatch: { product: 'fixture', evidenceRoot: path.join(scratch, 'evidence'), openDecisions: 0, verification: { command: 'node', args: ['verify.mjs'] }, lifecycle_moves: [] } } });
+    write(config, { projectName: 'Fixture', ideaGate: { since: '2026-10-17' }, orchestration: { transport: 'codex-cli', dispatch: { product: 'fixture', evidenceRoot: path.join(scratch, 'evidence'), openDecisions: 0, verification: { command: 'node', args: ['verify.mjs'] }, lifecycle_moves: [] } } });
     write(path.join(repo, '.gitignore'), '.worktrees/\n'); run('git', ['add', '.']); run('git', ['commit', '-m', 'fixture']); run('git', ['push', 'origin', 'main']);
     write(path.join(root, 'control.json'), { state: 'active', halt: false }); write(path.join(root, 'workers.json'), {});
     writeWatcherFixture(root, env);
     const snapshot = path.join(scratch, 'snapshot');
     write(path.join(snapshot, 'issue-MONO-999.md'), '# Fixture\n# Что сделать\nPlugin dispatch\n# Готовность агента\nAFK\n# Как проверить\nRun verification\n# Ключевые контракты\nKeep roots\nРиск: risky\n');
     for (const file of ['approval.md', 'project-brief.md', 'prd.md', 'tech-spec.md']) write(path.join(snapshot, file), 'Approved fixture');
+    ideaDispatchFixture(snapshot);
     const writable = path.join(scratch, 'writable.json'); write(writable, [temp]);
     const launched = JSON.parse(run(process.execPath, [path.join(pack, 'scripts/orchestrator/dispatch.mjs'), '--issue', 'MONO-999', '--root', root, '--config', config, '--snapshot', snapshot, '--skills-root', helper, '--worker-writable-roots', writable])); pid = launched.pid;
     const saved = JSON.parse(fs.readFileSync(path.join(root, 'workers.json')))['MONO-999'];
