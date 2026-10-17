@@ -92,6 +92,19 @@ function validateReadBudgetFixtures() {
     catch (error) { fail(`read-budget fixture ${name}: ${error.message}`); }
   };
   const require = (truth, message) => { if (!truth) throw new Error(message); };
+  fixture("Idea actual mandatory inputs and byte total", () => {
+    const expected = [
+      "skills/idea/SKILL.md",
+      "skills/idea/references/examples.md",
+      "skills/idea/references/find-in-linear.md",
+      "skills/idea/references/find-in-code.md",
+    ].sort();
+    const budget = measureReadBudget(root, { skills: ["idea"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Idea mandatory file set must include both scout tasks and exclude conditional inputs");
+    const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
+    require(budget.bytes === total && total <= 20_480, "Idea actual mandatory total differs or exceeds 20 KB");
+  });
   try {
     write("AGENTS.md", "# fixture\n");
     write("references/shared.md", "Read `references/nested.md`.\n");

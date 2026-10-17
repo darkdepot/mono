@@ -128,7 +128,8 @@ Workflow states:
    - Run `mono:idea` per idea in this session: launch both scouts, recap, answer the route and 1–3 meaning questions yourself with reasons; ask the owner only when their meaning is unclear. Show the description and «Ответил сам:» for the owner’s yes. Never relay the stage questions or give yes for the owner; this yes is separate from package approval. With several ideas, queue
      them and run discovery one project at a time (Director Discovery in
      `references/orchestration.md`) while dispatched work continues.
-   - Run the recommended discovery route and review skills through the
+   - Follow the next step from Idea's final message (Research; while absent, handoff)
+     and run review skills through the
      Second Voice protocol (`references/orchestration.md`): an independent
      reviewer agent interrogates and challenges, you answer as product
      director, record material choices under «Решил сам:», and batch

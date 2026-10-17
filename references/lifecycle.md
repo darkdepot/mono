@@ -14,8 +14,13 @@ Exit requires the owner's explicit yes to What / Why / Target outcome / prioriti
 Unknowns and successful `verify` for that exact Project record. The writing and recovery
 steps live only in `skills/idea/references/record.md`. Status Discovery follows «Готово»
 and is confirmed by read-back, then `mono:check idea` must pass. A Project returned
-from a later stage without a record keeps its body, package and status. Unknowns
-stay in the record. No Research document, PRD, Tech Spec, Issue, implementation
+with the three idea sections unchanged keeps its body, package and status;
+Unknowns may be new. Without those sections, write the approved body and preserve
+old text in notes; status changes only from Idea. Owner corrections to What / Why /
+Target outcome follow that body-write path without an approved package. With an
+approved package, stop before recording and route the correction through
+`mono:handoff` artifact repair, then return to Idea recording and verification.
+Unknowns stay in the record. No Research document, PRD, Tech Spec, Issue, implementation
 plan, ExecPlan or code is created here. A refusal returns to Idea.
 
 The next stage is Research (`mono:research`), starting with the first Unknown;

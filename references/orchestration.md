@@ -96,7 +96,7 @@ discovery-skill question stream to the user.
 
 Checkpoints — the only moments that touch the user:
 
-1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:»; the owner alone gives yes to this version. This yes is separate from package approval. After verified completion, the next stage is Research, starting with the first Unknown.
+1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:»; the owner alone gives yes to this version. This yes is separate from package approval. After verified completion, the next stage is Research, starting with the first Unknown; while `mono:research` is not installed, the next step is `mono:handoff`.
 2. UX checkpoint (user-facing surface only): one brief per
    `templates/orchestrator-brief.md` with a reviewed near-production
    prototype and the few contested UX decisions.
