@@ -5,13 +5,13 @@ Private vulnerability reports: [SECURITY.md](SECURITY.md).
 
 ## Обновление до 0.32.0
 
-Этап Idea требует запись «да» владельца на описание проекта перед запуском
-оркестратором и проверкой PR. Отсечка по умолчанию — `2026-10-18`, первый полный
-день после выпуска: проекты, созданные до отсечки, с пакетами, одобренными до неё,
-проходят с `legacy-before-cutoff`. Старому проекту без такого пакета нужна
-запись «да»; при подготовке пакета она создаётся вместе с его одобрением.
+В 0.32.0 проверка записи «да» спит и запуск работы не останавливает:
+отсечка по умолчанию — `2099-12-31`, проекты и одобрения пакетов считаются
+созданными до правила (`legacy-before-cutoff`). Этап Idea уже пишет запись «да»;
+при подготовке пакета старый проект без записи проходит с `legacy-migrate`.
+Включение проверки по умолчанию придёт следующим выпуском.
 
-В `.agents/mono-workflow.config.json` можно задать
+Продукт может включить проверку раньше в `.agents/mono-workflow.config.json`:
 `"ideaGate": { "since": "2026-10-18" }`. Сдвиг даты меняет только классификацию
 проектов и одобрений; пины и receipt остаются прежними. Старые попытки завершаются
 на сохранённом `packRoot`. До замены каталога выполните `before-update` по всем
@@ -124,10 +124,10 @@ or `codex` explicitly. Other role routes are unchanged.
 идею и `approval_status=approved`. Новый проект с `no-record` возвращается
 в `mono:idea`. Проверки handoff/delivery и implement требуют `approved`;
 проверка Discovery допускает `pass`, `stale`, `legacy-migrate`.
-Dispatch и receipt связывают ту же запись.
+Dispatch и receipt связывают результат проверки и снимок, включая проход до отсечки без записи.
 
 Необязательный `ideaGate.since` принимает дату `YYYY-MM-DD`; без него действует
-`2026-10-18`. Неверная дата даёт `bad-since`. `ideaGate.headings`
+`2099-12-31` (проверка спит в 0.32.0). Неверная дата даёт `bad-since`. `ideaGate.headings`
 переопределяет все четыре заголовка, например
 `{"what":"Что","why":"Зачем","outcome":"Образ результата","unknowns":"Неизвестные"}`.
 Defaults are `ru`/`en` from normalized `project.language`. Snapshot examples and
@@ -193,8 +193,8 @@ dispatch, start gate, spawn and a UTC ledger event. Refusals before spawn regist
 no attempt; their retries rebuild the exact requested snapshot composition.
 Project dispatch now requires `idea/project.json`, complete paginated
 `idea/idea-records.json`, `approval.json` and `issue-context.json` alongside the
-package documents. The Issue key/project, approval comment timestamp/body hash
-and approved idea must match; package approval needs exactly one
+package documents. The Issue key/project and approval comment timestamp/body hash must match;
+the idea check accepts pre-cutoff packages without a record in 0.32.0; package approval needs exactly one
 `approval_status=approved` (unmarked approval only before the configured cutoff).
 The saved idea and selected record are pinned through collection, signed receipt
 and ship, including canonical artifact contents. Amend/resume preserves the

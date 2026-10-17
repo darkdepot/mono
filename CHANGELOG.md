@@ -25,10 +25,10 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 - Require idea-gate checks at idea/discovery, handoff and implementation boundaries; migrate old discovery and refreshed ideas through the package approval touch.
 - Add host-specific `idea-helper` policy defaults and project overrides with fixtures preserving other role routes; keep rebuilt-stage prose Russian and machine tokens English.
 
-<!-- fragment: MONO-173 sha256:667f6745a872866b40faf6e65b5e30fb330469d619cdb96dd10924343a4f972e -->
+<!-- fragment: MONO-173 sha256:522652c3f7ac2c171f14e30656b532fada8671f36989f492a4fa4c6087855df1 -->
 ### Выпуск и обновление
 
-- Выпустить 0.32.0 с отсечкой `2026-10-18`, первым полным днём после выпуска: проекты с пакетами, одобренными до отсечки, проходят без отдельной записи идеи. Новые проекты и старые проекты без такого одобрения требуют запись «да» перед запуском и проверкой PR.
+- В 0.32.0 проверка записи «да» спит: отсечка `2099-12-31` позволяет проектам с одобренными пакетами запускаться и получать сертификат без записи идеи. Этап Idea уже пишет запись; проверку по умолчанию включит следующий выпуск. Продукт может включить её раньше через `ideaGate.since`.
 - Сохранять `packRoot` старых попыток; выполнять `before-update` по всем продуктам перед заменой каталога. Чтение старых receipt не переносит попытку, а `ideaGate.since` меняет только классификацию.
 - Добавлять `models.roles.idea-helper` только после установки 0.32.0 везде. Для отката сохранить и убрать переопределение во всех затронутых конфигах, проверить штатные роли старым пакетом и установить закреплённый `v0.31.1` из маркетплейса.
 

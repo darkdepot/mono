@@ -164,19 +164,34 @@ function writeJson(root, name, value) {
   const file = path.join(root, name); fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(value));
 }
-test('release cutoff defaults to the first full day and preserves pre-cutoff package approvals', () => {
-  assert.equal(IDEA_GATE_DEFAULT_SINCE, '2026-10-18');
+test('release cutoff is dormant and preserves strict cutoff boundaries', () => {
+  assert.equal(IDEA_GATE_DEFAULT_SINCE, '2099-12-31');
   const options = input();
   delete options.since;
   const comment = { id: 'approval-release', createdAt: '2026-10-17T23:59:59Z', body: 'Пакет одобрен' };
   options.records.comments = [comment];
   options.approval = { commentId: comment.id, createdAt: comment.createdAt, bodySha256: hash(comment.body), body: comment.body };
   expectCode(options, 'legacy-before-cutoff');
-  options.approval.createdAt = comment.createdAt = '2026-10-18T00:00:00Z';
+  options.approval.createdAt = comment.createdAt = '2099-12-31T00:00:00Z';
   expectCode(options, 'no-record');
   options.approval.createdAt = comment.createdAt = '2026-10-17T23:59:59Z';
-  options.project.createdAt = '2026-10-18T00:00:00Z';
+  options.project.createdAt = '2099-12-31T00:00:00Z';
   expectCode(options, 'no-record');
+});
+
+test('default approved mode accepts a new project without an idea record', () => {
+  const options = input();
+  delete options.since;
+  options.project.createdAt = '2026-10-19T00:00:00Z';
+  const comment = { id: 'approval-dormant', createdAt: '2026-10-19T01:00:00Z', body: 'approval_status=approved' };
+  options.records.comments = [comment];
+  options.approval = { commentId: comment.id, createdAt: comment.createdAt, bodySha256: hash(comment.body), body: comment.body };
+  options.issueContext = { issueId: 'issue-1', issueKey: 'MONO-173', projectId };
+  const result = expectCode(options, 'legacy-before-cutoff');
+  assert.equal(result.recordId, null);
+  assert.equal(result.fingerprint, null);
+  expectCode({ ...options, mode: 'fresh' }, 'legacy-migrate');
+  expectCode({ ...options, since: '2026-10-18' }, 'no-record');
 });
 
 test('CLI fresh needs only project and complete comments; default cutoff works and read errors fail closed', () => tempSnapshot(root => {
