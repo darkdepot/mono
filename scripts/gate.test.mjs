@@ -5,6 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { evaluateShip, validatePreflight, advanceEvidence, botRemarkDigest } from "./gate.mjs";
+import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
+import { ideaBinding } from './orchestrator/command-state.mjs';
+import { checkIdea } from './idea-gate.mjs';
 
 const head = "a".repeat(40);
 const sample = () => ({ head, state: "OPEN", mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", viewer: "worker",
@@ -332,7 +335,7 @@ test("named collection fixtures through the gate CLI", async t => {
   const { spawnSync } = await import("node:child_process");
   const { atomicJson, canonical, digest, resolvedLocation } = await import("./runtime.mjs");
   const { sha256File } = await import("./orchestrator/command-state.mjs");
-  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collector-temp|collection-declines|collection-helper|collection-class|collection-verify)-.*\.json$/u.test(name));
+  const files = fs.readdirSync("scripts/fixtures").filter(name => /^(collection-u13|collection-idea|collector-temp|collection-declines|collection-helper|collection-class|collection-verify)-.*\.json$/u.test(name));
   for (const name of files) await t.test(name, async () => {
     const fixture = JSON.parse(fs.readFileSync(path.join("scripts/fixtures", name), "utf8"));
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-u13-cli-"));
@@ -466,6 +469,23 @@ const n=fs.existsSync(p)?Number(fs.readFileSync(p,'utf8'))+1:1;fs.writeFileSync(
 if(${JSON.stringify(fixture.changeHead)})require('node:child_process').execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','changed']);
 process.exit(n<=${fixture.failRuns ?? 0}?1:0);
 `];
+      if (fixture.mode.startsWith('idea-')) {
+        pins.packVersion = fixture.mode === 'idea-old-no-pin' ? '0.31.1' : '0.32.0';
+        if (!fixture.mode.endsWith('no-pin')) {
+          const directory = path.join(path.dirname(pinsFile), 'snapshot');
+          const input = ideaDispatchFixture(directory);
+          atomicJson(path.join(directory, 'idea/gate-config.json'), { ideaGate: { since: '2026-10-17' } });
+          const lane = fixture.mode === 'idea-issue-only' ? JSON.parse(fs.readFileSync('scripts/fixtures/idea-gate/issue-only/issue-only.json')) : null;
+          if (lane) {
+            atomicJson(path.join(directory, 'issue-only.json'), lane);
+            for (const name of ['idea/project.json', 'idea/idea-records.json', 'approval.json', 'issue-context.json']) fs.unlinkSync(path.join(directory, name));
+          }
+          atomicJson(path.join(directory, 'idea/selected-record.json'), lane ? null : input.records.comments[0]);
+          pins.idea = ideaBinding(directory, checkIdea(lane ? { mode: 'approved', since: '2026-10-17', issueOnlySeam: lane.seam } :
+            { mode: 'approved', project: input.project, records: input.records,
+              approval: { ...input.approval, body: input.body }, issueContext: input.context, since: '2026-10-17' }));
+        }
+      }
       atomicJson(pinsFile, pins);
       const binding = { file: pinsFile, digest: sha256File(pinsFile) };
       const entry = { issue: "MONO-999", attempt: 1, stage: "mono-deliver", worktree: repo,
@@ -484,6 +504,51 @@ process.exit(n<=${fixture.failRuns ?? 0}?1:0);
       };
       const collect = async (value, expected = 0) => { await admit(value); const r = call({ ...value, collect: true }); assert.equal(r.status, expected, r.stdout + r.stderr); return JSON.parse(fs.readFileSync(receiptFile, "utf8")); };
       const seal = envelope => { envelope.signature = crypto.createHmac("sha256", fs.readFileSync(path.join(evidence, "receipt.key"))).update(canonical(envelope.receipt)).digest("hex"); atomicJson(receiptFile, envelope); };
+      if (fixture.mode.startsWith('idea-')) {
+        if (fixture.mode === 'idea-new-no-pin') {
+          const result = call(request); assert.equal(result.status, 1); assert.match(result.stdout, /idea pin required/u);
+          assert.equal(fs.existsSync(receiptFile), false); return;
+        }
+        if (fixture.mode === 'idea-request-mismatch') {
+          delete request.idea; const result = call(request); assert.equal(result.status, 1); assert.match(result.stdout, /mismatch: idea/u); return;
+        }
+        if (fixture.mode === 'idea-tamper-before-collect') {
+          const projectFile = path.join(pins.idea.path, 'idea/project.json'), project = JSON.parse(fs.readFileSync(projectFile));
+          project.status = 'Delivery'; atomicJson(projectFile, project);
+          await admit(request); const result = call({ ...request, collect: true });
+          assert.equal(result.status, 1); assert.match(result.stdout, /idea artifact/u);
+          assert.equal(fs.existsSync(receiptFile), false); assert.equal(fs.existsSync(sandboxLog), false); return;
+        }
+        const envelope = await collect(request);
+        if (fixture.mode !== 'idea-old-no-pin') assert.deepEqual(envelope.receipt.idea, pins.idea, 'signed receipt binds the saved idea');
+        else assert.equal(Object.hasOwn(envelope.receipt, 'idea'), false, 'old attempt remains field-free');
+        if (fixture.mode === 'idea-missing-receipt') { delete envelope.receipt.idea; seal(envelope); }
+        if (fixture.mode === 'idea-other-project-receipt') { envelope.receipt.idea.projectId = '11111111-1111-1111-1111-111111111111'; seal(envelope); }
+        if (fixture.mode === 'idea-tamper') {
+          const projectFile = path.join(pins.idea.path, 'idea/project.json'), project = JSON.parse(fs.readFileSync(projectFile));
+          project.status = 'Delivery'; project.body += '\n## Additional section\nLater change.\n';
+          atomicJson(projectFile, project);
+          assert.equal(checkIdea({ mode: 'approved', project, records: JSON.parse(fs.readFileSync(path.join(pins.idea.path, 'idea/idea-records.json'))), since: '2026-10-17' }).code, 'pass');
+        }
+        const result = call(request), rejected = ['idea-tamper', 'idea-missing-receipt', 'idea-other-project-receipt'].includes(fixture.mode);
+        assert.equal(result.status, rejected ? 1 : 0, result.stdout + result.stderr);
+        if (rejected) assert.match(result.stdout, /idea/u);
+        // Ship must perform the same artifact/receipt check before judgment.
+        if (rejected) {
+          const gh = path.join(bin, 'gh');
+          write(gh, `#!/usr/bin/env node
+const a=process.argv.slice(2),empty={nodes:[],pageInfo:{hasNextPage:false}};
+const pr={headRefOid:${JSON.stringify(head)},baseRefOid:${JSON.stringify(head)},baseRefName:'delivery',state:'OPEN',mergeStateStatus:'CLEAN',mergeable:'MERGEABLE',reviewThreads:empty};
+console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:pr,object:{statusCheckRollup:{contexts:empty}}}}}:a.includes('user')?{login:'fixture'}:[]));
+`);
+          fs.chmodSync(gh, 0o700);
+          const judgmentFile = path.join(scratch, 'judgment.json'); atomicJson(judgmentFile, { ...judgment(), head });
+          atomicJson(file, { preflight: request, repo: 'fixture/repo', number: 1, attempt: 1, stateFile: path.join(scratch, 'ship.json'), judgmentFile, watch: false });
+          const shipped = spawnSync(process.execPath, ['scripts/gate.mjs', 'ship', '--request', file], { env, encoding: 'utf8' });
+          assert.equal(shipped.status, 1, shipped.stdout + shipped.stderr); assert.match(shipped.stdout, /idea/u);
+        }
+        return;
+      }
       if (fixture.mode === "class-after-admission") {
         const { recordDecision, findingIdentity } = await import('./decisions.mjs');
         const { classFixture, classSeal } = await import('./class-fixtures.mjs');

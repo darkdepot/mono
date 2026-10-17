@@ -163,6 +163,16 @@ Installed `orchestrator/dispatch.mjs` launches an approved Issue from snapshot
 bodies in one command: extracts for short, immutable pins/digest, rendered
 dispatch, start gate, spawn and a UTC ledger event. Refusals before spawn register
 no attempt; their retries rebuild the exact requested snapshot composition.
+Project dispatch now requires `idea/project.json`, complete paginated
+`idea/idea-records.json`, `approval.json` and `issue-context.json` alongside the
+package documents. The Issue key/project, approval comment timestamp/body hash
+and approved idea must match; package approval needs exactly one
+`approval_status=approved` (unmarked approval only before the configured cutoff).
+The saved idea and selected record are pinned through collection, signed receipt
+and ship, including canonical artifact contents. Amend/resume preserves the
+binding; a new record requires a new attempt. Attempts launched before 0.32.0
+can finish without the field. Issue-only retains its existing envelope and seam.
+See [snapshot assembly](references/orchestration.md#orchestrator-dispatch-command).
 `orchestrator/accept.mjs ack|report|amend` validates a move plan before
 connector writes, confirms report queues from fresh reconciliation sessions, and
 prints `writeDigests` for the expanded writes, including certificates. Amendments

@@ -9,6 +9,7 @@ import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { extractSnapshot, references, section } from "./orchestrator/snapshot.mjs";
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
+import { ideaDispatchFixture, ideaProjectId } from './fixtures/idea-dispatch.mjs';
 import { applyPreapply, preapplyManifest } from "./orchestrator/preapply.mjs";
 import { digest, readJson, atomicJson, withLock } from "./runtime.mjs";
 import { publishPhase, validateConfirmation, confirmQueue } from "./delivery-state.mjs";
@@ -126,6 +127,21 @@ test("amend collection pins-file contracts", async t => {
       assert.equal(fs.existsSync(path.join(root, "consumed", `${issue}-a1`, "admissions", `${stale.capsule.open_queue[0].id}.json`)), false);
       assert.deepEqual((await admitCollection(root, report))[0], prior, "prior admission precedes new-version checks");
     });
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+});
+
+test('idea amendment cannot replace or remove the launch binding', () => {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-idea-amend-'));
+  try {
+    const file = path.join(scratch, 'pins.json'), idea = { path: '/saved/idea', projectId: ideaProjectId, digest: 'a'.repeat(64) };
+    atomicJson(file, { packVersion: '0.32.0', idea });
+    const entry = { pins: { file, digest: createHash('sha256').update(fs.readFileSync(file)).digest('hex') }, pinsVersion: 1 };
+    atomicJson(path.join(scratch, 'pins.v1.json'), { pinsVersion: 1, risk: 'risky' });
+    assert.deepEqual(effectivePins(entry).idea, idea);
+    for (const changed of [null, { ...idea, projectId: '11111111-1111-1111-1111-111111111111' }]) {
+      atomicJson(path.join(scratch, 'pins.v1.json'), { pinsVersion: 1, idea: changed });
+      assert.throws(() => effectivePins(entry), /idea pin is immutable/u);
+    }
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 
@@ -338,7 +354,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     git("init", "-b", "main");
     const origin = path.join(scratch, "origin.git"); pass(run("git", ["init", "--bare", origin])); git("remote", "add", "origin", origin);
     const config = path.join(repo, ".agents/mono-workflow.config.json");
-    write(config, { projectName: "Fixture", orchestration: { transport: "codex-cli", dispatch: { product: "fixture", evidenceRoot: path.join(scratch, "evidence"), openDecisions: 0,
+    write(config, { projectName: "Fixture", ideaGate: { since: '2026-10-17' }, orchestration: { transport: "codex-cli", dispatch: { product: "fixture", evidenceRoot: path.join(scratch, "evidence"), openDecisions: 0,
       verification: { command: "node", args: ["scripts/verify.mjs"] }, lifecycle_moves: [{ entity: "issue", key: "MONO-999", from: "Backlog", to: "In Progress" }] } } });
     write(path.join(repo, ".gitignore"), ".worktrees/\n.orchestrator/\n"); git("add", "."); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"); git("push", "origin", "main");
     const snapshot = path.join(scratch, "snapshot"), writable = path.join(scratch, "writable.json"); write(writable, [temp]);
@@ -346,14 +362,61 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     write(path.join(snapshot, "issue-MONO-999.md"), body); write(path.join(snapshot, "approval.md"), "Approved package and start; current project Delivery.");
     write(path.join(snapshot, "project-brief.md"), "# Fixture\nBrief\n"); write(path.join(snapshot, "prd.md"), fixture("cheap-waves-prd.md")); write(path.join(snapshot, "tech-spec.md"), fixture("cheap-waves-spec.md"));
     const command = path.join(runtime, "orchestrator/dispatch.mjs"), options = ["--issue", "MONO-999", "--root", root, "--config", config, "--snapshot", snapshot, "--handshake", "wait", "--worker-writable-roots", writable];
+    await t.test('idea dispatch refuses missing records before registering attempts', () => {
+      ideaDispatchFixture(snapshot, 'MONO-999', input => { input.records.comments = input.records.comments.filter(c => c.id !== 'idea-1'); });
+      const result = run(process.execPath, [command, ...options]);
+      assert.notEqual(result.status, 0, 'a project without an approved idea cannot launch');
+      assert.match(result.stderr, new RegExp(`no-record project=${ideaProjectId}`));
+      assert.equal(fs.existsSync(path.join(root, 'attempts.json')), false);
+      assert.deepEqual(readJson(path.join(root, 'workers.json')), {});
+    });
+    ideaDispatchFixture(snapshot);
     // A pre-spawn start-gate refusal leaves no attempt registration.
     const worktree = path.join(repo, ".worktrees/MONO-999"); git("worktree", "add", "-b", "mono/mono-999", worktree, "origin/main"); write(path.join(worktree, "dirty"), "dirty");
+    await t.test('idea dispatch refuses foreign, incomplete and unapproved package snapshots', async t => {
+      const other = '11111111-1111-1111-1111-111111111111';
+      for (const [name, change, code] of [
+        ['foreign-record', i => { i.records.comments[0].body = i.records.comments[0].body.replaceAll(ideaProjectId, other); }, 'other-project'],
+        ['complete-foreign-project', i => { i.project.id = other; i.records.comments[0].body = i.records.comments[0].body.replaceAll(ideaProjectId, other); }, 'other-project'],
+        ['wrong-issue', i => { i.context.issueKey = 'MONO-998'; }, 'read-failed'],
+        ['pending', i => { i.body = 'approval_status=pending'; }, 'read-failed'],
+        ['rejected', i => { i.body = 'approval_status=rejected'; }, 'read-failed'],
+        ['two-approved', i => { i.body = 'approval_status=approved\napproval_status=approved'; }, 'read-failed'],
+        ['approved-and-pending', i => { i.body = 'approval_status=approved\napproval_status=pending'; }, 'read-failed'],
+        ['new-unmarked', i => { i.body = 'Approved'; i.approval.createdAt = '2026-10-17T00:00:00Z'; }, 'read-failed'],
+        ['old-foreign-approval', i => { i.project.createdAt = '2026-10-01T00:00:00Z'; i.approval.commentId = 'foreign-approval'; }, 'other-project'],
+        ['incomplete-comments', i => { i.records.complete = false; }, 'read-failed'],
+      ]) await t.test(name, () => {
+        ideaDispatchFixture(snapshot, 'MONO-999', change);
+        const response = run(process.execPath, [command, ...options]);
+        assert.notEqual(response.status, 0); assert.match(response.stderr, new RegExp(`${code} project=`));
+        assert.equal(fs.existsSync(path.join(root, 'attempts.json')), false); assert.deepEqual(readJson(path.join(root, 'workers.json')), {});
+      });
+      for (const name of ['approval.json', 'issue-context.json', 'idea/project.json', 'idea/idea-records.json']) {
+        ideaDispatchFixture(snapshot); fs.unlinkSync(path.join(snapshot, name));
+        assert.match(run(process.execPath, [command, ...options]).stderr, /read-failed project=/u);
+      }
+      ideaDispatchFixture(snapshot); write(path.join(snapshot, 'approval.json'), { ...readJson(path.join(snapshot, 'approval.json')), bodySha256: '0'.repeat(64) });
+      assert.match(run(process.execPath, [command, ...options]).stderr, /read-failed project=/u);
+      ideaDispatchFixture(snapshot, 'MONO-999', i => { i.project.createdAt = '2026-10-01T00:00:00Z'; i.records.comments = i.records.comments.filter(c => c.id !== 'idea-1'); i.body = 'Approved legacy package'; });
+      const legacy = run(process.execPath, [command, ...options]);
+      assert.match(legacy.stderr, /legacy-before-cutoff/u); assert.match(legacy.stderr, /dirty/u);
+      assert.equal(fs.existsSync(path.join(root, 'attempts.json')), false);
+      // Old research can enter handoff without a record, but dispatch cannot.
+      const { checkIdea } = await import('./idea-gate.mjs');
+      const old = ideaDispatchFixture(snapshot, 'MONO-999', i => { i.project.createdAt = '2026-10-01T00:00:00Z'; i.records.comments = i.records.comments.filter(c => c.id !== 'idea-1'); i.approval.createdAt = '2026-10-18T00:00:00Z'; });
+      assert.equal(checkIdea({ mode: 'fresh', project: old.project, records: old.records, since: '2026-10-17' }).code, 'legacy-migrate');
+      assert.match(run(process.execPath, [command, ...options]).stderr, /no-record project=/u);
+      ideaDispatchFixture(snapshot, 'MONO-999', i => { i.project.createdAt = old.project.createdAt; i.approval.createdAt = old.approval.createdAt; });
+      assert.match(run(process.execPath, [command, ...options]).stderr, /dirty/u, 'package with a record now reaches start gate');
+      ideaDispatchFixture(snapshot);
+    });
     const refused = run(process.execPath, [command, ...options, "--profile", "full"]); assert.notEqual(refused.status, 0); assert.match(refused.stderr, /dirty/u);
     assert.equal(fs.existsSync(path.join(root, "attempts.json")), false); assert.deepEqual(readJson(path.join(root, "workers.json")), {});
     await t.test("dispatch-refused-snapshot-rebuild: each retry contains only its current composition", async () => {
       const preparedSnapshot = path.join(root, "dispatch/MONO-999-a1/snapshot");
       const names = () => fs.readdirSync(preparedSnapshot).sort();
-      assert.deepEqual(names(), ["approval.md", "issue-MONO-999.md", "prd.md", "project-brief.md", "tech-spec.md"]);
+      assert.deepEqual(names(), ["approval.json", "approval.md", "idea", "issue-MONO-999.md", "issue-context.json", "prd.md", "project-brief.md", "tech-spec.md"]);
       const retry = (source, profile) => {
         const current = [...options]; current[current.indexOf("--snapshot") + 1] = source;
         const result = run(process.execPath, [command, ...current, "--profile", profile]);
@@ -361,17 +424,17 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
         assert.equal(fs.existsSync(path.join(root, "attempts.json")), false); assert.deepEqual(readJson(path.join(root, "workers.json")), {});
       };
       retry(preparedSnapshot, "short"); // A full generated snapshot may itself be the next input.
-      assert.deepEqual(names(), ["approval.md", "issue-MONO-999.md", "prd-extract.md", "project-brief.md", "spec-extract.md"]);
+      assert.deepEqual(names(), ["approval.json", "approval.md", "idea", "issue-MONO-999.md", "issue-context.json", "prd-extract.md", "project-brief.md", "spec-extract.md"]);
       retry(snapshot, "full");
-      assert.deepEqual(names(), ["approval.md", "issue-MONO-999.md", "prd.md", "project-brief.md", "tech-spec.md"]);
+      assert.deepEqual(names(), ["approval.json", "approval.md", "idea", "issue-MONO-999.md", "issue-context.json", "prd.md", "project-brief.md", "tech-spec.md"]);
       const laneSource = path.join(scratch, "refused-lane-snapshot");
       write(path.join(laneSource, "issue-MONO-999.md"), body); write(path.join(laneSource, "approval.md"), "Approved lane fixture.");
       write(path.join(laneSource, "issue-only.json"), { marker: "fixture marker", label: "issue-only", fingerprint: createHash("sha256").update(body).digest("hex"),
         config: "enabled=true; ownerPrincipal=fixture", ownerApproval: "approved fixture fingerprint",
         seam: { package_kind: "issue-only", lifecycle_state_entity: "issue", behavioral_oracle: "fixture oracle", risk_class: "standard", approval_status: "approved-fresh" } });
-      retry(laneSource, "short"); assert.deepEqual(names(), ["approval.md", "issue-MONO-999.md", "issue-only.json"]);
+      retry(laneSource, "short"); assert.deepEqual(names(), ["approval.md", "idea", "issue-MONO-999.md", "issue-only.json"]);
       retry(snapshot, "short");
-      assert.deepEqual(names(), ["approval.md", "issue-MONO-999.md", "prd-extract.md", "project-brief.md", "spec-extract.md"]);
+      assert.deepEqual(names(), ["approval.json", "approval.md", "idea", "issue-MONO-999.md", "issue-context.json", "prd-extract.md", "project-brief.md", "spec-extract.md"]);
     });
     fs.unlinkSync(path.join(worktree, "dirty"));
     write(path.join(snapshot, "issue-MONO-999.md"), body.replace("R4, U5", "R99"));
@@ -399,6 +462,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     const launchDataset = path.join(scratch, "evidence/datasets/launch-fixture.md"); write(launchDataset, "Approved launch decisions.\n");
     const laneLaunch = JSON.parse(pass(run(process.execPath, [command, ...laneOptions, "--review-dataset", launchDataset, "--review-dataset-version", "7"]))); livePid = processes.track(laneLaunch.pid);
     const lanePins = readJson(laneLaunch.pins.file);
+    assert.equal(lanePins.idea.verdict, 'issue-only');
     assert.equal(lanePins.reviewDataset, launchDataset); assert.equal(lanePins.reviewDatasetVersion, 7);
     assert.equal(lanePins.reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(launchDataset)).digest("hex"));
     const laneRendered = fs.readFileSync(laneLaunch.dispatchFile, "utf8");
@@ -410,6 +474,8 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.equal(entry.attempt, 1); assert.equal(entry.pinsVersion, 0); assert.equal(entry.profile, "short"); assert.equal(entry.handshake, "wait");
     assert.equal(entry.pins.digest, (await import("./orchestrator/command-state.mjs")).sha256File(entry.pins.file));
     const launchedPins = readJson(entry.pins.file);
+    assert.equal(launchedPins.idea.verdict, 'pass'); assert.equal(launchedPins.idea.projectId, ideaProjectId);
+    assert.equal(readJson(path.join(launched.snapshot, 'idea/selected-record.json')).id, 'idea-1');
     assert.equal(launchedPins.reviewDataset, fs.realpathSync(path.join(scratch, "evidence/datasets/MONO-999-review-scope.v1.md")));
     assert.equal(launchedPins.reviewDatasetVersion, 1);
     assert.equal(launchedPins.reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(launchedPins.reviewDataset)).digest("hex"));
@@ -545,6 +611,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     try {
       const amended = await acceptAmend({ root, issue: ack.issue, attempt: "1", risk: "deep", text: "Raise risk to deep; approved full snapshot follows.", "full-snapshot": true, snapshot }); livePid = processes.track(amended.pid);
       assert.equal(amended.pinsVersion, 1); assert.match(amended.pinsFile, /pins\.v1\.json$/u); assert.equal(readJson(path.join(root, "workers.json"))[ack.issue].pinsVersion, 1);
+      assert.deepEqual(effectivePins(readJson(path.join(root, 'workers.json'))[ack.issue]).idea, launchedPins.idea, 'amendment keeps the original idea binding');
       assert.match(fs.readFileSync(amended.resumeFile, "utf8"), /## prd\.md/u);
       const originalResume = fs.readFileSync(amended.resumeFile, "utf8");
       await processes.stop(livePid); livePid = null;
@@ -1301,6 +1368,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     git(repo, "init", "-b", "main"); const origin = path.join(scratch, "origin.git"); git(scratch, "init", "--bare", origin); git(repo, "remote", "add", "origin", origin);
     const config = path.join(repo, ".agents/mono-workflow.config.json"), policy = readJson(path.join(checkout, ".agents/mono-workflow.config.json"));
     policy.orchestration.transport = "codex-cli";
+    policy.ideaGate = { since: '2026-10-17' };
     delete policy.orchestration.backupTransport;
     policy.orchestration.preapply = { mandate: input.mandate };
     policy.orchestration.delivery = { ...policy.orchestration.delivery, attemptCap: 10 };
@@ -1317,6 +1385,7 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     const target = ".agents/mono-workflow.config.json", opaquePath = ".agents/opaque.txt", opaqueBytes = JSON.parse(fixture("preapply-opaque-bytes.json")).bytes;
     const good = manifest(target, bytes) + manifest(opaquePath, opaqueBytes);
     write(path.join(snapshot, "approval.md"), "Approved AE12; project Delivery."); write(path.join(snapshot, "project-brief.md"), "AE12"); write(path.join(snapshot, "prd.md"), "## Кратко\nAE12 scratch.\n");
+    ideaDispatchFixture(snapshot, 'MONO-997');
     const setSpec = value => { write(path.join(snapshot, "issue-MONO-997.md"), body); write(path.join(snapshot, "tech-spec.md"), `- U7. AE12\n  - Предприменение:\n${value}- U8. Uncovered\n`); };
     setSpec(good);
     const writable = path.join(scratch, "writable.json"), temp = path.join(scratch, "worker-temp"); fs.mkdirSync(temp); write(writable, [temp]);

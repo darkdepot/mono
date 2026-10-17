@@ -7,6 +7,71 @@ import { readJournal, currentEntries } from '../decisions.mjs';
 import { buildReviewLedger, repeatedClasses, recordClassStop } from '../review-ledger.mjs';
 import { capDecisionDigest, reserveReviewCollection, validateCapAdmission } from '../review-cap.mjs';
 import { validatePhase, requirePredecessors, classifyQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
+import { checkIdea, IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
+
+export function dispatchIdea(directory, config, issue, lane = null) {
+  let project = null;
+  const refuse = code => { throw new Error(`idea-gate: fail: ${code} project=${project?.id ?? null}`); };
+  try {
+    const since = config.ideaGate?.since ?? IDEA_GATE_DEFAULT_SINCE;
+    if (lane) {
+      const result = checkIdea({ mode: 'approved', since, issueOnlySeam: lane.seam });
+      if (!result.ok) refuse(result.code);
+      return result;
+    }
+    project = readJson(path.join(directory, 'idea/project.json'));
+    const records = readJson(path.join(directory, 'idea/idea-records.json'));
+    const approval = { ...readJson(path.join(directory, 'approval.json')), body: fs.readFileSync(path.join(directory, 'approval.md'), 'utf8') };
+    const issueContext = readJson(path.join(directory, 'issue-context.json'));
+    if (typeof issueContext.issueId !== 'string' || !issueContext.issueId || issueContext.issueKey !== issue) refuse('read-failed');
+    if (approval.bodySha256 !== sha256File(path.join(directory, 'approval.md'))) refuse('read-failed');
+    const result = checkIdea({ mode: 'approved', project, records, approval, issueContext, since, headings: config.ideaGate?.headings });
+    if (!result.ok) refuse(result.code);
+    const statuses = [...approval.body.matchAll(/\bapproval_status\s*=\s*([\w-]+)/gu)].map(match => match[1]);
+    if (statuses.length ? statuses.length !== 1 || statuses[0] !== 'approved' :
+      !(Number.isFinite(Date.parse(approval.createdAt)) && Date.parse(approval.createdAt) < Date.parse(since))) refuse('read-failed');
+    if (!statuses.length || result.code === 'legacy-before-cutoff') console.error(`idea-gate: pass: legacy-before-cutoff project=${project.id}`);
+    return result;
+  } catch (error) {
+    if (error.message.startsWith('idea-gate: fail:')) throw error;
+    refuse('read-failed');
+  }
+}
+
+// Canonical contents, including all saved idea files, are distinct from the
+// semantic checkIdea digest: approved intentionally tolerates later body edits.
+export function ideaArtifactDigest(directory) {
+  const files = {};
+  const read = name => {
+    const file = path.join(directory, name), stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink()) throw new Error('idea artifact must not contain symbolic links');
+    if (stat.isDirectory()) {
+      for (const child of fs.readdirSync(file).sort()) read(`${name}/${child}`);
+    } else {
+      if (!stat.isFile()) throw new Error('idea artifact must contain regular files');
+      files[name] = name.endsWith('.json') ? readJson(file) : fs.readFileSync(file, 'utf8');
+    }
+  };
+  for (const name of ['idea', 'approval.md', ...(fs.existsSync(path.join(directory, 'issue-only.json')) ?
+    ['issue-only.json'] : ['approval.json', 'issue-context.json'])]) read(name);
+  return digest(files);
+}
+
+export function ideaBinding(directory, result) {
+  return { path: directory, projectId: result.projectId, recordId: result.recordId, fingerprint: result.fingerprint,
+    digest: result.digest, artifactDigest: ideaArtifactDigest(directory), verdict: result.code };
+}
+
+export function verifyIdeaArtifact(idea, issue) {
+  if (!path.isAbsolute(idea?.path ?? '')) throw new Error('absolute saved idea path required');
+  const config = readJson(path.join(idea.path, 'idea/gate-config.json'));
+  const lane = fs.existsSync(path.join(idea.path, 'issue-only.json')) ? readJson(path.join(idea.path, 'issue-only.json')) : null;
+  const result = dispatchIdea(idea.path, config, issue, lane);
+  const selected = result.recordId ? readJson(path.join(idea.path, 'idea/idea-records.json')).comments.find(comment => comment.id === result.recordId) : null;
+  if (canonical(selected) !== canonical(readJson(path.join(idea.path, 'idea/selected-record.json')))) throw new Error('saved idea selected record differs');
+  if (canonical(ideaBinding(idea.path, result)) !== canonical(idea)) throw new Error('saved idea artifact differs from pins');
+  return idea;
+}
 
 export const sha256File = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 export function commandFlags(argv, booleans = [], repeat = []) {
@@ -75,6 +140,11 @@ export function effectivePins(entry) {
   if (version && amendment.pinsVersion !== version) throw new Error("amendment version mismatch");
   if (base.release !== undefined && typeof base.release !== "boolean") throw new Error("release pin must be boolean");
   if (amendment.release !== undefined && amendment.release !== (base.release ?? false)) throw new Error("release pin is immutable");
+  if (Object.hasOwn(amendment, 'idea') && canonical(amendment.idea) !== canonical(base.idea)) throw new Error('idea pin is immutable; new idea requires a new attempt');
+  // The first release containing the machine idea gate is 0.32.0. Compare the
+  // launch identity, never the current pack/config, to finish older attempts.
+  const versionParts = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/u.exec(base.packVersion ?? entry.packVersion ?? '');
+  if (!base.idea && versionParts && (Number(versionParts[1]) > 0 || Number(versionParts[2]) >= 32)) throw new Error('idea pin required for this pack version');
   return { ...base, ...amendment, pinsVersion: version };
 }
 
@@ -137,7 +207,7 @@ export function collectionPinsBinding(entry, version = entry.pinsVersion ?? 0) {
   return { file, digest: sha256File(file) };
 }
 export function collectionPinMismatch(request, pins) {
-  for (const key of ["product", "root", "worktree", "packRoot", "skillsRoot", "baseRef", "evidenceRoot", "modelRoutes", "verification", "risk", "critical", "reviewDataset", "reviewDatasetVersion", "workerWritableRoots"]) {
+  for (const key of ["product", "root", "worktree", "packRoot", "skillsRoot", "baseRef", "evidenceRoot", "modelRoutes", "verification", "risk", "critical", "reviewDataset", "reviewDatasetVersion", "workerWritableRoots", "idea"]) {
     const fallback = key === "reviewDatasetVersion" ? 0 : null;
     if (canonical(request[key] ?? fallback) !== canonical(pins[key] ?? fallback)) return { field: key, expected: pins[key] ?? fallback };
   }

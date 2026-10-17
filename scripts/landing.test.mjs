@@ -9,6 +9,7 @@ import { atomicJson, changedPaths, withLock } from "./runtime.mjs";
 import { effectivePins, sha256File, admitCollection } from "./orchestrator/command-state.mjs";
 import { checkSpawnAvailability } from "./orchestrator/launch.mjs";
 import { renderDispatch } from "./orchestrator/dispatch.mjs";
+import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 
 const scenarios = ["clean-branch", "file-edit", "prefix-edit", "rename", "release", "forged-release", "branch-removes-policy", "inherited-after-rebase", "no-pins", "no-policy", "branch-introduces-policy"];
 test("landing U2 named gate fixtures", async t => {
@@ -119,6 +120,7 @@ test("landing U2 installed dispatch validates release and reserves a single rele
     git("init", "-b", "main"); const origin = path.join(scratch, "origin.git"); pass(run("git", ["init", "--bare", origin])); git("remote", "add", "origin", origin);
     const config = JSON.parse(fs.readFileSync(".agents/mono-workflow.config.json"));
     config.orchestration.transport = "codex-cli";
+    config.ideaGate = { since: '2026-10-17' };
     delete config.orchestration.backupTransport;
     delete config.landing;
     config.orchestration.dispatch = { product: "landing", evidenceRoot: path.join(scratch, "evidence"), openDecisions: 0, lifecycle_moves: [], verification: { command: "node", args: ["scripts/verify.mjs"] } };
@@ -127,6 +129,7 @@ test("landing U2 installed dispatch validates release and reserves a single rele
     const snapshot = path.join(scratch, "snapshot");
     write(path.join(snapshot, "issue-MONO-999.md"), "# Landing fixture\n# Что сделать\nLanding.\n# Готовность агента\nAFK\n# Покрытие PRD/Spec\nU1\n# Как проверить\nLanding.\n# Ключевые контракты\nLanding.\nРиск: standard\n");
     for (const file of ["approval.md", "project-brief.md", "prd.md", "tech-spec.md"]) write(path.join(snapshot, file), "Approved landing fixture.\n");
+    ideaDispatchFixture(snapshot);
     const runtime = path.join(skills, "scripts"), extras = path.join(scratch, "roots.json"); atomicJson(extras, [path.join(scratch, "temp")]); fs.mkdirSync(path.join(scratch, "temp"));
     const args = [path.join(runtime, "orchestrator/dispatch.mjs"), "--root", root, "--config", configFile, "--snapshot", snapshot, "--issue", "MONO-999", "--profile", "full", "--worker-writable-roots", extras];
     await t.test("invalid-release-flag", () => {
