@@ -19,11 +19,11 @@ Write skills in English, except stages rebuilt under «Mono как продук�
 - `mono:preflight`: local readiness/targeted verification/commit/certificate; mandatory `autoreview` (clean or approved declines), model from [role:autoreview](references/model-policy.md#roles), effort by risk.
 - `mono:ship`: accepted pre-ship drift, formal review/check, PR/docs-before-green/feedback/certificate.
 - `mono:deploy`: deploy delegation/evidence/post-ship/closeout/durable learnings.
-- `mono:orchestrate`: product control plane, dispatch/monitor/decisions and sole orchestrated Linear writer; runs Idea itself and brings its result to the owner for yes; other stage work follows its owner.
+- `mono:orchestrate`: product control plane, dispatch/monitor/decisions and sole orchestrated Linear writer; runs Idea for owner yes; other stages keep their owners.
 
 ## Skill Design Rules
 
-Use SKILL descriptions for routing, atomics for one artifact, wrappers for orchestration. Read `references/`/`templates/` progressively; never inline long templates. Keep handoff/implement/preflight/ship/deploy owners separate. `mono:deliver` sequences three phases in one context; rules stay with phase owners, never in a monolith. Orchestrator dispatches, confirms writes and monitors. Idea is the exception: it runs Idea itself, answers its questions with reasons and brings the description plus «Ответил сам:» to the owner. Only the owner gives yes to the idea; this is separate from later package approval. Implement/preflight/ship stay with workers.
+Use descriptions for routing, atomics for single artifacts and wrappers for orchestration. Read shared files progressively; never inline long templates. Keep phase owners separate: mono:deliver only sequences implement/preflight/ship; their rules stay with their owners. Orchestrator dispatches, confirms and monitors. Idea is its exception: answer questions with reasons, present the description and «Ответил сам:» for owner yes, separately from package approval. Implement/preflight/ship stay in workers.
 
 Review only reports quality/risk; check only reports readiness. Repair: handoff mutates Project-first, `mono:review artifact` judges classification, `mono:check repair` reports readiness, issue renews issue-only, ship owns accepted pre-ship drift. Apply accepted fixes only through these owners or explicit atomics.
 

@@ -5,7 +5,7 @@ description: Use when starting or running implementation from approved Linear Is
 
 # Mono Implement
 
-Shared files: here or pack root. `<корень>` is the pack root, `../..` from this skill folder. Resolve it to an absolute path before running a command from the product repo.
+Shared files: here or pack root. Resolve `<корень>/` to the absolute pack root (`../..` from this skill), not the product cwd.
 
 [Landing](references/landing.md).
 
