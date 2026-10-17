@@ -373,6 +373,34 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     ideaDispatchFixture(snapshot);
     // A pre-spawn start-gate refusal leaves no attempt registration.
     const worktree = path.join(repo, ".worktrees/MONO-999"); git("worktree", "add", "-b", "mono/mono-999", worktree, "origin/main"); write(path.join(worktree, "dirty"), "dirty");
+    await t.test('release default refuses missing records after cutoff, accepts records and preserves earlier approvals', () => {
+      const configured = readJson(config);
+      const defaults = { ...configured }; delete defaults.ideaGate;
+      write(config, defaults);
+      try {
+        ideaDispatchFixture(snapshot, 'MONO-999', i => {
+          i.project.createdAt = '2026-10-18T00:00:00Z';
+          i.approval.createdAt = '2026-10-18T00:00:00Z';
+          i.records.comments = i.records.comments.filter(c => c.id !== 'idea-1');
+        });
+        assert.match(run(process.execPath, [command, ...options]).stderr, /no-record project=/u);
+        ideaDispatchFixture(snapshot, 'MONO-999', i => {
+          i.project.createdAt = '2026-10-18T00:00:00Z';
+          i.approval.createdAt = '2026-10-18T00:00:00Z';
+        });
+        assert.match(run(process.execPath, [command, ...options]).stderr, /dirty/u, 'matching record reaches start gate');
+        ideaDispatchFixture(snapshot, 'MONO-999', i => {
+          i.project.createdAt = '2026-10-17T00:00:00Z';
+          i.approval.createdAt = '2026-10-17T23:59:59Z';
+          i.records.comments = i.records.comments.filter(c => c.id !== 'idea-1');
+        });
+        const legacy = run(process.execPath, [command, ...options]);
+        assert.match(legacy.stderr, /legacy-before-cutoff/u);
+        assert.match(legacy.stderr, /dirty/u, 'pre-cutoff package reaches start gate');
+        assert.equal(fs.existsSync(path.join(root, 'attempts.json')), false);
+        assert.deepEqual(readJson(path.join(root, 'workers.json')), {});
+      } finally { write(config, configured); ideaDispatchFixture(snapshot); }
+    });
     await t.test('idea dispatch refuses foreign, incomplete and unapproved package snapshots', async t => {
       const other = '11111111-1111-1111-1111-111111111111';
       for (const [name, change, code] of [

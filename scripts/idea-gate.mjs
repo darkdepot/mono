@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { digest, isMain, resolveRole } from './runtime.mjs';
 
-export const IDEA_GATE_DEFAULT_SINCE = '2099-12-31';
+export const IDEA_GATE_DEFAULT_SINCE = '2026-10-18';
 const DEFAULT_HEADINGS = {
   ru: { what: 'Что', why: 'Зачем', outcome: 'Образ результата', unknowns: 'Неизвестные' },
   en: { what: 'What', why: 'Why', outcome: 'Target outcome', unknowns: 'Unknowns' },

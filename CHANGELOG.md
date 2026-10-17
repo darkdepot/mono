@@ -6,6 +6,42 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-10-18
+
+<!-- fragment: MONO-187 sha256:1cc17d84c18c4f60e40858e19ac45893d020c8896fb0acca717cf662c84ad733 -->
+### Added
+
+- Idea recording and read-back CLI: `record` prepares the three-section Project body and approval comment; `verify` consumes raw Linear project/comment pages and checks the exact expected comment before reporting «Готово». Notes remain outside the fingerprint.
+- Read-only plugin agents `linear-scout` and `code-scout`, plus a host-aware `scout` model role and `helper --host` CLI; `idea-helper` remains unchanged.
+- Byte-preserved live Linear probes from Claude Code and Codex, manifest checks, and recording/verification regression scenarios.
+
+### Changed
+
+- Accepted PR #186 fixes: `record` refuses extra sections or preamble before writing; `verify` requires actual request cursors in separate `comments-N.request.json` files and checks the full cursor chain without altering raw responses. Regression cases cover an extra section and a skipped, renumbered middle page. MONO-188 must instruct the Idea agent to save each request cursor alongside its response.
+- Project template uses second-level headings, with three body sections in Idea and scope sections added by Handoff. Explicit contract change: PC-001 routes existing Idea Projects to `mono:idea`; PC-005/PC-013 define the three-section body and preserve old scope in approval notes. Contract SHA-256: `7f3faa082fcd224b9e1eb4ddb8ee7726e9f0d01b69dc1796f515b2e73fad4a62`; both direct consumers remain checked.
+- Workflow validation checks the scouts' known frontmatter fields and host efforts. Pin classification: no editorial sentence pins removed; commands, closed codes and agent field names are machine tokens, agent instructions stay in prose with field/body skeleton checks. Only the named, manifest-checked captured Linear files are excluded from executable model-policy scanning; their historical discussion is fixture data.
+- Offset the scout documentation within model policy: delivery reading is 98,341 bytes, below the original 98,366-byte corpus and the unchanged 98,373-byte regression guard. No test limits or expectations changed.
+- Include plugin agents in shared, model-policy and document-schema scratch copies so the same agent checks run against complete package fixtures.
+
+<!-- fragment: MONO-188 sha256:ea937774d5569f75a2a459a4036f49871184597262c3ec348b20ada9c049d2d6 -->
+### Changed
+
+- Rebuilt Idea from the approved Russian v7 draft: parallel source scouts, one meaning question at a time, owner yes to the shown description, verified recording before status changes, and Research next. The orchestrator runs Idea itself and shows its reasoned answers for owner approval.
+- Made Idea checks consume `verify`, kept writing/recovery in the skill's own reference, and resolved script paths from the package root. Package validation uses the shared `scripts/russian-stages.mjs` list (Idea first) for Russian read tiers, the first-AGENTS exemption and conditional Project-contract reads, with explicit package-root and skill-local references; mandatory Idea reading is limited to about 20 KB.
+- The next stage is Research (`mono:research`); while that skill is absent from the installed pack, the next step is `mono:handoff`. Research's follow-up removes this temporary fallback.
+- A returned Project with unchanged description sections keeps its body, package and status; the owner approves all four sections, including Unknowns drawn from description and scout facts. A Project without those sections follows the normal stage: preserve its old text in notes and write the approved body, changing status only from Idea. Notes carry a one-line fact plus source link for Research.
+- Added 10 positive and 6 negative Claude plugin activation evals, three runs at threshold 0.8. The orchestrator runs Claude-only checks on the final head; live stage behavior acceptance follows release 0.32.1.
+- Corrected returned descriptions update the approved body only before package approval; packaged Projects stop before recording and route the body correction through Handoff artifact repair. Explicitly count both scout tasks: the four-file mandatory Idea corpus is 20,441 bytes (limit 20,480), with an actual file-set/byte-total fixture.
+- Aligned the orchestrator fallback and Idea check/lifecycle return branches; unchanged returns prepare scout notes before recording. An Idea Project with a verified approval record resumes interrupted status completion without another owner yes only when the current request neither changes nor adds to the idea. Changed input follows the normal updated-description/owner-yes path.
+- Codex scouts now read their own definition files first (without frontmatter), from absolute paths supplied by Idea; Claude plugin agents retain their own definition loading. Definition paths are pinned only in the subagent launch skeleton, outside the four-file Idea input set. The actual-set fixture enforces this ownership and the unchanged 20,480-byte cap.
+
+<!-- fragment: MONO-189 sha256:faee696979dd3a1b95bdd1a8cebe0a2fbcdd739f45700582cd28ba652dadac46 -->
+### Выпуск и обновление
+
+- В 0.32.1 проверка записи «да» включена: отсечка по умолчанию `2026-10-18` (00:00 UTC). Запуск и сертификат без записи разрешены только проектам, созданным и с одобренным пакетом строго до отсечки. Проверки покрывают границу даты, отказ без записи и прохождение с записью, включая dispatch.
+- Обновление сохраняет каталоги живых попыток; перед заменой — `before-update` по всем продуктам. `models.roles.scout` добавляется только после установки 0.32.1 везде; `idea-helper` сохранён до отдельной задачи после 0.34.0.
+- Откат — закреплённый `v0.32.0` из маркетплейса после удаления переопределения `scout` и проверки ролей старым пакетом. `ideaGate.since` меняет классификацию, но не пины и receipt; попытка перезапускается.
+
 ## [0.32.0] - 2026-10-17
 
 <!-- fragment: MONO-170 sha256:6e34dc285af768b4afd7778b96ef6db7c95261d28c4933a92d745aa9d68903f1 -->
