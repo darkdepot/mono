@@ -17,7 +17,7 @@ Private vulnerability reports: [SECURITY.md](SECURITY.md).
 на сохранённом `packRoot`. До замены каталога выполните `before-update` по всем
 продуктам; если старый каталог потерян, нужна новая попытка.
 
-Добавляйте `models.roles.idea-helper` только после установки 0.32.0 везде:
+Добавляйте `models.roles.idea-helper` для Research и Discovery только после установки 0.32.0 везде:
 0.31.1 отвергает эту роль. Для [отката на 0.31.1](references/install.md#roll-back-to-0311)
 сохраните и удалите переопределение во всех затронутых конфигах, проверьте штатные
 роли старым пакетом и установите закреплённый `v0.31.1` из маркетплейса.
@@ -89,14 +89,14 @@ Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot mark
 A **wave** is the work dispatched for an Issue, including retries, review, and its eventual delivery or recorded stop. A green PR is ready for deploy; deploy supplies the merge, delivery verification, and Linear closeout.
 
 ```text
-raw idea → Project in Idea → recorded owner yes → Discovery → reviewed and approved package
+raw idea → Project in Idea → recorded owner yes → Research (Project status Discovery) → Discovery → reviewed and approved package
 → approved Issue → start handshake → one mono:deliver worker
     code → confirmed write queue → local readiness → confirmed certificate
     → PR → reviews and checks → confirmed green certificate
 → mono:deploy → verification → Linear closeout and project update
 ```
 
-1. **Capture.** Bring a raw idea to `mono:idea`, outside Plan Mode. Stage names stay English (Idea, Research, Discovery); the rebuilt stage text stays Russian. A read-only `idea-helper` gathers linked facts; recap the idea and ask at most three meaning questions. Show What / Why / Target outcome / prioritized Unknowns, obtain explicit yes, record and read it back, then move the Project to Discovery and require `idea-gate fresh` to pass. PRD, Tech Spec, Issues and code follow later. An unmistakable one-PR request may instead enter `mono:issue` under its eligibility rules.
+1. **Capture.** Bring a raw idea to `mono:idea`. Stage names stay English (Idea, Research, Discovery); the rebuilt stage is Russian. Two read-only scouts search Linear and code in parallel, then the agent recaps and asks meaning questions one at a time, at most three, using the host choice tool (text with a recommendation in Codex without one). A route question is separate; scope belongs to later stages. Show What / Why / Target outcome / prioritized Unknowns and stop for the owner's yes to this version. Follow [the recording reference](skills/idea/references/record.md); only «Готово» from `verify` permits the status move to Discovery, followed by read-back and `mono:check idea`. A returned later-stage Project keeps its body, package and status. Next: Research from the first Unknown; the stage stops after its final message. An unmistakable one-PR request routes to `mono:issue` only with the configured lane enabled and `ownerPrincipal` present. In orchestration, the orchestrator runs Idea itself, answers the questions with reasons and shows «Ответил сам:»; the owner alone gives yes, separately from later package approval.
 2. **Discover.** Shape the problem through `/office-hours` or `/brainstorming`; review a product/UI surface with `/plan-design-review` and an implementation architecture with `/plan-eng-review`. These outputs are inputs to handoff, not permission to code. In orchestrated discovery, a Second Voice challenges the draft, the orchestrator answers technical questions, and the owner sees reviewed prototypes and prepared decisions at checkpoints.
 3. **Package.** Run `mono:handoff`. Inspect supplied artifacts and scoped sources, draft the Project/PRD/Tech Spec and Issue slicing, review before the first durable package write, and obtain package approval. Persist the approved package in Linear and apply accepted fixes through its owner. Keep the Project pre-delivery until implementation start is explicitly authorized; documents alone never authorize Delivery.
 4. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
@@ -106,10 +106,20 @@ raw idea → Project in Idea → recorded owner yes → Discovery → reviewed a
 
 Stages rebuilt under «Mono как продукт» are written in Russian; machine tokens
 (commands, paths, keys and codes) stay English. Other skills remain English;
-Linear templates/examples stay Russian. `idea-helper` resolves the project
-`models.roles.idea-helper` override first, otherwise its host default from the
-[roles table](references/model-policy.md#roles); the skill supplies `claude-code`
-or `codex` explicitly. Other role routes are unchanged.
+Linear templates/examples stay Russian. Idea uses `scout`, resolved by
+`idea-gate helper` for `claude-code` or `codex`; `models.roles.scout` overrides
+the host default from the [roles table](references/model-policy.md#roles).
+The `idea-helper` role stays available for Research and Discovery.
+
+Idea reads its own `references/` beside the skill; `<корень>/` resolves to the
+pack root (`../..` from the skill folder). The Project contract is a conditional
+read before body writes; Idea does not eagerly read the product's `AGENTS.md`.
+`node scripts/read-budget.mjs --skill idea --mandatory` reports its required
+corpus; the acceptance target is about 20 KB without conditional reads. Both
+Russian and English read-tier labels are supported. [Activation evals](evals/idea/README.md)
+contain 10 positive and 6 negative prompts, three runs at threshold 0.8; the
+orchestrator runs Claude-only checks on the final head. Stage behavior is accepted
+live after 0.32.1, not by these activation scores.
 
 ### Artifacts and truth
 

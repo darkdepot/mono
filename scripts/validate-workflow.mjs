@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveRole, roleDefaults, requiredPairings } from "./runtime.mjs";
-import { checkPlugin } from "./validate-plugin.mjs";
+import { checkPlugin, resolveSkillPath } from "./validate-plugin.mjs";
 import { measureReadBudget, readingPaths, READ_BUDGET_MAX_BYTES, DELIVERY_SKILLS } from "./read-budget.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -68,6 +68,10 @@ function validateReadBudget() {
     console.log(`Read budget: ${budget.bytes} bytes / ~${budget.approximate_tokens} tokens; ceiling ${READ_BUDGET_MAX_BYTES} bytes`);
     if (!budget.within_ceiling) fail("Delivery reading corpus exceeds the byte ceiling");
     if (budget.files.some((entry) => entry.path.startsWith("references/rationale/"))) fail("Rationale entered delivery reading corpus");
+    const idea = measureReadBudget(root, { skills: ["idea"], includeConditional: false });
+    console.log(`Idea mandatory read budget: ${idea.bytes} bytes`);
+    if (idea.bytes > 20_480) fail("Idea mandatory reading corpus exceeds 20 KB");
+    if (idea.files.some(entry => entry.path === "references/orchestration.md")) fail("Idea eagerly reads orchestration policy");
   } catch (error) { fail(`Read budget: ${error.message}`); }
   for (const skill of [...DELIVERY_SKILLS, "deploy"]) {
     if (/orchestration\.md/.test(read(`skills/${skill}/SKILL.md`))) fail(`${skill}: phase names orchestrator reference`);
@@ -142,6 +146,20 @@ function validateReadBudgetFixtures() {
       require(paths.join() === "model-policy.md", "role or fenced-example parsing differs");
     });
 
+    fixture("Russian tiers, local references and explicit pack root", () => {
+      write("skills/idea/SKILL.md", "Прочитай сразу: `references/examples.md`.\nПрочитай, когда:\n- `<корень>/references/large.md`: перед записью.\n");
+      write("skills/idea/references/examples.md", "# Примеры\n");
+      const all = measureReadBudget(scratch, { skills: ["idea"] });
+      require(!all.within_ceiling && all.files.some(entry => entry.path === "references/large.md"), "Russian conditional pack-root path omitted");
+      const eager = measureReadBudget(scratch, { skills: ["idea"], includeConditional: false });
+      require(eager.files.map(entry => entry.path).sort().join("|") === "skills/idea/references/examples.md|skills/idea/SKILL.md".split("|").sort().join("|"), "mandatory corpus includes conditional reads or misses local input");
+      write("references/examples.md", "# Wrong source\n");
+      fs.unlinkSync(path.join(scratch, "skills/idea/references/examples.md"));
+      let error;
+      try { measureReadBudget(scratch, { skills: ["idea"], includeConditional: false }); } catch (caught) { error = caught; }
+      require(error?.message.includes("missing reading input"), "missing local input fell back to pack references");
+    });
+
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 
@@ -171,25 +189,37 @@ function parseFrontmatter(text) {
   const match = text.match(/^---\n([\s\S]*?)\n---\n?/);
   if (!match) return null;
   const fields = {};
+  let folded = null;
   for (const line of match[1].split("\n")) {
+    if (folded && /^\s+\S/.test(line)) { fields[folded] += (fields[folded] ? " " : "") + line.trim(); continue; }
+    folded = null;
     const field = line.match(/^([a-zA-Z0-9_-]+):\s*(.+)$/);
-    if (field) fields[field[1]] = field[2].trim();
+    if (field) {
+      fields[field[1]] = /^[>|]-?$/.test(field[2]) ? "" : field[2].trim();
+      if (/^[>|]-?$/.test(field[2])) folded = field[1];
+    }
   }
   return fields;
 }
 
 function extractReadFirstEntries(text) {
-  const index = text.indexOf("Read first:");
-  if (index < 0) return { paths: [], malformedLines: [] };
-
+  const now = /^(?:Read now|Прочитай сразу)(?:\s|:|$).*$/m.exec(text);
+  const first = now ?? /^Read first:.*$/m.exec(text);
+  if (!first) return { paths: [], malformedLines: [] };
   const paths = [];
   const malformedLines = [];
-  const lines = text.slice(index + "Read first:".length).split("\n");
+  const when = /^(?:Read when|Прочитай, когда)(?:\s|:|$)/m.exec(text.slice(first.index + first[0].length));
+  const end = when ? first.index + first[0].length + when.index : text.length;
+  const lines = text.slice(first.index, end).split("\n");
   let started = false;
 
   for (const line of lines) {
     if (!line.trim()) continue;
-    const match = line.match(/^\d+\.\s+(.+)$/);
+    if (line === first[0]) {
+      paths.push(...[...line.matchAll(/`([^`]+)`/g)].map(match => match[1]));
+      continue;
+    }
+    const match = line.match(/^(?:\d+\.|-)\s+(.+)$/);
     if (!match) {
       if (started) break;
       continue;
@@ -203,12 +233,18 @@ function extractReadFirstEntries(text) {
   return { paths, malformedLines };
 }
 
-function validateReadFirstPath(referencedPath) {
+function conditionalReadPaths(line) {
+  const entry = /^-((?:\s+`[^`]+`,?)+)\s*(?:—|:)\s+\S/.exec(line);
+  return entry ? [...entry[1].matchAll(/`([^`]+)`/g)].map(match => match[1]) : null;
+}
+
+function validateReadFirstPath(referencedPath, from = "") {
   if (referencedPath === "AGENTS.md") return exists("AGENTS.md");
   if (/^(https?:|\/)/.test(referencedPath)) return false;
-  if (/[$<>]/.test(referencedPath)) return false;
+  const named = referencedPath.replace(/^<корень>\//, "");
+  if (/[$<>]/.test(named)) return false;
   if (referencedPath.startsWith("./") || referencedPath.startsWith("../")) return false;
-  if (/^(skills|references|templates|scripts)\//.test(referencedPath)) return exists(referencedPath);
+  if (/^(skills|references|templates|scripts)\//.test(named)) return fs.existsSync(resolveSkillPath(root, from, referencedPath));
   return false;
 }
 
@@ -316,14 +352,14 @@ function validateSkills() {
       }
     }
 
-    if (!text.includes("Read first:")) fail(`${relativePath} missing Read first section`);
+    if (!/^(?:Read first:|Прочитай сразу:)/m.test(text)) fail(`${relativePath} missing Read first section`);
 
     const { paths: readFirstPaths, malformedLines } = extractReadFirstEntries(text);
     for (const malformedLine of malformedLines) {
       fail(`${relativePath} has malformed Read first entry: ${malformedLine}`);
     }
     for (const referencedPath of readFirstPaths) {
-      if (!validateReadFirstPath(referencedPath)) {
+      if (!validateReadFirstPath(referencedPath, relativePath)) {
         fail(`${relativePath} has broken Read first path: ${referencedPath}`);
       }
     }
@@ -557,8 +593,15 @@ function validateArtifactContractParity() {
           fail(`Missing artifact contract consumer: ${consumerPath}`);
           continue;
         }
-        const { paths } = extractReadFirstEntries(read(consumerPath));
-        if (!paths.includes(config.contractPath)) {
+        const consumer = read(consumerPath);
+        const { paths } = extractReadFirstEntries(consumer);
+        if (consumerPath === "skills/idea/SKILL.md") {
+          const tier = readTierBounds(consumer);
+          if (tier) for (const line of consumer.slice(tier.start, tier.end).split("\n")) {
+            paths.push(...(conditionalReadPaths(line) ?? []));
+          }
+        }
+        if (!paths.some(named => resolveSkillPath(root, consumerPath, named) === path.join(root, config.contractPath))) {
           fail(`${consumerPath} must read ${config.contractPath} as its normative artifact source`);
         }
       }
@@ -5407,14 +5450,15 @@ function validateModelPolicyFixtures() {
 }
 
 const STRING_PINS = [
-  // MONO-172: commands/markers/role identifiers only; idea prose is unpinned.
   ["skills/idea/SKILL.md", "mono:idea"],
-  ["skills/idea/SKILL.md", "idea-helper"],
-  ["skills/idea/SKILL.md", "mono-idea: approved project=<uuid> sha256=<64 hex>"],
-  ["skills/idea/SKILL.md", "mono-idea-snapshot"],
-  ["skills/idea/SKILL.md", "node scripts/idea-gate.mjs check --mode fresh --snapshot <dir> --config <path>"],
+  ["skills/idea/SKILL.md", "linear-scout"],
+  ["skills/idea/SKILL.md", "code-scout"],
+  ["skills/idea/SKILL.md", "references/record.md"],
+  ["skills/idea/SKILL.md", "mono:check idea"],
+  ["skills/idea/references/record.md", "mono-idea: approved project=<uuid> sha256=<64 hex>"],
+  ["skills/idea/references/record.md", "node <корень>/scripts/idea-gate.mjs verify --project <id> --dump <папка>/linear"],
   ["skills/handoff/SKILL.md", "approval_status=approved"],
-  ["skills/implement/SKILL.md", "node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>"],
+  ["skills/implement/SKILL.md", "node <корень>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>"],
   // MONO-95: render placeholders replace angle-substitution prose.
   ["templates/orchestrator-dispatch.md","{{approval}}"],
   ["templates/orchestrator-dispatch.md","{{attempt}}"],
@@ -5979,6 +6023,9 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "linear-scout", "code-scout", "references/record.md", "mono:check idea",
+  "node <корень>/scripts/idea-gate.mjs verify --project <id> --dump <папка>/linear",
+  "node <корень>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",
   "approval_status=approved",
   // MONO-187: CLI commands, closed result dictionary and plugin-agent fields.
   "record", "verify", "helper", "--help", "--draft", "--project", "--notes", "--out", "--dump", "--expect", "--host",
@@ -6642,8 +6689,8 @@ function validateCheckModeDeclaration() {
   if (modes.filter((mode) => mode === "repair").length !== 1) fail("mono:check Modes: missing or duplicate repair declaration");
 }
 function readTierBounds(text) {
-  const now = /^Read now(?:\s|:|$).*$/m.exec(text);
-  const when = /^Read when(?:\s|:|$).*$/m.exec(text);
+  const now = /^(?:Read now|Прочитай сразу)(?:\s|:|$).*$/m.exec(text);
+  const when = /^(?:Read when|Прочитай, когда)(?:\s|:|$).*$/m.exec(text);
   if (!now || !when || when.index <= now.index) return null;
   const start = when.index + when[0].length;
   let end = start, started = false;
@@ -6659,11 +6706,17 @@ function validateReadFirstTierContract() {
     const file = `skills/${skill}/SKILL.md`, text = read(file);
     const tier = readTierBounds(text);
     if (!tier) { fail(`${file}: missing or unordered read tiers`); continue; }
-    if (extractReadFirstEntries(text).paths[0] !== "AGENTS.md") fail(`${file}: AGENTS.md must be the first eager read`);
+    if (skill !== "idea" && extractReadFirstEntries(text).paths[0] !== "AGENTS.md") fail(`${file}: AGENTS.md must be the first eager read`);
     const conditional = text.slice(tier.start, tier.end);
     for (const line of conditional.split("\n")) {
       if (/^\d+\.\s/.test(line.trim())) fail(`${file}: numbered conditional read`);
-      if (line.startsWith("- ") && !/^-(?:\s+`[^`]+`,?)+\s+—\s+\S/.test(line)) fail(`${file}: conditional read needs a path and a condition`);
+      if (line.startsWith("- ")) {
+        const paths = conditionalReadPaths(line);
+        if (!paths) fail(`${file}: conditional read needs a path and a condition`);
+        else for (const named of paths) {
+          if (!validateReadFirstPath(named, file)) fail(`${file}: broken conditional read path ${named}`);
+        }
+      }
     }
   }
   const tiered = ["Read first:", "Read now:", "1. `AGENTS.md`", "2. `references/lifecycle.md`", "Read when:", "- `references/issue-only-lane.md` — fixture `lifecycle_state_entity=issue`", "", "End."].join("\n");
@@ -6768,6 +6821,14 @@ function validateAe6Fixtures() {
     change("README.md", (text) => text.replace(/^(- \*\*K-31\.\*\* )/m, "$1In this pack, "));
     check(); restore(); check();
     console.log("PASS README rule prose rewording: green");
+    for (const name of ["skills/check/SKILL.md", "skills/handoff/SKILL.md"]) change(name, text => text
+      .replace(/^Read now.*$/m, "Прочитай сразу:")
+      .replace(/^Read when.*$/m, "Прочитай, когда:")
+      .replace(/^(- `[^`]+`) — /gm, "$1: "));
+    check(); restore(); check();
+    console.log("PASS AE6 Russian read tiers and colon conditions: green");
+    negative("non-Idea first AGENTS read removed", () => change("skills/check/SKILL.md", text => text.replace(/^1\. `AGENTS.md`\n/m, "")), "AGENTS.md must be the first eager read");
+    negative("Idea conditional Project contract removed", () => change("skills/idea/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/project\.md`:[^\n]+\n/m, "")), "must read references/contracts/project.md as its normative artifact source");
     negative("required section removed", () => change("references/issue-only-lane.md", (text) => text.replace("### Post-`ready` exit\n", "")), "missing or duplicate section");
     for (const [, field, value] of LANE_FIELDS) {
       negative(`required lane field removed: ${field}`, () => change("references/issue-only-lane.md", (text) => text.replace(`${field} ${value}\n`, "")), `${field} missing or duplicate field`);
