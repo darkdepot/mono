@@ -13,8 +13,8 @@ single source for presentation shape.
 
 Use this contract when creating or updating the Linear Project that serves as
 the workflow source of truth. A raw request to write a Project routes to
-`mono:idea`; an existing Project or shaped-discovery repair routes to
-`mono:handoff`.
+`mono:idea`; an existing Project in Idea also routes to `mono:idea`. Other
+existing Projects and shaped-discovery repairs route to `mono:handoff`.
 
 ## PC-002 — Concise product brief
 
@@ -29,11 +29,12 @@ the config is absent.
 
 Keep the Project at overview level. Never inline the PRD or Tech Spec.
 
-## PC-005 — Five body concerns
+## PC-005 — Body concerns by stage
 
-Limit the body to what, why, target outcome, in scope, and out of scope. In
-default Russian output the corresponding headings are `Что`, `Зачем`, `Образ
-результата`, `Что входит`, and `Что не входит`.
+In Idea, limit the body to what, why, and target outcome, with second-level
+headings: `Что`, `Зачем`, `Образ результата` in default Russian output. Unknowns
+live in the approval comment snapshot. Handoff adds in scope and out of scope
+(`Что входит`, `Что не входит`); these concerns remain outside the Idea body.
 
 ## PC-006 — No workflow dashboard
 
@@ -70,8 +71,9 @@ Project body.
 
 ## PC-013 — Idea state
 
-In Idea, keep only the strengthened brief; PRD, Tech Spec, and Issue must not
-exist yet.
+In Idea, keep only the three-section strengthened brief defined in PC-005;
+PRD, Tech Spec, and Issue must not exist yet. Preserve any former scope sections
+in the approval comment notes before replacing the body.
 
 ## PC-014 — Discovery state
 

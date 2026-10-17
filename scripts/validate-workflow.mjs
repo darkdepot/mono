@@ -255,6 +255,37 @@ function issueOnlyLaneActivationError(config) {
   return null;
 }
 
+const PLUGIN_SCOUTS = ["linear-scout", "code-scout"];
+function pluginAgentFaults(text, name) {
+  const allowed = ["name", "description", "model", "effort", "disallowedTools"];
+  const header = /^---\n([\s\S]*?)\n---\n/.exec(text);
+  if (!header) return ["missing agent frontmatter"];
+  const lines = header[1].split("\n"), keys = lines.map(line => /^([A-Za-z][A-Za-z0-9_-]*):\s*.+$/.exec(line)?.[1]);
+  if (keys.some(key => !allowed.includes(key)) || new Set(keys).size !== keys.length) return ["unknown, duplicate or malformed agent field"];
+  const fields = parseFrontmatter(text), errors = [];
+  if (fields.name !== name || !fields.description || fields.description.length < 20) errors.push("agent name/description invalid");
+  if (fields.model !== "sonnet" || fields.effort !== "medium") errors.push("agent model/effort invalid");
+  const tools = fields.disallowedTools?.split(/,\s*/).sort();
+  if (JSON.stringify(tools) !== JSON.stringify(["Write", "Edit", "NotebookEdit"].sort())) errors.push("agent disallowedTools invalid");
+  if (!text.slice(header[0].length).trim()) errors.push("agent body missing");
+  return errors;
+}
+function validatePluginAgents() {
+  for (const name of PLUGIN_SCOUTS) {
+    const file = `agents/${name}.md`;
+    if (!exists(file)) { fail(`Missing plugin agent: ${file}`); continue; }
+    const text = read(file);
+    for (const error of pluginAgentFaults(text, name)) fail(`${file}: ${error}`);
+    for (const field of ["hooks", "mcpServers", "permissionMode", "unknownField"]) {
+      const altered = text.replace("---\n", `---\n${field}: forbidden\n`);
+      if (!pluginAgentFaults(altered, name).length) fail(`${file}: forbidden-field fixture ${field} passed`);
+    }
+    for (const [from, to] of [["effort: medium", "effort: high"], ["Write, Edit, NotebookEdit", "Write, Edit"], ["model: sonnet", "model: sonnet\nmodel: sonnet"]]) {
+      if (!pluginAgentFaults(text.replace(from, to), name).length) fail(`${file}: invalid-field fixture passed`);
+    }
+  }
+}
+
 function validateSkills() {
   const skills = listSkillNames();
   const skillSet = new Set(skills);
@@ -458,7 +489,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "795496ca9bd70ed61b2c27886e2d3b4ca68f41a18e85ea9f4f2fa35afe358d9f",
+      contractFingerprint: "7f3faa082fcd224b9e1eb4ddb8ee7726e9f0d01b69dc1796f515b2e73fad4a62",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/handoff/SKILL.md",
@@ -4880,7 +4911,7 @@ function validateProjectUpdateSurface() {
 const MODEL_POLICY_PATH = "references/model-policy.md";
 const MODEL_ROLES = [
   "orchestrator", "second-voice", "second-voice-alt", "worker-default",
-  "worker-complex", "worker-claude", "autoreview", "idea-helper",
+  "worker-complex", "worker-claude", "autoreview", "idea-helper", "scout",
 ];
 const MODEL_ENUM_ALLOWLIST = new Set([
   "claude-code-desktop", "claude-5", "gpt-worker", "gpt-5",
@@ -4952,11 +4983,12 @@ function policyRoles(text) {
     const effort = effortCell.replaceAll("`", "");
     if (roles.has(role)) throw new Error(`duplicate role ${role}`);
     if (!MODEL_ROLES.includes(role)) throw new Error(`unknown role ${role}`);
-    const hosts = role === "idea-helper" ? /^claude-code: ([^;\s]+); codex: ([^;\s]+)$/.exec(model) : null;
-    if (role === "orchestrator" ? model !== "session-selected" : role === "idea-helper"
-      ? !hosts || !isModelId(hosts[1]) || !isModelId(hosts[2]) : !isModelId(model)) throw new Error(`invalid model id for ${role}`);
+    const hosts = ["idea-helper", "scout"].includes(role) ? /^claude-code: ([^;\s]+); codex: ([^;\s]+)$/.exec(model) : null;
+    if (role === "orchestrator" ? model !== "session-selected" : ["idea-helper", "scout"].includes(role)
+      ? !hosts || !(role === "scout" ? hosts[1] === "sonnet" : isModelId(hosts[1])) || !isModelId(hosts[2]) : !isModelId(model)) throw new Error(`invalid model id for ${role}`);
     if (role === "orchestrator" ? effort !== "n/a" : role === "autoreview"
       ? effort !== "[Canonical Routes](autoreview-routing.md#canonical-routes)"
+      : role === "scout" ? effort !== "claude-code: medium; codex: high"
       : !MODEL_EFFORTS.includes(effort)) throw new Error(`invalid effort source for ${role}`);
     roles.set(role, { model, effort, appliesTo, decidedBy, ...(hosts ? { hosts: { "claude-code": hosts[1], codex: hosts[2] } } : {}) });
   }
@@ -4975,7 +5007,7 @@ function modelActiveFiles(base) {
     for (const entry of fs.readdirSync(path.join(base, relative), { withFileTypes: true })) {
       const child = path.posix.join(relative, entry.name);
       if (entry.isDirectory()) walk(child);
-      else if (entry.isFile()) files.push(child);
+      else if (entry.isFile() && !/^scripts\/fixtures\/idea-gate\/probe\/(?:claude-code|codex)\/(?:get_project\.json|list_comments(?:\.limit4)?\.page-[1-3]\.json|calls\.json|README\.md|MANIFEST\.sha256)$/.test(child)) files.push(child);
     }
   }
   for (const directory of ["skills", "references", "templates", "scripts"]) walk(directory);
@@ -5167,7 +5199,7 @@ function checkModelPolicy(base) {
 function validateModelPolicyFixtures() {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-model-policy-"));
   try {
-    for (const name of ["skills", "references", "templates", "scripts", "AGENTS.md", "README.md"]) {
+    for (const name of ["skills", "agents", "references", "templates", "scripts", "AGENTS.md", "README.md"]) {
       fs.cpSync(path.join(root, name), path.join(scratch, name), { recursive: true });
     }
     const script = path.join(scratch, "scripts/validate-workflow.mjs");
@@ -5213,9 +5245,9 @@ function validateModelPolicyFixtures() {
     check();
     console.log("PASS model-policy session-selected orchestrator marker");
     // Host defaults and overrides must not perturb unrelated role routes.
-    const defaults = roleDefaults(scratch);
     for (const host of ["claude-code", "codex"]) {
       const options = { packRoot: scratch, host };
+      const defaults = roleDefaults(scratch, host);
       const helper = resolveRole("idea-helper", {}, options);
       const expectedEngine = host === "claude-code" ? "claude" : "codex";
       if (helper.model !== roles.get("idea-helper").hosts[host] || helper.engine !== expectedEngine || helper.effort !== "high" ||
@@ -5232,7 +5264,7 @@ function validateModelPolicyFixtures() {
       if (resolveRole("idea-helper", config, options).engine !== "codex") throw new Error("idea-helper explicit engine override ignored");
     }
     const productConfig = JSON.parse(fs.readFileSync(file('.agents/mono-workflow.config.json'), 'utf8'));
-    const baselineRoutes = Object.fromEntries(MODEL_ROLES.filter(role => role !== "idea-helper").map(role => [role, resolveRole(role, productConfig, { packRoot: scratch })]));
+    const baselineRoutes = Object.fromEntries(MODEL_ROLES.filter(role => !["idea-helper", "scout"].includes(role)).map(role => [role, resolveRole(role, productConfig, { packRoot: scratch })]));
     productConfig.models.roles["idea-helper"] = { model: fabricated("gpt", "configured"), effort: "high" };
     for (const [role, baseline] of Object.entries(baselineRoutes)) {
       const { fingerprint, ...route } = resolveRole(role, productConfig, { packRoot: scratch, host: "claude-code" });
@@ -5240,6 +5272,19 @@ function validateModelPolicyFixtures() {
       if (JSON.stringify(route) !== JSON.stringify(previous)) throw new Error(`configured idea-helper changed ${role}`);
     }
     console.log("PASS idea-helper host defaults, override precedence and unchanged other roles");
+    for (const host of ["claude-code", "codex"]) {
+      const options = { packRoot: scratch, host }, defaults = roleDefaults(scratch, host);
+      const scout = resolveRole("scout", {}, options);
+      if (scout.model !== roles.get("scout").hosts[host] || scout.effort !== (host === "claude-code" ? "medium" : "high")) throw new Error(`scout ${host} default mismatch`);
+      const config = { models: { roles: { scout: { model: fabricated("gpt", "scout"), effort: "low" } } } };
+      const override = resolveRole("scout", config, options);
+      if (override.model !== config.models.roles.scout.model || override.effort !== "low") throw new Error(`scout ${host} override mismatch`);
+      for (const role of MODEL_ROLES.filter(role => role !== "scout")) {
+        const { fingerprint, ...route } = resolveRole(role, config, options);
+        if (JSON.stringify(route) !== JSON.stringify(defaults[role])) throw new Error(`scout changed ${role}`);
+      }
+    }
+    console.log("PASS scout host models/efforts, overrides and unchanged other roles");
     change(MODEL_POLICY_PATH, (text) => cell(text, "worker-default", 1, fabricated("gpt", "a")));
     check();
     console.log("PASS model-policy AE1: changed cell, unchanged fixtures");
@@ -5264,6 +5309,10 @@ function validateModelPolicyFixtures() {
       text => cell(text, "idea-helper", 1, `codex: ${fabricated("gpt", "only")}`)), "invalid model id for idea-helper");
     negative("idea-helper malformed host model", () => change(MODEL_POLICY_PATH,
       text => cell(text, "idea-helper", 1, `claude-code: invalid; codex: ${fabricated("gpt", "valid")}`)), "invalid model id for idea-helper");
+    negative("scout invalid host effort", () => change(MODEL_POLICY_PATH,
+      text => cell(text, "scout", 2, "claude-code: high; codex: high")), "invalid effort source for scout");
+    negative("scout missing host", () => change(MODEL_POLICY_PATH,
+      text => cell(text, "scout", 1, "sonnet")), "invalid model id for scout");
     negative("orchestrator concrete model rejected", () => change(MODEL_POLICY_PATH,
       (text) => cell(text, "orchestrator", 1, fabricated("claude", "orchestrator"))), "invalid model id for orchestrator");
     for (const name of [MODEL_POLICY_PATH, "skills/orchestrate/SKILL.md", "templates/orchestrator-brief.md"]) {
@@ -5931,6 +5980,12 @@ const REQUIRED_HEADINGS = [
 ];
 const MACHINE_TOKENS = new Set([
   "approval_status=approved",
+  // MONO-187: CLI commands, closed result dictionary and plugin-agent fields.
+  "record", "verify", "helper", "--help", "--draft", "--project", "--notes", "--out", "--dump", "--expect", "--host",
+  "scout", "claude-code", "codex", "sonnet", "medium", "high",
+  "name", "description", "model", "effort", "disallowedTools", "Write", "Edit", "NotebookEdit",
+  "pass", "legacy-before-cutoff", "legacy-migrate", "issue-only", "no-record", "other-project", "bad-record", "stale",
+  "missing-heading", "duplicate-heading", "unsupported-format", "bad-since", "read-failed",
   "idea-helper", "mono-idea-snapshot", "mono-idea: approved project=<uuid> sha256=<64 hex>",
   "node scripts/idea-gate.mjs check --mode fresh --snapshot <dir> --config <path>",
   "node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",
@@ -6677,7 +6732,7 @@ function validateAe6Fixtures() {
     if (failures.length === before) console.log(`PASS AE6 ${label}: red, restored green`);
   }
   try {
-    for (const name of ["skills", "references", "templates", "scripts", "AGENTS.md", "README.md", "CHANGELOG.md", "examples", "VERSION", ".claude-plugin", ".codex-plugin"]) {
+    for (const name of ["skills", "agents", "references", "templates", "scripts", "AGENTS.md", "README.md", "CHANGELOG.md", "examples", "VERSION", ".claude-plugin", ".codex-plugin"]) {
       fs.cpSync(path.join(root, name), file(name), { recursive: true });
     }
     check();
@@ -6823,6 +6878,7 @@ if (process.argv.includes("--model-policy-only") || process.argv.includes("--mod
 }
 
 failures.push(...checkPlugin(root));
+validatePluginAgents();
 validateLandingSurface();
 validateDocumentSkeleton();
 validateCheckModeDeclaration();

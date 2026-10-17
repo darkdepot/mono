@@ -113,6 +113,34 @@ or `codex` explicitly. Other role routes are unchanged.
 
 ### Artifacts and truth
 
+`idea-gate.mjs record --draft APPROVED --config CONFIG --out DIR` готовит
+`body.md`: три раздела Idea с заголовками второго уровня. С `--project UUID`
+и необязательным `--notes NOTES` он также создаёт `comment.md`: прежняя строка
+«да», точный четырёхраздельный снимок и заметки вне отпечатка. Handoff добавляет
+разделы границ работы в тело проекта. Лишний раздел `##` или текст вне четырёх
+разделов в черновике дают «Стоп» (`unsupported-format`) до записи файлов.
+
+`idea-gate.mjs verify --project UUID --dump DIR --expect COMMENT --config CONFIG`
+читает ответы Linear как есть: `project.json`, `comments-1.json`, `comments-2.json`…
+Рядом с каждым ответом сохраните `comments-N.request.json` с фактически переданным
+cursor: `{}` для первой страницы, `{"cursor":"…"}` для следующих. Каждый следующий
+запрос должен продолжать cursor предыдущего ответа; перенумерация файлов не
+заменяет эту цепочку. Нужны все страницы: `hasNextPage`, cursor последнего
+комментария на промежуточных, без cursor на последней. Байты ответов не меняются.
+UUID берётся из `uuid`, а не из человекочитаемого `id`.
+«Готово» означает `pass` для точного комментария `--expect`; изменение тела даёт
+«Нужно новое «да»», ошибка чтения или записи — «Стоп» с действием. Вторая строка —
+JSON с машинным кодом. Скрипт не обращается в Linear.
+Состав dump и команды также описаны в `node scripts/idea-gate.mjs --help`.
+
+`idea-gate.mjs helper --host claude-code|codex [--config CONFIG]` возвращает
+модель и усилие [role:scout](references/model-policy.md#roles); переопределение —
+`models.roles.scout`. Два агента плагина в `agents/` только читают Linear/код;
+Codex получает их текст без шапки через встроенных субагентов. Роль `idea-helper`
+для Research и Discovery сохраняется. Добавляйте переопределение `scout` только
+после установки выпуска 0.32.1 везде; текущая дата отсечки остаётся без изменений.
+
+
 `scripts/idea-gate.mjs` проверяет запись «да» по снимку без сети.
 `check --mode fresh --snapshot DIR --config CONFIG` сравнивает текущие Что/Зачем/
 Образ результата с записанными Неизвестными; `--mode approved` проверяет целостность
@@ -138,7 +166,7 @@ Known limitation: inline code spanning multiple source lines refuses `unsupporte
 
 | Surface | What belongs there |
 | --- | --- |
-| Linear Project body | What, why, target outcome, in scope, out of scope |
+| Linear Project body | Idea: what, why, target outcome; Handoff adds in scope and out of scope |
 | Project metadata, resources, comments | Lifecycle, active documents and Issues, relationships, approvals, review disposition, handoff |
 | PRD | WHAT: actors, problem, workflows, requirements, acceptance and success |
 | Tech Spec | HOW: architecture, real system contracts, failures, implementation units, validation and rollback |
