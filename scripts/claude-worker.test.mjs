@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
+import { ideaDispatchFixture, ideaAttemptFixture } from './fixtures/idea-dispatch.mjs';
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -445,7 +445,8 @@ test("Claude pre-registration refusals preserve the attempt budget", async t => 
 test("Claude startup grants bind the immutable pins file, including symlink targets", async () => {
   await fixture(async ({ request, root, start, registry }) => {
     const file = path.join(root, "dispatch/pins.json");
-    const bytes = JSON.stringify({ workerWritableRoots: [request.worktree] });
+    const idea = ideaAttemptFixture(path.join(root, 'dispatch/snapshot'), request.issue);
+    const bytes = JSON.stringify({ workerWritableRoots: [request.worktree], idea });
     write(file, bytes);
     request.pins = { file, digest: crypto.createHash("sha256").update(bytes).digest("hex") };
     await assert.rejects(start("success"), /immutable attempt pins/);
