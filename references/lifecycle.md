@@ -2,17 +2,30 @@
 
 ## Idea
 
-`mono:idea` handles a raw idea or an existing Idea Project. A read-only
-`idea-helper` gathers linked facts before the understanding recap and at most
-three meaning questions. Unmistakable one-PR projectless work routes to `mono:issue`.
+`mono:idea` handles a raw idea or an existing Idea Project. Two read-only scouts,
+`linear-scout` and `code-scout`, gather linked facts in parallel before the recap.
+Unmistakable one-PR projectless work routes to `mono:issue` only when the configured
+lane is enabled and has `ownerPrincipal`; otherwise it goes through a Project.
+Questions concern meaning, one at a time, at most three; a route question is separate.
+The orchestrator runs Idea itself and answers these questions with reasons, showing
+«Ответил сам:» to the owner rather than forwarding the questions.
 
 Exit requires the owner's explicit yes to What / Why / Target outcome / prioritized
-Unknowns, a project-bound `mono-idea: approved` record and `mono-idea-snapshot`
-verified by comment read-back. Unknowns stay in that record. `mono:idea` itself
-moves the Project to Discovery and verifies the status, then requires
-`node scripts/idea-gate.mjs check --mode fresh --snapshot <dir> --config <path>`
-with code `pass` and `mono:check idea`. No PRD, Tech Spec, Issue, ExecPlan,
-implementation plan or code is created here. A refusal returns to this stage.
+Unknowns and successful `verify` for that exact Project record. The writing and recovery
+steps live only in `skills/idea/references/record.md`. Status Discovery follows «Готово»
+and is confirmed by read-back, then `mono:check idea` must pass. A Project returned
+with the three idea sections unchanged keeps its body, package and status;
+Unknowns may be new. Without those sections, write the approved body and preserve
+old text in notes; status changes only from Idea. Owner corrections to What / Why /
+Target outcome follow that body-write path without an approved package. With an
+approved package, stop before recording and route the correction through
+`mono:handoff` artifact repair, then return to Idea recording and verification.
+Unknowns stay in the record. No Research document, PRD, Tech Spec, Issue, implementation
+plan, ExecPlan or code is created here. A refusal returns to Idea.
+
+The next stage is Research (`mono:research`), starting with the first Unknown;
+while that skill is absent from the installed pack, the next step is `mono:handoff`.
+Stop after the final message. Idea approval is separate from package approval.
 
 ## Discovery
 

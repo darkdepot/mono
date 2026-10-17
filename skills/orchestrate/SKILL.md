@@ -12,7 +12,7 @@ projects and Issues through the existing workflow skills with delegated
 workers, answer technical questions autonomously, and escalate only product
 decisions to the user.
 
-`mono:orchestrate` never does stage work itself. It inspects, delegates,
+`mono:orchestrate` runs Idea itself as the explicit stage-work exception. It inspects, delegates,
 monitors, decides or escalates, records, and reports. Stage ownership is
 unchanged: `mono:implement` owns Delivery Start, `mono:preflight` owns
 local readiness, `mono:ship` owns the PR lifecycle, `mono:deploy` owns
@@ -125,10 +125,11 @@ Workflow states:
      `templates/orchestrator-brief.md` with its «Техника» table) before
      taking new actions.
 2. `intake-and-discovery`
-   - Run `mono:idea` per idea in this session; with several ideas, queue
+   - Run `mono:idea` per idea in this session: launch both scouts, recap, answer the route and 1–3 meaning questions yourself with reasons; ask the owner only when their meaning is unclear. Show the description and «Ответил сам:» for the owner’s yes. Never relay the stage questions or give yes for the owner; this yes is separate from package approval. With several ideas, queue
      them and run discovery one project at a time (Director Discovery in
      `references/orchestration.md`) while dispatched work continues.
-   - Run the recommended discovery route and review skills through the
+   - Follow the next step from Idea's final message (Research; while absent, handoff)
+     and run review skills through the
      Second Voice protocol (`references/orchestration.md`): an independent
      reviewer agent interrogates and challenges, you answer as product
      director, record material choices under «Решил сам:», and batch
@@ -303,7 +304,7 @@ Rules:
   does not replace them.
 - Never ask the user an unprepared question; exhaust autonomous work first
   and refresh item state immediately before asking (Decision Briefs policy).
-- Touch the user only at checkpoints: intake direction questions, the UX
+- Touch the user only at checkpoints: Idea description approval (clarify meaning only when necessary), the UX
   checkpoint, package approval, deploy approval per policy, and ad-hoc
   risk or scope-drift escalations; decide everything else and record it
   under «Решил сам:» (Director Discovery in `references/orchestration.md`).

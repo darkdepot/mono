@@ -1,17 +1,21 @@
 # Questioning Policy
 
-Ask one concise outcome-based question at a time, with options/consequences/recommendation and custom-answer support, only for uninferable product/workflow/scope/risk. Never ask discoverable facts, report-only permission or routine implementation choices.
+Ask one outcome question at a time, with options, consequences, recommendation and custom answer. Ask only uninferable product/workflow/scope/risk; discover facts and routine choices yourself. Report-only work needs no permission.
 
 ## Autonomy Defaults
 
-Resolve repo/Linear/GitHub/config facts, layout/naming/libraries/patterns/refactors, doc structure/risk/gates yourself. Decide clearly safer uncontested product micro-choices; record material draft choices as «Решил сам:» plus reason for approval-time override.
+Decide repo/Linear/GitHub/config facts, layout, naming, libraries, patterns, refactors, docs, risk and gates. Record material choices as «Решил сам:» with reasons for owner override.
 
-Always ask contestable scope, multi-PR slicing (propose split/count/reason first), money/data/production irreversibility/access risk, and visuals/design. Prepare/open side-by-side `/design-html` variants where available, otherwise concrete layout/hierarchy/state alternatives. No silent visual decisions or unprepared visual questions.
+Always ask contested scope/slicing (split/count/reason), money/data/production/access risk and design. Prepare /design-html variants or concrete layout/hierarchy/state alternatives first.
 
-Stage limits: Idea asks 1–3 outcome/boundary/audience questions before Project creation/update, rest assumptions; handoff package approval/unresolved product/review fixes; review defaults to findings/options, missing artifact blocked; implement start approval/blockers; orchestrate Always-ask escalations only; preflight dirty ownership/drift/access/branch risk; ship feedback product/UX/business/scope/risk; deploy configured approval/delivery-policy/risk.
+Idea: up to three meaning questions, one at a time from the last answer; no scope questions. Raw idea: start open-ended. Host choice window: recommendation/reason first, custom answer supported; Codex without it: one text question/recommendation, end turn. Route question first, outside the limit. «Пиши сам»: recommendations disclosed in «Решил сам:». Owner yes is mandatory.
+
+Other stages: owner approval/blocker/risk gates.
 
 ## Orchestrated Mode
 
-Workers never ask users: blocking question → needs-decision mailbox with recommendation. Orchestrator answers technical questions, records «Решил сам:», escalates Always-ask immediately with prepared brief; design batches into UX checkpoint.
+Workers never ask users: needs-decision mailbox with recommendation. Orchestrator answers technical questions with reasons; escalate Always-ask with a prepared brief, batch design at UX checkpoint.
 
-Discovery stays with orchestrator. Available Second Voice generates/challenges questions; director answers/records choices, batches contested Always-ask into UX/package approval rather than forwarding streams. At round cap escalate surviving disagreements only if Always-ask.
+Idea: answer questions yourself with reasons, show description and «Ответил сам:». Ask only unclear owner meaning; owner alone gives yes, separately from package approval.
+
+Discovery: Second Voice challenges when available; orchestrator answers/records. Batch contested Always-ask at UX/package approval; at round cap escalate surviving Always-ask only.

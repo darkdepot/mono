@@ -41,17 +41,16 @@ Split Settings > Notifications into independently saveable blocks for email, mob
 
 Expected behavior:
 
-1. `mono:idea` inspects only minimal context.
-2. It asks 2-4 idea-shaping questions with recommended options.
-3. It creates or updates a Linear Project in `Idea`.
-4. Final output includes:
-   - Project link.
-   - Strengthened brief.
-   - Next step: `/office-hours` or `/brainstorming`.
-   - Reason for the recommendation.
-   - Statement that no PRD, Tech Spec, Issue, plan, ExecPlan, or code was created.
+1. `mono:idea` sends read-only Linear and code scouts in parallel, then recaps the facts.
+2. It asks at most three meaning questions, one at a time through the host choice tool, recommendation first with a reason. A route question is outside the limit. Codex without a choice tool asks one short text question and ends the turn.
+3. It shows What / Why / Target outcome / prioritized Unknowns and waits for the owner's direct yes. A correction or “yes, but” changes the affected part and requires yes again; prior answers and the question count remain.
+4. Recording and recovery follow only `skills/idea/references/record.md`. `verify` must return «Готово» before a Project in Idea moves to Discovery; status is read back and `mono:check idea` passes. A returned Project retains its later-stage status and package.
+5. Final output links the Project, states the approved idea and says “Next: Research”, starting with the first Unknown. Then stop; no Research document, PRD, Tech Spec, Issue, plan, ExecPlan or code.
+6. Under orchestration, the orchestrator runs Idea and answers its questions itself with reasons, showing «Ответил сам:» with the description. It does not relay those questions or give yes for the owner. Idea approval and later package approval are separate.
 
-No implementation plan is produced.
+Activation evidence comes from `evals/idea/` (10 positive / 6 negative requests,
+three runs, threshold 0.8); the orchestrator runs Claude-only checks on the final
+head. Behavior is accepted live after release 0.32.1.
 
 ## Correct Discovery To Handoff
 

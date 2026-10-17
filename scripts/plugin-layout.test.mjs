@@ -92,6 +92,37 @@ test('plugin checks reject version drift, a root manifest and any missing skill 
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('plugin paths distinguish skill references from explicit pack-root references', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-local-paths-'));
+  const write = (file, content) => {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.writeFileSync(path.join(root, file), content);
+  };
+  try {
+    write('VERSION', '0.32.0\n');
+    for (const tool of ['claude', 'codex']) write(`.${tool}-plugin/plugin.json`, JSON.stringify({ name: 'mono', version: '0.32.0' }));
+    write('skills/idea/SKILL.md', 'Прочитай сразу: `references/examples.md`.\nПрочитай, когда:\n- `<корень>/references/contracts/project.md`: перед записью.\nRun `node <корень>/scripts/idea-gate.mjs`.');
+    write('skills/idea/references/examples.md', '# Examples');
+    write('references/contracts/project.md', '# Contract');
+    write('scripts/idea-gate.mjs', '');
+    assert.deepEqual(checkPlugin(root), []);
+    fs.unlinkSync(path.join(root, 'skills/idea/references/examples.md'));
+    write('references/examples.md', '# Wrong source');
+    assert.match(checkPlugin(root).join('\n'), /missing pack file references\/examples.md/);
+    write('skills/idea/references/examples.md', '# Examples');
+    fs.unlinkSync(path.join(root, 'references/contracts/project.md'));
+    write('skills/idea/references/contracts/project.md', '# Wrong source');
+    assert.match(checkPlugin(root).join('\n'), /missing pack file <корень>\/references\/contracts\/project.md/);
+    write('references/contracts/project.md', '# Contract');
+    write('skills/fixture/SKILL.md', 'Read `<корень>/references/contracts/project.md`.');
+    assert.match(checkPlugin(root).join('\n'), /skills\/fixture\/SKILL.md: missing pack file <корень>\/references\/contracts\/project.md/);
+    write('skills/fixture/SKILL.md', 'Run `node <pack-root>/scripts/idea-gate.mjs`.');
+    assert.deepEqual(checkPlugin(root), []);
+    fs.unlinkSync(path.join(root, 'scripts/idea-gate.mjs'));
+    assert.match(checkPlugin(root).join('\n'), /skills\/fixture\/SKILL.md: missing pack file <pack-root>\/scripts\/idea-gate.mjs/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('dispatch pins the plugin script folder and refuses resume when that folder disappears', async () => {
   const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-dispatch-')));

@@ -1,6 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isMain, runtimePackRoot } from './runtime.mjs';
+import { isRussianStage } from './russian-stages.mjs';
+
+export function resolveSkillPath(root, file, named) {
+  if (named.startsWith('<корень>/') && isRussianStage(file)) return path.resolve(root, named.slice('<корень>/'.length));
+  if (named.startsWith('<pack-root>/')) return path.resolve(root, named.slice('<pack-root>/'.length));
+  const skill = /^skills\/[^/]+\//.exec(file)?.[0];
+  if (skill && named.startsWith('references/') && (isRussianStage(file) || fs.existsSync(path.join(root, skill, 'references'))))
+    return path.resolve(root, skill, named);
+  return path.resolve(root, named);
+}
 
 export function checkPlugin(root) {
   const failures = [], version = fs.readFileSync(path.join(root, 'VERSION'), 'utf8').trim();
@@ -18,9 +28,9 @@ export function checkPlugin(root) {
   if (fs.existsSync(path.join(root, 'plugin.json'))) failures.push('root plugin.json is forbidden');
   for (const skill of fs.readdirSync(path.join(root, 'skills'), { withFileTypes: true }).filter(entry => entry.isDirectory())) {
     const file = `skills/${skill.name}/SKILL.md`, text = fs.readFileSync(path.join(root, file), 'utf8');
-    const paths = new Set([...text.matchAll(/(?<![\w/.-])((?:skills|references|templates|scripts)\/[\w./-]+\.(?:md|mjs|json))(?![\w.-])/g)].map(match => match[1]));
+    const paths = new Set([...text.matchAll(/(?<![\w/.-])((?:<(?:корень|pack-root)>\/)?(?:skills|references|templates|scripts)\/[\w./-]+\.(?:md|mjs|json))(?![\w.-])/g)].map(match => match[1]));
     for (const named of paths) {
-      const resolved = path.resolve(root, named);
+      const resolved = resolveSkillPath(root, file, named);
       if (!resolved.startsWith(path.resolve(root) + path.sep) || !fs.existsSync(resolved) || !fs.statSync(resolved).isFile())
         failures.push(`${file}: missing pack file ${named}`);
     }
