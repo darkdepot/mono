@@ -29,6 +29,7 @@ const EXPECTED_SKILLS = [
   "issue",
   "orchestrate",
   "preflight",
+  "research",
   "review",
   "ship",
 ];
@@ -69,10 +70,12 @@ function validateReadBudget() {
     console.log(`Read budget: ${budget.bytes} bytes / ~${budget.approximate_tokens} tokens; ceiling ${READ_BUDGET_MAX_BYTES} bytes`);
     if (!budget.within_ceiling) fail("Delivery reading corpus exceeds the byte ceiling");
     if (budget.files.some((entry) => entry.path.startsWith("references/rationale/"))) fail("Rationale entered delivery reading corpus");
-    const idea = measureReadBudget(root, { skills: ["idea"], includeConditional: false });
-    console.log(`Idea mandatory read budget: ${idea.bytes} bytes`);
-    if (idea.bytes > 20_480) fail("Idea mandatory reading corpus exceeds 20 KB");
-    if (idea.files.some(entry => entry.path === "references/orchestration.md")) fail("Idea eagerly reads orchestration policy");
+    for (const stage of RUSSIAN_STAGES) {
+      const budget = measureReadBudget(root, { skills: [stage], includeConditional: false });
+      console.log(`${stage} mandatory read budget: ${budget.bytes} bytes`);
+      if (budget.bytes > 20_480) fail(`${stage} mandatory reading corpus exceeds 20 KB`);
+      if (budget.files.some(entry => entry.path === "references/orchestration.md")) fail(`${stage} eagerly reads orchestration policy`);
+    }
   } catch (error) { fail(`Read budget: ${error.message}`); }
   for (const skill of [...DELIVERY_SKILLS, "deploy"]) {
     if (/orchestration\.md/.test(read(`skills/${skill}/SKILL.md`))) fail(`${skill}: phase names orchestrator reference`);
@@ -118,6 +121,14 @@ function validateReadBudgetFixtures() {
     require(!/agents\/[^\s`"<>]*\.md/.test(outsideLaunches)
       && !budget.files.some(entry => entry.path.startsWith("agents/")),
       "Scout definitions must occur only as subagent reads, never as Idea inputs");
+  });
+  fixture("Research actual mandatory inputs and byte total", () => {
+    const expected = ["skills/research/SKILL.md", "skills/research/references/run.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["research"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Research mandatory file set differs from the stage and its run reference");
+    const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
+    require(budget.bytes === total && total <= 20_480, "Research actual mandatory total differs or exceeds 20 KB");
   });
   try {
     write("AGENTS.md", "# fixture\n");
@@ -334,7 +345,7 @@ function issueOnlyLaneActivationError(config) {
   return null;
 }
 
-const PLUGIN_SCOUTS = ["linear-scout", "code-scout"];
+const PLUGIN_SCOUTS = ["linear-scout", "code-scout", "web-scout"];
 function pluginAgentFaults(text, name) {
   const allowed = ["name", "description", "model", "effort", "disallowedTools"];
   const header = /^---\n([\s\S]*?)\n---\n/.exec(text);
@@ -344,8 +355,8 @@ function pluginAgentFaults(text, name) {
   const fields = parseFrontmatter(text), errors = [];
   if (fields.name !== name || !fields.description || fields.description.length < 20) errors.push("agent name/description invalid");
   if (fields.model !== "sonnet" || fields.effort !== "medium") errors.push("agent model/effort invalid");
-  const tools = fields.disallowedTools?.split(/,\s*/).sort();
-  if (JSON.stringify(tools) !== JSON.stringify(["Write", "Edit", "NotebookEdit"].sort())) errors.push("agent disallowedTools invalid");
+  const tools = fields.disallowedTools?.split(/,\s*/) ?? [];
+  if (!["Write", "Edit", "NotebookEdit"].every(tool => tools.includes(tool))) errors.push("agent disallowedTools invalid");
   if (!text.slice(header[0].length).trim()) errors.push("agent body missing");
   return errors;
 }
@@ -359,9 +370,16 @@ function validatePluginAgents() {
       const altered = text.replace("---\n", `---\n${field}: forbidden\n`);
       if (!pluginAgentFaults(altered, name).length) fail(`${file}: forbidden-field fixture ${field} passed`);
     }
-    for (const [from, to] of [["effort: medium", "effort: high"], ["Write, Edit, NotebookEdit", "Write, Edit"], ["model: sonnet", "model: sonnet\nmodel: sonnet"]]) {
+    for (const [from, to] of [["effort: medium", "effort: high"], ["model: sonnet", "model: sonnet\nmodel: sonnet"]]) {
       if (!pluginAgentFaults(text.replace(from, to), name).length) fail(`${file}: invalid-field fixture passed`);
     }
+    for (const tool of ["Write", "Edit", "NotebookEdit"]) {
+      const altered = text.replace(/^disallowedTools: (.+)$/m, (_, value) =>
+        `disallowedTools: ${value.split(/,\s*/).filter(entry => entry !== tool).join(", ")}`);
+      if (!pluginAgentFaults(altered, name).length) fail(`${file}: missing ${tool} fixture passed`);
+    }
+    const extraTool = text.replace(/^disallowedTools: (.+)$/m, "$&, Read");
+    if (pluginAgentFaults(extraTool, name).length) fail(`${file}: additional disallowed tool fixture refused`);
   }
 }
 
@@ -568,7 +586,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "7f3faa082fcd224b9e1eb4ddb8ee7726e9f0d01b69dc1796f515b2e73fad4a62",
+      contractFingerprint: "f89ac50904889292bfd486e5c5bbb1d3784b01bfe1bc5e4a71dc51fdd6c00b4d",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/handoff/SKILL.md",
@@ -5844,6 +5862,7 @@ const STRING_PINS = [
   ["references/orchestration.md","`recorded-late`"],
 ];
 const REQUIRED_HEADINGS = [
+  ["skills/research/SKILL.md", "mono:research"],
   ["references/worker-contract.md", "AFK Contract"],
   ["references/worker-contract.md", "Two-Phase Dispatch Handshake"],
   ["references/worker-contract.md", "Delivery Reports and Capsule"],
@@ -6066,6 +6085,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "mono-research", "ready", "hold", "not-required", "web-scout", "mono:research",
   "reader", "subagent", "definitions",
   "<корень>/agents/linear-scout.md", "<корень>/agents/code-scout.md",
   "linear-scout", "code-scout", "references/record.md", "mono:check idea",

@@ -24,7 +24,8 @@ function date(value, cutoff = false) {
 }
 
 function headingDictionary(headings = 'ru') {
-  const dictionary = typeof headings === 'string' ? DEFAULT_HEADINGS[headings] : headings;
+  const language = { Russian: 'ru', English: 'en' }[headings] ?? headings;
+  const dictionary = typeof language === 'string' ? DEFAULT_HEADINGS[language] : language;
   if (!object(dictionary) || Object.keys(dictionary).length !== 4 ||
       KEYS.some(key => typeof dictionary[key] !== 'string' || !dictionary[key] || dictionary[key] !== dictionary[key].trim() || /[\r\n]/.test(dictionary[key])) ||
       new Set(Object.values(dictionary)).size !== 4) fail('read-failed');
@@ -248,10 +249,7 @@ function readJson(file) { return JSON.parse(fs.readFileSync(file, 'utf8')); }
 function optionalJson(file) { return fs.existsSync(file) ? readJson(file) : undefined; }
 
 function configuredHeadings(config) {
-  const language = config.languages?.linear ?? 'Russian';
-  const headings = config.ideaGate?.headings ?? { Russian: 'ru', English: 'en' }[language];
-  if (headings === undefined) fail('read-failed');
-  return headingDictionary(headings);
+  return headingDictionary(config.ideaGate?.headings ?? config.languages?.linear ?? 'ru');
 }
 
 function recordIdea(options, config) {
@@ -282,12 +280,8 @@ function recordIdea(options, config) {
     ...(comment !== undefined ? { comment: path.join(options['--out'], 'comment.md') } : {}), fingerprint }));
 }
 
-function verifyDump(options, config) {
-  const projectId = options['--project'];
-  if (!uuid(projectId) || !options['--dump'] || !options['--expect'] || !options['--config']) fail('read-failed');
-  const root = options['--dump'], raw = readJson(path.join(root, 'project.json'));
+function readDump(root, raw, config) {
   if (!object(raw) || !uuid(raw.uuid)) fail('read-failed');
-  if (raw.uuid !== projectId) return verdict('other-project', projectId);
   const headings = configuredHeadings(config);
   const project = { id: raw.uuid, createdAt: raw.createdAt, status: raw.status?.name,
     body: raw.description, language: 'custom' };
@@ -315,6 +309,17 @@ function verifyDump(options, config) {
       comments.push({ id: item.id, createdAt: item.createdAt, body: item.body });
     }
   }
+  return { project, records: { complete: true, comments }, headings };
+}
+
+function verifyDump(options, config) {
+  const projectId = options['--project'];
+  if (!uuid(projectId) || !options['--dump'] || !options['--expect'] || !options['--config']) fail('read-failed');
+  const raw = readJson(path.join(options['--dump'], 'project.json'));
+  if (!object(raw) || !uuid(raw.uuid)) fail('read-failed');
+  if (raw.uuid !== projectId) return verdict('other-project', projectId);
+  const { project, records, headings } = readDump(options['--dump'], raw, config);
+  const comments = records.comments;
   const expected = fs.readFileSync(options['--expect'], 'utf8');
   const matches = comments.filter(comment => comment.body === expected);
   if (!matches.length) return verdict('no-record', projectId);
@@ -373,6 +378,7 @@ function main(argv) {
     console.log(`Usage: idea-gate.mjs record --draft APPROVED --config CONFIG --out DIR [--project UUID] [--notes NOTES]
        idea-gate.mjs verify --project UUID --dump DIR --expect COMMENT --config CONFIG
        idea-gate.mjs helper --host claude-code|codex [--config CONFIG]
+       idea-gate.mjs check --mode fresh --dump DIR --config CONFIG
        idea-gate.mjs check --mode fresh|approved --snapshot DIR [--config CONFIG]
        idea-gate.mjs fingerprint --snapshot FILE [--config CONFIG]
 Dump: project.json and comments-N.json are raw Linear responses (N=1,2,...).
@@ -387,13 +393,15 @@ record refuses unrecognized sections or text outside the four sections before wr
     const command = argv.shift(), options = {};
     while (argv.length) {
       const key = argv.shift();
-      if (!['--mode', '--snapshot', '--config'].includes(key) || key in options || !argv.length) fail('read-failed');
+      if (!['--mode', '--snapshot', '--dump', '--config'].includes(key) || key in options || !argv.length) fail('read-failed');
       options[key] = argv.shift();
     }
-    if (!options['--snapshot']) fail('read-failed');
+    if (Boolean(options['--snapshot']) === Boolean(options['--dump'])) fail('read-failed');
     const snapshot = options['--snapshot'];
-    const project = command === 'check' ? optionalJson(path.join(snapshot, 'idea/project.json')) : undefined;
-    projectId = project?.id ?? null;
+    const raw = options['--dump'] ? readJson(path.join(options['--dump'], 'project.json')) : undefined;
+    const project = command === 'check' && snapshot ? optionalJson(path.join(snapshot, 'idea/project.json')) : undefined;
+    projectId = raw?.uuid ?? project?.id ?? null;
+    if (options['--dump'] && (command !== 'check' || options['--mode'] !== 'fresh' || !options['--config'])) fail('read-failed');
     const config = options['--config'] ? readJson(options['--config']) : {};
     try { validateIdeaGate(config.ideaGate); } catch (error) {
       fail(error.code === 'bad-since' ? 'bad-since' : 'read-failed');
@@ -405,13 +413,18 @@ record refuses unrecognized sections or text outside the four sections before wr
       const since = config.ideaGate?.since ?? IDEA_GATE_DEFAULT_SINCE;
       // Before release a configured cutoff is required even on the projectless lane.
       if (!Number.isFinite(date(since, true))) fail('bad-since');
-      const lane = optionalJson(path.join(snapshot, 'issue-only.json'));
-      const approval = optionalJson(path.join(snapshot, 'approval.json'));
-      if (approval !== undefined) approval.body = fs.readFileSync(path.join(snapshot, 'approval.md'), 'utf8');
-      result = checkIdea({ mode: options['--mode'], project, since,
-        records: project ? readJson(path.join(snapshot, 'idea/idea-records.json')) : undefined,
-        approval, headings: config.ideaGate?.headings, issueOnlySeam: lane?.seam,
-        issueContext: optionalJson(path.join(snapshot, 'issue-context.json')) });
+      if (options['--dump']) {
+        const input = readDump(options['--dump'], raw, config);
+        result = checkIdea({ ...input, mode: 'fresh', since });
+      } else {
+        const lane = optionalJson(path.join(snapshot, 'issue-only.json'));
+        const approval = optionalJson(path.join(snapshot, 'approval.json'));
+        if (approval !== undefined) approval.body = fs.readFileSync(path.join(snapshot, 'approval.md'), 'utf8');
+        result = checkIdea({ mode: options['--mode'], project, since,
+          records: project ? readJson(path.join(snapshot, 'idea/idea-records.json')) : undefined,
+          approval, headings: config.ideaGate?.headings ?? (config.languages?.linear ? configuredHeadings(config) : undefined), issueOnlySeam: lane?.seam,
+          issueContext: optionalJson(path.join(snapshot, 'issue-context.json')) });
+      }
     } else fail('read-failed');
   } catch (error) {
     result = verdict(['bad-since', 'missing-heading', 'duplicate-heading', 'unsupported-format'].includes(error.code) ? error.code : 'read-failed', projectId);

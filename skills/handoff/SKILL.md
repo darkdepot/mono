@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Use for an existing Project or shaped discovery to create the Project-first package, or for targeted PRD or Tech Spec repair. Raw ideas route to mono:idea, unmistakable one-PR projectless work to mono:issue, and pre-ship drift to mono:ship.
+description: Use for an existing Project or shaped discovery to create the Project-first package, or for targeted PRD or Tech Spec repair. A Project without Research («Исследование») routes to mono:research, except a package approved before researchGate.since from config, otherwise RESEARCH_GATE_DEFAULT_SINCE. Raw ideas route to mono:idea, unmistakable one-PR projectless work to mono:issue, and pre-ship drift to mono:ship.
 ---
 
 # Mono Handoff
@@ -85,6 +85,7 @@ Draft package approval UX:
   - "Nothing written yet" or the exact mutation boundary.
   - Project brief shape.
   - PRD product decisions.
+  - The Research document link and its reason when `not-required`; for `stale`, the recorded Unknowns Research investigated. The approval comment must name that document and reason too.
   - PRD actor -> capability -> benefit coverage and behavior-validation intent.
   - Tech Spec implementation decisions.
   - «Решил сам:» — non-contested product choices the agent took itself, each with a one-line reason; overriding any of them is a valid approval answer.
@@ -194,11 +195,13 @@ Execution-mode workflow:
    - Inspect local gstack artifacts only when scoped by project slug, branch/session, or explicit filename match.
    - Do not perform broad home-directory scans.
    - Produce `read`, `unavailable`, `stale_or_ignored`, `conflicts`, `decisions_carried_forward`, and `confidence_boundary`.
-   Before drafting, assemble the fresh normalized idea snapshot from the Project and all comment pages per `references/orchestration.md`; run `node <pack-root>/scripts/idea-gate.mjs check --mode fresh --snapshot <dir> --config <path>`. Continue on `pass`; on `stale` or `legacy-migrate`, include the current four-section idea (with prioritized Unknowns) in the package approval brief, so the owner's package approval also approves that exact idea version without a separate stop. On `no-record` for a new project, run `mono:idea` first. Other refusals block with project/code; never bypass a failed read.
+   Before drafting, save raw Linear Project and all comment page responses unchanged as `project.json`, `comments-N.json` and `comments-N.request.json` (`{}` first, then `{"cursor":"<previous response cursor>"}`). Run `node <pack-root>/scripts/idea-gate.mjs check --mode fresh --dump <dir> --config <path>`. Continue on `pass`; on `stale` or `legacy-migrate`, include the current four-section idea in the package approval brief, so package approval also approves that exact version. For `stale`, keep the Unknowns from the recorded version that Research investigated, not newly invented ones. On `no-record` for a new project, run `mono:idea` first. Other refusals block with project/code; never bypass a failed read.
+   Read the Project’s Research («Исследование») document before drafting. Missing: route to `mono:research`, except a package approved before `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`. Until Discovery is installed, advice «не делать» or «отложить» goes to the owner first: decide whether to continue before drafting the package.
 3. Synthesize a draft handoff package before mutating durable Linear artifacts:
    - Artifact intake summary and confidence boundary.
    - Project summary as a concise product brief.
    - PRD as product truth with requirement IDs and acceptance examples when useful.
+   - Until Discovery owns this, PRD section «Что решили по неизвестным Research»: one decision per Н — решено (как), принимаем риск (какой), проверяем параллельно (как, где результат), сначала проверить (only when building requires the answer), не делаем (почему).
    - PRD coverage check for actor, capability, benefit, and behavior-validation intent.
    - Tech Spec as implementation truth that traces HOW decisions back to PRD requirements.
    - Apply [landing slicing](references/landing.md#scheduling) when forming Issue dependencies.

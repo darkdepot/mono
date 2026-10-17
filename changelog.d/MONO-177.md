@@ -1,0 +1,1 @@
+- MONO-177: add the Russian Research stage, web scout, raw-Linear fresh idea check and routing from Idea through Research to Handoff; carry Research unknowns and document references into package approval.

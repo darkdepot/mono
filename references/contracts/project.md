@@ -13,7 +13,10 @@ single source for presentation shape.
 
 Use this contract when creating or updating the Linear Project that serves as
 the workflow source of truth. A raw request to write a Project routes to
-`mono:idea`; an existing Project in Idea also routes to `mono:idea`. Other
+`mono:idea`; an existing Project in Idea also routes to `mono:idea`. An existing
+Project without a Research («Исследование») document routes to `mono:research`,
+except a package approved before `researchGate.since` from product config, or
+`RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs` when unset. Other
 existing Projects and shaped-discovery repairs route to `mono:handoff`.
 
 ## PC-002 — Concise product brief
@@ -48,7 +51,8 @@ comments, and the handoff package.
 
 ## PC-008 — Active document set
 
-For this MVP, the only active Project document types are PRD and Tech Spec.
+For this MVP, the only active Project document types are PRD, Tech Spec, and
+Research («Исследование»).
 
 ## PC-009 — Default Issue plan
 

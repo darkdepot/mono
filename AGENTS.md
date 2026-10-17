@@ -13,17 +13,19 @@ Write skills in English, except stages rebuilt under «Mono как продук�
 - Project entity: shaped outcome, lifecycle and relationships in metadata/resources/comments/handoff; body: only what/why/outcome/in/out.
 - PRD: WHAT (problem/operator/workflow/scenarios/requirements/acceptance). Tech Spec: HOW (architecture/contracts/failures/validation). Issue: one-PR contract with snapshot.
 - GitHub: branch/PR/review/CI/deploy/merge history only.
+- `mono:idea`: raw idea to an approved Project description; owner yes only.
+- `mono:research`: facts before a solution; «Исследование» document; no owner questions.
 - `mono:handoff`: persists Project-first package/slicing before implementation; owns reviewed class 1–3 repair.
 - `mono:issue`: issue-only create-then-approve intake/body renewal; never handoff repair.
 - `mono:implement`: Delivery Start/code from approved Issues.
 - `mono:preflight`: local readiness/targeted verification/commit/certificate; mandatory `autoreview` (clean or approved declines), model from [role:autoreview](references/model-policy.md#roles), effort by risk.
 - `mono:ship`: accepted pre-ship drift, formal review/check, PR/docs-before-green/feedback/certificate.
 - `mono:deploy`: deploy delegation/evidence/post-ship/closeout/durable learnings.
-- `mono:orchestrate`: product control plane, dispatch/monitor/decisions and sole orchestrated Linear writer; runs Idea for owner yes; other stages keep their owners.
+- `mono:orchestrate`: product control plane, dispatch/monitor/decisions and sole orchestrated Linear writer; runs Idea for owner yes and Research itself; other stages keep their owners.
 
 ## Skill Design Rules
 
-Use descriptions for routing, atomics for single artifacts and wrappers for orchestration. Read shared files progressively; never inline long templates. Keep phase owners separate: mono:deliver only sequences implement/preflight/ship; their rules stay with their owners. Orchestrator dispatches, confirms and monitors. Idea is its exception: answer questions with reasons, present the description and «Ответил сам:» for owner yes, separately from package approval. Implement/preflight/ship stay in workers.
+Use descriptions for routing, atomics for single artifacts and wrappers for orchestration. Read shared files progressively; never inline long templates. Keep phase owners separate: mono:deliver only sequences implement/preflight/ship; their rules stay with their owners. Orchestrator dispatches, confirms and monitors. Idea is its exception: answer questions with reasons, present the description and «Ответил сам:» for owner yes, separately from package approval. Research too: no owner questions or yes; the result goes to the owner. Implement/preflight/ship stay in workers.
 
 Review only reports quality/risk; check only reports readiness. Repair: handoff mutates Project-first, `mono:review artifact` judges classification, `mono:check repair` reports readiness, issue renews issue-only, ship owns accepted pre-ship drift. Apply accepted fixes only through these owners or explicit atomics.
 

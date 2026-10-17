@@ -18,8 +18,8 @@ Link `role:<role>` to `#roles`; report values.
 | `autoreview` | `claude-opus-5` | [Canonical Routes](autoreview-routing.md#canonical-routes) | Reviewer. | Owner, 2026-09-06. |
 
 `idea-helper`/`scout`: `resolveRole` takes actual `host: "claude-code"|"codex"`
-(default codex). `models.roles.<role>` overrides; omissions inherit. Keep
-`idea-helper` for Research/Discovery; Claude scouts require the short alias.
+(default codex). `models.roles.<role>` overrides; omissions inherit. Stages use `scout`;
+`idea-helper` stays for configs; Claude scouts require the short alias.
 
 ## Reviewer and producer
 
