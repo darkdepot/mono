@@ -117,7 +117,9 @@ pack root (`../..` from the skill folder). The Project contract is a conditional
 read before body writes; Idea does not eagerly read the product's `AGENTS.md`.
 `node scripts/read-budget.mjs --skill idea --mandatory` reports its required
 corpus, explicitly including both scout task files; the complete mandatory set is
-20,433 bytes, below 20,480 without conditional reads. Both
+20,386 bytes, below 20,480 without conditional reads. Scout definitions are read
+by the scouts themselves, not by Idea: Codex receives absolute definition paths
+and tells each subagent to read its own file first, skipping frontmatter. Both
 English read tiers stay valid for every stage. [The shared Russian-stage list](scripts/russian-stages.mjs)
 (currently Idea) enables Russian labels, colon conditions, the first-`AGENTS.md`
 exemption and conditional Project-contract reads; later Russian stages add themselves
@@ -165,7 +167,8 @@ JSON с машинным кодом. Скрипт не обращается в L
 `idea-gate.mjs helper --host claude-code|codex [--config CONFIG]` возвращает
 модель и усилие [role:scout](references/model-policy.md#roles); переопределение —
 `models.roles.scout`. Два агента плагина в `agents/` только читают Linear/код;
-Codex получает их текст без шапки через встроенных субагентов. Роль `idea-helper`
+В Codex встроенный субагент сам читает своё определение по абсолютному пути,
+пропуская шапку; ведущий Idea передаёт путь, задание и контекст. Роль `idea-helper`
 пока сохранена; удаление отдельной задачей после 0.34.0. Добавляйте переопределение `scout` только
 после установки выпуска 0.32.1 везде; текущая дата отсечки остаётся без изменений.
 

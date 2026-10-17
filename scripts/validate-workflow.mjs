@@ -104,6 +104,20 @@ function validateReadBudgetFixtures() {
       "Idea mandatory file set must include both scout tasks and exclude conditional inputs");
     const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
     require(budget.bytes === total && total <= 20_480, "Idea actual mandatory total differs or exceeds 20 KB");
+    const stage = read("skills/idea/SKILL.md");
+    const launches = [...stage.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]));
+    const definitions = {
+      "linear-scout": "<корень>/agents/linear-scout.md",
+      "code-scout": "<корень>/agents/code-scout.md",
+    };
+    for (const token of ["reader", "subagent", "definitions", ...Object.keys(definitions), ...Object.values(definitions)]) requireMachineToken(token);
+    require(launches.length === 1 && launches[0].reader === "subagent"
+      && JSON.stringify(launches[0].definitions) === JSON.stringify(definitions),
+      "Scout definition paths must belong to the subagent launch skeleton");
+    const outsideLaunches = expected.map(file => read(file)).join("\n").replace(/```json\n[\s\S]*?\n```/g, "");
+    require(!/agents\/[^\s`"<>]*\.md/.test(outsideLaunches)
+      && !budget.files.some(entry => entry.path.startsWith("agents/")),
+      "Scout definitions must occur only as subagent reads, never as Idea inputs");
   });
   try {
     write("AGENTS.md", "# fixture\n");
@@ -6052,6 +6066,8 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "reader", "subagent", "definitions",
+  "<корень>/agents/linear-scout.md", "<корень>/agents/code-scout.md",
   "linear-scout", "code-scout", "references/record.md", "mono:check idea",
   "node <корень>/scripts/idea-gate.mjs verify --project <id> --dump <папка>/linear",
   "node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",
