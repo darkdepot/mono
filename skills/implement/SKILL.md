@@ -25,12 +25,12 @@ Read when:
 - `references/issue-only-lane.md` — `lifecycle_state_entity=issue` or lane park/freeze/exit.
 - `skills/preflight/SKILL.md` — exiting implemented-needs-preflight.
 
-Inspect package/checks, config/git/base. Identity before work/resume.
-Dispatch: phase/full queue; standalone: stage report.
+Inspect package/config/git/base; identity before work/resume.
+Dispatch: phase/full queue; standalone: report.
 
 ## Workflow
 
-Before start, run `node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>` against the normalized snapshot (Project, complete comments and package approval; issue-only uses its approved-fresh envelope). Dispatch supplies the pinned snapshot; standalone gathers the Project, all comment pages, package approval and Issue context from Linear. Any refusal blocks start with project/code; missing idea approval routes to `mono:idea`, never an inferred approval. `legacy-migrate` is not an approved-mode pass.
+Before start run `node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>`. Use the pinned dispatch snapshot or fresh Linear Project, complete comments, package approval and Issue context; issue-only uses its approved-fresh envelope. Refusal blocks with project/code; missing approval routes to `mono:idea`. `legacy-migrate` cannot pass this mode.
 
 start-checkpoint validates approved package/start/handoff/seam/lifecycle. Dispatch
 branch/snapshot wins. Consult gstack-learnings-search --limit 10; absence advisory.
@@ -39,9 +39,8 @@ interactive slices need Issue permission. Missing/conflicting artifacts allow
 discovery. Product/access/dirty/risk decisions → mailbox; material drift →
 scope-drift-needs-handoff. Russian comment for stops. No PR/formal pre-ship checks.
 
-Do not build custom parsers, heuristics or mechanisms beyond the Issue contract.
-Use an existing tool or literal conservative solution; correct the error class.
-On repeated key/class apply `references/review-admission.md` before edits.
+Use existing tools/literal solutions within the Issue. Repeated key/class:
+apply `references/review-admission.md` before edits.
 
 ## Orchestration branch of `start-checkpoint`
 
