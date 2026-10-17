@@ -167,6 +167,13 @@ function validateReadBudgetFixtures() {
       require(error?.message.includes("Russian read tiers require a listed Russian stage"), "unlisted Russian reads silently omitted");
       write("skills/ship/SKILL.md", base);
     });
+    fixture("unlisted stage rejects Russian pack-root reads", () => {
+      write("skills/ship/SKILL.md", "Read now: `<корень>/references/large.md`.\n");
+      let error;
+      try { measureReadBudget(scratch); } catch (caught) { error = caught; }
+      require(error?.message.includes("Russian pack-root paths require a listed Russian stage"), "unlisted Russian pack-root read silently omitted");
+      write("skills/ship/SKILL.md", base);
+    });
 
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
@@ -249,7 +256,8 @@ function conditionalReadPaths(line, file = "") {
 function validateReadFirstPath(referencedPath, from = "") {
   if (referencedPath === "AGENTS.md") return exists("AGENTS.md");
   if (/^(https?:|\/)/.test(referencedPath)) return false;
-  const named = referencedPath.replace(/^<корень>\//, "");
+  if (referencedPath.startsWith("<корень>/") && !isRussianStage(from)) return false;
+  const named = referencedPath.replace(/^<(?:корень|pack-root)>\//, "");
   if (/[$<>]/.test(named)) return false;
   if (referencedPath.startsWith("./") || referencedPath.startsWith("../")) return false;
   if (/^(skills|references|templates|scripts)\//.test(named)) return fs.existsSync(resolveSkillPath(root, from, referencedPath));
@@ -603,7 +611,7 @@ function validateArtifactContractParity() {
         }
         const consumer = read(consumerPath);
         const { paths } = extractReadFirstEntries(consumer, consumerPath);
-        if (isRussianStage(consumerPath)) {
+        if (isRussianStage(consumerPath) && config.contractPath === "references/contracts/project.md") {
           const tier = readTierBounds(consumer, consumerPath);
           if (tier) for (const line of consumer.slice(tier.start, tier.end).split("\n")) {
             paths.push(...(conditionalReadPaths(line, consumerPath) ?? []));
@@ -5466,7 +5474,7 @@ const STRING_PINS = [
   ["skills/idea/references/record.md", "mono-idea: approved project=<uuid> sha256=<64 hex>"],
   ["skills/idea/references/record.md", "node <корень>/scripts/idea-gate.mjs verify --project <id> --dump <папка>/linear"],
   ["skills/handoff/SKILL.md", "approval_status=approved"],
-  ["skills/implement/SKILL.md", "node <корень>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>"],
+  ["skills/implement/SKILL.md", "node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>"],
   // MONO-95: render placeholders replace angle-substitution prose.
   ["templates/orchestrator-dispatch.md","{{approval}}"],
   ["templates/orchestrator-dispatch.md","{{attempt}}"],
@@ -6033,7 +6041,7 @@ const REQUIRED_HEADINGS = [
 const MACHINE_TOKENS = new Set([
   "linear-scout", "code-scout", "references/record.md", "mono:check idea",
   "node <корень>/scripts/idea-gate.mjs verify --project <id> --dump <папка>/linear",
-  "node <корень>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",
+  "node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",
   "approval_status=approved",
   // MONO-187: CLI commands, closed result dictionary and plugin-agent fields.
   "record", "verify", "helper", "--help", "--draft", "--project", "--notes", "--out", "--dump", "--expect", "--host",
@@ -6720,6 +6728,7 @@ function validateReadFirstTierContract() {
   }
   for (const skill of listSkillNames()) {
     const file = `skills/${skill}/SKILL.md`, text = read(file);
+    if (!isRussianStage(file) && /^Прочитай(?: сразу|, когда)/m.test(text)) fail(`${file}: Russian read tiers require a listed Russian stage`);
     const tier = readTierBounds(text, file);
     if (!tier) { fail(`${file}: missing or unordered read tiers`); continue; }
     if (!isRussianStage(file) && extractReadFirstEntries(text, file).paths[0] !== "AGENTS.md") fail(`${file}: AGENTS.md must be the first eager read`);
@@ -6854,9 +6863,13 @@ function validateAe6Fixtures() {
     console.log("PASS AE6 listed Russian stage: Russian tiers, no first AGENTS read, conditional contract and pack-root paths green");
     negative("unlisted stage with Russian read tiers", () => change("skills/check/SKILL.md", text => text
       .replace(/^Read now.*$/m, "Прочитай сразу:")
-      .replace(/^Read when.*$/m, "Прочитай, когда:")), "missing or unordered read tiers");
+      .replace(/^Read when.*$/m, "Прочитай, когда:")), "Russian read tiers require a listed Russian stage");
     negative("unlisted stage without first AGENTS read", () => change("skills/check/SKILL.md", text => text.replace(/^1\. `AGENTS.md`\n/m, "")), "AGENTS.md must be the first eager read");
     negative("unlisted stage with colon condition", () => change("skills/check/SKILL.md", text => text.replace(/^(- `[^`]+`) — /m, "$1: ")), "conditional read needs a path and a condition");
+    negative("unlisted stage with Russian pack-root path", () => change("skills/check/SKILL.md", text => text.replace("2. `references/readiness-gates.md`", "2. `<корень>/references/readiness-gates.md`")), "missing pack file <корень>/references/readiness-gates.md");
+    negative("unlisted stage with conditional Project contract", () => change("skills/handoff/SKILL.md", text => text
+      .replace(/^2\. `references\/contracts\/project.md`\n/m, "")
+      .replace(/^Read when.*$/m, "$&\n- `references/contracts/project.md` — before fixture write.")), "must read references/contracts/project.md as its normative artifact source");
     negative("Idea conditional Project contract removed", () => change("skills/idea/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/project\.md`:[^\n]+\n/m, "")), "must read references/contracts/project.md as its normative artifact source");
     negative("required section removed", () => change("references/issue-only-lane.md", (text) => text.replace("### Post-`ready` exit\n", "")), "missing or duplicate section");
     for (const [, field, value] of LANE_FIELDS) {

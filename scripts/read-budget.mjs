@@ -26,7 +26,7 @@ function withoutFences(text) {
 
 function namedPaths(text, list = false) {
   // Reading prose may name a path in backticks, a link, or plain text.
-  return [...text.matchAll(/(?<![A-Za-z0-9_<:/.-])((?:<корень>\/)?(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.md)(?![A-Za-z0-9_-]|\.[A-Za-z0-9])/g)]
+  return [...text.matchAll(/(?<![A-Za-z0-9_<:/.-])((?:<(?:корень|pack-root)>\/)?(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.md)(?![A-Za-z0-9_-]|\.[A-Za-z0-9])/g)]
     .filter((match) => list || match[1].includes("/") || match[1] === "AGENTS.md" || /(?:read|load|consult|follow|use|apply)\s+[`(]?$/i.test(text.slice(0, match.index)))
     .map((match) => match[1]);
 }
@@ -77,7 +77,9 @@ export function measureReadBudget(root, { skills = DELIVERY_SKILLS, includeCondi
   const fileFor = name => layout.file(name);
   const normalize = (reference, from) => {
     if (/^mono-[^/]+\/SKILL\.md$/.test(reference)) reference = `skills/${reference}`;
-    if (reference.startsWith('<корень>/') || (/^skills\/[^/]+\//.test(from) && reference.startsWith('references/')))
+    if (reference.startsWith('<корень>/') && !isRussianStage(from))
+      throw new Error(`${from}: Russian pack-root paths require a listed Russian stage`);
+    if (/^<(?:корень|pack-root)>\//.test(reference) || (/^skills\/[^/]+\//.test(from) && reference.startsWith('references/')))
       reference = path.relative(root, resolveSkillPath(root, from, reference)).split(path.sep).join('/');
     if (/^(?:https?:|\/)/.test(reference) || /[<>*]/.test(reference)) return null;
     const names = /^(?:AGENTS\.md|skills\/|references\/|templates\/|docs\/|plans\/|examples\/)/.test(reference)

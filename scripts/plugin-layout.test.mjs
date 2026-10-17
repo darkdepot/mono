@@ -113,6 +113,13 @@ test('plugin paths distinguish skill references from explicit pack-root referenc
     fs.unlinkSync(path.join(root, 'references/contracts/project.md'));
     write('skills/idea/references/contracts/project.md', '# Wrong source');
     assert.match(checkPlugin(root).join('\n'), /missing pack file <корень>\/references\/contracts\/project.md/);
+    write('references/contracts/project.md', '# Contract');
+    write('skills/fixture/SKILL.md', 'Read `<корень>/references/contracts/project.md`.');
+    assert.match(checkPlugin(root).join('\n'), /skills\/fixture\/SKILL.md: missing pack file <корень>\/references\/contracts\/project.md/);
+    write('skills/fixture/SKILL.md', 'Run `node <pack-root>/scripts/idea-gate.mjs`.');
+    assert.deepEqual(checkPlugin(root), []);
+    fs.unlinkSync(path.join(root, 'scripts/idea-gate.mjs'));
+    assert.match(checkPlugin(root).join('\n'), /skills\/fixture\/SKILL.md: missing pack file <pack-root>\/scripts\/idea-gate.mjs/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -5,7 +5,7 @@ description: Use when starting or running implementation from approved Linear Is
 
 # Mono Implement
 
-Shared files: here or pack root. Resolve `<корень>/` to the absolute pack root (`../..` from this skill), not the product cwd.
+Shared files: here or pack root. Resolve `<pack-root>/` to the absolute pack root (`../..` from this skill), not the product cwd.
 
 [Landing](references/landing.md).
 
@@ -30,7 +30,7 @@ Dispatch: phase/full queue; standalone: report.
 
 ## Workflow
 
-Before start run `node <корень>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>`. Use the pinned dispatch snapshot or fresh Linear Project, complete comments, package approval and Issue context; issue-only uses its approved-fresh envelope. Refusal blocks with project/code; missing approval routes to `mono:idea`. `legacy-migrate` cannot pass this mode.
+Before start run `node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>`. Use the pinned dispatch snapshot or fresh Linear Project, complete comments, package approval and Issue context; issue-only uses its approved-fresh envelope. Refusal blocks with project/code; missing approval routes to `mono:idea`. `legacy-migrate` cannot pass this mode.
 
 start-checkpoint validates approved package/start/handoff/seam/lifecycle. Dispatch
 branch/snapshot wins. Consult gstack-learnings-search --limit 10; absence advisory.

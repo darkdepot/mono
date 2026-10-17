@@ -121,10 +121,19 @@ English read tiers stay valid for every stage. [The shared Russian-stage list](s
 exemption and conditional Project-contract reads; later Russian stages add themselves
 there. Package-root paths and each skill's own reference folder are checked by the
 same resolver in plugin validation, workflow validation and reading counts.
+The Russian `<корень>/` prefix belongs to listed stages; English stages use
+`<pack-root>/` in commands.
 [Activation evals](evals/idea/README.md)
 contain 10 positive and 6 negative prompts, three runs at threshold 0.8; the
 orchestrator runs Claude-only checks on the final head. Stage behavior is accepted
 live after 0.32.1, not by these activation scores.
+
+A returned Project with What / Why / Target outcome keeps its body, package and
+status: the agent derives Unknowns from the description and scout facts, shows
+all four sections for yes, then records and verifies. Without those three
+sections, run the normal stage with the owner, preserve the old text in notes
+and write the approved body; only an Idea Project moves status. Notes state each
+known fact in one line with its source link for Research.
 
 ### Artifacts and truth
 
