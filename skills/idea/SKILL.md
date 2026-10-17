@@ -74,7 +74,7 @@ Read when:
    Не добавляй пустые границы и не удаляй существующие границы проекта.
 2. Сохрани показанную одобренную версию из четырёх разделов в UTF-8 файл.
    Заголовки второго уровня соответствуют языку проекта или `ideaGate.headings`.
-   Получи отпечаток командой `node scripts/idea-gate.mjs fingerprint --snapshot <file>`.
+   Получи отпечаток командой `node scripts/idea-gate.mjs fingerprint --snapshot <file> --config <path>`.
    Не вычисляй его через `runtime.digest`. Запиши комментарий на этом проекте
    с двумя отдельными заборами кода: `text` со строкой
    `mono-idea: approved project=<uuid> sha256=<64 hex>` и `mono-idea-snapshot`
