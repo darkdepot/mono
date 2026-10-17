@@ -1,0 +1,176 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { checkIdea, ideaFingerprint } from './idea-gate.mjs';
+import { resolveRole } from './runtime.mjs';
+
+const projectId = '59c079b6-fc26-40a6-ba19-9467674fa637';
+const otherId = '11111111-1111-1111-1111-111111111111';
+const cli = args => spawnSync(process.execPath, ['scripts/idea-gate.mjs', ...args], { encoding: 'utf8' });
+const json = file => JSON.parse(fs.readFileSync(file, 'utf8'));
+function sandbox(run) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-idea-record-'));
+  try { run(root); } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+function write(root, file, value) {
+  const target = path.join(root, file); fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, typeof value === 'string' ? value : JSON.stringify(value));
+  return target;
+}
+function setup(root, host, language = 'Russian') {
+  const source = new URL(`./fixtures/idea-gate/probe/${host}/`, import.meta.url);
+  const project = json(new URL('get_project.json', source));
+  const pages = [1, 2, 3].map(n => json(new URL(`list_comments.limit4.page-${n}.json`, source)));
+  const existing = pages.flatMap(page => page.comments).find(c => c.body.includes('mono-idea: approved'));
+  assert.ok(existing, 'live probe has an approval record');
+  let draft = existing.body.split('```mono-idea-snapshot\n')[1].split('\n```')[0];
+  if (language === 'English') for (const [ru, en] of [['Что', 'What'], ['Зачем', 'Why'], ['Образ результата', 'Target outcome'], ['Неизвестные', 'Unknowns']]) draft = draft.replace(`## ${ru}\n`, `## ${en}\n`);
+  write(root, 'draft.md', draft);
+  write(root, 'config.json', { languages: { linear: language } });
+  write(root, 'notes.md', 'Ссылка разведчика: https://example.com/fact\n\n## Что входит\nСтарый раздел');
+  const args = ['record', '--draft', path.join(root, 'draft.md'), '--config', path.join(root, 'config.json'), '--out', root];
+  let result = cli(args); assert.equal(result.status, 0, result.stdout + result.stderr);
+  result = cli([...args, '--project', projectId, '--notes', path.join(root, 'notes.md')]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const body = fs.readFileSync(path.join(root, 'body.md'), 'utf8');
+  const comment = fs.readFileSync(path.join(root, 'comment.md'), 'utf8');
+  project.description = body;
+  // Keep live metadata, including updatedAt before createdAt. Replace only content
+  // for the generated-record round trip; raw probe files remain byte-for-byte.
+  pages[0].comments[0].body = comment;
+  write(root, 'dump/project.json', project);
+  pages.forEach((page, i) => write(root, `dump/comments-${i + 1}.json`, page));
+  return { project, pages, draft, body, comment, args,
+    verify: ['verify', '--project', projectId, '--dump', path.join(root, 'dump'), '--expect', path.join(root, 'comment.md'), '--config', path.join(root, 'config.json')] };
+}
+function verify(args, code) {
+  const result = cli(args), lines = result.stdout.trim().split('\n');
+  assert.equal(lines.length, 2, result.stdout + result.stderr);
+  const verdict = JSON.parse(lines[1]);
+  assert.equal(verdict.code, code, result.stdout + result.stderr);
+  assert.equal(result.status, code === 'pass' ? 0 : 1, result.stdout + result.stderr);
+  assert.match(lines[0], code === 'pass' ? /^Готово$/ : code === 'stale' ? /^Нужно новое «да»: / : /^Стоп: /);
+  return verdict;
+}
+for (const host of ['claude-code', 'codex']) {
+  test(`${host}: record body and comment round trip through complete live-shaped pages`, () => sandbox(root => {
+    const s = setup(root, host);
+    assert.equal((s.body.match(/^## /gm) ?? []).length, 3);
+    assert.ok(s.comment.includes(s.draft));
+    assert.ok(s.comment.indexOf('## Что входит') > s.comment.indexOf('\n```\n\n## Заметки'));
+    const result = verify(s.verify, 'pass');
+    assert.equal(result.recordId, s.pages[0].comments[0].id);
+    assert.equal(result.fingerprint, ideaFingerprint(s.draft));
+    assert.equal(checkIdea({ mode: 'fresh', project: { id: projectId, createdAt: s.project.createdAt, status: s.project.status.name, body: s.body, language: 'ru' }, records: { complete: true, comments: [{ ...s.pages[0].comments[0] }] } }).code, 'pass');
+    const command = cli([...s.args, '--project', projectId]);
+    assert.equal(command.status, 0, command.stdout + command.stderr);
+    const withoutNotes = fs.readFileSync(path.join(root, 'comment.md'), 'utf8');
+    assert.match(withoutNotes, new RegExp(`sha256=${result.fingerprint}`));
+  }));
+  test(`${host}: incomplete, duplicate, unordered and malformed pages stop`, () => sandbox(root => {
+    const s = setup(root, host);
+    fs.unlinkSync(path.join(root, 'dump/comments-2.json')); verify(s.verify, 'read-failed');
+    write(root, 'dump/comments-2.json', s.pages[1]);
+    fs.unlinkSync(path.join(root, 'dump/comments-3.json')); verify(s.verify, 'read-failed');
+    write(root, 'dump/comments-3.json', s.pages[2]);
+    for (const mutate of [
+      pages => { pages[0].cursor = 'wrong'; },
+      pages => { pages[2].cursor = 'unexpected'; },
+      pages => { pages[0].hasNextPage = false; delete pages[0].cursor; },
+      pages => { pages[1].comments[0] = pages[0].comments[0]; },
+      pages => { pages[1].comments.reverse(); },
+      pages => { delete pages[1].comments[0].createdAt; },
+    ]) {
+      const pages = structuredClone(s.pages); mutate(pages);
+      pages.forEach((page, i) => write(root, `dump/comments-${i + 1}.json`, page));
+      verify(s.verify, 'read-failed');
+    }
+  }));
+  test(`${host}: exact expected comment, project UUID and changed body`, () => sandbox(root => {
+    const s = setup(root, host);
+    s.project.uuid = otherId; write(root, 'dump/project.json', s.project); verify(s.verify, 'other-project');
+    s.project.uuid = projectId; write(root, 'dump/project.json', s.project);
+    write(root, 'comment.md', s.comment + '\n'); verify(s.verify, 'no-record');
+    write(root, 'comment.md', s.comment);
+    s.project.description += '\nChanged outcome'; write(root, 'dump/project.json', s.project); verify(s.verify, 'stale');
+    s.project.description = s.body; write(root, 'dump/project.json', s.project);
+    const foreign = s.comment.replace(`project=${projectId}`, `project=${otherId}`);
+    write(root, 'comment.md', foreign); s.pages[0].comments[0].body = foreign;
+    write(root, 'dump/comments-1.json', s.pages[0]); verify(s.verify, 'other-project');
+  }));
+  test(`${host}: old approval without notes, single page and English headings`, () => sandbox(root => {
+    const s = setup(root, host, 'English');
+    const noNotes = s.comment.split('\n## Заметки')[0];
+    write(root, 'comment.md', noNotes);
+    const single = { comments: s.pages.flatMap(p => p.comments), hasNextPage: false };
+    single.comments[0].body = noNotes;
+    write(root, 'dump/comments-1.json', single);
+    for (const n of [2, 3]) fs.unlinkSync(path.join(root, `dump/comments-${n}.json`));
+    verify(s.verify, 'pass');
+    assert.match(s.body, /^## What\n/);
+    // An unrelated later record must never stand in for the expected one.
+    single.comments[1].body = noNotes;
+    single.comments[0].body = 'Unrelated comment';
+    write(root, 'dump/comments-1.json', single);
+    assert.equal(verify(s.verify, 'pass').recordId, single.comments[1].id);
+    single.comments[1].body = noNotes + '\nnotes changed';
+    write(root, 'dump/comments-1.json', single); verify(s.verify, 'no-record');
+  }));
+}
+test('helper uses host scout defaults and role overrides without changing idea-helper', () => sandbox(root => {
+  for (const [host, model, effort] of [['claude-code', 'sonnet', 'medium'], ['codex', ['gpt', '6', 'luna'].join('-'), 'high']]) {
+    const result = cli(['helper', '--host', host]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(JSON.parse(result.stdout).model, model); assert.equal(JSON.parse(result.stdout).effort, effort);
+    const old = resolveRole('idea-helper', {}, { host, packRoot: process.cwd() });
+    const cfg = write(root, 'config.json', { models: { roles: { scout: { model: 'custom-scout', effort: 'low' } } } });
+    const overridden = cli(['helper', '--host', host, '--config', cfg]);
+    assert.equal(overridden.status, 0, overridden.stdout + overridden.stderr);
+    assert.equal(JSON.parse(overridden.stdout).model, 'custom-scout'); assert.equal(JSON.parse(overridden.stdout).effort, 'low');
+    const { fingerprint, ...before } = old;
+    const { fingerprint: afterFingerprint, ...after } = resolveRole('idea-helper', json(cfg), { host, packRoot: process.cwd() });
+    assert.deepEqual(after, before);
+  }
+  assert.equal(cli(['helper', '--host', 'unknown']).status, 1);
+}));
+
+for (const [host, manifestHash] of [['claude-code', '520f041db7335c3c3e1fb222c4d9760365809751d5fbede149e7e32c645d4c64'], ['codex', '8ad08c5fea40cce9f696b87df4a284e116e2e7b2ed93c0d496f31f7720bcc0d8']]) {
+  test(`${host}: captured probe bytes retain the approved manifest`, () => {
+    const directory = new URL(`./fixtures/idea-gate/probe/${host}/`, import.meta.url);
+    const manifest = fs.readFileSync(new URL('MANIFEST.sha256', directory));
+    const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+    assert.equal(hash(manifest), manifestHash);
+    for (const line of manifest.toString().trim().split('\n')) {
+      const [, expected, file] = /^(\w{64})  (.+)$/.exec(line);
+      assert.equal(hash(fs.readFileSync(new URL(file, directory))), expected, file);
+    }
+  });
+  test(`${host}: unmodified raw connector responses verify their exact existing record`, () => sandbox(root => {
+    const source = new URL(`./fixtures/idea-gate/probe/${host}/`, import.meta.url);
+    const pages = [1, 2, 3].map(n => json(new URL(`list_comments.limit4.page-${n}.json`, source)));
+    const expected = pages.flatMap(p => p.comments).find(c => c.body.includes('mono-idea: approved'));
+    fs.mkdirSync(path.join(root, 'dump'));
+    fs.copyFileSync(new URL('get_project.json', source), path.join(root, 'dump/project.json'));
+    for (const n of [1, 2, 3]) fs.copyFileSync(new URL(`list_comments.limit4.page-${n}.json`, source), path.join(root, `dump/comments-${n}.json`));
+    write(root, 'expect.md', expected.body); write(root, 'config.json', { languages: { linear: 'Russian' } });
+    assert.equal(verify(['verify', '--project', projectId, '--dump', path.join(root, 'dump'), '--expect', path.join(root, 'expect.md'), '--config', path.join(root, 'config.json')], 'pass').recordId, expected.id);
+  }));
+}
+
+test('record retains literal fence whitespace and configured custom headings', () => sandbox(root => {
+  const config = { languages: { linear: 'Other' }, ideaGate: { headings: { what: 'A', why: 'B', outcome: 'C', unknowns: 'D' } } };
+  const draft = '## A\n\n```txt\nvalue  \n```  \n\n## B\n\nWhy\n\n## C\n\nOutcome\n\n## D\n\nQuestion';
+  write(root, 'config.json', config); write(root, 'draft.md', draft);
+  const result = cli(['record', '--draft', path.join(root, 'draft.md'), '--project', projectId, '--config', path.join(root, 'config.json'), '--out', root]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const body = fs.readFileSync(path.join(root, 'body.md'), 'utf8');
+  const comment = fs.readFileSync(path.join(root, 'comment.md'), 'utf8');
+  assert.equal(checkIdea({ mode: 'fresh', headings: config.ideaGate.headings, project: { id: projectId, createdAt: '2026-10-17T00:00:00Z', status: 'Idea', language: 'Other', body }, records: { complete: true, comments: [{ id: 'expected', createdAt: '2026-10-17T01:00:00Z', body: comment }] } }).code, 'pass');
+  assert.ok(body.includes('```  \n'));
+  write(root, 'config.json', { languages: { linear: 'Other' } });
+  assert.equal(cli(['record', '--draft', path.join(root, 'draft.md'), '--config', path.join(root, 'config.json'), '--out', root]).status, 1);
+}));

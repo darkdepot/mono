@@ -14,11 +14,17 @@ Link `role:<role>` to `#roles`; report values.
 | `worker-complex` | `gpt-6.1-sol` | `xhigh` | Complex Codex; dispatch reason required, never risk-selected. | Owner, 2026-09-30. |
 | `worker-claude` | `claude-opus-5` | `high` | Claude worker; guarantees below. | Owner, 2026-09-06. |
 | `idea-helper` | claude-code: `claude-opus-5-5`; codex: `gpt-6.1-sol` | `high` | Read-only idea facts. | Owner, 2026-10-16. |
+| `scout` | claude-code: `sonnet`; codex: `gpt-6-luna` | claude-code: `medium`; codex: `high` | Read-only Linear/code scouts. | Owner, 2026-10-17. |
 | `autoreview` | `claude-opus-5` | [Canonical Routes](autoreview-routing.md#canonical-routes) | Code reviewer. | Owner, 2026-09-06. |
 
 For `idea-helper`, skills pass their actual `host: "claude-code"` or `host: "codex"`
 to `resolveRole`. `models.roles.idea-helper` overrides host defaults; omissions
 inherit (Claude/Codex, high). Existing callers without host default to codex.
+
+`scout` uses the actual host: Claude Code agents accept the short model name
+`sonnet`; Codex uses `gpt-6-luna`. `models.roles.scout` overrides host defaults,
+including effort; omissions inherit. `idea-helper` stays available to Research
+and Discovery. Resolve CLI scout routes with `idea-gate.mjs helper --host`.
 
 ## Reviewer and producer
 
@@ -33,7 +39,7 @@ Omissions inherit; engine changes need compatible effort/provider. Reject unknow
 fields. Secrets stay with the orchestrator; `credentialEnv` names a variable.
 Native auth: null endpoint/credentialEnv.
 
-Engines: `idea-helper` → claude|codex; `worker-default|worker-complex` → codex;
+Engines: `scout` and `idea-helper` → claude|codex; `worker-default|worker-complex` → codex;
 `worker-claude` → claude; `autoreview` → claude|kimi|pi|codex;
 `second-voice` → native Codex for Claude (cross-vendor).
 No overrides for `orchestrator`/`second-voice-alt`.

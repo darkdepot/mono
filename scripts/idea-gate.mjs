@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { digest, isMain } from './runtime.mjs';
+import { digest, isMain, resolveRole } from './runtime.mjs';
 
 export const IDEA_GATE_DEFAULT_SINCE = '2099-12-31';
 const DEFAULT_HEADINGS = {
@@ -244,7 +244,123 @@ export function checkIdea({ mode, project, records, approval, since = IDEA_GATE_
 function readJson(file) { return JSON.parse(fs.readFileSync(file, 'utf8')); }
 function optionalJson(file) { return fs.existsSync(file) ? readJson(file) : undefined; }
 
+function configuredHeadings(config) {
+  const language = config.languages?.linear ?? 'Russian';
+  const headings = config.ideaGate?.headings ?? { Russian: 'ru', English: 'en' }[language];
+  if (headings === undefined) fail('read-failed');
+  return headingDictionary(headings);
+}
+
+function recordIdea(options, config) {
+  if (!options['--draft'] || !options['--out'] || !options['--config'] ||
+      (options['--notes'] && !options['--project'])) fail('read-failed');
+  const draft = fs.readFileSync(options['--draft'], 'utf8'), headings = configuredHeadings(config);
+  const fingerprint = ideaFingerprint(draft, headings), found = sections(draft, headings);
+  const body = KEYS.slice(0, 3).map(key => {
+    const content = [...found[key]];
+    while (content.length && !content.at(-1).fenced && /^\r?$/.test(content.at(-1).text)) content.pop();
+    return `## ${headings[key]}\n${content.map(block => block.text).join('\n')}`;
+  }).join('\n\n') + '\n';
+  let comment;
+  if (options['--project']) {
+    if (!uuid(options['--project'])) fail('read-failed');
+    const notes = options['--notes'] ? fs.readFileSync(options['--notes'], 'utf8') : '';
+    const runs = [...draft.matchAll(/`+/g)].map(match => match[0].length);
+    const fence = '`'.repeat(Math.max(3, ...runs.map(length => length + 1)));
+    comment = `\`\`\`text\nmono-idea: approved project=${options['--project']} sha256=${fingerprint}\n\`\`\`\n\n` +
+      `${fence}mono-idea-snapshot\n${draft}\n${fence}\n\n## Заметки для Research и Handoff\n\n${notes}`;
+    // Notes are outside the fingerprint, but cannot introduce another record.
+    approvedRecord({ id: 'record', body: comment }, options['--project'], headings);
+  }
+  fs.mkdirSync(options['--out'], { recursive: true });
+  fs.writeFileSync(path.join(options['--out'], 'body.md'), body);
+  if (comment !== undefined) fs.writeFileSync(path.join(options['--out'], 'comment.md'), comment);
+  console.log(JSON.stringify({ body: path.join(options['--out'], 'body.md'),
+    ...(comment !== undefined ? { comment: path.join(options['--out'], 'comment.md') } : {}), fingerprint }));
+}
+
+function verifyDump(options, config) {
+  const projectId = options['--project'];
+  if (!uuid(projectId) || !options['--dump'] || !options['--expect'] || !options['--config']) fail('read-failed');
+  const root = options['--dump'], raw = readJson(path.join(root, 'project.json'));
+  if (!object(raw) || !uuid(raw.uuid)) fail('read-failed');
+  if (raw.uuid !== projectId) return verdict('other-project', projectId);
+  const headings = configuredHeadings(config);
+  const project = { id: raw.uuid, createdAt: raw.createdAt, status: raw.status?.name,
+    body: raw.description, language: 'custom' };
+  const files = fs.readdirSync(root).filter(name => /^comments-.*\.json$/.test(name));
+  if (!files.length || files.some(name => !/^comments-[1-9]\d*\.json$/.test(name))) fail('read-failed');
+  const comments = [], ids = new Set();
+  let previousUpdatedAt = Infinity;
+  for (let n = 1; n <= files.length; n++) {
+    const page = readJson(path.join(root, `comments-${n}.json`));
+    if (!object(page) || !Array.isArray(page.comments) || typeof page.hasNextPage !== 'boolean' ||
+        page.hasNextPage !== (n < files.length) ||
+        (page.hasNextPage ? !page.comments.length || page.cursor !== page.comments.at(-1)?.id : Object.hasOwn(page, 'cursor'))) fail('read-failed');
+    for (const item of page.comments) {
+      if (!object(item) || typeof item.id !== 'string' || !item.id || ids.has(item.id) ||
+          typeof item.body !== 'string' || !Number.isFinite(date(item.createdAt)) ||
+          !Number.isFinite(date(item.updatedAt)) || date(item.updatedAt) > previousUpdatedAt) fail('read-failed');
+      previousUpdatedAt = date(item.updatedAt);
+      ids.add(item.id);
+      comments.push({ id: item.id, createdAt: item.createdAt, body: item.body });
+    }
+  }
+  const expected = fs.readFileSync(options['--expect'], 'utf8');
+  const matches = comments.filter(comment => comment.body === expected);
+  if (!matches.length) return verdict('no-record', projectId);
+  if (matches.length !== 1) fail('read-failed');
+  // Select the byte-identical comment explicitly: fresh must not pick another
+  // approval or accept the legacy migration exception for a missing new write.
+  return checkIdea({ mode: 'fresh', project, records: { complete: true, comments: matches },
+    headings, since: config.ideaGate?.since ?? IDEA_GATE_DEFAULT_SINCE });
+}
+
+const VERIFY_REASONS = {
+  'no-record': 'комментарий из --expect не найден; прочитайте запись и все страницы комментариев заново',
+  'other-project': 'проект или запись относятся к другому проекту; проверьте UUID и ответы Linear',
+  'bad-record': 'запись повреждена; подготовьте и опубликуйте комментарий заново через record',
+  'missing-heading': 'нет нужного заголовка второго уровня; проверьте язык и одобренную версию',
+  'duplicate-heading': 'заголовок повторён; устраните повтор и проверьте одобренную версию',
+  'unsupported-format': 'формат текста не поддерживается; уберите таблицы и вложенные списки из описания',
+  'bad-since': 'в пакете не задана корректная дата начала проверки; исправьте установку или настройку',
+  'read-failed': 'ответы Linear, страницы или настройки неполны либо повреждены; сохраните проект и все страницы заново',
+};
+function authoringMain(argv) {
+  const command = argv.shift(), options = {};
+  let result;
+  try {
+    const allowed = { record: ['--project', '--draft', '--notes', '--config', '--out'],
+      verify: ['--project', '--dump', '--expect', '--config'], helper: ['--host', '--config'] }[command];
+    while (argv.length) {
+      const key = argv.shift();
+      if (!allowed.includes(key) || key in options || !argv.length || argv[0].startsWith('--')) fail('read-failed');
+      options[key] = argv.shift();
+    }
+    const config = options['--config'] ? readJson(options['--config']) : {};
+    validateIdeaGate(config.ideaGate);
+    if (command === 'record') return recordIdea(options, config);
+    if (command === 'helper') {
+      if (!['claude-code', 'codex'].includes(options['--host'])) fail('read-failed');
+      console.log(JSON.stringify(resolveRole('scout', config, { host: options['--host'], packRoot: path.resolve(import.meta.dirname, '..') })));
+      return;
+    }
+    result = verifyDump(options, config);
+  } catch (error) {
+    result = verdict(['bad-since', 'other-project', 'bad-record', 'missing-heading', 'duplicate-heading', 'unsupported-format'].includes(error.code)
+      ? error.code : 'read-failed', options['--project'] ?? null);
+  }
+  const pass = result.code === 'pass';
+  if (command === 'verify') {
+    console.log(pass ? 'Готово' : result.code === 'stale' ? 'Нужно новое «да»: тело проекта изменилось; покажите владельцу текущую версию'
+      : `Стоп: ${VERIFY_REASONS[result.code] ?? VERIFY_REASONS['read-failed']}`);
+    console.log(JSON.stringify(result));
+  } else console.log(`idea-gate: fail: ${result.code} project=${result.projectId}`);
+  process.exitCode = pass ? 0 : 1;
+}
+
 function main(argv) {
+  if (['record', 'verify', 'helper'].includes(argv[0])) return authoringMain(argv);
   let projectId = null, result;
   try {
     const command = argv.shift(), options = {};

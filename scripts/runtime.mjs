@@ -434,7 +434,7 @@ export function deliveryConfig(source) {
 export const ROLE_ENGINES = {
   orchestrator: ['claude'], 'second-voice': ['codex'], 'second-voice-alt': ['claude'],
   'worker-default': ['codex'], 'worker-complex': ['codex'], 'worker-claude': ['claude'],
-  autoreview: ['claude', 'kimi', 'pi', 'codex'], 'idea-helper': ['codex', 'claude'],
+  autoreview: ['claude', 'kimi', 'pi', 'codex'], 'idea-helper': ['codex', 'claude'], scout: ['codex', 'claude'],
 };
 export const RISK_KEYS = ['tiny', 'standard', 'deep', 'risky', 'riskyCritical'];
 const NATIVE_PROVIDERS = { claude: 'anthropic', codex: 'openai', kimi: 'moonshot', pi: 'openai' };
@@ -460,14 +460,19 @@ export function roleDefaults(skillsRoot, host = 'codex') {
     const row = policy.split('\n').find(line => line.startsWith(`| \`${role}\` |`));
     const cells = row?.split('|').slice(1, 4).map(cell => cell.trim().replaceAll('`', ''));
     need(cells?.length === 3, `policy role unavailable: ${role}`);
-    let engine = engines[0], model = cells[1];
-    if (role === 'idea-helper') {
+    let engine = engines[0], model = cells[1], effort = cells[2];
+    if (['idea-helper', 'scout'].includes(role)) {
       const hosts = /^claude-code: ([^;\s]+); codex: ([^;\s]+)$/.exec(model);
-      need(hosts, 'policy idea-helper requires claude-code and codex models');
+      need(hosts, `policy ${role} requires claude-code and codex models`);
       engine = host === 'claude-code' ? 'claude' : 'codex';
       model = hosts[host === 'claude-code' ? 1 : 2];
+      if (role === 'scout') {
+        const efforts = /^claude-code: (medium); codex: (high)$/.exec(effort);
+        need(efforts, 'policy scout requires claude-code medium and codex high efforts');
+        effort = efforts[host === 'claude-code' ? 1 : 2];
+      }
     }
-    defaults[role] = { engine, model, effort: role === 'orchestrator' ? null : cells[2],
+    defaults[role] = { engine, model, effort: role === 'orchestrator' ? null : effort,
       provider: { id: NATIVE_PROVIDERS[engine], endpoint: null }, credentialEnv: null };
   }
   const routing = fs.readFileSync(path.join(directory, 'autoreview-routing.md'), 'utf8');

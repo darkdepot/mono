@@ -1,0 +1,42 @@
+[
+  {
+    "file": "get_project.json",
+    "tool": "mcp__codex_apps__linear_get_project",
+    "arguments": {
+      "query": "59c079b6-fc26-40a6-ba19-9467674fa637"
+    }
+  },
+  {
+    "file": "list_comments.page-1.json",
+    "tool": "mcp__codex_apps__linear_list_comments",
+    "arguments": {
+      "projectId": "59c079b6-fc26-40a6-ba19-9467674fa637"
+    }
+  },
+  {
+    "file": "list_comments.limit4.page-1.json",
+    "tool": "mcp__codex_apps__linear_list_comments",
+    "arguments": {
+      "projectId": "59c079b6-fc26-40a6-ba19-9467674fa637",
+      "limit": 4
+    }
+  },
+  {
+    "file": "list_comments.limit4.page-2.json",
+    "tool": "mcp__codex_apps__linear_list_comments",
+    "arguments": {
+      "projectId": "59c079b6-fc26-40a6-ba19-9467674fa637",
+      "limit": 4,
+      "cursor": "f5de731e-66ca-4384-ae67-f34eb6b701f2"
+    }
+  },
+  {
+    "file": "list_comments.limit4.page-3.json",
+    "tool": "mcp__codex_apps__linear_list_comments",
+    "arguments": {
+      "projectId": "59c079b6-fc26-40a6-ba19-9467674fa637",
+      "limit": 4,
+      "cursor": "c89729ef-654a-4da8-9248-aa971219955f"
+    }
+  }
+]
