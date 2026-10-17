@@ -1,7 +1,7 @@
 import { packLayout, canonical } from './runtime.mjs';
 import { copyPluginFixture, writeWatcherFixture } from './plugin-fixture.mjs';
 import assert from "node:assert/strict";
-import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
+import { ideaDispatchFixture, ideaAttemptFixture } from './fixtures/idea-dispatch.mjs';
 import fs from "node:fs";
 import crypto from "node:crypto";
 import os from "node:os";
@@ -38,9 +38,11 @@ function installedAdmissionFixture(runtime, file, cwd, env) {
       write(admissionScript, `import fs from 'node:fs';import path from 'node:path';
 import {atomicJson,packLayout} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'runtime.mjs')).href)};
 import {admitCollection,sha256File} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'orchestrator/command-state.mjs')).href)};
+import {ideaAttemptFixture} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'fixtures/idea-dispatch.mjs')).href)};
 const request=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=request.root;delete request.pins;request.reviewDatasetVersion??=0;
 fs.mkdirSync(request.evidenceRoot,{recursive:true});
 const identity=packLayout(request.skillsRoot).identity(),pinsFile=path.join(root,'dispatch',request.issue+'-a1','pins.json');
+request.idea=ideaAttemptFixture(path.join(path.dirname(pinsFile),'snapshot'),request.issue);
 atomicJson(pinsFile,{...request,base:request.head});
 const entry={issue:request.issue,attempt:1,stage:'mono-deliver',worktree:request.worktree,...identity,pins:{file:pinsFile,digest:sha256File(pinsFile)},pinsVersion:0};
 atomicJson(path.join(root,'workers.json'),{[entry.issue]:entry});
@@ -63,7 +65,7 @@ await admitCollection(root,{...entry,phase:'preflight',sequence:1,kind:'confirma
     if(request.collect===true) {
       const receiptFile=path.join(request.evidenceRoot,request.head+'.json');
       if(fs.existsSync(receiptFile)) {
-        const envelope=json(receiptFile);delete envelope.receipt.pins;
+        const envelope=json(receiptFile);delete envelope.receipt.pins;delete envelope.receipt.idea;
         envelope.signature=crypto.createHmac('sha256',fs.readFileSync(path.join(request.evidenceRoot,'receipt.key'))).update(canonical(envelope.receipt)).digest('hex');write(receiptFile,envelope);
       }
     }
@@ -201,7 +203,8 @@ test("backup switch named launch contracts", async t => {
       const pin = (req, attempt = 1) => {
         const pinsFile = path.join(root, "dispatch", `MONO-999-a${attempt}`, "pins.json");
         const modelRoutes = runtime.resolveWorkerPins(req);
-        write(pinsFile, { base: req.base, modelRoutes, workerWritableRoots: roots, ...(req.backupSwitch ? { backupSwitch: req.backupSwitch } : {}) });
+        const idea = ideaAttemptFixture(path.join(path.dirname(pinsFile), 'snapshot'), req.issue);
+        write(pinsFile, { base: req.base, modelRoutes, workerWritableRoots: roots, idea, ...(req.backupSwitch ? { backupSwitch: req.backupSwitch } : {}) });
         return { ...req, modelRoutes, pins: { file: pinsFile, digest: crypto.createHash("sha256").update(fs.readFileSync(pinsFile)).digest("hex") } };
       };
       const starting = runtime.spawnWorker(pin(request));
@@ -1336,14 +1339,15 @@ console.log(JSON.stringify(result));
     // U13 absence must fail ship before judgment without a publishRequest.
     const registryFile = path.join(state, "workers.json"), registryBefore = fs.existsSync(registryFile) ? fs.readFileSync(registryFile) : null;
     const launchPins = path.join(state, "dispatch/MONO-998-a1/pins.json");
-    const boundPins = { ...preflight, reviewDataset: null, reviewDatasetVersion: 0, reviewDatasetDigest: null };
+    const idea = ideaAttemptFixture(path.join(path.dirname(launchPins), 'snapshot'), 'MONO-998');
+    const boundPins = { ...preflight, idea, reviewDataset: null, reviewDatasetVersion: 0, reviewDatasetDigest: null };
     write(launchPins, boundPins);
     const pinsBinding = { file: launchPins, digest: crypto.createHash("sha256").update(fs.readFileSync(launchPins)).digest("hex") };
     write(registryFile, { "MONO-998": { ...pins, issue: "MONO-998", attempt: 1, stage: "mono-deliver", worktree: repo, pins: pinsBinding, pinsVersion: 0 } });
     const history = path.join(preflight.evidenceRoot, "history"), savedHistory = history + ".saved";
     fs.renameSync(history, savedHistory);
     try {
-      write(gateRequest, { ...proofRequest, preflight: { ...preflight, pins: pinsBinding, reviewDatasetVersion: 0 } });
+      write(gateRequest, { ...proofRequest, preflight: { ...preflight, idea, pins: pinsBinding, reviewDatasetVersion: 0 } });
       const missing = shipCall(); assert.equal(missing.status, 1); assert.match(missing.stdout, /missing or stale autoreview artifact/u);
       assert.ok(!missing.stdout.includes("publishRequest") && !missing.stdout.includes("pending"));
     } finally {
@@ -2199,7 +2203,8 @@ test('scratch short launch pins profile, handshake, pins digest, version and pro
     const base = pass(run('git', ['rev-parse', 'HEAD'], repo, env)).stdout.trim();
     const identity = packLayout(skills).identity();
     const dispatchFile = path.join(root, 'dispatch.md'), pinsFile = path.join(root, 'pins.json');
-    write(dispatchFile, 'fixture'); write(pinsFile, { profile: 'short', handshake: 'wait' });
+    const idea = ideaAttemptFixture(path.join(root, 'snapshot'), 'MONO-993');
+    write(dispatchFile, 'fixture'); write(pinsFile, { profile: 'short', handshake: 'wait', idea });
     const pins = { file: pinsFile, digest: crypto.createHash('sha256').update(fs.readFileSync(pinsFile)).digest('hex') };
     write(path.join(state, 'control.json'), { state: 'active', halt: false }); write(path.join(state, 'workers.json'), {});
     fs.mkdirSync(path.join(state, 'reports'));

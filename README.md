@@ -1,10 +1,27 @@
 # Mono Agent Workflow
 
-Current release: **0.31.1**. See the [release notes](CHANGELOG.md#0311---2026-10-17).
+Текущий выпуск: **0.32.0**. См. [заметки выпуска](CHANGELOG.md#0320---2026-10-17).
 Private vulnerability reports: [SECURITY.md](SECURITY.md).
 
-0.31.1 is a compatible patch to 0.31.0; workflow, decision-journal and signed-receipt
-formats are unchanged. Follow the [update conditions](references/install.md#plugin-updates).
+## Обновление до 0.32.0
+
+В 0.32.0 проверка записи «да» спит и запуск работы не останавливает:
+отсечка по умолчанию — `2099-12-31`, проекты и одобрения пакетов считаются
+созданными до правила (`legacy-before-cutoff`). Этап Idea уже пишет запись «да»;
+при подготовке пакета старый проект без записи проходит с `legacy-migrate`.
+Включение проверки по умолчанию придёт следующим выпуском.
+
+Продукт может включить проверку раньше в `.agents/mono-workflow.config.json`:
+`"ideaGate": { "since": "2026-10-18" }`. Сдвиг даты меняет только классификацию
+проектов и одобрений; пины и receipt остаются прежними. Старые попытки завершаются
+на сохранённом `packRoot`. До замены каталога выполните `before-update` по всем
+продуктам; если старый каталог потерян, нужна новая попытка.
+
+Добавляйте `models.roles.idea-helper` только после установки 0.32.0 везде:
+0.31.1 отвергает эту роль. Для [отката на 0.31.1](references/install.md#roll-back-to-0311)
+сохраните и удалите переопределение во всех затронутых конфигах, проверьте штатные
+роли старым пакетом и установите закреплённый `v0.31.1` из маркетплейса.
+Порядок раскатки и проверка обеих установок — [в инструкции](references/install.md#release-0320).
 
 **Upgrading from 0.30.1 or earlier:** since 0.31.0, worker launch and resume require
 a live watcher. Use [cross-product quiescence](references/install.md#quiescence):
@@ -96,17 +113,22 @@ or `codex` explicitly. Other role routes are unchanged.
 
 ### Artifacts and truth
 
-The snapshot-only `scripts/idea-gate.mjs` checks an approved idea record without
-network access. `check --mode fresh --snapshot DIR --config CONFIG` compares the
-live What/Why/Target outcome with the recorded Unknowns; `--mode approved` checks
-record integrity without requiring the current body to match. It accepts the
-newest valid project record, or a verified package approval before the cutoff.
-An old project without a record can enter packaging (`legacy-migrate`) only in
-`fresh`; an issue-only seam requires `approved-fresh`. Handoff checks `fresh` before drafting; `stale` and `legacy-migrate` put the current idea in the package approval touch, whose comment records the idea and `approval_status=approved`. New projects with `no-record` return to `mono:idea`. Handoff/delivery checks and implement require `approved`; Discovery checks allow `pass`, `stale`, `legacy-migrate`. Dispatch/receipts bind that same record. The default cutoff remains unset until release.
+`scripts/idea-gate.mjs` проверяет запись «да» по снимку без сети.
+`check --mode fresh --snapshot DIR --config CONFIG` сравнивает текущие Что/Зачем/
+Образ результата с записанными Неизвестными; `--mode approved` проверяет целостность
+записи без сравнения текущего тела. Принимается новейшая корректная запись проекта
+или подтверждённое одобрение пакета до отсечки. Старый проект без записи входит
+в пакет с `legacy-migrate` только в режиме `fresh`; задача без проекта требует
+`approved-fresh`. Handoff проверяет `fresh` до черновика: при `stale` или
+`legacy-migrate` текущая идея входит в одобрение пакета, комментарий записывает
+идею и `approval_status=approved`. Новый проект с `no-record` возвращается
+в `mono:idea`. Проверки handoff/delivery и implement требуют `approved`;
+проверка Discovery допускает `pass`, `stale`, `legacy-migrate`.
+Dispatch и receipt связывают результат проверки и снимок, включая проход до отсечки без записи.
 
-Set optional `ideaGate.since` to a valid `YYYY-MM-DD` in the project config;
-without it checks currently refuse `bad-since`. Optional `ideaGate.headings`
-replaces all four names, for example
+Необязательный `ideaGate.since` принимает дату `YYYY-MM-DD`; без него действует
+`2099-12-31` (проверка спит в 0.32.0). Неверная дата даёт `bad-since`. `ideaGate.headings`
+переопределяет все четыре заголовка, например
 `{"what":"Что","why":"Зачем","outcome":"Образ результата","unknowns":"Неизвестные"}`.
 Defaults are `ru`/`en` from normalized `project.language`. Snapshot examples and
 live Linear serialization samples: [fixtures](scripts/fixtures/idea-gate/README.md).
@@ -171,8 +193,8 @@ dispatch, start gate, spawn and a UTC ledger event. Refusals before spawn regist
 no attempt; their retries rebuild the exact requested snapshot composition.
 Project dispatch now requires `idea/project.json`, complete paginated
 `idea/idea-records.json`, `approval.json` and `issue-context.json` alongside the
-package documents. The Issue key/project, approval comment timestamp/body hash
-and approved idea must match; package approval needs exactly one
+package documents. The Issue key/project and approval comment timestamp/body hash must match;
+the idea check accepts pre-cutoff packages without a record in 0.32.0; package approval needs exactly one
 `approval_status=approved` (unmarked approval only before the configured cutoff).
 The saved idea and selected record are pinned through collection, signed receipt
 and ship, including canonical artifact contents. Amend/resume preserves the

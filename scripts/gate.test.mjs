@@ -643,7 +643,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
       if (fixture.mode.startsWith("temp-")) { expectedStatus = fixture.protected || fixture.reviewOverlap || fixture.mode === "temp-descendant" ? 1 : 0; request.collect = true; }
       if (fixture.mode === "legacy") {
         delete pins.reviewDatasetDigest; atomicJson(pinsFile, pins); binding.digest = sha256File(pinsFile); register(); delete request.pins;
-        const envelope = await collect({...request,pins:binding}); delete envelope.receipt.pins; seal(envelope); expectedStatus = 0;
+        const envelope = await collect({...request,pins:binding}); delete envelope.receipt.pins; delete envelope.receipt.idea; seal(envelope); expectedStatus = 0;
       }
       if (fixture.mode === "receipt-pins") {
         const envelope = await collect(request); envelope.receipt.pins.digest = "0".repeat(64); seal(envelope); expectedStatus = 1;
@@ -684,7 +684,7 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
           atomicJson(pinsFile,pins);binding.digest=sha256File(pinsFile);register();
         }
         const envelope=await collect(fixture.unpinned?{...request,pins:binding}:request),r=envelope.receipt,f=declineFixture();
-        if(fixture.unpinned)delete r.pins;
+        if(fixture.unpinned){delete r.pins;delete r.idea;}
         if(fixture.unpinned)fs.unlinkSync(registryFile);
         r.review.json=f.receipt.review.json;r.review.status={...f.receipt.review.status,engine:r.route.engine??'claude'};
         r.review.exitCode=1;r.review.output=`autoreview target: branch | engine: ${r.route.engine??'claude'} | model: ${r.route.model} | thinking: ${r.route.effort}\nautoreview findings: 1\noverall: patch is incorrect (0.9)\n`;

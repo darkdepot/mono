@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ideaFingerprint, checkIdea } from './idea-gate.mjs';
+import { IDEA_GATE_DEFAULT_SINCE, ideaFingerprint, checkIdea } from './idea-gate.mjs';
 import { digest } from './runtime.mjs';
 
 const fixture = name => {
@@ -106,7 +106,7 @@ test('malformed input and incomplete pagination fail closed with closed codes', 
     [o => { o.records.comments[0].createdAt = '2026-02-30T01:00:00Z'; }, 'read-failed'],
     [o => { o.project.createdAt = '2026-10-17T24:00:00Z'; }, 'read-failed'],
     [o => { o.since = '2026-02-30'; }, 'bad-since'],
-    [o => { delete o.since; }, 'bad-since'],
+    [o => { o.since = null; }, 'bad-since'],
     [o => { o.since = '2026-10-17T00:00:00Z'; }, 'bad-since'],
     [o => { o.mode = 'unsafe'; }, 'read-failed'],
     [o => { o.project.language = 'fr'; }, 'read-failed'],
@@ -164,7 +164,37 @@ function writeJson(root, name, value) {
   const file = path.join(root, name); fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(value));
 }
-test('CLI fresh needs only project and complete comments; missing cutoff and read errors fail closed', () => tempSnapshot(root => {
+test('release cutoff is dormant and preserves strict cutoff boundaries', () => {
+  assert.equal(IDEA_GATE_DEFAULT_SINCE, '2099-12-31');
+  const options = input();
+  delete options.since;
+  const comment = { id: 'approval-release', createdAt: '2026-10-17T23:59:59Z', body: 'Пакет одобрен' };
+  options.records.comments = [comment];
+  options.approval = { commentId: comment.id, createdAt: comment.createdAt, bodySha256: hash(comment.body), body: comment.body };
+  expectCode(options, 'legacy-before-cutoff');
+  options.approval.createdAt = comment.createdAt = '2099-12-31T00:00:00Z';
+  expectCode(options, 'no-record');
+  options.approval.createdAt = comment.createdAt = '2026-10-17T23:59:59Z';
+  options.project.createdAt = '2099-12-31T00:00:00Z';
+  expectCode(options, 'no-record');
+});
+
+test('default approved mode accepts a new project without an idea record', () => {
+  const options = input();
+  delete options.since;
+  options.project.createdAt = '2026-10-19T00:00:00Z';
+  const comment = { id: 'approval-dormant', createdAt: '2026-10-19T01:00:00Z', body: 'approval_status=approved' };
+  options.records.comments = [comment];
+  options.approval = { commentId: comment.id, createdAt: comment.createdAt, bodySha256: hash(comment.body), body: comment.body };
+  options.issueContext = { issueId: 'issue-1', issueKey: 'MONO-173', projectId };
+  const result = expectCode(options, 'legacy-before-cutoff');
+  assert.equal(result.recordId, null);
+  assert.equal(result.fingerprint, null);
+  expectCode({ ...options, mode: 'fresh' }, 'legacy-migrate');
+  expectCode({ ...options, since: '2026-10-18' }, 'no-record');
+});
+
+test('CLI fresh needs only project and complete comments; default cutoff works and read errors fail closed', () => tempSnapshot(root => {
   const options = input();
   writeJson(root, 'idea/project.json', options.project);
   writeJson(root, 'idea/idea-records.json', options.records);
@@ -175,7 +205,12 @@ test('CLI fresh needs only project and complete comments; missing cutoff and rea
   const lines = result.stdout.trim().split('\n');
   assert.equal(lines[0], `idea-gate: pass: pass project=${projectId}`);
   assert.equal(JSON.parse(lines[1]).recordId, 'idea-1');
-  assert.equal(cli(args.slice(0, -2)).stdout.trim(), `idea-gate: fail: bad-since project=${projectId}`);
+  const defaults = cli(args.slice(0, -2));
+  assert.equal(defaults.status, 0, defaults.stdout + defaults.stderr);
+  assert.equal(JSON.parse(defaults.stdout.trim().split('\n')[1]).code, 'pass');
+  writeJson(root, 'idea/idea-records.json', { complete: true, comments: [] });
+  assert.equal(JSON.parse(cli(args.slice(0, -2)).stdout.trim().split('\n')[1]).code, 'legacy-migrate');
+  assert.equal(cli(args).stdout.trim(), `idea-gate: fail: no-record project=${projectId}`);
   fs.unlinkSync(path.join(root, 'idea/idea-records.json'));
   result = cli(args); assert.equal(result.status, 1); assert.match(result.stdout, /fail: read-failed/);
 }));
