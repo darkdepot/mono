@@ -115,9 +115,11 @@ The `idea-helper` role is retained for now; removal is a separate task after 0.3
 Idea reads its own `references/` beside the skill; `<корень>/` resolves to the
 pack root (`../..` from the skill folder). The Project contract is a conditional
 read before body writes; Idea does not eagerly read the product's `AGENTS.md`.
+Verified-record recovery applies only when the current request neither changes nor
+adds to the idea; changed input takes the normal updated-description/owner-yes path.
 `node scripts/read-budget.mjs --skill idea --mandatory` reports its required
 corpus, explicitly including both scout task files; the complete mandatory set is
-20,386 bytes, below 20,480 without conditional reads. Scout definitions are read
+20,441 bytes, below 20,480 without conditional reads. Scout definitions are read
 by the scouts themselves, not by Idea: Codex receives absolute definition paths
 and tells each subagent to read its own file first, skipping frontmatter. Both
 English read tiers stay valid for every stage. [The shared Russian-stage list](scripts/russian-stages.mjs)
