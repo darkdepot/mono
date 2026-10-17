@@ -935,6 +935,8 @@ test("clean installed runtime: tool evidence, spawn/resume, halt, attempts and d
     assert.equal(incompatibleStart.status, 1);
     assert.match(incompatibleStart.stdout + incompatibleStart.stderr, /surfaceRevision.*new attempt/);
     write(gateRequest, baseRequest);
+    // End the compatibility experiment before creating new legacy admissions.
+    write(path.join(skills, "VERSION"), pins.packVersion + "\n");
     const globalConfig = path.join(root, "global-gitconfig"), globalIgnore = path.join(root, "global-ignore");
     write(globalIgnore, "global-only.tmp\n");
     write(globalConfig, `[core]\nexcludesFile = ${JSON.stringify(globalIgnore)}\nfsmonitor = ${JSON.stringify(fsmonitor)}\n`);
