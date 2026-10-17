@@ -1,0 +1,1 @@
+- Use English stage names Idea and Research in the Russian Idea skill; keep ordinary research wording, workflow rules and required reading unchanged.
