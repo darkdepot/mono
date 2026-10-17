@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Use for an existing Project or shaped discovery to create the Project-first package, or for targeted PRD or Tech Spec repair. A Project without Research («Исследование») routes to mono:research, except a package approved before researchGate.since from config, otherwise RESEARCH_GATE_DEFAULT_SINCE. Raw ideas route to mono:idea, unmistakable one-PR projectless work to mono:issue, and pre-ship drift to mono:ship.
+description: Use for an existing Project or shaped discovery to create the Project-first package, or for targeted PRD or Tech Spec repair. A Project without Research («Исследование») routes to mono:research, except a package approved before researchGate.since from config, otherwise RESEARCH_GATE_DEFAULT_SINCE from scripts/idea-gate.mjs. Raw ideas route to mono:idea, unmistakable one-PR projectless work to mono:issue, and pre-ship drift to mono:ship.
 ---
 
 # Mono Handoff

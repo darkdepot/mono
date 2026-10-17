@@ -5,8 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { checkIdea, ideaFingerprint } from './idea-gate.mjs';
+import { checkIdea, ideaFingerprint, RESEARCH_GATE_DEFAULT_SINCE } from './idea-gate.mjs';
 import { resolveRole } from './runtime.mjs';
+
+test('Research cutoff remains dormant until the release task enables it', () => {
+  assert.equal(RESEARCH_GATE_DEFAULT_SINCE, '2099-12-31');
+});
 
 const projectId = '59c079b6-fc26-40a6-ba19-9467674fa637';
 const otherId = '11111111-1111-1111-1111-111111111111';

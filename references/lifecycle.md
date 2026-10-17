@@ -34,7 +34,7 @@ uses its description. It writes one Research («Исследование») docu
 Project comment with the stage log, then stops with an answer, advice and next step.
 Discovery follows when installed; until then, `mono:handoff` owns the next step.
 A Project without Research routes here, except a package approved before
-`researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE`.
+`researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
 
 ## Discovery
 
