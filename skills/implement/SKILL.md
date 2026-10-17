@@ -30,6 +30,8 @@ Dispatch: phase/full queue; standalone: stage report.
 
 ## Workflow
 
+Before start, run `node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>` against the normalized snapshot (Project, complete comments and package approval; issue-only uses its approved-fresh envelope). Dispatch supplies the pinned snapshot; standalone gathers the Project, all comment pages, package approval and Issue context from Linear. Any refusal blocks start with project/code; missing idea approval routes to `mono:idea`, never an inferred approval. `legacy-migrate` is not an approved-mode pass.
+
 start-checkpoint validates approved package/start/handoff/seam/lifecycle. Dispatch
 branch/snapshot wins. Consult gstack-learnings-search --limit 10; absence advisory.
 Record start; implement one PR with incremental checks. AFK forbids sub-workers;

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveRole, roleDefaults, requiredPairings } from "./runtime.mjs";
 import { checkPlugin } from "./validate-plugin.mjs";
 import { measureReadBudget, readingPaths, READ_BUDGET_MAX_BYTES, DELIVERY_SKILLS } from "./read-budget.mjs";
 
@@ -4879,7 +4880,7 @@ function validateProjectUpdateSurface() {
 const MODEL_POLICY_PATH = "references/model-policy.md";
 const MODEL_ROLES = [
   "orchestrator", "second-voice", "second-voice-alt", "worker-default",
-  "worker-complex", "worker-claude", "autoreview",
+  "worker-complex", "worker-claude", "autoreview", "idea-helper",
 ];
 const MODEL_ENUM_ALLOWLIST = new Set([
   "claude-code-desktop", "claude-5", "gpt-worker", "gpt-5",
@@ -4951,13 +4952,15 @@ function policyRoles(text) {
     const effort = effortCell.replaceAll("`", "");
     if (roles.has(role)) throw new Error(`duplicate role ${role}`);
     if (!MODEL_ROLES.includes(role)) throw new Error(`unknown role ${role}`);
-    if (role === "orchestrator" ? model !== "session-selected" : !isModelId(model)) throw new Error(`invalid model id for ${role}`);
+    const hosts = role === "idea-helper" ? /^claude-code: ([^;\s]+); codex: ([^;\s]+)$/.exec(model) : null;
+    if (role === "orchestrator" ? model !== "session-selected" : role === "idea-helper"
+      ? !hosts || !isModelId(hosts[1]) || !isModelId(hosts[2]) : !isModelId(model)) throw new Error(`invalid model id for ${role}`);
     if (role === "orchestrator" ? effort !== "n/a" : role === "autoreview"
       ? effort !== "[Canonical Routes](autoreview-routing.md#canonical-routes)"
       : !MODEL_EFFORTS.includes(effort)) throw new Error(`invalid effort source for ${role}`);
-    roles.set(role, { model, effort, appliesTo, decidedBy });
+    roles.set(role, { model, effort, appliesTo, decidedBy, ...(hosts ? { hosts: { "claude-code": hosts[1], codex: hosts[2] } } : {}) });
   }
-  if (roles.size !== MODEL_ROLES.length) throw new Error("policy must define all seven roles");
+  if (roles.size !== MODEL_ROLES.length) throw new Error("policy must define all required roles");
   return roles;
 }
 
@@ -5209,6 +5212,34 @@ function validateModelPolicyFixtures() {
     const link = (role) => `[role:${role}](references/model-policy.md#roles)`;
     check();
     console.log("PASS model-policy session-selected orchestrator marker");
+    // Host defaults and overrides must not perturb unrelated role routes.
+    const defaults = roleDefaults(scratch);
+    for (const host of ["claude-code", "codex"]) {
+      const options = { packRoot: scratch, host };
+      const helper = resolveRole("idea-helper", {}, options);
+      const expectedEngine = host === "claude-code" ? "claude" : "codex";
+      if (helper.model !== roles.get("idea-helper").hosts[host] || helper.engine !== expectedEngine || helper.effort !== "high" ||
+          helper.provider.id !== (host === "claude-code" ? "anthropic" : "openai")) throw new Error(`idea-helper ${host} default mismatch`);
+      const config = { models: { roles: { "idea-helper": { model: fabricated(expectedEngine === "claude" ? "claude" : "gpt", "idea"), effort: "medium" } } } };
+      const overridden = resolveRole("idea-helper", config, options);
+      if (overridden.model !== config.models.roles["idea-helper"].model || overridden.effort !== "medium" || overridden.engine !== expectedEngine ||
+          requiredPairings(config, options).length) throw new Error(`idea-helper ${host} override mismatch`);
+      for (const role of MODEL_ROLES.filter(role => role !== "idea-helper")) {
+        const { fingerprint, ...route } = resolveRole(role, config, options);
+        if (JSON.stringify(route) !== JSON.stringify(defaults[role])) throw new Error(`idea-helper changed ${role}`);
+      }
+      config.models.roles["idea-helper"] = { engine: "codex", model: fabricated("gpt", "explicit"), effort: "high" };
+      if (resolveRole("idea-helper", config, options).engine !== "codex") throw new Error("idea-helper explicit engine override ignored");
+    }
+    const productConfig = JSON.parse(fs.readFileSync(file('.agents/mono-workflow.config.json'), 'utf8'));
+    const baselineRoutes = Object.fromEntries(MODEL_ROLES.filter(role => role !== "idea-helper").map(role => [role, resolveRole(role, productConfig, { packRoot: scratch })]));
+    productConfig.models.roles["idea-helper"] = { model: fabricated("gpt", "configured"), effort: "high" };
+    for (const [role, baseline] of Object.entries(baselineRoutes)) {
+      const { fingerprint, ...route } = resolveRole(role, productConfig, { packRoot: scratch, host: "claude-code" });
+      const { fingerprint: previousFingerprint, ...previous } = baseline;
+      if (JSON.stringify(route) !== JSON.stringify(previous)) throw new Error(`configured idea-helper changed ${role}`);
+    }
+    console.log("PASS idea-helper host defaults, override precedence and unchanged other roles");
     change(MODEL_POLICY_PATH, (text) => cell(text, "worker-default", 1, fabricated("gpt", "a")));
     check();
     console.log("PASS model-policy AE1: changed cell, unchanged fixtures");
@@ -5229,6 +5260,10 @@ function validateModelPolicyFixtures() {
       negative(`session-selected rejected for ${role}`, () => change(MODEL_POLICY_PATH,
         (text) => cell(text, role, 1, "session-selected")), `invalid model id for ${role}`);
     }
+    negative("idea-helper missing host", () => change(MODEL_POLICY_PATH,
+      text => cell(text, "idea-helper", 1, `codex: ${fabricated("gpt", "only")}`)), "invalid model id for idea-helper");
+    negative("idea-helper malformed host model", () => change(MODEL_POLICY_PATH,
+      text => cell(text, "idea-helper", 1, `claude-code: invalid; codex: ${fabricated("gpt", "valid")}`)), "invalid model id for idea-helper");
     negative("orchestrator concrete model rejected", () => change(MODEL_POLICY_PATH,
       (text) => cell(text, "orchestrator", 1, fabricated("claude", "orchestrator"))), "invalid model id for orchestrator");
     for (const name of [MODEL_POLICY_PATH, "skills/orchestrate/SKILL.md", "templates/orchestrator-brief.md"]) {
@@ -5323,6 +5358,14 @@ function validateModelPolicyFixtures() {
 }
 
 const STRING_PINS = [
+  // MONO-172: commands/markers/role identifiers only; idea prose is unpinned.
+  ["skills/idea/SKILL.md", "mono:idea"],
+  ["skills/idea/SKILL.md", "idea-helper"],
+  ["skills/idea/SKILL.md", "mono-idea: approved project=<uuid> sha256=<64 hex>"],
+  ["skills/idea/SKILL.md", "mono-idea-snapshot"],
+  ["skills/idea/SKILL.md", "node scripts/idea-gate.mjs check --mode fresh --snapshot <dir> --config <path>"],
+  ["skills/handoff/SKILL.md", "approval_status=approved"],
+  ["skills/implement/SKILL.md", "node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>"],
   // MONO-95: render placeholders replace angle-substitution prose.
   ["templates/orchestrator-dispatch.md","{{approval}}"],
   ["templates/orchestrator-dispatch.md","{{attempt}}"],
@@ -5795,7 +5838,6 @@ const REQUIRED_HEADINGS = [
   ["skills/check/SKILL.md","Mono Check"],
   ["skills/deploy/SKILL.md","Mono Deploy"],
   ["skills/handoff/SKILL.md","Mono Handoff"],
-  ["skills/idea/SKILL.md","Mono Idea"],
   ["skills/implement/SKILL.md","Mono Implement"],
   ["skills/issue/SKILL.md","Mono Issue"],
   ["skills/orchestrate/SKILL.md","Mono Orchestrate"],
@@ -5888,6 +5930,10 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "approval_status=approved",
+  "idea-helper", "mono-idea-snapshot", "mono-idea: approved project=<uuid> sha256=<64 hex>",
+  "node scripts/idea-gate.mjs check --mode fresh --snapshot <dir> --config <path>",
+  "node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",
   // MONO-154: cap/chain dictionary and certificate label, no prose pins.
   "continue", "successor", "cap-stop", "stopId", "originalIssue", "successorIssue",
   "localPasses", "externalCollections", "local_passes", "Autoreview decisions:",

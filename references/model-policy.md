@@ -14,7 +14,14 @@ outputs record values, not defaults.
 | `worker-default` | `gpt-6.1-sol` | `high` | Default Codex worker. | Owner, 2026-09-30. |
 | `worker-complex` | `gpt-6.1-sol` | `xhigh` | Complex Codex work; explicit reason per dispatch, never automatic by risk. | Owner, 2026-09-30. |
 | `worker-claude` | `claude-opus-5` | `high` | Claude worker transports; guarantees below. | Owner, 2026-09-06. |
+| `idea-helper` | claude-code: `claude-opus-5-5`; codex: `gpt-6.1-sol` | `high` | Read-only idea facts in the calling host. | Owner, 2026-10-16. |
 | `autoreview` | `claude-opus-5` | [Canonical Routes](autoreview-routing.md#canonical-routes) | Mandatory reviewer; final-risk effort. | Owner-approved reviewer/producer pairing, 2026-09-06. |
+
+For `idea-helper`, the skill supplies `host: "claude-code"` or `host: "codex"`
+to `resolveRole`. Resolve `models.roles.idea-helper` first; omitted fields inherit
+that host's table defaults (Claude engine for claude-code, Codex for codex).
+The resolver's omitted host defaults to codex for existing callers; skills must
+select their actual host. The effort is high on both hosts.
 
 ## Reviewer and producer
 
@@ -30,7 +37,7 @@ changing engine requires compatible effort and provider. Keys stay in the
 orchestrator environment; `credentialEnv` names its variable. Native auth allows
 null endpoint/credentialEnv. Unknown fields are refused.
 
-Matrix: `worker-default|worker-complex` → codex; `worker-claude` → claude;
+Matrix: `idea-helper` → claude|codex; `worker-default|worker-complex` → codex; `worker-claude` → claude;
 `autoreview` → claude|kimi|pi|codex; `second-voice` → native Codex for the Claude
 orchestrator (cross-vendor). `orchestrator` and `second-voice-alt` overrides are
 refused. Managed CLI transports: `codex-cli` accepts `worker-default|worker-complex`;
