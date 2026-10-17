@@ -72,20 +72,27 @@ Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot mark
 A **wave** is the work dispatched for an Issue, including retries, review, and its eventual delivery or recorded stop. A green PR is ready for deploy; deploy supplies the merge, delivery verification, and Linear closeout.
 
 ```text
-raw idea → Project in Idea → discovery → reviewed and approved package
+raw idea → Project in Idea → recorded owner yes → Discovery → reviewed and approved package
 → approved Issue → start handshake → one mono:deliver worker
     code → confirmed write queue → local readiness → confirmed certificate
     → PR → reviews and checks → confirmed green certificate
 → mono:deploy → verification → Linear closeout and project update
 ```
 
-1. **Capture.** Bring a raw idea to `mono:idea`, outside Plan Mode. Create a strengthened Project in Idea, assigned to the owner, without PRD, Tech Spec, Issues, or code. An unmistakable one-PR request may instead enter `mono:issue` under its eligibility rules.
+1. **Capture.** Bring a raw idea to `mono:idea`, outside Plan Mode. A read-only `idea-helper` gathers linked facts; recap the idea and ask at most three meaning questions. Show What / Why / Target outcome / prioritized Unknowns, obtain explicit yes, record and read it back, then move the Project to Discovery and require `idea-gate fresh` to pass. PRD, Tech Spec, Issues and code follow later. An unmistakable one-PR request may instead enter `mono:issue` under its eligibility rules.
 2. **Discover.** Shape the problem through `/office-hours` or `/brainstorming`; review a product/UI surface with `/plan-design-review` and an implementation architecture with `/plan-eng-review`. These outputs are inputs to handoff, not permission to code. In orchestrated discovery, a Second Voice challenges the draft, the orchestrator answers technical questions, and the owner sees reviewed prototypes and prepared decisions at checkpoints.
 3. **Package.** Run `mono:handoff`. Inspect supplied artifacts and scoped sources, draft the Project/PRD/Tech Spec and Issue slicing, review before the first durable package write, and obtain package approval. Persist the approved package in Linear and apply accepted fixes through its owner. Keep the Project pre-delivery until implementation start is explicitly authorized; documents alone never authorize Delivery.
 4. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
 5. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review or `accepted-with-declines` with orchestrator-approved evidence. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts lead the Russian ready-certificate comment before its unchanged machine block. Codex full and final deep/risky work retain the local loop. Managed Claude Code uses external committed-head collection only, with no in-worker helper pass; its ready certificate names that review route and stop/resume startup. Preserve phase ownership.
 6. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
 7. **Deploy and close.** `mono:deploy` verifies that the current PR head matches the green certificate, applies the configured approval policy, and delegates the configured deploy workflow. Verify delivery and run live acceptance where users consume the result. Close the Issue only after its delivery requirements pass; publish the informational project update, report cost, record useful learnings, and retire the worker. Only the shipment of the last open Project Issue may complete that Project.
+
+Stages rebuilt under «Mono как продукт» are written in Russian; machine tokens
+(commands, paths, keys and codes) stay English. Other skills remain English;
+Linear templates/examples stay Russian. `idea-helper` resolves the project
+`models.roles.idea-helper` override first, otherwise its host default from the
+[roles table](references/model-policy.md#roles); the skill supplies `claude-code`
+or `codex` explicitly. Other role routes are unchanged.
 
 ### Artifacts and truth
 
@@ -95,8 +102,7 @@ live What/Why/Target outcome with the recorded Unknowns; `--mode approved` check
 record integrity without requiring the current body to match. It accepts the
 newest valid project record, or a verified package approval before the cutoff.
 An old project without a record can enter packaging (`legacy-migrate`) only in
-`fresh`; an issue-only seam requires `approved-fresh`. Dispatch/receipt/skill
-integration follows separately; the default cutoff remains unset until release.
+`fresh`; an issue-only seam requires `approved-fresh`. Handoff checks `fresh` before drafting; `stale` and `legacy-migrate` put the current idea in the package approval touch, whose comment records the idea and `approval_status=approved`. New projects with `no-record` return to `mono:idea`. Handoff/delivery checks and implement require `approved`; Discovery checks allow `pass`, `stale`, `legacy-migrate`. Dispatch/receipts bind that same record. The default cutoff remains unset until release.
 
 Set optional `ideaGate.since` to a valid `YYYY-MM-DD` in the project config;
 without it checks currently refuse `bad-since`. Optional `ideaGate.headings`
@@ -104,7 +110,7 @@ replaces all four names, for example
 `{"what":"Что","why":"Зачем","outcome":"Образ результата","unknowns":"Неизвестные"}`.
 Defaults are `ru`/`en` from normalized `project.language`. Snapshot examples and
 live Linear serialization samples: [fixtures](scripts/fixtures/idea-gate/README.md).
-`fingerprint --snapshot FILE` hashes the four sections as canonical UTF-8 bytes;
+`fingerprint --snapshot FILE --config CONFIG` hashes the four sections as canonical UTF-8 bytes;
 inline code and fences remain literal. The project body stays unchanged.
 Known limitation: inline code spanning multiple source lines refuses `unsupported-format`.
 
@@ -825,7 +831,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-12.** Name the theme Project in an issue-only Issue and send its shipment update there, so a projectless result still has a visible home — [Theme project](references/issue-only-lane.md#theme-project).
 - **K-13.** Assign new agent-created Project leads and Issue assignees to the acting owner while preserving existing assignments, so created work reaches the owner's lists — [Linear Artifact Rules](references/artifact-rules.md#linear-artifact-rules).
 - **K-14.** Treat project updates as informational closeout results whose absence or failure cannot block delivery or change its verdict, so reporting cannot stop shipment — [Skill Design Rules](AGENTS.md#skill-design-rules).
-- **K-15.** Turn a raw idea into an Idea-state Project with one strengthened brief and no PRD, Tech Spec, Issues or code, so implementation planning waits for the decision to proceed — [Idea state](references/contracts/project.md#pc-013--idea-state).
+- **K-15.** Turn a raw idea into a Project with a read-back owner approval record and a verified move to Discovery, before PRD, Tech Spec, Issues or code — [Idea exit](references/lifecycle.md#idea).
 - **K-16.** Present the Project brief, PRD, Tech Spec and Issue slicing as one package with a completed review verdict, so one decision does not become a stream of questions — [Pre-write package review](references/orchestration.md#pre-write-package-review).
 - **K-17.** Have an independent cross-vendor Second Voice review the package draft before its first Linear write, so author and reviewer do not share the same blind spots — [Second Voice](references/orchestration.md#second-voice).
 - **K-18.** Decide repository-, Linear- and config-derived implementation details, document structure and risk classification autonomously, but ask about scope, slicing, risk acceptance and design, so routine questions do not consume owner time or seize owner authority — [Autonomy Defaults](references/questioning.md#autonomy-defaults).
@@ -854,7 +860,7 @@ this pack uses `/mono:ship` and `/mono:review`.
 
 | Skill | Use it for |
 | --- | --- |
-| [mono:idea](skills/idea/SKILL.md) | Raw idea intake and strengthened Idea Project |
+| [mono:idea](skills/idea/SKILL.md) | Idea intake, recorded owner yes and transition to Discovery |
 | [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
 | [mono:handoff](skills/handoff/SKILL.md) | Project-first packaging, slicing and reviewed artifact repair |
 | [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |

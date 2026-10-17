@@ -2,24 +2,17 @@
 
 ## Idea
 
-Capture a strengthened idea without premature delivery artifacts. `mono:idea` is an intake gate, not a planning skill.
+`mono:idea` handles a raw idea or an existing Idea Project. A read-only
+`idea-helper` gathers linked facts before the understanding recap and at most
+three meaning questions. Unmistakable one-PR projectless work routes to `mono:issue`.
 
-Required:
-
-- Project in Idea.
-- Strengthened brief from raw idea plus AskQuestion answers.
-- Recommendation for `/office-hours` or `/brainstorming`.
-
-Forbidden:
-
-- PRD.
-- Tech Spec.
-- Issue.
-- ExecPlan.
-- Implementation plan.
-- Code changes.
-
-Gate: `mono:check idea`.
+Exit requires the owner's explicit yes to What / Why / Target outcome / prioritized
+Unknowns, a project-bound `mono-idea: approved` record and `mono-idea-snapshot`
+verified by comment read-back. Unknowns stay in that record. `mono:idea` itself
+moves the Project to Discovery and verifies the status, then requires
+`node scripts/idea-gate.mjs check --mode fresh --snapshot <dir> --config <path>`
+with code `pass` and `mono:check idea`. No PRD, Tech Spec, Issue, ExecPlan,
+implementation plan or code is created here. A refusal returns to this stage.
 
 ## Discovery
 
@@ -41,7 +34,15 @@ Forbidden:
 - Starting implementation from a raw discovery or review plan.
 - Moving the Project to Delivery merely because PRD or Tech Spec exists.
 
-Gate: `mono:check discovery`, then `mono:handoff`.
+Gate: `mono:check discovery`, then `mono:handoff`. Discovery accepts only
+`fresh` codes `pass`, `stale`, `legacy-migrate`. An old Discovery Project without
+a record (`legacy-migrate`) enters handoff: the current idea is shown in the
+package approval brief, and the package approval comment creates the idea record
+alongside `approval_status=approved`. A changed idea (`stale`) uses the same
+single approval touch. A new project with `no-record` first runs `mono:idea`.
+Thus old discovery → package with verified record → approved-mode start; migration
+alone never permits implementation. Handoff checks `fresh` before drafting and
+`approved` after approval; implement checks `approved` before start.
 
 ## Handoff
 

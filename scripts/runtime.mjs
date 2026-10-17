@@ -434,7 +434,7 @@ export function deliveryConfig(source) {
 export const ROLE_ENGINES = {
   orchestrator: ['claude'], 'second-voice': ['codex'], 'second-voice-alt': ['claude'],
   'worker-default': ['codex'], 'worker-complex': ['codex'], 'worker-claude': ['claude'],
-  autoreview: ['claude', 'kimi', 'pi', 'codex'],
+  autoreview: ['claude', 'kimi', 'pi', 'codex'], 'idea-helper': ['codex', 'claude'],
 };
 export const RISK_KEYS = ['tiny', 'standard', 'deep', 'risky', 'riskyCritical'];
 const NATIVE_PROVIDERS = { claude: 'anthropic', codex: 'openai', kimi: 'moonshot', pi: 'openai' };
@@ -451,7 +451,8 @@ function fields(value, allowed, label) {
 function token(value, label) {
   need(typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/:\[\]-]{0,199}$/.test(value) && !/^sk[-_]/i.test(value), `${label} must be a non-secret identifier`);
 }
-export function roleDefaults(skillsRoot) {
+export function roleDefaults(skillsRoot, host = 'codex') {
+  need(['claude-code', 'codex'].includes(host), 'unsupported idea-helper host');
   const directory = packLayout(skillsRoot).policyDirectory;
   const policy = fs.readFileSync(path.join(directory, 'model-policy.md'), 'utf8');
   const defaults = {};
@@ -459,8 +460,15 @@ export function roleDefaults(skillsRoot) {
     const row = policy.split('\n').find(line => line.startsWith(`| \`${role}\` |`));
     const cells = row?.split('|').slice(1, 4).map(cell => cell.trim().replaceAll('`', ''));
     need(cells?.length === 3, `policy role unavailable: ${role}`);
-    defaults[role] = { engine: engines[0], model: cells[1], effort: role === 'orchestrator' ? null : cells[2],
-      provider: { id: engines[0] === 'claude' ? 'anthropic' : 'openai', endpoint: null }, credentialEnv: null };
+    let engine = engines[0], model = cells[1];
+    if (role === 'idea-helper') {
+      const hosts = /^claude-code: ([^;\s]+); codex: ([^;\s]+)$/.exec(model);
+      need(hosts, 'policy idea-helper requires claude-code and codex models');
+      engine = host === 'claude-code' ? 'claude' : 'codex';
+      model = hosts[host === 'claude-code' ? 1 : 2];
+    }
+    defaults[role] = { engine, model, effort: role === 'orchestrator' ? null : cells[2],
+      provider: { id: NATIVE_PROVIDERS[engine], endpoint: null }, credentialEnv: null };
   }
   const routing = fs.readFileSync(path.join(directory, 'autoreview-routing.md'), 'utf8');
   const effortByRisk = {};
@@ -506,9 +514,9 @@ function checkCredentialFields(value, location = '') {
     checkCredentialFields(entry, at);
   }
 }
-function modelState(config, skillsRoot) {
+function modelState(config, skillsRoot, host) {
   need(object(config), 'config must be an object');
-  const defaults = roleDefaults(skillsRoot), roles = structuredClone(defaults);
+  const defaults = roleDefaults(skillsRoot, host), roles = structuredClone(defaults);
   if (config.models === undefined) return { defaults, roles, records: [] };
   checkCredentialFields(config.models, 'models');
   fields(config.models, ['roles', 'pairingAccepted'], 'models');
@@ -555,11 +563,11 @@ function changedPairs(state) {
   return ['worker-default', 'worker-complex', 'worker-claude'].filter(role =>
     canonical(pairFor(role, state.roles)) !== canonical(pairFor(role, state.defaults))).map(role => pairFor(role, state.roles));
 }
-export function requiredPairings(config, { packRoot, skillsRoot } = {}) {
-  return changedPairs(modelState(config, packRoot ?? skillsRoot));
+export function requiredPairings(config, { packRoot, skillsRoot, host } = {}) {
+  return changedPairs(modelState(config, packRoot ?? skillsRoot, host));
 }
-export function validateModels(config, { packRoot, skillsRoot } = {}) {
-  const state = modelState(config, packRoot ?? skillsRoot);
+export function validateModels(config, { packRoot, skillsRoot, host } = {}) {
+  const state = modelState(config, packRoot ?? skillsRoot, host);
   for (const record of state.records) {
     fields(record, ['producer', 'reviewer', 'riskClasses', 'linearDecision', 'by', 'date'], 'pairingAccepted record');
     need(typeof record.linearDecision === 'string' && /^https:\/\/linear\.app\/[^\s]+/.test(record.linearDecision), 'pairingAccepted.linearDecision must reference a Linear decision');
