@@ -18,8 +18,9 @@ from a later stage without a record keeps its body, package and status. Unknowns
 stay in the record. No Research document, PRD, Tech Spec, Issue, implementation
 plan, ExecPlan or code is created here. A refusal returns to Idea.
 
-The next stage is Research, starting with the first Unknown; stop after the final
-message. Idea approval is separate from package approval.
+The next stage is Research (`mono:research`), starting with the first Unknown;
+while that skill is absent from the installed pack, the next step is `mono:handoff`.
+Stop after the final message. Idea approval is separate from package approval.
 
 ## Discovery
 

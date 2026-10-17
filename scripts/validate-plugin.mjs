@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isMain, runtimePackRoot } from './runtime.mjs';
+import { isRussianStage } from './russian-stages.mjs';
 
 export function resolveSkillPath(root, file, named) {
   if (named.startsWith('<корень>/')) return path.resolve(root, named.slice('<корень>/'.length));
   const skill = /^skills\/[^/]+\//.exec(file)?.[0];
-  if (skill && named.startsWith('references/') && fs.existsSync(path.join(root, skill, 'references')))
+  if (skill && named.startsWith('references/') && (isRussianStage(file) || fs.existsSync(path.join(root, skill, 'references'))))
     return path.resolve(root, skill, named);
   return path.resolve(root, named);
 }

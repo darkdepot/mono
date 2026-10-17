@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packLayout, runtimePackRoot } from './runtime.mjs';
 import { resolveSkillPath } from './validate-plugin.mjs';
+import { isRussianStage } from './russian-stages.mjs';
 
 // Validator ceiling for the union, in bytes. Tokens are only bytes / 4.
 export const READ_BUDGET_MAX_BYTES = 99_882;
@@ -33,13 +34,18 @@ function namedPaths(text, list = false) {
 // Reading tiers are a union. Inline reading instructions are also edges;
 // conditions are never evaluated. Non-reading mentions and code examples
 // (output paths, sample artifacts) are not reading instructions.
-export function readingPaths(text, { includeConditional = true } = {}) {
+export function readingPaths(text, { includeConditional = true, file = "" } = {}) {
   const source = withoutFences(text);
   const result = new Set();
   let tier = null, started = false;
   const paragraphs = [];
+  const labels = isRussianStage(file)
+    ? /^(?:#{1,6}\s+)?(Read (?:first|now|when)\b|Прочитай сразу|Прочитай, когда)/
+    : /^(?:#{1,6}\s+)?(Read (?:first|now|when)\b)/;
   for (const line of source.split("\n")) {
-    const label = /^(?:#{1,6}\s+)?(Read (?:first|now|when)\b|Прочитай сразу|Прочитай, когда)/.exec(line);
+    if (!isRussianStage(file) && /^(?:#{1,6}\s+)?Прочитай(?: сразу|, когда)/.test(line))
+      throw new Error(`${file}: Russian read tiers require a listed Russian stage`);
+    const label = labels.exec(line);
     if (label) {
       tier = /^(?:Read when|Прочитай, когда)$/.test(label[1]) ? 'conditional' : 'mandatory';
       started = false;
@@ -94,7 +100,7 @@ export function measureReadBudget(root, { skills = DELIVERY_SKILLS, includeCondi
     if (entries.has(name)) { entries.get(name).read_by.add(from); continue; }
     const data = fs.readFileSync(fileFor(name));
     entries.set(name, { path: name, bytes: data.length, read_by: new Set([from]) });
-    for (const ref of readingPaths(data.toString("utf8"), { includeConditional })) {
+    for (const ref of readingPaths(data.toString("utf8"), { includeConditional, file: name })) {
       const next = normalize(ref, name);
       if (next) queue.push([next, name]);
     }

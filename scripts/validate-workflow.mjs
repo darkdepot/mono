@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { resolveRole, roleDefaults, requiredPairings } from "./runtime.mjs";
 import { checkPlugin, resolveSkillPath } from "./validate-plugin.mjs";
 import { measureReadBudget, readingPaths, READ_BUDGET_MAX_BYTES, DELIVERY_SKILLS } from "./read-budget.mjs";
+import { RUSSIAN_STAGES, isRussianStage } from "./russian-stages.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const validationStateRoot = fs.mkdtempSync(
@@ -159,6 +160,13 @@ function validateReadBudgetFixtures() {
       try { measureReadBudget(scratch, { skills: ["idea"], includeConditional: false }); } catch (caught) { error = caught; }
       require(error?.message.includes("missing reading input"), "missing local input fell back to pack references");
     });
+    fixture("unlisted stage rejects Russian read tiers", () => {
+      write("skills/ship/SKILL.md", "Прочитай сразу: `references/large.md`.\nПрочитай, когда:\n- `references/shared.md`: условие.\n");
+      let error;
+      try { measureReadBudget(scratch); } catch (caught) { error = caught; }
+      require(error?.message.includes("Russian read tiers require a listed Russian stage"), "unlisted Russian reads silently omitted");
+      write("skills/ship/SKILL.md", base);
+    });
 
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
@@ -202,13 +210,13 @@ function parseFrontmatter(text) {
   return fields;
 }
 
-function extractReadFirstEntries(text) {
-  const now = /^(?:Read now|Прочитай сразу)(?:\s|:|$).*$/m.exec(text);
+function extractReadFirstEntries(text, file = "") {
+  const now = (isRussianStage(file) ? /^(?:Read now|Прочитай сразу)(?:\s|:|$).*$/m : /^Read now(?:\s|:|$).*$/m).exec(text);
   const first = now ?? /^Read first:.*$/m.exec(text);
   if (!first) return { paths: [], malformedLines: [] };
   const paths = [];
   const malformedLines = [];
-  const when = /^(?:Read when|Прочитай, когда)(?:\s|:|$)/m.exec(text.slice(first.index + first[0].length));
+  const when = (isRussianStage(file) ? /^(?:Read when|Прочитай, когда)(?:\s|:|$)/m : /^Read when(?:\s|:|$)/m).exec(text.slice(first.index + first[0].length));
   const end = when ? first.index + first[0].length + when.index : text.length;
   const lines = text.slice(first.index, end).split("\n");
   let started = false;
@@ -233,8 +241,8 @@ function extractReadFirstEntries(text) {
   return { paths, malformedLines };
 }
 
-function conditionalReadPaths(line) {
-  const entry = /^-((?:\s+`[^`]+`,?)+)\s*(?:—|:)\s+\S/.exec(line);
+function conditionalReadPaths(line, file = "") {
+  const entry = (isRussianStage(file) ? /^-((?:\s+`[^`]+`,?)+)\s*(?:—|:)\s+\S/ : /^-((?:\s+`[^`]+`,?)+)\s*—\s+\S/).exec(line);
   return entry ? [...entry[1].matchAll(/`([^`]+)`/g)].map(match => match[1]) : null;
 }
 
@@ -352,9 +360,9 @@ function validateSkills() {
       }
     }
 
-    if (!/^(?:Read first:|Прочитай сразу:)/m.test(text)) fail(`${relativePath} missing Read first section`);
+    if (!(isRussianStage(relativePath) ? /^(?:Read first:|Прочитай сразу:)/m : /^Read first:/m).test(text)) fail(`${relativePath} missing Read first section`);
 
-    const { paths: readFirstPaths, malformedLines } = extractReadFirstEntries(text);
+    const { paths: readFirstPaths, malformedLines } = extractReadFirstEntries(text, relativePath);
     for (const malformedLine of malformedLines) {
       fail(`${relativePath} has malformed Read first entry: ${malformedLine}`);
     }
@@ -594,11 +602,11 @@ function validateArtifactContractParity() {
           continue;
         }
         const consumer = read(consumerPath);
-        const { paths } = extractReadFirstEntries(consumer);
-        if (consumerPath === "skills/idea/SKILL.md") {
-          const tier = readTierBounds(consumer);
+        const { paths } = extractReadFirstEntries(consumer, consumerPath);
+        if (isRussianStage(consumerPath)) {
+          const tier = readTierBounds(consumer, consumerPath);
           if (tier) for (const line of consumer.slice(tier.start, tier.end).split("\n")) {
-            paths.push(...(conditionalReadPaths(line) ?? []));
+            paths.push(...(conditionalReadPaths(line, consumerPath) ?? []));
           }
         }
         if (!paths.some(named => resolveSkillPath(root, consumerPath, named) === path.join(root, config.contractPath))) {
@@ -6643,7 +6651,8 @@ function validateLandingSurface() {
   for (const file of ["references/worker-contract.md", "skills/implement/SKILL.md", "skills/preflight/SKILL.md", "skills/ship/SKILL.md"]) {
     const target = file.startsWith("references/") ? "landing.md" : "references/landing.md";
     requireMachineToken(target);
-    if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one landing reference`);
+    const targets = isRussianStage(file) ? [target, `<корень>/${target}`] : [target];
+    if (targets.reduce((count, link) => count + read(file).split(`](${link})`).length - 1, 0) !== 1) fail(`${file}: expected one landing reference`);
   }
   for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly", "Merge validation", "Install", "Scheduling", "Landing observer", "Head observations and refresh history", "Landing journal and queue decision"])
     if (documentSection(read("references/landing.md"), heading) === null) fail(`landing reference: missing or duplicate section ${heading}`);
@@ -6656,7 +6665,11 @@ function validateLandingSurface() {
     assertIncludes("references/landing.md", token);
   assertIncludes("templates/orchestrator-brief.md", "Посадка:");
   for (const [file, targets] of [["skills/handoff/SKILL.md", ["references/landing.md#scheduling"]], ["skills/orchestrate/SKILL.md", ["references/landing.md#scheduling", "references/landing.md#head-observations-and-refresh-history"]]])
-    for (const target of targets) { requireMachineToken(target); if (read(file).split(`](${target})`).length !== 2) fail(`${file}: expected one landing rule reference`); }
+    for (const target of targets) {
+      requireMachineToken(target);
+      const links = isRussianStage(file) ? [target, `<корень>/${target}`] : [target];
+      if (links.reduce((count, link) => count + read(file).split(`](${link})`).length - 1, 0) !== 1) fail(`${file}: expected one landing rule reference`);
+    }
   assertIncludes("README.md", "references/landing.md"); assertIncludes("README.md", "examples/landing-config.json");
   for (const token of ["changelog-assemble.mjs", "--worktree", "--config", "--check", "<!-- fragment: <KEY> sha256:<digest> -->"])
     assertIncludes("references/landing.md", token);
@@ -6688,9 +6701,9 @@ function validateCheckModeDeclaration() {
   }
   if (modes.filter((mode) => mode === "repair").length !== 1) fail("mono:check Modes: missing or duplicate repair declaration");
 }
-function readTierBounds(text) {
-  const now = /^(?:Read now|Прочитай сразу)(?:\s|:|$).*$/m.exec(text);
-  const when = /^(?:Read when|Прочитай, когда)(?:\s|:|$).*$/m.exec(text);
+function readTierBounds(text, file = "") {
+  const now = (isRussianStage(file) ? /^(?:Read now|Прочитай сразу)(?:\s|:|$).*$/m : /^Read now(?:\s|:|$).*$/m).exec(text);
+  const when = (isRussianStage(file) ? /^(?:Read when|Прочитай, когда)(?:\s|:|$).*$/m : /^Read when(?:\s|:|$).*$/m).exec(text);
   if (!now || !when || when.index <= now.index) return null;
   const start = when.index + when[0].length;
   let end = start, started = false;
@@ -6702,16 +6715,19 @@ function readTierBounds(text) {
   return { now: now.index, start, end: Math.min(end, text.length) };
 }
 function validateReadFirstTierContract() {
+  for (const skill of RUSSIAN_STAGES) {
+    if (!listSkillNames().includes(skill)) fail(`Russian stage list names missing skill ${skill}`);
+  }
   for (const skill of listSkillNames()) {
     const file = `skills/${skill}/SKILL.md`, text = read(file);
-    const tier = readTierBounds(text);
+    const tier = readTierBounds(text, file);
     if (!tier) { fail(`${file}: missing or unordered read tiers`); continue; }
-    if (skill !== "idea" && extractReadFirstEntries(text).paths[0] !== "AGENTS.md") fail(`${file}: AGENTS.md must be the first eager read`);
+    if (!isRussianStage(file) && extractReadFirstEntries(text, file).paths[0] !== "AGENTS.md") fail(`${file}: AGENTS.md must be the first eager read`);
     const conditional = text.slice(tier.start, tier.end);
     for (const line of conditional.split("\n")) {
       if (/^\d+\.\s/.test(line.trim())) fail(`${file}: numbered conditional read`);
       if (line.startsWith("- ")) {
-        const paths = conditionalReadPaths(line);
+        const paths = conditionalReadPaths(line, file);
         if (!paths) fail(`${file}: conditional read needs a path and a condition`);
         else for (const named of paths) {
           if (!validateReadFirstPath(named, file)) fail(`${file}: broken conditional read path ${named}`);
@@ -6821,13 +6837,26 @@ function validateAe6Fixtures() {
     change("README.md", (text) => text.replace(/^(- \*\*K-31\.\*\* )/m, "$1In this pack, "));
     check(); restore(); check();
     console.log("PASS README rule prose rewording: green");
-    for (const name of ["skills/check/SKILL.md", "skills/handoff/SKILL.md"]) change(name, text => text
+    change("scripts/russian-stages.mjs", text => text.replace(/(export const RUSSIAN_STAGES = )\[[^\]]*\]/, `$1${JSON.stringify([...RUSSIAN_STAGES, "handoff"])}`));
+    change("skills/handoff/SKILL.md", text => text
+      .replace(/^Read first:\n/m, "")
       .replace(/^Read now.*$/m, "Прочитай сразу:")
-      .replace(/^Read when.*$/m, "Прочитай, когда:")
+      .replace(/^Read when.*$/m, "Прочитай, когда:\n- `<корень>/references/contracts/project.md`: перед записью.")
+      .replace(/^1\. `AGENTS.md`\n/m, "")
+      .replace(/^2\. `references\/contracts\/project.md`\n/m, "")
+      .replace(/(?<!<корень>\/)references\//g, "<корень>/references/")
       .replace(/^(- `[^`]+`) — /gm, "$1: "));
-    check(); restore(); check();
-    console.log("PASS AE6 Russian read tiers and colon conditions: green");
-    negative("non-Idea first AGENTS read removed", () => change("skills/check/SKILL.md", text => text.replace(/^1\. `AGENTS.md`\n/m, "")), "AGENTS.md must be the first eager read");
+    check();
+    const listedBudget = JSON.parse(runNode(["--input-type=module", "-e",
+      `import { measureReadBudget } from ${JSON.stringify(file("scripts/read-budget.mjs"))}; console.log(JSON.stringify(measureReadBudget(${JSON.stringify(scratch)}, { skills: ["handoff"], includeConditional: false })));`]));
+    if (listedBudget.files.some(entry => entry.path === "references/contracts/project.md")) fail("listed Russian stage conditional contract leaked into mandatory read budget");
+    restore(); check();
+    console.log("PASS AE6 listed Russian stage: Russian tiers, no first AGENTS read, conditional contract and pack-root paths green");
+    negative("unlisted stage with Russian read tiers", () => change("skills/check/SKILL.md", text => text
+      .replace(/^Read now.*$/m, "Прочитай сразу:")
+      .replace(/^Read when.*$/m, "Прочитай, когда:")), "missing or unordered read tiers");
+    negative("unlisted stage without first AGENTS read", () => change("skills/check/SKILL.md", text => text.replace(/^1\. `AGENTS.md`\n/m, "")), "AGENTS.md must be the first eager read");
+    negative("unlisted stage with colon condition", () => change("skills/check/SKILL.md", text => text.replace(/^(- `[^`]+`) — /m, "$1: ")), "conditional read needs a path and a condition");
     negative("Idea conditional Project contract removed", () => change("skills/idea/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/project\.md`:[^\n]+\n/m, "")), "must read references/contracts/project.md as its normative artifact source");
     negative("required section removed", () => change("references/issue-only-lane.md", (text) => text.replace("### Post-`ready` exit\n", "")), "missing or duplicate section");
     for (const [, field, value] of LANE_FIELDS) {
