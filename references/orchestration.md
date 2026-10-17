@@ -3,6 +3,7 @@
 Control-plane policy for `mono:orchestrate`. The orchestrator inspects,
 delegates, monitors, decides or escalates, records, and reports. It never
 implements delivery-stage work itself. Idea is the explicit exception: the orchestrator runs that stage itself.
+Research too: no owner questions or yes; the result goes to the owner.
 
 ## Roles
 
@@ -20,6 +21,7 @@ implements delivery-stage work itself. Idea is the explicit exception: the orche
 | Stage | Runs in |
 | --- | --- |
 | `mono:idea`, discovery | orchestrator session (Director Discovery) |
+| `mono:research` | orchestrator session itself; no owner questions or yes; result to owner |
 | `mono:handoff` | orchestrator session |
 | `mono:implement`, `mono:preflight`, `mono:ship` | worker session |
 | `mono:deploy` | orchestrator session |
@@ -96,7 +98,7 @@ discovery-skill question stream to the user.
 
 Checkpoints — the only moments that touch the user:
 
-1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:»; the owner alone gives yes to this version. This yes is separate from package approval. After verified completion, the next stage is Research, starting with the first Unknown; while `mono:research` is not installed, the next step is `mono:handoff`.
+1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:»; the owner alone gives yes to this version. This yes is separate from package approval. After verified completion, run `mono:research` itself, starting with the first Unknown. Research adds no owner questions or yes; return its result to the owner.
 2. UX checkpoint (user-facing surface only): one brief per
    `templates/orchestrator-brief.md` with a reviewed near-production
    prototype and the few contested UX decisions.

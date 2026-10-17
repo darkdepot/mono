@@ -37,7 +37,7 @@ Apply conditionally:
 Project:
 
 - Lifecycle status matches current stage.
-- Active docs are PRD and Tech Spec unless an explicit exception exists.
+- Active docs are PRD, Tech Spec, and Research («Исследование») unless an explicit exception exists.
 - Active Issues represent current approved execution plan.
 - No stale PR chips or raw PR URLs remain.
 

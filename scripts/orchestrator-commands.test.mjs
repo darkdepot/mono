@@ -347,7 +347,8 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     const runtime = path.join(skills, "scripts");
     for (const script of ["dispatch", "accept", "linear-adapter", "collector"]) pass(run(process.execPath, [path.join(runtime, `orchestrator/${script}.mjs`), "--help"]));
     const budget = JSON.parse(pass(run(process.execPath, [path.join(runtime, "read-budget.mjs"), "--json"])));
-    assert.ok(budget.bytes <= 98_373, "worker corpus must not grow from the MONO-121 baseline");
+    // MONO-177 explicitly adds 383 bytes; preserve the original baseline headroom.
+    assert.ok(budget.bytes <= 98_373 + 383, "worker corpus exceeds the baseline plus approved Research delta");
     write(path.join(bin, "codex"), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"fixture-thread"}));setInterval(()=>{},1000);\n'); fs.chmodSync(path.join(bin, "codex"), 0o700);
     write(path.join(bin, "ps"), '#!/usr/bin/env node\nconsole.log("fixture-start");\n'); fs.chmodSync(path.join(bin, "ps"), 0o700);
     atomicJson(path.join(root, "control.json"), { state: "active", halt: false }); atomicJson(path.join(root, "workers.json"), {}); writeWatcherFixture(root, env);

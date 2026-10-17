@@ -23,9 +23,18 @@ approved package, stop before recording and route the correction through
 Unknowns stay in the record. No Research document, PRD, Tech Spec, Issue, implementation
 plan, ExecPlan or code is created here. A refusal returns to Idea.
 
-The next stage is Research (`mono:research`), starting with the first Unknown;
-while that skill is absent from the installed pack, the next step is `mono:handoff`.
+The next stage is Research (`mono:research`), starting with the first Unknown.
 Stop after the final message. Idea approval is separate from package approval.
+
+## Research
+
+`mono:research` gathers facts before choosing a solution, without owner questions or
+a separate yes. The approved Idea record supplies the questions; a legacy Project
+uses its description. It writes one Research («Исследование») document and one
+Project comment with the stage log, then stops with an answer, advice and next step.
+Discovery follows when installed; until then, `mono:handoff` owns the next step.
+A Project without Research routes here, except a package approved before
+`researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
 
 ## Discovery
 
@@ -49,7 +58,7 @@ Forbidden:
 
 Gate: `mono:check discovery`, then `mono:handoff`. Discovery accepts only
 `fresh` codes `pass`, `stale`, `legacy-migrate`. An old Discovery Project without
-a record (`legacy-migrate`) enters handoff: the current idea is shown in the
+a record (`legacy-migrate`) enters Research, then handoff: the current idea is shown in the
 package approval brief, and the package approval comment creates the idea record
 alongside `approval_status=approved`. A changed idea (`stale`) uses the same
 single approval touch. A new project with `no-record` first runs `mono:idea`.
@@ -261,6 +270,8 @@ Required:
 - `mono:idea`, discovery, `mono:handoff`, and `mono:deploy` run in the
   orchestrator session; `mono:implement`, `mono:preflight`, and
   `mono:ship` run in one worker session per Issue.
+- `mono:research` runs in the orchestrator session itself. No owner questions or
+  yes; the result goes to the owner. Idea still waits for the owner’s yes.
 - All Linear mutations during orchestration flow through the orchestrator
   (single writer); workers never write to Linear and queue stage-required
   mutations in mailbox reports.

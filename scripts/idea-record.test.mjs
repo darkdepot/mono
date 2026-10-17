@@ -5,8 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { checkIdea, ideaFingerprint } from './idea-gate.mjs';
+import { checkIdea, ideaFingerprint, RESEARCH_GATE_DEFAULT_SINCE } from './idea-gate.mjs';
 import { resolveRole } from './runtime.mjs';
+
+test('Research cutoff remains dormant until the release task enables it', () => {
+  assert.equal(RESEARCH_GATE_DEFAULT_SINCE, '2099-12-31');
+});
 
 const projectId = '59c079b6-fc26-40a6-ba19-9467674fa637';
 const otherId = '11111111-1111-1111-1111-111111111111';
@@ -215,4 +219,74 @@ test('record retains literal fence whitespace and configured custom headings', (
   assert.ok(body.includes('```  \n'));
   write(root, 'config.json', { languages: { linear: 'Other' } });
   assert.equal(cli(['record', '--draft', path.join(root, 'draft.md'), '--config', path.join(root, 'config.json'), '--out', root]).status, 1);
+}));
+
+function checkDump(root, code, extra = [], expectedProject = projectId) {
+  const result = cli(['check', '--mode', 'fresh', '--dump', path.join(root, 'dump'), '--config', path.join(root, 'config.json'), ...extra]);
+  const lines = result.stdout.trim().split('\n');
+  const ok = ['pass', 'legacy-migrate'].includes(code);
+  assert.equal(result.status, ok ? 0 : 1, result.stdout + result.stderr);
+  assert.equal(lines[0], `idea-gate: ${ok ? 'pass' : 'fail'}: ${code} project=${expectedProject}`);
+  assert.equal(lines.length, ok ? 2 : 1, result.stdout);
+  return ok ? JSON.parse(lines[1]) : null;
+}
+for (const host of ['claude-code', 'codex']) {
+  for (const language of ['Russian', 'English']) {
+    test(`${host} check --dump: ${language}, complete pages, pass/stale/legacy-migrate/no-record`, () => sandbox(root => {
+      const s = setup(root, host, language);
+      const before = fs.readFileSync(path.join(root, 'dump/comments-1.json'));
+      assert.equal(checkDump(root, 'pass').recordId, s.pages[0].comments[0].id);
+      assert.deepEqual(fs.readFileSync(path.join(root, 'dump/comments-1.json')), before);
+      write(root, 'dump/project.json', { ...s.project, description: s.body.replace(/## (Что|What)\n/, '$&\nChanged\n') });
+      checkDump(root, 'stale');
+      const noRecords = s.pages.map(page => ({ ...page, comments: page.comments.map(c => ({ ...c, body: 'Ordinary comment' })) }));
+      noRecords.forEach((page, i) => write(root, `dump/comments-${i + 1}.json`, page));
+      write(root, 'dump/project.json', { ...s.project, createdAt: '2026-10-19T00:00:00Z' });
+      checkDump(root, 'no-record');
+      write(root, 'dump/project.json', { ...s.project, createdAt: '2026-10-16T00:00:00Z' });
+      checkDump(root, 'legacy-migrate');
+    }));
+  }
+  test(`${host} check --dump: partial pages, invalid cursor and malformed pages refuse`, () => sandbox(root => {
+    const s = setup(root, host);
+    for (const n of [2, 3]) {
+      const file = path.join(root, `dump/comments-${n}.json`);
+      fs.unlinkSync(file); checkDump(root, 'read-failed'); write(root, `dump/comments-${n}.json`, s.pages[n - 1]);
+    }
+    const request = json(path.join(root, 'dump/comments-2.request.json'));
+    write(root, 'dump/comments-2.request.json', { cursor: 'wrong' }); checkDump(root, 'read-failed');
+    write(root, 'dump/comments-2.request.json', request);
+    for (const mutate of [
+      pages => { pages[0].cursor = 'wrong'; },
+      pages => { pages[2].cursor = 'unexpected'; },
+      pages => { pages[0].hasNextPage = false; delete pages[0].cursor; },
+      pages => { pages[1].comments[0] = pages[0].comments[0]; },
+      pages => { pages[1].comments.reverse(); },
+    ]) {
+      const pages = structuredClone(s.pages); mutate(pages);
+      pages.forEach((page, i) => write(root, `dump/comments-${i + 1}.json`, page));
+      checkDump(root, 'read-failed');
+    }
+    s.pages.forEach((page, i) => write(root, `dump/comments-${i + 1}.json`, page));
+    checkDump(root, 'read-failed', ['--mode', 'approved'], null);
+    checkDump(root, 'read-failed', ['--snapshot', root], null);
+  }));
+}
+
+
+test('check --dump accepts one complete page and refuses non-fresh modes or missing config', () => sandbox(root => {
+  const s = setup(root, 'codex');
+  const single = { comments: s.pages.flatMap(page => page.comments), hasNextPage: false };
+  write(root, 'dump/comments-1.json', single);
+  for (const n of [2, 3]) for (const suffix of ['.json', '.request.json']) fs.unlinkSync(path.join(root, `dump/comments-${n}${suffix}`));
+  checkDump(root, 'pass');
+  const args = ['check', '--dump', path.join(root, 'dump'), '--config', path.join(root, 'config.json')];
+  for (const mode of ['approved', 'unsafe']) {
+    const result = cli([...args, '--mode', mode]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout.trim(), `idea-gate: fail: read-failed project=${projectId}`);
+  }
+  const missingConfig = cli(['check', '--mode', 'fresh', '--dump', path.join(root, 'dump')]);
+  assert.equal(missingConfig.status, 1);
+  assert.equal(missingConfig.stdout.trim(), `idea-gate: fail: read-failed project=${projectId}`);
 }));

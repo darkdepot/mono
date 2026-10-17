@@ -10,7 +10,7 @@ Idea ведёт идею от просьбы обычными словами д�
 о смысле по одному, окном выбора с рекомендацией, не больше трёх. В Codex без окна
 выбора вопрос задаётся текстом. Оркестратор проходит Idea сам, отвечает с причинами
 и показывает описание и «Ответил сам:» владельцу на «да».
-После Idea — Research; пока `mono:research` не установлен — `mono:handoff`.
+После Idea — Research (`mono:research`): факты, документ «Исследование» и совет без вопросов владельцу.
 
 Проверка записи «да» включена: отсечка по умолчанию — **2026-10-18, 00:00 UTC**.
 Запуск работы и сертификат для PR требуют запись именно этого проекта.
@@ -107,17 +107,18 @@ raw idea → Project in Idea → recorded owner yes → Research (Project status
 → mono:deploy → verification → Linear closeout and project update
 ```
 
-1. **Capture.** Bring a raw idea to `mono:idea`. Stage names stay English (Idea, Research, Discovery); the rebuilt stage is Russian. Two read-only scouts search Linear and code in parallel, then the agent recaps and asks meaning questions one at a time, at most three, using the host choice tool (text with a recommendation in Codex without one). A route question is separate; scope belongs to later stages. Show What / Why / Target outcome / prioritized Unknowns and stop for the owner's yes to this version. Follow [the recording reference](skills/idea/references/record.md); only «Готово» from `verify` permits the status move to Discovery, followed by read-back and `mono:check idea`. A returned Project with the three idea sections unchanged keeps body/package/status. Without them, write the approved body and change status only from Idea; corrections follow the package-aware return rules below. Next: Research (`mono:research`) from the first Unknown; while that skill is absent from the installed pack, use `mono:handoff`. The stage stops after its final message. An unmistakable one-PR request routes to `mono:issue` only with the configured lane enabled and `ownerPrincipal` present. In orchestration, the orchestrator runs Idea itself, answers the questions with reasons and shows «Ответил сам:»; the owner alone gives yes, separately from later package approval.
-2. **Discover.** Shape the problem through `/office-hours` or `/brainstorming`; review a product/UI surface with `/plan-design-review` and an implementation architecture with `/plan-eng-review`. These outputs are inputs to handoff, not permission to code. In orchestrated discovery, a Second Voice challenges the draft, the orchestrator answers technical questions, and the owner sees reviewed prototypes and prepared decisions at checkpoints.
-3. **Package.** Run `mono:handoff`. Inspect supplied artifacts and scoped sources, draft the Project/PRD/Tech Spec and Issue slicing, review before the first durable package write, and obtain package approval. Persist the approved package in Linear and apply accepted fixes through its owner. Keep the Project pre-delivery until implementation start is explicitly authorized; documents alone never authorize Delivery.
-4. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
-5. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review or `accepted-with-declines` with orchestrator-approved evidence. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts lead the Russian ready-certificate comment before its unchanged machine block. Codex full and final deep/risky work retain the local loop. Managed Claude Code uses external committed-head collection only, with no in-worker helper pass; its ready certificate names that review route and stop/resume startup. Preserve phase ownership.
-6. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
-7. **Deploy and close.** `mono:deploy` verifies that the current PR head matches the green certificate, applies the configured approval policy, and delegates the configured deploy workflow. Verify delivery and run live acceptance where users consume the result. Close the Issue only after its delivery requirements pass; publish the informational project update, report cost, record useful learnings, and retire the worker. Only the shipment of the last open Project Issue may complete that Project.
+1. **Capture.** Bring a raw idea to `mono:idea`. Stage names stay English (Idea, Research, Discovery); the rebuilt stage is Russian. Two read-only scouts search Linear and code in parallel, then the agent recaps and asks meaning questions one at a time, at most three, using the host choice tool (text with a recommendation in Codex without one). A route question is separate; scope belongs to later stages. Show What / Why / Target outcome / prioritized Unknowns and stop for the owner's yes to this version. Follow [the recording reference](skills/idea/references/record.md); only «Готово» from `verify` permits the status move to Discovery, followed by read-back and `mono:check idea`. A returned Project with the three idea sections unchanged keeps body/package/status. Without them, write the approved body and change status only from Idea; corrections follow the package-aware return rules below. Next: Research (`mono:research`) from the first Unknown. The stage stops after its final message. An unmistakable one-PR request routes to `mono:issue` only with the configured lane enabled and `ownerPrincipal` present. In orchestration, the orchestrator runs Idea itself, answers the questions with reasons and shows «Ответил сам:»; the owner alone gives yes, separately from later package approval.
+2. **Research.** Run `mono:research` after the owner’s Idea yes, using raw Linear responses with `idea-gate check --mode fresh --dump`. Write a brief, gather internal and external facts through source scouts, check the advice against sources and a second model, then read back one Research («Исследование») document and one Project log comment. No owner questions, separate yes, solution selection or stage Issues. The orchestrator runs this stage itself and returns the result. A tiny reversible project gets `not-required` with a reason; missing facts get `hold` and a cheap next check. Stop with advice and the next stage: Discovery when installed, otherwise Handoff. Existing Projects without Research route here, except packages approved before `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
+3. **Discover.** Shape the problem through `/office-hours` or `/brainstorming`; review a product/UI surface with `/plan-design-review` and an implementation architecture with `/plan-eng-review`. These outputs are inputs to handoff, not permission to code. In orchestrated discovery, a Second Voice challenges the draft, the orchestrator answers technical questions, and the owner sees reviewed prototypes and prepared decisions at checkpoints.
+4. **Package.** Run `mono:handoff`. Inspect supplied artifacts and scoped sources, draft the Project/PRD/Tech Spec and Issue slicing, review before the first durable package write, and obtain package approval. Persist the approved package in Linear and apply accepted fixes through its owner. Keep the Project pre-delivery until implementation start is explicitly authorized; documents alone never authorize Delivery.
+5. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
+6. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review or `accepted-with-declines` with orchestrator-approved evidence. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts lead the Russian ready-certificate comment before its unchanged machine block. Codex full and final deep/risky work retain the local loop. Managed Claude Code uses external committed-head collection only, with no in-worker helper pass; its ready certificate names that review route and stop/resume startup. Preserve phase ownership.
+7. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
+8. **Deploy and close.** `mono:deploy` verifies that the current PR head matches the green certificate, applies the configured approval policy, and delegates the configured deploy workflow. Verify delivery and run live acceptance where users consume the result. Close the Issue only after its delivery requirements pass; publish the informational project update, report cost, record useful learnings, and retire the worker. Only the shipment of the last open Project Issue may complete that Project.
 
 Stages rebuilt under «Mono как продукт» are written in Russian; machine tokens
 (commands, paths, keys and codes) stay English. Other skills remain English;
-Linear templates/examples stay Russian. Idea uses `scout`, resolved by
+Linear templates/examples stay Russian. Idea and Research use `scout`, resolved by
 `idea-gate helper` for `claude-code` or `codex`; `models.roles.scout` overrides
 the host default from the [roles table](references/model-policy.md#roles).
 The `idea-helper` role is retained for now; removal is a separate task after 0.34.0.
@@ -133,10 +134,14 @@ corpus, explicitly including both scout task files; the complete mandatory set i
 by the scouts themselves, not by Idea: Codex receives absolute definition paths
 and tells each subagent to read its own file first, skipping frontmatter. Both
 English read tiers stay valid for every stage. [The shared Russian-stage list](scripts/russian-stages.mjs)
-(currently Idea) enables Russian labels, colon conditions, the first-`AGENTS.md`
+(Idea and Research) enables Russian labels, colon conditions, the first-`AGENTS.md`
 exemption and conditional Project-contract reads; later Russian stages add themselves
 there. Package-root paths and each skill's own reference folder are checked by the
 same resolver in plugin validation, workflow validation and reading counts.
+Research mandatory reading is measured by `node scripts/read-budget.mjs --skill research --mandatory`;
+all listed Russian stages have the same fixed 20,480-byte limit.
+Research activation cases live in [evals/research](evals/research/README.md).
+The release and live acceptance belong to the later release task; this intermediate main is not a release.
 The Russian `<корень>/` prefix belongs to listed stages; English stages use
 `<pack-root>/` in commands.
 [Activation evals](evals/idea/README.md)
@@ -178,16 +183,18 @@ JSON с машинным кодом. Скрипт не обращается в L
 
 `idea-gate.mjs helper --host claude-code|codex [--config CONFIG]` возвращает
 модель и усилие [role:scout](references/model-policy.md#roles); переопределение —
-`models.roles.scout`. Два агента плагина в `agents/` только читают Linear/код;
+`models.roles.scout`. Три агента плагина в `agents/` только читают Linear, код и интернет;
 В Codex встроенный субагент сам читает своё определение по абсолютному пути,
-пропуская шапку; ведущий Idea передаёт путь, задание и контекст. Роль `idea-helper`
+пропуская шапку; ведущий этапа передаёт задание и контекст. Роль `idea-helper`
 пока сохранена; удаление отдельной задачей после 0.34.0. Добавляйте переопределение `scout` только
 после установки выпуска 0.32.1 во всех затронутых продуктах и хостах.
 
 
 `scripts/idea-gate.mjs` проверяет запись «да» по снимку без сети.
-`check --mode fresh --snapshot DIR --config CONFIG` сравнивает текущие Что/Зачем/
-Образ результата с записанными Неизвестными; `--mode approved` проверяет целостность
+`check --mode fresh --dump DIR --config CONFIG` читает сырые ответы Linear в той же
+раскладке и с теми же проверками страниц и курсоров, что `verify`. Язык из конфига:
+`Russian` → `ru`, `English` → `en`, либо `ideaGate.headings`. Команда сравнивает текущие Что/Зачем/
+Образ результата с записанными Неизвестными; `check --mode approved --snapshot DIR` проверяет целостность
 записи без сравнения текущего тела. Принимается новейшая корректная запись проекта
 или подтверждённое одобрение пакета до отсечки. Старый проект без записи входит
 в пакет с `legacy-migrate` только в режиме `fresh`; задача без проекта требует
@@ -195,14 +202,17 @@ JSON с машинным кодом. Скрипт не обращается в L
 `legacy-migrate` текущая идея входит в одобрение пакета, комментарий записывает
 идею и `approval_status=approved`. Новый проект с `no-record` возвращается
 в `mono:idea`. Проверки handoff/delivery и implement требуют `approved`;
-проверка Discovery допускает `pass`, `stale`, `legacy-migrate`.
+проверка Discovery допускает `pass`, `stale`, `legacy-migrate`. Проверка `fresh` в
+Research, check discovery и Handoff использует только `--dump`; dispatch сохраняет `approved --snapshot`.
+Вывод: `idea-gate: pass|fail: <code> project=<id>`, при проходе ещё JSON.
+Handoff до черновика читает «Исследование» и пишет в PRD «Что решили по неизвестным Research»: решение по каждому Н. Совет «не делать» или «отложить» сначала выносится владельцу. Одобрение называет документ и причину `not-required`; при `stale` — неизвестные из исследованной записи.
 Dispatch и receipt связывают результат проверки и снимок, включая проход до отсечки без записи.
 
 Необязательный `ideaGate.since` принимает дату `YYYY-MM-DD`; без него действует
 `2026-10-18` (00:00 UTC, проверка включена с 0.32.1). Неверная дата даёт `bad-since`. `ideaGate.headings`
 переопределяет все четыре заголовка, например
 `{"what":"Что","why":"Зачем","outcome":"Образ результата","unknowns":"Неизвестные"}`.
-Defaults are `ru`/`en` from normalized `project.language`. Snapshot examples and
+Defaults normalize `Russian`/`English` from config (or `project.language` for a snapshot without a configured language) to `ru`/`en`. Snapshot examples and
 live Linear serialization samples: [fixtures](scripts/fixtures/idea-gate/README.md).
 `fingerprint --snapshot FILE --config CONFIG` hashes the four sections as canonical UTF-8 bytes;
 inline code and fences remain literal. The project body stays unchanged.
@@ -212,6 +222,7 @@ Known limitation: inline code spanning multiple source lines refuses `unsupporte
 | --- | --- |
 | Linear Project body | Idea: what, why, target outcome; Handoff adds in scope and out of scope |
 | Project metadata, resources, comments | Lifecycle, active documents and Issues, relationships, approvals, review disposition, handoff |
+| Research («Исследование») | Facts, confidence, unknowns and advice before choosing a solution |
 | PRD | WHAT: actors, problem, workflows, requirements, acceptance and success |
 | Tech Spec | HOW: architecture, real system contracts, failures, implementation units, validation and rollback |
 | Issue | One-PR execution contract, dependencies, AFK/HITL readiness, context snapshot, acceptance and verification |
@@ -956,6 +967,7 @@ this pack uses `/mono:ship` and `/mono:review`.
 | Skill | Use it for |
 | --- | --- |
 | [mono:idea](skills/idea/SKILL.md) | Idea intake, recorded owner yes and transition to Discovery |
+| [mono:research](skills/research/SKILL.md) | Facts before a solution, Research document and next-step advice without owner questions |
 | [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
 | [mono:handoff](skills/handoff/SKILL.md) | Project-first packaging, slicing and reviewed artifact repair |
 | [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |
