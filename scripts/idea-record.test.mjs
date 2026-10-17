@@ -21,6 +21,13 @@ function write(root, file, value) {
   fs.writeFileSync(target, typeof value === 'string' ? value : JSON.stringify(value));
   return target;
 }
+function saveRequests(root, source) {
+  const calls = json(new URL('calls.json', source));
+  for (const n of [1, 2, 3]) {
+    const args = calls.find(call => call.file === `list_comments.limit4.page-${n}.json`).arguments;
+    write(root, `dump/comments-${n}.request.json`, Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {});
+  }
+}
 function setup(root, host, language = 'Russian') {
   const source = new URL(`./fixtures/idea-gate/probe/${host}/`, import.meta.url);
   const project = json(new URL('get_project.json', source));
@@ -44,6 +51,7 @@ function setup(root, host, language = 'Russian') {
   pages[0].comments[0].body = comment;
   write(root, 'dump/project.json', project);
   pages.forEach((page, i) => write(root, `dump/comments-${i + 1}.json`, page));
+  saveRequests(root, source);
   return { project, pages, draft, body, comment, args,
     verify: ['verify', '--project', projectId, '--dump', path.join(root, 'dump'), '--expect', path.join(root, 'comment.md'), '--config', path.join(root, 'config.json')] };
 }
@@ -90,6 +98,24 @@ for (const host of ['claude-code', 'codex']) {
       verify(s.verify, 'read-failed');
     }
   }));
+  test(`${host}: skipped middle page and invalid request cursors stop`, () => sandbox(root => {
+    const s = setup(root, host);
+    verify(s.verify, 'pass');
+    for (const request of [{ cursor: 'unexpected' }, { cursor: null }, { extra: true }]) {
+      write(root, 'dump/comments-1.request.json', request); verify(s.verify, 'read-failed');
+    }
+    write(root, 'dump/comments-1.request.json', {});
+    const second = json(path.join(root, 'dump/comments-2.request.json'));
+    for (const request of [{}, { cursor: 'wrong' }, { ...second, extra: true }]) {
+      write(root, 'dump/comments-2.request.json', request); verify(s.verify, 'read-failed');
+    }
+    fs.unlinkSync(path.join(root, 'dump/comments-2.request.json')); verify(s.verify, 'read-failed');
+    // Keep page 3's actual request when renumbering: its cursor proves page 2 was skipped.
+    write(root, 'dump/comments-2.json', s.pages[2]);
+    fs.renameSync(path.join(root, 'dump/comments-3.request.json'), path.join(root, 'dump/comments-2.request.json'));
+    fs.unlinkSync(path.join(root, 'dump/comments-3.json'));
+    verify(s.verify, 'read-failed');
+  }));
   test(`${host}: exact expected comment, project UUID and changed body`, () => sandbox(root => {
     const s = setup(root, host);
     s.project.uuid = otherId; write(root, 'dump/project.json', s.project); verify(s.verify, 'other-project');
@@ -109,7 +135,7 @@ for (const host of ['claude-code', 'codex']) {
     const single = { comments: s.pages.flatMap(p => p.comments), hasNextPage: false };
     single.comments[0].body = noNotes;
     write(root, 'dump/comments-1.json', single);
-    for (const n of [2, 3]) fs.unlinkSync(path.join(root, `dump/comments-${n}.json`));
+    for (const n of [2, 3]) for (const suffix of ['.json', '.request.json']) fs.unlinkSync(path.join(root, `dump/comments-${n}${suffix}`));
     verify(s.verify, 'pass');
     assert.match(s.body, /^## What\n/);
     // An unrelated later record must never stand in for the expected one.
@@ -156,10 +182,26 @@ for (const [host, manifestHash] of [['claude-code', '520f041db7335c3c3e1fb222c4d
     fs.mkdirSync(path.join(root, 'dump'));
     fs.copyFileSync(new URL('get_project.json', source), path.join(root, 'dump/project.json'));
     for (const n of [1, 2, 3]) fs.copyFileSync(new URL(`list_comments.limit4.page-${n}.json`, source), path.join(root, `dump/comments-${n}.json`));
+    saveRequests(root, source);
     write(root, 'expect.md', expected.body); write(root, 'config.json', { languages: { linear: 'Russian' } });
     assert.equal(verify(['verify', '--project', projectId, '--dump', path.join(root, 'dump'), '--expect', path.join(root, 'expect.md'), '--config', path.join(root, 'config.json')], 'pass').recordId, expected.id);
   }));
 }
+
+test('record refuses unrecognized sections and text outside sections before writing', () => sandbox(root => {
+  const draft = '## Что\nWhat\n\n## Зачем\nWhy\n\n## Образ результата\nOutcome\n\n## Неизвестные\nQuestion';
+  write(root, 'config.json', { languages: { linear: 'Russian' } });
+  for (const [i, invalid] of [draft + '\n\n## Другое\nApproved extra text', draft + '\n\n  ## Другое\nExtra', draft + '\n\n##', 'Approved preamble\n\n' + draft, '```txt\nPreamble\n```\n' + draft].entries()) {
+    write(root, 'draft.md', invalid);
+    const out = path.join(root, `out-${i}`);
+    const result = cli(['record', '--draft', path.join(root, 'draft.md'), '--project', projectId, '--config', path.join(root, 'config.json'), '--out', out]);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /^Стоп: /);
+    assert.equal(JSON.parse(result.stdout.trim().split('\n')[1]).code, 'unsupported-format');
+    assert.equal(fs.existsSync(path.join(out, 'body.md')), false);
+    assert.equal(fs.existsSync(path.join(out, 'comment.md')), false);
+  }
+}));
 
 test('record retains literal fence whitespace and configured custom headings', () => sandbox(root => {
   const config = { languages: { linear: 'Other' }, ideaGate: { headings: { what: 'A', why: 'B', outcome: 'C', unknowns: 'D' } } };

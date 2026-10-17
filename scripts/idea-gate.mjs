@@ -123,18 +123,21 @@ function ordinary(text) {
   });
 }
 
-function sections(markdown, headings, requireUnknowns = true) {
+function sections(markdown, headings, requireUnknowns = true, rejectOutside = false) {
   const dictionary = headingDictionary(headings), found = {}, required = requireUnknowns ? KEYS : KEYS.slice(0, 3);
   let current = null;
   for (const block of blocks(markdown)) {
     const heading = !block.fenced && block.text.match(/^##[ \t]+(.+?)[ \t]*\r?$/);
+    if (rejectOutside && !block.fenced && !heading && /^ {0,3}##(?:[ \t]|\r?$)/.test(block.text)) fail('unsupported-format');
     if (heading) {
       current = KEYS.find(key => dictionary[key] === heading[1]) ?? null;
+      if (rejectOutside && !current) fail('unsupported-format');
       if (current) {
         if (found[current]) fail('duplicate-heading');
         found[current] = [];
       }
     } else if (current) found[current].push(block);
+    else if (rejectOutside && block.text.trim()) fail('unsupported-format');
   }
   if (required.some(key => !found[key])) fail('missing-heading');
   return found;
@@ -255,7 +258,7 @@ function recordIdea(options, config) {
   if (!options['--draft'] || !options['--out'] || !options['--config'] ||
       (options['--notes'] && !options['--project'])) fail('read-failed');
   const draft = fs.readFileSync(options['--draft'], 'utf8'), headings = configuredHeadings(config);
-  const fingerprint = ideaFingerprint(draft, headings), found = sections(draft, headings);
+  const found = sections(draft, headings, true, true), fingerprint = ideaFingerprint(draft, headings);
   const body = KEYS.slice(0, 3).map(key => {
     const content = [...found[key]];
     while (content.length && !content.at(-1).fenced && /^\r?$/.test(content.at(-1).text)) content.pop();
@@ -289,14 +292,20 @@ function verifyDump(options, config) {
   const project = { id: raw.uuid, createdAt: raw.createdAt, status: raw.status?.name,
     body: raw.description, language: 'custom' };
   const files = fs.readdirSync(root).filter(name => /^comments-.*\.json$/.test(name));
-  if (!files.length || files.some(name => !/^comments-[1-9]\d*\.json$/.test(name))) fail('read-failed');
+  const pages = files.filter(name => /^comments-[1-9]\d*\.json$/.test(name));
+  if (!pages.length || files.length !== pages.length * 2 ||
+      files.some(name => !/^comments-[1-9]\d*(?:\.request)?\.json$/.test(name))) fail('read-failed');
   const comments = [], ids = new Set();
-  let previousUpdatedAt = Infinity;
-  for (let n = 1; n <= files.length; n++) {
+  let previousUpdatedAt = Infinity, previousCursor;
+  for (let n = 1; n <= pages.length; n++) {
+    const request = readJson(path.join(root, `comments-${n}.request.json`));
+    if (!object(request) || (n === 1 ? Object.keys(request).length !== 0 :
+      Object.keys(request).length !== 1 || !Object.hasOwn(request, 'cursor') || request.cursor !== previousCursor)) fail('read-failed');
     const page = readJson(path.join(root, `comments-${n}.json`));
     if (!object(page) || !Array.isArray(page.comments) || typeof page.hasNextPage !== 'boolean' ||
-        page.hasNextPage !== (n < files.length) ||
+        page.hasNextPage !== (n < pages.length) ||
         (page.hasNextPage ? !page.comments.length || page.cursor !== page.comments.at(-1)?.id : Object.hasOwn(page, 'cursor'))) fail('read-failed');
+    previousCursor = page.cursor;
     for (const item of page.comments) {
       if (!object(item) || typeof item.id !== 'string' || !item.id || ids.has(item.id) ||
           typeof item.body !== 'string' || !Number.isFinite(date(item.createdAt)) ||
@@ -322,7 +331,7 @@ const VERIFY_REASONS = {
   'bad-record': 'запись повреждена; подготовьте и опубликуйте комментарий заново через record',
   'missing-heading': 'нет нужного заголовка второго уровня; проверьте язык и одобренную версию',
   'duplicate-heading': 'заголовок повторён; устраните повтор и проверьте одобренную версию',
-  'unsupported-format': 'формат текста не поддерживается; уберите таблицы и вложенные списки из описания',
+  'unsupported-format': 'формат текста не поддерживается; оставьте четыре раздела без текста вне них, таблиц и вложенных списков',
   'bad-since': 'в пакете не задана корректная дата начала проверки; исправьте установку или настройку',
   'read-failed': 'ответы Linear, страницы или настройки неполны либо повреждены; сохраните проект и все страницы заново',
 };
@@ -351,7 +360,7 @@ function authoringMain(argv) {
       ? error.code : 'read-failed', options['--project'] ?? null);
   }
   const pass = result.code === 'pass';
-  if (command === 'verify') {
+  if (['record', 'verify'].includes(command)) {
     console.log(pass ? 'Готово' : result.code === 'stale' ? 'Нужно новое «да»: тело проекта изменилось; покажите владельцу текущую версию'
       : `Стоп: ${VERIFY_REASONS[result.code] ?? VERIFY_REASONS['read-failed']}`);
     console.log(JSON.stringify(result));
@@ -360,6 +369,18 @@ function authoringMain(argv) {
 }
 
 function main(argv) {
+  if (argv.length === 1 && argv[0] === '--help') {
+    console.log(`Usage: idea-gate.mjs record --draft APPROVED --config CONFIG --out DIR [--project UUID] [--notes NOTES]
+       idea-gate.mjs verify --project UUID --dump DIR --expect COMMENT --config CONFIG
+       idea-gate.mjs helper --host claude-code|codex [--config CONFIG]
+       idea-gate.mjs check --mode fresh|approved --snapshot DIR [--config CONFIG]
+       idea-gate.mjs fingerprint --snapshot FILE [--config CONFIG]
+Dump: project.json and comments-N.json are raw Linear responses (N=1,2,...).
+Each response needs comments-N.request.json: {} for page 1, {"cursor":"previous response cursor"} thereafter.
+Save the actual request cursor; the final response has hasNextPage=false and no cursor.
+record refuses unrecognized sections or text outside the four sections before writing files.`);
+    return;
+  }
   if (['record', 'verify', 'helper'].includes(argv[0])) return authoringMain(argv);
   let projectId = null, result;
   try {

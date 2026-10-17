@@ -5981,7 +5981,7 @@ const REQUIRED_HEADINGS = [
 const MACHINE_TOKENS = new Set([
   "approval_status=approved",
   // MONO-187: CLI commands, closed result dictionary and plugin-agent fields.
-  "record", "verify", "helper", "--draft", "--project", "--notes", "--out", "--dump", "--expect", "--host",
+  "record", "verify", "helper", "--help", "--draft", "--project", "--notes", "--out", "--dump", "--expect", "--host",
   "scout", "claude-code", "codex", "sonnet", "medium", "high",
   "name", "description", "model", "effort", "disallowedTools", "Write", "Edit", "NotebookEdit",
   "pass", "legacy-before-cutoff", "legacy-migrate", "issue-only", "no-record", "other-project", "bad-record", "stale",
