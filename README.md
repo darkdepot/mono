@@ -1,28 +1,38 @@
 # Mono Agent Workflow
 
-Текущий выпуск: **0.32.0**. См. [заметки выпуска](CHANGELOG.md#0320---2026-10-17).
+Текущий выпуск: **0.32.1**. См. [заметки выпуска](CHANGELOG.md#0321---2026-10-18).
 Private vulnerability reports: [SECURITY.md](SECURITY.md).
 
-## Обновление до 0.32.0
+## Обновление до 0.32.1
 
-В 0.32.0 проверка записи «да» спит и запуск работы не останавливает:
-отсечка по умолчанию — `2099-12-31`, проекты и одобрения пакетов считаются
-созданными до правила (`legacy-before-cutoff`). Этап Idea уже пишет запись «да»;
-при подготовке пакета старый проект без записи проходит с `legacy-migrate`.
-Включение проверки по умолчанию придёт следующим выпуском.
+Idea ведёт идею от просьбы обычными словами до описания, на которое владелец
+говорит «да». Два разведчика параллельно читают Linear и код; затем идут вопросы
+о смысле по одному, окном выбора с рекомендацией, не больше трёх. В Codex без окна
+выбора вопрос задаётся текстом. Оркестратор проходит Idea сам, отвечает с причинами
+и показывает описание и «Ответил сам:» владельцу на «да».
+После Idea — Research; пока `mono:research` не установлен — `mono:handoff`.
 
-Продукт может включить проверку раньше в `.agents/mono-workflow.config.json`:
-`"ideaGate": { "since": "2026-10-18" }`. Сдвиг даты меняет только классификацию
-проектов и одобрений; пины и receipt остаются прежними. Старые попытки завершаются
+Проверка записи «да» включена: отсечка по умолчанию — **2026-10-18, 00:00 UTC**.
+Запуск работы и сертификат для PR требуют запись именно этого проекта.
+Проект без записи проходит «до правила» (`legacy-before-cutoff`), только если
+и проект создан, и его пакет одобрен строго до отсечки. Старый проект без записи
+может войти в подготовку пакета с `legacy-migrate`; «да» на идею тогда записывается
+вместе с одобрением пакета. Это не разрешает запуск без записи после отсечки.
+
+В `.agents/mono-workflow.config.json` можно задать свою дату:
+`"ideaGate": { "since": "2026-10-18" }`. Сдвиг `ideaGate.since` вперёд временно
+откладывает правило для продукта и меняет только классификацию проектов и одобрений;
+пины и receipt остаются прежними, нужна новая попытка. Старые попытки завершаются
 на сохранённом `packRoot`. До замены каталога выполните `before-update` по всем
 продуктам; если старый каталог потерян, нужна новая попытка.
 
-Роль `idea-helper` пока сохранена; удаление отдельной задачей после 0.34.0.
-Переопределение `models.roles.idea-helper` совместимо только после установки 0.32.0 везде:
-0.31.1 отвергает эту роль. Для [отката на 0.31.1](references/install.md#roll-back-to-0311)
-сохраните и удалите переопределение во всех затронутых конфигах, проверьте штатные
-роли старым пакетом и установите закреплённый `v0.31.1` из маркетплейса.
-Порядок раскатки и проверка обеих установок — [в инструкции](references/install.md#release-0320).
+Переопределение `models.roles.scout` добавляйте только после установки 0.32.1
+во всех затронутых продуктах и хостах. До этого используйте штатные модели нового
+пакета. Роль `idea-helper` пока сохранена; удаление отдельной задачей после 0.34.0.
+Для [отката на 0.32.0](references/install.md#roll-back-to-0320) сохраните и удалите
+переопределение `scout` во всех затронутых конфигах, проверьте штатные роли старым
+пакетом и установите закреплённый `v0.32.0` из маркетплейса.
+Порядок раскатки и проверка обеих установок — [в инструкции](references/install.md#release-0321).
 
 **Upgrading from 0.30.1 or earlier:** since 0.31.0, worker launch and resume require
 a live watcher. Use [cross-product quiescence](references/install.md#quiescence):
@@ -172,7 +182,7 @@ JSON с машинным кодом. Скрипт не обращается в L
 В Codex встроенный субагент сам читает своё определение по абсолютному пути,
 пропуская шапку; ведущий Idea передаёт путь, задание и контекст. Роль `idea-helper`
 пока сохранена; удаление отдельной задачей после 0.34.0. Добавляйте переопределение `scout` только
-после установки выпуска 0.32.1 везде; текущая дата отсечки остаётся без изменений.
+после установки выпуска 0.32.1 во всех затронутых продуктах и хостах.
 
 
 `scripts/idea-gate.mjs` проверяет запись «да» по снимку без сети.
@@ -189,7 +199,7 @@ JSON с машинным кодом. Скрипт не обращается в L
 Dispatch и receipt связывают результат проверки и снимок, включая проход до отсечки без записи.
 
 Необязательный `ideaGate.since` принимает дату `YYYY-MM-DD`; без него действует
-`2099-12-31` (проверка спит в 0.32.0). Неверная дата даёт `bad-since`. `ideaGate.headings`
+`2026-10-18` (00:00 UTC, проверка включена с 0.32.1). Неверная дата даёт `bad-since`. `ideaGate.headings`
 переопределяет все четыре заголовка, например
 `{"what":"Что","why":"Зачем","outcome":"Образ результата","unknowns":"Неизвестные"}`.
 Defaults are `ru`/`en` from normalized `project.language`. Snapshot examples and
@@ -256,12 +266,13 @@ no attempt; their retries rebuild the exact requested snapshot composition.
 Project dispatch now requires `idea/project.json`, complete paginated
 `idea/idea-records.json`, `approval.json` and `issue-context.json` alongside the
 package documents. The Issue key/project and approval comment timestamp/body hash must match;
-the idea check accepts pre-cutoff packages without a record in 0.32.0; package approval needs exactly one
+the idea check accepts a package without a record only when both project creation
+and package approval precede the cutoff (default: 2026-10-18 UTC); package approval needs exactly one
 `approval_status=approved` (unmarked approval only before the configured cutoff).
 The saved idea and selected record are pinned through collection, signed receipt
 and ship, including canonical artifact contents. Amend/resume preserves the
-binding; a new record requires a new attempt. Attempts launched before 0.32.0
-can finish without the field. Issue-only retains its existing envelope and seam.
+binding; a new record requires a new attempt. Attempts pinned to packs older than
+0.32.0 can finish without the idea field; every attempt keeps its original packRoot. Issue-only retains its existing envelope and seam.
 See [snapshot assembly](references/orchestration.md#orchestrator-dispatch-command).
 `orchestrator/accept.mjs ack|report|amend` validates a move plan before
 connector writes, confirms report queues from fresh reconciliation sessions, and
