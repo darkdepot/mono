@@ -334,7 +334,7 @@ function repositoryRoot(start = process.cwd()) {
   }
 }
 
-// owner/repo of the checkout's remotes (linked worktrees included); empty when unreadable.
+// host/owner/repo of the checkout's remotes (linked worktrees included); empty when unreadable.
 function repositoryRemotes(repo) {
   try {
     let gitDir = path.join(repo, '.git');
@@ -344,7 +344,8 @@ function repositoryRemotes(repo) {
       if (fs.existsSync(common)) gitDir = path.resolve(gitDir, fs.readFileSync(common, 'utf8').trim());
     }
     return new Set([...fs.readFileSync(path.join(gitDir, 'config'), 'utf8').matchAll(/^\s*url\s*=\s*(\S+)\s*$/gm)]
-      .map(match => match[1].match(/[:/]([^/:\s]+\/[^/\s]+?)(?:\.git)?\/?$/)?.[1]?.toLowerCase()).filter(Boolean));
+      .map(match => match[1].match(/^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^/@:\s]+@)?([^/:\s]+(?::\d+)?)[/:]([^/:\s]+\/[^/\s]+?)(?:\.git)?\/?$/i)
+        ?.slice(1).join('/').toLowerCase()).filter(Boolean));
   } catch { return new Set(); }
 }
 
@@ -352,6 +353,10 @@ function repositoryRemotes(repo) {
 function gitHas(repo, spec) {
   return spawnSync('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', spec], { stdio: 'ignore' }).status === 0;
 }
+
+// A slash makes a path explicit; bare filenames need a file suffix to exclude dotted config keys.
+const BACKTICKED_PATH = /`((?:[\w.-]+\/)+[\w.-]+|[\w.-]+\.(?:md|markdown|jsonc?|ya?ml|toml|ini|cfg|conf|txt|csv|xml|html?|css|scss|[cm]?js|jsx|[cm]?ts|tsx|py|go|rs|rb|php|java|kt|swift|[ch]|[ch]pp|sh|sql|lock))(?::\d+(?:-\d+)?)?`/gi;
+const PATH_LIKE = new RegExp(`https?:\\/\\/[^/\\s]+\\/[^/\\s]+\\/[^/\\s]+\\/(?:-\\/)?(?:blob|tree)\\/|${BACKTICKED_PATH.source}`, 'i');
 
 // Advisory only: notes stay outside the fingerprint and may carry the old project text verbatim,
 // so findings are reported for the agent to fix in its own fact lines and never block the record.
@@ -386,15 +391,12 @@ export function lintNotes(notes, repo = repositoryRoot()) {
     const line = index + 1;
     if (text.includes('\u2014')) warnings.push({ line, kind: 'long-dash' });
     if (!repo) return;
-    for (const match of text.matchAll(/https?:\/\/[^/\s]+\/([^/\s]+\/[^/\s]+)\/(?:-\/)?(?:blob|tree)\/([^\s#?<>()\]]+)/g))
-      if ((!remotes.size || remotes.has(match[1].toLowerCase())) && !/^[0-9a-f]{7,40}\//i.test(match[2])) onBranch(line, match[2]);
-    for (const match of text.matchAll(/`((?:[\w.-]+\/)+[\w-][\w.-]*\.[A-Za-z0-9]{1,8})(?::\d+(?:-\d+)?)?`/g)) inTree(line, match[1]);
+    for (const match of text.matchAll(/https?:\/\/([^/\s]+)\/([^/\s]+\/[^/\s]+)\/(?:-\/)?(?:blob|tree)\/([^\s#?<>()\]]+)/g))
+      if ((!remotes.size || remotes.has(`${match[1]}/${match[2]}`.toLowerCase())) && !/^[0-9a-f]{7,40}\//i.test(match[3])) onBranch(line, match[3]);
+    for (const match of text.matchAll(BACKTICKED_PATH)) inTree(line, match[1]);
   });
   return warnings;
 }
-
-// Notes name repository paths that could not be checked because no checkout holds the cwd.
-const PATH_LIKE = /https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+\/(?:-\/)?(?:blob|tree)\/|`(?:[\w.-]+\/)+[\w-][\w.-]*\.[A-Za-z0-9]{1,8}/;
 
 function recordIdea(options, config) {
   if (!options['--draft'] || !options['--out'] || !options['--config']) fail('read-failed');

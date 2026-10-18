@@ -370,6 +370,60 @@ test('record --notes warnings never change the comment and stay absent when note
   assert.deepEqual(lintNotes('Нет файла: `src/zzz.go` \u2014 старое', null), [{ line: 1, kind: 'long-dash' }]);
 }));
 
+test('record --notes checks root files and extensionless paths without treating tokens as files', () => sandbox(root => {
+  const repo = productRepo(root);
+  write(repo, 'package.json', '{}');
+  write(repo, 'src/Justfile', 'default:\n');
+  write(root, 'config.json', { languages: { linear: 'Russian' } });
+  write(root, 'draft.md', ideaDraft);
+  write(root, 'notes.md', [
+    'Missing root file: `README.md`',
+    'Existing root file: `package.json`',
+    'Missing extensionless file: `src/Makefile:12`',
+    'Existing extensionless file: `src/Justfile`',
+    'Tokens: `issueOnlyLane.enabled`, `models.roles.scout`, `approval_status=approved`, `get_project`',
+  ].join('\n'));
+  const result = runIn(repo, ['record', '--draft', path.join(root, 'draft.md'), '--notes', path.join(root, 'notes.md'),
+    '--config', path.join(root, 'config.json'), '--out', path.join(root, 'out')]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(output.warnings, [
+    { line: 1, kind: 'missing-path', path: 'README.md' },
+    { line: 3, kind: 'missing-path', path: 'src/Makefile' },
+  ]);
+  assert.equal(output.paths, undefined);
+}));
+
+test('record --notes reports the same root and extensionless paths unchecked outside a checkout', () => sandbox(root => {
+  assert.equal(repositoryLike(root), false);
+  write(root, 'config.json', { languages: { linear: 'Russian' } });
+  write(root, 'draft.md', ideaDraft);
+  for (const notes of ['`README.md`', '`package.json`', '`src/Makefile`']) {
+    const result = runIn(root, ['record', '--draft', path.join(root, 'draft.md'), '--notes', write(root, 'notes.md', notes),
+      '--config', path.join(root, 'config.json'), '--out', path.join(root, 'out')]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.paths, 'unchecked', notes);
+    assert.equal(output.warnings, undefined);
+  }
+  const result = runIn(root, ['record', '--draft', path.join(root, 'draft.md'),
+    '--notes', write(root, 'notes.md', '`issueOnlyLane.enabled`, `models.roles.scout`, `approval_status=approved`, `get_project`'),
+    '--config', path.join(root, 'config.json'), '--out', path.join(root, 'out')]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(JSON.parse(result.stdout).paths, undefined);
+}));
+
+test('notes repository identity distinguishes hosts for SSH and HTTPS remotes', () => sandbox(root => {
+  for (const remote of ['git@github.com:acme/app.git', 'https://github.com/acme/app.git', 'ssh://git@github.com/acme/app.git']) {
+    const repo = productRepo(root, remote);
+    assert.deepEqual(lintNotes([
+      'Other host: https://gitlab.com/acme/app/blob/main/src/b.go',
+      'Same host: https://github.com/acme/app/blob/main/src/b.go',
+      'Existing: https://github.com/acme/app/blob/main/src/a.go',
+    ].join('\n'), repo), [{ line: 2, kind: 'missing-path', path: 'src/b.go' }], remote);
+  }
+}));
+
 test('record --notes checks blob links on the named branch and reports unchecked paths outside a checkout', t => sandbox(root => {
   const git = (cwd, ...args) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main', ...args], { cwd, encoding: 'utf8' });
   const repo = path.join(root, 'product');
