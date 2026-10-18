@@ -343,6 +343,7 @@ function recordIdea(options, config) {
     const fence = '`'.repeat(Math.max(3, ...runs.map(length => length + 1)));
     comment = `\`\`\`text\nmono-idea: approved project=${options['--project']} sha256=${fingerprint}\n\`\`\`\n\n` +
       `${fence}mono-idea-snapshot\n${draft}\n${fence}\n\n## Заметки для Research и Handoff\n\n${notes}`;
+    comment = comment.replace(/[\r\n]+$/, '');
     // Notes are outside the fingerprint, but cannot introduce another record.
     approvedRecord({ id: 'record', body: comment }, options['--project'], headings);
   }
@@ -393,11 +394,11 @@ function verifyDump(options, config) {
   if (raw.uuid !== projectId) return verdict('other-project', projectId);
   const { project, records, headings } = readDump(options['--dump'], raw, config);
   const comments = records.comments;
-  const expected = fs.readFileSync(options['--expect'], 'utf8');
-  const matches = comments.filter(comment => comment.body === expected);
+  const expected = fs.readFileSync(options['--expect'], 'utf8').replace(/[\r\n]+$/, '');
+  const matches = comments.filter(comment => comment.body.replace(/[\r\n]+$/, '') === expected);
   if (!matches.length) return verdict('no-record', projectId);
   if (matches.length !== 1) fail('read-failed');
-  // Select the byte-identical comment explicitly: fresh must not pick another
+  // Select the exact comment, ignoring only trailing line endings: fresh must not pick another
   // approval or accept the legacy migration exception for a missing new write.
   return checkIdea({ mode: 'fresh', project, records: { complete: true, comments: matches },
     headings, since: config.ideaGate?.since ?? IDEA_GATE_DEFAULT_SINCE });
