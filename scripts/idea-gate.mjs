@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { digest, isMain, resolveRole } from './runtime.mjs';
 
 export const IDEA_GATE_DEFAULT_SINCE = '2026-10-18';
@@ -325,10 +326,82 @@ function configuredHeadings(config) {
   return headingDictionary(config.ideaGate?.headings ?? config.languages?.linear ?? 'ru');
 }
 
+// The product repository holding the cwd; null when the cwd is not inside a checkout.
+function repositoryRoot(start = process.cwd()) {
+  for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    if (path.dirname(dir) === dir) return null;
+  }
+}
+
+// host/owner/repo of the checkout's remotes (linked worktrees included); empty when unreadable.
+function repositoryRemotes(repo) {
+  try {
+    let gitDir = path.join(repo, '.git');
+    if (fs.statSync(gitDir).isFile()) {
+      gitDir = path.resolve(repo, fs.readFileSync(gitDir, 'utf8').match(/^gitdir:\s*(.+)$/m)[1].trim());
+      const common = path.join(gitDir, 'commondir');
+      if (fs.existsSync(common)) gitDir = path.resolve(gitDir, fs.readFileSync(common, 'utf8').trim());
+    }
+    return new Set([...fs.readFileSync(path.join(gitDir, 'config'), 'utf8').matchAll(/^\s*url\s*=\s*(\S+)\s*$/gm)]
+      .map(match => match[1].match(/^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^/@:\s]+@)?([^/:\s]+(?::\d+)?)[/:]([^/:\s]+\/[^/\s]+?)(?:\.git)?\/?$/i)
+        ?.slice(1).join('/').toLowerCase()).filter(Boolean));
+  } catch { return new Set(); }
+}
+
+// Read-only git lookup: true when <rev>:<path> names an object in the repository.
+function gitHas(repo, spec) {
+  return spawnSync('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', spec], { stdio: 'ignore' }).status === 0;
+}
+
+// A slash makes a path explicit; bare filenames need a file suffix to exclude dotted config keys.
+const BACKTICKED_PATH = /`((?:[\w.-]+\/)+[\w.-]+|[\w.-]+\.(?:md|markdown|jsonc?|ya?ml|toml|ini|cfg|conf|txt|csv|xml|html?|css|scss|[cm]?js|jsx|[cm]?ts|tsx|py|go|rs|rb|php|java|kt|swift|[ch]|[ch]pp|sh|sql|lock))(?::\d+(?:-\d+)?)?`/gi;
+const PATH_LIKE = new RegExp(`https?:\\/\\/[^/\\s]+\\/[^/\\s]+\\/[^/\\s]+\\/(?:-\\/)?(?:blob|tree)\\/|${BACKTICKED_PATH.source}`, 'i');
+
+// Advisory only: notes stay outside the fingerprint and may carry the old project text verbatim,
+// so findings are reported for the agent to fix in its own fact lines and never block the record.
+// A blob/tree link is checked on the branch it names (local or origin/, slashes in the branch
+// allowed), because the link opens that branch, not the working tree; backticked paths are
+// checked in the working tree. Without a readable git repository both fall back to the tree.
+export function lintNotes(notes, repo = repositoryRoot()) {
+  const warnings = [], remotes = repo ? repositoryRemotes(repo) : new Set();
+  const git = Boolean(repo) && spawnSync('git', ['-C', repo, 'rev-parse', '--git-dir'], { stdio: 'ignore' }).status === 0;
+  const clean = file => {
+    let named = file.replace(/[.,;:!?]+$/, '');
+    try { named = decodeURIComponent(named); } catch {}
+    named = named.replace(/^\/+/, '');
+    return !named || named.split('/').includes('..') ? null : named;
+  };
+  const inTree = (line, file) => {
+    const named = clean(file);
+    if (named && !fs.existsSync(path.join(repo, named))) warnings.push({ line, kind: 'missing-path', path: named });
+  };
+  const onBranch = (line, rest) => {
+    const parts = (clean(rest) ?? '').split('/').filter(Boolean);
+    if (parts.length < 2) return;
+    if (!git) return inTree(line, parts.slice(1).join('/'));
+    for (let cut = 1; cut < parts.length; cut++) {
+      const ref = parts.slice(0, cut).join('/'), file = parts.slice(cut).join('/');
+      if (ref.startsWith('-')) continue;
+      if (gitHas(repo, `${ref}:${file}`) || gitHas(repo, `origin/${ref}:${file}`)) return;
+    }
+    warnings.push({ line, kind: 'missing-path', path: parts.slice(1).join('/') });
+  };
+  notes.split('\n').forEach((text, index) => {
+    const line = index + 1;
+    if (text.includes('\u2014')) warnings.push({ line, kind: 'long-dash' });
+    if (!repo) return;
+    for (const match of text.matchAll(/https?:\/\/([^/\s]+)\/([^/\s]+\/[^/\s]+)\/(?:-\/)?(?:blob|tree)\/([^\s#?<>()\]]+)/g))
+      if ((!remotes.size || remotes.has(`${match[1]}/${match[2]}`.toLowerCase())) && !/^[0-9a-f]{7,40}\//i.test(match[3])) onBranch(line, match[3]);
+    for (const match of text.matchAll(BACKTICKED_PATH)) inTree(line, match[1]);
+  });
+  return warnings;
+}
+
 function recordIdea(options, config) {
-  if (!options['--draft'] || !options['--out'] || !options['--config'] ||
-      (options['--notes'] && !options['--project'])) fail('read-failed');
+  if (!options['--draft'] || !options['--out'] || !options['--config']) fail('read-failed');
   const draft = fs.readFileSync(options['--draft'], 'utf8'), headings = configuredHeadings(config);
+  const notes = options['--notes'] ? fs.readFileSync(options['--notes'], 'utf8') : '';
   const found = sections(draft, headings, true, true), fingerprint = ideaFingerprint(draft, headings);
   const body = KEYS.slice(0, 3).map(key => {
     const content = [...found[key]];
@@ -338,7 +411,6 @@ function recordIdea(options, config) {
   let comment;
   if (options['--project']) {
     if (!uuid(options['--project'])) fail('read-failed');
-    const notes = options['--notes'] ? fs.readFileSync(options['--notes'], 'utf8') : '';
     const runs = [...draft.matchAll(/`+/g)].map(match => match[0].length);
     const fence = '`'.repeat(Math.max(3, ...runs.map(length => length + 1)));
     comment = `\`\`\`text\nmono-idea: approved project=${options['--project']} sha256=${fingerprint}\n\`\`\`\n\n` +
@@ -350,11 +422,17 @@ function recordIdea(options, config) {
   fs.mkdirSync(options['--out'], { recursive: true });
   fs.writeFileSync(path.join(options['--out'], 'body.md'), body);
   if (comment !== undefined) fs.writeFileSync(path.join(options['--out'], 'comment.md'), comment);
+  const repo = options['--notes'] ? repositoryRoot() : null;
+  const warnings = options['--notes'] ? lintNotes(notes, repo) : [];
+  const unchecked = Boolean(options['--notes']) && !repo && PATH_LIKE.test(notes);
   console.log(JSON.stringify({ body: path.join(options['--out'], 'body.md'),
-    ...(comment !== undefined ? { comment: path.join(options['--out'], 'comment.md') } : {}), fingerprint }));
+    ...(comment !== undefined ? { comment: path.join(options['--out'], 'comment.md') } : {}), fingerprint,
+    ...(warnings.length ? { warnings } : {}), ...(unchecked ? { paths: 'unchecked' } : {}) }));
 }
 
-function readDump(root, raw, config) {
+// elidedBodies (verify only): a comment may omit body; it then cannot be the expected record.
+// The fresh check over all comments keeps every body, so a newer record can never hide.
+function readDump(root, raw, config, { elidedBodies = false } = {}) {
   if (!object(raw) || !uuid(raw.uuid)) fail('read-failed');
   const headings = configuredHeadings(config);
   const project = { id: raw.uuid, createdAt: raw.createdAt, status: raw.status?.name,
@@ -376,11 +454,11 @@ function readDump(root, raw, config) {
     previousCursor = page.cursor;
     for (const item of page.comments) {
       if (!object(item) || typeof item.id !== 'string' || !item.id || ids.has(item.id) ||
-          typeof item.body !== 'string' || !Number.isFinite(date(item.createdAt)) ||
+          (typeof item.body !== 'string' && !(elidedBodies && !Object.hasOwn(item, 'body'))) || !Number.isFinite(date(item.createdAt)) ||
           !Number.isFinite(date(item.updatedAt)) || date(item.updatedAt) > previousUpdatedAt) fail('read-failed');
       previousUpdatedAt = date(item.updatedAt);
       ids.add(item.id);
-      comments.push({ id: item.id, createdAt: item.createdAt, body: item.body });
+      if (typeof item.body === 'string') comments.push({ id: item.id, createdAt: item.createdAt, body: item.body });
     }
   }
   return { project, records: { complete: true, comments }, headings };
@@ -392,7 +470,7 @@ function verifyDump(options, config) {
   const raw = readJson(path.join(options['--dump'], 'project.json'));
   if (!object(raw) || !uuid(raw.uuid)) fail('read-failed');
   if (raw.uuid !== projectId) return verdict('other-project', projectId);
-  const { project, records, headings } = readDump(options['--dump'], raw, config);
+  const { project, records, headings } = readDump(options['--dump'], raw, config, { elidedBodies: true });
   const comments = records.comments;
   const expected = fs.readFileSync(options['--expect'], 'utf8').replace(/[\r\n]+$/, '');
   const matches = comments.filter(comment => comment.body.replace(/[\r\n]+$/, '') === expected);
@@ -459,7 +537,14 @@ function main(argv) {
 Dump: project.json and comments-N.json are raw Linear responses (N=1,2,...).
 Each response needs comments-N.request.json: {} for page 1, {"cursor":"previous response cursor"} thereafter.
 Save the actual request cursor; the final response has hasNextPage=false and no cursor.
-record refuses unrecognized sections or text outside the four sections before writing files.`);
+Only the fields the script reads are needed: project uuid, createdAt, status.name, description;
+per page comments, hasNextPage, cursor; per comment id, createdAt, updatedAt and body.
+verify accepts comments without body (they cannot match --expect); check --dump needs every body.
+record refuses unrecognized sections or text outside the four sections before writing files.
+record --notes (with or without --project) adds advisory "warnings" for long dashes and
+repository paths that do not exist: blob/tree links on the branch they name (local or origin/),
+backticked paths in the checkout holding the current directory. Outside a checkout, notes with
+such paths add "paths":"unchecked".`);
     return;
   }
   if (['record', 'verify', 'helper'].includes(argv[0])) return authoringMain(argv);

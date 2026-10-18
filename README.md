@@ -145,7 +145,7 @@ raw idea → Project in Idea → recorded owner yes → Research (Project status
 → mono:deploy → verification → Linear closeout and project update
 ```
 
-1. **Capture.** Bring a raw idea to `mono:idea`. Stage names stay English (Idea, Research, Discovery); the rebuilt stage is Russian. Two read-only scouts search Linear and code in parallel, then the agent recaps and asks meaning questions one at a time, at most three, using the host choice tool (text with a recommendation in Codex without one). A route question is separate; scope belongs to later stages. Show What / Why / Target outcome / prioritized Unknowns and stop for the owner's yes to this version. Follow [the recording reference](skills/idea/references/record.md); only «Готово» from `verify` permits the status move to Discovery, followed by read-back and `mono:check idea`. A returned Project with the three idea sections unchanged keeps body/package/status. Without them, write the approved body and change status only from Idea; corrections follow the package-aware return rules below. Next: Research (`mono:research`) from the first Unknown. The stage stops after its final message. An unmistakable one-PR request routes to `mono:issue` only with the configured lane enabled and `ownerPrincipal` present. In orchestration, the orchestrator runs Idea itself, answers the questions with reasons and shows «Ответил сам:»; the owner alone gives yes, separately from later package approval.
+1. **Capture.** Bring a raw idea to `mono:idea`. Stage names stay English (Idea, Research, Discovery); the rebuilt stage is Russian. The agent acts as the founder's project manager: its first message restates the idea with a time estimate, the host plan lists 3-4 steps in the idea's words, and no wait passes without a one-line status. Two read-only scouts search Linear and code in the background; the first result is shown as it lands and an early route question may come before the code result. The agent recaps with its own pick among priced options and asks meaning questions, at most three, each from the last answer, using the host choice tool (one plain-text question with a recommendation in Codex without one). The agent says plainly when it would not build the idea as asked. The project name is shown before the yes; the record is prepared while the owner reads, nothing is written to Linear before the yes, and after the yes there is one status line, then the final message. A route question is separate; scope belongs to later stages. Show What / Why / Target outcome / prioritized Unknowns and stop for the owner's yes to this version. Follow [the recording reference](skills/idea/references/record.md); only «Готово» from `verify` permits the status move to Discovery, followed by read-back and `mono:check idea`. A returned Project with the three idea sections unchanged keeps body/package/status. Without them, write the approved body and change status only from Idea; corrections follow the package-aware return rules below. Next: Research (`mono:research`) from the first Unknown. The stage stops after its final message; the owner's yes also covers starting Research, so the agent invokes it unless the owner asked to hold it. An unmistakable one-PR request routes to `mono:issue` only with the configured lane enabled and `ownerPrincipal` present. In orchestration, the orchestrator runs Idea itself, answers the questions with reasons and shows «Ответил сам:»; the owner alone gives yes, separately from later package approval.
 2. **Research.** Run `mono:research` after the owner’s Idea yes, using raw Linear responses with `idea-gate check --mode fresh --dump`. Write a brief, gather internal and external facts through source scouts, check the advice against sources and a second model, then read back one Research («Исследование») document and one stage-task log comment. No owner questions, separate yes, solution selection or execution Issues. The orchestrator runs this stage itself and returns the result. A tiny reversible project gets `not-required` with a reason; missing facts get `hold` and a cheap next check. Stop with advice and the next stage: `mono:discovery`. Existing Projects without Research route here, except packages approved before `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
 3. **Discover.** Run `mono:discovery` after Idea and Research: up to three real product solutions, explicit choice, details, chosen PRD in Linear and yes bound to the shown `updatedAt`. Tiny work gets a short PRD without second model or builder. Close/defer can exit without PRD, with reason and return condition in the closed stage task. In orchestration the session runs the stage itself, answers with sources, gives its own yes and returns the result without waiting; the owner can overturn it.
 4. **Package.** Run `mono:handoff` with approved PRD read-only. It calls `mono:check discovery` once, drafts Tech Spec and execution-Issue slicing, reviews the package before writing and obtains package approval. Before accepting the package answer it rereads the approved PRD and compares `updatedAt` with the referenced approval; a change returns to Discovery for renewed yes. A PRD finding before approval returns to Discovery with renewed yes in the same owner touch; after approval normal repair and Ship drift rules apply without PRD-yes recheck. Handoff drafts PRD only on the old path defined in [Discovery](references/lifecycle.md#discovery). `discoveryGate.since` overrides that cutoff (currently `2099-12-31` until release); absent Research still requires the independent Research exception. Documents alone never authorize Delivery.
@@ -168,7 +168,10 @@ Verified-record recovery applies only when the current request neither changes n
 adds to the idea; changed input takes the normal updated-description/owner-yes path.
 `node scripts/read-budget.mjs --skill idea --mandatory` reports its required
 corpus, explicitly including both scout task files; the complete mandatory set is
-20,441 bytes, below 20,480 without conditional reads. Scout definitions are read
+19,969 bytes, below 20,480 without conditional reads. The recording reference and
+the Project contract are conditional and are read while the scouts search, before
+the description is shown; orchestrator specifics live in a conditional
+`skills/idea/references/orchestrator.md`. Scout definitions are read
 by the scouts themselves, not by Idea: Codex receives absolute definition paths
 and tells each subagent to read its own file first, skipping frontmatter. Both
 English read tiers stay valid for every stage. [The shared Russian-stage list](scripts/russian-stages.mjs)
@@ -205,7 +208,13 @@ one-line known facts with source links for Research.
 «да», точный четырёхраздельный снимок и заметки вне отпечатка. Handoff добавляет
 разделы границ работы в тело проекта. Лишний раздел `##` или текст вне четырёх
 разделов в черновике дают «Стоп» (`unsupported-format`) до записи файлов.
-`comment.md` записывается без завершающих переводов строки.
+`comment.md` записывается без завершающих переводов строки. `--notes` можно
+передать и без `--project`, до «да»: тогда появляется только `body.md`. В обоих
+случаях ответ получает необязательный `warnings`: строки заметок с длинным тире
+и пути, которых нет: ссылка `…/blob/<ветка>/<путь>` проверяется на этой ветке
+(локальной или `origin/`, только чтение git), путь в обратных кавычках в checkout, где
+запущена команда; ссылки на другие репозитории и на коммиты не проверяются. Вне
+checkout заметки с путями дают `"paths":"unchecked"`. Предупреждения не блокируют запись.
 
 `idea-gate.mjs verify --project UUID --dump DIR --expect COMMENT --config CONFIG`
 читает ответы Linear как есть: `project.json`, `comments-1.json`, `comments-2.json`…
@@ -213,7 +222,11 @@ one-line known facts with source links for Research.
 cursor: `{}` для первой страницы, `{"cursor":"…"}` для следующих. Каждый следующий
 запрос должен продолжать cursor предыдущего ответа; перенумерация файлов не
 заменяет эту цепочку. Нужны все страницы: `hasNextPage`, cursor последнего
-комментария на промежуточных, без cursor на последней. Байты ответов не меняются.
+комментария на промежуточных, без cursor на последней. Достаточно полей, которые
+читает скрипт (`uuid`, `createdAt`, `status.name`, `description`; `comments`,
+`hasNextPage`, `cursor`; у комментария `id`, `createdAt`, `updatedAt`, `body`), их
+значения не меняются. Для `verify` у комментариев без записи «да» `body` можно
+опустить; `check --dump` требует все тела.
 UUID берётся из `uuid`, а не из человекочитаемого `id`.
 «Готово» означает `pass` для комментария `--expect`: при сравнении снимаются только
 завершающие переводы строк с обеих сторон, остальной текст совпадает байт в байт.
