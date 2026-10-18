@@ -104,10 +104,10 @@ Settings > Notifications will change email, mobile push, and quiet-hours behavio
 Expected behavior:
 
 1. `mono:handoff` classifies the package as `deep` or `risky`.
-2. Project, PRD, and Tech Spec are updated first.
+2. The approved PRD is already in Linear, read-only; Handoff drafts Project, Tech Spec and execution-Issue slicing before writing them.
 3. `mono:review handoff` reports `needs-fixes` if actors, flows, requirement trace, validation, or rollout are weak.
-4. User accepts or rejects proposed fixes.
-5. `mono:handoff` applies accepted artifact fixes and records acceptance as a Linear comment.
+4. Handoff fixes its draft; PRD findings return to Discovery for the affected changes and renewed yes.
+5. The user approves the reviewed package (and renewed PRD yes when needed) in one touch; Handoff records acceptance as a Linear comment, then writes its package artifacts.
 6. `mono:check handoff` and `mono:check issue` run or are reported before implementation can start.
 7. `mono:implement` verifies implementation-start approval, moves the Project to Delivery after prerequisites are explicit, then runs or reports `mono:check delivery`.
 

@@ -439,7 +439,22 @@ function retiredAdapterReferenceAllowed(relativePath) {
   );
 }
 
+function hasRetiredAdapterReference(body) {
+  // The exact PRD approval marker names a record, not a retired skill.
+  return /mono-(?:project|prd|spec)(?:\/SKILL\.md)?/.test(body.replaceAll("mono-prd: approved", ""));
+}
+
 function validateRetiredAdapterReferenceAllowlist() {
+  for (const [name, body, expected] of [
+    ["prd-approval-record", "mono-prd: approved project=<uuid>", false],
+    ["prd-approval-reference", "`mono-prd: approved`", false],
+    ["retired-prd-adapter", "mono-prd/SKILL.md", true],
+    ["retired-project-adapter", "mono-project", true],
+    ["retired-spec-adapter", "mono-spec", true],
+    ["approval-with-retired-adapter", "mono-prd: approved\nmono-prd/SKILL.md", true],
+  ]) {
+    if (hasRetiredAdapterReference(body) !== expected) fail(`Retired adapter fixture ${name} failed`);
+  }
   if (retiredAdapterReferenceAllowed("README.md")) {
     fail("Retired adapter reference allowlist must reject active documentation");
   }
@@ -453,8 +468,6 @@ function validateRetiredAdapterReferenceAllowlist() {
   })
     .split("\n")
     .filter(Boolean);
-  const retiredReference = /mono-(?:project|prd|spec)(?:\/SKILL\.md)?/;
-
   for (const relativePath of files) {
     if (!exists(relativePath) || retiredAdapterReferenceAllowed(relativePath)) continue;
     // `git ls-files` reports a nested repository — a linked worktree or a
@@ -462,7 +475,7 @@ function validateRetiredAdapterReferenceAllowlist() {
     // it raises EISDIR. Only a regular file carries text to scan.
     if (!fs.statSync(path.join(root, relativePath)).isFile()) continue;
     const body = read(relativePath);
-    if (retiredReference.test(body)) {
+    if (hasRetiredAdapterReference(body)) {
       fail(
         `${relativePath} references a retired Project/PRD/Tech Spec adapter outside the historical migration allowlist`
       );
