@@ -23,6 +23,7 @@ const EXPECTED_SKILLS = [
   "check",
   "deploy",
   "deliver",
+  "discovery",
   "handoff",
   "idea",
   "implement",
@@ -438,7 +439,22 @@ function retiredAdapterReferenceAllowed(relativePath) {
   );
 }
 
+function hasRetiredAdapterReference(body) {
+  // The exact PRD approval marker names a record, not a retired skill.
+  return /mono-(?:project|prd|spec)(?:\/SKILL\.md)?/.test(body.replaceAll("mono-prd: approved", ""));
+}
+
 function validateRetiredAdapterReferenceAllowlist() {
+  for (const [name, body, expected] of [
+    ["prd-approval-record", "mono-prd: approved project=<uuid>", false],
+    ["prd-approval-reference", "`mono-prd: approved`", false],
+    ["retired-prd-adapter", "mono-prd/SKILL.md", true],
+    ["retired-project-adapter", "mono-project", true],
+    ["retired-spec-adapter", "mono-spec", true],
+    ["approval-with-retired-adapter", "mono-prd: approved\nmono-prd/SKILL.md", true],
+  ]) {
+    if (hasRetiredAdapterReference(body) !== expected) fail(`Retired adapter fixture ${name} failed`);
+  }
   if (retiredAdapterReferenceAllowed("README.md")) {
     fail("Retired adapter reference allowlist must reject active documentation");
   }
@@ -452,8 +468,6 @@ function validateRetiredAdapterReferenceAllowlist() {
   })
     .split("\n")
     .filter(Boolean);
-  const retiredReference = /mono-(?:project|prd|spec)(?:\/SKILL\.md)?/;
-
   for (const relativePath of files) {
     if (!exists(relativePath) || retiredAdapterReferenceAllowed(relativePath)) continue;
     // `git ls-files` reports a nested repository — a linked worktree or a
@@ -461,7 +475,7 @@ function validateRetiredAdapterReferenceAllowlist() {
     // it raises EISDIR. Only a regular file carries text to scan.
     if (!fs.statSync(path.join(root, relativePath)).isFile()) continue;
     const body = read(relativePath);
-    if (retiredReference.test(body)) {
+    if (hasRetiredAdapterReference(body)) {
       fail(
         `${relativePath} references a retired Project/PRD/Tech Spec adapter outside the historical migration allowlist`
       );
@@ -586,7 +600,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "f89ac50904889292bfd486e5c5bbb1d3784b01bfe1bc5e4a71dc51fdd6c00b4d",
+      contractFingerprint: "25d5cd949de2d4c3a2320dcde9a8718a374fe6fcb454f743ec361e0741571c66",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/handoff/SKILL.md",
@@ -597,8 +611,9 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/prd.md",
       ledgerSourcePath: "references/contracts/prd.md",
       templatePath: "templates/prd.md",
-      contractFingerprint: "47eb271b57b398e9a8004abcd5664942f9b6ebcad3783e0791a4bb1ed7c51389",
+      contractFingerprint: "d1c46a65548fd609e48f1838fbeb2ec8dcff45a0ce9f921e1dce4146dc1be5a6",
       contractConsumers: [
+        "skills/discovery/SKILL.md",
         "skills/handoff/SKILL.md",
         "skills/ship/SKILL.md",
       ],
@@ -656,7 +671,7 @@ function validateArtifactContractParity() {
         }
         const consumer = read(consumerPath);
         const { paths } = extractReadFirstEntries(consumer, consumerPath);
-        if (isRussianStage(consumerPath) && config.contractPath === "references/contracts/project.md") {
+        if (isRussianStage(consumerPath)) {
           const tier = readTierBounds(consumer, consumerPath);
           if (tier) for (const line of consumer.slice(tier.start, tier.end).split("\n")) {
             paths.push(...(conditionalReadPaths(line, consumerPath) ?? []));
@@ -797,6 +812,7 @@ function validateRepairAndRoutingContract() {
     ["existing-project-pre-ship-drift", "mono:ship"],
     ["issue-only-body-edit", "mono:issue"],
     ["existing-project-targeted-repair", "mono:handoff repair"],
+    ["prd-before-package-approval", "mono:discovery"],
   ];
   for (const [fixture, expectedOwner] of routingOverlapFixtures) {
     const rowPattern = new RegExp(
@@ -5519,6 +5535,10 @@ const STRING_PINS = [
   ["skills/idea/SKILL.md", "references/record.md"],
   ["skills/idea/SKILL.md", "mono:check idea"],
   ["skills/idea/references/record.md", "mono-idea: approved project=<uuid> sha256=<64 hex>"],
+  ["skills/discovery/references/prd.md", "mono-prd: approved"],
+  ["skills/discovery/references/prd.md", "by=owner"],
+  ["skills/discovery/references/orchestrator.md", "by=orchestrator"],
+  ["references/repair-machine.md", "prd-before-package-approval"],
   ["skills/idea/references/record.md", "node <корень>/scripts/idea-gate.mjs verify --project <id> --dump <папка>/linear"],
   ["skills/handoff/SKILL.md", "approval_status=approved"],
   ["skills/implement/SKILL.md", "node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>"],
@@ -6094,6 +6114,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "mono-prd: approved", "by=owner", "by=orchestrator", "prd-before-package-approval",
   "Этап", // MONO-183: Linear stage-task label, not editorial wording.
   "mono-research", "ready", "hold", "not-required", "web-scout", "mono:research",
   "reader", "subagent", "definitions",
@@ -6931,6 +6952,7 @@ function validateAe6Fixtures() {
     negative("unlisted stage with conditional Project contract", () => change("skills/handoff/SKILL.md", text => text
       .replace(/^2\. `references\/contracts\/project.md`\n/m, "")
       .replace(/^Read when.*$/m, "$&\n- `references/contracts/project.md` — before fixture write.")), "must read references/contracts/project.md as its normative artifact source");
+    negative("Discovery conditional PRD contract removed", () => change("skills/discovery/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/prd\.md`:[^\n]+\n/m, "")), "must read references/contracts/prd.md as its normative artifact source");
     negative("Idea conditional Project contract removed", () => change("skills/idea/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/project\.md`:[^\n]+\n/m, "")), "must read references/contracts/project.md as its normative artifact source");
     negative("required section removed", () => change("references/issue-only-lane.md", (text) => text.replace("### Post-`ready` exit\n", "")), "missing or duplicate section");
     for (const [, field, value] of LANE_FIELDS) {

@@ -14,16 +14,18 @@ Evaluate stage-specific ownership before the general front-door order. Accepted 
 | --- | --- | --- | --- |
 | `existing-project-pre-ship-drift` | An existing Project has drift accepted during pre-ship. | `mono:ship` | Run accepted drift sync in ship; do not enter handoff repair. |
 | `issue-only-body-edit` | An existing issue-only Issue body needs any edit. | `mono:issue` | Run create-then-approve renewal; do not enter handoff repair. |
-| `existing-project-targeted-repair` | An existing Project has a targeted PRD or Tech Spec repair request before pre-ship. | `mono:handoff repair` | Enter the stable-ID classification and class transaction; do not run ordinary package creation. |
+| `prd-before-package-approval` | PRD edit before package approval. | `mono:discovery` | Repeat affected Discovery and obtain new PRD yes; after approval normal repair applies without PRD-yes recheck. |
+| `existing-project-targeted-repair` | An existing Project has a Tech Spec or approved-package PRD repair request before pre-ship. | `mono:handoff repair` | Enter the stable-ID classification and class transaction; do not run ordinary package creation. |
 
 Only when neither override matches, apply the front-door order:
 
 1. A raw idea routes to `mono:idea`.
 2. An unmistakably one-PR projectless request routes to `mono:issue`.
-3. A targeted PRD or Tech Spec repair in a Project-first package routes to
+3. A PRD edit before package approval routes to `mono:discovery`; a targeted
+   Tech Spec or approved-package PRD repair routes to
    `mono:handoff` repair mode.
-4. Existing Project or shaped discovery context that is not a targeted repair
-   routes to ordinary `mono:handoff` package creation.
+4. Other existing Projects: PC-001 (`references/contracts/project.md`) routes via
+   Research, approved PRD/Discovery, then ordinary `mono:handoff` packaging.
 
 Any route ambiguity fails closed to the Project-first `mono:handoff` path;
 ambiguity inside a proposed repair fails closed to class 3.

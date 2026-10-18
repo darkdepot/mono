@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Use for an existing Project or shaped discovery to create the Project-first package, or for targeted PRD or Tech Spec repair. A Project without Research («Исследование») routes to mono:research, except a package approved before researchGate.since from config, otherwise RESEARCH_GATE_DEFAULT_SINCE from scripts/idea-gate.mjs. Raw ideas route to mono:idea, unmistakable one-PR projectless work to mono:issue, and pre-ship drift to mono:ship.
+description: Use for an existing Project with research and an approved PRD (or on the old path) to create the Project-first package, or for Tech Spec and approved-package repair. Raw ideas route to mono:idea, a Project without research to mono:research (except a package approved strictly before researchGate.since), without an approved PRD to mono:discovery, unmistakable one-PR projectless work to mono:issue, and pre-ship drift to mono:ship.
 ---
 
 # Mono Handoff
@@ -40,16 +40,16 @@ Every "Read when" entry is a real requirement once its condition holds: the tier
 
 When to use:
 
-- After `/office-hours` or `/brainstorming`.
+- After `mono:discovery` approved the shown PRD version, or on the old path.
 - After `/plan-design-review` or `/plan-eng-review`.
 - When a discovery or review session produced an implementation plan and the user wants to proceed through Linear.
 - When shaped context exists but Linear Project, PRD, Tech Spec, and Issues are not yet current.
-- When an existing Project-first PRD or Tech Spec needs targeted repair before pre-ship.
+- When a Tech Spec or approved Project-first package needs targeted repair before pre-ship; PRD edits before package approval return to `mono:discovery`.
 
 Inputs to gather:
 
 - Linear Project link or id from `mono:idea`.
-- Current conversation discovery decisions.
+- Approved PRD and its Project yes comment; Discovery decision comment and its selected Research link (a sole Research document selects itself); current discovery decisions.
 - Relevant `/office-hours`, `/brainstorming`, `/plan-design-review`, and `/plan-eng-review` outputs.
 - Existing Linear Project, PRD, Tech Spec, and Issues.
 - Latest `mono:review` report when one already exists.
@@ -84,10 +84,10 @@ Package Issue membership, slicing and approval mean [execution Issues](reference
 
 - The pre-write approval screen must be a package map, not an idea recap.
 - It must include:
-  - "Nothing written yet" or the exact mutation boundary.
+  - The exact mutation boundary: approved PRD is already Linear truth and read-only; only the old path drafts it.
   - Project brief shape.
-  - PRD product decisions.
-  - The Research document link and its reason when `not-required`; for `stale`, the recorded Unknowns Research investigated. The approval comment must name that document and reason too.
+  - Approved PRD product decisions and yes record (`document`, `updatedAt`); package approval references it, without reapproving PRD. A required renewed PRD yes after a Handoff finding is taken in this same owner touch.
+  - The Research document selected by Discovery (decision-comment link, or the sole document) and its reason when `not-required`; for `stale`, the recorded Unknowns Research investigated. The approval comment must name that document and reason too.
   - PRD actor -> capability -> benefit coverage and behavior-validation intent.
   - Tech Spec implementation decisions.
   - «Решил сам:» — non-contested product choices the agent took itself, each with a one-line reason; overriding any of them is a valid approval answer.
@@ -100,7 +100,7 @@ Package Issue membership, slicing and approval mean [execution Issues](reference
 Draft package example:
 
 ```text
-Готов handoff draft. В Linear пока ничего не записывал.
+Готов handoff draft. PRD уже утверждён в Linear; Tech Spec и задачи пока не записаны.
 
 Я разложил approved discovery в пакет так:
 
@@ -152,7 +152,7 @@ Plan: turn discovery into a Linear-backed execution package
 
 1. Gather discovery and review context from this session and available artifacts.
 2. Prepare the Linear Project update as a concise product brief.
-3. Prepare the PRD from product and workflow decisions.
+3. Read the approved PRD; draft a PRD only on the old path.
 4. Prepare the Tech Spec from engineering and design review decisions.
 5. Classify risk and identify whether `mono:review handoff` is required or advisory.
 6. Run the pre-write handoff review on the draft package and apply the accepted fixes to the draft, before any durable write.
@@ -188,7 +188,7 @@ Repair-mode workflow:
 
 Execution-mode workflow:
 
-1. Fetch fresh Linear Project, PRD, Tech Spec, and Issue state.
+1. Fetch fresh Linear Project, PRD, Tech Spec, and Issue state. On entry call `mono:check discovery` once; reuse its result (including old-path/package state) only while its checked inputs remain unchanged, rather than duplicating its conditions. Refusal stops here with its named owner.
 2. Gather discovery and review artifacts using `references/artifact-intake.md`.
    - Inspect explicit user-provided artifact paths and Linear resources first.
    - Inspect fresh Linear Project, PRD, Tech Spec, Issues, comments, and review reports.
@@ -197,13 +197,13 @@ Execution-mode workflow:
    - Inspect local gstack artifacts only when scoped by project slug, branch/session, or explicit filename match.
    - Do not perform broad home-directory scans.
    - Produce `read`, `unavailable`, `stale_or_ignored`, `conflicts`, `decisions_carried_forward`, and `confidence_boundary`.
-   Before drafting, save raw Linear Project and all comment page responses unchanged as `project.json`, `comments-N.json` and `comments-N.request.json` (`{}` first, then `{"cursor":"<previous response cursor>"}`). Run `node <pack-root>/scripts/idea-gate.mjs check --mode fresh --dump <dir> --config <path>`. Continue on `pass`; on `stale` or `legacy-migrate`, include the current four-section idea in the package approval brief, so package approval also approves that exact version. For `stale`, keep the Unknowns from the recorded version that Research investigated, not newly invented ones. On `no-record` for a new project, run `mono:idea` first. Other refusals block with project/code; never bypass a failed read.
-   Read the Project’s Research («Исследование») document before drafting. Missing: route to `mono:research`, except a package approved before `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`. Until Discovery is installed, advice «не делать» or «отложить» goes to the owner first: decide whether to continue before drafting the package.
+   Use the entry check's `fresh` result. On `stale` or `legacy-migrate`, show the current four-section idea in the package touch; for `stale`, retain the recorded Unknowns Research investigated. Package approval also approves that version. On the old path only, bring Research advice «не делать» / «отложить» to the owner before drafting; record the decision and handle each Н below. On the new path Discovery already owns those decisions.
+
 3. Synthesize a draft handoff package before mutating durable Linear artifacts:
    - Artifact intake summary and confidence boundary.
    - Project summary as a concise product brief.
-   - PRD as product truth with requirement IDs and acceptance examples when useful.
-   - Until Discovery owns this, PRD section «Что решили по неизвестным Research»: one decision per Н — решено (как), принимаем риск (какой), проверяем параллельно (как, где результат), сначала проверить (only when building requires the answer), не делаем (почему).
+   - PRD as product truth with requirement IDs and acceptance examples; approved PRD read-only, draft only on the old path.
+   - Old path only: PRD section «Что решили по неизвестным Research»: one decision per Н — решено (как), принимаем риск (какой), проверяем параллельно (как, где результат), сначала проверить (only when building requires the answer), не делаем (почему).
    - PRD coverage check for actor, capability, benefit, and behavior-validation intent.
    - Tech Spec as implementation truth that traces HOW decisions back to PRD requirements.
    - Apply [landing slicing](references/landing.md#scheduling) when forming Issue dependencies.
@@ -220,14 +220,14 @@ Execution-mode workflow:
    - Bug and performance Issues carry a reproduction or feedback-loop expectation.
    - Operational status, lifecycle gates, and workflow mechanics are absent from Linear-facing bodies.
 5. Run the pre-write handoff review on the draft package, before the first durable Linear write:
-   - The reviewed subject is the draft itself: draft Project brief, draft PRD, draft Tech Spec, and the proposed [execution Issues](references/lifecycle.md#задачи-этапов) slicing, submitted to the reviewer as its input. None of those bodies is written to Linear yet, and that absence is the expected state of this mode, not a missing artifact. The Project entity may already exist — this stage often runs for an existing Project — and stays available as surrounding context; what has not been written is the drafted content.
+   - The reviewed subject is the draft itself: draft Project brief, approved PRD read-only (draft PRD only on the old path), draft Tech Spec, and the proposed [execution Issues](references/lifecycle.md#задачи-этапов) slicing, submitted to the reviewer as its input. Draft bodies are not written yet; the approved PRD already exists and is not a draft. Its presence is expected, not a missing draft. The Project entity may already exist — this stage often runs for an existing Project — and stays available as surrounding context; what has not been written is the drafted content.
    - "Before the first durable Linear write" means before the first Linear mutation this run applies — or, where the run queues mutations instead of applying them, before the first mutation it queues. The write-versus-queue substitution has one home, Orchestration Mode Precedence in `references/orchestration.md`; read the timing from there rather than from a second copy of the rule.
    - The gate is required for `standard`, `deep`, and `risky` per `references/readiness-gates.md`: no durable write of the package happens until the review ran and its blocking findings are resolved, accepted, or explicitly deferred. For `tiny` the gate stays advisory, and skipping it requires the recorded skip reason.
    - Interactive runs invoke `mono:review handoff` report-only over the draft package. Orchestrated runs delegate the same handoff-review contract to an independent Second Voice reviewer agent per `references/orchestration.md`; that reviewer is a discovery agent with no Linear-write capability and no owner contact, and its findings return to this stage.
-6. Apply accepted review fixes to the draft package, and re-review the draft after any material change to any reviewed component of it — Project brief, PRD requirements, Tech Spec implementation or validation decisions, [execution Issues](references/lifecycle.md#задачи-этапов) slicing, risk classification, or rollout. Only editorial changes that alter no decision skip the re-review, and that judgment is recorded with the verdict. Fixes land in the draft, never in an already-written Linear artifact.
+6. A finding requiring PRD edits before package approval returns to `mono:discovery` for the affected parts and renewed yes in the same owner touch as package approval; Handoff never edits the approved PRD. Apply other accepted review fixes to the draft package, and re-review the draft after any material change to any reviewed component of it — Project brief, PRD requirements, Tech Spec implementation or validation decisions, [execution Issues](references/lifecycle.md#задачи-этапов) slicing, risk classification, or rollout. Only editorial changes that alter no decision skip the re-review, and that judgment is recorded with the verdict. Handoff fixes land in its draft; an approved PRD is read-only and its fixes belong to Discovery.
 7. Present one owner touch: the draft package summary together with the review disposition — the verdict with its remaining blocking findings, proposed fixes, and decisions, or, for a `tiny` package whose advisory gate was skipped, the recorded skip reason — for package approval before durable writes.
-8. If approval is missing, rejected, or changes are requested, do not create Issue(s), do not move the Project to Delivery, revise and re-present or stop as `BLOCKED / INCOMPLETE` with current links. An owner-requested revision follows the same rule as step 6: any material change to any reviewed component returns through steps 5-6 before it is re-presented, and only an editorial change that alters no decision does not. The disposition in the owner's touch always belongs to the draft being approved, never to a superseded one.
-9. After package approval, create or update PRD and Tech Spec in Linear.
+8. On the new path, immediately before accepting the package answer, reread the approved PRD and compare its current `updatedAt` with the approved PRD record named in the package. Any difference invalidates the entry result: do not accept package approval; return to `mono:discovery` for renewed yes in the same owner touch. If approval is missing, rejected, or changes are requested, do not create Issue(s), do not move the Project to Delivery, revise and re-present or stop as `BLOCKED / INCOMPLETE` with current links. An owner-requested revision follows the same rule as step 6: any material change to any reviewed component returns through steps 5-6 before it is re-presented, and only an editorial change that alters no decision does not. The disposition in the owner's touch always belongs to the draft being approved, never to a superseded one.
+9. After package approval, create or update only Tech Spec in Linear (PRD too only on the old path). Reference the PRD yes record (`document`, `updatedAt`) and the Research selected by Discovery in the approval comment; the launch check reads that same Research. After approval, repairs follow `references/repair-machine.md`; PRD yes is no longer rechecked.
 10. Update the Project body with only the product brief concerns: what, why, target outcome, in scope, and out of scope. Render headings in the project config language; default Russian headings are `Что`, `Зачем`, `Образ результата`, `Что входит`, and `Что не входит`. Do not touch the lead of an existing Project here: `mono:idea` sets it when the Project is created, and updating a Project never reassigns it.
 11. Record approval as a Linear comment. The comment should identify the approved package, PRD/Tech Spec links or intended titles, approved [execution Issues](references/lifecycle.md#задачи-этапов) slice titles or ids, the review verdict with the accepted fixes and any explicit deferrals or recorded advisory-skip reason, and whether implementation may start.
     Include exactly one `approval_status=approved` line in the package approval comment. For `stale` or `legacy-migrate`, that same comment also records the owner's approved idea: fingerprint the shown four-section UTF-8 snapshot with `node <pack-root>/scripts/idea-gate.mjs fingerprint --snapshot <file> --config <path>`, then include separate `text` and `mono-idea-snapshot` fences containing `mono-idea: approved project=<uuid> sha256=<64 hex>` and the exact snapshot. Unknowns stay in the record, not the Project body. Read the comment back and verify project, marker, snapshot and fingerprint before proceeding; the ordinary package touch is the approval, never an inferred agent decision. Rebuild the normalized snapshot after writes and require `--mode approved` to pass before handoff completes.
@@ -256,7 +256,7 @@ Rules:
 - Use Linear comments for user review acceptance, not Project Updates.
 - Split Issues only when one PR is truly too large; split into vertical slices with explicit dependencies.
 - Mark every execution Issue as `AFK` or `HITL` and name dependencies or blockers.
-- If a source artifact is a local plan or review report, translate it into PRD/Spec/Issue shape. Do not paste the local artifact body into Linear unchanged.
+- If a source artifact is a local plan or review report, translate it into Spec/Issue shape (PRD only on the old path); before package approval missing/changed PRD returns to Discovery. Do not paste the local artifact body into Linear unchanged.
 - The handoff review runs on the draft package before the first durable Linear write of that package. The order is the rule: synthesize the draft, review it, fix the draft, then ask the owner for approval with the verdict already in hand, and only then write. Findings are fixed in the draft, never in an artifact that is already written.
 - `mono:review` is report-only. Do not ask it to apply fixes or create artifacts.
 - Required `mono:review handoff` findings must be resolved, accepted, or explicitly deferred before the first durable write of the package, and therefore before creating Issues.

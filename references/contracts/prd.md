@@ -1,7 +1,7 @@
 # PRD artifact contract
 
 This bounded contract is the normative source for PRD artifact behavior.
-`mono:handoff` consumes it for Project-first package creation and repair;
+`mono:discovery` writes PRD; `mono:handoff` consumes it for packaging and repair;
 `mono:ship` consumes it for accepted pre-ship drift. Use the shared
 [artifact rules](../artifact-rules.md), [artifact quality](../artifact-quality.md),
 [execution quality](../execution-quality.md), and
@@ -11,8 +11,8 @@ template here.
 
 ## PR-001 — PRD routing
 
-Use this contract inside the lifecycle owner that creates or updates a Linear
-PRD after discovery, an explicit discovery skip, or an approved repair.
+`mono:discovery` creates/updates PRD; `mono:handoff` only on the old path
+(see lifecycle) or approved-package repair.
 
 ## PR-002 — Product truth
 
@@ -20,15 +20,13 @@ The PRD records WHAT the workflow achieves and how the user experiences it.
 
 ## PR-003 — Internal helper boundary
 
-PRD writing is owned by lifecycle stages rather than exposed as a direct
-artifact door. The normal post-discovery and repair workflow is `mono:handoff`;
-accepted pre-ship drift belongs to `mono:ship`.
+Stages own PRD writing: `mono:discovery`; approved-package repair:
+`mono:handoff`; accepted pre-ship drift: `mono:ship`.
 
 ## PR-004 — Targeted-use eligibility
 
-A direct request to write or repair a PRD must route to `mono:handoff` repair.
-Accepted pre-ship drift routes to `mono:ship`; no other workflow mutates the
-PRD directly.
+Direct PRD requests before package approval route to `mono:discovery`; after
+approval to `mono:handoff` repair; accepted pre-ship drift to `mono:ship`.
 
 ## PR-005 — Linear-facing language
 
@@ -53,13 +51,11 @@ PRD so the Tech Spec does not invent product decisions.
 
 ## PR-009 — Approved inputs
 
-Ground the PRD in Project context and discovery output from `/brainstorming` or
-`/office-hours`.
+Use the Idea yes record, Research («Исследование») and selected solution.
 
 ## PR-010 — Explicit discovery skip
 
-When both discovery workflows are explicitly skipped, create PRD-lite from the
-strengthened brief and mark its lower confidence.
+PRD-lite is old-path only. Tiny Discovery work gets a short PRD.
 
 ## PR-011 — Core product coverage
 
@@ -115,7 +111,7 @@ from Project, discovery, or repository context.
 
 ## PR-021 — Review acceptance record
 
-Record user review acceptance as a Linear comment.
+Record PRD yes in a Project comment bound to the shown document version.
 
 ## PR-022 — No Issue creation
 
@@ -127,8 +123,8 @@ Keep implementation architecture in Tech Spec, not PRD.
 
 ## PR-024 — No Delivery transition
 
-PRD creation belongs to Discovery or Handoff and must not move the Project to
-Delivery.
+Discovery creates PRD; Handoff only on the old path. Neither moves the Project
+to Delivery.
 
 ## PR-025 — No implementation start
 

@@ -32,39 +32,38 @@ Stop after the final message. Idea approval is separate from package approval.
 a separate yes. The approved Idea record supplies the questions; a legacy Project
 uses its description. It writes one Research («Исследование») document and one
 comment in its stage task with the stage log, then stops with an answer, advice and next step.
-Discovery follows when installed; until then, `mono:handoff` owns the next step.
+`mono:discovery` follows.
 A Project without Research routes here, except a package approved before
 `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
 
 ## Discovery
 
-Use Plan Mode discovery and review skills to shape the idea.
+`mono:discovery` takes the approved Idea record and Research («Исследование»),
+finds up to three real solutions, obtains an explicit choice and writes the chosen
+solution's PRD in Linear with yes bound to the shown document version. It runs in
+the owner session or the orchestrator session itself; workers/background launches
+do not start it. Details and the selected Research link stay in the Discovery task.
 
-Required:
+Close/defer is decided by the lead: owner, or orchestrator with a reason. Close
+sets Canceled; defer keeps status, records the return condition in the closed task.
+Both exit without PRD or Handoff. Do not resume deferred work before the condition
+or an owner return. Otherwise gate: `mono:check discovery`, then `mono:handoff`.
+Until Design and Tech Evaluation exist, Handoff receives their open questions and
+«нужны макеты» (Research `interface: true` or a new screen/window in the solution).
+A raw implementation plan never authorizes code or Delivery.
 
-- Project from `mono:idea`.
-- `/office-hours` or `/brainstorming` output when product shape is unclear.
-- `/plan-design-review` when UI or product surface needs design review.
-- `/plan-eng-review` when architecture is ready to review.
-- Handoff to `mono:handoff` instead of direct implementation approval.
-- PRD and Tech Spec may exist while the Project remains in Discovery.
+Discovery cutoff: `2099-12-31` until release; product `discoveryGate.since` overrides
+it. The old-path eligibility and package-aware checks have one home:
+`skills/check/SKILL.md`, mode `discovery`. On that path Handoff may write PRD-lite;
+tiny new Discovery work gets a short PRD. On the new path Handoff reads approved
+PRD only; before package approval a PRD finding returns to Discovery, with renewed
+yes in the same owner touch as package approval. After package approval normal
+repair/Ship drift applies, without rechecking PRD yes.
 
-Forbidden:
-
-- Treating discovery artifacts as durable Linear truth.
-- Approving a discovery implementation plan directly.
-- Starting implementation from a raw discovery or review plan.
-- Moving the Project to Delivery merely because PRD or Tech Spec exists.
-
-Gate: `mono:check discovery`, then `mono:handoff`. Discovery accepts only
-`fresh` codes `pass`, `stale`, `legacy-migrate`. An old Discovery Project without
-a record (`legacy-migrate`) enters Research, then handoff: the current idea is shown in the
-package approval brief, and the package approval comment creates the idea record
-alongside `approval_status=approved`. A changed idea (`stale`) uses the same
-single approval touch. A new project with `no-record` first runs `mono:idea`.
-Thus old discovery → package with verified record → approved-mode start; migration
-alone never permits implementation. Handoff checks `fresh` before drafting and
-`approved` after approval; implement checks `approved` before start.
+The entry `fresh` check admits `pass`, `stale`, `legacy-migrate`; stale/legacy ideas
+are shown in the package touch and recorded with package approval. Migration alone
+never permits implementation. `no-record` on a new project returns to `mono:idea`.
+Implement checks `approved` before start.
 
 ## Задачи этапов
 
@@ -294,11 +293,13 @@ product and sequences the stages above through delegated workers.
 Required:
 
 - Gate ordering of this lifecycle preserved verbatim.
-- `mono:idea`, discovery, `mono:handoff`, and `mono:deploy` run in the
+- `mono:idea`, `mono:research`, `mono:discovery`, `mono:handoff`, and `mono:deploy` run in the
   orchestrator session; `mono:implement`, `mono:preflight`, and
   `mono:ship` run in one worker session per Issue.
 - `mono:research` runs in the orchestrator session itself. No owner questions or
-  yes; the result goes to the owner. Idea still waits for the owner’s yes.
+  yes; the result goes to the owner. Discovery answers with sources, chooses and
+  gives its own PRD yes; its result goes to the owner without waiting. Idea still
+  waits for the owner’s yes.
 - All Linear mutations during orchestration flow through the orchestrator
   (single writer); workers never write to Linear and queue stage-required
   mutations in mailbox reports.
@@ -306,13 +307,11 @@ Required:
   the user as decision briefs — immediately when they block progress;
   design/UX items arising during discovery batch into the UX checkpoint per
   Director Discovery.
-- Discovery under orchestration follows Director Discovery
-  (references/orchestration.md): the orchestrator answers discovery-skill
-  questions itself — a Second Voice reviewer generates them when the
-  runtime provides one — and touches the user only at checkpoints — intake
-  direction questions, the UX checkpoint with a reviewed prototype, package
-  approval, deploy approval per policy, and ad-hoc risk or scope-drift
-  escalations.
+- Discovery under orchestration follows its stage reference: one second-model
+  pass without interview or continued dialogue. Owner contacts: Idea description
+  approval, Research/Discovery results without waiting, UX checkpoint with a reviewed
+  prototype, package approval, deploy approval per policy, ad-hoc risk/scope drift.
+
 
 Forbidden:
 

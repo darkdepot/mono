@@ -13,7 +13,7 @@ Use higher approved/final-diff class; apply `references/autoreview-routing.md`:
 
 Require review for standard/deep/risky handoff/pre-ship; created/materially rewritten PRD/Spec/Issue; material pre-ship drift/drift-candidate; bug/perf missing repro/baseline/loop; AFK with unresolved judgment; risky domains; or no-spec beyond tiny/low-risk. Tiny/accepted PRD-lite/explicit low-risk no-spec may be advisory with reason.
 
-Handoff reviews draft Project/PRD/Spec/slicing before first durable write or queue. No standard/deep/risky exception; only recorded tiny advisory skip. Handoff fixes draft; review stays report-only. Apply `references/worker-contract.md` mode precedence. Issue-only review/check requires only its self-contained contract: standard ready, tiny advisory/reason, no Project/docs.
+Handoff reviews Project/Spec/slicing drafts and approved PRD read-only (old path: draft PRD) before first durable write or queue. No standard/deep/risky exception; only recorded tiny advisory skip. Handoff fixes draft; review stays report-only. Apply `references/worker-contract.md` mode precedence. Issue-only review/check requires only its self-contained contract: standard ready, tiny advisory/reason, no Project/docs.
 
 ## Gate Outcomes
 
