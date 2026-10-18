@@ -80,6 +80,8 @@ User-facing handoff UX:
 
 Draft package approval UX:
 
+Package Issue membership, slicing and approval mean [execution Issues](references/lifecycle.md#задачи-этапов).
+
 - The pre-write approval screen must be a package map, not an idea recap.
 - It must include:
   - "Nothing written yet" or the exact mutation boundary.
@@ -89,7 +91,7 @@ Draft package approval UX:
   - PRD actor -> capability -> benefit coverage and behavior-validation intent.
   - Tech Spec implementation decisions.
   - «Решил сам:» — non-contested product choices the agent took itself, each with a one-line reason; overriding any of them is a valid approval answer.
-  - Issue slicing, `AFK`/`HITL` readiness, dependencies, and why this split is right.
+  - [execution Issues](references/lifecycle.md#задачи-этапов) slicing, `AFK`/`HITL` readiness, dependencies, and why this split is right.
   - Review gate, risk, and validation plan.
   - The pre-write handoff review verdict, the fixes already applied to the draft, and anything explicitly deferred. The owner sees the package and its review in one touch, because the review already ran on the draft.
   - Decision options — every option must say which approval(s) it grants.
@@ -178,7 +180,7 @@ Repair-mode workflow:
    class 2 stops or quiesces every affected active worker before any repair
    mutation, then synchronizes snapshots and fingerprints and stales earlier
    preflight certificates; class 3 stops workers,
-   supersedes approvals, invalidates dependants, and rolls Delivery back to
+   supersedes approvals, invalidates dependants, and rolls Delivery or Ready back to
    Discovery for owner re-approval.
 6. Run or report `mono:check repair` against every required effect and leave a
    durable repair record with the diff, class, evidence, old/new fingerprints,
@@ -205,7 +207,7 @@ Execution-mode workflow:
    - PRD coverage check for actor, capability, benefit, and behavior-validation intent.
    - Tech Spec as implementation truth that traces HOW decisions back to PRD requirements.
    - Apply [landing slicing](references/landing.md#scheduling) when forming Issue dependencies.
-   - Proposed Issue slicing with one-PR default, `AFK`/`HITL` readiness, and explicit dependencies if split.
+   - Proposed [execution Issues](references/lifecycle.md#задачи-этапов) slicing with one-PR default, `AFK`/`HITL` readiness, and explicit dependencies if split.
    - Split work expected to exceed roughly 1,000 changed lines in a critical path (gates, release, security, data) into smaller one-PR Issues during package assembly; give each a verifiable contract and dependencies.
    - Risk classification and whether the review gate is required, advisory, skipped, or blocked.
    - Remaining assumptions, if any, that the user should see before Issue creation.
@@ -218,19 +220,19 @@ Execution-mode workflow:
    - Bug and performance Issues carry a reproduction or feedback-loop expectation.
    - Operational status, lifecycle gates, and workflow mechanics are absent from Linear-facing bodies.
 5. Run the pre-write handoff review on the draft package, before the first durable Linear write:
-   - The reviewed subject is the draft itself: draft Project brief, draft PRD, draft Tech Spec, and the proposed Issue slicing, submitted to the reviewer as its input. None of those bodies is written to Linear yet, and that absence is the expected state of this mode, not a missing artifact. The Project entity may already exist — this stage often runs for an existing Project — and stays available as surrounding context; what has not been written is the drafted content.
+   - The reviewed subject is the draft itself: draft Project brief, draft PRD, draft Tech Spec, and the proposed [execution Issues](references/lifecycle.md#задачи-этапов) slicing, submitted to the reviewer as its input. None of those bodies is written to Linear yet, and that absence is the expected state of this mode, not a missing artifact. The Project entity may already exist — this stage often runs for an existing Project — and stays available as surrounding context; what has not been written is the drafted content.
    - "Before the first durable Linear write" means before the first Linear mutation this run applies — or, where the run queues mutations instead of applying them, before the first mutation it queues. The write-versus-queue substitution has one home, Orchestration Mode Precedence in `references/orchestration.md`; read the timing from there rather than from a second copy of the rule.
    - The gate is required for `standard`, `deep`, and `risky` per `references/readiness-gates.md`: no durable write of the package happens until the review ran and its blocking findings are resolved, accepted, or explicitly deferred. For `tiny` the gate stays advisory, and skipping it requires the recorded skip reason.
    - Interactive runs invoke `mono:review handoff` report-only over the draft package. Orchestrated runs delegate the same handoff-review contract to an independent Second Voice reviewer agent per `references/orchestration.md`; that reviewer is a discovery agent with no Linear-write capability and no owner contact, and its findings return to this stage.
-6. Apply accepted review fixes to the draft package, and re-review the draft after any material change to any reviewed component of it — Project brief, PRD requirements, Tech Spec implementation or validation decisions, Issue slicing, risk classification, or rollout. Only editorial changes that alter no decision skip the re-review, and that judgment is recorded with the verdict. Fixes land in the draft, never in an already-written Linear artifact.
+6. Apply accepted review fixes to the draft package, and re-review the draft after any material change to any reviewed component of it — Project brief, PRD requirements, Tech Spec implementation or validation decisions, [execution Issues](references/lifecycle.md#задачи-этапов) slicing, risk classification, or rollout. Only editorial changes that alter no decision skip the re-review, and that judgment is recorded with the verdict. Fixes land in the draft, never in an already-written Linear artifact.
 7. Present one owner touch: the draft package summary together with the review disposition — the verdict with its remaining blocking findings, proposed fixes, and decisions, or, for a `tiny` package whose advisory gate was skipped, the recorded skip reason — for package approval before durable writes.
 8. If approval is missing, rejected, or changes are requested, do not create Issue(s), do not move the Project to Delivery, revise and re-present or stop as `BLOCKED / INCOMPLETE` with current links. An owner-requested revision follows the same rule as step 6: any material change to any reviewed component returns through steps 5-6 before it is re-presented, and only an editorial change that alters no decision does not. The disposition in the owner's touch always belongs to the draft being approved, never to a superseded one.
 9. After package approval, create or update PRD and Tech Spec in Linear.
 10. Update the Project body with only the product brief concerns: what, why, target outcome, in scope, and out of scope. Render headings in the project config language; default Russian headings are `Что`, `Зачем`, `Образ результата`, `Что входит`, and `Что не входит`. Do not touch the lead of an existing Project here: `mono:idea` sets it when the Project is created, and updating a Project never reassigns it.
-11. Record approval as a Linear comment. The comment should identify the approved package, PRD/Tech Spec links or intended titles, approved Issue slice titles or ids, the review verdict with the accepted fixes and any explicit deferrals or recorded advisory-skip reason, and whether implementation may start.
+11. Record approval as a Linear comment. The comment should identify the approved package, PRD/Tech Spec links or intended titles, approved [execution Issues](references/lifecycle.md#задачи-этапов) slice titles or ids, the review verdict with the accepted fixes and any explicit deferrals or recorded advisory-skip reason, and whether implementation may start.
     Include exactly one `approval_status=approved` line in the package approval comment. For `stale` or `legacy-migrate`, that same comment also records the owner's approved idea: fingerprint the shown four-section UTF-8 snapshot with `node <pack-root>/scripts/idea-gate.mjs fingerprint --snapshot <file> --config <path>`, then include separate `text` and `mono-idea-snapshot` fences containing `mono-idea: approved project=<uuid> sha256=<64 hex>` and the exact snapshot. Unknowns stay in the record, not the Project body. Read the comment back and verify project, marker, snapshot and fingerprint before proceeding; the ordinary package touch is the approval, never an inferred agent decision. Rebuild the normalized snapshot after writes and require `--mode approved` to pass before handoff completes.
-12. Create or update Linear Issue(s) from the approved package. Set the assignee of every Issue created here to the acting user (`assignee: "me"` on the Linear connector), so the work is the owner's the moment it appears in Linear; an Issue that already exists keeps the assignee it has.
-13. Run or report `mono:check handoff` and `mono:check issue`.
+12. Create or update [execution Issues](references/lifecycle.md#задачи-этапов) from the approved package. Set the assignee of every Issue created here to the acting user (`assignee: "me"` on the Linear connector), so the work is the owner's the moment it appears in Linear; an Issue that already exists keeps the assignee it has.
+13. Run or report `mono:check handoff` and `mono:check issue`. Only after package approval and PASS `mono:check handoff`, set the Project to Ready and read it back. No workspace Ready: keep Discovery and report the fallback in check output; do not create a status. Non-PASS never sets Ready.
 14. If the user explicitly approved implementation start, route to `mono:implement`. `mono:implement` owns Project-to-Delivery movement, `mono:check delivery`, the implementation-start comment, and implementation execution.
 15. If implementation start is not approved, stop after handoff and return the approved Issue link(s).
 
@@ -288,7 +290,7 @@ Completion example:
 Готово. Handoff зафиксирован в Linear, код не трогал.
 
 Пакет:
-- Project: [Settings skeleton states cleanup](<url>) - статус `Discovery`; верхний контейнер работы и короткий product brief.
+- Project: [Settings skeleton states cleanup](<url>) - статус `Ready` (без Ready в рабочем пространстве — `Discovery`); верхний контейнер работы и короткий product brief.
 - PRD: [Settings structural skeletons](<url>) - WHAT: какие Settings loading states покрываем, что значит structural-not-literal, где границы.
 - Tech Spec: [Settings structural skeletons](<url>) - HOW: skeleton kit, route-family mapping, validation, rollout/rollback.
 - Issue: [PROD-6](<url>) - первый execution slice; сейчас это один PR.

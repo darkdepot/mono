@@ -30,6 +30,9 @@ ambiguity inside a proposed repair fails closed to class 3.
 
 ## Stable-ID diff preview
 
+Issue set, membership, count, slicing and dependency topology in every class below
+mean [execution Issues](lifecycle.md#задачи-этапов).
+
 Before any durable mutation, show an exact before/after diff grouped by stable ID.
 Each changed hunk names the narrowest durable identifier available: artifact
 contract rule IDs (`PC-*`, `PR-*`, `TS-*`, `IS-*`) and artifact IDs such as
@@ -38,7 +41,7 @@ hunk to the governing contract rule ID and name the field. If a hunk cannot be
 anchored unambiguously, classify the repair as class 3.
 
 The preview includes classification evidence, not only the proposed class. It
-states which semantic surfaces changed and explicitly proves unchanged R/AE/AC, non-goals, risk class, and Issue set whenever class 1 or class 2 is proposed.
+states which semantic surfaces changed and explicitly proves unchanged R/AE/AC, non-goals, risk class, and [execution Issues](lifecycle.md#задачи-этапов) set whenever class 1 or class 2 is proposed.
 `mono:review artifact` inspects this preview before `mono:handoff` applies it.
 
 ## Classification table
@@ -48,19 +51,19 @@ The highest matching class wins. Risk growth always selects class 3. Ambiguity i
 | Fixture | Evidence | Class | Required result |
 | --- | --- | --- | --- |
 | `typo-or-format` | Only formatting, spelling, or a link correction to the same intended target changes; semantics and all guarded surfaces are unchanged. | `1` | Keep approval valid and do not touch Issues. |
-| `how-only` | HOW, architecture, implementation seam, or validation changes while R/AE/AC, non-goals, visible behavior, risk, and Issue set are unchanged. | `2` | No owner approval; require `mono:review artifact` and all class 2 effects. |
+| `how-only` | HOW, architecture, implementation seam, or validation changes while R/AE/AC, non-goals, visible behavior, risk, and [execution Issues](lifecycle.md#задачи-этапов) set are unchanged. | `2` | No owner approval; require `mono:review artifact` and all class 2 effects. |
 | `requirement` | A requirement is added, removed, or semantically changed. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `acceptance` | An acceptance example or acceptance criterion is added, removed, or semantically changed. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `non-goal` | A non-goal or scope boundary changes. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `risk` | The recorded risk changes or evidence indicates risk growth. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
-| `issue-set` | Issue count, slicing, dependency topology, or approved Issue membership changes. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
+| `issue-set` | [execution Issues](lifecycle.md#задачи-этапов) count, slicing, dependency topology, or approved membership changes. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `visible-behavior` | Externally visible behavior changes even when the written requirement or acceptance IDs were not updated. | `3` | Fail closed on unrecorded product drift; supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `ambiguous` | A changed hunk lacks a stable anchor or evidence cannot prove the class 1/2 guard set unchanged. | `3` | Fail closed; do not infer a lower class; supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 
 ## Class 1 execution
 
 After a ready `mono:review artifact` report, `mono:handoff` may apply the exact
-previewed non-semantic edit. Class 1 keeps package and implementation-start approvals valid. It must not update Issue bodies, Issue snapshots, fingerprints, certificates, worker dispatches, Issue slicing, or Project lifecycle state.
+previewed non-semantic edit. Class 1 keeps package and implementation-start approvals valid. It must not update Issue bodies, Issue snapshots, fingerprints, certificates, worker dispatches, [execution Issues](lifecycle.md#задачи-этапов) slicing, or Project lifecycle state.
 
 ## Class 2 execution
 
@@ -74,7 +77,7 @@ the remaining snapshot-sync and stale-preflight-cert effects as one repair
 transaction. If any effect cannot complete, stop and report the partial state;
 do not claim the repair ready.
 
-Project-first implementation-start approval is bound to the unchanged scope and Issue set, not to an Issue snapshot fingerprint. Because class 2 proves those approval surfaces unchanged, owner renewal is neither required nor allowed; fresh dispatch is the required non-owner re-authorization for implementation against the synchronized snapshot.
+Project-first implementation-start approval is bound to the unchanged scope and [execution Issues](lifecycle.md#задачи-этапов) set, not to an Issue snapshot fingerprint. Because class 2 proves those approval surfaces unchanged, owner renewal is neither required nor allowed; fresh dispatch is the required non-owner re-authorization for implementation against the synchronized snapshot.
 
 ## Class 2 effect fixture: snapshot-sync
 
@@ -101,19 +104,19 @@ thread memory or an in-place verbal update is not a substitute.
 
 ## Class 3 rollback
 
-Class 3 cannot mutate product scope under an old approval. First stop affected workers before rollback. Then supersede the package approval and supersede the implementation-start approval, invalidate dependent Tech Spec, Issue snapshots, certificates, and Issue slicing, and move a Delivery Project back to Discovery. Preserve the proposed stable-ID diff as evidence, obtain owner
+Class 3 cannot mutate product scope under an old approval. First stop affected workers before rollback. Then supersede the package approval and supersede the implementation-start approval, invalidate dependent Tech Spec, Issue snapshots, certificates, and [execution Issues](lifecycle.md#задачи-этапов) slicing, and move a Delivery or Ready Project back to Discovery. Preserve the proposed stable-ID diff as evidence, obtain owner
 re-approval of the rebuilt package, and start Delivery again only through
 `mono:implement`.
 
-The order is safety-critical: stop workers -> supersede approvals -> invalidate dependants -> Delivery to Discovery -> rebuild -> review/check -> owner re-approval. Never keep Delivery active while a class 3 repair is pending.
+The order is safety-critical: stop workers -> supersede approvals -> invalidate dependants -> Delivery or Ready to Discovery -> rebuild -> review/check -> owner re-approval. Never keep Delivery or Ready active while a class 3 repair is pending.
 
 ## Pre-application manifest repair
 
 The manifest is part of its Tech Spec implementation unit. A worker finding on
 pre-applied `.agents/` files parks blocked with exact replacement bytes;
 `mono:handoff` owns the stable-ID preview, review and repair. Classify by meaning:
-class 2 only when guarded R/AE/AC, non-goals, visible behavior, risk and Issue set
+class 2 only when guarded R/AE/AC, non-goals, visible behavior, risk and [execution Issues](lifecycle.md#задачи-этапов) set
 are unchanged, with snapshot synchronization, fingerprint recomputation and
 certificate staleness; changed risk/scope selects class 3 with owner reapproval.
-After repair, require a NEW `dispatch.mjs --preapply` attempt, never amend/resume.
+After repair, require a NEW `dispatch.mjs --preapply` attempt for [execution Issues](lifecycle.md#задачи-этапов), never amend/resume.
 Issue-only manifests live in the Issue and renew through `mono:issue`.

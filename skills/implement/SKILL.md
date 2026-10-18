@@ -67,6 +67,9 @@ Issue-only: fresh authenticated fingerprint approval/pre-start PASS. Move only
 Issue to started; record lifecycle/fingerprint/oracle/engine/verification, one PR.
 Lane exit parks for superseding marker/Project-first restart; no retrofit.
 
+Start from Ready; Discovery only for legacy Projects or absent workspace Ready,
+with package checks passed.
+
 Interactive: separate package/start approvals; bundled handoff counts.
 Start permits Delivery/branch/code. Offer start/defer; «запускай реализацию» suffices.
 Never infer/re-ask approval.
