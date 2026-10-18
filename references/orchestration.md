@@ -300,9 +300,12 @@ passes seam to checkIdea and needs no Project files.
 
 After the Idea check and before registering an attempt, dispatch checks Research.
 For a Project package, read the Research document named by `id` or `url` in the
-exact `approval.md` comment. Save its metadata as `{id,url,title,projectId}` in
-`research/document.json` and its body in `research/document.md`, unchanged from
-the read-back. These are snapshot inputs, not pack reading dependencies.
+exact `approval.md` comment. Save the named document as snapshot inputs:
+
+```text
+research/document.json  {id,url,title,projectId} from the document metadata
+research/document.md    body copied unchanged from the Linear read-back
+```
 
 Do not substitute another Project document titled «Исследование». The gate reads
 only the one `mono-research` JSON fence in the named document: `project` must match
