@@ -6,7 +6,8 @@
 `linear-scout` and `code-scout`, gather linked facts in parallel before the recap.
 Unmistakable one-PR projectless work routes to `mono:issue` only when the configured
 lane is enabled and has `ownerPrincipal`; otherwise it goes through a Project.
-Questions concern meaning, one at a time, at most three; a route question is separate.
+Questions concern meaning, at most three, each built on the last answer (independent ones
+may go together); a route question is separate and may come early from the Linear facts.
 The orchestrator runs Idea itself and answers these questions with reasons, showing
 «Ответил сам:» to the owner rather than forwarding the questions.
 
@@ -24,7 +25,9 @@ Unknowns stay in the record. No Research document, PRD, Tech Spec, Issue, implem
 plan, ExecPlan or code is created here. A refusal returns to Idea.
 
 The next stage is Research (`mono:research`), starting with the first Unknown.
-Stop after the final message. Idea approval is separate from package approval.
+Idea stops after its final message; the owner's yes also covers starting Research, so the
+agent then invokes `mono:research` unless the owner asked to hold it (the orchestrator runs
+it itself). Idea approval is separate from package approval.
 
 ## Research
 

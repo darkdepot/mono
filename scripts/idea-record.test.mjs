@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { checkIdea, ideaFingerprint, RESEARCH_GATE_DEFAULT_SINCE } from './idea-gate.mjs';
+import { checkIdea, ideaFingerprint, lintNotes, RESEARCH_GATE_DEFAULT_SINCE } from './idea-gate.mjs';
 import { resolveRole } from './runtime.mjs';
 
 test('Research cutoff starts on the first full UTC day after release 0.33.0', () => {
@@ -319,3 +319,125 @@ test('check --dump accepts one complete page and refuses non-fresh modes or miss
   assert.equal(missingConfig.status, 1);
   assert.equal(missingConfig.stdout.trim(), `idea-gate: fail: read-failed project=${projectId}`);
 }));
+
+const script = path.join(import.meta.dirname, 'idea-gate.mjs');
+const runIn = (cwd, args) => spawnSync(process.execPath, [script, ...args], { cwd, encoding: 'utf8' });
+function productRepo(root, remote = 'git@github.com:acme/app.git') {
+  const repo = path.join(root, 'product');
+  write(repo, '.git/config', `[remote "origin"]\n\turl = ${remote}\n`);
+  write(repo, 'src/a.go', 'package a\n');
+  return repo;
+}
+const ideaDraft = '## Что\nWhat\n\n## Зачем\nWhy\n\n## Образ результата\nOutcome\n\n## Неизвестные\nQuestion';
+
+test('record --notes without --project lints notes before the yes and writes no comment', () => sandbox(root => {
+  const repo = productRepo(root);
+  write(root, 'config.json', { languages: { linear: 'Russian' } }); write(root, 'draft.md', ideaDraft);
+  write(root, 'notes.md', [
+    'Факт — https://github.com/acme/app/blob/main/src/a.go#L3.',
+    'Нет файла: https://github.com/acme/app/blob/main/src/b.go',
+    'Чужой репозиторий: https://github.com/other/x/blob/main/zzz.go',
+    'Закреплено коммитом: https://github.com/acme/app/blob/abc1234/old.go',
+    'Код: `src/a.go:12`, `src/c.ts`, `issueOnlyLane.enabled`',
+  ].join('\n'));
+  const out = path.join(root, 'out');
+  const result = runIn(path.join(repo, 'src'), ['record', '--draft', path.join(root, 'draft.md'), '--notes', path.join(root, 'notes.md'), '--config', path.join(root, 'config.json'), '--out', out]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const output = JSON.parse(result.stdout.trim());
+  assert.deepEqual(output.warnings, [
+    { line: 1, kind: 'long-dash' },
+    { line: 2, kind: 'missing-path', path: 'src/b.go' },
+    { line: 5, kind: 'missing-path', path: 'src/c.ts' },
+  ]);
+  assert.equal(output.comment, undefined);
+  assert.ok(fs.existsSync(path.join(out, 'body.md')));
+  assert.equal(fs.existsSync(path.join(out, 'comment.md')), false);
+}));
+
+test('record --notes warnings never change the comment and stay absent when notes are clean', () => sandbox(root => {
+  const repo = productRepo(root);
+  write(root, 'config.json', { languages: { linear: 'Russian' } }); write(root, 'draft.md', ideaDraft);
+  const args = notes => ['record', '--draft', path.join(root, 'draft.md'), '--project', projectId, '--notes', write(root, 'notes.md', notes), '--config', path.join(root, 'config.json'), '--out', root];
+  let result = runIn(repo, args('Факт: https://github.com/acme/app/blob/main/src/a.go'));
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(JSON.parse(result.stdout.trim()).warnings, undefined);
+  const dirty = 'Старый текст проекта — как был';
+  result = runIn(repo, args(dirty));
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout.trim()).warnings, [{ line: 1, kind: 'long-dash' }]);
+  assert.ok(fs.readFileSync(path.join(root, 'comment.md'), 'utf8').endsWith(dirty));
+  // Outside any checkout only the long dash is reported: paths cannot be resolved.
+  assert.deepEqual(lintNotes('Нет файла: `src/zzz.go` \u2014 старое', null), [{ line: 1, kind: 'long-dash' }]);
+}));
+
+test('record --notes checks blob links on the named branch and reports unchecked paths outside a checkout', t => sandbox(root => {
+  const git = (cwd, ...args) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main', ...args], { cwd, encoding: 'utf8' });
+  const repo = path.join(root, 'product');
+  fs.mkdirSync(repo, { recursive: true });
+  if (git(repo, 'init', '-q').status !== 0) return t.skip('git is unavailable');
+  git(repo, 'remote', 'add', 'origin', 'git@github.com:acme/app.git');
+  write(repo, 'src/a.go', 'package a\n');
+  git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'base');
+  git(repo, 'checkout', '-qb', 'feature/x');
+  write(repo, 'src/only.go', 'package a\n');
+  git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'feature');
+  git(repo, 'checkout', '-q', 'main');
+  write(repo, 'src/local.go', 'package a\n');
+  write(root, 'config.json', { languages: { linear: 'Russian' } }); write(root, 'draft.md', ideaDraft);
+  const notes = write(root, 'notes.md', [
+    'Есть: https://github.com/acme/app/blob/main/src/a.go',
+    'Ветка со слешем: https://github.com/acme/app/blob/feature/x/src/only.go',
+    'Только в рабочей копии: https://github.com/acme/app/blob/main/src/local.go',
+    'Нет на main: https://github.com/acme/app/blob/main/src/only.go',
+    'Код: `src/local.go`',
+  ].join('\n'));
+  const args = ['record', '--draft', path.join(root, 'draft.md'), '--notes', notes, '--config', path.join(root, 'config.json'), '--out', path.join(root, 'out')];
+  let result = runIn(repo, args);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  let output = JSON.parse(result.stdout.trim());
+  assert.deepEqual(output.warnings, [
+    { line: 3, kind: 'missing-path', path: 'src/local.go' },
+    { line: 4, kind: 'missing-path', path: 'src/only.go' },
+  ]);
+  assert.equal(output.paths, undefined);
+  // Outside any checkout the paths cannot be checked, and the answer says so.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-idea-outside-'));
+  try {
+    if (repositoryLike(outside)) return t.skip('temporary directory is inside a checkout');
+    result = runIn(outside, args);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    output = JSON.parse(result.stdout.trim());
+    assert.equal(output.paths, 'unchecked');
+    assert.equal(output.warnings, undefined);
+    result = runIn(outside, [...args.slice(0, 4), write(root, 'plain.md', 'Факт без путей: https://example.com/fact'), ...args.slice(5)]);
+    assert.equal(JSON.parse(result.stdout.trim()).paths, undefined);
+  } finally { fs.rmSync(outside, { recursive: true, force: true }); }
+}));
+
+function repositoryLike(start) {
+  for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, '.git'))) return true;
+    if (path.dirname(dir) === dir) return false;
+  }
+}
+
+for (const host of ['claude-code', 'codex']) {
+  test(`${host}: verify accepts non-record comments without body; check --dump does not`, () => sandbox(root => {
+    const s = setup(root, host);
+    const elided = s.pages.map((page, i) => ({ ...page, comments: page.comments.map((comment, j) => {
+      if (i === 0 && j === 0) return comment;
+      const { body, ...rest } = comment; return rest;
+    }) }));
+    elided.forEach((page, i) => write(root, `dump/comments-${i + 1}.json`, page));
+    assert.equal(verify(s.verify, 'pass').recordId, s.pages[0].comments[0].id);
+    const missingRecord = elided.map((page, i) => i === 0 ? { ...page, comments: page.comments.map((comment, j) => {
+      if (j) return comment; const { body, ...rest } = comment; return rest;
+    }) } : page);
+    write(root, 'dump/comments-1.json', missingRecord[0]);
+    verify(s.verify, 'no-record');
+    write(root, 'dump/comments-1.json', { ...elided[0], comments: elided[0].comments.map((comment, j) => j === 1 ? { ...comment, body: 7 } : comment) });
+    verify(s.verify, 'read-failed');
+    write(root, 'dump/comments-1.json', elided[0]);
+    checkDump(root, 'read-failed');
+  }));
+}

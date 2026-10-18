@@ -8,7 +8,7 @@ Decide repo/Linear/GitHub/config facts, layout, naming, libraries, patterns, ref
 
 Always ask contested scope/slicing (split/count/reason), money/data/production/access risk and design. Prepare /design-html variants or concrete layout/hierarchy/state alternatives first.
 
-Idea: up to three meaning questions, one at a time from the last answer; no scope questions. Raw idea: start open-ended. Host choice window: recommendation/reason first, custom answer supported; Codex without it: one text question/recommendation, end turn. Route question first, outside the limit. «Пиши сам»: recommendations disclosed in «Решил сам:». Owner yes is mandatory.
+Idea: up to three meaning questions from the last answer (independent: together); no scope. Raw idea: start open-ended. Host choice window: recommendation/reason first, custom answer supported; Codex without it: one text question/recommendation, end turn. Route question first, outside the limit. «Пиши сам»: recommendations disclosed in «Решил сам:». Owner yes is mandatory.
 
 Research: no owner questions.
 Other stages: owner approval/blocker/risk gates.
