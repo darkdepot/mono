@@ -1588,11 +1588,14 @@ if(isMain(import.meta.url)){ const args=process.argv.slice(2), request=path.join
       const ignored = ".agents/ignored.txt", ignoredBytes = "approved ignored target\n";
       const ignoredManifest = good + manifest(ignored, ignoredBytes);
       const laneBody = body + "# Предприменение\n" + ignoredManifest;
-      write(path.join(snapshot, "issue-MONO-996.md"), laneBody);
-      write(path.join(snapshot, "issue-only.json"), { marker: "fixture", label: "issue-only", fingerprint: hash(laneBody), config: "fixture enabled", ownerApproval: "approved",
+      const laneSnapshot = path.join(scratch, "issue-only-snapshot");
+      write(path.join(laneSnapshot, "approval.md"), "Approved issue-only AE12.");
+      write(path.join(laneSnapshot, "issue-MONO-996.md"), laneBody);
+      write(path.join(laneSnapshot, "issue-only.json"), { marker: "fixture", label: "issue-only", fingerprint: hash(laneBody), config: "fixture enabled", ownerApproval: "approved",
         seam: { package_kind: "issue-only", lifecycle_state_entity: "issue", behavioral_oracle: "AE12", risk_class: "standard", approval_status: "approved-fresh" } });
       atomicJson(path.join(root, "control.json"), { state: "active", halt: false });
       const laneOptions = [...options]; laneOptions[laneOptions.indexOf("--issue") + 1] = "MONO-996";
+      laneOptions[laneOptions.indexOf("--snapshot") + 1] = laneSnapshot;
       const launched = JSON.parse(pass(run(process.execPath, [...laneOptions, "--preapply"]))); pid = processes.track(launched.pid);
       assert.equal(fs.readFileSync(path.join(launched.snapshot, "issue-MONO-996.md"), "utf8"), laneBody);
       assert.equal(fs.readFileSync(path.join(repo, ".worktrees/MONO-996", target), "utf8"), bytes);
