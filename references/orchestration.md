@@ -317,8 +317,7 @@ are not checked. Run `node <pack-root>/scripts/idea-gate.mjs research --snapshot
 one line, `research-gate: pass|fail: <code> project=<id>`.
 
 `researchGate.since` optionally overrides `RESEARCH_GATE_DEFAULT_SINCE` with a
-valid `YYYY-MM-DD` UTC date. The default stays dormant at `2099-12-31` until the
-release task activates it. A package whose `approval.createdAt` is strictly
+valid `YYYY-MM-DD` UTC date. The default is `2026-10-19`, 00:00 UTC, active since 0.33.0. A package whose `approval.createdAt` is strictly
 before this date passes as `legacy-before-cutoff`; equality requires Research.
 An Idea `issue-only` verdict with no Issue Project passes as `issue-only`.
 Neither exemption reads `research/`, and the directory may be absent. When it
