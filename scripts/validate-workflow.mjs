@@ -6101,6 +6101,8 @@ const MACHINE_TOKENS = new Set([
   "idea-helper", "mono-idea-snapshot", "mono-idea: approved project=<uuid> sha256=<64 hex>",
   "node scripts/idea-gate.mjs check --mode fresh --snapshot <dir> --config <path>",
   "node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",
+  // MONO-175: closed Research gate refusal codes; shared success/date codes above.
+  "research-missing", "research-bad-record", "research-other-project", "research-not-referenced",
   // MONO-154: cap/chain dictionary and certificate label, no prose pins.
   "continue", "successor", "cap-stop", "stopId", "originalIssue", "successorIssue",
   "localPasses", "externalCollections", "local_passes", "Autoreview decisions:",
