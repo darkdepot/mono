@@ -409,6 +409,34 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       fs.rmSync(path.join(snapshot, 'research'), { recursive: true }); ideaDispatchFixture(snapshot);
       write(config, configured);
     });
+    await t.test('Research release default checks the UTC boundary before registering attempts', () => {
+      const configured = readJson(config), defaults = { ...configured };
+      delete defaults.researchGate; write(config, defaults);
+      const document = { id: 'research-release', url: 'https://linear.app/document/research-release', title: 'Исследование', projectId: ideaProjectId };
+      const prepare = createdAt => ideaDispatchFixture(snapshot, 'MONO-999', i => {
+        i.approval.createdAt = createdAt; i.body += `\n${document.url}`;
+      });
+      try {
+        prepare('2026-10-18T23:59:59.999Z');
+        assert.match(run(process.execPath, [command, ...options]).stderr, /dirty/u, 'earlier approval reaches start gate without research/');
+        for (const createdAt of ['2026-10-19T00:00:00Z', '2026-10-19T12:00:00Z']) {
+          prepare(createdAt);
+          assert.match(run(process.execPath, [command, ...options]).stderr, /research-gate: fail: research-missing/u);
+          assert.equal(fs.existsSync(path.join(root, 'attempts.json')), false);
+          assert.deepEqual(readJson(path.join(root, 'workers.json')), {});
+        }
+        write(path.join(snapshot, 'research/document.json'), document);
+        for (const outcome of ['ready', 'not-required']) {
+          const content = '```mono-research\n' + JSON.stringify({ project: ideaProjectId, outcome, reason: 'Обратимая правка текста', interface: false }) + '\n```';
+          write(path.join(snapshot, 'research/document.md'), content);
+          assert.match(run(process.execPath, [command, ...options]).stderr, /dirty/u, `${outcome} reaches start gate`);
+          assert.equal(fs.readFileSync(path.join(root, 'dispatch/MONO-999-a1/snapshot/research/document.md'), 'utf8'), content);
+        }
+      } finally {
+        fs.rmSync(path.join(snapshot, 'research'), { recursive: true, force: true });
+        ideaDispatchFixture(snapshot); write(config, configured);
+      }
+    });
     await t.test('release default refuses missing records after cutoff, accepts records and preserves earlier approvals', () => {
       const configured = readJson(config);
       const defaults = { ...configured }; delete defaults.ideaGate;

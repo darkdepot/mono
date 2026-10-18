@@ -6,6 +6,25 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-18
+
+<!-- fragment: MONO-175 sha256:c0247603f8b3bbd1b8af508fea7479cf3d763712ef9b4e1c6140c31b17706147 -->
+### Added
+
+- Research snapshot validation before dispatch attempt registration: the package approval must name the document, its `mono-research` fence must match the Project and carry an allowed outcome and required reason. Extra fields remain compatible with the live Linear probe.
+- Optional `researchGate.since` UTC cutoff; projectless Issues and earlier approvals pass without `research/`. The default remains dormant at `2099-12-31` until MONO-178.
+- CLI, configuration and dispatch fixtures, including unchanged live-probe fence bytes and refusal without attempt consumption.
+
+<!-- fragment: MONO-177 sha256:6c01b7d47aae5f1aefb33328edf20f8b7499c0439b1257bbe86abd1a2660cf68 -->
+- MONO-177: add the Russian Research stage, web scout, raw-Linear fresh idea check and routing from Idea through Research to Handoff; carry Research unknowns and document references into package approval; expose the dormant Research cutoff for text-stage references.
+
+<!-- fragment: MONO-178 sha256:de810c117f13be5762f15df3b27a08d67fb538ff3cc13c57d464ade319527eac -->
+### Выпуск и обновление
+
+- Выпуск 0.33.0 включает Research после Idea: факты, документ «Исследование» и совет без вопросов владельцу. Проверка Research включена с `2026-10-19` (00:00 UTC), первого полного дня UTC после выпуска; пакеты, одобренные раньше, и задачи без проекта проходят без исследования. `researchGate.since` позволяет сдвинуть отсечку для продукта.
+- Версии плагинов согласованы; README и инструкция установки описывают совместимость форматов и прежний порядок Plugin Updates. Текущие попытки продолжаются на сохранённом `packRoot`; общая quiescence не требуется.
+- Проверки покрывают границу UTC, отказ `research-missing`, проход с документом и `not-required`, включая dispatch без переопределения даты. Проверки Claude до PR и установка с живой приёмкой после вливания принадлежат оркестратору.
+
 ## [0.32.1] - 2026-10-18
 
 <!-- fragment: MONO-187 sha256:1cc17d84c18c4f60e40858e19ac45893d020c8896fb0acca717cf662c84ad733 -->

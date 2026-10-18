@@ -8,8 +8,8 @@ import { spawnSync } from 'node:child_process';
 import { checkIdea, ideaFingerprint, RESEARCH_GATE_DEFAULT_SINCE } from './idea-gate.mjs';
 import { resolveRole } from './runtime.mjs';
 
-test('Research cutoff remains dormant until the release task enables it', () => {
-  assert.equal(RESEARCH_GATE_DEFAULT_SINCE, '2099-12-31');
+test('Research cutoff starts on the first full UTC day after release 0.33.0', () => {
+  assert.equal(RESEARCH_GATE_DEFAULT_SINCE, '2026-10-19');
 });
 
 const projectId = '59c079b6-fc26-40a6-ba19-9467674fa637';

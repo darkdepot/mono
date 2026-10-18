@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { checkResearch, RESEARCH_GATE_DEFAULT_SINCE } from './idea-gate.mjs';
-import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
+import { ideaDispatchFixture, ideaProjectId } from './fixtures/idea-dispatch.mjs';
 
 const projectId = 'c45ee7dc-3226-4401-854d-a82944949601';
 const otherId = '11111111-1111-1111-1111-111111111111';
@@ -71,14 +71,16 @@ test('research has closed refusal codes for reference, fence, identity, outcome 
   }
 });
 
-test('research cutoff uses approval UTC timestamp strictly before since and sleeps by default', () => {
+test('research release cutoff uses approval UTC timestamp strictly before 2026-10-19', () => {
   const options = input(); delete options.document;
-  options.approval.createdAt = '2026-10-16T23:59:59.999Z'; expectCode(options, 'legacy-before-cutoff');
-  options.approval.createdAt = '2026-10-17T00:00:00Z'; expectCode(options, 'research-missing');
-  options.approval.createdAt = '2026-10-17T01:00:00+02:00'; expectCode(options, 'legacy-before-cutoff');
-  options.approval.createdAt = '2026-10-17T00:00:00Z';
-  assert.equal(RESEARCH_GATE_DEFAULT_SINCE, '2099-12-31');
-  delete options.since; expectCode(options, 'legacy-before-cutoff');
+  assert.equal(RESEARCH_GATE_DEFAULT_SINCE, '2026-10-19');
+  delete options.since;
+  options.approval.createdAt = '2026-10-18T23:59:59.999Z'; expectCode(options, 'legacy-before-cutoff');
+  options.approval.createdAt = '2026-10-19T00:00:00Z'; expectCode(options, 'research-missing');
+  options.approval.createdAt = '2026-10-19T01:00:00+02:00'; expectCode(options, 'legacy-before-cutoff');
+  options.approval.createdAt = '2026-10-19T02:00:00+02:00'; expectCode(options, 'research-missing');
+  options.approval.createdAt = '2026-10-19T00:00:00.001Z'; expectCode(options, 'research-missing');
+  expectCode({ ...options, since: '2026-10-20' }, 'legacy-before-cutoff');
   for (const since of [null, '2026-02-30', '', '2026-10-17T00:00:00Z']) expectCode({ ...options, since }, 'bad-since');
   expectCode({ ...options, approval: { createdAt: 'bad' } }, 'read-failed');
 });
@@ -100,6 +102,25 @@ function snapshot(run) {
     ...(config ? ['--config', path.join(root, 'config.json')] : [])], { encoding: 'utf8' });
   try { run({ root, write, cli }); } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
+test('release CLI requires research on and after the default cutoff without a researchGate override', () => snapshot(({ root, write, cli }) => {
+  const prepare = createdAt => ideaDispatchFixture(root, 'MONO-178', i => {
+    i.approval.createdAt = createdAt; i.body += '\nhttps://linear.app/document/research-1';
+  });
+  const check = (code, ok) => {
+    const result = cli(false);
+    assert.equal(result.status, ok ? 0 : 1, result.stderr + result.stdout);
+    assert.equal(result.stdout.trim(), `research-gate: ${ok ? 'pass' : 'fail'}: ${code} project=${ideaProjectId}`);
+  };
+  prepare('2026-10-18T23:59:59.999Z'); check('legacy-before-cutoff', true);
+  prepare('2026-10-19T00:00:00Z'); check('research-missing', false);
+  prepare('2026-10-19T12:00:00Z'); check('research-missing', false);
+  const { body, ...metadata } = input().document;
+  metadata.projectId = ideaProjectId;
+  write('research/document.json', metadata);
+  write('research/document.md', body.replaceAll(projectId, metadata.projectId)); check('pass', true);
+  write('research/document.md', fence({ ...record(), project: metadata.projectId, outcome: 'not-required', reason: 'Обратимая правка текста' }));
+  check('not-required', true);
+}));
 test('research CLI emits one line, reads only the named document and fails closed on read errors', () => snapshot(({ root, write, cli }) => {
   ideaDispatchFixture(root, 'MONO-175', i => { i.project.id = projectId; i.context.projectId = projectId;
     i.records.comments[0].body = i.records.comments[0].body.replaceAll('59c079b6-fc26-40a6-ba19-9467674fa637', projectId);
