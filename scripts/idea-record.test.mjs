@@ -124,13 +124,42 @@ for (const host of ['claude-code', 'codex']) {
     const s = setup(root, host);
     s.project.uuid = otherId; write(root, 'dump/project.json', s.project); verify(s.verify, 'other-project');
     s.project.uuid = projectId; write(root, 'dump/project.json', s.project);
-    write(root, 'comment.md', s.comment + '\n'); verify(s.verify, 'no-record');
+    write(root, 'comment.md', s.comment.replace('Ссылка разведчика:', 'Изменённая ссылка:')); verify(s.verify, 'no-record');
     write(root, 'comment.md', s.comment);
     s.project.description += '\nChanged outcome'; write(root, 'dump/project.json', s.project); verify(s.verify, 'stale');
     s.project.description = s.body; write(root, 'dump/project.json', s.project);
     const foreign = s.comment.replace(`project=${projectId}`, `project=${otherId}`);
     write(root, 'comment.md', foreign); s.pages[0].comments[0].body = foreign;
     write(root, 'dump/comments-1.json', s.pages[0]); verify(s.verify, 'other-project');
+  }));
+  test(`${host}: record and verify tolerate only trailing line endings`, () => sandbox(root => {
+    const s = setup(root, host);
+    write(root, 'notes.md', 'Ссылка разведчика: https://example.com/fact\n\n');
+    const recorded = cli([...s.args, '--project', projectId, '--notes', path.join(root, 'notes.md')]);
+    assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
+    const comment = fs.readFileSync(path.join(root, 'comment.md'), 'utf8');
+    s.pages[0].comments[0].body = comment.replace(/[\r\n]+$/, '');
+    write(root, 'dump/comments-1.json', s.pages[0]);
+    verify(s.verify, 'pass');
+    assert.ok(!/[\r\n]$/.test(comment), 'record emits no trailing line ending');
+    for (const expectedSuffix of ['', '\n', '\n\n', '\r\n', '\r\n\r\n']) {
+      for (const savedSuffix of ['', '\n', '\n\n', '\r\n', '\r\n\r\n']) {
+        write(root, 'comment.md', comment + expectedSuffix);
+        s.pages[0].comments[0].body = comment + savedSuffix;
+        write(root, 'dump/comments-1.json', s.pages[0]);
+        verify(s.verify, 'pass');
+      }
+    }
+    write(root, 'comment.md', comment);
+    for (const changed of [comment.replace('Ссылка разведчика:', 'Изменённая ссылка:'),
+      comment.replace('\n\n', '\n'), comment.replace('\n', '\r\n'), ' ' + comment, comment + ' ', comment + '\n \n']) {
+      s.pages[0].comments[0].body = changed;
+      write(root, 'dump/comments-1.json', s.pages[0]);
+      verify(s.verify, 'no-record');
+    }
+    const noNotes = cli([...s.args, '--project', projectId]);
+    assert.equal(noNotes.status, 0, noNotes.stdout + noNotes.stderr);
+    assert.ok(!/[\r\n]$/.test(fs.readFileSync(path.join(root, 'comment.md'), 'utf8')));
   }));
   test(`${host}: old approval without notes, single page and English headings`, () => sandbox(root => {
     const s = setup(root, host, 'English');
