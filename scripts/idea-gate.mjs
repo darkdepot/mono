@@ -45,6 +45,75 @@ export function validateIdeaGate(config) {
   }
 }
 
+export function validateResearchGate(config) {
+  if (config === undefined) return;
+  if (!object(config) || Object.keys(config).some(key => key !== 'since')) throw new Error('researchGate must contain only since');
+  if ('since' in config && !Number.isFinite(date(config.since, true)))
+    throw Object.assign(new Error('researchGate.since must be a valid YYYY-MM-DD date'), { code: 'bad-since' });
+}
+
+export function checkResearch({ ideaVerdict, issueContext, project, document, approval, approvalBody,
+  since = RESEARCH_GATE_DEFAULT_SINCE } = {}) {
+  const result = code => ({ ok: ['pass', 'not-required', 'issue-only', 'legacy-before-cutoff'].includes(code),
+    code, documentId: document?.id ?? null });
+  if (!ideaVerdict?.ok) return result('read-failed');
+  if (ideaVerdict.code === 'issue-only')
+    return result(!project && !issueContext?.projectId ? 'issue-only' : 'research-other-project');
+  if (!Number.isFinite(date(since, true))) return result('bad-since');
+  if (!uuid(project?.id) || issueContext?.projectId !== project.id || !Number.isFinite(date(approval?.createdAt)))
+    return result('read-failed');
+  if (date(approval.createdAt) < date(since, true)) return result('legacy-before-cutoff');
+  if (!document) return result('research-missing');
+  if (!object(document) || typeof document.id !== 'string' || !document.id ||
+      typeof document.url !== 'string' || !document.url || typeof document.body !== 'string' ||
+      typeof approvalBody !== 'string') return result('read-failed');
+  if (!approvalBody.includes(document.id) && !approvalBody.includes(document.url)) return result('research-not-referenced');
+  if (document.projectId !== project.id) return result('research-other-project');
+  try {
+    const fences = blocks(document.body).filter(block => block.info === 'mono-research');
+    if (fences.length !== 1) return result('research-bad-record');
+    const record = JSON.parse(fences[0].content);
+    if (!object(record) || !uuid(record.project) || !['ready', 'hold', 'not-required'].includes(record.outcome) ||
+        (['hold', 'not-required'].includes(record.outcome) && (typeof record.reason !== 'string' || !record.reason.trim())))
+      return result('research-bad-record');
+    if (record.project !== project.id) return result('research-other-project');
+    return result(record.outcome === 'not-required' ? 'not-required' : 'pass');
+  } catch { return result('research-bad-record'); }
+}
+
+// The exemptions are decided before touching research/. Dispatch supplies its
+// already checked Idea verdict; the CLI obtains the same verdict from the snapshot.
+export function checkResearchSnapshot(snapshot, config = {}, ideaVerdict) {
+  let projectId = null;
+  try {
+    const project = optionalJson(path.join(snapshot, 'idea/project.json'));
+    const issueContext = optionalJson(path.join(snapshot, 'issue-context.json'));
+    projectId = project?.id ?? issueContext?.projectId ?? null;
+    validateResearchGate(config.researchGate);
+    const approval = optionalJson(path.join(snapshot, 'approval.json'));
+    let approvalBody;
+    if (!ideaVerdict) {
+      const lane = optionalJson(path.join(snapshot, 'issue-only.json'));
+      approvalBody = approval ? fs.readFileSync(path.join(snapshot, 'approval.md'), 'utf8') : undefined;
+      ideaVerdict = checkIdea({ mode: 'approved', project, issueContext, issueOnlySeam: lane?.seam,
+        approval: approval ? { ...approval, body: approvalBody } : undefined,
+        records: project ? readJson(path.join(snapshot, 'idea/idea-records.json')) : undefined,
+        since: config.ideaGate?.since, headings: config.ideaGate?.headings });
+    }
+    const input = { ideaVerdict, project, issueContext, approval,
+      since: config.researchGate?.since === undefined ? RESEARCH_GATE_DEFAULT_SINCE : config.researchGate.since };
+    const exempt = checkResearch(input);
+    if (exempt.code !== 'research-missing') return { ...exempt, projectId };
+    const metadata = optionalJson(path.join(snapshot, 'research/document.json'));
+    const document = metadata === undefined ? undefined : { ...metadata, body: fs.readFileSync(path.join(snapshot, 'research/document.md'), 'utf8') };
+    const result = checkResearch({ ...input, document,
+      approvalBody: approvalBody ?? fs.readFileSync(path.join(snapshot, 'approval.md'), 'utf8') });
+    return { ...result, projectId };
+  } catch (error) {
+    return { ok: false, code: error.code === 'bad-since' ? 'bad-since' : 'read-failed', documentId: null, projectId };
+  }
+}
+
 // Fences are opaque, including their whitespace. Only top-level ordinary lines
 // can declare sections; the same scanner extracts the comment's snapshot fence.
 function blocks(markdown) {
@@ -381,6 +450,7 @@ function main(argv) {
        idea-gate.mjs helper --host claude-code|codex [--config CONFIG]
        idea-gate.mjs check --mode fresh --dump DIR --config CONFIG
        idea-gate.mjs check --mode fresh|approved --snapshot DIR [--config CONFIG]
+       idea-gate.mjs research --snapshot DIR [--config CONFIG]
        idea-gate.mjs fingerprint --snapshot FILE [--config CONFIG]
 Dump: project.json and comments-N.json are raw Linear responses (N=1,2,...).
 Each response needs comments-N.request.json: {} for page 1, {"cursor":"previous response cursor"} thereafter.
@@ -389,6 +459,7 @@ record refuses unrecognized sections or text outside the four sections before wr
     return;
   }
   if (['record', 'verify', 'helper'].includes(argv[0])) return authoringMain(argv);
+  const research = argv[0] === 'research';
   let projectId = null, result;
   try {
     const command = argv.shift(), options = {};
@@ -396,6 +467,13 @@ record refuses unrecognized sections or text outside the four sections before wr
       const key = argv.shift();
       if (!['--mode', '--snapshot', '--dump', '--config'].includes(key) || key in options || !argv.length) fail('read-failed');
       options[key] = argv.shift();
+    }
+    if (research) {
+      if (!options['--snapshot'] || options['--dump'] || options['--mode']) fail('read-failed');
+      result = checkResearchSnapshot(options['--snapshot'], options['--config'] ? readJson(options['--config']) : {});
+      console.log(`research-gate: ${result.ok ? 'pass' : 'fail'}: ${result.code} project=${result.projectId}`);
+      process.exitCode = result.ok ? 0 : 1;
+      return;
     }
     if (Boolean(options['--snapshot']) === Boolean(options['--dump'])) fail('read-failed');
     const snapshot = options['--snapshot'];
@@ -430,7 +508,7 @@ record refuses unrecognized sections or text outside the four sections before wr
   } catch (error) {
     result = verdict(['bad-since', 'missing-heading', 'duplicate-heading', 'unsupported-format'].includes(error.code) ? error.code : 'read-failed', projectId);
   }
-  console.log(`idea-gate: ${result.ok ? 'pass' : 'fail'}: ${result.code} project=${result.projectId}`);
+  console.log(`${research ? 'research-gate' : 'idea-gate'}: ${result.ok ? 'pass' : 'fail'}: ${result.code} project=${result.projectId}`);
   if (result.ok) console.log(JSON.stringify(result));
   process.exitCode = result.ok ? 0 : 1;
 }

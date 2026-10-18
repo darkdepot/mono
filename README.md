@@ -208,6 +208,22 @@ Research, check discovery и Handoff использует только `--dump`;
 Handoff до черновика читает «Исследование» и пишет в PRD «Что решили по неизвестным Research»: решение по каждому Н. Совет «не делать» или «отложить» сначала выносится владельцу. Одобрение называет документ и причину `not-required`; при `stale` — неизвестные из исследованной записи.
 Dispatch и receipt связывают результат проверки и снимок, включая проход до отсечки без записи.
 
+Проверка Research перед запуском работы: `node scripts/idea-gate.mjs research
+--snapshot DIR [--config CONFIG]`. После проверки Idea dispatch требует документ,
+названный в одобрении пакета, и один JSON-забор `mono-research`: UUID проекта,
+`outcome` (`ready`, `hold`, `not-required`) и непустую причину у последних двух.
+Лишние поля разрешены; проза и другие документы проекта не влияют на результат.
+Снимок содержит `research/document.json` (`id`, `url`, `title`, `projectId`) и
+`research/document.md`; сборка описана в [Orchestration](references/orchestration.md).
+Вывод одной строкой: `research-gate: pass|fail: <code> project=<id>`.
+Отказ не расходует попытку. Задача без проекта и пакет с `approval.createdAt`
+строго до `researchGate.since` проходят без каталога `research/`; имеющийся каталог
+копируется в снимок попытки. Необязательный `researchGate.since` — дата `YYYY-MM-DD`
+по UTC; неверная дата, в том числе явный `null`, даёт `bad-since`. По умолчанию
+`RESEARCH_GATE_DEFAULT_SINCE` остаётся `2099-12-31`: до выпуска 0.33.0 проверка
+спит, дату включения задаёт MONO-178. Проверка работает только по снимку, без сети.
+Прежний реестр живой пробы и новый блок проверяются [фикстурами](scripts/fixtures/research-gate/README.md).
+
 Необязательный `ideaGate.since` принимает дату `YYYY-MM-DD`; без него действует
 `2026-10-18` (00:00 UTC, проверка включена с 0.32.1). Неверная дата даёт `bad-since`. `ideaGate.headings`
 переопределяет все четыре заголовка, например

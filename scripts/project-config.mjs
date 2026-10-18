@@ -6,7 +6,7 @@ import process from "node:process";
 import { deliveryConfig, validateModels, validateLanding } from "./runtime.mjs";
 import { preapplyMandate } from "./orchestrator/preapply.mjs";
 import { configuredBackup } from "./orchestrator/backup-switch.mjs";
-import { validateIdeaGate } from "./idea-gate.mjs";
+import { validateIdeaGate, validateResearchGate } from "./idea-gate.mjs";
 
 const CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.json";
 const LEGACY_CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.md";
@@ -300,6 +300,7 @@ function validateConfig(config, failures) {
   try { validateModels(config); } catch (error) { failures.push(error.message); }
   try { validateLanding(config); } catch (error) { failures.push(error.message); }
   try { validateIdeaGate(config.ideaGate); } catch (error) { failures.push(error.message); }
+  try { validateResearchGate(config.researchGate); } catch (error) { failures.push(error.message); }
   if ("landWorkflow" in config || config.workflows?.land) {
     failures.push("Project config must use workflows.deploy, not Land workflow compatibility fields");
   }

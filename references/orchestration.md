@@ -298,6 +298,37 @@ refusal names code/project and consumes no attempt. Issue-only keeps its existin
 `issue-only.json` envelope (marker,label,fingerprint,config,ownerApproval,seam),
 passes seam to checkIdea and needs no Project files.
 
+After the Idea check and before registering an attempt, dispatch checks Research.
+For a Project package, read the Research document named by `id` or `url` in the
+exact `approval.md` comment. Save only that document as:
+
+- `research/document.json`: `{id,url,title,projectId}` from the document metadata;
+- `research/document.md`: its body, unchanged from the read-back.
+
+Do not substitute another Project document titled «Исследование». The gate reads
+only the one `mono-research` JSON fence in the named document: `project` must match
+the Project UUID, `outcome` is `ready`, `hold` or `not-required`; `hold` and
+`not-required` require a nonempty `reason`. Extra fields, including the older
+record format, are allowed. Prose, `interface`, fact quality and PRD decisions
+are not checked. Run `node <pack-root>/scripts/idea-gate.mjs research --snapshot <dir>
+--config <path>` to inspect the same snapshot without network access; output is
+one line, `research-gate: pass|fail: <code> project=<id>`.
+
+`researchGate.since` optionally overrides `RESEARCH_GATE_DEFAULT_SINCE` with a
+valid `YYYY-MM-DD` UTC date. The default stays dormant at `2099-12-31` until the
+release task activates it. A package whose `approval.createdAt` is strictly
+before this date passes as `legacy-before-cutoff`; equality requires Research.
+An Idea `issue-only` verdict with no Issue Project passes as `issue-only`.
+Neither exemption reads `research/`, and the directory may be absent. When it
+exists, dispatch copies it into the attempt snapshot; absence never triggers a
+copy for an exempt package. Other packages require the named document. Any read
+error refuses the launch. Research refusals name the code and Project and do
+not register or consume an attempt. The closed codes are `pass`, `not-required`,
+`issue-only`, `legacy-before-cutoff`, `research-missing`, `research-bad-record`,
+`research-other-project`, `research-not-referenced`, `bad-since`, `read-failed`.
+This is a dispatch-only check; preflight, ship and direct worker launch do not
+add another Research gate.
+
 Dispatch saves idea files, approval/context and selected-record.json plus the
 cutoff/headings policy; pins.idea binds path/projectId/recordId/fingerprint/digest/
 artifactDigest/verdict. artifactDigest covers canonical contents of every saved

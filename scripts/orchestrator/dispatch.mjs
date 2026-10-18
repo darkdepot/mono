@@ -12,7 +12,7 @@ import { workerTransport } from "../worker-transport.mjs";
 import { spawnWorker } from "./launch.mjs";
 import { configuredBackup, resolveBackupSwitch } from "./backup-switch.mjs";
 import { versionDataset } from "../decisions.mjs";
-import { IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
+import { IDEA_GATE_DEFAULT_SINCE, checkResearchSnapshot } from '../idea-gate.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const q = value => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -91,6 +91,8 @@ async function prepareDispatch(args) {
   if (issueOnly && (seam.package_kind !== "issue-only" || seam.approval_status !== "approved-fresh" || !lane.marker || !lane.label || !lane.ownerApproval || !lane.config ||
       typeof lane.fingerprint !== "string" || !lane.fingerprint.trim())) throw new Error("complete issue-only snapshot with nonempty fingerprint required");
   const ideaResult = dispatchIdea(args.snapshot, config, issue, lane);
+  const researchResult = checkResearchSnapshot(args.snapshot, config, ideaResult);
+  if (!researchResult.ok) throw new Error(`research-gate: fail: ${researchResult.code} project=${researchResult.projectId}`);
   const attemptsFile = path.join(args.root, "attempts.json"), attempt = (fs.existsSync(attemptsFile) ? readJson(attemptsFile)[issue] ?? 0 : 0) + 1;
   const worktree = path.join(repo, ".worktrees", issue), branch = `mono/${issue.toLowerCase()}`;
   git(repo, "fetch", "origin", "main");
@@ -145,6 +147,8 @@ async function prepareDispatch(args) {
       fs.cpSync(path.join(args.snapshot, 'idea'), path.join(preparedSnapshot, 'idea'), { recursive: true });
       for (const name of ['approval.json', 'issue-context.json']) fs.copyFileSync(path.join(args.snapshot, name), path.join(preparedSnapshot, name));
     }
+    if (fs.existsSync(path.join(args.snapshot, 'research')))
+      fs.cpSync(path.join(args.snapshot, 'research'), path.join(preparedSnapshot, 'research'), { recursive: true });
     atomicJson(path.join(preparedSnapshot, 'idea/gate-config.json'), { ideaGate: { since: config.ideaGate?.since ?? IDEA_GATE_DEFAULT_SINCE, ...(config.ideaGate?.headings ? { headings: config.ideaGate.headings } : {}) } });
     const selected = ideaResult.recordId ? readJson(path.join(preparedSnapshot, 'idea/idea-records.json')).comments.find(comment => comment.id === ideaResult.recordId) : null;
     atomicJson(path.join(preparedSnapshot, 'idea/selected-record.json'), selected);
