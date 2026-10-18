@@ -6,6 +6,36 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-18
+
+<!-- fragment: MONO-183 sha256:952ceeacdf0666622546f27cc01be0682fcaabe139f4cde94e54c020a5f15540 -->
+# MONO-183
+
+- Added one stage-task definition, role assignment and Russian task template; package membership, repair and dispatch consumers link to it.
+- Research finds or creates its own task first, records its log there and closes it on completion or refused entry.
+- Handoff sets Ready after approved package and passing check; Delivery Start accepts Ready, with legacy/missing-status Discovery fallback, and class 3 repair removes Ready.
+
+<!-- fragment: MONO-184 sha256:5ae53eb79356f5a6560838ab280de0c8d52e42791fc2b4294b7b6ba5baec2da1 -->
+# MONO-184
+
+- Add Russian Discovery from approved draft v6: product solutions, explicit choice, version-bound PRD yes, tiny and close/defer paths, owner and orchestrator modes.
+- Make Discovery the PRD owner before package approval; keep approved PRD read-only in Handoff, with explicit legacy path and independent Research checks.
+- Update approved PRD/Project contracts and parity fingerprints, configuration validation, orchestration policy and activation eval cases.
+- Invalidate the Handoff entry check when its inputs change; reread the approved PRD immediately before accepting package approval and return to Discovery on a version mismatch.
+
+<!-- fragment: MONO-186 sha256:95d1e40e7f4dd1114dad287302d2d3858836fbf4fa173f2a203cb88a9d5e2ee5 -->
+### Выпуск и обновление
+
+- Выпуск 0.34.0 включает Discovery: решения, явный выбор и PRD с «да» на показанную версию в режиме владельца или оркестратора. Отсечка старого пути Handoff — 20.10.2026 (`2026-10-20`, 00:00 UTC), первый полный день UTC после последнего ожидаемого дня выпуска по d-002; при поздней установке продукт может сдвинуть её вперёд через `discoveryGate.since`. Handoff получает утверждённый PRD на чтение, задачи этапов не входят в набор задач реализации, Ready ставится после проверенного пакета.
+- Версии плагинов согласованы; README и инструкция установки описывают обновление, поздний переход продукта, задачи с меткой `Этап` и поведение без Ready. Форматы совместимы, общая quiescence не нужна; сохранены обычные условия Plugin Updates и исходный `packRoot` текущих попыток.
+- Проверки Claude на полном наборе Idea, Research и Discovery до PR, установка обоих хостов и живая приёмка после вливания принадлежат оркестратору; их результат фиксируется отдельно от локальных проверок пака.
+
+<!-- fragment: MONO-201 sha256:6b8d1d315c0169c13bad7f7c7ad6a08a8d4266a8514927881c2908ae496beb07 -->
+Исправлена проверка записи «да» в Idea: `record` сохраняет комментарий без завершающих переводов строки, а `verify` допускает их срезание Linear. Любые другие различия в тексте по-прежнему отклоняются; формат записи, снимок, отпечаток и проверка запуска работы не меняются.
+
+<!-- fragment: MONO-203 sha256:b48b3d59e7719fabc8fe5c729ed9e95468e914f8c99665851520923ef1196c6f -->
+Этап Idea ведёт разговор как менеджер проекта у основателя: первое сообщение сразу пересказывает идею словами владельца и называет срок, план из 3-4 шагов словами идеи, ни одного ожидания без строки статуса (в Claude Code его держит фоновый будильник). Разведчики работают в фоне, первая находка и ранний вопрос о маршруте приходят до итога по коду; картина связной речью без подписей, варианты с ценой один раз в карточке и свой выбор, агент прямо говорит, если делал бы иначе. Название проекта до «да», в Linear до «да» ничего не пишется, после «да» одна строка, финал и сразу исследование: «да» на описание включает его старт. Запись готовится, пока владелец читает описание; показанная версия становится одобренной только после «да». `record --notes` работает и до «да» и предупреждает о длинном тире и путях, которых нет на ветке из ссылки; вне репозитория отвечает `"paths":"unchecked"`. `verify` принимает выгрузку только нужных полей и комментарии без тела, если это не запись «да». Формат записи, снимок, отпечаток и проверка запуска работы не меняются.
+
 ## [0.33.0] - 2026-10-18
 
 <!-- fragment: MONO-175 sha256:c0247603f8b3bbd1b8af508fea7479cf3d763712ef9b4e1c6140c31b17706147 -->

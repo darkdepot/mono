@@ -55,8 +55,9 @@ Until Design and Tech Evaluation exist, Handoff receives their open questions an
 «нужны макеты» (Research `interface: true` or a new screen/window in the solution).
 A raw implementation plan never authorizes code or Delivery.
 
-Discovery cutoff: `2099-12-31` until release; product `discoveryGate.since` overrides
-it. The old-path eligibility and package-aware checks have one home:
+Discovery cutoff: `2026-10-20` (20.10.2026, 00:00 UTC), the first full UTC day
+after the latest expected release day of 0.34.0 (d-002); product
+`discoveryGate.since` overrides it and can move it forward for late installation. The old-path eligibility and package-aware checks have one home:
 `skills/check/SKILL.md`, mode `discovery`. On that path Handoff may write PRD-lite;
 tiny new Discovery work gets a short PRD. On the new path Handoff reads approved
 PRD only; before package approval a PRD finding returns to Discovery, with renewed
