@@ -163,7 +163,8 @@ Workflow states:
      never use the product/worktree current directory.
      The upstream pack source remains `scripts/watch-workers.mjs` for
      development and fixtures.
-   - One Issue per worker. Use `scripts/orchestrator/dispatch.mjs`
+   - Select [execution Issues](references/lifecycle.md#задачи-этапов) only; never pass a task labelled `Этап` to `dispatch.mjs` (the script cannot inspect labels).
+   - One of the [execution Issues](references/lifecycle.md#задачи-этапов) per worker. Use `scripts/orchestrator/dispatch.mjs`
      with Issue, root, config, snapshot bodies and the explicit lifecycle moves,
      open-decision count and verification command. It builds pins/digest, extracts,
      start-gate and spawn requests, renders the single dispatch template, passes
@@ -173,7 +174,7 @@ Workflow states:
      `templates/orchestrator-dispatch.md`: one delivery, full context snapshot, AFK
      contract, engine block, mailbox path, authorization. Include the
      no-sub-delegation rule in every dispatch prompt.
-   - Dispatch mono:deliver once per approved Issue with the full snapshot,
+   - Dispatch mono:deliver once per approved [execution Issues](references/lifecycle.md#задачи-этапов) with the full snapshot,
      exact identity command, start-gate request and required phase capabilities.
      Pin request handshake=wait|resume (default resume), profile=short|full
      (default full), pins {file,digest}, pinsVersion=0; short only tiny/standard,

@@ -31,7 +31,7 @@ Stop after the final message. Idea approval is separate from package approval.
 `mono:research` gathers facts before choosing a solution, without owner questions or
 a separate yes. The approved Idea record supplies the questions; a legacy Project
 uses its description. It writes one Research («Исследование») document and one
-Project comment with the stage log, then stops with an answer, advice and next step.
+comment in its stage task with the stage log, then stops with an answer, advice and next step.
 Discovery follows when installed; until then, `mono:handoff` owns the next step.
 A Project without Research routes here, except a package approved before
 `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
@@ -66,13 +66,40 @@ Thus old discovery → package with verified record → approved-mode start; mig
 alone never permits implementation. Handoff checks `fresh` before drafting and
 `approved` after approval; implement checks `approved` before start.
 
+## Задачи этапов
+
+Задачи реализации (execution Issues) не включают задачи с меткой `Этап`.
+Это определение действует для набора задач пакета, одобрения, ревью, проверок,
+Issue set во всех классах правки и запуска работы. Создание задачи этапа само по
+себе не меняет набор задач реализации и класс правки пакета.
+
+Своя задача есть у Research, Discovery, Design и Tech Evaluation. У Idea и
+Handoff задачи этапа нет. Роли: Idea — проджект-менеджер; Research и Discovery —
+продакт; Design — дизайнер; Tech Evaluation — техлид; Handoff — тимлид;
+Implementation — инженер.
+
+Каждый этап первым шагом ищет свою задачу по проекту, метке `Этап` и началу
+названия: `Research:`, `Discovery:`, `Design:` или `Tech Evaluation:`. Название
+целиком: `Research: <проект>`, `Discovery: <проект>` и так же для остальных.
+Открытую берёт, закрытую при повторном входе открывает. Исключение: отложенная,
+у которой условие возврата не наступило и владелец её не вернул; этап говорит,
+до чего отложено, и останавливается, задачу не открывает. Нет задачи: заводит по
+[шаблону задачи этапа](../templates/stage-task.md), исполнитель — владелец.
+Предыдущий этап задач не заводит; каждый отвечает только за свою.
+
+Метку `Этап` ищет в команде первый этап, которому она нужна; если её нет,
+создаёт. Задача этапа без ветки и PR: поручение роли, журнал в комментариях,
+результат в документе проекта. В конце этапа задача закрывается в Done.
+Если вход отказан (проверка идеи или Research), в задаче записываются причина
+и куда дальше, затем она закрывается. Каждая запись читается обратно.
+
 ## Handoff
 
 Turn discovery into a Linear-backed execution package.
 
 Required:
 
-- Project remains in Discovery or an equivalent configured pre-delivery state. If no separate pre-delivery status exists, keep Discovery and record handoff readiness in comments or check output.
+- Project stays in Discovery while assembling the package. After package approval and PASS `mono:check handoff`, set and read back Ready, the configured pre-delivery status before Delivery. If Ready is absent from the workspace, keep Discovery; the check reports that fallback.
 - Artifact intake summary following `references/artifact-intake.md`.
 - Current PRD.
 - Current Tech Spec.
@@ -108,7 +135,7 @@ Required:
   re-derives fingerprints, and stales preflight certificates issued before the
   repair.
 - Class 3 stops workers, supersedes approvals, invalidates dependent artifacts,
-  moves a Delivery Project back to Discovery, and requires owner re-approval.
+  moves a Delivery or Ready Project back to Discovery, and requires owner re-approval.
 - `mono:check repair` reports readiness after all class effects are recorded.
 
 Forbidden:
@@ -151,7 +178,7 @@ Gate: `mono:check issue`.
 
 ## Delivery
 
-Prepare and run implementation from approved Linear Issue(s). Delivery starts through `mono:implement` only after execution Issue(s) exist and implementation is ready to begin.
+Prepare and run implementation from approved Linear Issue(s). Delivery starts through `mono:implement` only after execution Issue(s) exist and implementation is ready to begin. Start from Ready; Discovery is accepted for a legacy Project or any Project whose workspace has no Ready status, with package checks passed.
 
 Required:
 

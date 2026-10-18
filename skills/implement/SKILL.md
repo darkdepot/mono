@@ -5,11 +5,11 @@ description: Use when starting or running implementation from approved Linear Is
 
 # Mono Implement
 
-Shared files: here or pack root. Resolve `<pack-root>/` to the absolute pack root (`../..` from this skill), not the product cwd.
+Files: here/pack root. Absolute `<pack-root>/` = `../..` here, never product cwd.
 
 [Landing](references/landing.md).
 
-Own start/code; preflight follows. Ship owns PR; deploy closeout.
+Own start/code → preflight. Ship: PR; deploy: closeout.
 Config: `.agents/mono-workflow.config.json`.
 
 Read first:
@@ -25,7 +25,7 @@ Read when:
 - `references/issue-only-lane.md` — `lifecycle_state_entity=issue` or lane park/freeze/exit.
 - `skills/preflight/SKILL.md` — exiting implemented-needs-preflight.
 
-Inspect package/config/git/base; identity before work/resume.
+Inspect package/config/git/base; identity on start/resume.
 Dispatch: phase/full queue; standalone: report.
 
 ## Workflow
@@ -37,10 +37,10 @@ branch/snapshot wins. Consult gstack-learnings-search --limit 10; absence adviso
 Record start; implement one PR with incremental checks. AFK forbids sub-workers;
 interactive slices need Issue permission. Missing/conflicting artifacts allow
 discovery. Product/access/dirty/risk decisions → mailbox; material drift →
-scope-drift-needs-handoff. Russian comment for stops. No PR/formal pre-ship checks.
+scope-drift-needs-handoff. Russian stop comment. No PR/formal pre-ship checks.
 
-Use existing tools/literal solutions within the Issue. Repeated key/class:
-apply `references/review-admission.md` before edits.
+Only existing tools/literal solutions. Repeated key/class: apply
+`references/review-admission.md` before edits.
 
 ## Orchestration branch of `start-checkpoint`
 
@@ -61,8 +61,9 @@ apply `references/review-admission.md` before edits.
 
 ## Context-seam branch at Delivery Start
 
-Apply worker Context seam. Project-first: start approval, Delivery,
-mono:check delivery, start comment; missing → park/restart, integrity → needs-human.
+Apply worker Context seam. Project-first: package/start approval and checks passed;
+Ready (Discovery for legacy/no workspace Ready) → Delivery. Run mono:check delivery
+and record start; missing → park/restart, integrity → needs-human.
 Issue-only: fresh authenticated fingerprint approval/pre-start PASS. Move only
 Issue to started; record lifecycle/fingerprint/oracle/engine/verification, one PR.
 Lane exit parks for superseding marker/Project-first restart; no retrofit.

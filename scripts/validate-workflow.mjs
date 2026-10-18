@@ -5511,6 +5511,8 @@ function validateModelPolicyFixtures() {
 }
 
 const STRING_PINS = [
+  ["references/lifecycle.md", "Этап"],
+  ["templates/stage-task.md", "Этап"],
   ["skills/idea/SKILL.md", "mono:idea"],
   ["skills/idea/SKILL.md", "linear-scout"],
   ["skills/idea/SKILL.md", "code-scout"],
@@ -5862,6 +5864,13 @@ const STRING_PINS = [
   ["references/orchestration.md","`recorded-late`"],
 ];
 const REQUIRED_HEADINGS = [
+  ["references/lifecycle.md", "Задачи этапов"],
+  ["templates/stage-task.md", "Роль"],
+  ["templates/stage-task.md", "Вводные со ссылками"],
+  ["templates/stage-task.md", "Что сделать"],
+  ["templates/stage-task.md", "Результат и где лежит"],
+  ["templates/stage-task.md", "Когда готово"],
+  ["templates/stage-task.md", "Чего не делать"],
   ["skills/research/SKILL.md", "mono:research"],
   ["references/worker-contract.md", "AFK Contract"],
   ["references/worker-contract.md", "Two-Phase Dispatch Handshake"],
@@ -6085,6 +6094,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "Этап", // MONO-183: Linear stage-task label, not editorial wording.
   "mono-research", "ready", "hold", "not-required", "web-scout", "mono:research",
   "reader", "subagent", "definitions",
   "<корень>/agents/linear-scout.md", "<корень>/agents/code-scout.md",

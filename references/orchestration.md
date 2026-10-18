@@ -35,7 +35,7 @@ stage skills keep their ownership unchanged.
 The user decides. Escalate immediately and interactively with a decision
 brief (options + recommendation):
 
-- Idea direction and scope: handoff package approval, Issue slicing, scope
+- Idea direction and scope: handoff package approval, [execution Issues](lifecycle.md#задачи-этапов) slicing, scope
   drift.
 - Design and UX: always with prepared side-by-side variants (`/design-html`
   when the runtime provides it; concrete textual variants otherwise). Under
@@ -202,7 +202,7 @@ owner conversation, or any authority over workers.
 
 The orchestrator's `mono:handoff` state has one mandatory Second Voice run
 that is not discovery: the drafted handoff package — draft Project brief,
-draft PRD, draft Tech Spec, and proposed Issue slicing — goes to an
+draft PRD, draft Tech Spec, and proposed [execution Issues](lifecycle.md#задачи-этапов) slicing — goes to an
 independent reviewer BEFORE the orchestrator writes any of it to Linear.
 Order, not preference: synthesize the draft, review it, fix the draft, then
 put it to the owner with the verdict already attached, and only then write.
@@ -217,7 +217,7 @@ put it to the owner with the verdict already attached, and only then write.
   recorded. The orchestrator cannot decide this gate away under «Решил
   сам:»; only findings inside it are its to accept.
 - The reviewed subject is the draft, so none of the drafted bodies — Project
-  brief, PRD, Tech Spec, Issue slicing — is written to Linear at review time.
+  brief, PRD, Tech Spec, [execution Issues](lifecycle.md#задачи-этапов) slicing — is written to Linear at review time.
   The Project entity itself may already exist, and stays available to the
   reviewer as surrounding context; what is absent is the drafted content, not
   necessarily the container. That absence is expected and is never reported as
@@ -270,7 +270,11 @@ both audiences. Facts are never compressed for either column.
 
 ### Orchestrator dispatch command
 
-Installed command: `scripts/orchestrator/dispatch.mjs --issue KEY --root DIR
+Select [execution Issues](lifecycle.md#задачи-этапов) before dispatch; never pass a task labelled
+`Этап` to `dispatch.mjs`, which cannot inspect labels. This selection applies to
+every dispatch path below, including retries and corrective work.
+
+For [execution Issues](lifecycle.md#задачи-этапов), installed command: `scripts/orchestrator/dispatch.mjs --issue KEY --root DIR
 --config FILE --snapshot DIR`. Optional risk/critical, profile, handshake and
 role/reason pin the attempt. --moves JSON, --open-decisions N, --verification JSON
 or `orchestration.dispatch` defaults are required; defaults also cover product,
@@ -882,7 +886,7 @@ Keep both as history. Example decision (replace paths and Issue facts):
 ```
 
 Add `--backup-switch /absolute/orchestrator/switch-input/EXAMPLE-7.json` to the
-ordinary installed `orchestrator/dispatch.mjs` command, retaining the current
+ordinary installed `orchestrator/dispatch.mjs` command for [execution Issues](lifecycle.md#задачи-этапов), retaining the current
 snapshot, gates, verification, risk and complete write grants. A direct spawn
 request carries the same object in `backupSwitch` and its normalized record in
 the new attempt's pins. This record is the sole exception to selecting the
@@ -1984,7 +1988,7 @@ forced mid-wave resume has never been tested.
 
 ## Pre-application by mandate
 
-`dispatch.mjs --preapply` applies only approved manifest bytes under `.agents/`
+For [execution Issues](lifecycle.md#задачи-этапов), `dispatch.mjs --preapply` applies only approved manifest bytes under `.agents/`
 before start gates and spawn, on a clean tree. The product config's
 `orchestration.preapply.mandate` is the URL of an owner comment covering both
 application and the repair procedure; absent/empty means no mandate. Establish
