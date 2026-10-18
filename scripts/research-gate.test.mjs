@@ -36,6 +36,18 @@ test('research checks only the referenced document fence and permits extra field
   assert.equal(JSON.parse(live).project, projectId);
 });
 
+test('approval references cannot match a different document through an id or URL prefix', () => {
+  for (const approvalBody of ['research-10', 'prefix-research-1', 'research-1-extra', 'research-1_suffix',
+    'https://linear.app/document/research-10', 'https://linear.app/document/research-1-extra'])
+    expectCode({ ...input(), approvalBody }, 'research-not-referenced');
+  const options = input(); options.document.id = 'separate-id';
+  for (const suffix of ['0', '/other', '?other=1', '#other', '.extra'])
+    expectCode({ ...options, approvalBody: options.document.url + suffix }, 'research-not-referenced');
+  for (const approvalBody of ['[Исследование](https://linear.app/document/research-1)',
+    '<document id="separate-id" href="https://linear.app/document/research-1">Исследование</document>',
+    'Одобрено https://linear.app/document/research-1.']) expectCode({ ...options, approvalBody }, 'pass');
+});
+
 test('research has closed refusal codes for reference, fence, identity, outcome and reason', () => {
   for (const [change, code] of [
     [o => { o.approvalBody = 'Одобрено без ссылки'; }, 'research-not-referenced'],

@@ -67,7 +67,10 @@ export function checkResearch({ ideaVerdict, issueContext, project, document, ap
   if (!object(document) || typeof document.id !== 'string' || !document.id ||
       typeof document.url !== 'string' || !document.url || typeof document.body !== 'string' ||
       typeof approvalBody !== 'string') return result('read-failed');
-  if (!approvalBody.includes(document.id) && !approvalBody.includes(document.url)) return result('research-not-referenced');
+  const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const idReference = new RegExp(`(?<![\\p{L}\\p{N}_-])${escape(document.id)}(?![\\p{L}\\p{N}_-])`, 'u');
+  const urlReference = new RegExp(`(^|[\\s<>"'=(\\[])${escape(document.url)}(?=$|[\\s<>"')\\],;]|\\.(?:\\s|$))`, 'u');
+  if (!idReference.test(approvalBody) && !urlReference.test(approvalBody)) return result('research-not-referenced');
   if (document.projectId !== project.id) return result('research-other-project');
   try {
     const fences = blocks(document.body).filter(block => block.info === 'mono-research');
