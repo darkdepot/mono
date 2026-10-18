@@ -301,6 +301,7 @@ function validateConfig(config, failures) {
   try { validateLanding(config); } catch (error) { failures.push(error.message); }
   try { validateIdeaGate(config.ideaGate); } catch (error) { failures.push(error.message); }
   try { validateResearchGate(config.researchGate); } catch (error) { failures.push(error.message); }
+  try { validateResearchGate(config.discoveryGate); } catch (error) { failures.push(`${error.code ? `${error.code}: ` : ""}${error.message.replaceAll("researchGate", "discoveryGate")}`); }
   if ("landWorkflow" in config || config.workflows?.land) {
     failures.push("Project config must use workflows.deploy, not Land workflow compatibility fields");
   }

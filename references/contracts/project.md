@@ -11,13 +11,12 @@ single source for presentation shape.
 
 ## PC-001 — Project routing
 
-Use this contract when creating or updating the Linear Project that serves as
-the workflow source of truth. A raw request to write a Project routes to
-`mono:idea`; an existing Project in Idea also routes to `mono:idea`. An existing
-Project without a Research («Исследование») document routes to `mono:research`,
-except a package approved before `researchGate.since` from product config, or
-`RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs` when unset. Other
-existing Projects and shaped-discovery repairs route to `mono:handoff`.
+Use this contract for Linear Project mutations. Raw ideas and existing Idea
+Projects route to `mono:idea`. An existing Project in Discovery without a
+Research document routes to `mono:research`, except a package approved strictly
+before `researchGate.since` (config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` in
+`scripts/idea-gate.mjs`); without an approved PRD to `mono:discovery` (old path in
+`references/lifecycle.md`); otherwise, and for package repairs, to `mono:handoff`.
 
 ## PC-002 — Concise product brief
 
@@ -81,8 +80,8 @@ in the approval comment notes before replacing the body.
 
 ## PC-014 — Discovery state
 
-In Discovery, the Project coexists with discovery output. Durable PRD and Tech
-Spec may exist and are normally created by `mono:handoff`.
+In Discovery, PRD is created by `mono:discovery`, Tech Spec normally by
+`mono:handoff`. They coexist with the Project before Delivery.
 
 ## PC-015 — Handoff readiness state
 

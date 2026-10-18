@@ -4,6 +4,7 @@ Control-plane policy for `mono:orchestrate`. The orchestrator inspects,
 delegates, monitors, decides or escalates, records, and reports. It never
 implements delivery-stage work itself. Idea is the explicit exception: the orchestrator runs that stage itself.
 Research too: no owner questions or yes; the result goes to the owner.
+Discovery answers with sources and its own PRD yes; result to owner without waiting.
 
 ## Roles
 
@@ -20,7 +21,8 @@ Research too: no owner questions or yes; the result goes to the owner.
 
 | Stage | Runs in |
 | --- | --- |
-| `mono:idea`, discovery | orchestrator session (Director Discovery) |
+| `mono:idea` | orchestrator session; owner yes per Idea |
+| `mono:discovery` | orchestrator session itself, per its orchestrator reference |
 | `mono:research` | orchestrator session itself; no owner questions or yes; result to owner |
 | `mono:handoff` | orchestrator session |
 | `mono:implement`, `mono:preflight`, `mono:ship` | worker session |
@@ -50,6 +52,8 @@ brief (options + recommendation):
 The orchestrator decides itself and records every such decision in the ledger
 under «Решил сам:» with a one-line reason:
 
+- Discovery solution choice and its own PRD yes, with sources; the owner can
+  override at any time or at package approval.
 - All technical and implementation questions from workers.
 - Implementation start after package approval (recorded explicitly; the
   bundled-approval rule from `mono:implement` applies).
@@ -71,34 +75,22 @@ affected stage when that happens.
 
 ## Director Discovery
 
-Discovery under orchestration runs in director mode: the user is the
-advisor, the orchestrator is the product director. Discovery skills
-(`/office-hours`, `/brainstorming`, `/plan-design-review`,
-`/plan-eng-review`) are interrogative — they extract decisions from their
-operator. Under orchestration the interrogative side runs as a Second
-Voice — an independent reviewer agent per the protocol below — and the
-orchestrator answers as product director, grounded in the Linear brief,
-repo and product context, and prior user answers. It never relays a
-discovery-skill question stream to the user.
+Run Idea → Research → Discovery yourself, each by its orchestrator-mode rules.
+Discovery uses one second-model pass after solutions/recommendation, before choice;
+no Second Voice interview, dialogue continuation or rounds for this stage. Its
+answers carry sources or judgments, and it gives its own PRD yes. Workers and
+background launches never start the stage. The owner can overturn its result.
+A deferred Project stays out of intake until its return condition or owner return.
 
-- Material product choices made this way are recorded under «Решил сам:»
-  and surface in the package-approval brief, where overriding any of them
-  is a valid answer.
-- Genuinely contested items (per the Always-ask list) are collected and
-  batched into the UX checkpoint or the package-approval brief; interrupt
-  discovery only when the item blocks it from continuing.
-- When a named discovery skill is not available in the current runtime,
-  run an equivalent review pass over the same ground (product,
-  engineering, and design lenses) through the Second Voice — a missing
-  skill does not license in-session self-review while an agent binding
-  exists — and record the substitution in the discovery notes.
-- Second Voice and lens reviews run as agents per the Second Voice
-  protocol below; findings return to the orchestrator, never to the user
-  directly. Workers remain barred from spawning anything.
+UX checkpoint and reviewed-prototype bar below stay in force. Contested Always-ask
+items batch there or into package approval. The Second Voice dialogue/round
+protocol below belongs only to pre-write package review; a Discovery second-model
+pass follows the stage reference instead. Design-lens prototype review is a pass,
+not a Discovery interview.
 
 Checkpoints — the only moments that touch the user:
 
-1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:»; the owner alone gives yes to this version. This yes is separate from package approval. After verified completion, run `mono:research` itself, starting with the first Unknown. Research adds no owner questions or yes; return its result to the owner.
+1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:»; the owner alone gives yes to this version. This yes is separate from package approval. After verified completion, run `mono:research` itself, starting with the first Unknown. Research adds no owner questions or yes; return its result to the owner. Then run Discovery yourself: sources on answers, own PRD yes; return its result without waiting.
 2. UX checkpoint (user-facing surface only): one brief per
    `templates/orchestrator-brief.md` with a reviewed near-production
    prototype and the few contested UX decisions.
@@ -121,14 +113,10 @@ show the discovery queue in the status table.
 
 ### Second Voice
 
-A self-interview is an echo chamber. The interrogative side of discovery
-is delegated to a Second Voice: an independent reviewer agent in a fresh
-context that gets the product brief, Linear links, repo read access, and
-the named discovery skill's question framework — none of the
-orchestrator's reasoning. It plays interviewer for idea shaping
-(`/office-hours`, `/brainstorming`) and critic for reviews
-(`/plan-eng-review`, `/plan-design-review`); the orchestrator answers as
-product director.
+For pre-write package review, delegate the critique to an independent fresh-context
+Second Voice with the product brief, Linear links and repo read access. It reviews
+the package; the orchestrator answers as product director. This dialogue protocol
+does not run the Idea, Research or Discovery stages.
 
 Model selection is mandatory and cross-vendor: the Second Voice runs on
 a different model family from the orchestrator. A fresh context on the same
@@ -202,7 +190,7 @@ owner conversation, or any authority over workers.
 
 The orchestrator's `mono:handoff` state has one mandatory Second Voice run
 that is not discovery: the drafted handoff package — draft Project brief,
-draft PRD, draft Tech Spec, and proposed [execution Issues](lifecycle.md#задачи-этапов) slicing — goes to an
+approved PRD read-only (draft PRD only on the old path), draft Tech Spec, and proposed [execution Issues](lifecycle.md#задачи-этапов) slicing — goes to an
 independent reviewer BEFORE the orchestrator writes any of it to Linear.
 Order, not preference: synthesize the draft, review it, fix the draft, then
 put it to the owner with the verdict already attached, and only then write.
@@ -217,11 +205,12 @@ put it to the owner with the verdict already attached, and only then write.
   recorded. The orchestrator cannot decide this gate away under «Решил
   сам:»; only findings inside it are its to accept.
 - The reviewed subject is the draft, so none of the drafted bodies — Project
-  brief, PRD, Tech Spec, [execution Issues](lifecycle.md#задачи-этапов) slicing — is written to Linear at review time.
+  brief, Tech Spec, [execution Issues](lifecycle.md#задачи-этапов) slicing — is written to Linear at review time.
   The Project entity itself may already exist, and stays available to the
   reviewer as surrounding context; what is absent is the drafted content, not
   necessarily the container. That absence is expected and is never reported as
-  a missing artifact, per the pre-write `handoff` mode in
+  a missing artifact. Approved PRD already exists read-only; a PRD finding returns
+  to Discovery for renewed yes in the package touch, per the pre-write `handoff` mode in
   `skills/review/SKILL.md`.
 - Workers never run this review. They cannot spawn agents, and a worker is
   not independent of the package it was dispatched from.

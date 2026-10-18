@@ -1,6 +1,6 @@
 # Linear Artifact Rules
 
-Apply `AGENTS.md` source-of-truth, artifact responsibilities, stage ownership and language rules. Linear defaults Russian; repo instructions English. Discovery/local scratch becomes truth only through handoff; worker intake follows `references/worker-contract.md`, never broad home scans.
+Apply `AGENTS.md` source-of-truth, artifact responsibilities, stage ownership and language rules. Linear defaults Russian; repo instructions English. Discovery PRD becomes Linear truth on yes; local scratch needs handoff; worker intake follows `references/worker-contract.md`, never broad home scans.
 
 Set newly created Project leads and Issue assignees to acting user in every owner stage, including hotfix/follow-up; preserve existing assignments.
 

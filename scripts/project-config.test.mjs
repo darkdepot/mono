@@ -49,6 +49,25 @@ test('researchGate validates an optional UTC date without accepting null or unkn
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+test('discoveryGate validates an optional UTC date without accepting null or unknown fields', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-discovery-config-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    for (const [discoveryGate, valid] of [
+      [undefined, true], [{}, true], [{ since: '2026-10-17' }, true], [{ since: '2028-02-29' }, true],
+      [null, false], [[], false], [{ unknown: true }, false], [{ headings: { what: 'A', why: 'B', outcome: 'C', unknowns: 'D' } }, false], [{ since: null }, false],
+      [{ since: '2026-02-30' }, false], [{ since: '2026-10-17T00:00:00Z' }, false], [{ since: 2026 }, false],
+    ]) {
+      config.discoveryGate = discoveryGate;
+      fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify(config));
+      const result = spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+      assert.equal(result.status, valid ? 0 : 1, `${JSON.stringify(discoveryGate)}: ${result.stderr}`);
+      if (!valid) assert.match(result.stderr, /discoveryGate/);
+      if (discoveryGate && Object.hasOwn(discoveryGate, "since") && !valid) assert.match(result.stderr, /bad-since/);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 test('backup transport config accepts only distinct managed CLI workers', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-backup-config-'));
   try {

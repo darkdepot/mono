@@ -129,20 +129,19 @@ Workflow states:
    - Run `mono:idea` per idea in this session: launch both scouts, recap, answer the route and 1–3 meaning questions yourself with reasons; ask the owner only when their meaning is unclear. Show the description and «Ответил сам:» for the owner’s yes. Never relay the stage questions or give yes for the owner; this yes is separate from package approval. With several ideas, queue
      them and run discovery one project at a time (Director Discovery in
      `references/orchestration.md`) while dispatched work continues.
-   - After `mono:idea`, run `mono:research` yourself in this session; no owner
-     questions or yes, return the result to the owner. Then follow Research’s
-     next step (Discovery when installed, otherwise `mono:handoff`) and run review skills through the
-     Second Voice protocol (`references/orchestration.md`): an independent
-     reviewer agent interrogates and challenges, you answer as product
-     director, record material choices under «Решил сам:», and batch
-     genuinely contested items into checkpoints instead of relaying
-     question streams to the user.
+   - After Idea, run `mono:research`, then `mono:discovery` yourself in this
+     session by their orchestrator-mode references. Research adds no questions
+     or yes. Discovery answers with sources, chooses a solution and gives its own
+     PRD yes; its one second-model pass is not a Second Voice interview. Return
+     both results to the owner without waiting. A deferred Project is not picked
+     up before its task's return condition or an explicit owner return.
    - For user-facing surface, prepare the UX checkpoint per
      `templates/orchestrator-brief.md`: a near-production prototype that
      already passed a design-lens Second Voice review (in-session pass as
      fallback), plus the few contested UX decisions, one brief.
-   - Scope boundaries, issue slicing, risk acceptance, and design stay the
-     user's decisions — exercised at checkpoints with prepared variants,
+   - Discovery choices/PRD yes are the orchestrator's with sources and owner
+     override; package scope boundaries, issue slicing, risk acceptance and design
+     stay the user's decisions — exercised at checkpoints with prepared variants,
      per the Always-ask list.
 3. `handoff`
    - Run `mono:handoff` in this session. Bring the user one
@@ -293,8 +292,9 @@ Rules:
 
 - This skill is a control plane: never implement, edit code, fix CI, or rewrite PRs
   in this session; delegate that to workers. Discovery artifacts (prototypes,
-  mockups, review notes) are discovery work, not stage work, and stay
-  orchestrator-owned.
+  mockups, review notes) stay orchestrator-owned. Stages before Handoff
+  (Idea, Research, Discovery) explicitly run here under their own rules;
+  implement/preflight/ship always stay in workers.
 - Narrow control-plane exception: under an explicit owner mandate the
   orchestrator MAY author operational and deploy-repair changes directly —
   deploy scripts, infra config, docs address sweeps — and every such change
@@ -307,7 +307,8 @@ Rules:
   does not replace them.
 - Never ask the user an unprepared question; exhaust autonomous work first
   and refresh item state immediately before asking (Decision Briefs policy).
-- Research adds no owner touchpoint: run it yourself and return the result.
+- Idea yes still waits for the owner. Research/Discovery results are owner
+  contacts without waiting; Discovery uses its own yes, never owner yes.
 - Touch the user only at checkpoints: Idea description approval (clarify meaning only when necessary), the UX
   checkpoint, package approval, deploy approval per policy, and ad-hoc
   risk or scope-drift escalations; decide everything else and record it

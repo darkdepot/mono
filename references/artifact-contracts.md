@@ -48,38 +48,38 @@ every bounded contract and its direct lifecycle consumers.
 
 | Contract source | Rule ID | Named consumers |
 | --- | --- | --- |
-| `references/contracts/prd.md#PR-001` | `PR-001` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-002` | `PR-002` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-003` | `PR-003` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-004` | `PR-004` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-005` | `PR-005` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-006` | `PR-006` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-007` | `PR-007` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-008` | `PR-008` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-009` | `PR-009` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-010` | `PR-010` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-011` | `PR-011` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-012` | `PR-012` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-013` | `PR-013` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-014` | `PR-014` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-015` | `PR-015` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-016` | `PR-016` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-017` | `PR-017` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-018` | `PR-018` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-019` | `PR-019` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-020` | `PR-020` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-021` | `PR-021` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-022` | `PR-022` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-023` | `PR-023` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-024` | `PR-024` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-025` | `PR-025` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-026` | `PR-026` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-027` | `PR-027` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-028` | `PR-028` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-029` | `PR-029` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-030` | `PR-030` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-031` | `PR-031` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/prd.md#PR-032` | `PR-032` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-001` | `PR-001` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-002` | `PR-002` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-003` | `PR-003` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-004` | `PR-004` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-005` | `PR-005` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-006` | `PR-006` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-007` | `PR-007` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-008` | `PR-008` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-009` | `PR-009` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-010` | `PR-010` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-011` | `PR-011` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-012` | `PR-012` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-013` | `PR-013` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-014` | `PR-014` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-015` | `PR-015` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-016` | `PR-016` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-017` | `PR-017` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-018` | `PR-018` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-019` | `PR-019` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-020` | `PR-020` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-021` | `PR-021` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-022` | `PR-022` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-023` | `PR-023` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-024` | `PR-024` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-025` | `PR-025` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-026` | `PR-026` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-027` | `PR-027` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-028` | `PR-028` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-029` | `PR-029` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-030` | `PR-030` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-031` | `PR-031` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/prd.md#PR-032` | `PR-032` | `mono:discovery`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 
 ## Tech Spec parity
 

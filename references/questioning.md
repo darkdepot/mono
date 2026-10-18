@@ -20,4 +20,4 @@ Workers never ask users: needs-decision mailbox with recommendation. Orchestrato
 Idea: answer questions yourself with reasons, show description and «Ответил сам:». Ask only unclear owner meaning; owner alone gives yes, separately from package approval.
 
 Research: run it yourself; the result goes to the owner without waiting.
-Discovery: Second Voice challenges when available; orchestrator answers/records. Batch contested Always-ask at UX/package approval; at round cap escalate surviving Always-ask only.
+Discovery: run it yourself, sources on answers, own PRD yes; result to owner without waiting. Batch contested Always-ask at UX/package approval; at round cap escalate surviving Always-ask only.

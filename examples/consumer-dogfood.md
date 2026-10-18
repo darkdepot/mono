@@ -56,16 +56,13 @@ head. Behavior is accepted live after release 0.32.1.
 
 Expected behavior:
 
-1. User runs `/office-hours` or `/brainstorming` in Plan Mode.
-2. User optionally runs `/plan-design-review` and `/plan-eng-review`.
-3. When a discovery/review implementation plan appears, user runs `/mono:handoff` instead of direct artifact authoring or direct implementation.
-4. `mono:handoff` produces a handoff exit-plan if still in Plan Mode.
-5. `mono:handoff` performs artifact intake, previews the package for approval before durable writes, and after approval updates Project, PRD, and Tech Spec in Linear and creates Issue(s).
-6. `mono:handoff` runs or reports the required/advisory `mono:review handoff` gate before Issue creation.
-7. Accepted review fixes are applied by `mono:handoff`, not by `mono:review`.
-8. PRD and Tech Spec creation keeps the Project in Discovery or an equivalent pre-delivery state.
-9. If the user explicitly approves implementation start, `mono:handoff` routes to `mono:implement`.
-10. The Project moves to Delivery only through `mono:implement` after approved execution Issue(s) exist, delivery readiness is checked, and implementation-start approval is explicit.
+1. `mono:discovery` reads Idea and Research, presents real solutions and obtains a choice.
+2. It writes the chosen PRD in Linear and records yes on the shown version.
+3. `mono:handoff` calls `mono:check discovery` on entry and reads that PRD without edits.
+4. Handoff drafts only Tech Spec and execution-Issue slicing (PRD only on the old path), reviews before durable package writes, and brings package approval with the review verdict.
+5. PRD findings return to Discovery; renewed PRD yes shares the package-approval touch.
+6. Handoff writes Tech Spec and Issues after approval; the approval links PRD yes and Discovery's selected Research. PASS `mono:check handoff` permits Ready (Discovery fallback if absent).
+7. Explicit start approval then routes to `mono:implement`; only it starts Delivery.
 
 ## Correct Project Body Shape
 
@@ -170,7 +167,7 @@ FAIL:
 Why this fails:
 
 - `mono:review` is report-only.
-- Accepted fixes must be applied by `mono:handoff`, an explicit atomic skill, or `mono:ship`.
+- PRD fixes before package approval belong to `mono:discovery`; Tech Spec and approved-package repair to `mono:handoff`, accepted pre-ship drift to `mono:ship`.
 
 ## Anti-Example: Vendored Project Install
 
@@ -200,7 +197,7 @@ FAIL:
 
 Why this fails:
 
-- Discovery artifacts are inputs, not Linear source of truth.
+- Discovery PRD with version-bound yes is Linear truth; a local plan bypassing `mono:discovery` and Handoff is not.
 - Project, PRD, Tech Spec, and Issue(s) were not updated before implementation.
 - Implementation did not start from approved Linear Issue(s).
 
