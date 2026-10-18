@@ -91,7 +91,7 @@ Package Issue membership, slicing and approval mean [execution Issues](reference
   - PRD actor -> capability -> benefit coverage and behavior-validation intent.
   - Tech Spec implementation decisions.
   - «Решил сам:» — non-contested product choices the agent took itself, each with a one-line reason; overriding any of them is a valid approval answer.
-  - [execution Issues](references/lifecycle.md#задачи-этапов) slicing, `AFK`/`HITL` readiness, dependencies, and why this split is right.
+  - Issue slicing, `AFK`/`HITL` readiness, dependencies, and why this split is right — [execution Issues](references/lifecycle.md#задачи-этапов).
   - Review gate, risk, and validation plan.
   - The pre-write handoff review verdict, the fixes already applied to the draft, and anything explicitly deferred. The owner sees the package and its review in one touch, because the review already ran on the draft.
   - Decision options — every option must say which approval(s) it grants.
