@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { checkResearch, RESEARCH_GATE_DEFAULT_SINCE } from './idea-gate.mjs';
+import { fileURLToPath } from 'node:url';
+import { checkResearch, lintResearchDraft, RESEARCH_GATE_DEFAULT_SINCE } from './idea-gate.mjs';
 import { ideaDispatchFixture, ideaProjectId } from './fixtures/idea-dispatch.mjs';
 
 const projectId = 'c45ee7dc-3226-4401-854d-a82944949601';
@@ -155,3 +156,166 @@ test('CLI exempts projectless and pre-cutoff snapshots without reading research'
   ideaDispatchFixture(root);
   result = cli(); assert.equal(result.status, 0, result.stdout); assert.match(result.stdout, /pass: legacy-before-cutoff/);
 }));
+
+const draftFixture = name => fs.readFileSync(new URL(`./fixtures/research-draft/${name}`, import.meta.url), 'utf8');
+const kinds = result => result.findings.map(finding => finding.kind);
+const draftProject = projectId;
+
+test('research-draft passes the rewritten Handoff document and its Linear read-back form', () => {
+  const good = draftFixture('good.md');
+  const result = lintResearchDraft(good, { project: draftProject });
+  assert.deepEqual(result.findings, []);
+  assert.ok(result.measures.body <= 1000 && result.measures.summary <= 150 && result.measures.sources === 25);
+  // Linear rewrites list markers and escapes brackets; neither may add findings.
+  const readBack = good.replace(/^- /gm, '* ').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+  assert.deepEqual(lintResearchDraft(readBack, { project: draftProject }).findings, []);
+  assert.deepEqual(kinds(lintResearchDraft(good, { project: otherId })), ['other-project']);
+  // Linear read-back wraps project mentions in chips; markup is not reader text.
+  const chip = '<project id="11111111-1111-1111-1111-111111111111" href="https://linear.app/example/project/x">';
+  const chipped = readBack.replace(/«Оркестратор без присмотра»/g, `${chip}Оркестратор без присмотра</project>`);
+  assert.notEqual(chipped, readBack);
+  assert.deepEqual(lintResearchDraft(chipped, { project: draftProject }).findings, []);
+  // A bare project link in a source line becomes a chip with the project's long name.
+  const longChip = `${chip}Этап Handoff: тимлид сверяет готовое и режет на задачи, длинное имя проекта из многих слов</project>`;
+  const linked = readBack.replace(/https:\/\/linear\.app\/example\/project\/[^\s,]+/g, longChip);
+  assert.notEqual(linked, readBack);
+  assert.deepEqual(lintResearchDraft(linked, { project: draftProject }).findings, []);
+});
+
+test('research-draft reports the 0.34.0 live document problems by kind', () => {
+  const result = lintResearchDraft(draftFixture('live-0.34.0-excerpt.md'));
+  for (const kind of ['lead-metadata', 'lead-words', 'summary-words', 'fact-code-in-text', 'paragraph-words', 'fact-not-cited'])
+    assert.ok(kinds(result).includes(kind), kind);
+  assert.equal(result.ok, false);
+});
+
+test('research-draft enforces dash, table, nested list, headings and source limits', () => {
+  const good = draftFixture('good.md');
+  const cases = {
+    'long-dash': good.replace('Готово 19.10.2026.', 'Готово — 19.10.2026.'),
+    table: good.replace('## Кратко\n', '## Кратко\n\n| а | б |\n|---|---|\n'),
+    'nested-list': good.replace('- Интерфейс: нет.', '- Интерфейс: нет.\n  - вложенный пункт'),
+    'heading-words': good.replace('### 2. ', '### 2. Очень длинный заголовок находки из многих слов, который никто не дочитает до конца, '),
+    'source-words': good.replace('- Ф24. ', '- Ф24. ' + 'слово '.repeat(46)),
+    'advice-missing': good.replace('**Совет: делать.**', 'Делать.'),
+    'fact-unknown': good.replace('Откуда: Ф23, Ф24.', 'Откуда: Ф23, Ф24, Ф99.'),
+    'fact-not-cited': good.replace('Откуда: Ф13, Ф20–Ф22.', 'Откуда: Ф13, Ф20, Ф21.'),
+    'fact-code-in-text': good.replace('Готово 19.10.2026.', 'Готово 19.10.2026, см. Ф3.'),
+    'short-date': good.replace('Готово 19.10.2026.', 'Готово 19.10.'),
+  };
+  for (const [kind, text] of Object.entries(cases)) assert.ok(kinds(lintResearchDraft(text)).includes(kind), kind);
+});
+
+test('research-draft requires exactly one valid final top-level mono-research block', () => {
+  const good = draftFixture('good.md');
+  const block = good.slice(good.indexOf('```mono-research'));
+  assert.ok(kinds(lintResearchDraft(good.replace(block, ''))).includes('block-count'));
+  assert.ok(kinds(lintResearchDraft(good + '\n' + block)).includes('block-count'));
+  assert.ok(kinds(lintResearchDraft(good.replace(block, block + '\nХвост после блока.'))).includes('block-not-last'));
+  assert.ok(kinds(lintResearchDraft(good.replace(block, block.replace(/^/gm, '  ')))).includes('block-indented'));
+  assert.ok(kinds(lintResearchDraft(good.replace('"outcome": "ready"', '"outcome": "hold"'))).includes('bad-record'));
+  assert.deepEqual(kinds(lintResearchDraft(good.replace(block, block.replace('```mono-research', '````mono-research').replace(/```\n?$/, '````\n')))), []);
+});
+
+test('research-draft requires all four machine fields with valid types', () => {
+  const good = draftFixture('good.md');
+  const block = good.slice(good.indexOf('```mono-research'));
+  const valid = { project: projectId, outcome: 'ready', reason: null, interface: false };
+  const check = value => lintResearchDraft(good.replace(block, fence(value)));
+  for (const key of Object.keys(valid)) {
+    const missing = { ...valid }; delete missing[key];
+    assert.ok(kinds(check(missing)).includes('bad-record'), `missing ${key}`);
+  }
+  for (const value of [null, 'false', 0, {}, []])
+    assert.ok(kinds(check({ ...valid, interface: value })).includes('bad-record'), `interface ${JSON.stringify(value)}`);
+  for (const value of [false, 0, {}, []])
+    assert.ok(kinds(check({ ...valid, reason: value })).includes('bad-record'), `reason ${JSON.stringify(value)}`);
+  for (const outcome of ['ready', 'hold', 'not-required']) {
+    const value = { ...valid, outcome, reason: outcome === 'ready' ? null : 'A concrete reason', interface: true };
+    assert.deepEqual(check(value).findings, []);
+    if (outcome !== 'ready') for (const reason of [null, '', '  '])
+      assert.ok(kinds(check({ ...value, reason })).includes('bad-record'), `${outcome} reason ${JSON.stringify(reason)}`);
+  }
+});
+
+test('research-draft rejects raw invalid records without Markdown repair', () => {
+  for (const name of ['escaped-invalid-json.md', 'missing-field.md', 'markdown-escaped-value.md']) {
+    const draft = draftFixture(name);
+    for (const text of [draft, draft.replace(/\n/g, '\r\n')]) {
+      const result = lintResearchDraft(text, { language: 'en' });
+      assert.equal(result.ok, false, name);
+      assert.ok(kinds(result).includes('bad-record'), name);
+    }
+  }
+});
+
+test('research-draft preserves valid literal Markdown escapes inside JSON', () => {
+  const draft = 'Research is not required: a reversible copy edit. 20.10.2026.\n\n' +
+    fence({ project: projectId, outcome: 'not-required', reason: String.raw`\[pending\] \*literal\*`, interface: false });
+  assert.deepEqual(lintResearchDraft(draft, { language: 'en' }).findings, []);
+  assert.deepEqual(lintResearchDraft(draft.replace(/\n/g, '\r\n'), { language: 'en' }).findings, []);
+});
+
+test('research-draft accepts a one-line not-required document and English markers', () => {
+  const notRequired = 'Исследование не требуется: правка текста одной кнопки, вернуть можно одной правкой. 19.10.2026.\n\n' +
+    fence({ project: projectId, outcome: 'not-required', reason: 'обратимо', interface: false });
+  assert.deepEqual(lintResearchDraft(notRequired).findings, []);
+  const english = 'Research for the decision on reminders. Ready 19.10.2026.\n\n## Summary\n\nClients read messengers.\n\n' +
+    '**Advice: build.** Messengers win.\n\nFrom: F1.\n\n## Sources\n\n- F1. Survey: messengers win. https://example.com, 01.10.2026.\n\n' +
+    fence({ project: projectId, outcome: 'ready', reason: null, interface: false });
+  assert.deepEqual(lintResearchDraft(english, { language: 'en' }).findings, []);
+  assert.ok(kinds(lintResearchDraft(english)).includes('advice-missing'));
+});
+
+test('research-draft excludes only one final localized sources section from body limits', () => {
+  for (const [language, summary, advice, answers, sources] of [
+    ['ru', 'Кратко', 'Совет', 'Ответы на вопросы идеи', 'Источники'],
+    ['en', 'Summary', 'Advice', 'Answers to the idea questions', 'Sources'],
+  ]) {
+    const header = `Ready 19.10.2026.\n\n## ${summary}\n\n**${advice}: build.**\n\n`;
+    const record = fence({ project: projectId, outcome: 'ready', reason: null, interface: false });
+    const longAnswer = `## ${answers}\n\n${'word '.repeat(1100)}\n\n`;
+    for (const sections of [
+      longAnswer,
+      longAnswer + '## References\n\n',
+      `## ${sources}\n\n` + longAnswer,
+      `## ${sources}\n\n` + longAnswer + `## ${sources}\n\n`,
+    ]) {
+      for (const text of [header + sections + record, (header + sections + record).replace(/\n/g, '\r\n')]) {
+        const result = lintResearchDraft(text, { language });
+        assert.equal(result.ok, false, `${language}: ${sections.slice(0, 60)}`);
+        assert.ok(kinds(result).includes('sources-section'));
+        assert.ok(kinds(result).includes('body-words'));
+        assert.ok(result.measures.body >= 1100);
+      }
+    }
+    const valid = lintResearchDraft(header + longAnswer + `## ${sources}\n\n` + record, { language });
+    assert.ok(!kinds(valid).includes('sources-section'));
+    assert.ok(kinds(valid).includes('body-words'));
+  }
+});
+
+test('research-draft CLI prints JSON and exits 1 only on findings or read errors', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'research-draft-'));
+  try {
+    const run = args => spawnSync(process.execPath, ['scripts/idea-gate.mjs', 'research-draft', ...args], { encoding: 'utf8' });
+    fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ languages: { linear: 'Russian' } }));
+    let result = run(['--draft', fileURLToPathSafe('good.md'), '--config', path.join(root, 'config.json')]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(JSON.parse(result.stdout).ok, true);
+    result = run(['--draft', fileURLToPathSafe('live-0.34.0-excerpt.md')]);
+    assert.equal(result.status, 1); assert.equal(JSON.parse(result.stdout).ok, false);
+    fs.writeFileSync(path.join(root, 'en.json'), JSON.stringify({ languages: { linear: 'en' } }));
+    fs.writeFileSync(path.join(root, 'en.md'), 'Research for the decision on reminders. Ready 19.10.2026.\n\n## Summary\n\nClients read messengers.\n\n' +
+      '**Advice: build.** Messengers win.\n\nFrom: F1.\n\n## Sources\n\n- F1. Survey: messengers win. https://example.com, 01.10.2026.\n\n' +
+      fence({ project: projectId, outcome: 'ready', reason: null, interface: false }));
+    result = run(['--draft', path.join(root, 'en.md'), '--config', path.join(root, 'en.json')]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    result = run(['--draft', path.join(root, 'missing.md')]);
+    assert.equal(result.status, 1); assert.deepEqual(JSON.parse(result.stdout).findings, [{ kind: 'read-failed' }]);
+    result = run(['--draft']);
+    assert.equal(result.status, 1); assert.deepEqual(JSON.parse(result.stdout).findings, [{ kind: 'read-failed' }]);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+function fileURLToPathSafe(name) { return fileURLToPath(new URL(`./fixtures/research-draft/${name}`, import.meta.url)); }
