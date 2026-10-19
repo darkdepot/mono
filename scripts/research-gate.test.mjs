@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { checkResearch, lintResearchDraft, RESEARCH_GATE_DEFAULT_SINCE } from './idea-gate.mjs';
 import { ideaDispatchFixture, ideaProjectId } from './fixtures/idea-dispatch.mjs';
 
@@ -216,6 +217,27 @@ test('research-draft requires exactly one valid final top-level mono-research bl
   assert.deepEqual(kinds(lintResearchDraft(good.replace(block, block.replace('```mono-research', '````mono-research').replace(/```\n?$/, '````\n')))), []);
 });
 
+test('research-draft requires all four machine fields with valid types', () => {
+  const good = draftFixture('good.md');
+  const block = good.slice(good.indexOf('```mono-research'));
+  const valid = { project: projectId, outcome: 'ready', reason: null, interface: false };
+  const check = value => lintResearchDraft(good.replace(block, fence(value)));
+  for (const key of Object.keys(valid)) {
+    const missing = { ...valid }; delete missing[key];
+    assert.ok(kinds(check(missing)).includes('bad-record'), `missing ${key}`);
+  }
+  for (const value of [null, 'false', 0, {}, []])
+    assert.ok(kinds(check({ ...valid, interface: value })).includes('bad-record'), `interface ${JSON.stringify(value)}`);
+  for (const value of [false, 0, {}, []])
+    assert.ok(kinds(check({ ...valid, reason: value })).includes('bad-record'), `reason ${JSON.stringify(value)}`);
+  for (const outcome of ['ready', 'hold', 'not-required']) {
+    const value = { ...valid, outcome, reason: outcome === 'ready' ? null : 'A concrete reason', interface: true };
+    assert.deepEqual(check(value).findings, []);
+    if (outcome !== 'ready') for (const reason of [null, '', '  '])
+      assert.ok(kinds(check({ ...value, reason })).includes('bad-record'), `${outcome} reason ${JSON.stringify(reason)}`);
+  }
+});
+
 test('research-draft accepts a one-line not-required document and English markers', () => {
   const notRequired = 'Исследование не требуется: правка текста одной кнопки, вернуть можно одной правкой. 19.10.2026.\n\n' +
     fence({ project: projectId, outcome: 'not-required', reason: 'обратимо', interface: false });
@@ -250,4 +272,4 @@ test('research-draft CLI prints JSON and exits 1 only on findings or read errors
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-function fileURLToPathSafe(name) { return new URL(`./fixtures/research-draft/${name}`, import.meta.url).pathname; }
+function fileURLToPathSafe(name) { return fileURLToPath(new URL(`./fixtures/research-draft/${name}`, import.meta.url)); }

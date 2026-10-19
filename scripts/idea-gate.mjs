@@ -569,6 +569,7 @@ export function lintResearchDraft(markdown, { language = 'ru', project } = {}) {
       const value = JSON.parse(part.content);
       outcome = value?.outcome;
       if (!object(value) || !uuid(value.project) || !['ready', 'hold', 'not-required'].includes(value.outcome) ||
+          (value.reason !== null && typeof value.reason !== 'string') || typeof value.interface !== 'boolean' ||
           (['hold', 'not-required'].includes(value.outcome) && (typeof value.reason !== 'string' || !value.reason.trim())))
         add('bad-record', { line });
       else if (project && value.project !== project) add('other-project', { line });
