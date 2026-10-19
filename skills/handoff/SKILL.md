@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Use for an existing Project with research and an approved PRD (or on the old path) to create the Project-first package, or for Tech Spec and approved-package repair. Raw ideas route to mono:idea, a Project without research to mono:research (except a package approved strictly before researchGate.since), without an approved PRD to mono:discovery, unmistakable one-PR projectless work to mono:issue, and pre-ship drift to mono:ship.
+description: Use for an existing Project with research and an approved PRD (or on the old path) to create the Project-first package, or for Tech Spec and approved-package repair. Raw ideas route to mono:idea, a Project without research to mono:research (except a package approved strictly before researchGate.since), without an approved PRD off the old path to mono:discovery, unmistakable one-PR projectless work to mono:issue, and pre-ship drift to mono:ship.
 ---
 
 # Mono Handoff

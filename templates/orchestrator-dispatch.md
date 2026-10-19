@@ -220,7 +220,8 @@ worker contract without redefining it:
 ## AFK Contract
 
 Apply `references/worker-contract.md`: snapshot-only Linear access, single
-writer, one Issue, no sub-workers/session management, no user questions,
+writer, one Issue, no sub-workers/session management, no user questions
+(no `AskUserQuestion` or `request_user_input*`; blockers go to the mailbox),
 report-before-stop, unchanged gates/statuses and stage-owned branch. Generate
 profile-required redundancy from that source verbatim; do not invent a second
 AFK contract. Every pending Linear comment/status/certificate uses the required

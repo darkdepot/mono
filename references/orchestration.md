@@ -21,9 +21,9 @@ Discovery answers with sources and its own PRD yes; result to owner without wait
 
 | Stage | Runs in |
 | --- | --- |
-| `mono:idea` | orchestrator session; owner yes per Idea |
+| `mono:idea` | orchestrator session; owner presses «Утвердить» per Idea |
 | `mono:discovery` | orchestrator session itself, per its orchestrator reference |
-| `mono:research` | orchestrator session itself; no owner questions or yes; result to owner |
+| `mono:research` | orchestrator session itself after the owner's start; no owner questions or yes; result to owner |
 | `mono:handoff` | orchestrator session |
 | `mono:implement`, `mono:preflight`, `mono:ship` | worker session |
 | `mono:deploy` | orchestrator session |
@@ -75,9 +75,9 @@ affected stage when that happens.
 
 ## Director Discovery
 
-Run Idea → Research yourself, then Handoff on the old path while the Discovery
-cutoff is dormant (`lifecycle.md`). Run Discovery only on an explicit owner request
-or when the product's `discoveryGate.since` activates the cutoff.
+Run Idea → Research yourself, then Handoff for a Project on the old path
+(`mono:check discovery`, Old path; with the dormant cutoff every Project without an
+approved PRD), otherwise or on an explicit owner request Discovery.
 Discovery uses one second-model pass after solutions/recommendation, before choice;
 no Second Voice interview, dialogue continuation or rounds for this stage. Its
 answers carry sources or judgments, and it gives its own PRD yes. Workers and
@@ -92,7 +92,7 @@ not a Discovery interview.
 
 Checkpoints — the only moments that touch the user:
 
-1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:»; the owner alone gives yes to this version. This yes is separate from package approval. After verified completion, run `mono:research` itself, starting with the first Unknown. Research adds no owner questions or yes; return its result to the owner. Then follow the cutoff-dependent route above: Handoff on the old path by default; when Discovery is explicitly requested or the cutoff is active, run it yourself with sources on answers and own PRD yes, returning its result without waiting.
+1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:» with the approval window; only the owner's «Утвердить» approves this version, separately from package approval. After verified completion send the Idea final message, then the «Начать исследование» window with the plan prepared by Research; run `mono:research` itself only after the owner's start (button or words); the Project stays in Idea until then. Research adds no owner questions or yes; return its result to the owner. Then follow the route above: Handoff on the old path; otherwise, or when the owner explicitly requests it, run Discovery yourself with sources on answers and own PRD yes, returning its result without waiting.
 2. UX checkpoint (user-facing surface only): one brief per
    `templates/orchestrator-brief.md` with a reviewed near-production
    prototype and the few contested UX decisions.

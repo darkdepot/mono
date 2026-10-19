@@ -47,7 +47,7 @@ PRD, одобрения пакета и записи «да», если теку
 
 После Idea теперь установлен Research (`mono:research`): факты до выбора решения,
 документ Linear «Исследование: <проект>» и совет о следующем шаге. Этап проходит
-без вопросов владельцу и без отдельного «да»; оркестратор ведёт его сам.
+без вопросов владельцу и без отдельного утверждения; оркестратор ведёт его сам.
 Дальше — Discovery: решения, выбор и PRD с «да» на показанную версию.
 
 Проверка Research включена с **2026-10-19, 00:00 UTC** — первого полного дня UTC
@@ -164,15 +164,15 @@ Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot mark
 A **wave** is the work dispatched for an Issue, including retries, review, and its eventual delivery or recorded stop. A green PR is ready for deploy; deploy supplies the merge, delivery verification, and Linear closeout.
 
 ```text
-raw idea → Project in Idea → recorded owner yes → Research (Project status Discovery) → Handoff (old path; Discovery optional) → reviewed and approved package
+raw idea → recorded owner approval → Project in Idea → owner starts Research (Project status Discovery) → Handoff (old path; Discovery optional) → reviewed and approved package
 → approved Issue → start handshake → one mono:deliver worker
     code → confirmed write queue → local readiness → confirmed certificate
     → PR → reviews and checks → confirmed green certificate
 → mono:deploy → verification → Linear closeout and project update
 ```
 
-1. **Capture.** Bring a raw idea to `mono:idea`. Stage names stay English (Idea, Research, Discovery); the rebuilt stage is Russian. The agent acts as the founder's project manager: its first message restates the idea with a time estimate, the host plan lists 3-4 steps in the idea's words, and no wait passes without a one-line status. Two read-only scouts search Linear and code in the background; the first result is shown as it lands and an early route question may come before the code result. The agent recaps with its own pick among priced options and asks meaning questions, at most three, each from the last answer, using the host choice tool (one plain-text question with a recommendation in Codex without one). The agent says plainly when it would not build the idea as asked. The project name is shown before the yes; the record is prepared while the owner reads, nothing is written to Linear before the yes, and after the yes there is one status line, then the final message. A route question is separate; scope belongs to later stages. Show What / Why / Target outcome / prioritized Unknowns and stop for the owner's yes to this version. Follow [the recording reference](skills/idea/references/record.md); only «Готово» from `verify` permits the status move to Discovery, followed by read-back and `mono:check idea`. A returned Project with the three idea sections unchanged keeps body/package/status. Without them, write the approved body and change status only from Idea; corrections follow the package-aware return rules below. Next: Research (`mono:research`) from the first Unknown. The stage stops after its final message; the owner's yes also covers starting Research, so the agent invokes it unless the owner asked to hold it. An unmistakable one-PR request routes to `mono:issue` only with the configured lane enabled and `ownerPrincipal` present. In orchestration, the orchestrator runs Idea itself, answers the questions with reasons and shows «Ответил сам:»; the owner alone gives yes, separately from later package approval.
-2. **Research.** Run `mono:research` after the owner’s Idea yes, using raw Linear responses with `idea-gate check --mode fresh --dump`. Write a brief, gather internal and external facts through source scouts, check the advice against sources and a second model, then read back one Research («Исследование») document and one stage-task log comment. No owner questions, separate yes, solution selection or execution Issues. The orchestrator runs this stage itself and returns the result. A tiny reversible project gets `not-required` with a reason; missing facts get `hold` and a cheap next check. Stop with advice and the next stage: `mono:handoff` on the old path while the Discovery cutoff is dormant; Discovery only on an explicit owner request or an active product cutoff. Existing Projects without Research route here, except packages approved before `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
+1. **Capture.** Bring a raw idea to `mono:idea`. Stage names stay English (Idea, Research, Discovery); the rebuilt stage is Russian. The agent acts as the founder's project manager: its first message has two paragraphs (the idea in the owner's words, then what it looks at and will bring), the host plan lists 3-4 steps in the idea's words, and there are no time estimates or waiting lines: results are shown as they land. Two read-only scouts search Linear and code in the background; the first result is shown as it lands and an early route question may come before the code result. The agent recaps with its own pick among priced options and asks meaning questions, at most three, each from the last answer, using the host choice tool (`AskUserQuestion` in Claude Code, `request_user_input_async` in Codex; one plain-text question with a recommendation without one). The agent says plainly when it would not build the idea as asked. The project name is shown before approval; the record is prepared while the owner reads, nothing is written to Linear before approval, and approval is only the «Утвердить» button in the question window («Утвердить» / «Ещё обсудить»): chat words like «да» continue the conversation, and without a window there is no approval. A route question is separate; scope belongs to later stages. Show What / Why / Target outcome / prioritized Unknowns and stop for the owner's approval of this version. Follow [the recording reference](skills/idea/references/record.md); «Готово» from `verify`, status Idea read back and `mono:check idea` finish the record. Decisions, doubts and side ideas from the conversation go into the notes block «Что всплыло в разговоре» for Research; later additions without a description change create no new record and reach Research through the session and its stage log. A returned Project with the three idea sections unchanged keeps body/package/status. Without them, write the approved body and keep the status; corrections follow the package-aware return rules below. The stage ends with a separate final message (Project, link, status Idea, team) and a «Начать исследование» / «Ещё обсудить» window with the research plan. Research (`mono:research`) starts only when the owner starts it, by button or words at any time, never automatically; «Ещё обсудить» continues the conversation and changes the description only through a new approval. An unmistakable one-PR request routes to `mono:issue` only with the configured lane enabled and `ownerPrincipal` present. In orchestration, the orchestrator runs Idea itself, answers the questions with reasons and shows «Ответил сам:» in the same approval window; the owner alone presses «Утвердить», separately from later package approval; the final message comes first, then the owner starts Research. The research plan in the window is prepared by Research and reused after the start.
+2. **Research.** Run `mono:research` when the owner starts it after Idea approval, using raw Linear responses with `idea-gate check --mode fresh --dump`; entry is checked read-only (fresh `pass` and the owner's start for an Idea Project) before any Linear write, then the Project moves to Discovery and the stage task opens. The first action sets the stage's own plan in the host task list; each returning direction gets 2-3 lines; no time estimates; the final message is separate, then «Начать <next stage>» / «Ещё обсудить» in an owner session, while the orchestrator starts the next stage itself. Write a brief, gather internal and external facts through source scouts, check the advice against sources and a second model, then read back one Research («Исследование») document and one stage-task log comment. No owner questions, separate yes, solution selection or execution Issues. The orchestrator runs this stage itself and returns the result. A tiny reversible project gets `not-required` with a reason; missing facts get `hold` and a cheap next check. Stop with advice and the next stage: `mono:handoff` for a Project on the old path (`mono:check discovery`; with the dormant cutoff every Project without an approved PRD), otherwise or on an explicit owner request `mono:discovery`. Existing Projects without Research route here, except packages approved before `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
 3. **Discover (optional until a new stage version).** Run `mono:discovery` after Idea and Research only on an explicit owner request or when the product cutoff is active: up to three real product solutions, explicit choice, details, chosen PRD in Linear and yes bound to the shown `updatedAt`. Tiny work gets a short PRD without second model or builder. Close/defer can exit without PRD, with reason and return condition in the closed stage task. In orchestration the session runs the stage itself, answers with sources, gives its own yes and returns the result without waiting; the owner can overturn it.
 4. **Package.** Run `mono:handoff`, the default after Research while the Discovery cutoff is dormant. On the old path it drafts PRD; an approved PRD stays read-only. It calls `mono:check discovery` once, drafts Tech Spec and execution-Issue slicing, reviews the package before writing and obtains package approval. Before accepting the package answer it rereads the approved PRD and compares `updatedAt` with the referenced approval; a change returns to Discovery for renewed yes. On the new path, a PRD finding before approval returns to Discovery with renewed yes in the same owner touch; after approval normal repair and Ship drift rules apply without PRD-yes recheck. Handoff drafts PRD only on the old path defined in [Discovery](references/lifecycle.md#discovery). `discoveryGate.since` overrides the dormant `2099-12-31` cutoff to activate Discovery earlier; absent Research still requires the independent Research exception. Documents alone never authorize Delivery.
 5. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
@@ -180,7 +180,8 @@ raw idea → Project in Idea → recorded owner yes → Research (Project status
 7. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
 8. **Deploy and close.** `mono:deploy` verifies that the current PR head matches the green certificate, applies the configured approval policy, and delegates the configured deploy workflow. Verify delivery and run live acceptance where users consume the result. Close the Issue only after its delivery requirements pass; publish the informational project update, report cost, record useful learnings, and retire the worker. Only the shipment of the last open Project Issue may complete that Project.
 
-Stages rebuilt under «Mono как продукт» are written in Russian; machine tokens
+Stages rebuilt under «Mono как продукт» and their shared host reference
+`references/owner-dialog.md` are written in Russian; machine tokens
 (commands, paths, keys and codes) stay English. Other skills remain English;
 Linear templates/examples stay Russian. Idea and Research use `scout`, resolved by
 `idea-gate helper` for `claude-code` or `codex`; `models.roles.scout` overrides
@@ -194,7 +195,7 @@ Verified-record recovery applies only when the current request neither changes n
 adds to the idea; changed input takes the normal updated-description/owner-yes path.
 `node scripts/read-budget.mjs --skill idea --mandatory` reports its required
 corpus, explicitly including both scout task files; the complete mandatory set is
-19,969 bytes, below 20,480 without conditional reads. The recording reference and
+20,203 bytes, below 20,480 without conditional reads. The recording reference and
 the Project contract are conditional and are read while the scouts search, before
 the description is shown; orchestrator specifics live in a conditional
 `skills/idea/references/orchestrator.md`. Scout definitions are read
@@ -212,7 +213,7 @@ The release and live acceptance belong to the later release task; this intermedi
 The Russian `<корень>/` prefix belongs to listed stages; English stages use
 `<pack-root>/` in commands.
 [Activation evals](evals/idea/README.md)
-contain 10 positive and 6 negative prompts, three runs at threshold 0.8; the
+contain 10 positive and 7 negative prompts, three runs at threshold 0.8; the
 orchestrator runs Claude-only checks on the final head. Stage behavior is accepted
 live after 0.32.1, not by these activation scores.
 
@@ -220,7 +221,7 @@ A returned Project with unchanged What / Why / Target outcome keeps its body,
 package and status: show all four sections, deriving Unknowns from description
 and scout facts, then record and verify. If the owner corrects those three
 sections, a Project without an approved package writes the approved body and
-preserves the old text in notes; only an Idea Project moves status. With an
+preserves the old text in notes; Idea never moves status. With an
 approved package, stop before recording and route the correction through
 `mono:handoff` artifact repair, then return to Idea recording and verification.
 Without the three sections, run the normal stage with the owner. Notes carry
@@ -231,11 +232,11 @@ one-line known facts with source links for Research.
 `idea-gate.mjs record --draft APPROVED --config CONFIG --out DIR` готовит
 `body.md`: три раздела Idea с заголовками второго уровня. С `--project UUID`
 и необязательным `--notes NOTES` он также создаёт `comment.md`: прежняя строка
-«да», точный четырёхраздельный снимок и заметки вне отпечатка. Handoff добавляет
+утверждения, точный четырёхраздельный снимок и заметки вне отпечатка (с блоком «Что всплыло в разговоре»). Handoff добавляет
 разделы границ работы в тело проекта. Лишний раздел `##` или текст вне четырёх
 разделов в черновике дают «Стоп» (`unsupported-format`) до записи файлов.
 `comment.md` записывается без завершающих переводов строки. `--notes` можно
-передать и без `--project`, до «да»: тогда появляется только `body.md`. В обоих
+передать и без `--project`, до утверждения: тогда появляется только `body.md`. В обоих
 случаях ответ получает необязательный `warnings`: строки заметок с длинным тире
 и пути, которых нет: ссылка `…/blob/<ветка>/<путь>` проверяется на этой ветке
 (локальной или `origin/`, только чтение git), путь в обратных кавычках в checkout, где
@@ -251,13 +252,13 @@ cursor: `{}` для первой страницы, `{"cursor":"…"}` для с�
 комментария на промежуточных, без cursor на последней. Достаточно полей, которые
 читает скрипт (`uuid`, `createdAt`, `status.name`, `description`; `comments`,
 `hasNextPage`, `cursor`; у комментария `id`, `createdAt`, `updatedAt`, `body`), их
-значения не меняются. Для `verify` у комментариев без записи «да» `body` можно
+значения не меняются. Для `verify` у комментариев без записи утверждения `body` можно
 опустить; `check --dump` требует все тела.
 UUID берётся из `uuid`, а не из человекочитаемого `id`.
 «Готово» означает `pass` для комментария `--expect`: при сравнении снимаются только
 завершающие переводы строк с обеих сторон, остальной текст совпадает байт в байт.
 Изменение тела проекта даёт
-«Нужно новое «да»», ошибка чтения или записи — «Стоп» с действием. Вторая строка —
+«Нужно новое утверждение», ошибка чтения или записи — «Стоп» с действием. Вторая строка —
 JSON с машинным кодом. Скрипт не обращается в Linear.
 Состав dump и команды также описаны в `node scripts/idea-gate.mjs --help`.
 
@@ -1063,7 +1064,7 @@ this pack uses `/mono:ship` and `/mono:review`.
 
 | Skill | Use it for |
 | --- | --- |
-| [mono:idea](skills/idea/SKILL.md) | Idea intake, recorded owner yes and transition to Discovery |
+| [mono:idea](skills/idea/SKILL.md) | Idea intake and recorded owner approval; Research starts only on the owner's start |
 | [mono:research](skills/research/SKILL.md) | Facts before a solution, Research document and next-step advice without owner questions |
 | [mono:discovery](skills/discovery/SKILL.md) | Product solutions, explicit choice and version-approved PRD; owner or orchestrator mode |
 | [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |

@@ -12,11 +12,14 @@ single source for presentation shape.
 ## PC-001 — Project routing
 
 Use this contract for Linear Project mutations. Raw ideas and existing Idea
-Projects route to `mono:idea`. An existing Project in Discovery without a
-Research document routes to `mono:research`, except a package approved strictly
-before `researchGate.since` (config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` in
-`scripts/idea-gate.mjs`); without an approved PRD to `mono:discovery` (old path in
-`references/lifecycle.md`); otherwise, and for package repairs, to `mono:handoff`.
+Projects route to `mono:idea`; an Idea Project with a verified approval record routes
+to `mono:research` only when the owner starts Research («Начать исследование» or the
+owner's words). An existing Project in Discovery without a Research document routes
+to `mono:research`, except a package approved strictly before `researchGate.since` (config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` in
+`scripts/idea-gate.mjs`); without an approved PRD, a Project on the old path
+(`skills/check/SKILL.md`, mode `discovery`, Old path) routes to `mono:handoff` unless
+the owner explicitly requests Discovery, any other to `mono:discovery`; otherwise,
+and for package repairs, to `mono:handoff`.
 
 ## PC-002 — Concise product brief
 
@@ -75,13 +78,16 @@ Project body.
 ## PC-013 — Idea state
 
 In Idea, keep only the three-section strengthened brief defined in PC-005;
-PRD, Tech Spec, and Issue must not exist yet. Preserve any former scope sections
-in the approval comment notes before replacing the body.
+PRD, Tech Spec, and execution Issues must not exist yet. Preserve any former scope
+sections in the approval comment notes before replacing the body. The approved
+Project stays in Idea until the owner starts Research; Research never starts by itself.
 
 ## PC-014 — Discovery state
 
-In Discovery, PRD is created by `mono:discovery`, Tech Spec normally by
-`mono:handoff`. They coexist with the Project before Delivery.
+`mono:research` moves an approved Idea Project to Discovery after its read-only
+entry check, once the owner starts it. In Discovery, PRD is created by `mono:discovery`;
+on the old path (`references/lifecycle.md`) `mono:handoff` keeps PRD ownership. Tech Spec
+is normally created by `mono:handoff`. They coexist with the Project before Delivery.
 
 ## PC-015 — Handoff readiness state
 
