@@ -525,6 +525,144 @@ function authoringMain(argv) {
   process.exitCode = pass ? 0 : 1;
 }
 
+// Research document readability limits (words) for the human reader: a minute for the
+// answer, five minutes for the picture. Advisory for the stage agent before writing and
+// after read-back; never part of the research gate, so old documents keep passing.
+export const RESEARCH_DRAFT_LIMITS = { lead: 25, summary: 150, body: 1000, paragraph: 80, heading: 12, source: 45 };
+const RESEARCH_DRAFT_MARKERS = {
+  ru: { from: 'Откуда', fact: 'Ф', advice: 'Совет' },
+  en: { from: 'From', fact: 'F', advice: 'Advice' },
+};
+// Linear read-back turns a project or issue link into a chip carrying its full name;
+// like a link, a chip is not reader prose and counts as no words.
+const stripUrls = text => text.replace(/<?https?:\/\/[^\s>)]+>?/g, ' ');
+const countWords = text => (stripUrls(text.replace(/<(project|issue|document|initiative|user)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+  .replace(/<\/?[a-z][^>]*>/gi, ' ')).match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) ?? []).length;
+// A day.month date without its year (19.10 instead of 19.10.2026).
+const shortDate = /(?<!\p{N}|\p{N}\.)(?:0?[1-9]|[12]\d|3[01])\.(?:0[1-9]|1[0-2])(?!\p{N}|\.\p{N})/u;
+
+export function lintResearchDraft(markdown, { language = 'ru', project } = {}) {
+  const marker = RESEARCH_DRAFT_MARKERS[language];
+  if (!marker || typeof markdown !== 'string') fail('read-failed');
+  // Linear read-back escapes brackets and rewrites "- " to "* "; both are normalized.
+  const text = markdown.replace(/\r\n/g, '\n').replace(/\\([[\]_*#>`|])/g, '$1');
+  const findings = [], add = (kind, extra = {}) => findings.push({ kind, ...extra });
+  let parts;
+  try { parts = blocks(text); } catch { return { ok: false, measures: {}, findings: [{ kind: 'unclosed-fence' }] }; }
+  const lines = [];
+  let lineNo = 1, record;
+  for (const part of parts) {
+    if (part.fenced) {
+      if (part.info === 'mono-research') record ??= [];
+      if (part.info === 'mono-research') record.push({ part, line: lineNo });
+    } else lines.push({ text: part.text, line: lineNo });
+    lineNo += part.text.split('\n').length;
+  }
+  const last = [...parts].reverse().find(part => part.fenced || part.text.trim());
+  let outcome;
+  if (!record || record.length !== 1) add('block-count', { value: record?.length ?? 0 });
+  else {
+    const [{ part, line }] = record;
+    if (last !== part) add('block-not-last', { line });
+    if (!/^(`{3,}|~{3,})/.test(part.text)) add('block-indented', { line });
+    try {
+      const value = JSON.parse(part.content);
+      outcome = value?.outcome;
+      if (!object(value) || !uuid(value.project) || !['ready', 'hold', 'not-required'].includes(value.outcome) ||
+          (['hold', 'not-required'].includes(value.outcome) && (typeof value.reason !== 'string' || !value.reason.trim())))
+        add('bad-record', { line });
+      else if (project && value.project !== project) add('other-project', { line });
+    } catch { add('bad-record', { line }); }
+  }
+  const evidence = new RegExp(`^(?:[*+-][ \\t]+)?${marker.from}:\\s`, 'u');
+  const factCode = new RegExp(`(?<![\\p{L}\\p{N}])${marker.fact}(\\d+)(?![\\p{L}\\p{N}])`, 'gu');
+  for (const { text: line, line: n } of lines) {
+    if (line.includes('—')) add('long-dash', { line: n });
+    if (shortDate.test(stripUrls(line))) add('short-date', { line: n });
+    if (/^\s*\|/.test(line)) add('table', { line: n });
+    if (/^(?: {2,}|\t)(?:[*+-]|\d+[.)])[ \t]+/.test(line)) add('nested-list', { line: n });
+  }
+  const headings = lines.map((entry, index) => ({ ...entry, index })).filter(entry => /^## /.test(entry.text));
+  const leadLines = lines.slice(0, headings[0]?.index ?? lines.length).filter(entry => entry.text.trim());
+  const lead = countWords(leadLines.map(entry => entry.text).join(' '));
+  if (!leadLines.length) add('lead-missing');
+  else if (/ · |^\S[^:]{0,30}: .* · /.test(leadLines[0].text)) add('lead-metadata', { line: leadLines[0].line });
+  const measures = { lead, summary: 0, body: lead, longestParagraph: 0, sources: 0, codesInText: 0 };
+  if (outcome === 'not-required') return { ok: !findings.length, measures, findings };
+  if (lead > RESEARCH_DRAFT_LIMITS.lead) add('lead-words', { value: lead, limit: RESEARCH_DRAFT_LIMITS.lead });
+  if (headings.length < 2) { add('sections', { value: headings.length }); return { ok: false, measures, findings }; }
+  const section = i => lines.slice(headings[i].index + 1, headings[i + 1]?.index ?? lines.length);
+  const summary = section(0).filter(entry => !evidence.test(entry.text));
+  measures.summary = countWords(summary.map(entry => entry.text).join(' '));
+  if (measures.summary > RESEARCH_DRAFT_LIMITS.summary) add('summary-words', { value: measures.summary, limit: RESEARCH_DRAFT_LIMITS.summary });
+  if (!summary.some(entry => entry.text.includes(`**${marker.advice}:`))) add('advice-missing', { line: headings[0].line });
+  const body = lines.slice(0, headings.at(-1).index);
+  const cited = new Set();
+  let paragraph = null;
+  const close = () => {
+    if (paragraph && paragraph.words > RESEARCH_DRAFT_LIMITS.paragraph) add('paragraph-words', { line: paragraph.line, value: paragraph.words, limit: RESEARCH_DRAFT_LIMITS.paragraph });
+    if (paragraph) measures.longestParagraph = Math.max(measures.longestParagraph, paragraph.words);
+    paragraph = null;
+  };
+  measures.body = 0;
+  for (const { text: line, line: n } of body) {
+    if (evidence.test(line)) {
+      close();
+      for (const range of line.matchAll(new RegExp(`${marker.fact}(\\d+)(?:\\s*[–-]\\s*${marker.fact}(\\d+))?`, 'gu')))
+        for (let id = Number(range[1]); id <= Number(range[2] ?? range[1]); id++) cited.add(id);
+      continue;
+    }
+    const words = countWords(line);
+    measures.body += words;
+    const codes = [...line.matchAll(factCode)].length;
+    if (codes) { measures.codesInText += codes; add('fact-code-in-text', { line: n, value: codes }); }
+    if (/^#{2,} /.test(line)) {
+      close();
+      const heading = countWords(line.replace(/^#+\s+\d+\.\s*/, ''));
+      if (/^### /.test(line) && heading > RESEARCH_DRAFT_LIMITS.heading) add('heading-words', { line: n, value: heading, limit: RESEARCH_DRAFT_LIMITS.heading });
+      continue;
+    }
+    if (!line.trim()) { close(); continue; }
+    if (/^(?:[*+-]|\d+[.)])[ \t]+/.test(line)) close();
+    paragraph ??= { line: n, words: 0 };
+    paragraph.words += words;
+  }
+  close();
+  if (measures.body > RESEARCH_DRAFT_LIMITS.body) add('body-words', { value: measures.body, limit: RESEARCH_DRAFT_LIMITS.body });
+  const sourceIds = new Set();
+  const sourceLine = new RegExp(`^[*+-][ \\t]+${marker.fact}(\\d+)\\.\\s`, 'u');
+  for (const { text: line, line: n } of section(headings.length - 1)) {
+    const match = line.match(sourceLine);
+    if (!match) continue;
+    sourceIds.add(Number(match[1]));
+    const words = countWords(line.replace(/\[([^\]]*)\]\(<?[^)]*>?\)/g, ' '));
+    if (words > RESEARCH_DRAFT_LIMITS.source) add('source-words', { line: n, value: words, limit: RESEARCH_DRAFT_LIMITS.source });
+  }
+  measures.sources = sourceIds.size;
+  for (const id of sourceIds) if (!cited.has(id)) add('fact-not-cited', { value: `${marker.fact}${id}` });
+  for (const id of cited) if (!sourceIds.has(id)) add('fact-unknown', { value: `${marker.fact}${id}` });
+  return { ok: !findings.length, measures, findings };
+}
+
+function researchDraftMain(argv) {
+  let result;
+  try {
+    const options = {};
+    while (argv.length) {
+      const key = argv.shift();
+      if (!['--draft', '--config', '--project'].includes(key) || key in options || !argv.length || argv[0].startsWith('--')) fail('read-failed');
+      options[key] = argv.shift();
+    }
+    if (!options['--draft'] || (options['--project'] && !uuid(options['--project']))) fail('read-failed');
+    const config = options['--config'] ? readJson(options['--config']) : {};
+    const linear = config.languages?.linear;
+    const language = ({ Russian: 'ru', English: 'en' })[linear] ?? (['ru', 'en'].includes(linear) ? linear : 'ru');
+    result = lintResearchDraft(fs.readFileSync(options['--draft'], 'utf8'), { language, project: options['--project'] });
+  } catch { result = { ok: false, measures: {}, findings: [{ kind: 'read-failed' }] }; }
+  console.log(JSON.stringify(result));
+  process.exitCode = result.ok ? 0 : 1;
+}
+
 function main(argv) {
   if (argv.length === 1 && argv[0] === '--help') {
     console.log(`Usage: idea-gate.mjs record --draft APPROVED --config CONFIG --out DIR [--project UUID] [--notes NOTES]
@@ -533,6 +671,7 @@ function main(argv) {
        idea-gate.mjs check --mode fresh --dump DIR --config CONFIG
        idea-gate.mjs check --mode fresh|approved --snapshot DIR [--config CONFIG]
        idea-gate.mjs research --snapshot DIR [--config CONFIG]
+       idea-gate.mjs research-draft --draft FILE [--config CONFIG] [--project UUID]
        idea-gate.mjs fingerprint --snapshot FILE [--config CONFIG]
 Dump: project.json and comments-N.json are raw Linear responses (N=1,2,...).
 Each response needs comments-N.request.json: {} for page 1, {"cursor":"previous response cursor"} thereafter.
@@ -544,9 +683,14 @@ record refuses unrecognized sections or text outside the four sections before wr
 record --notes (with or without --project) adds advisory "warnings" for long dashes and
 repository paths that do not exist: blob/tree links on the branch they name (local or origin/),
 backticked paths in the checkout holding the current directory. Outside a checkout, notes with
-such paths add "paths":"unchecked".`);
+such paths add "paths":"unchecked".
+research-draft prints {ok, measures, findings} for a Research document draft or its read-back:
+reader limits in words, fact codes outside evidence lines, dates without a year, long dashes,
+tables, one final block.
+It never gates work; exit 1 means findings to fix before writing.`);
     return;
   }
+  if (argv[0] === 'research-draft') return researchDraftMain(argv.slice(1));
   if (['record', 'verify', 'helper'].includes(argv[0])) return authoringMain(argv);
   const research = argv[0] === 'research';
   let projectId = null, result;
