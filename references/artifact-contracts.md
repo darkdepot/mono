@@ -25,7 +25,7 @@ every bounded contract and its direct lifecycle consumers.
 
 | Contract source | Rule ID | Named consumers |
 | --- | --- | --- |
-| `references/contracts/project.md#PC-001` | `PC-001` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-001` | `PC-001` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 | `references/contracts/project.md#PC-002` | `PC-002` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 | `references/contracts/project.md#PC-003` | `PC-003` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 | `references/contracts/project.md#PC-004` | `PC-004` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
@@ -37,12 +37,12 @@ every bounded contract and its direct lifecycle consumers.
 | `references/contracts/project.md#PC-010` | `PC-010` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 | `references/contracts/project.md#PC-011` | `PC-011` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 | `references/contracts/project.md#PC-012` | `PC-012` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-013` | `PC-013` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-014` | `PC-014` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-013` | `PC-013` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-014` | `PC-014` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 | `references/contracts/project.md#PC-015` | `PC-015` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 | `references/contracts/project.md#PC-016` | `PC-016` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 | `references/contracts/project.md#PC-017` | `PC-017` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/project.md#PC-018` | `PC-018` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/project.md#PC-018` | `PC-018` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 
 ## PRD parity
 

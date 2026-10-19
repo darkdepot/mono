@@ -6,7 +6,7 @@ Define reusable Mono skills from idea to shipped PR; Linear holds Project/PRD/Te
 
 ## Language
 
-Write skills in English, except stages rebuilt under «Mono как продукт»: write those in Russian. Machine tokens (commands, paths, keys, codes) stay English; Linear templates/examples stay Russian.
+Write skills in English; stages rebuilt under «Mono как продукт» and `references/owner-dialog.md` in Russian. Machine tokens (commands/paths/keys/codes) stay English; Linear templates/examples stay Russian.
 
 ## Source Of Truth
 

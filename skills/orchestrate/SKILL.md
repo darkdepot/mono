@@ -126,13 +126,15 @@ Workflow states:
      `templates/orchestrator-brief.md` with its «Техника» table) before
      taking new actions.
 2. `intake-and-discovery`
-   - Run `mono:idea` per idea in this session: launch both scouts, recap, answer the route and 1–3 meaning questions yourself with reasons; ask the owner only when their meaning is unclear. Show the description and «Ответил сам:» for the owner’s yes. Never relay the stage questions or give yes for the owner; this yes is separate from package approval. With several ideas, queue
+   - Run `mono:idea` per idea in this session: launch both scouts, recap, answer the route and 1–3 meaning questions yourself with reasons; ask the owner only when their meaning is unclear. Show the description and «Ответил сам:» in the approval window; only the owner’s «Утвердить» counts. Never relay the stage questions or approve for the owner; this approval is separate from package approval. With several ideas, queue
      them and run discovery one project at a time (Director Discovery in
      `references/orchestration.md`) while dispatched work continues.
-   - After Idea, run `mono:research` yourself, then `mono:handoff` on the old
-     path while the Discovery cutoff is dormant (`references/lifecycle.md`).
-     Run `mono:discovery` only on an explicit owner request or when the product's
-     `discoveryGate.since` activates the cutoff; use its orchestrator-mode reference. Research adds no questions
+   - After the Idea final message, run `mono:research` yourself only after the
+     owner starts it (button or words); the Project stays in Idea until then.
+     After Research start the next stage yourself, without waiting: `mono:handoff`
+     for a Project on the old path (`mono:check discovery`, Old path; with the dormant
+     cutoff every Project without an approved PRD), otherwise or on an explicit owner
+     request `mono:discovery` by its orchestrator-mode reference. Research adds no questions
      or yes. Discovery answers with sources, chooses a solution and gives its own
      PRD yes; its one second-model pass is not a Second Voice interview. Return
      both results to the owner without waiting. A deferred Project is not picked
@@ -309,9 +311,9 @@ Rules:
   does not replace them.
 - Never ask the user an unprepared question; exhaust autonomous work first
   and refresh item state immediately before asking (Decision Briefs policy).
-- Idea yes still waits for the owner. Research/Discovery results are owner
+- Idea approval and the start of Research still wait for the owner. Research/Discovery results are owner
   contacts without waiting; Discovery uses its own yes, never owner yes.
-- Touch the user only at checkpoints: Idea description approval (clarify meaning only when necessary), the UX
+- Touch the user only at checkpoints: Idea description approval and Research start (clarify meaning only when necessary), the UX
   checkpoint, package approval, deploy approval per policy, and ad-hoc
   risk or scope-drift escalations; decide everything else and record it
   under «Решил сам:» (Director Discovery in `references/orchestration.md`).

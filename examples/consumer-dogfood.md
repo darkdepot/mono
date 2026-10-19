@@ -43,12 +43,12 @@ Expected behavior:
 
 1. `mono:idea` sends read-only Linear and code scouts in parallel, then recaps the facts.
 2. It asks at most three meaning questions, one at a time through the host choice tool, recommendation first with a reason. A route question is outside the limit. Codex without a choice tool asks one short text question and ends the turn.
-3. It shows What / Why / Target outcome / prioritized Unknowns and waits for the owner's direct yes. A correction or “yes, but” changes the affected part and requires yes again; prior answers and the question count remain.
-4. Recording and recovery follow only `skills/idea/references/record.md`. `verify` must return «Готово» before a Project in Idea moves to Discovery; status is read back and `mono:check idea` passes. A returned Project retains its later-stage status and package.
-5. Final output links the Project, states the approved idea and says “Next: Research”, starting with the first Unknown. Then stop; no Research document, PRD, Tech Spec, Issue, plan, ExecPlan or code.
-6. Under orchestration, the orchestrator runs Idea and answers its questions itself with reasons, showing «Ответил сам:» with the description. It does not relay those questions or give yes for the owner. Idea approval and later package approval are separate.
+3. It shows What / Why / Target outcome / prioritized Unknowns with the «Утвердить» / «Ещё обсудить» window and waits for the owner to press «Утвердить». Chat words never approve; a correction changes the affected part and needs a new approval; prior answers and the question count remain.
+4. Recording and recovery follow only `skills/idea/references/record.md`. `verify` must return «Готово»; the Project stays in Idea, status is read back and `mono:check idea` passes. A returned Project retains its later-stage status and package.
+5. A separate final message names the Project, link, status Idea and team, then a «Начать исследование» / «Ещё обсудить» window shows the research plan. Research starts only on the owner's start and moves the Project to Discovery; Idea creates no Research document, PRD, Tech Spec, Issue, plan, ExecPlan or code.
+6. Under orchestration, the orchestrator runs Idea and answers its questions itself with reasons, showing «Ответил сам:» with the description. It does not relay those questions or approve for the owner; the owner presses «Утвердить» in the same window and starts Research by button or words; the Idea final message always comes first. Idea approval and later package approval are separate.
 
-Activation evidence comes from `evals/idea/` (10 positive / 6 negative requests,
+Activation evidence comes from `evals/idea/` (10 positive / 7 negative requests,
 three runs, threshold 0.8); the orchestrator runs Claude-only checks on the final
 head. Behavior is accepted live after release 0.32.1.
 

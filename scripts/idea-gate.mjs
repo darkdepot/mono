@@ -518,7 +518,7 @@ function authoringMain(argv) {
   }
   const pass = result.code === 'pass';
   if (['record', 'verify'].includes(command)) {
-    console.log(pass ? 'Готово' : result.code === 'stale' ? 'Нужно новое «да»: тело проекта изменилось; покажите владельцу текущую версию'
+    console.log(pass ? 'Готово' : result.code === 'stale' ? 'Нужно новое утверждение: тело проекта изменилось; покажите владельцу текущую версию'
       : `Стоп: ${VERIFY_REASONS[result.code] ?? VERIFY_REASONS['read-failed']}`);
     console.log(JSON.stringify(result));
   } else console.log(`idea-gate: fail: ${result.code} project=${result.projectId}`);

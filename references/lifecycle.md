@@ -11,34 +11,51 @@ may go together); a route question is separate and may come early from the Linea
 The orchestrator runs Idea itself and answers these questions with reasons, showing
 «Ответил сам:» to the owner rather than forwarding the questions.
 
-Exit requires the owner's explicit yes to What / Why / Target outcome / prioritized
-Unknowns and successful `verify` for that exact Project record. The writing and recovery
-steps live only in `skills/idea/references/record.md`. Status Discovery follows «Готово»
-and is confirmed by read-back, then `mono:check idea` must pass. A Project returned
+Exit requires the owner's approval of What / Why / Target outcome / prioritized
+Unknowns, given only by pressing «Утвердить» in the approval window (also under the
+orchestrator; chat words never approve; without a window there is no approval and
+nothing is written), and successful `verify` for that exact Project record. The writing
+and recovery steps live only in `skills/idea/references/record.md`. After «Готово» the
+status stays Idea, confirmed by read-back, then `mono:check idea` must pass. A Project returned
 with the three idea sections unchanged keeps its body, package and status;
 Unknowns may be new. Without those sections, write the approved body and preserve
-old text in notes; status changes only from Idea. Owner corrections to What / Why /
+old text in notes; Idea never changes the status. Owner corrections to What / Why /
 Target outcome follow that body-write path without an approved package. With an
 approved package, stop before recording and route the correction through
 `mono:handoff` artifact repair, then return to Idea recording and verification.
 Unknowns stay in the record. No Research document, PRD, Tech Spec, Issue, implementation
 plan, ExecPlan or code is created here. A refusal returns to Idea.
 
-The next stage is Research (`mono:research`), starting with the first Unknown.
-Idea stops after its final message; the owner's yes also covers starting Research, so the
-agent then invokes `mono:research` unless the owner asked to hold it (the orchestrator runs
-it itself). Idea approval is separate from package approval.
+The next stage is Research (`mono:research`). Idea ends with a separate final message
+(Project, link, status Idea, team), then offers «Начать исследование» / «Ещё обсудить»
+with the research plan that Research prepares (`skills/research/references/plan.md`).
+Research starts only when the owner starts it, by button or words at any time; never
+automatically, also under the orchestrator. The Project stays in Idea until then.
+Idea approval is separate from package approval.
 
 ## Research
 
 `mono:research` gathers facts before choosing a solution, without owner questions or
-a separate yes. The approved Idea record supplies the questions; a legacy Project
-uses its description. It writes one Research («Исследование») document and one
+a separate yes. Its plan comes from the approved Idea record and the notes block
+«Что всплыло в разговоре»; a legacy Project uses its description. Entered from an Idea
+Project, it needs a fresh `pass` and the owner's start, checked read-only before any
+Linear write; then it moves the Project to Discovery, reads it back and only then opens
+its stage task. It writes one Research («Исследование») document and one
 comment in its stage task with the stage log, then stops with an answer, advice and next step.
-`mono:handoff` follows on the old path while the Discovery cutoff is dormant;
-`mono:discovery` follows only when the cutoff is active for the product or the owner explicitly requests it.
+`mono:handoff` follows for a Project on the old path (`skills/check/SKILL.md`, mode `discovery`, Old path); while the cutoff is dormant
+that is every Project without an approved PRD. Otherwise, or on the owner's explicit
+request, `mono:discovery` follows.
 A Project without Research routes here, except a package approved before
 `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
+
+Stage transitions in the Russian stages. Idea → Research: only the owner starts it
+(button or words), in every mode. Research → next stage and Discovery → Handoff: in an
+owner session (Claude Code, Codex) the final message comes first, then «Начать <этап>» /
+«Ещё обсудить»; the stage never starts the next one itself. The owner's explicit words
+(«начинаем <этап>») also start a stage; only approving a document is button-only. The orchestrator starts both by itself, without waiting. Every stage keeps its
+own plan first, has no time estimates or waiting lines, and sends the final message
+separately before any window or next stage. Approval anywhere is only «Утвердить» in a
+question window; host mechanics live in `owner-dialog.md`.
 
 ## Discovery
 
@@ -84,7 +101,7 @@ Handoff задачи этапа нет. Роли: Idea — проджект-ме
 продакт; Design — дизайнер; Tech Evaluation — техлид; Handoff — тимлид;
 Implementation — инженер.
 
-Каждый этап первым шагом ищет свою задачу по проекту, метке `Этап` и началу
+Каждый этап первым шагом (Research сразу после проверки входа и перехода из Idea) ищет свою задачу по проекту, метке `Этап` и началу
 названия: `Research:`, `Discovery:`, `Design:` или `Tech Evaluation:`. Название
 целиком: `Research: <проект>`, `Discovery: <проект>` и так же для остальных.
 Открытую берёт, закрытую при повторном входе открывает. Исключение: отложенная,
@@ -96,8 +113,10 @@ Implementation — инженер.
 Метку `Этап` ищет в команде первый этап, которому она нужна; если её нет,
 создаёт. Задача этапа без ветки и PR: поручение роли, журнал в комментариях,
 результат в документе проекта. В конце этапа задача закрывается в Done.
-Если вход отказан (проверка идеи или Research), в задаче записываются причина
-и куда дальше, затем она закрывается. Каждая запись читается обратно.
+Research проверяет вход до любых записей и при отказе задачу не заводит: причина
+только в сессии. У остальных этапов при отказе входа (проверка идеи или Research)
+в задаче записываются причина и куда дальше, затем она закрывается. Каждая запись
+читается обратно.
 
 ## Handoff
 
@@ -306,7 +325,7 @@ Required:
 - `mono:research` runs in the orchestrator session itself. No owner questions or
   yes; the result goes to the owner. Discovery answers with sources, chooses and
   gives its own PRD yes; its result goes to the owner without waiting. Idea still
-  waits for the owner’s yes.
+  waits for the owner’s «Утвердить», and Research for the owner’s start.
 - All Linear mutations during orchestration flow through the orchestrator
   (single writer); workers never write to Linear and queue stage-required
   mutations in mailbox reports.
@@ -316,7 +335,7 @@ Required:
   Director Discovery.
 - Discovery under orchestration follows its stage reference: one second-model
   pass without interview or continued dialogue. Owner contacts: Idea description
-  approval, Research/Discovery results without waiting, UX checkpoint with a reviewed
+  approval, Research start, Research/Discovery results without waiting, UX checkpoint with a reviewed
   prototype, package approval, deploy approval per policy, ad-hoc risk/scope drift.
 
 
