@@ -6,6 +6,16 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.34.1] - 2026-10-19
+
+<!-- fragment: MONO-209 sha256:e2621f02fe41d3afe6aa64f9b3746d139c3701f4b9acacdc26d2e60914baa0c5 -->
+### Выпуск и обновление
+
+- Выпуск 0.34.1: Discovery необязателен до новой версии этапа, отсечка снова спящая (`2099-12-31`). После Research основной путь — Handoff по старому пути; Discovery запускается только явной командой владельца. Продукт может включить его раньше через `discoveryGate.since` в `.agents/mono-workflow.config.json`.
+- Исправлены маршруты по умолчанию в Research, проверке и оркестраторе, примеры и документация. Старый путь также открыт проекту без PRD, одобрения пакета и записи «да» PRD, если текущая дата UTC строго раньше действующей отсечки; существующие даты PRD/пакета, проверка Research и правила записей «да» не меняются. Сам Discovery и контракты сохранены.
+- Форматы совместимы, общая quiescence не требуется; обычные условия Plugin Updates сохраняются, текущие попытки продолжаются на сохранённом `packRoot`.
+- Проверки Claude (`claude plugin validate . --strict`, `/skill-doctor`) перед PR выполняет оркестратор и включает результат в PR.
+
 ## [0.34.0] - 2026-10-18
 
 <!-- fragment: MONO-183 sha256:952ceeacdf0666622546f27cc01be0682fcaabe139f4cde94e54c020a5f15540 -->
