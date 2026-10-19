@@ -544,18 +544,19 @@ const shortDate = /(?<!\p{N}|\p{N}\.)(?:0?[1-9]|[12]\d|3[01])\.(?:0[1-9]|1[0-2])
 export function lintResearchDraft(markdown, { language = 'ru', project } = {}) {
   const marker = RESEARCH_DRAFT_MARKERS[language];
   if (!marker || typeof markdown !== 'string') fail('read-failed');
-  // Linear read-back escapes brackets and rewrites "- " to "* "; both are normalized.
-  const text = markdown.replace(/\r\n/g, '\n').replace(/\\([[\]_*#>`|])/g, '$1');
   const findings = [], add = (kind, extra = {}) => findings.push({ kind, ...extra });
   let parts;
-  try { parts = blocks(text); } catch { return { ok: false, measures: {}, findings: [{ kind: 'unclosed-fence' }] }; }
+  try { parts = blocks(markdown); } catch { return { ok: false, measures: {}, findings: [{ kind: 'unclosed-fence' }] }; }
   const lines = [];
   let lineNo = 1, record;
   for (const part of parts) {
     if (part.fenced) {
       if (part.info === 'mono-research') record ??= [];
       if (part.info === 'mono-research') record.push({ part, line: lineNo });
-    } else lines.push({ text: part.text, line: lineNo });
+    } else {
+      // Normalize Linear's Markdown escapes only in prose; fenced JSON stays literal.
+      lines.push({ text: part.text.replace(/\r$/, '').replace(/\\([[\]_*#>`|])/g, '$1'), line: lineNo });
+    }
     lineNo += part.text.split('\n').length;
   }
   const last = [...parts].reverse().find(part => part.fenced || part.text.trim());

@@ -238,6 +238,24 @@ test('research-draft requires all four machine fields with valid types', () => {
   }
 });
 
+test('research-draft rejects raw invalid records without Markdown repair', () => {
+  for (const name of ['escaped-invalid-json.md', 'missing-field.md', 'markdown-escaped-value.md']) {
+    const draft = draftFixture(name);
+    for (const text of [draft, draft.replace(/\n/g, '\r\n')]) {
+      const result = lintResearchDraft(text, { language: 'en' });
+      assert.equal(result.ok, false, name);
+      assert.ok(kinds(result).includes('bad-record'), name);
+    }
+  }
+});
+
+test('research-draft preserves valid literal Markdown escapes inside JSON', () => {
+  const draft = 'Research is not required: a reversible copy edit. 20.10.2026.\n\n' +
+    fence({ project: projectId, outcome: 'not-required', reason: String.raw`\[pending\] \*literal\*`, interface: false });
+  assert.deepEqual(lintResearchDraft(draft, { language: 'en' }).findings, []);
+  assert.deepEqual(lintResearchDraft(draft.replace(/\n/g, '\r\n'), { language: 'en' }).findings, []);
+});
+
 test('research-draft accepts a one-line not-required document and English markers', () => {
   const notRequired = 'Исследование не требуется: правка текста одной кнопки, вернуть можно одной правкой. 19.10.2026.\n\n' +
     fence({ project: projectId, outcome: 'not-required', reason: 'обратимо', interface: false });
