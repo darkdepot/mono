@@ -530,8 +530,8 @@ function authoringMain(argv) {
 // after read-back; never part of the research gate, so old documents keep passing.
 export const RESEARCH_DRAFT_LIMITS = { lead: 25, summary: 150, body: 1000, paragraph: 80, heading: 12, source: 45 };
 const RESEARCH_DRAFT_MARKERS = {
-  ru: { from: 'Откуда', fact: 'Ф', advice: 'Совет' },
-  en: { from: 'From', fact: 'F', advice: 'Advice' },
+  ru: { from: 'Откуда', fact: 'Ф', advice: 'Совет', sources: 'Источники' },
+  en: { from: 'From', fact: 'F', advice: 'Advice', sources: 'Sources' },
 };
 // Linear read-back turns a project or issue link into a chip carrying its full name;
 // like a link, a chip is not reader prose and counts as no words.
@@ -598,7 +598,10 @@ export function lintResearchDraft(markdown, { language = 'ru', project } = {}) {
   measures.summary = countWords(summary.map(entry => entry.text).join(' '));
   if (measures.summary > RESEARCH_DRAFT_LIMITS.summary) add('summary-words', { value: measures.summary, limit: RESEARCH_DRAFT_LIMITS.summary });
   if (!summary.some(entry => entry.text.includes(`**${marker.advice}:`))) add('advice-missing', { line: headings[0].line });
-  const body = lines.slice(0, headings.at(-1).index);
+  const sources = headings.filter(entry => entry.text.trimEnd() === `## ${marker.sources}`);
+  const source = sources.length === 1 && sources[0] === headings.at(-1) ? sources[0] : null;
+  if (!source) add('sources-section');
+  const body = source ? lines.slice(0, source.index) : lines;
   const cited = new Set();
   let paragraph = null;
   const close = () => {
@@ -633,7 +636,7 @@ export function lintResearchDraft(markdown, { language = 'ru', project } = {}) {
   if (measures.body > RESEARCH_DRAFT_LIMITS.body) add('body-words', { value: measures.body, limit: RESEARCH_DRAFT_LIMITS.body });
   const sourceIds = new Set();
   const sourceLine = new RegExp(`^[*+-][ \\t]+${marker.fact}(\\d+)\\.\\s`, 'u');
-  for (const { text: line, line: n } of section(headings.length - 1)) {
+  for (const { text: line, line: n } of source ? lines.slice(source.index + 1) : []) {
     const match = line.match(sourceLine);
     if (!match) continue;
     sourceIds.add(Number(match[1]));

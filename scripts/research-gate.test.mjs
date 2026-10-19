@@ -267,6 +267,34 @@ test('research-draft accepts a one-line not-required document and English marker
   assert.ok(kinds(lintResearchDraft(english)).includes('advice-missing'));
 });
 
+test('research-draft excludes only one final localized sources section from body limits', () => {
+  for (const [language, summary, advice, answers, sources] of [
+    ['ru', 'Кратко', 'Совет', 'Ответы на вопросы идеи', 'Источники'],
+    ['en', 'Summary', 'Advice', 'Answers to the idea questions', 'Sources'],
+  ]) {
+    const header = `Ready 19.10.2026.\n\n## ${summary}\n\n**${advice}: build.**\n\n`;
+    const record = fence({ project: projectId, outcome: 'ready', reason: null, interface: false });
+    const longAnswer = `## ${answers}\n\n${'word '.repeat(1100)}\n\n`;
+    for (const sections of [
+      longAnswer,
+      longAnswer + '## References\n\n',
+      `## ${sources}\n\n` + longAnswer,
+      `## ${sources}\n\n` + longAnswer + `## ${sources}\n\n`,
+    ]) {
+      for (const text of [header + sections + record, (header + sections + record).replace(/\n/g, '\r\n')]) {
+        const result = lintResearchDraft(text, { language });
+        assert.equal(result.ok, false, `${language}: ${sections.slice(0, 60)}`);
+        assert.ok(kinds(result).includes('sources-section'));
+        assert.ok(kinds(result).includes('body-words'));
+        assert.ok(result.measures.body >= 1100);
+      }
+    }
+    const valid = lintResearchDraft(header + longAnswer + `## ${sources}\n\n` + record, { language });
+    assert.ok(!kinds(valid).includes('sources-section'));
+    assert.ok(kinds(valid).includes('body-words'));
+  }
+});
+
 test('research-draft CLI prints JSON and exits 1 only on findings or read errors', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'research-draft-'));
   try {
