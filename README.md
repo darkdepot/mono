@@ -1,6 +1,6 @@
 # Mono Agent Workflow
 
-Текущий выпуск: **0.34.0**. См. [заметки выпуска](CHANGELOG.md#0340---2026-10-18).
+Текущий выпуск: **0.34.1**. См. [заметки выпуска](CHANGELOG.md#0341---2026-10-19).
 Private vulnerability reports: [SECURITY.md](SECURITY.md).
 
 ## Задачи этапов и Ready
@@ -20,35 +20,28 @@ Research, Discovery, Design и Tech Evaluation первым шагом кажд�
 проекта или при отсутствии Ready, если пакет прошёл проверки. Возврат пакета
 на переработку класса 3 переводит Delivery или Ready обратно в Discovery.
 
-## Обновление до 0.34.0
+## Обновление до 0.34.1
 
-После Research установлен Discovery (`mono:discovery`): до трёх настоящих
-продуктовых решений, явный выбор и PRD выбранного решения в Linear с «да» на
-показанную версию (`updatedAt`). В режиме владельца отвечает и утверждает он;
-в режиме оркестратора этап проходит сама сессия, отвечает с источниками,
-ставит своё «да» и приносит итог одним сообщением. Мелочь идёт коротким путём;
-решение закрыть или отложить может завершить этап без PRD.
+Discovery из 0.34.0 необязателен до новой версии этапа. Отсечка снова спящая:
+**2099-12-31**. После Research основной путь — Handoff по старому пути с
+написанием PRD; Discovery запускается только явной командой владельца.
+Сам этап и запись «да» на PRD сохранены. Старый путь также открыт проекту без
+PRD, одобрения пакета и записи «да», если текущая дата UTC строго раньше
+действующей отсечки. Остальные условия `mono:check discovery` не меняются.
+Если запись «да» PRD уже есть, до одобрения пакета проверяется её актуальность
+при любой дате; Handoff получает такой PRD на чтение. После одобрения пакета
+действуют обычные правила правок и Ship. Условие Research независимо от Discovery.
 
-Отсечка Discovery — **20.10.2026, 00:00 UTC**: первый полный день UTC после
-последнего ожидаемого дня выпуска (d-002). Старый путь Handoff
-с написанием PRD открыт только проекту без записи «да» PRD, у которого одобрение
-пакета или PRD появились строго раньше отсечки. Есть запись «да» — до одобрения
-пакета проверяется её актуальность при любой дате. На новом пути Handoff берёт
-утверждённый PRD только на чтение; правка до одобрения пакета возвращается в
-Discovery за новым «да». После одобрения действуют обычные правки пакета и Ship.
-Независимое условие Research сохраняется.
-
-При позднем обновлении продукт может сдвинуть отсечку вперёд, например в
-`.agents/mono-workflow.config.json`: `"discoveryGate": { "since": "2026-10-21" }`.
-Иначе PRD, написанный старым Handoff после отсечки 20.10.2026 (UTC), требует «да» в Discovery
-на текущую версию. Настройка меняет границу старого пути, а не пины и receipt.
+Продукт может включить Discovery раньше в `.agents/mono-workflow.config.json`:
+`"discoveryGate": { "since": "2026-10-19" }`. Эта дата перекрывает спящую отсечку
+из [lifecycle](references/lifecycle.md#discovery); с неё действует новый путь
+с утверждённым PRD. Настройка меняет границу старого пути, а не пины и receipt.
 Задачи этапов, метка `Этап`, Ready и поведение без Ready описаны
 [выше](#задачи-этапов-и-ready).
 
 Выпуск совместим по форматам; общая quiescence не требуется. Сохраняются обычные условия Plugin Updates: before-update для удаляемого или заменяемого каталога, пауза затронутых запусков и проверка установки. Текущие попытки продолжаются только на сохранённом packRoot.
-Установка и проверка обоих хостов — по существующей процедуре
-[Plugin Updates](references/install.md#plugin-updates); проверки выпуска и
-приёмка после установки — в [Release 0.34.0](references/install.md#release-0340).
+Установка обоих хостов — по [Plugin Updates](references/install.md#plugin-updates);
+проверки выпуска — в [Release 0.34.1](references/install.md#release-0341).
 
 ## Обновление до 0.33.0
 
@@ -171,7 +164,7 @@ Short dispatch extracts PRD/Tech Spec definitions through the [U12 snapshot mark
 A **wave** is the work dispatched for an Issue, including retries, review, and its eventual delivery or recorded stop. A green PR is ready for deploy; deploy supplies the merge, delivery verification, and Linear closeout.
 
 ```text
-raw idea → Project in Idea → recorded owner yes → Research (Project status Discovery) → Discovery → reviewed and approved package
+raw idea → Project in Idea → recorded owner yes → Research (Project status Discovery) → Handoff (old path; Discovery optional) → reviewed and approved package
 → approved Issue → start handshake → one mono:deliver worker
     code → confirmed write queue → local readiness → confirmed certificate
     → PR → reviews and checks → confirmed green certificate
@@ -179,9 +172,9 @@ raw idea → Project in Idea → recorded owner yes → Research (Project status
 ```
 
 1. **Capture.** Bring a raw idea to `mono:idea`. Stage names stay English (Idea, Research, Discovery); the rebuilt stage is Russian. The agent acts as the founder's project manager: its first message restates the idea with a time estimate, the host plan lists 3-4 steps in the idea's words, and no wait passes without a one-line status. Two read-only scouts search Linear and code in the background; the first result is shown as it lands and an early route question may come before the code result. The agent recaps with its own pick among priced options and asks meaning questions, at most three, each from the last answer, using the host choice tool (one plain-text question with a recommendation in Codex without one). The agent says plainly when it would not build the idea as asked. The project name is shown before the yes; the record is prepared while the owner reads, nothing is written to Linear before the yes, and after the yes there is one status line, then the final message. A route question is separate; scope belongs to later stages. Show What / Why / Target outcome / prioritized Unknowns and stop for the owner's yes to this version. Follow [the recording reference](skills/idea/references/record.md); only «Готово» from `verify` permits the status move to Discovery, followed by read-back and `mono:check idea`. A returned Project with the three idea sections unchanged keeps body/package/status. Without them, write the approved body and change status only from Idea; corrections follow the package-aware return rules below. Next: Research (`mono:research`) from the first Unknown. The stage stops after its final message; the owner's yes also covers starting Research, so the agent invokes it unless the owner asked to hold it. An unmistakable one-PR request routes to `mono:issue` only with the configured lane enabled and `ownerPrincipal` present. In orchestration, the orchestrator runs Idea itself, answers the questions with reasons and shows «Ответил сам:»; the owner alone gives yes, separately from later package approval.
-2. **Research.** Run `mono:research` after the owner’s Idea yes, using raw Linear responses with `idea-gate check --mode fresh --dump`. Write a brief, gather internal and external facts through source scouts, check the advice against sources and a second model, then read back one Research («Исследование») document and one stage-task log comment. No owner questions, separate yes, solution selection or execution Issues. The orchestrator runs this stage itself and returns the result. A tiny reversible project gets `not-required` with a reason; missing facts get `hold` and a cheap next check. Stop with advice and the next stage: `mono:discovery`. Existing Projects without Research route here, except packages approved before `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
-3. **Discover.** Run `mono:discovery` after Idea and Research: up to three real product solutions, explicit choice, details, chosen PRD in Linear and yes bound to the shown `updatedAt`. Tiny work gets a short PRD without second model or builder. Close/defer can exit without PRD, with reason and return condition in the closed stage task. In orchestration the session runs the stage itself, answers with sources, gives its own yes and returns the result without waiting; the owner can overturn it.
-4. **Package.** Run `mono:handoff` with approved PRD read-only. It calls `mono:check discovery` once, drafts Tech Spec and execution-Issue slicing, reviews the package before writing and obtains package approval. Before accepting the package answer it rereads the approved PRD and compares `updatedAt` with the referenced approval; a change returns to Discovery for renewed yes. A PRD finding before approval returns to Discovery with renewed yes in the same owner touch; after approval normal repair and Ship drift rules apply without PRD-yes recheck. Handoff drafts PRD only on the old path defined in [Discovery](references/lifecycle.md#discovery). `discoveryGate.since` can move the `2026-10-20` (20.10.2026, 00:00 UTC) cutoff forward for late installation; this is the first full UTC day after the latest expected release day (d-002); absent Research still requires the independent Research exception. Documents alone never authorize Delivery.
+2. **Research.** Run `mono:research` after the owner’s Idea yes, using raw Linear responses with `idea-gate check --mode fresh --dump`. Write a brief, gather internal and external facts through source scouts, check the advice against sources and a second model, then read back one Research («Исследование») document and one stage-task log comment. No owner questions, separate yes, solution selection or execution Issues. The orchestrator runs this stage itself and returns the result. A tiny reversible project gets `not-required` with a reason; missing facts get `hold` and a cheap next check. Stop with advice and the next stage: `mono:handoff` on the old path while the Discovery cutoff is dormant; Discovery only on an explicit owner request or an active product cutoff. Existing Projects without Research route here, except packages approved before `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
+3. **Discover (optional until a new stage version).** Run `mono:discovery` after Idea and Research only on an explicit owner request or when the product cutoff is active: up to three real product solutions, explicit choice, details, chosen PRD in Linear and yes bound to the shown `updatedAt`. Tiny work gets a short PRD without second model or builder. Close/defer can exit without PRD, with reason and return condition in the closed stage task. In orchestration the session runs the stage itself, answers with sources, gives its own yes and returns the result without waiting; the owner can overturn it.
+4. **Package.** Run `mono:handoff`, the default after Research while the Discovery cutoff is dormant. On the old path it drafts PRD; an approved PRD stays read-only. It calls `mono:check discovery` once, drafts Tech Spec and execution-Issue slicing, reviews the package before writing and obtains package approval. Before accepting the package answer it rereads the approved PRD and compares `updatedAt` with the referenced approval; a change returns to Discovery for renewed yes. On the new path, a PRD finding before approval returns to Discovery with renewed yes in the same owner touch; after approval normal repair and Ship drift rules apply without PRD-yes recheck. Handoff drafts PRD only on the old path defined in [Discovery](references/lifecycle.md#discovery). `discoveryGate.since` overrides the dormant `2099-12-31` cutoff to activate Discovery earlier; absent Research still requires the independent Research exception. Documents alone never authorize Delivery.
 5. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
 6. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review or `accepted-with-declines` with orchestrator-approved evidence. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts lead the Russian ready-certificate comment before its unchanged machine block. Codex full and final deep/risky work retain the local loop. Managed Claude Code uses external committed-head collection only, with no in-worker helper pass; its ready certificate names that review route and stop/resume startup. Preserve phase ownership.
 7. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.

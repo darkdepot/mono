@@ -256,7 +256,7 @@ Rules:
 - Use Linear comments for user review acceptance, not Project Updates.
 - Split Issues only when one PR is truly too large; split into vertical slices with explicit dependencies.
 - Mark every execution Issue as `AFK` or `HITL` and name dependencies or blockers.
-- If a source artifact is a local plan or review report, translate it into Spec/Issue shape (PRD only on the old path); before package approval missing/changed PRD returns to Discovery. Do not paste the local artifact body into Linear unchanged.
+- If a source artifact is a local plan or review report, translate it into Spec/Issue shape (PRD only on the old path); on the new path, before package approval missing/changed PRD returns to Discovery. Do not paste the local artifact body into Linear unchanged.
 - The handoff review runs on the draft package before the first durable Linear write of that package. The order is the rule: synthesize the draft, review it, fix the draft, then ask the owner for approval with the verdict already in hand, and only then write. Findings are fixed in the draft, never in an artifact that is already written.
 - `mono:review` is report-only. Do not ask it to apply fixes or create artifacts.
 - Required `mono:review handoff` findings must be resolved, accepted, or explicitly deferred before the first durable write of the package, and therefore before creating Issues.

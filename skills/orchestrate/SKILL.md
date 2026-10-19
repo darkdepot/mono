@@ -129,8 +129,10 @@ Workflow states:
    - Run `mono:idea` per idea in this session: launch both scouts, recap, answer the route and 1–3 meaning questions yourself with reasons; ask the owner only when their meaning is unclear. Show the description and «Ответил сам:» for the owner’s yes. Never relay the stage questions or give yes for the owner; this yes is separate from package approval. With several ideas, queue
      them and run discovery one project at a time (Director Discovery in
      `references/orchestration.md`) while dispatched work continues.
-   - After Idea, run `mono:research`, then `mono:discovery` yourself in this
-     session by their orchestrator-mode references. Research adds no questions
+   - After Idea, run `mono:research` yourself, then `mono:handoff` on the old
+     path while the Discovery cutoff is dormant (`references/lifecycle.md`).
+     Run `mono:discovery` only on an explicit owner request or when the product's
+     `discoveryGate.since` activates the cutoff; use its orchestrator-mode reference. Research adds no questions
      or yes. Discovery answers with sources, chooses a solution and gives its own
      PRD yes; its one second-model pass is not a Second Voice interview. Return
      both results to the owner without waiting. A deferred Project is not picked

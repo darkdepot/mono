@@ -35,7 +35,8 @@ it itself). Idea approval is separate from package approval.
 a separate yes. The approved Idea record supplies the questions; a legacy Project
 uses its description. It writes one Research («Исследование») document and one
 comment in its stage task with the stage log, then stops with an answer, advice and next step.
-`mono:discovery` follows.
+`mono:handoff` follows on the old path while the Discovery cutoff is dormant;
+`mono:discovery` follows only when the cutoff is active for the product or the owner explicitly requests it.
 A Project without Research routes here, except a package approved before
 `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
 
@@ -55,9 +56,11 @@ Until Design and Tech Evaluation exist, Handoff receives their open questions an
 «нужны макеты» (Research `interface: true` or a new screen/window in the solution).
 A raw implementation plan never authorizes code or Delivery.
 
-Discovery cutoff: `2026-10-20` (20.10.2026, 00:00 UTC), the first full UTC day
-after the latest expected release day of 0.34.0 (d-002); product
-`discoveryGate.since` overrides it and can move it forward for late installation. The old-path eligibility and package-aware checks have one home:
+Discovery cutoff: `2099-12-31` (dormant). Discovery is optional until a new version
+of the stage; the default route after Research is Handoff on the old path.
+While dormant, start Discovery only on an explicit owner request. Product
+`discoveryGate.since` overrides the cutoff and can activate Discovery earlier.
+The old-path eligibility and package-aware checks have one home:
 `skills/check/SKILL.md`, mode `discovery`. On that path Handoff may write PRD-lite;
 tiny new Discovery work gets a short PRD. On the new path Handoff reads approved
 PRD only; before package approval a PRD finding returns to Discovery, with renewed

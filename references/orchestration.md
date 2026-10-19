@@ -75,7 +75,9 @@ affected stage when that happens.
 
 ## Director Discovery
 
-Run Idea → Research → Discovery yourself, each by its orchestrator-mode rules.
+Run Idea → Research yourself, then Handoff on the old path while the Discovery
+cutoff is dormant (`lifecycle.md`). Run Discovery only on an explicit owner request
+or when the product's `discoveryGate.since` activates the cutoff.
 Discovery uses one second-model pass after solutions/recommendation, before choice;
 no Second Voice interview, dialogue continuation or rounds for this stage. Its
 answers carry sources or judgments, and it gives its own PRD yes. Workers and
@@ -90,7 +92,7 @@ not a Discovery interview.
 
 Checkpoints — the only moments that touch the user:
 
-1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:»; the owner alone gives yes to this version. This yes is separate from package approval. After verified completion, run `mono:research` itself, starting with the first Unknown. Research adds no owner questions or yes; return its result to the owner. Then run Discovery yourself: sources on answers, own PRD yes; return its result without waiting.
+1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:»; the owner alone gives yes to this version. This yes is separate from package approval. After verified completion, run `mono:research` itself, starting with the first Unknown. Research adds no owner questions or yes; return its result to the owner. Then follow the cutoff-dependent route above: Handoff on the old path by default; when Discovery is explicitly requested or the cutoff is active, run it yourself with sources on answers and own PRD yes, returning its result without waiting.
 2. UX checkpoint (user-facing surface only): one brief per
    `templates/orchestrator-brief.md` with a reviewed near-production
    prototype and the few contested UX decisions.
