@@ -42,6 +42,8 @@ function historyReceipt(request) {
   if (matches.length > 1) throw new Error("multiple history receipts for collectionId");
   return matches.length ? { file: matches[0], envelope: verifyReceipt(matches[0], request) } : null;
 }
+// Deadlines are wall-clock instants; one-shot timers count only awake time on Darwin.
+const DEADLINE_POLL_MS = 250;
 class CollectionTimeout extends Error {}
 class CollectionSessionPending extends Error {}
 export function collectionBudget(entry, report) {
@@ -87,7 +89,8 @@ async function runGate(options, request, budget, heldLock = null, startedFile = 
   const runner = `let token=""; for await (const chunk of process.stdin) token += chunk;
 if (token !== "go\\n") process.exit(1);
 const killGroup = () => { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); } };
-const watchdog = setTimeout(killGroup, Math.max(1, ${Math.min(runDeadline + 2000, budget.deadline - 5000)} - Date.now()));
+const watchdogDeadline = ${Math.min(runDeadline + 2000, budget.deadline - 5000)};
+const watchdog = setInterval(() => { if (Date.now() >= watchdogDeadline) killGroup(); }, ${DEADLINE_POLL_MS});
 process.on('SIGTERM', () => {}); // Survive TERM grace until descendants exit or the watchdog kills the group.
 process.argv = ${JSON.stringify([process.execPath, script, "preflight", "--request", file])};
 try { await import(${JSON.stringify(pathToFileURL(script).href)}); }
@@ -95,7 +98,7 @@ catch (error) { console.error(error); process.exitCode = 1; }
 finally {
   try {
     const {processTable} = await import(${JSON.stringify(new URL('../runtime.mjs', import.meta.url).href)});
-    if (!processTable().some(row => row.group === process.pid && row.pid !== process.pid && !row.state.startsWith('Z'))) clearTimeout(watchdog);
+    if (!processTable().some(row => row.group === process.pid && row.pid !== process.pid && !row.state.startsWith('Z'))) clearInterval(watchdog);
   } catch {} // Retain the watchdog when descendant telemetry is unavailable.
 }`;
   const child = spawn(process.execPath, ["--input-type=module", "-e", runner], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
@@ -122,10 +125,12 @@ finally {
   for (const stream of [child.stdout, child.stderr]) stream.on("data", data => { output = (output + data).slice(-64 * 1024); fs.appendFileSync(logPath(options), data); });
   let timer;
   const closed = new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
-  let timedOut;
+  let timedOut, poll;
   try {
-    timedOut = await Promise.race([closed.then(() => false), new Promise(resolve => { timer = setTimeout(() => resolve(true), Math.max(1, runDeadline - Date.now())); })]);
-  } finally { clearTimeout(timer); }
+    timedOut = await Promise.race([closed.then(() => false), new Promise(resolve => {
+      poll = setInterval(() => { if (Date.now() >= runDeadline) resolve(true); }, DEADLINE_POLL_MS);
+    })]);
+  } finally { clearInterval(poll); }
   // A closed leader can leave children holding pipes or surviving independently.
   // Keep the group recorded until telemetry proves the whole group dead.
   try {
