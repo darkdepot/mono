@@ -131,6 +131,14 @@ function validateReadBudgetFixtures() {
     const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
     require(budget.bytes === total && total <= 20_480, "Research actual mandatory total differs or exceeds 20 KB");
   });
+  fixture("Discovery actual mandatory inputs and byte total", () => {
+    const expected = ["skills/discovery/SKILL.md", "skills/discovery/references/run.md", "skills/discovery/references/examples.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["discovery"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Discovery mandatory file set differs from the stage, its entry reference and examples");
+    const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
+    require(budget.bytes === total && total <= 20_480, "Discovery actual mandatory total differs or exceeds 20 KB");
+  });
   try {
     write("AGENTS.md", "# fixture\n");
     write("references/shared.md", "Read `references/nested.md`.\n");

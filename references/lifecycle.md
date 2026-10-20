@@ -60,8 +60,10 @@ question window; host mechanics live in `owner-dialog.md`.
 ## Discovery
 
 `mono:discovery` takes the approved Idea record and Research («Исследование»),
-finds up to three real solutions, obtains an explicit choice and writes the chosen
-solution's PRD in Linear with yes bound to the shown document version. It runs in
+searches for the solution with the owner in conversation (own view, two or three
+solutions that differ by what the owner gets, a live example), obtains an explicit
+choice and writes the chosen solution's PRD in Linear with approval («Утвердить»)
+bound to the shown document version. It runs in
 the owner session or the orchestrator session itself; workers/background launches
 do not start it. Details and the selected Research link stay in the Discovery task.
 
