@@ -139,6 +139,14 @@ function validateReadBudgetFixtures() {
     const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
     require(budget.bytes === total && total <= 20_480, "Discovery actual mandatory total differs or exceeds 20 KB");
   });
+  fixture("Handoff actual mandatory inputs and byte total", () => {
+    const expected = ["skills/handoff/SKILL.md", "skills/handoff/references/run.md", "skills/handoff/references/examples.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["handoff"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Handoff mandatory file set differs from the stage, its entry reference and examples");
+    const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
+    require(budget.bytes === total && total <= 20_480, "Handoff actual mandatory total differs or exceeds 20 KB");
+  });
   try {
     write("AGENTS.md", "# fixture\n");
     write("references/shared.md", "Read `references/nested.md`.\n");
@@ -644,7 +652,7 @@ function validateArtifactContractParity() {
       ledgerSourcePath: "references/contracts/issue.md",
       templatePath: "templates/issue.md",
       contractFingerprint: "85fa3d5b6126a038b28567b3016a7662373cc213abdc862aaed882f479b56aa3",
-      contractConsumers: ["skills/issue/SKILL.md"],
+      contractConsumers: ["skills/issue/SKILL.md", "skills/handoff/SKILL.md"],
     },
   };
 
@@ -5549,7 +5557,14 @@ const STRING_PINS = [
   ["skills/discovery/references/orchestrator.md", "by=orchestrator"],
   ["references/repair-machine.md", "prd-before-package-approval"],
   ["skills/idea/references/record.md", "node <корень>/scripts/idea-gate.mjs verify --project <id> --dump <папка>/linear"],
-  ["skills/handoff/SKILL.md", "approval_status=approved"],
+  ["skills/handoff/references/record.md", "approval_status=approved"],
+  ["skills/handoff/references/record.md", "mono-package: recorded"],
+  ["skills/handoff/references/record.md", "mono-package: start"],
+  ["skills/handoff/references/record.md", "by=owner"],
+  ["skills/check/SKILL.md", "mono-package: recorded"],
+  ["skills/handoff/SKILL.md", "too-big"],
+  ["skills/handoff/SKILL.md", "shared-base"],
+  ["skills/handoff/SKILL.md", "probe"],
   ["skills/implement/SKILL.md", "node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>"],
   // MONO-95: render placeholders replace angle-substitution prose.
   ["templates/orchestrator-dispatch.md","{{approval}}"],
@@ -5817,13 +5832,7 @@ const STRING_PINS = [
   ["templates/compact-instructions.md","product_name"],
   ["skills/deploy/SKILL.md","git rev-parse HEAD"],
   ["references/install.md","git show"],
-  ["skills/handoff/SKILL.md","references/artifact-intake.md"],
-  ["skills/handoff/SKILL.md","read"],
-  ["skills/handoff/SKILL.md","unavailable"],
-  ["skills/handoff/SKILL.md","stale_or_ignored"],
-  ["skills/handoff/SKILL.md","conflicts"],
-  ["skills/handoff/SKILL.md","decisions_carried_forward"],
-  ["skills/handoff/SKILL.md","confidence_boundary"],
+  ["skills/handoff/references/record.md","references/artifact-intake.md"],
   ["skills/implement/SKILL.md","Implementation workflow"],
   ["skills/implement/SKILL.md","implemented-needs-preflight"],
   ["skills/implement/SKILL.md","scope-drift-needs-handoff"],
@@ -6030,7 +6039,7 @@ const REQUIRED_HEADINGS = [
   ["references/human-friendly-output.md","Product Language For The Owner"],
   ["skills/check/SKILL.md","Mono Check"],
   ["skills/deploy/SKILL.md","Mono Deploy"],
-  ["skills/handoff/SKILL.md","Mono Handoff"],
+  ["skills/handoff/SKILL.md","mono:handoff"],
   ["skills/implement/SKILL.md","Mono Implement"],
   ["skills/issue/SKILL.md","Mono Issue"],
   ["skills/orchestrate/SKILL.md","Mono Orchestrate"],
@@ -6124,6 +6133,7 @@ const REQUIRED_HEADINGS = [
 ];
 const MACHINE_TOKENS = new Set([
   "mono-prd: approved", "by=owner", "by=orchestrator", "prd-before-package-approval",
+  "mono-package: recorded", "mono-package: start", "too-big", "shared-base", "probe",
   "Этап", // MONO-183: Linear stage-task label, not editorial wording.
   "mono-research", "ready", "hold", "not-required", "web-scout", "mono:research",
   "reader", "subagent", "definitions",
@@ -6937,19 +6947,20 @@ function validateAe6Fixtures() {
     change("README.md", (text) => text.replace(/^(- \*\*K-31\.\*\* )/m, "$1In this pack, "));
     check(); restore(); check();
     console.log("PASS README rule prose rewording: green");
-    change("scripts/russian-stages.mjs", text => text.replace(/(export const RUSSIAN_STAGES = )\[[^\]]*\]/, `$1${JSON.stringify([...RUSSIAN_STAGES, "handoff"])}`));
-    change("skills/handoff/SKILL.md", text => text
+    change("scripts/russian-stages.mjs", text => text.replace(/(export const RUSSIAN_STAGES = )\[[^\]]*\]/, `$1${JSON.stringify([...RUSSIAN_STAGES, "issue"])}`));
+    change("skills/issue/SKILL.md", text => text
       .replace(/^Read first:\n/m, "")
       .replace(/^Read now.*$/m, "Прочитай сразу:")
-      .replace(/^Read when.*$/m, "Прочитай, когда:\n- `<корень>/references/contracts/project.md`: перед записью.")
       .replace(/^1\. `AGENTS.md`\n/m, "")
-      .replace(/^2\. `references\/contracts\/project.md`\n/m, "")
+      .replace(/^2\. `references\/contracts\/issue.md`\n/m, "")
+      .replaceAll("`references/contracts/issue.md`", "the Issue contract")
+      .replace(/^Read when.*$/m, "Прочитай, когда:\n- `<корень>/references/contracts/issue.md`: перед записью.")
       .replace(/(?<!<корень>\/)references\//g, "<корень>/references/")
       .replace(/^(- `[^`]+`) — /gm, "$1: "));
     check();
     const listedBudget = JSON.parse(runNode(["--input-type=module", "-e",
-      `import { measureReadBudget } from ${JSON.stringify(file("scripts/read-budget.mjs"))}; console.log(JSON.stringify(measureReadBudget(${JSON.stringify(scratch)}, { skills: ["handoff"], includeConditional: false })));`]));
-    if (listedBudget.files.some(entry => entry.path === "references/contracts/project.md")) fail("listed Russian stage conditional contract leaked into mandatory read budget");
+      `import { measureReadBudget } from ${JSON.stringify(file("scripts/read-budget.mjs"))}; console.log(JSON.stringify(measureReadBudget(${JSON.stringify(scratch)}, { skills: ["issue"], includeConditional: false })));`]));
+    if (listedBudget.files.some(entry => entry.path === "references/contracts/issue.md")) fail("listed Russian stage conditional contract leaked into mandatory read budget");
     restore(); check();
     console.log("PASS AE6 listed Russian stage: Russian tiers, no first AGENTS read, conditional contract and pack-root paths green");
     negative("unlisted stage with Russian read tiers", () => change("skills/check/SKILL.md", text => text
@@ -6958,9 +6969,10 @@ function validateAe6Fixtures() {
     negative("unlisted stage without first AGENTS read", () => change("skills/check/SKILL.md", text => text.replace(/^1\. `AGENTS.md`\n/m, "")), "AGENTS.md must be the first eager read");
     negative("unlisted stage with colon condition", () => change("skills/check/SKILL.md", text => text.replace(/^(- `[^`]+`) — /m, "$1: ")), "conditional read needs a path and a condition");
     negative("unlisted stage with Russian pack-root path", () => change("skills/check/SKILL.md", text => text.replace("2. `references/readiness-gates.md`", "2. `<корень>/references/readiness-gates.md`")), "missing pack file <корень>/references/readiness-gates.md");
-    negative("unlisted stage with conditional Project contract", () => change("skills/handoff/SKILL.md", text => text
-      .replace(/^2\. `references\/contracts\/project.md`\n/m, "")
-      .replace(/^Read when.*$/m, "$&\n- `references/contracts/project.md` — before fixture write.")), "must read references/contracts/project.md as its normative artifact source");
+    negative("unlisted stage with conditional Issue contract", () => change("skills/issue/SKILL.md", text => text
+      .replace(/^2\. `references\/contracts\/issue.md`\n/m, "")
+      .replace(/^Read when.*$/m, "$&\n- `references/contracts/issue.md` — before fixture write.")), "must read references/contracts/issue.md as its normative artifact source");
+    negative("Handoff conditional Issue contract removed", () => change("skills/handoff/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/issue\.md`:[^\n]+\n/m, "")), "must read references/contracts/issue.md as its normative artifact source");
     negative("Discovery conditional PRD contract removed", () => change("skills/discovery/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/prd\.md`:[^\n]+\n/m, "")), "must read references/contracts/prd.md as its normative artifact source");
     negative("Idea conditional Project contract removed", () => change("skills/idea/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/project\.md`:[^\n]+\n/m, "")), "must read references/contracts/project.md as its normative artifact source");
     negative("required section removed", () => change("references/issue-only-lane.md", (text) => text.replace("### Post-`ready` exit\n", "")), "missing or duplicate section");
