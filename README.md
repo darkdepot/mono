@@ -1,6 +1,6 @@
 # Mono Agent Workflow
 
-Текущий выпуск: **0.34.1**. См. [заметки выпуска](CHANGELOG.md#0341---2026-10-19).
+Текущий выпуск: **0.35.0**. См. [заметки выпуска](CHANGELOG.md#0350---2026-10-20).
 Private vulnerability reports: [SECURITY.md](SECURITY.md).
 
 ## Задачи этапов и Ready
@@ -22,6 +22,35 @@ Handoff ставит Ready после записи пакета, задач и P
 старого проекта или при отсутствии Ready, если пакет прошёл проверки. Крупная
 правка после старта снимает прежний старт и требует нового; у старого пакета
 класс 3 переводит Delivery или Ready обратно в Discovery.
+
+## Обновление до 0.35.0
+
+Этапы Idea, Research, Discovery и Handoff пересобраны как разговор с сильным
+менеджером проекта, продактом и тимлидом. Утверждение везде только кнопкой
+«Утвердить» в окне вопроса; слова в чате не согласие, без окна утверждения нет.
+Исследование начинает только владелец кнопкой «Начать исследование» или словами,
+проект до этого в Idea. В сессии владельца после финала Research и Discovery окно
+«Начать <этап>» / «Ещё обсудить»; у оркестратора следующий этап начинается сам.
+Сроков и строк ожидания нет нигде.
+
+Handoff больше не пишет PRD и Tech Spec и не просит отдельного «да» на пакет.
+Он сверяет утверждённое, спрашивает только про то, что меняет результат для
+пользователя, деньги, данные или необратимое, режет работу на одну задачу
+(до трёх по названной причине, больше только с твоим ответом), пишет одну запись
+пакета комментарием проекта и ставит Ready. Работу начинает только владелец:
+кнопкой «Начать работу» или словом «начинаем», и у оркестратора тоже.
+
+После Research новый проект идёт в Discovery. Исключение определяется по записям, а не по дате:
+это только пакет, одобренный прежним Handoff, без записи «да» на PRD; такие пакеты
+живут и чинятся по прежним правилам. `discoveryGate.since` маршрут больше не меняет,
+ключ остаётся допустимым в `.agents/mono-workflow.config.json`.
+
+Явная правка контрактов проекта, PRD, Tech Spec и задачи: новые отпечатки.
+Скрипты доставки не менялись: запись пакета едет воркеру в слоте `tech-spec.md`,
+запись старта на месте прежнего комментария одобрения.
+Выпуск совместим по форматам; общая quiescence не требуется. Сохраняются обычные условия Plugin Updates: before-update для удаляемого или заменяемого каталога, пауза затронутых запусков и проверка установки. Текущие попытки продолжаются только на сохранённом packRoot.
+Установка обоих хостов по [Plugin Updates](references/install.md#plugin-updates);
+проверки выпуска в [Release 0.35.0](references/install.md#release-0350).
 
 ## Обновление до 0.34.1
 
@@ -216,7 +245,6 @@ Handoff is a listed Russian stage too: `node scripts/read-budget.mjs --skill han
 counts exactly `SKILL.md`, `references/run.md` and `references/examples.md`; record,
 review, scout, orchestrator and repair rules are conditional. Its activation cases
 live in [evals/handoff](evals/handoff/README.md).
-The release and live acceptance belong to the later release task; this intermediate main is not a release.
 The Russian `<корень>/` prefix belongs to listed stages; English stages use
 `<pack-root>/` in commands.
 [Activation evals](evals/idea/README.md)
