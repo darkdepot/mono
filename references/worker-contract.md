@@ -36,7 +36,7 @@ node '<pack-root>/scripts/verify-pack-state.mjs' identity \
 
 At start match `git show <sha>` blobs to dispatch commit/files/sha256 and Issue
 manifest; never edit them. Findings park `blocked` with exact replacement bytes;
-artifact owner repairs Tech Spec or renews issue-only Issue, then NEW dispatch.
+artifact owner repairs Tech Spec/record or renews issue-only Issue, then NEW dispatch.
 Amendment/resume cannot apply a repaired manifest.
 
 ## Two-Phase Dispatch Handshake
@@ -86,7 +86,7 @@ Before lifecycle/scope gates resolve Issue/marker/config/verified label/
 authenticated approval/emit-fingerprint from dispatch snapshot. Whole-body
 SHA-256 only; no inferred oracle/lane/sixth field. Retain parent/marker/label/
 approval provenance for fallback. Project-first needs approved
-Project/PRD/Spec-or-exception/Issue; candidate escape is not proof.
+Project/PRD/Spec-record-or-exception/Issue; candidate escape is not proof.
 Apply `references/issue-only-lane.md` Context Contract/Resolver/fallback,
 candidate/freeze/exit: `approval_status=approved-fresh`, matching fingerprints/
 owner, eligible risk, oracle acceptance/verification. Valid lane needs no Project
@@ -100,7 +100,7 @@ outside lane. Ship bad approval stops gates/PR → no-promotion handoff.
 Readiness-only, no findings/writes/repair/install. PASS inspected/unblocked; FAIL
 violation; BLOCKED unavailable. Return mode/meaning/boundary/unblock;
 failure: FAIL - Linear <mode> not ready.
-Delivery: Delivery Project/current PRD/Spec-or-exception/approved Issues/start/
+Delivery: Delivery Project/current PRD/Spec-record-or-exception/approved Issues/start/
 coherent risk-review; docs alone fail. Issue-only pre-activation: oracle/marker/
 label/fresh authenticated approval/review; started/terminal fails. Read-back/retry:
 configured started/nonterminal, no Project for issue-only.

@@ -19,10 +19,11 @@ project config (`languages.linear`).
 3. <свой ответ>
 ```
 
-Package-approval briefs: include an option that explicitly bundles
-implementation start («это одновременно approval на старт кода») so the
-bundled-approval rule from `mono:implement` applies and the orchestrator
-does not re-ask before dispatching workers.
+Handoff summary: its shape belongs to `mono:handoff` in orchestrator mode. Work
+starts only by the owner («Начать работу» or «начинаем»); the summary never
+holds other waves, and the orchestrator never starts work itself. A brief for
+more than three Issues offers «Разбить проект» (recommended when it fits) and
+«Разрешить больше задач».
 
 Design questions: prepare side-by-side variants first (`/design-html` when the
 runtime provides it), open them, then ask. Never decide visual questions
@@ -51,7 +52,7 @@ design-review pass already applied. Never bring a first draft.
 
 These rules bind every Decision Brief and UX checkpoint that offers
 numbered or lettered options — with or without a board or prototype
-(a plain package-approval brief included). Wave-1 precedent: a
+(a plain Handoff summary included). Wave-1 precedent: a
 brief numbered 7 questions against a 5-section board; the owner's
 «2) B» decoded to one option under brief numbering and to a different
 one under board numbering — a possibly inverted product decision — and
@@ -74,7 +75,7 @@ the contested question was then closed by silence after a fallback line.
   never closed by silence — no answer means asked again, not resolved.
   A fallback line («если не ответишь — делаю X») does not resolve a
   contested item.
-- Post-approval delta: any spec change after a package approval that
+- Post-approval delta: any spec or record change after the owner's start that
   alters user-visible behavior appears as an explicit
   «Изменилось после твоего одобрения:» delta list at the next owner
   touch — never only as a fait-accompli status line. When in doubt

@@ -26,7 +26,7 @@ Write skills in English; stages rebuilt under «Mono как продукт» and
 
 ## Skill Design Rules
 
-Use descriptions for routing, atomics for single artifacts and wrappers for orchestration. Read shared files progressively; never inline long templates. Keep phase owners separate: mono:deliver only sequences implement/preflight/ship; their rules stay with their owners. Orchestrator dispatches, confirms and monitors. Idea is its exception: answer questions with reasons, present the description and «Ответил сам:» for owner yes, separately from package approval. Research too: no owner questions or yes; the result goes to the owner. Discovery: answers with sources and its own PRD yes; the result goes to the owner. Implement/preflight/ship stay in workers.
+Use descriptions for routing, atomics for single artifacts and wrappers for orchestration. Read shared files progressively; never inline long templates. Keep phase owners separate: mono:deliver only sequences implement/preflight/ship; their rules stay with their owners. Orchestrator dispatches, confirms and monitors. Idea is its exception: answer questions with reasons, present the description and «Ответил сам:» for owner yes, separately from work start. Research too: no owner questions or yes; the result goes to the owner. Discovery: answers with sources and its own PRD yes; the result goes to the owner. Handoff follows; only the owner starts work. Implement/preflight/ship stay in workers.
 
 Review only reports quality/risk; check only reports readiness. Repair: handoff mutates Project-first, `mono:review artifact` judges classification, `mono:check repair` reports readiness, issue renews issue-only, ship owns accepted pre-ship drift. Apply accepted fixes only through these owners or explicit atomics.
 

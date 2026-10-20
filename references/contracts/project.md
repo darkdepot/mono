@@ -38,8 +38,9 @@ Keep the Project at overview level. Never inline the PRD or Tech Spec.
 
 In Idea, limit the body to what, why, and target outcome, with second-level
 headings: `Что`, `Зачем`, `Образ результата` in default Russian output. Unknowns
-live in the approval comment snapshot. Handoff adds in scope and out of scope
-(`Что входит`, `Что не входит`); these concerns remain outside the Idea body.
+live in the approval comment snapshot. Scope boundaries live in the PRD; Handoff
+leaves the approved body unchanged, and legacy packages may keep the in scope
+and out of scope sections (`Что входит`, `Что не входит`) they already added.
 
 ## PC-006 — No workflow dashboard
 
@@ -54,11 +55,16 @@ comments, and the handoff package.
 ## PC-008 — Active document set
 
 For this MVP, the only active Project document types are PRD, Tech Spec, and
-Research («Исследование»).
+Research («Исследование»). The package record is a Project comment, not a
+document: one current version holds input versions, shared decisions, «Решил
+сам», the reconciliation result and the execution Issue graph.
 
 ## PC-009 — Default Issue plan
 
-Plan one active execution Issue by default.
+Plan one active execution Issue by default. A second and third need a named,
+recorded reason (too big for one review, a shared base several parts wait for,
+or an external-service probe first); more than three only with the owner's
+answer (split the Project or allow more).
 
 ## PC-010 — Review-gate record
 
@@ -85,21 +91,26 @@ Project stays in Idea until the owner starts Research; Research never starts by 
 ## PC-014 — Discovery state
 
 `mono:research` moves an approved Idea Project to Discovery after its read-only
-entry check, once the owner starts it. In Discovery, PRD is created by `mono:discovery`;
-on the old path (`references/lifecycle.md`) `mono:handoff` keeps PRD ownership. Tech Spec
-is normally created by `mono:handoff`. They coexist with the Project before Delivery.
+entry check, once the owner starts it. In Discovery, PRD is created and changed only
+by `mono:discovery`. `mono:handoff` writes neither PRD nor Tech Spec; it writes the
+package record. A Tech Spec exists only as an input from a later stage or in a
+legacy package. They coexist with the Project before Delivery.
 
 ## PC-015 — Handoff readiness state
 
-While PRD, Tech Spec, and proposed or approved Issue slicing are made current,
-keep the Project in Discovery or an equivalent configured pre-delivery state.
-Record readiness in comments or check output, not in the Project body.
+While the package is assembled, keep the Project in Discovery or an equivalent
+configured pre-delivery state. After the package record, its review and execution
+Issues are written and `mono:check handoff` passes, Handoff sets Ready before the
+owner's start; Ready never authorizes implementation. Record readiness in comments
+or check output, not in the Project body.
 
 ## PC-016 — Delivery state
 
 Delivery begins only after `mono:implement` verifies the Project, current PRD,
-Tech Spec or explicit no-spec exception, approved execution Issue set, explicit
-implementation-start approval, and readiness to start from those Issues.
+the current package record (a legacy package: Tech Spec or explicit no-spec
+exception), execution Issue set, the owner's start record (`by=owner`, bound to
+the shown summary and that Issue set; a legacy package: its approval), and
+readiness to start from those Issues. The orchestrator never gives the start.
 
 ## PC-017 — Ship state ownership
 

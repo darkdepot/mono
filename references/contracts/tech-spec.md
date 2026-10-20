@@ -1,7 +1,7 @@
 # Tech Spec artifact contract
 
 This bounded contract is the normative source for Tech Spec artifact behavior.
-`mono:handoff` consumes it for Project-first package creation and repair;
+`mono:handoff` consumes it for legacy Tech Spec repair and reconciliation;
 `mono:ship` consumes it for accepted pre-ship drift. Use the shared
 [artifact rules](../artifact-rules.md), [artifact quality](../artifact-quality.md),
 [readiness gates](../readiness-gates.md), and
@@ -21,14 +21,14 @@ The Tech Spec records HOW the approved PRD will be built.
 ## TS-003 — Internal helper boundary
 
 Tech Spec writing is owned by lifecycle stages rather than exposed as a direct
-artifact door. The normal post-discovery and repair workflow is `mono:handoff`;
-accepted pre-ship drift belongs to `mono:ship`.
+artifact door. Legacy Tech Spec repair is `mono:handoff`; accepted pre-ship
+drift belongs to `mono:ship`.
 
 ## TS-004 — Targeted-use eligibility
 
-A direct request to write or repair a Tech Spec must route to `mono:handoff`
-repair. Accepted pre-ship drift routes to `mono:ship`; no other workflow mutates
-the Tech Spec directly.
+No new Tech Spec is created in this release. A request to repair an existing
+legacy Tech Spec routes to `mono:handoff` repair; accepted pre-ship drift to
+`mono:ship`; nothing else mutates it.
 
 ## TS-005 — Linear-facing language
 
@@ -56,12 +56,13 @@ to PRD or mark the gap before proceeding.
 
 ## TS-010 — Durable engineering review
 
-When an engineering review exists, translate it into durable Tech Spec form.
+Translate an engineering review into the existing Tech Spec, else into the
+package record and Issues.
 
 ## TS-011 — Lightweight engineering pass
 
-When no engineering review exists, perform a lightweight engineering pass and
-write a lightweight spec.
+Without one, do a lightweight engineering pass; its HOW goes to `U` units and
+Issues, not a new spec.
 
 ## TS-012 — Requirement trace coverage
 
@@ -97,12 +98,13 @@ trace, validation, rollback, and failure modes concrete enough for
 
 ## TS-018 — Narrow no-spec exception
 
-Use a no-spec exception only for truly simple, low-risk work.
+A package record is not a no-spec exception: at any risk it carries shared HOW
+as `U` units in the Tech Spec slot; deep or risky needs at least one.
 
 ## TS-019 — Forbidden no-spec domains
 
-Never use a no-spec exception for risky, cross-cutting, data, auth, release, or
-multi-surface work.
+A legacy no-spec exception never covers risky, cross-cutting, data, auth,
+release, or multi-surface work.
 
 ## TS-020 — Unknowns by phase
 
@@ -137,8 +139,7 @@ instructions out of the Linear Tech Spec body.
 
 ## TS-026 — No Delivery transition
 
-Tech Spec creation belongs to Discovery or Handoff. Only `mono:implement` owns
-Delivery Start.
+Only `mono:implement` owns Delivery Start.
 
 ## TS-027 — No PR creation
 

@@ -126,15 +126,14 @@ Workflow states:
      `templates/orchestrator-brief.md` with its «Техника» table) before
      taking new actions.
 2. `intake-and-discovery`
-   - Run `mono:idea` per idea in this session: launch both scouts, recap, answer the route and 1–3 meaning questions yourself with reasons; ask the owner only when their meaning is unclear. Show the description and «Ответил сам:» in the approval window; only the owner’s «Утвердить» counts. Never relay the stage questions or approve for the owner; this approval is separate from package approval. With several ideas, queue
+   - Run `mono:idea` per idea in this session: launch both scouts, recap, answer the route and 1–3 meaning questions yourself with reasons; ask the owner only when their meaning is unclear. Show the description and «Ответил сам:» in the approval window; only the owner’s «Утвердить» counts. Never relay the stage questions or approve for the owner; this approval is separate from the work start. With several ideas, queue
      them and run discovery one project at a time (Director Discovery in
      `references/orchestration.md`) while dispatched work continues.
    - After the Idea final message, run `mono:research` yourself only after the
      owner starts it (button or words); the Project stays in Idea until then.
-     After Research start the next stage yourself, without waiting: `mono:handoff`
-     for a Project on the old path (`mono:check discovery`, Old path; with the dormant
-     cutoff every Project without an approved PRD), otherwise or on an explicit owner
-     request `mono:discovery` by its orchestrator-mode reference. Research adds no questions
+     After Research start the next stage yourself, without waiting: `mono:discovery`
+     by its orchestrator-mode reference; only a legacy package on the old path
+     (`mono:check discovery`, Old path) goes to `mono:handoff` repair. Research adds no questions
      or yes. Discovery answers with sources, chooses a solution and gives its own
      PRD yes; its one second-model pass is not a Second Voice interview. Return
      both results to the owner without waiting. A deferred Project is not picked
@@ -144,15 +143,18 @@ Workflow states:
      already passed a design-lens Second Voice review (in-session pass as
      fallback), plus the few contested UX decisions, one brief.
    - Discovery choices/PRD yes are the orchestrator's with sources and owner
-     override; package scope boundaries, issue slicing, risk acceptance and design
-     stay the user's decisions — exercised at checkpoints with prepared variants,
-     per the Always-ask list.
+     override; more than three Issues, money, user data, irreversible effects and
+     design stay the user's decisions — exercised at checkpoints with prepared
+     variants, per the Always-ask list.
 3. `handoff`
-   - Run `mono:handoff` in this session. Bring the user one
-     package-approval decision brief per `templates/orchestrator-brief.md`.
-   - After package approval, implementation start is the orchestrator's own
-     decision; record it explicitly (the bundled-approval rule from
-     `mono:implement` applies).
+   - After Discovery run `mono:handoff` yourself in this session, by its
+     orchestrator-mode reference. Answer reconciliation conflicts without money,
+     user data or irreversible effects yourself with a recorded reason; those and
+     more than three Issues go to the owner while other waves continue.
+   - Bring the user the Handoff summary; it never holds other waves. Work starts
+     only when the owner presses «Начать работу» or says «начинаем»; then write
+     and read back the start record before any dispatch. Never start work
+     yourself; a Ready Project without that record is never dispatched.
 4. `dispatch`
    - Apply [landing launch scheduling](references/landing.md#scheduling) before adding work to a running wave.
    - Before incompatible plugin updates require machine-wide quiescence per
@@ -314,7 +316,7 @@ Rules:
 - Idea approval and the start of Research still wait for the owner. Research/Discovery results are owner
   contacts without waiting; Discovery uses its own yes, never owner yes.
 - Touch the user only at checkpoints: Idea description approval and Research start (clarify meaning only when necessary), the UX
-  checkpoint, package approval, deploy approval per policy, and ad-hoc
+  checkpoint, the Handoff summary and work start, deploy approval per policy, and ad-hoc
   risk or scope-drift escalations; decide everything else and record it
   under «Решил сам:» (Director Discovery in `references/orchestration.md`).
 - Second Voice reviewers are discovery agents, not workers: they never

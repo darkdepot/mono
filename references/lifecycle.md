@@ -31,7 +31,7 @@ The next stage is Research (`mono:research`). Idea ends with a separate final me
 with the research plan that Research prepares (`skills/research/references/plan.md`).
 Research starts only when the owner starts it, by button or words at any time; never
 automatically, also under the orchestrator. The Project stays in Idea until then.
-Idea approval is separate from package approval.
+Idea approval is separate from the Handoff start.
 
 ## Research
 
@@ -42,9 +42,9 @@ Project, it needs a fresh `pass` and the owner's start, checked read-only before
 Linear write; then it moves the Project to Discovery, reads it back and only then opens
 its stage task. It writes one Research («Исследование») document and one
 comment in its stage task with the stage log, then stops with an answer, advice and next step.
-`mono:handoff` follows for a Project on the old path (`skills/check/SKILL.md`, mode `discovery`, Old path); while the cutoff is dormant
-that is every Project without an approved PRD. Otherwise, or on the owner's explicit
-request, `mono:discovery` follows.
+`mono:discovery` follows. Only a Project on the old path (`skills/check/SKILL.md`, mode
+`discovery`, Old path: a legacy approved package) goes to `mono:handoff`, which repairs
+that package and never writes a new one.
 A Project without Research routes here, except a package approved before
 `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
 
@@ -52,7 +52,10 @@ Stage transitions in the Russian stages. Idea → Research: only the owner start
 (button or words), in every mode. Research → next stage and Discovery → Handoff: in an
 owner session (Claude Code, Codex) the final message comes first, then «Начать <этап>» /
 «Ещё обсудить»; the stage never starts the next one itself. The owner's explicit words
-(«начинаем <этап>») also start a stage; only approving a document is button-only. The orchestrator starts both by itself, without waiting. Every stage keeps its
+(«начинаем <этап>») also start a stage; only approving a document is button-only. The orchestrator starts both by itself, without waiting. Handoff → work: in every
+mode the final message, then the summary with «Начать работу» / «Ещё обсудить»; only
+the owner starts work (the button or «начинаем»), which also accepts the shown summary;
+the orchestrator never does. Every stage keeps its
 own plan first, has no time estimates or waiting lines, and sends the final message
 separately before any window or next stage. Approval anywhere is only «Утвердить» in a
 question window; host mechanics live in `owner-dialog.md`.
@@ -75,19 +78,19 @@ Until Design and Tech Evaluation exist, Handoff receives their open questions an
 «нужны макеты» (Research `interface: true` or a new screen/window in the solution).
 A raw implementation plan never authorizes code or Delivery.
 
-Discovery cutoff: `2099-12-31` (dormant). Discovery is optional until a new version
-of the stage; the default route after Research is Handoff on the old path.
-While dormant, start Discovery only on an explicit owner request. Product
-`discoveryGate.since` overrides the cutoff and can activate Discovery earlier.
-The old-path eligibility and package-aware checks have one home:
-`skills/check/SKILL.md`, mode `discovery`. On that path Handoff may write PRD-lite;
-tiny new Discovery work gets a short PRD. On the new path Handoff reads approved
-PRD only; before package approval a PRD finding returns to Discovery, with renewed
-yes in the same owner touch as package approval. After package approval normal
-repair/Ship drift applies, without rechecking PRD yes.
+Discovery always follows Research. The old path is decided by records, not dates:
+no `mono-prd: approved` record and an approved legacy package (approval comment,
+no package record). Product `discoveryGate.since` no longer changes routing; the key
+stays valid in config. The old-path eligibility and package-aware checks have one home:
+`skills/check/SKILL.md`, mode `discovery`. Tiny Discovery work gets a short PRD.
+Handoff reads the approved PRD only: a finding that needs a PRD change gets the
+owner's answer in Handoff, then Discovery changes the PRD with a renewed approval in
+the same touch and Handoff continues. After the owner's start, normal repair/Ship
+drift applies, without rechecking PRD yes.
 
 The entry `fresh` check admits `pass`, `stale`, `legacy-migrate`; stale/legacy ideas
-are shown in the package touch and recorded with package approval. Migration alone
+are shown in the Handoff summary and recorded with the owner's start (a legacy
+package: with its approval). Migration alone
 never permits implementation. `no-record` on a new project returns to `mono:idea`.
 Implement checks `approved` before start.
 
@@ -122,27 +125,38 @@ Research проверяет вход до любых записей и при о
 
 ## Handoff
 
-Turn discovery into a Linear-backed execution package.
+The team lead reconciles the approved inputs and slices the work; it writes no PRD
+or Tech Spec.
 
 Required:
 
-- Project stays in Discovery while assembling the package. After package approval and PASS `mono:check handoff`, set and read back Ready, the configured pre-delivery status before Delivery. If Ready is absent from the workspace, keep Discovery; the check reports that fallback.
-- Artifact intake summary following `references/artifact-intake.md`.
-- Current PRD.
-- Current Tech Spec.
-- Package approval recorded as a Linear comment.
-- Risk classification and review-gate policy.
-- `mono:review handoff` when required by `references/readiness-gates.md`.
-- User approval recorded as a Linear comment.
-- Proposed Issue slicing.
+- Entry through `mono:check discovery`: approved idea, Research, PRD approved on its
+  current version. Otherwise the Project returns to the owner stage of what is missing.
+- Reconciliation of Project, Research, PRD and, when they exist, Tech Spec and design.
+- Owner questions only for choices that change what the user gets or what is out of
+  scope, or that are irreversible, lose data or cost money; a PRD change goes to
+  Discovery in the same touch.
+- One look at the product code before slicing.
+- One execution Issue by default; a second and third by a recorded reason; more only
+  with the owner's answer.
+- `mono:review handoff` and a second voice on another model, both before the first
+  Linear write, each finding fixed or declined with a reason (tiny: advisory).
+- One package record as a Project comment, then execution Issues, `mono:check handoff`,
+  and Ready set and read back. If Ready is absent from the workspace, keep Discovery;
+  the check reports that fallback.
+- Final message, then the summary with «Начать работу» / «Ещё обсудить».
+- The owner's start record (`by=owner`) written and read back after the button or
+  «начинаем».
 
 Forbidden:
 
-- Code changes during handoff.
-- PR creation during handoff.
-- Implementation before approved Issue(s) exist.
-- Moving the Project to Delivery before approved execution Issue(s) exist.
+- Writing or changing PRD or Tech Spec.
+- Code changes or PR creation during handoff.
+- Starting work without the owner's start; the orchestrator never gives it.
 - Moving the Project to Delivery from `mono:handoff`; Delivery Start belongs to `mono:implement`.
+
+A legacy package (approved by the earlier Handoff, no package record) keeps its
+Tech Spec, approval and repair rules.
 
 Gate: `mono:review handoff` when required or advisory, then `mono:check handoff`.
 
@@ -162,7 +176,10 @@ Required:
   re-derives fingerprints, and stales preflight certificates issued before the
   repair.
 - Class 3 stops workers, supersedes approvals, invalidates dependent artifacts,
-  moves a Delivery or Ready Project back to Discovery, and requires owner re-approval.
+  and requires a new owner start on a new summary. A legacy package moves a Delivery
+  or Ready Project back to Discovery and needs a new approval in its old format; a
+  package record keeps or returns it to Ready. After the start a PRD change waits
+  until Handoff has stopped affected work; then Discovery writes it.
 - `mono:check repair` reports readiness after all class effects are recorded.
 
 Forbidden:
@@ -188,11 +205,10 @@ Required:
 - `AFK` or `HITL` readiness with the exact human dependency when present.
 - Dependencies and blockers.
 - Review-gate record.
-- Context snapshot from Project, PRD, and Tech Spec or exception.
+- Context snapshot from Project, PRD, and the package record (legacy: Tech Spec or exception).
 - Current vs desired behavior plus reproduction or baseline for bug/perf work.
 - Key contracts when they matter for implementation.
 - Concrete validation.
-- User approval of the handoff package.
 - Linear chips for Project, PRD, and Tech Spec where available.
 
 Forbidden:
@@ -211,9 +227,9 @@ Required:
 
 - Project in Delivery.
 - Current PRD.
-- Current Tech Spec or explicit no-spec exception.
-- Approved execution Issue(s).
-- Approval covers the current Issue set and explicitly allows implementation start.
+- Current package record (legacy: Tech Spec or explicit no-spec exception).
+- Execution Issue(s) from that package.
+- The owner's start record (legacy: package approval) covers the current Issue set and allows implementation start.
 - Required review findings resolved, accepted, or explicitly deferred.
 - Implementation starts from the approved Issue(s), not from raw discovery output.
 - `mono:implement` verifies or obtains implementation-start approval, moves the Project to Delivery, runs or reports `mono:check delivery`, records the start comment, and selects the implementation engine.
@@ -223,7 +239,7 @@ Required:
 Forbidden:
 
 - Passing delivery readiness with only PRD and Tech Spec.
-- Moving to Delivery when package approval did not authorize implementation start.
+- Moving to Delivery without the owner's start record (legacy: an approval authorizing start).
 - Starting implementation from a raw `/office-hours`, `/brainstorming`, or review plan.
 - Creating PRs, running pre-ship review/check, deploy, or closeout from `mono:implement`.
 
@@ -326,8 +342,10 @@ Required:
   `mono:ship` run in one worker session per Issue.
 - `mono:research` runs in the orchestrator session itself. No owner questions or
   yes; the result goes to the owner. Discovery answers with sources, chooses and
-  gives its own PRD yes; its result goes to the owner without waiting. Idea still
-  waits for the owner’s «Утвердить», and Research for the owner’s start.
+  gives its own PRD yes; its result goes to the owner without waiting. Handoff then
+  runs itself; reconciliation conflicts without money, user data or irreversible
+  effects are the orchestrator's with a recorded reason. Idea still waits for the
+  owner’s «Утвердить», Research and work for the owner’s start.
 - All Linear mutations during orchestration flow through the orchestrator
   (single writer); workers never write to Linear and queue stage-required
   mutations in mailbox reports.
@@ -338,7 +356,8 @@ Required:
 - Discovery under orchestration follows its stage reference: one second-model
   pass without interview or continued dialogue. Owner contacts: Idea description
   approval, Research start, Research/Discovery results without waiting, UX checkpoint with a reviewed
-  prototype, package approval, deploy approval per policy, ad-hoc risk/scope drift.
+  prototype, the Handoff summary and work start (owner only; it never holds other
+  waves), deploy approval per policy, ad-hoc risk/scope drift.
 
 
 Forbidden:

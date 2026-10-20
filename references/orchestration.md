@@ -24,7 +24,7 @@ Discovery answers with sources and its own PRD yes; result to owner without wait
 | `mono:idea` | orchestrator session; owner presses «Утвердить» per Idea |
 | `mono:discovery` | orchestrator session itself, per its orchestrator reference |
 | `mono:research` | orchestrator session itself after the owner's start; no owner questions or yes; result to owner |
-| `mono:handoff` | orchestrator session |
+| `mono:handoff` | orchestrator session itself after Discovery; work starts only by the owner |
 | `mono:implement`, `mono:preflight`, `mono:ship` | worker session |
 | `mono:deploy` | orchestrator session |
 
@@ -37,8 +37,8 @@ stage skills keep their ownership unchanged.
 The user decides. Escalate immediately and interactively with a decision
 brief (options + recommendation):
 
-- Idea direction and scope: handoff package approval, [execution Issues](lifecycle.md#задачи-этапов) slicing, scope
-  drift.
+- Idea direction and scope: work start after the Handoff summary, more than
+  three [execution Issues](lifecycle.md#задачи-этапов), scope drift.
 - Design and UX: always with prepared side-by-side variants (`/design-html`
   when the runtime provides it; concrete textual variants otherwise). Under
   Director Discovery, batch design/UX escalations into the UX checkpoint
@@ -53,10 +53,10 @@ The orchestrator decides itself and records every such decision in the ledger
 under «Решил сам:» with a one-line reason:
 
 - Discovery solution choice and its own PRD yes, with sources; the owner can
-  override at any time or at package approval.
+  override at any time or at the Handoff summary.
+- Handoff reconciliation conflicts without money, user data or irreversible
+  effects, with the reason in the package record.
 - All technical and implementation questions from workers.
-- Implementation start after package approval (recorded explicitly; the
-  bundled-approval rule from `mono:implement` applies).
 - Technical review-finding acceptance, CI repair, and PR stabilization
   routing.
 - Merge/deploy for risk classes the configured `deployApproval` allows (all
@@ -75,9 +75,8 @@ affected stage when that happens.
 
 ## Director Discovery
 
-Run Idea → Research yourself, then Handoff for a Project on the old path
-(`mono:check discovery`, Old path; with the dormant cutoff every Project without an
-approved PRD), otherwise or on an explicit owner request Discovery.
+Run Idea → Research → Discovery → Handoff yourself; only a legacy package on the
+old path (`mono:check discovery`, Old path) goes from Research to Handoff repair.
 Discovery uses one second-model pass after solutions/recommendation, before choice;
 no Second Voice interview, dialogue continuation or rounds for this stage. Its
 answers carry sources or judgments, and it gives its own PRD yes. Workers and
@@ -85,19 +84,21 @@ background launches never start the stage. The owner can overturn its result.
 A deferred Project stays out of intake until its return condition or owner return.
 
 UX checkpoint and reviewed-prototype bar below stay in force. Contested Always-ask
-items batch there or into package approval. The Second Voice dialogue/round
+items batch there or into the Handoff summary. The Second Voice dialogue/round
 protocol below belongs only to pre-write package review; a Discovery second-model
 pass follows the stage reference instead. Design-lens prototype review is a pass,
 not a Discovery interview.
 
 Checkpoints — the only moments that touch the user:
 
-1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:» with the approval window; only the owner's «Утвердить» approves this version, separately from package approval. After verified completion send the Idea final message, then the «Начать исследование» window with the plan prepared by Research; run `mono:research` itself only after the owner's start (button or words); the Project stays in Idea until then. Research adds no owner questions or yes; return its result to the owner. Then follow the route above: Handoff on the old path; otherwise, or when the owner explicitly requests it, run Discovery yourself with sources on answers and own PRD yes, returning its result without waiting.
+1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:» with the approval window; only the owner's «Утвердить» approves this version, separately from the work start. After verified completion send the Idea final message, then the «Начать исследование» window with the plan prepared by Research; run `mono:research` itself only after the owner's start (button or words); the Project stays in Idea until then. Research adds no owner questions or yes; return its result to the owner. Then follow the route above: run Discovery yourself with sources on answers and own PRD yes, returning its result without waiting, then Handoff.
 2. UX checkpoint (user-facing surface only): one brief per
    `templates/orchestrator-brief.md` with a reviewed near-production
    prototype and the few contested UX decisions.
-3. Package approval: the existing single handoff brief, bundling the
-   implementation-start option and the pre-write review verdict.
+3. Work start: the Handoff summary (tasks, «Решил сам», «Ответил сам», what was
+   reconciled) after the Project is Ready. Only the owner's «Начать работу» or
+   «начинаем» starts work; the summary never holds other waves (window only while
+   no wave is live, otherwise a text line), and the Project waits in Ready.
 4. Deploy approval per the configured `deployApproval` policy.
 5. Ad-hoc: risk acceptance and material scope drift — these never wait.
 
@@ -191,11 +192,11 @@ owner conversation, or any authority over workers.
 ### Pre-write package review
 
 The orchestrator's `mono:handoff` state has one mandatory Second Voice run
-that is not discovery: the drafted handoff package — draft Project brief,
-approved PRD read-only (draft PRD only on the old path), draft Tech Spec, and proposed [execution Issues](lifecycle.md#задачи-этапов) slicing — goes to an
-independent reviewer BEFORE the orchestrator writes any of it to Linear.
-Order, not preference: synthesize the draft, review it, fix the draft, then
-put it to the owner with the verdict already attached, and only then write.
+that is not discovery: the drafted package record and [execution Issues](lifecycle.md#задачи-этапов)
+bodies, checked against the approved PRD read-only, go to an independent reviewer
+next to `mono:review handoff`, BEFORE the orchestrator writes any of it to Linear.
+Order, not preference: synthesize the draft, review it, fix the draft, then write,
+set Ready and bring the owner the summary.
 
 - The reviewer is a discovery agent under the Second Voice protocol above —
   fresh context, cross-vendor model, no worktree, no Issue, no registry
@@ -206,8 +207,8 @@ put it to the owner with the verdict already attached, and only then write.
   `standard`, `deep`, and `risky`, advisory for `tiny` with the skip reason
   recorded. The orchestrator cannot decide this gate away under «Решил
   сам:»; only findings inside it are its to accept.
-- The reviewed subject is the draft, so none of the drafted bodies — Project
-  brief, Tech Spec, [execution Issues](lifecycle.md#задачи-этапов) slicing — is written to Linear at review time.
+- The reviewed subject is the draft, so none of the drafted bodies — package
+  record, [execution Issues](lifecycle.md#задачи-этапов) — is written to Linear at review time.
   The Project entity itself may already exist, and stays available to the
   reviewer as surrounding context; what is absent is the drafted content, not
   necessarily the container. That absence is expected and is never reported as
@@ -216,8 +217,8 @@ put it to the owner with the verdict already attached, and only then write.
   `skills/review/SKILL.md`.
 - Workers never run this review. They cannot spawn agents, and a worker is
   not independent of the package it was dispatched from.
-- The package-approval checkpoint stays a single owner touch, because the
-  verdict is already in hand when the brief is written.
+- The work-start checkpoint stays a single owner touch, because the verdict
+  is already applied when the summary is written.
 
 ## Orchestration Mode Precedence
 
@@ -283,7 +284,16 @@ project relation and Project, then paginate every Project comment. Normalize:
 languages.linear (Russian→ru, English→en; otherwise configure ideaGate.headings).
 `idea/idea-records.json` = {complete:true,comments:[{id,createdAt,body}]}; true only
 after all pages. `issue-context.json` = {issueId,issueKey,projectId} from the Issue.
-`approval.md` is the exact package approval comment; `approval.json` =
+For a package record, `tech-spec.md` holds the content of the current record's
+`mono-package` fence (its `- U<n>.` units, `## Кратко` and manifests stay
+parseable; the dispatch label `Tech Spec:` stays) and `approval.md` is the owner's
+start comment; before dispatch verify that the start is `by=owner`, lists this
+Issue, and names the record version it started with its `sha256`; the current
+version is that one or is reached from it by a verified chain of class 1-2
+versions with protected surfaces and Issue set unchanged. A class 3 version after
+it needs a new owner start; never rewrite the old start. A legacy package keeps
+its Tech Spec and approval comment.
+`approval.md` is the exact start or package approval comment; `approval.json` =
 {commentId,createdAt,bodySha256}, SHA-256 of its UTF-8 bytes. That comment must
 appear in this Project's comments with matching timestamp/body hash.
 Require exactly one approval_status=approved and no other approval markers;
@@ -1835,7 +1845,7 @@ user-facing shapes live in `templates/orchestrator-brief.md`
 - An item routed to a checkpoint as contested is never closed by silence:
   no answer means asked again, not resolved. A fallback line never
   resolves a contested item.
-- Any spec change after a package approval that alters user-visible
+- Any spec or record change after the owner's start that alters user-visible
   behavior appears as an explicit «Изменилось после твоего одобрения:»
   delta list at the next owner touch, never only as a fait-accompli
   status line. When in doubt whether a change is user-visible, include
@@ -1987,8 +1997,8 @@ that value in a separate orchestrator action before a live pre-application wave.
 Workers never bootstrap or change it.
 
 Issue-only uses `# Предприменение` in the approved Issue. Project-first keeps a
-nested `Предприменение:` list item within the covered Tech Spec implementation
-unit; dispatch reads the full approved Spec before extraction and materializes
+nested `Предприменение:` list item within the covered Tech Spec or package-record
+`U` unit; dispatch reads the full approved slot before extraction and materializes
 only its wrapper as the Issue section in the snapshot. For each file, use one
 list item with a backtick-quoted path, the word `sha256`, a backtick-quoted
 64-character lowercase hex hash and nothing else, followed by a `text` fence.
