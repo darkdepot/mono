@@ -46,7 +46,7 @@ Expected behavior:
 3. It shows What / Why / Target outcome / prioritized Unknowns with the «Утвердить» / «Ещё обсудить» window and waits for the owner to press «Утвердить». Chat words never approve; a correction changes the affected part and needs a new approval; prior answers and the question count remain.
 4. Recording and recovery follow only `skills/idea/references/record.md`. `verify` must return «Готово»; the Project stays in Idea, status is read back and `mono:check idea` passes. A returned Project retains its later-stage status and package.
 5. A separate final message names the Project, link, status Idea and team, then a «Начать исследование» / «Ещё обсудить» window shows the research plan. Research starts only on the owner's start and moves the Project to Discovery; Idea creates no Research document, PRD, Tech Spec, Issue, plan, ExecPlan or code.
-6. Under orchestration, the orchestrator runs Idea and answers its questions itself with reasons, showing «Ответил сам:» with the description. It does not relay those questions or approve for the owner; the owner presses «Утвердить» in the same window and starts Research by button or words; the Idea final message always comes first. Idea approval and later package approval are separate.
+6. Under orchestration, the orchestrator runs Idea and answers its questions itself with reasons, showing «Ответил сам:» with the description. It does not relay those questions or approve for the owner; the owner presses «Утвердить» in the same window and starts Research by button or words; the Idea final message always comes first. Idea approval and the later work start are separate.
 
 Activation evidence comes from `evals/idea/` (10 positive / 7 negative requests,
 three runs, threshold 0.8); the orchestrator runs Claude-only checks on the final
@@ -59,10 +59,10 @@ Expected behavior:
 1. `mono:discovery` reads Idea and Research, presents real solutions and obtains a choice.
 2. It writes the chosen PRD in Linear and records yes on the shown version.
 3. `mono:handoff` calls `mono:check discovery` on entry and reads that PRD without edits.
-4. Handoff drafts only Tech Spec and execution-Issue slicing (PRD only on the old path), reviews before durable package writes, and brings package approval with the review verdict.
-5. PRD findings return to Discovery; renewed PRD yes shares the package-approval touch.
-6. Handoff writes Tech Spec and Issues after approval; the approval links PRD yes and Discovery's selected Research. PASS `mono:check handoff` permits Ready (Discovery fallback if absent).
-7. Explicit start approval then routes to `mono:implement`; only it starts Delivery.
+4. Handoff reconciles the approved inputs, looks at the code once, drafts the package record and execution-Issue slicing (one Issue by default), and has both reviewed before the first durable write.
+5. A finding needing a PRD change gets the owner's answer, then Discovery changes the PRD with renewed approval in the same touch.
+6. Handoff writes the package record (naming PRD yes and Discovery's selected Research) and the Issues; PASS `mono:check handoff` permits Ready (Discovery fallback if absent).
+7. The owner presses «Начать работу» or says «начинаем»; the start record then routes to `mono:implement`; only it starts Delivery.
 
 ## Correct Project Body Shape
 
@@ -104,12 +104,12 @@ Settings > Notifications will change email, mobile push, and quiet-hours behavio
 Expected behavior:
 
 1. `mono:handoff` classifies the package as `deep` or `risky`.
-2. The approved PRD is already in Linear, read-only; Handoff drafts Project, Tech Spec and execution-Issue slicing before writing them.
+2. The approved PRD is already in Linear, read-only; Handoff drafts the package record with shared `U` decisions and execution-Issue slicing before writing them.
 3. `mono:review handoff` reports `needs-fixes` if actors, flows, requirement trace, validation, or rollout are weak.
-4. Handoff fixes its draft; PRD findings return to Discovery for the affected changes and renewed yes.
-5. The user approves the reviewed package (and renewed PRD yes when needed) in one touch; Handoff records acceptance as a Linear comment, then writes its package artifacts.
-6. `mono:check handoff` and `mono:check issue` run or are reported before implementation can start.
-7. `mono:implement` verifies implementation-start approval, moves the Project to Delivery after prerequisites are explicit, then runs or reports `mono:check delivery`.
+4. Handoff fixes its draft; PRD findings get the owner's answer, then Discovery changes the PRD with renewed approval.
+5. Handoff writes the reviewed package record and Issues, runs `mono:check handoff` and `mono:check issue`, sets Ready and shows the summary; the deep or risky record carries at least one shared `U` decision.
+6. The owner's «Начать работу» or «начинаем» is recorded as a Linear comment `by=owner` before implementation can start.
+7. `mono:implement` verifies that start record, moves the Project to Delivery after prerequisites are explicit, then runs or reports `mono:check delivery`.
 
 ### Correct Implement To Preflight To Ship
 
@@ -167,7 +167,7 @@ FAIL:
 Why this fails:
 
 - `mono:review` is report-only.
-- PRD fixes before package approval belong to `mono:discovery`; Tech Spec and approved-package repair to `mono:handoff`, accepted pre-ship drift to `mono:ship`.
+- PRD fixes belong to `mono:discovery`; package record, legacy Tech Spec and Issue repair to `mono:handoff`, accepted pre-ship drift to `mono:ship`.
 
 ## Anti-Example: Vendored Project Install
 

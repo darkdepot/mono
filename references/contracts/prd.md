@@ -11,8 +11,7 @@ template here.
 
 ## PR-001 — PRD routing
 
-`mono:discovery` creates/updates PRD; `mono:handoff` only on the old path
-(see lifecycle) or approved-package repair.
+Only `mono:discovery` creates or changes PRD; `mono:handoff` never does.
 
 ## PR-002 — Product truth
 
@@ -20,13 +19,13 @@ The PRD records WHAT the workflow achieves and how the user experiences it.
 
 ## PR-003 — Internal helper boundary
 
-Stages own PRD writing: `mono:discovery`; approved-package repair:
-`mono:handoff`; accepted pre-ship drift: `mono:ship`.
+Stages own PRD writing: `mono:discovery`, also inside package repair;
+accepted pre-ship drift: `mono:ship`.
 
 ## PR-004 — Targeted-use eligibility
 
-Direct PRD requests before package approval route to `mono:discovery`; after
-approval to `mono:handoff` repair; accepted pre-ship drift to `mono:ship`.
+Direct PRD requests route to `mono:discovery`; after the start `mono:handoff`
+repair stops affected work first; accepted pre-ship drift to `mono:ship`.
 
 ## PR-005 — Linear-facing language
 
@@ -123,8 +122,7 @@ Keep implementation architecture in Tech Spec, not PRD.
 
 ## PR-024 — No Delivery transition
 
-Discovery creates PRD; Handoff only on the old path. Neither moves the Project
-to Delivery.
+Discovery creates PRD and never moves the Project to Delivery.
 
 ## PR-025 — No implementation start
 

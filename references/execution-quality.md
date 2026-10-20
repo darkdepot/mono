@@ -8,11 +8,11 @@ Cover actor -> capability -> benefit; sharpen missing actors/benefits before han
 
 ## Durable Issue Writing
 
-Prefer current/desired behavior, observable contracts/invariants, stable type/config/endpoint/domain names and independent acceptance. No line numbers, brittle edit scripts/choreography or full-doc copies; paths only for stable required reading.
+Prefer current/desired behavior, observable contracts/invariants, stable type/config/endpoint/domain names and independent acceptance. No line numbers, brittle edit scripts/choreography or full-doc copies; paths only for stable required reading and dated change surfaces.
 
 ## Agent Readiness
 
-AFK = package supports execution/proof without new judgment; HITL = decisions/design/access/manual-QA/risk remain. Prefer one Issue; split only oversized PRs or safe independent vertical slices. Each completes a demoable/verifiable path across layers with `Blocked by` or `None - can start immediately`.
+AFK = package supports execution/proof without new judgment; HITL = decisions/design/access/manual-QA/risk remain. Prefer one Issue; split only for Handoff's named reasons; over three needs the owner; legacy slicing stays. Each completes a demoable/verifiable path across layers with `Blocked by` or `None - can start immediately`.
 
 ## Bug And Performance Proof
 

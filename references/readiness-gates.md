@@ -5,15 +5,15 @@
 Use higher approved/final-diff class; apply `references/autoreview-routing.md`:
 
 - `tiny`: one narrow artifact, no data/auth/billing/migration/multi-surface UX/release/public-API risk; explicit PRD-lite/no-spec may qualify.
-- `standard`: normal product/workflow; approved Project/PRD/Spec/Issue (issue-only substitutes its contract).
+- `standard`: normal product/workflow; approved Project/PRD/Spec or record/Issue (issue-only substitutes its contract).
 - `deep`: cross-cutting artifacts/abstractions/multi-step behavior; explicit architecture review of stable interfaces/real seams/tests.
 - `risky`: auth/permissions/billing/migrations/sensitive-production data/release-deploy/public API/security.
 
 ## Review Gate Policy
 
-Require review for standard/deep/risky handoff/pre-ship; created/materially rewritten PRD/Spec/Issue; material pre-ship drift/drift-candidate; bug/perf missing repro/baseline/loop; AFK with unresolved judgment; risky domains; or no-spec beyond tiny/low-risk. Tiny/accepted PRD-lite/explicit low-risk no-spec may be advisory with reason.
+Require review for standard/deep/risky handoff/pre-ship; created/materially rewritten PRD/Spec/Issue; material pre-ship drift/drift-candidate; bug/perf missing repro/baseline/loop; AFK with unresolved judgment; risky domains; or legacy no-spec beyond tiny/low-risk. Tiny/accepted PRD-lite/explicit low-risk no-spec may be advisory with reason.
 
-Handoff reviews Project/Spec/slicing drafts and approved PRD read-only (old path: draft PRD) before first durable write or queue. No standard/deep/risky exception; only recorded tiny advisory skip. Handoff fixes draft; review stays report-only. Apply `references/worker-contract.md` mode precedence. Issue-only review/check requires only its self-contained contract: standard ready, tiny advisory/reason, no Project/docs.
+Handoff reviews its package record and Issue drafts against approved PRD before first durable write or queue. No standard/deep/risky exception; only recorded tiny advisory skip. Handoff fixes draft; review stays report-only. Apply `references/worker-contract.md` mode precedence. Issue-only review/check requires only its self-contained contract: standard ready, tiny advisory/reason, no Project/docs.
 
 ## Gate Outcomes
 

@@ -30,7 +30,7 @@ Dispatch: phase/full queue; standalone: report.
 
 ## Workflow
 
-Before start run `node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>`. Use the pinned dispatch snapshot or fresh Linear Project, complete comments, package approval and Issue context; issue-only uses its approved-fresh envelope. Refusal blocks with project/code; missing approval routes to `mono:idea`. `legacy-migrate` cannot pass this mode.
+Before start run `node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>`. Use the pinned dispatch snapshot or fresh Linear Project, complete comments, package approval and Issue context; issue-only uses its approved-fresh envelope. Refusal blocks with project/code; missing idea record → `mono:idea`, missing start → Handoff summary. `legacy-migrate` cannot pass this mode.
 
 start-checkpoint validates approved package/start/handoff/seam/lifecycle. Dispatch
 branch/snapshot wins. Consult gstack-learnings-search --limit 10; absence advisory.
@@ -68,8 +68,8 @@ Issue-only: fresh authenticated fingerprint approval/pre-start PASS. Move only
 Issue to started; record lifecycle/fingerprint/oracle/engine/verification, one PR.
 Lane exit parks for superseding marker/Project-first restart; no retrofit.
 
-Interactive: separate package/start approvals; bundled handoff counts.
-Start permits Delivery/branch/code. Offer start/defer; «запускай реализацию» suffices.
+Interactive `mono-package`: owner start record only, else Handoff summary, no code.
+Legacy: separate package/start approvals or bundled handoff; offer start/defer; «запускай реализацию» suffices. Start permits Delivery/branch/code.
 Never infer/re-ask approval.
 
 ## Engine and Start Comment

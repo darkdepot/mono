@@ -51,7 +51,7 @@ Use `none` explicitly when a field has no entries. Do not omit fields.
 
 - Prefer explicit user-provided paths over discovered local files.
 - Prefer Linear artifacts over local scratch when Linear is newer or already
-  records package approval.
+  records the package.
 - Treat local plans and review reports as evidence, not source of truth.
 - Treat stale local artifacts as useful only when they explain prior decisions
   and do not conflict with fresher Linear state.
@@ -62,9 +62,9 @@ Use `none` explicitly when a field has no entries. Do not omit fields.
 
 ## Output Shape
 
-The structured intake record belongs in the package-approval Linear comment and package notes. The chat final carries a one-sentence Russian rendering instead.
+The structured intake record belongs in the package record notes, outside its fence (a legacy package: its approval comment), and only when sources other than the named approved inputs fed the package. The chat final carries a one-sentence Russian rendering instead.
 
-Structured record (for package-approval Linear comment):
+Structured record (for the package record notes):
 
 ```text
 Artifact intake:

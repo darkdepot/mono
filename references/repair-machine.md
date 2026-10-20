@@ -14,16 +14,16 @@ Evaluate stage-specific ownership before the general front-door order. Accepted 
 | --- | --- | --- | --- |
 | `existing-project-pre-ship-drift` | An existing Project has drift accepted during pre-ship. | `mono:ship` | Run accepted drift sync in ship; do not enter handoff repair. |
 | `issue-only-body-edit` | An existing issue-only Issue body needs any edit. | `mono:issue` | Run create-then-approve renewal; do not enter handoff repair. |
-| `prd-before-package-approval` | PRD edit before package approval. | `mono:discovery` | Repeat affected Discovery and obtain new PRD yes; after approval normal repair applies without PRD-yes recheck. |
-| `existing-project-targeted-repair` | An existing Project has a Tech Spec or approved-package PRD repair request before pre-ship. | `mono:handoff repair` | Enter the stable-ID classification and class transaction; do not run ordinary package creation. |
+| `prd-before-package-approval` | PRD edit before the owner's start (legacy: package approval). | `mono:discovery` | Repeat affected Discovery and obtain new PRD approval; Handoff then writes a new record version and summary. After the start the PRD change follows `existing-project-targeted-repair`. |
+| `existing-project-targeted-repair` | An existing Project has a package record, Tech Spec, Issue or after-start PRD repair request before pre-ship. | `mono:handoff repair` | Enter the stable-ID classification and class transaction; do not run ordinary package creation. An after-start PRD change: Handoff first prepares the diff, classification and the class's worker stop, revocation and rollback; only then Discovery writes and approves the PRD (before that it may only draft); Handoff finishes. |
 
 Only when neither override matches, apply the front-door order:
 
 1. A raw idea routes to `mono:idea`.
 2. An unmistakably one-PR projectless request routes to `mono:issue`.
-3. A PRD edit before package approval routes to `mono:discovery`; a targeted
-   Tech Spec or approved-package PRD repair routes to
-   `mono:handoff` repair mode.
+3. A PRD edit before the start routes to `mono:discovery`; a targeted package
+   record, Tech Spec, Issue or after-start PRD repair routes to `mono:handoff`
+   repair mode.
 4. Other existing Projects: PC-001 (`references/contracts/project.md`) routes via
    Research, approved PRD/Discovery, then ordinary `mono:handoff` packaging.
 
@@ -38,7 +38,7 @@ mean [execution Issues](lifecycle.md#задачи-этапов).
 Before any durable mutation, show an exact before/after diff grouped by stable ID.
 Each changed hunk names the narrowest durable identifier available: artifact
 contract rule IDs (`PC-*`, `PR-*`, `TS-*`, `IS-*`) and artifact IDs such as
-`R*`, `AE*`, `U*`, or `AC*`. For prose or metadata without its own ID, anchor the
+`R*`, `AE*`, `U*`, `AC*`, or package-record `C*`, `S*`, `T*`. For prose or metadata without its own ID, anchor the
 hunk to the governing contract rule ID and name the field. If a hunk cannot be
 anchored unambiguously, classify the repair as class 3.
 
@@ -61,6 +61,20 @@ The highest matching class wins. Risk growth always selects class 3. Ambiguity i
 | `issue-set` | [execution Issues](lifecycle.md#задачи-этапов) count, slicing, dependency topology, or approved membership changes. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `visible-behavior` | Externally visible behavior changes even when the written requirement or acceptance IDs were not updated. | `3` | Fail closed on unrecorded product drift; supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `ambiguous` | A changed hunk lacks a stable anchor or evidence cannot prove the class 1/2 guard set unchanged. | `3` | Fail closed; do not infer a lower class; supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
+
+## Package record versions
+
+A package record changes only by a new Project comment version naming its
+`previous` version and `class`; earlier versions stay as evidence. The owner's
+start binds one version's `sha256` and its Issue set. Before the start there is
+nothing to supersede: re-slicing within three Issues is a new version with review,
+check and a new summary, without a separate question, and the Project stays Ready.
+The start stays bound to the version it named and is never rewritten; later
+versions keep it valid only through a verified chain of class 1-2 versions with
+protected surfaces and the Issue set unchanged. A class 3 version supersedes that
+start; a new owner start on the new summary is required. A legacy package keeps its
+Tech Spec and old approval format in every class; its class 3 returns to Discovery
+and needs a new owner approval after repair, never an automatic package record.
 
 ## Class 1 execution
 
@@ -106,15 +120,15 @@ thread memory or an in-place verbal update is not a substitute.
 
 ## Class 3 rollback
 
-Class 3 cannot mutate product scope under an old approval. First stop affected workers before rollback. Then supersede the package approval and supersede the implementation-start approval, invalidate dependent Tech Spec, Issue snapshots, certificates, and [execution Issues](lifecycle.md#задачи-этапов) slicing, and move a Delivery or Ready Project back to Discovery. Preserve the proposed stable-ID diff as evidence, obtain owner
+Class 3 cannot mutate product scope under an old approval. First stop affected workers before rollback. Then supersede the package approval and supersede the implementation-start approval, invalidate dependent Tech Spec or record version, Issue snapshots, certificates, and [execution Issues](lifecycle.md#задачи-этапов) slicing, and move a Delivery or Ready Project back to Discovery (a package record: back to Ready while it is rebuilt). Preserve the proposed stable-ID diff as evidence, obtain owner
 re-approval of the rebuilt package, and start Delivery again only through
 `mono:implement`.
 
-The order is safety-critical: stop workers -> supersede approvals -> invalidate dependants -> Delivery or Ready to Discovery -> rebuild -> review/check -> owner re-approval. Never keep Delivery or Ready active while a class 3 repair is pending.
+The order is safety-critical: stop workers -> supersede approvals -> invalidate dependants -> Delivery or Ready to Discovery (package record: Ready) -> rebuild -> review/check -> owner re-approval (package record: a new owner start). Never keep Delivery active, or a legacy Ready, while a class 3 repair is pending.
 
 ## Pre-application manifest repair
 
-The manifest is part of its Tech Spec implementation unit. A worker finding on
+The manifest is part of its Tech Spec or package-record `U` unit. A worker finding on
 pre-applied `.agents/` files parks blocked with exact replacement bytes;
 `mono:handoff` owns the stable-ID preview, review and repair. Classify by meaning:
 class 2 only when guarded R/AE/AC, non-goals, visible behavior, risk and [execution Issues](lifecycle.md#задачи-этапов) set

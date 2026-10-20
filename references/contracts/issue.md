@@ -13,7 +13,8 @@ duplicate the template here.
 ## IS-001 — Issue routing
 
 Use this contract to create or update a one-PR Linear Issue. `mono:handoff`
-owns the Project-first branch from Project, PRD, and Tech Spec context;
+owns the Project-first branch from Project, Research, approved PRD, and package
+record context (a legacy package: its approved set, IS-008);
 `mono:issue` owns only unmistakable projectless issue-only intake and renewal;
 `mono:ship` owns accepted pre-ship drift sync.
 
@@ -52,18 +53,22 @@ config is absent.
 
 ## IS-007 — One Issue by default
 
-Create one Issue by default.
+Create one Issue by default. A Project package has at most three without the
+owner's answer; each extra Issue names its reason under IS-023.
 
 ## IS-008 — Project-first sources
 
-In the `mono:handoff` branch, build a project-first Issue from Project, PRD, and
-Tech Spec, or an explicit no-spec exception. These sources make the package
-ineligible for `mono:issue`.
+In the `mono:handoff` branch, build a project-first Issue from Project,
+Research, approved PRD, and the package record; Tech Spec and design when they
+exist. A legacy package keeps its approved set: Project, PRD, Tech Spec or an
+explicit no-spec exception, Research or its allowed exception; repair never
+forces migration. These sources make the package ineligible for `mono:issue`.
 
 ## IS-009 — Read-first context
 
-Include a localized Read first section naming Project, PRD, Tech Spec, and
-supporting documents or stable code paths.
+Include a localized Read first section naming Project, PRD, Tech Spec when it
+exists, supporting documents or code paths, and for a package-record package also
+Research and the package record.
 
 ## IS-010 — Review-gate record
 
@@ -82,7 +87,9 @@ surfaces, validation, acceptance, and non-goals.
 
 ## IS-013 — Scope trace
 
-Map Issue scope to PRD requirement IDs and Tech Spec surfaces when available.
+Map Issue scope to PRD requirement IDs (required in a package-record package;
+a legacy package keeps its previous tracing) and to package-record or Tech Spec
+`U` units when available.
 
 ## IS-014 — Agent readiness
 
@@ -93,7 +100,8 @@ external-access, manual-QA, or risk-acceptance dependency.
 ## IS-015 — Dependencies
 
 Name the parent or source package, `Blocked by` dependencies, and whether the
-Issue can start immediately.
+Issue can start immediately. Issues touching the same surfaces are chained and
+never run in parallel; a probe blocks the Issues that depend on it.
 
 ## IS-016 — Bug and performance proof
 
@@ -105,11 +113,14 @@ symptom is not reproducible yet, say so explicitly.
 
 When material, name stable types, config shapes, endpoints, domain contracts,
 invariants, or external behavior. Do not turn them into a file-by-file edit
-script.
+script. Without a Tech Spec, an Issue integrating an external service carries
+live response samples or waits for its probe Issue.
 
 ## IS-018 — Verification boundary
 
-Include concrete validation, acceptance criteria, and non-goals.
+Include concrete validation, acceptance criteria starting «Готово, когда»,
+and non-goals. Without a Tech Spec, the Issue and its package-record units carry
+the relevant failure modes, validation, rollout and rollback.
 
 ## IS-019 — Project-first chips
 
@@ -132,9 +143,11 @@ Do not attach PRD or Tech Spec documents to the Issue.
 
 ## IS-023 — Vertical slicing
 
-Only `mono:handoff` may split work when one PR is truly too large, and it must
-split into vertical slices with explicit dependencies. A request for slicing is
-ineligible for `mono:issue`.
+Only `mono:handoff` may split work, by behavior that can be verified, never by
+layer. A second or third Issue needs one recorded reason: `too-big` (one change
+does not pass one review), `shared-base` (several parts wait for it), or `probe`
+(an external service needs a live sample first). A fourth needs the owner's
+answer. A request for slicing is ineligible for `mono:issue`.
 
 ## IS-024 — Ready before coding
 
@@ -146,8 +159,9 @@ Do not add PR chips before a real PR exists.
 
 ## IS-026 — No raw-discovery creation
 
-Do not create Issues directly from raw discovery plans before Project, PRD,
-and Tech Spec are current.
+Do not create Issues directly from raw discovery plans before Project,
+Research, approved PRD, and the package record (a legacy package: its approved
+set, IS-008) are current.
 
 ## IS-027 — No Delivery transition
 
@@ -157,7 +171,8 @@ Start after approval to execute from the Issue.
 ## IS-028 — Durable instructions
 
 Exclude line numbers, brittle implementation choreography, and open-file-at-line
-instructions. File paths are allowed only as stable read-first surfaces.
+instructions. File paths are allowed as stable read-first surfaces and in the
+change surfaces section marked with the slicing date.
 
 ## IS-029 — Zero-context self-review
 
@@ -179,9 +194,9 @@ Verify acceptance criteria are concrete enough to check after the PR.
 
 ## IS-033 — Scope-drift self-review
 
-If a Project-first Issue introduces scope absent from PRD or Tech Spec before
-pre-ship, return to handoff approval. At pre-ship, `mono:ship` applies accepted
-drift and routes unaccepted scope change back through handoff approval. If
+If a Project-first Issue introduces scope absent from PRD, the package record or
+Tech Spec before pre-ship, return to `mono:handoff` repair. At pre-ship, `mono:ship`
+applies accepted drift and routes unaccepted scope change back through handoff repair. If
 issue-only scope grows beyond its approved one-PR envelope, fail closed to
 Project-first instead of renewing it in place.
 

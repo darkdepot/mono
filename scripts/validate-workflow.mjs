@@ -608,7 +608,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "516d42c33b387d68ce14000845d4beffdbb4f70235e31a179e2cdc4d071efedd",
+      contractFingerprint: "a9869cf1c7aaeec30e7bd5f058094b90761d35534ae7b8eb7c9954f931756158",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/research/SKILL.md",
@@ -620,7 +620,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/prd.md",
       ledgerSourcePath: "references/contracts/prd.md",
       templatePath: "templates/prd.md",
-      contractFingerprint: "d1c46a65548fd609e48f1838fbeb2ec8dcff45a0ce9f921e1dce4146dc1be5a6",
+      contractFingerprint: "52199926dc91aa59cf5b2e6a7a857d306cef4674ecac6e928778126a9b0dee91",
       contractConsumers: [
         "skills/discovery/SKILL.md",
         "skills/handoff/SKILL.md",
@@ -632,7 +632,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/tech-spec.md",
       ledgerSourcePath: "references/contracts/tech-spec.md",
       templatePath: "templates/tech-spec.md",
-      contractFingerprint: "547967678d727dfc3795d14f2621d1ff8845fcd09f99cd996ccb725d3cdd2a56",
+      contractFingerprint: "17144e24db190a8b4117277e7954cb086f6505218a3954f220fcb4f99c9466ed",
       contractConsumers: [
         "skills/handoff/SKILL.md",
         "skills/ship/SKILL.md",
@@ -643,7 +643,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/issue.md",
       ledgerSourcePath: "references/contracts/issue.md",
       templatePath: "templates/issue.md",
-      contractFingerprint: "929162d760fd79536c94a5fccf15cd904eaba54d377035d61095b48fe0456901",
+      contractFingerprint: "85fa3d5b6126a038b28567b3016a7662373cc213abdc862aaed882f479b56aa3",
       contractConsumers: ["skills/issue/SKILL.md"],
     },
   };

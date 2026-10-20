@@ -12,7 +12,7 @@ Apply `references/contracts/prd.md`; retain stable R IDs and A/F/AE when section
 
 ## Tech Spec
 
-Apply `references/contracts/tech-spec.md`; stable U IDs, PRD trace, system impact/failures/proof/rollout/rollback. API evidence includes deployed enum domains/shapes/edges/date/version or first-in-wave verification spike. Deep/risky requires real seam; no-spec only tiny/low risk; no repair archaeology.
+Apply `references/contracts/tech-spec.md`; stable U IDs, PRD trace, system impact/failures/proof/rollout/rollback. API evidence includes deployed enum domains/shapes/edges/date/version or first-in-wave verification spike. Deep/risky requires real seam; legacy no-spec only tiny/low risk; no repair archaeology.
 
 ## Issue
 

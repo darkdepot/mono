@@ -3,8 +3,8 @@
 Use the project config language for Linear Project body. Use Russian when no
 project config is present.
 
-In Idea, use exactly three second-level sections. Handoff adds In scope and
-Out of scope; Unknowns live in the approval comment snapshot, outside the body.
+In Idea, use exactly three second-level sections. Legacy Handoff packages added In scope and
+Out of scope; the current Handoff leaves the approved body unchanged. Unknowns live in the approval comment snapshot, outside the body.
 
 Default Russian Idea body:
 
@@ -16,7 +16,7 @@ Default Russian Idea body:
 ## Образ результата
 ```
 
-Handoff appends:
+Legacy packages may carry:
 
 ```markdown
 ## Что входит

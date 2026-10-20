@@ -9,6 +9,7 @@ Use this rubric from `mono:review` to inspect Linear Project, PRD, Tech Spec, an
 - Fresh Linear Project.
 - Fresh PRD document, when expected.
 - Fresh Tech Spec document, when expected.
+- Package record (current Project comment version, or its draft in pre-write `handoff`), when expected; its `U` units and Issues carry failure modes, validation, rollout and rollback where a Tech Spec would.
 - Fresh Issue(s), when expected.
 - Discovery and review context when available.
 - Preflight certificate when running `pre-ship` and one exists.
@@ -37,7 +38,7 @@ Apply conditionally:
 Project:
 
 - Lifecycle status matches current stage.
-- Active docs are PRD, Tech Spec, and Research («Исследование») unless an explicit exception exists.
+- Active docs are PRD, Tech Spec (only when it exists), and Research («Исследование»); the package record is a Project comment.
 - Active Issues represent current approved execution plan.
 - No stale PR chips or raw PR URLs remain.
 
@@ -49,6 +50,12 @@ PRD:
 - Flows and acceptance examples cover stateful or conditional behavior.
 - Behavior-validation intent gives Tech Spec and Issue a product-facing proof target.
 - Non-goals and assumptions prevent downstream invention.
+
+Package record:
+
+- Input versions name the approved PRD and Research; reconciliation findings are resolved; shared `U` decisions cover what several Issues need (deep/risky: at least one).
+- One Issue unless a recorded `too-big`, `shared-base` or `probe` reason; at most three without the owner; every PRD requirement has an Issue and every Issue a requirement.
+- No `approval_status`, `mono-idea:` or `mono-idea-snapshot` inside it.
 
 Tech Spec:
 
@@ -65,7 +72,7 @@ Issue:
 - States `AFK` or `HITL`, dependencies, and blockers.
 - For bug/perf work, includes current vs desired behavior and a reproduction, baseline, or feedback-loop expectation.
 - Is durable: no line numbers, brittle edit scripts, or procedural choreography.
-- Uses Project, PRD, and Tech Spec chips.
+- Uses Project and PRD chips, the Tech Spec chip only when it exists, and a package-record link for a package record.
 - Does not attach PRD or Tech Spec docs.
 
 Pre-ship:
@@ -88,9 +95,9 @@ Repair classification:
   and Issue set, and names all three effects: snapshot-sync with fingerprint
   re-derivation, stale-preflight-cert disposition, and stale worker stop.
 - Class 3 evidence covers requirement/acceptance/non-goal/risk/Issue-set or
-  visible-behavior change and the ordered rollback: worker stop, approval
-  supersession, dependent invalidation, Delivery to Discovery, owner
-  re-approval.
+  visible-behavior change and the ordered rollback: worker stop, approval or
+  start supersession, dependent invalidation, Delivery to Discovery (legacy
+  package) or to Ready (package record), owner re-approval or a new owner start.
 - Ambiguity or risk growth is class 3. A mixed or unanchored diff cannot receive
   a lower advisory classification.
 

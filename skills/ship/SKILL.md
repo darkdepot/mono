@@ -37,7 +37,7 @@ never dispatch another stage. Preserve the following order.
 ## Workflow
 
 1. Apply worker Context seam/parentless gate. Project-first needs approved linked
-   Issue/current Project/PRD/Spec, otherwise handoff. Valid issue-only uses oracle/
+   Issue/current Project/PRD/Spec-or-record, otherwise handoff. Valid issue-only uses oracle/
    fingerprint/current preflight, no Project docs. Absent/stale/broken approval or
    fail-closed context stops formal gates/PR; use deterministic no-promotion fallback.
 2. Recover latest mono-preflight certificate. Missing/superseded → preflight;
