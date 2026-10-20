@@ -2503,9 +2503,13 @@ Date.now=()=>{try{return now()+Number(fs.readFileSync(${JSON.stringify(offsetFil
       while ((live(-gate.processGroup) || live(readJson(f.stateFile).descendant)) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
       return !live(-gate.processGroup) && !live(readJson(f.stateFile).descendant);
     };
-    let gate;
-    try { await run({ ...f, offsetFile, preload, launched: async () => (gate = await launched()), dead }); }
-    finally { if (gate && live(-gate.processGroup)) process.kill(-gate.processGroup, 'SIGKILL'); }
+    // A gate can register before the startup wait fails; cleanup reads the registration itself.
+    const registered = () => { try { return readJson(f.startFile).gate ?? null; } catch { return null; } };
+    try { await run({ ...f, offsetFile, preload, launched, registered, dead }); }
+    finally {
+      const gate = registered();
+      if (gate && live(-gate.processGroup)) process.kill(-gate.processGroup, 'SIGKILL');
+    }
   });
 }
 
@@ -2523,7 +2527,11 @@ test('retry-clock-jump-collector: the collector stops a gate once wall-clock tim
       await polled;
     } finally {
       Date.now = now;
-      if (!settled) { process.kill(-gate.processGroup, 'SIGKILL'); await polled.catch(() => {}); }
+      if (!settled) {
+        const registered = f.registered();
+        if (registered) try { process.kill(-registered.processGroup, 'SIGKILL'); } catch {}
+        await Promise.race([polled.catch(() => {}), new Promise(resolve => setTimeout(resolve, 10_000))]);
+      }
     }
     assert.match(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /gate run timed out without completion/);
     assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
