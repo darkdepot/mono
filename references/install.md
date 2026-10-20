@@ -186,6 +186,33 @@ sandbox.
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
 equal `VERSION`; only release tasks change them. Try unreleased code per README.
 
+### Release 0.35.0
+
+Idea, Research, Discovery и Handoff пересобраны: утверждение только кнопкой
+«Утвердить» в окне вопроса (Claude Code `AskUserQuestion`, Codex
+`request_user_input_async`; без окна утверждения нет), исследование начинает
+владелец, переходы после Research и Discovery в сессии владельца по кнопке
+«Начать <этап>», у оркестратора сами. Новый общий `references/owner-dialog.md`.
+
+Handoff пишет одну запись пакета (комментарий проекта `mono-package: recorded`)
+вместо Tech Spec и отдельного одобрения, ставит Ready до слова владельца; работу
+начинает только владелец, запись старта `mono-package: start` с `by=owner` и одной
+строкой `approval_status=approved` занимает место прежнего комментария одобрения
+в `approval.md`, а содержимое записи пакета идёт в `tech-spec.md` снимка. Скрипты
+`dispatch.mjs`, `snapshot.mjs`, `preapply.mjs` и `idea-gate.mjs` не менялись.
+
+Отсечки Discovery больше нет: после Research новый проект идёт в Discovery, старый путь только
+у пакета, одобренного прежним Handoff, без записи «да» на PRD (`mono:check discovery`,
+Old path). `discoveryGate.since` маршрут не меняет и остаётся допустимым ключом.
+Явная правка контрактов проекта, PRD, Tech Spec и задачи с новыми отпечатками.
+Пины и receipt текущих попыток не меняются.
+
+Выпуск совместим по форматам; общая quiescence не требуется. Сохраняются обычные условия Plugin Updates. Текущие попытки продолжаются только на сохранённом packRoot.
+Установка и проверка обоих кэшей по [Plugin Updates](#plugin-updates),
+установленная версия должна быть 0.35.0. Перед PR оркестратор запускает
+`claude plugin validate . --strict`, `/skill-doctor` и evals срабатывания, результат включает в PR;
+воркер эти проверки не запускает.
+
 ### Release 0.34.1
 
 Discovery из 0.34.0 необязателен до новой версии этапа. Отсечка в
