@@ -529,6 +529,11 @@ function approvalChain(root, config) {
           (p.design === 'needed' && p.next !== 'design') ||
           (p.next === 'design' && p.design !== 'needed') ||
           (p.design === 'not-needed' && p.next === 'design')) fail('bad-record');
+      if (p.design === 'not-needed' && p.next === undefined) {
+        const previous = latestApproval(records.comments.filter(comment => comment !== prd.comment),
+          'mono-prd: approved', ['project', 'document', 'updatedAt', 'by'], ['next', 'design']);
+        if (!previous || previous.fields.project !== projectId || previous.fields.next !== undefined) fail('bad-record');
+      }
     }
     stage = 'mono:design';
     const design = latestApproval(records.comments, 'mono-design: approved',

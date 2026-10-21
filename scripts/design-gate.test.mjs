@@ -118,3 +118,29 @@ for (const replacement of ['design=needed next=handoff','design=not-needed next=
     change('comments-1.json', p => { p.comments[2].body=p.comments[2].body.replace('design=needed next=design',replacement); });
     check('route','bad-record');
   }));
+
+for (const [previousNext, code] of [[undefined,'bad-record'],['tech-evaluation','bad-record'],[null,'pass']])
+  test(`enabled PRD without next requires a predecessor without next: ${previousNext}`, () => fixture(({ change, check }) => {
+    change('comments-1.json', p => {
+      const current=p.comments[2];
+      current.body=current.body.replace('design=needed next=design','design=not-needed');
+      p.comments=[current];
+      if (previousNext !== undefined) {
+        const previous=structuredClone(current);
+        previous.id='previous-prd-record';
+        previous.createdAt='2026-10-20T01:01:00.000Z';
+        previous.updatedAt=previous.createdAt;
+        previous.body=previous.body.replace(' design=not-needed', previousNext === null ? '' : ` next=${previousNext}`);
+        p.comments.push(previous);
+      }
+    });
+    const route=check('route',code);
+    if (code === 'pass') {
+      assert.deepEqual(route.requiredRecords,[]);
+      assert.equal(route.next,'handoff');
+      check('tech','no-record');
+    } else {
+      assert.equal(route.stage,'mono:discovery');
+      assert.equal(check('tech','bad-record').stage,'mono:discovery');
+    }
+  }));
