@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Mono pack: reusable skills from idea to shipped PR; Linear holds artifacts and approvals. English skills read this file at runtime; keep it within the worker read budget (`node scripts/read-budget.mjs`).
+Mono skills take ideas to shipped PRs. Linear holds truth. Runtime read budget: `node scripts/read-budget.mjs`.
 
 ## Language
 
