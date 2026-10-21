@@ -59,7 +59,8 @@ compares `git show <sha>` blobs to that block and the snapshot manifest at start
 
 Use this pinned preflight request; replace HEAD in head/collectionId with the
 committed SHA and increment the collection number on retry. Gate-side reads of
-registry/dispatch are allowed; the worker must not read those directories.
+registry/dispatch are allowed. Worker reads there are limited to its pinned
+snapshot/design.json and snapshot/design/*.png; other dispatch state stays closed.
 Run preflight with collect:false. Exit 2 is pending, not pass: publish only the
 returned publishRequest in payload.request, then wait for collection confirmation.
 Never construct a replacement request from the error text.

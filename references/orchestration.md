@@ -333,7 +333,9 @@ checks the selected record, its Project against the task’s verified Project,
 and the copied image hash, and writes `snapshot/design/`
 PNGs plus normalized `snapshot/design.json` and the consumed raw responses in
 `snapshot/design-input/` for refused-attempt retries. It renders the final snapshot
-path in the worker prompt. Copies stay outside the worktree and are never
+path in the worker prompt. The AFK read exception covers only its pinned
+`snapshot/design.json` and `snapshot/design/*.png`, not other dispatch state.
+Copies stay outside the worktree and are never
 committed. Without a U2 record omit this manifest: no PNGs are supplied.
 An Issue naming U2 without its source manifest refuses dispatch. Textual
 owner/product taste rules come from the Issue's context snapshot, including
