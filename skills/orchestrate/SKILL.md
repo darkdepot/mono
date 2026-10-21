@@ -14,10 +14,11 @@ decisions to the user.
 
 `mono:orchestrate` runs Idea itself as the explicit stage-work exception.
 Research too: no owner questions or yes; the result goes to the owner.
-Discovery and routed Tech Evaluation also run here. Tech Evaluation approves
+Discovery and routed Design/Tech Evaluation also run here. Design approves
+`by=orchestrator` with a reason; only first-product exemplars wait for the owner. Tech Evaluation approves
 as owner (`by=orchestrator` with reason), including irreversible, deferred and
 contrary-to-owner decisions; no owner windows, result at Handoff work start.
-Discovery emits `next=` for new approvals; repeat approvals keep their route.
+Every PRD approval redecides design, then size; changed routes invalidate lower records.
 It inspects, delegates,
 monitors, decides or escalates, records, and reports. Stage ownership is
 unchanged: `mono:implement` owns Delivery Start, `mono:preflight` owns
@@ -143,16 +144,16 @@ Workflow states:
      PRD yes; its one second-model pass is not a Second Voice interview. Return
      both results to the owner without waiting. A deferred Project is not picked
      up before its task's return condition or an explicit owner return.
-   - For user-facing surface, prepare the UX checkpoint per
-     `templates/orchestrator-brief.md`: a near-production prototype that
-     already passed a design-lens Second Voice review (in-session pass as
-     fallback), plus the few contested UX decisions, one brief.
-   - Discovery choices/PRD yes are the orchestrator's with sources and owner
-     override; more than three Issues, money, user data, irreversible effects and
-     design stay the user's decisions — exercised at checkpoints with prepared
-     variants, per the Always-ask list.
+   - Follow the chain after Discovery automatically: `next=design` starts
+     `mono:design` here, then its `next=` starts Tech Evaluation or Handoff.
+     No product memory: send the owner one «на кого равняться» question with
+     proposed exemplars; only this Project waits. Design direction/approval
+     are the orchestrator's, `by=orchestrator` with a reason, no owner window.
+   - Discovery recomputes design then size on every PRD approval; changed routes
+     invalidate downstream records. Handoff starts after the last required stage.
+     Its summary shows designer decisions next to tech lead decisions.
 3. `handoff`
-   - After Discovery run `mono:handoff` yourself in this session, by its
+   - After the last required stage in the record chain run `mono:handoff` here, by its
      orchestrator-mode reference. Answer reconciliation conflicts without money,
      user data or irreversible effects yourself with a recorded reason; those and
      more than three Issues go to the owner while other waves continue.
@@ -272,9 +273,9 @@ Workflow states:
 6. `decide-or-escalate`
    - Technical questions: decide, record in the ledger under «Решил сам:»
      with a one-line reason, answer the worker.
-   - Always-ask questions (scope, design/UX, product risk, deploy approval
+   - Always-ask questions (scope, first-product exemplars, product risk, deploy approval
      per policy): escalate immediately and interactively with a decision
-     brief. Design questions require prepared visual variants first.
+     brief. First-product exemplars carry proposed references and reasons.
 7. `deploy-and-closeout`
    - When a worker reports `green` (mono-ship green certificate), run
      `mono:deploy` from this session per the configured Deploy workflow
@@ -320,8 +321,7 @@ Rules:
   and refresh item state immediately before asking (Decision Briefs policy).
 - Idea approval and the start of Research still wait for the owner. Research/Discovery results are owner
   contacts without waiting; Discovery uses its own yes, never owner yes.
-- Touch the user only at checkpoints: Idea description approval and Research start (clarify meaning only when necessary), the UX
-  checkpoint, the Handoff summary and work start, deploy approval per policy, and ad-hoc
+- Touch the user only at checkpoints: Idea description approval and Research start (clarify meaning only when necessary), first-product exemplars, the Handoff summary and work start, deploy approval per policy, and ad-hoc
   risk or scope-drift escalations; decide everything else and record it
   under «Решил сам:» (Director Discovery in `references/orchestration.md`).
 - Second Voice reviewers are discovery agents, not workers: they never

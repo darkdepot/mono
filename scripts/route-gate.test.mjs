@@ -44,14 +44,14 @@ test('route preserves the no-PRD legacy path without new-format records', () => 
   assert.equal(route.records.prd, null);
 }));
 
-test('no-PRD legacy path rejects dormant design at its writer', () => fixture(({ change, check }) => {
+test('no-PRD legacy path rejects damaged design at its writer', () => fixture(({ change, check }) => {
   change(p => { p.comments = [{ id:'design', createdAt:'2026-10-21T04:00:00.000Z', updatedAt:'2026-10-21T04:00:00.000Z', body:'```text\nmono-design: approved project=broken\n```' }]; });
   for (const command of ['route', 'tech', 'design'])
     assert.equal(check(command, 'bad-record').stage, 'mono:design');
 }));
 
-test('no-PRD legacy path rejects a dormant tech design field', () => fixture(({ change, check }) => {
-  change(p => { p.comments.pop(); p.comments[0].body = p.comments[0].body.replace('by=owner', 'by=owner design=none'); });
+test('no-PRD legacy path rejects an invalid tech design field', () => fixture(({ change, check }) => {
+  change(p => { p.comments.pop(); p.comments[0].body = p.comments[0].body.replace('by=owner', 'by=owner design=!'); });
   for (const command of ['route', 'tech', 'design'])
     assert.equal(check(command, 'bad-record').stage, 'mono:tech-evaluation');
 }));
@@ -80,11 +80,11 @@ test('damaged tech remains blocked at its writer and never hides an upstream fau
 }));
 
 for (const [name, mutate, stage] of [
-  ['PRD design field', p => { p.comments[1].body = p.comments[1].body.replace('by=owner', 'by=owner design=not-needed'); }, 'mono:discovery'],
+  ['unknown PRD design field', p => { p.comments[1].body = p.comments[1].body.replace('by=owner', 'by=owner design=unknown'); }, 'mono:discovery'],
   ['PRD next design', p => { p.comments[1].body = p.comments[1].body.replace('next=tech-evaluation', 'next=design'); }, 'mono:discovery'],
   ['design approval', p => { p.comments.unshift({ id:'design', createdAt:'2026-10-21T04:00:00.000Z', updatedAt:'2026-10-21T04:00:00.000Z', body:'```text\nmono-design: approved project=broken\n```' }); }, 'mono:design'],
-  ['tech design field', p => { p.comments[0].body = p.comments[0].body.replace('by=owner', 'by=owner design=none'); }, 'mono:tech-evaluation'],
-]) test(`dormant route rejects ${name} through every gate`, () => fixture(({ change, check }) => {
+  ['tech design field', p => { p.comments[0].body = p.comments[0].body.replace('by=owner', 'by=owner design=!'); }, 'mono:tech-evaluation'],
+]) test(`active route rejects ${name} through every gate`, () => fixture(({ change, check }) => {
   change(mutate);
   for(const command of ['route', 'tech', 'design']) assert.equal(check(command, 'bad-record').stage, stage);
 }));

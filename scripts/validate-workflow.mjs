@@ -632,7 +632,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "a2fb37cfb1d4ecb5d847ac25d020bb1e3299be757316caf5c0bf5f13065705a0",
+      contractFingerprint: "b601ec186ee4777e081fd5ff1214bc4abd930c9150a0b913708d9cde542dba73",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/research/SKILL.md",
@@ -5918,7 +5918,6 @@ const STRING_PINS = [
 ];
 const REQUIRED_HEADINGS = [
   ["skills/design/SKILL.md", "mono:design"],
-  ["skills/design/SKILL.md", "Пока выключено"],
   ["skills/design/SKILL.md", "Как ты думаешь"],
   ["skills/design/SKILL.md", "Кто что решает"],
   ["skills/design/references/run.md", "Задача этапа"],
@@ -6116,7 +6115,7 @@ const REQUIRED_HEADINGS = [
   ["references/orchestration.md","Sandbox ladder"],
   ["references/orchestration.md","Worker model selection"],
   ["references/install.md","Project Config Contract"],
-  ["templates/orchestrator-brief.md","UX-чекпоинт (UX Checkpoint Brief)"],
+  ["templates/orchestrator-brief.md","Эталоны первого продукта"],
   ["README.md","Skills"],
 
   ["references/orchestration.md","Two-Phase Dispatch Handshake"],
@@ -6244,6 +6243,7 @@ const MACHINE_TOKENS = new Set([
   "{{mailbox}}",
   "{{marker}}",
   "{{model_routes}}",
+  "{{design_context}}",
   "{{moves}}",
   "{{outcome}}",
   "{{owner_approval}}",

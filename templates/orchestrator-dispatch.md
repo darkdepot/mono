@@ -188,6 +188,12 @@ Emit the resolved command below; it is invocation data, not a second gate defini
 
 ## Context Snapshot
 
+Design input: {{design_context}}
+
+Read approved PNGs from that snapshot directory before UI code; apply the textual
+owner/product taste rules from the Issue context. Never copy or commit PNGs into
+the worktree. Live screen comparison is Deploy in a browser session.
+
 Snapshot composition: {{snapshot_note}}. Short includes Issue, approval, brief, referenced definitions and common PRD/Spec sections; full retains complete documents. Issue-only includes no Project documents.
 
 Approval record:

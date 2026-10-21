@@ -35,6 +35,17 @@ Contract application:
 - If issue-only prequalification refuses the request, stop this skill without rendering or mutating an Issue. Route shaped Project-first work to `mono:handoff` and unshaped work to `mono:idea`; the destination lifecycle owner applies the Project-first rules.
 - Render the self-contained Issue with `templates/issue.md`, applying every branch-relevant content, readiness, review, durability, and check rule from the bounded contract.
 
+## UI context
+
+UI-задача: в «Прочитать сначала» строка «Дизайн: запись mono-design <id>,
+Paper <ссылка>, images <sha256>» или «Дизайн: нет», пути к памяти владельца,
+продукта и папке PNG конкретной версии. Правила вкуса обоих слоёв прочитай и
+скопируй применимые целиком текстом в «Снимок контекста» (причина, верно/неверно,
+источник, вес), в том числе без макета. Нет правил — явно укажи отсутствие.
+Задача без проекта не проходит Design и не получает выдуманную запись; применяет
+память вкуса. Нет доступа к существующим правилам — останови подготовку с
+причиной. Исполнитель может не видеть домашнюю папку.
+
 ## Routing and fail-closed proof
 
 Prove the right to enter issue-only before creating or renewing anything:

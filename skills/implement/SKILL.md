@@ -21,6 +21,7 @@ Read now:
 4. `references/human-friendly-output.md`
 
 Read when:
+- `references/ui-implementation.md` — UI inputs, before code.
 - `references/questioning.md` — asking interactive questions.
 - `references/issue-only-lane.md` — `lifecycle_state_entity=issue` or lane park/freeze/exit.
 - `skills/preflight/SKILL.md` — exiting implemented-needs-preflight.

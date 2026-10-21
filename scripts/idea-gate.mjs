@@ -8,8 +8,8 @@ import { digest, isMain, resolveRole } from './runtime.mjs';
 
 export const IDEA_GATE_DEFAULT_SINCE = '2026-10-18';
 export const RESEARCH_GATE_DEFAULT_SINCE = '2026-10-19';
-// MONO-228 activates the route and its writers together. No product override.
-const DESIGN_ROUTE_ENABLED = false;
+// Entry and all record writers activate together; no product override (U14).
+const DESIGN_ROUTE_ENABLED = true;
 const DESIGN_HOME = path.join(os.homedir(), '.mono-agent-workflow', 'design');
 const DEFAULT_HEADINGS = {
   ru: { what: 'Что', why: 'Зачем', outcome: 'Образ результата', unknowns: 'Неизвестные' },
@@ -593,7 +593,8 @@ function checkTechDump(root, config) {
     }
     if (!Number.isFinite(date(prd.updatedAt))) fail('bad-record');
     let code = 'pass';
-    if (t.prd !== p.document || prd.id !== p.document || t['prd-updatedAt'] !== p.updatedAt || prd.updatedAt !== p.updatedAt)
+    if (t.prd !== p.document || prd.id !== p.document || t['prd-updatedAt'] !== p.updatedAt || prd.updatedAt !== p.updatedAt ||
+        date(tech.comment.createdAt) <= date(approval.comment.createdAt))
       code = 'stale-prd';
     else if ((t.design ?? 'none') !== (design?.comment.id ?? 'none')) code = 'stale-design';
     else if (spec.id !== t.spec || sha256(spec.content) !== t['spec-sha256']) code = 'stale-spec';
@@ -624,7 +625,8 @@ function checkDesignDump(root, config, repository) {
     const d = design.fields, p = approval.fields, prd = readJson(path.join(root, 'prd.json'));
     if (!object(prd) || !uuid(prd.id) || typeof prd.content !== 'string' ||
         (prd.project?.id ?? prd.projectId) !== projectId || !Number.isFinite(date(prd.updatedAt))) fail('bad-record');
-    if (d.prd !== p.document || prd.id !== p.document || d['prd-updatedAt'] !== p.updatedAt || prd.updatedAt !== p.updatedAt)
+    if (d.prd !== p.document || prd.id !== p.document || d['prd-updatedAt'] !== p.updatedAt || prd.updatedAt !== p.updatedAt ||
+        date(design.comment.createdAt) <= date(approval.comment.createdAt))
       return { ok: false, code: 'stale-prd', projectId, recordId: design.comment.id };
     const directory = path.join(designProductDirectory(config, repository), 'approved', projectId, d.images.slice(0, 12));
     let images;
@@ -864,7 +866,7 @@ function main(argv) {
 Dump: project.json and comments-N.json are raw Linear responses (N=1,2,...).
 Each response needs comments-N.request.json: {} for page 1, {"cursor":"previous response cursor"} thereafter.
 Save the actual request cursor; the final response has hasNextPage=false and no cursor.
-route validates all record fields before selecting requiredRecords; the Design route is dormant.
+route validates all record fields before selecting requiredRecords in the active Design chain.
 design reads raw prd.json and the immutable PNG version under ~/.mono-agent-workflow/design/;
 --config supplies projectName and its repository location.
 tech also reads raw prd.json and tech-spec.json: id, content, project.id (or projectId),
