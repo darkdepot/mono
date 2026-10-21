@@ -38,13 +38,54 @@ Discovery без второй остановки.
 Явная правка контрактов Tech Spec и проекта по решению владельца 21.10.2026;
 их SHA-256 обновлены, доставка снимка задач не меняется. Выпуска здесь нет.
 
+## Design: подготовлен, пока выключен
+
+[mono:design](skills/design/SKILL.md) добавлен в MONO-227 спящим. Вход, записи
+и маршрут оркестратора включает MONO-228 одной задачей. Пока проекты идут
+прежним путём, прямой вызов останавливается до записей и Paper, версия и выпуск
+не меняются. Design — дизайнер с памятью: подтверждённые эталоны в два кольца,
+правила владельца и продукта, экраны с прода; фича проходит референсы,
+направления, сценарии и состояния, правка на месте — одно решение и показ.
+Комментарии Paper дают общее правило, правило продукта или разовую правку;
+память меняется только дизайнером после согласия владельца. Макет проверяется
+по картинке до показа; PRD правит Discovery одним касанием с утверждением макета.
+
+Проверка цепи уже действует: вход Handoff, запись старта и Project-first режимы
+`mono:check` discovery/tech/handoff/delivery всегда сначала запускают
+`idea-gate.mjs route`, даже без записи PRD. Послабления старого пути действуют
+только после `pass`. Неизвестный маршрут и
+новый формат (`design=` в PRD/tech, `next=design`, `mono-design`) дают
+`bad-record`, никогда не `no-record`. Запись PRD без `design=` с `next=` или без
+сохраняет прежний путь. Команда `tech` проверяет маршрут до поиска своей записи.
+Команда `design`, PNG и `stale-design` подготовлены за выключателем; тесты
+включают его только в временной копии. Подробно —
+[цепь записей](references/lifecycle.md#record-chain).
+
+Повреждённая запись блокирует следующие этапы, но её писатель может войти для
+исправления после отдельной проверки утверждений выше по цепи. У техлида этот
+вход описан в [правилах записи](skills/tech-evaluation/references/spec.md#вход-для-исправления-записи):
+он не превращает `bad-record` в PASS; Handoff ждёт годную новую запись и всю цепь.
+В подготовленном новом маршруте прежняя запись техлида не добавляет его в цепь,
+если последняя запись ведёт прямо в Handoff; старый путь сохраняет эту проверку.
+Запись `design=not-needed` без `next=` сохраняет прежнее отсутствие маршрута:
+нужна предыдущая запись утверждения PRD без `next=`, иначе `bad-record`.
+
+После включения Design утверждённые версии Paper и PNG задают вход техлиду и
+Handoff. Пункт на утверждённых экранах возвращается в Design до показа страницы
+техлида, пункт вне экранов может откладываться строкой на странице с новой
+записью неизменённых картинок без повторного показа. Контракт PRD не меняется.
+Откат возможен до первой записи нового формата, дальше только исправление вперёд.
+Файлы [evals/design](evals/design/README.md) подготовлены; прогон и живая проверка
+всей цепочки относятся к MONO-229. Бюджет обязательного чтения Design и других
+русских этапов — 20 480 байт каждый.
+
 ## Задачи этапов и Ready
 
 Research, Discovery, Design и Tech Evaluation первым шагом каждый находят или
 заводят свою задачу с меткой `Этап` (`Research: <проект>`, `Discovery: <проект>`
 и так далее). У Idea и Handoff задачи этапа нет. Записи о ходе работы — в
 комментариях задачи, результат — в документе проекта; задачи этапов не входят
-в набор задач реализации. Сами этапы Design и Tech Evaluation ещё не выпущены.
+в набор задач реализации. Design пока спит; этап Tech Evaluation добавлен, его выпуск ведёт MONO-225.
 Правила повторного входа, роли и единое определение задач реализации — в
 [«Задачах этапов»](references/lifecycle.md#задачи-этапов), форма поручения —
 [в шаблоне](templates/stage-task.md). Каждый этап отвечает только за свою задачу.
@@ -296,6 +337,9 @@ review, scout, orchestrator and repair rules are conditional. Its activation cas
 live in [evals/handoff](evals/handoff/README.md).
 Tech Evaluation uses the same three mandatory files and 20,480-byte ceiling;
 `node scripts/read-budget.mjs --skill tech-evaluation --mandatory` measures it.
+Design reads exactly its SKILL.md and references/run.md eagerly; drawing, memory and
+approval references are conditional. Measure with
+`node scripts/read-budget.mjs --skill design --mandatory`.
 Activation cases: [evals/tech-evaluation](evals/tech-evaluation/README.md).
 Claude validation, skill-doctor and evals run on the preflight-ready head before
 ship; the release and live owner run belong to MONO-225.
@@ -1156,6 +1200,7 @@ this pack uses `/mono:ship` and `/mono:review`.
 | [mono:idea](skills/idea/SKILL.md) | Idea intake and recorded owner approval; Research starts only on the owner's start |
 | [mono:research](skills/research/SKILL.md) | Facts before a solution, Research document and next-step advice without owner questions |
 | [mono:discovery](skills/discovery/SKILL.md) | Solution found with the owner in conversation, explicit choice and version-approved PRD; owner or orchestrator mode |
+| [mono:design](skills/design/SKILL.md) | Dormant designer stage, consented taste memory and immutable Paper/PNG approval; activation in MONO-228 |
 | [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) | One checked technical solution, one version-approved plain-language page, then a short Tech Spec; owner or orchestrator mode |
 | [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
 | [mono:handoff](skills/handoff/SKILL.md) | Team lead: reconciles approved inputs, slices (one Issue by default), one reviewed package record, Ready; work starts only by the owner; repair by the record |
@@ -1211,6 +1256,7 @@ node scripts/validate-workflow.mjs --readme-only
 node scripts/validate-workflow.mjs --model-policy-fixtures
 node scripts/read-budget.mjs
 node scripts/lint-mono-artifacts.mjs
+node --test scripts/route-gate.test.mjs scripts/design-gate.test.mjs scripts/tech-gate.test.mjs
 ```
 
 Runtime tests use scratch plugin folders; the real sandbox-boundary test runs outside a worker sandbox and reports an explicit skip when nested sandboxing prevents it. Installation, live production QA, deploy and owner acceptance are separate evidence boundaries, never implied by a local green check.

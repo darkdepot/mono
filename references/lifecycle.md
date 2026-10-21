@@ -74,7 +74,7 @@ Close/defer is decided by the lead: owner, or orchestrator with a reason. Close
 sets Canceled; defer keeps status, records the return condition in the closed task.
 Both exit without PRD or Handoff. Do not resume deferred work before the condition
 or an owner return. Otherwise gate: `mono:check discovery`, then the route in the PRD approval below.
-Design can precede Tech Evaluation; until Design exists, Handoff receives
+Design is dormant until MONO-228 activates it; currently Handoff receives
 «нужны макеты» (Research `interface: true` or a new screen/window in the solution).
 A raw implementation plan never authorizes code or Delivery.
 
@@ -94,6 +94,108 @@ package: with its approval). Migration alone
 never permits implementation. `no-record` on a new project returns to `mono:idea`.
 Implement checks `approved` before start.
 
+## Design (dormant)
+
+MONO-227 adds the stage and chain checks without activation. `DESIGN_ROUTE_ENABLED`
+in `scripts/idea-gate.mjs` is false, with no product override. MONO-228 activates
+entry, all new record writers and the Project contract together. Until then no
+path starts Design, creates its stage task or writes the new format; orchestrator
+rules stay unchanged. Any new-format record, including `design=` in PRD or tech,
+`next=design` or `mono-design`, is `bad-record`, never `no-record` or an old path.
+Any intervening release is safe. Rollback is possible only before the first such
+record; after it, fix forward. The PRD contract and its fingerprint stay unchanged.
+
+### Record chain
+
+Handoff entry, work-start recording and Project-first `mono:check` modes
+`discovery`, `tech`, `handoff` and `delivery` always first save raw Project and
+complete comment responses with actual request cursors and run:
+`node <pack-root>/scripts/idea-gate.mjs route --mode fresh --dump <dir> --config <path>`.
+Require exit 0, «Готово», JSON `pass` before deciding which stage checks to skip.
+This also applies without a PRD approval: old-path exemptions apply only after
+`pass`, and dormant Design records still stop at their writer.
+`requiredRecords` names the records to verify; route validates fields and closed
+dictionaries, not freshness or stage completion. `bad-record` stops at its named
+writer stage; it is never absence. `tech` also performs this validation before
+returning `no-record`. The most recent approval by `createdAt` wins; no fallback
+from a damaged newer one. A PRD without `design=` is the Design old path, with
+or without `next=`; it keeps today's Tech Evaluation route. Records, never dates.
+
+The following format and behavior are **dormant until MONO-228**:
+
+```text
+mono-prd: approved project=<uuid> document=<uuid PRD> updatedAt=<ISO> design=needed|not-needed next=<stage> by=owner|orchestrator
+mono-design: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> paper=<URL> images=<sha256> next=tech-evaluation|handoff by=owner|orchestrator
+```
+
+Discovery writes the design reason below its record. `design=needed` only pairs
+with `next=design`; `design=not-needed` only with `next=tech-evaluation|handoff`,
+or no `next` if the former approval lacked it. Unknown fields, values or other
+combinations are `bad-record`. No separate “design not required” record.
+Next follows the last approval in the chain: PRD → Design when required →
+Tech Evaluation when named → Handoff. Tech Evaluation entry requires its
+predecessor to name `next=tech-evaluation`. Handoff and work start require a valid
+record at every named stage; missing/stale design returns to Design, never skips.
+An existing tech record is still consumed on the old path, even without `next`.
+
+### Designer and approval (dormant)
+
+`skills/design/SKILL.md` owns the designer, two-layer memory, Paper approval and
+`Design: <project>` task under the stage-task rules. Product memory is outside
+repos under `~/.mono-agent-workflow/design/`; only the designer writes it after
+owner consent. First run asks whom to emulate and confirms two rings of strong
+exemplars. Every run updates production screens if anything merged since the
+last update, reads old Paper threads, design system and taste rules before drawing.
+Feature depth: references, 2–3 layout directions, scenarios, states, with owner
+contact after each. Otherwise one solution over the production screen and one
+showing. The owner can change depth; platforms follow the affected product.
+Inspect exported images before every showing. Comments become an owner rule,
+product rule or one-off fix, with consent before recording a rule.
+
+Approved artboards are duplicated to Paper «Утверждено <ДД.ММ.ГГГГ>» and exported
+as `NN-<name>.png` (ASCII letters, digits, hyphens) into a new immutable version:
+`~/.mono-agent-workflow/design/<slug>/approved/<project uuid>/<first 12 of images>/`.
+Compute `images` within that folder using
+`LC_ALL=C ls *.png | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256`.
+The Design record binds latest PRD approval id/version, Paper page, image hash
+and `next`: ordinary/large PRD to `tech-evaluation`, tiny to `handoff`.
+Design task depth does not change that route. Raw dump also includes `prd.json`;
+run `idea-gate.mjs design --mode fresh --dump <dir> --config <path>`.
+Exit 0, «Готово», JSON `pass` are required; `no-record`, `stale-prd`,
+`stale-images`, `bad-record` stop. Reading is not a substitute.
+
+A PRD correction uses one approval of mockups and «Было / Стало». Discovery
+writes the PRD and its approval with `design=needed next=design`, then Design
+writes its record with the new `prd-updatedAt` in the same touch. Only the first
+succeeded: retry the second under the same approval. Designer never edits PRD.
+Owner-led Discovery ends with «Начать Design»; Desktop opens a fresh designer
+session via `mcp__ccd_session__start_session` using
+`$TMPDIR/mono-design/<project>/brief.md`; Codex/terminal use that file and their
+host's `mono:design` invocation. Designer ends with the next-stage window from
+its own `next`. This session route remains disabled in MONO-227.
+
+### Reapproval and technical evaluation (dormant)
+
+MONO-228 replaces today's route-preservation rule: at every PRD reapproval,
+including the old path, Discovery decides design again, then size and `next`;
+not-needed with a previously absent `next` keeps its absence. A changed route
+invalidates downstream approvals; rerun with showing under the current mode.
+Same route: each stage itself decides whether its approved artifact changes.
+Designer sees unchanged screens: new record, same images, new PRD version,
+no showing. Tech lead sees unchanged page: renewed record without showing.
+
+With a valid design record, Tech Evaluation reads its PNGs with the product and
+checks screen risks. An infeasible mockup returns to Design before page showing.
+A PRD item present on approved screens cannot be deferred by the tech lead:
+return to Design before showing, with «предлагаю убрать: …, потому что …» in
+its stage task; new design round and PRD correction through Discovery.
+An item absent from screens may be deferred on the page as today. Its approval
+calls Discovery in the same touch; unchanged screens get a new Design record
+with the same images without showing, then Tech Spec and tech approval.
+`mono-tech` adds optional `design=<latest mono-design comment id>|none`;
+omission means `none`. Mismatch with the latest design record yields
+`stale-design`, so Tech Evaluation reenters on design changes too.
+
 ## Tech Evaluation
 
 The intended order is Discovery → Tech Evaluation → Handoff for ordinary and
@@ -102,7 +204,8 @@ large Projects; tiny work goes directly to Handoff. Route by records, not dates:
 `next=` is the **Tech Evaluation old path**, skipping that stage unless the
 owner explicitly requests it in the stage task. It is separate from the
 Discovery old path (no PRD approval and an approved legacy package).
-An existing `mono-tech` record is consumed even without `next=`.
+On the Design old path (PRD without `design=`), an existing `mono-tech` record is
+consumed even without `next=`.
 Discovery writes `next=tech-evaluation` for ordinary/large new PRD approvals
 and `next=handoff` for tiny ones; its final offers the recorded next stage.
 Reapproval of the same PRD preserves the previous record's `next`, including
