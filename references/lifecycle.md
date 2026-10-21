@@ -106,7 +106,9 @@ An existing `mono-tech` record is consumed even without `next=`.
 Discovery writes `next=tech-evaluation` for ordinary/large new PRD approvals
 and `next=handoff` for tiny ones; its final offers the recorded next stage.
 Reapproval of the same PRD preserves the previous record's `next`, including
-its absence; changing size alone never rewrites that route.
+its absence; changing size alone never rewrites that route. The sole exception
+is the deferred-item callback below: the owner-requested old path then records
+`next=tech-evaluation` (U5).
 
 Tech Evaluation owns the technical decision and new Tech Spec. Owner-led: show
 one page, then «Утвердить» on that exact version, `by=owner`. Orchestrator-led:
