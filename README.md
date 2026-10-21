@@ -3,6 +3,27 @@
 Текущий выпуск: **0.35.1**. См. [заметки выпуска](CHANGELOG.md#0351---2026-10-21).
 Private vulnerability reports: [SECURITY.md](SECURITY.md).
 
+## Правила перед Tech Evaluation
+
+Подготовлен спящий маршрут Discovery → Tech Evaluation → Handoff для обычного
+и крупного проекта, мелочь сразу в Handoff. Сам этап и включение маршрута идут
+следом: пока Discovery не пишет `next=`, проекты продолжают прежний путь.
+Запись PRD без поля это старый путь Tech Evaluation; повторное утверждение
+сохраняет прежний маршрут. Проверка `mono:check tech` и команда
+`idea-gate.mjs tech --mode fresh --dump` проверяют `mono-tech: approved`, версию
+PRD, точный текст страницы и тело Tech Spec, а не время комментария к нему.
+
+Новый короткий Tech Spec пишет только Tech Evaluation после утверждения
+страницы; Handoff переносит решения в запись пакета и задачи. Разделов без
+содержимого нет, отказы, выпуск и откат только по делу. Меняется строка страницы:
+возврат к техлиду, после старта через ремонт класса 3 с новым стартом владельца.
+Ведёт владелец: «Утвердить». Ведёт оркестратор: утверждает сам с причиной,
+включая необратимое и отложенный пункт PRD; владелец видит итог при старте
+работы в Handoff. Отложенный пункт переносит Discovery без второй остановки.
+Формат и порядок записи: [жизненный цикл](references/lifecycle.md#tech-evaluation).
+Явная правка контрактов Tech Spec и проекта по решению владельца 21.10.2026;
+их SHA-256 обновлены, доставка снимка задач не меняется. Выпуска здесь нет.
+
 ## Задачи этапов и Ready
 
 Research, Discovery, Design и Tech Evaluation первым шагом каждый находят или
@@ -371,7 +392,7 @@ Known limitation: inline code spanning multiple source lines refuses `unsupporte
 | Project metadata, resources, comments | Lifecycle, active documents and Issues, relationships, approvals, review disposition, the package record and the owner's start |
 | Research («Исследование») | Facts, confidence, unknowns and advice before choosing a solution |
 | PRD | WHAT: actors, problem, workflows, requirements, acceptance and success |
-| Tech Spec | HOW from a later stage or a legacy package: architecture, real system contracts, failures, implementation units, validation and rollback; without it, shared HOW lives in the package record |
+| Tech Spec | HOW from Tech Evaluation after page approval, or a legacy package; only relevant contracts, impact and validation, failures/release/rollback when applicable; old-path shared HOW stays in the package record |
 | Issue | One-PR execution contract, dependencies, AFK/HITL readiness, context snapshot, acceptance and verification |
 | GitHub | Branch, PR, code review, CI, deploy and merge history |
 | Worker report | Phase, exact head, decisions, every pending write and verification result; no direct Linear mutation |

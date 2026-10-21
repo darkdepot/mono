@@ -1,6 +1,7 @@
 # Tech Spec artifact contract
 
 This bounded contract is the normative source for Tech Spec artifact behavior.
+`mono:tech-evaluation` consumes it for new Tech Specs after page approval;
 `mono:handoff` consumes it for legacy Tech Spec repair and reconciliation;
 `mono:ship` consumes it for accepted pre-ship drift. Use the shared
 [artifact rules](../artifact-rules.md), [artifact quality](../artifact-quality.md),
@@ -11,8 +12,8 @@ duplicate the template here.
 
 ## TS-001 — Tech Spec routing
 
-Use this contract inside the lifecycle owner that creates or updates a Linear
-Tech Spec before Delivery, Issue creation, or an approved repair.
+New Tech Spec after page approval: `mono:tech-evaluation`. Legacy repair:
+`mono:handoff`. Accepted pre-PR drift: `mono:ship`.
 
 ## TS-002 — Implementation truth
 
@@ -20,15 +21,13 @@ The Tech Spec records HOW the approved PRD will be built.
 
 ## TS-003 — Internal helper boundary
 
-Tech Spec writing is owned by lifecycle stages rather than exposed as a direct
-artifact door. Legacy Tech Spec repair is `mono:handoff`; accepted pre-ship
-drift belongs to `mono:ship`.
+Only these stage owners write Tech Specs; no direct artifact door.
 
 ## TS-004 — Targeted-use eligibility
 
-No new Tech Spec is created in this release. A request to repair an existing
-legacy Tech Spec routes to `mono:handoff` repair; accepted pre-ship drift to
-`mono:ship`; nothing else mutates it.
+An approved page authorizes the new Spec. Route by PRD record per
+`references/lifecycle.md`: ordinary/large via Tech Evaluation; tiny/old path skip.
+Activation in T2.
 
 ## TS-005 — Linear-facing language
 
@@ -56,13 +55,13 @@ to PRD or mark the gap before proceeding.
 
 ## TS-010 — Durable engineering review
 
-Translate an engineering review into the existing Tech Spec, else into the
-package record and Issues.
+Tech Evaluation persists its reviewed decision after page approval. Handoff copies
+Spec decisions to package `U` units and Issue key contracts.
 
 ## TS-011 — Lightweight engineering pass
 
-Without one, do a lightweight engineering pass; its HOW goes to `U` units and
-Issues, not a new spec.
+Old path without Tech Evaluation: Handoff writes HOW to package `U` units and Issues,
+never a new Spec.
 
 ## TS-012 — Requirement trace coverage
 
@@ -74,8 +73,8 @@ Use stable `U1`, `U2`, and subsequent implementation-unit IDs.
 
 ## TS-014 — Core implementation coverage
 
-Include system-wide impact, contracts, failure modes, validation, rollout, and
-rollback.
+Keep non-inferable, costly-to-redo contracts, impact and proof.
+Failures/release/rollback only when applicable; no empty sections.
 
 ## TS-015 — Observed backend contracts
 
@@ -92,14 +91,13 @@ it.
 
 ## TS-017 — Review-inspectable detail
 
-For standard, deep, risky, or review-sensitive packages, make requirement
-trace, validation, rollback, and failure modes concrete enough for
-`mono:review artifact`, without adding review-workflow sections to the body.
+For standard/deep/risky work, make trace, proof and applicable
+failures/release/rollback reviewable, without review mechanics.
 
 ## TS-018 — Narrow no-spec exception
 
-A package record is not a no-spec exception: at any risk it carries shared HOW
-as `U` units in the Tech Spec slot; deep or risky needs at least one.
+Tech Evaluation requires its Spec and effective `mono-tech`. Tiny/old-path HOW stays
+in `U` units (deep/risky: at least one); legacy no-spec follows TS-019.
 
 ## TS-019 — Forbidden no-spec domains
 
@@ -114,9 +112,8 @@ implementation touches the code.
 
 ## TS-021 — Relevant sections only
 
-Include architecture, contracts, boundaries, risks, files/surfaces,
-validation, rollout, and rollback when relevant; omit a section only when it
-adds no value.
+Only relevant, populated sections. Estimate PR count/order/risk for Handoff; it owns
+slicing. Estimate changes need no new page: they are absent from it.
 
 ## TS-022 — Deep architecture lens
 
@@ -179,5 +176,5 @@ instructions.
 
 ## TS-035 — Transition check
 
-For standalone use run or report `mono:check discovery`; inside `mono:handoff`,
-run or report `mono:check handoff`.
+Entry: `mono:check discovery`; exit: `mono:check tech` plus Spec read-back. Handoff
+checks `mono-tech` at entry/start; after start, repair/pre-PR drift applies.

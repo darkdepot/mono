@@ -614,7 +614,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "a9869cf1c7aaeec30e7bd5f058094b90761d35534ae7b8eb7c9954f931756158",
+      contractFingerprint: "a2fb37cfb1d4ecb5d847ac25d020bb1e3299be757316caf5c0bf5f13065705a0",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/research/SKILL.md",
@@ -638,7 +638,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/tech-spec.md",
       ledgerSourcePath: "references/contracts/tech-spec.md",
       templatePath: "templates/tech-spec.md",
-      contractFingerprint: "17144e24db190a8b4117277e7954cb086f6505218a3954f220fcb4f99c9466ed",
+      contractFingerprint: "613c51ed55647f99e01825bd7ea1db497fda20d749274d59239a3a0d7ecb7f05",
       contractConsumers: [
         "skills/handoff/SKILL.md",
         "skills/ship/SKILL.md",
@@ -5536,6 +5536,9 @@ function validateModelPolicyFixtures() {
 }
 
 const STRING_PINS = [
+  ["references/lifecycle.md", "mono-tech: approved"],
+  ["references/lifecycle.md", "mono-tech-page"],
+  ["skills/check/SKILL.md", "next="],
   ["references/lifecycle.md", "Этап"],
   ["templates/stage-task.md", "Этап"],
   ["skills/idea/SKILL.md", "mono:idea"],
@@ -5894,6 +5897,8 @@ const STRING_PINS = [
   ["references/orchestration.md","`recorded-late`"],
 ];
 const REQUIRED_HEADINGS = [
+  ["templates/tech-spec.md", "Решения"],
+  ["templates/tech-spec.md", "Прикидка для Handoff"],
   ["references/lifecycle.md", "Задачи этапов"],
   ["templates/stage-task.md", "Роль"],
   ["templates/stage-task.md", "Вводные со ссылками"],
@@ -5923,14 +5928,6 @@ const REQUIRED_HEADINGS = [
   ["templates/prd.md","Допущения"],
   ["templates/prd.md","Открытые вопросы"],
   ["templates/prd.md","Связи"],
-  ["templates/tech-spec.md","Исходные требования"],
-  ["templates/tech-spec.md","Контракты и границы"],
-  ["templates/tech-spec.md","Реальные ответы бэкенда"],
-  ["templates/tech-spec.md","Единицы реализации"],
-  ["templates/tech-spec.md","Влияние на остальную систему"],
-  ["templates/tech-spec.md","Что может сломаться и как защищаемся"],
-  ["templates/tech-spec.md","Валидация"],
-  ["templates/tech-spec.md","Релиз и откат"],
   ["templates/issue.md","Прочитать сначала"],
   ["templates/issue.md","Готовность агента"],
   ["templates/issue.md","Зависимости"],
@@ -6124,6 +6121,10 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "tech",
+  "mono-tech: approved",
+  "next=",
+  "mono-tech-page",
   "mono-prd: approved", "by=owner", "by=orchestrator", "prd-before-package-approval",
   "mono-package: recorded", "mono-package: start", "too-big", "shared-base", "probe",
   "Этап", // MONO-183: Linear stage-task label, not editorial wording.
@@ -6788,7 +6789,7 @@ function validateLandingBehavior() {
   catch (error) { fail(`landing named scratch fixtures: ${error.message}`); }
 }
 function validateCheckModeDeclaration() {
-  requireMachineToken("Modes:"); requireMachineToken("repair");
+  requireMachineToken("Modes:");
   const lines = documentSection(read("skills/check/SKILL.md"), "Mono Check") || [];
   const starts = lines.flatMap((line, index) => line === "Modes:" ? [index] : []);
   const modes = [];
@@ -6798,7 +6799,10 @@ function validateCheckModeDeclaration() {
     if (!entry) break;
     modes.push(entry[1]);
   }
-  if (modes.filter((mode) => mode === "repair").length !== 1) fail("mono:check Modes: missing or duplicate repair declaration");
+  for (const mode of ["repair", "tech"]) {
+    requireMachineToken(mode);
+    if (modes.filter(value => value === mode).length !== 1) fail(`mono:check Modes: missing or duplicate ${mode} declaration`);
+  }
 }
 function readTierBounds(text, file = "") {
   const now = (isRussianStage(file) ? /^(?:Read now|Прочитай сразу)(?:\s|:|$).*$/m : /^Read now(?:\s|:|$).*$/m).exec(text);
@@ -6991,6 +6995,8 @@ function validateAe6Fixtures() {
       '  "question": "<question text, or null>",\n', "")), "missing mandatory machine field");
     negative("repair mode declaration removed with prose intact", () => change("skills/check/SKILL.md", (text) => text.replace(
       "- `repair`\n", "")), "Modes: missing or duplicate repair declaration");
+    negative("tech mode declaration removed with prose intact", () => change("skills/check/SKILL.md", (text) => text.replace(
+      "- `tech`\n", "")), "Modes: missing or duplicate tech declaration");
     change("skills/deploy/SKILL.md", (text) => text.replace(/^(\d+)(\. `cost`:)/m, (_, ordinal, suffix) => `${ordinal === "99" ? "98" : "99"}${suffix}`));
     check(); restore(); check();
     console.log("PASS AE6 cost step renumbering: green");

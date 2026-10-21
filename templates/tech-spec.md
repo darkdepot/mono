@@ -4,43 +4,33 @@ Use Russian for Linear Tech Spec content and section headings. Keep code
 identifiers, file paths, commands, product labels, and UI copy in their native
 language.
 
-Default sections:
+Choose only sections that carry a decision; never publish empty headings or
+repeat the PRD. Failures, release and rollback are conditional, not a checklist.
 
 ```markdown
 ## Кратко
+<одно техническое решение и почему оно проще>
 
-## Исходные требования
+## Решения
+- U1. <что исполнитель не угадает; контракт, граница и проверка>. Покрывает R1
 
-## Цели и не цели
-
-## Архитектура
-
-## Контракты и границы
-
-### Реальные ответы бэкенда
-
-<выборка реальных ответов с деплоя: домены enum, формы объектов, крайние записи; дата выборки и SHA/версия деплоя>
-
-## Единицы реализации
-
-## Влияние на остальную систему
-
-## Риски и защита
-
-## Что может сломаться и как защищаемся
-
-## Файлы и поверхности
-
-## Валидация
-
-## Релиз и откат
+## Прикидка для Handoff
+<примерное число PR, что первым, где риск; нарезку решает Handoff>
 
 ## Связи
+<PRD и источники решения>
 ```
 
-Rules:
+When relevant, add populated sections: «Исходные требования», «Архитектура»,
+«Контракты и границы», «Реальные ответы бэкенда», «Единицы реализации»,
+«Влияние на остальную систему», «Что может сломаться и как защищаемся»,
+«Валидация», «Релиз и откат». For a backend, include real deployed enum domains,
+object shapes and edge records with sampling date/version, or the first probe.
 
-Apply `references/contracts/tech-spec.md`; preserve native literals. Trace HOW to R/AE or cross-cutting support; first ID per section adds Russian slug, bare key unchanged. Preserve U IDs after splits/reordering. Units: goal/coverage/dependencies/surfaces/approach/tests/verification. No-API/backend subsection omission requires reason; when unsure sample. Cover affected interfaces/errors/state risks/unchanged invariants. Code/test-dependent unknowns stay deferred. Directional diagrams/pseudocode only, no copy-paste code/shell choreography. Check HOW trace and no invented WHAT.
+Apply `references/contracts/tech-spec.md`; preserve native literals. Trace HOW
+to R/AE or cross-cutting support; keep stable U IDs after splits/reordering.
+Record only non-inferable, expensive-to-redo decisions and deferred unknowns.
+Directional diagrams/pseudocode only, no copy-paste code/shell choreography.
 
 Optional nested manifest: indented path/hash items and blank lines are allowed;
 column-zero fences contain raw UTF-8 with final LF;

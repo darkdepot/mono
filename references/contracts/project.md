@@ -18,8 +18,12 @@ owner's words). An existing Project in Discovery without a Research document rou
 to `mono:research`, except a package approved strictly before `researchGate.since` (config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` in
 `scripts/idea-gate.mjs`); without an approved PRD, a Project on the old path
 (`skills/check/SKILL.md`, mode `discovery`, Old path) routes to `mono:handoff` unless
-the owner explicitly requests Discovery, any other to `mono:discovery`; otherwise,
-and for package repairs, to `mono:handoff`.
+the owner explicitly requests Discovery, any other to `mono:discovery`. An approved PRD routes by `next=tech-evaluation|handoff`
+in its approval: ordinary and large Projects take Tech Evaluation before Handoff,
+tiny work goes straight to Handoff. No `next=` is the Tech Evaluation old path,
+which skips that stage unless the owner explicitly requests it; any existing
+`mono-tech` record is still consumed by Handoff. Discovery does not emit `next=`
+until the stage lands. Package repairs stay with `mono:handoff`.
 
 ## PC-002 — Concise product brief
 
@@ -93,8 +97,9 @@ Project stays in Idea until the owner starts Research; Research never starts by 
 `mono:research` moves an approved Idea Project to Discovery after its read-only
 entry check, once the owner starts it. In Discovery, PRD is created and changed only
 by `mono:discovery`. `mono:handoff` writes neither PRD nor Tech Spec; it writes the
-package record. A Tech Spec exists only as an input from a later stage or in a
-legacy package. They coexist with the Project before Delivery.
+package record. `mono:tech-evaluation` creates the short Tech Spec after page
+approval, between Discovery and Handoff; tiny work and the Tech Evaluation old
+path skip it. A legacy Tech Spec remains a valid input. These coexist before Delivery.
 
 ## PC-015 — Handoff readiness state
 

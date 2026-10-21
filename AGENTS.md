@@ -1,18 +1,20 @@
 # AGENTS.md
 
-This repo is the Mono pack: skills that take a product idea to a shipped PR, with Linear as the record. Two readers load this file: agents editing the pack, and the English workflow skills at run time (they read it first; the Russian stages do not). Every byte here counts against the worker read budget (`node scripts/read-budget.mjs`), so add only what an agent cannot find in the skill it runs.
+Mono pack: reusable skills from idea to shipped PR; Linear holds artifacts and approvals. English skills read this file at runtime; keep it within the worker read budget (`node scripts/read-budget.mjs`).
 
 ## Language
 
-Stages listed in `scripts/russian-stages.mjs` (idea, research, discovery, handoff) and `references/owner-dialog.md` are written in Russian; other skills in English. Linear artifacts, templates and examples use the project language (Russian here) so the owner can read them. Commands, paths, keys and codes stay English everywhere.
+Stages in `scripts/russian-stages.mjs` and `references/owner-dialog.md`: Russian; other skills: English. Linear artifacts, templates and examples use the project language (Russian here). Machine tokens stay English.
 
 ## Source Of Truth
 
 - Linear holds the Project, PRD (what and why), Tech Spec (how), Issue (one-PR contract) and every owner approval as a comment. Obligations live in `references/contracts/`, shape in `templates/`.
 - GitHub holds branch, PR, review, CI and merge history.
-- Each skill's description and the README Skills table route between stages. The orchestrator runs Idea, Research, Discovery and Handoff itself and is the sole Linear writer; workers run implement, preflight and ship and queue Linear writes in reports. Project-first work starts on the owner's word after Handoff; issue-only work starts with owner approval through `mono:issue`.
+- Each skill's description and the README Skills table route between stages. The orchestrator runs Idea, Research, Discovery, routed Tech Evaluation and Handoff itself and is the sole Linear writer; workers run implement, preflight and ship and queue Linear writes in reports. Project-first work starts on the owner's word after Handoff; issue-only work starts with owner approval through `mono:issue`.
 
 ## Skill Design Rules
+
+- `mono:tech-evaluation` owns new Tech Spec after page approval; Handoff consumes it and repairs legacy Spec; Ship owns accepted pre-PR drift. Owner-led approval: `by=owner`. Orchestrator-led: `by=orchestrator` with reason, including irreversible/deferred/contrary-to-owner lines; no owner windows, result shown at Handoff work start.
 
 - A description routes; a skill owns one artifact or phase; a wrapper such as `mono:deliver` only sequences owners and keeps their rules with them.
 - `SKILL.md` carries what the model cannot infer; longer material sits in `references/` or `templates/` behind a Read when condition.

@@ -15,6 +15,8 @@ Evaluate stage-specific ownership before the general front-door order. Accepted 
 | `existing-project-pre-ship-drift` | An existing Project has drift accepted during pre-ship. | `mono:ship` | Run accepted drift sync in ship; do not enter handoff repair. |
 | `issue-only-body-edit` | An existing issue-only Issue body needs any edit. | `mono:issue` | Run create-then-approve renewal; do not enter handoff repair. |
 | `prd-before-package-approval` | PRD edit before the owner's start (legacy: package approval). | `mono:discovery` | Repeat affected Discovery and obtain new PRD approval; Handoff then writes a new record version and summary. After the start the PRD change follows `existing-project-targeted-repair`. |
+| `tech-page-before-start` | Any approved `mono-tech-page` line changes before work start. | `mono:tech-evaluation` | New page and effective record; Handoff reconciles again and writes a new package version. It never edits the Spec itself. |
+| `tech-page-after-start` | Any approved page line changes after start. | `mono:handoff repair` → `mono:tech-evaluation` | Class 3 first: stop workers, supersede start, invalidate dependants and roll back; then new page/record, package review/check and new owner start. |
 | `existing-project-targeted-repair` | An existing Project has a package record, Tech Spec, Issue or after-start PRD repair request before pre-ship. | `mono:handoff repair` | Enter the stable-ID classification and class transaction; do not run ordinary package creation. An after-start PRD change: Handoff first prepares the diff, classification and the class's worker stop, revocation and rollback; only then Discovery writes and approves the PRD (before that it may only draft); Handoff finishes. |
 
 Only when neither override matches, apply the front-door order:
@@ -29,6 +31,12 @@ Only when neither override matches, apply the front-door order:
 
 Any route ambiguity fails closed to the Project-first `mono:handoff` path;
 ambiguity inside a proposed repair fails closed to class 3.
+
+An effective Tech Evaluation Spec is an approved input, not a Handoff rewrite target.
+A gap changing no page line is closed in package-record decisions. A pre-start
+PRD edit changing no page line calls Tech Evaluation to renew the record without
+showing the owner; otherwise a new page. After start, repair and accepted
+pre-ship drift retain their owners; do not rerun routine approval freshness.
 
 ## Stable-ID diff preview
 
@@ -54,6 +62,7 @@ The highest matching class wins. Risk growth always selects class 3. Ambiguity i
 | --- | --- | --- | --- |
 | `typo-or-format` | Only formatting, spelling, or a link correction to the same intended target changes; semantics and all guarded surfaces are unchanged. | `1` | Keep approval valid and do not touch Issues. |
 | `how-only` | HOW, architecture, implementation seam, or validation changes while R/AE/AC, non-goals, visible behavior, risk, and [execution Issues](lifecycle.md#задачи-этапов) set are unchanged. | `2` | No owner approval; require `mono:review artifact` and all class 2 effects. |
+| `tech-page` | Any line of the approved Tech Evaluation page changes, including tested cases or risk. | `3` | Stop workers and perform class 3 rollback before Tech Evaluation produces a new page/record; then Handoff rebuilds and obtains a new owner start. |
 | `requirement` | A requirement is added, removed, or semantically changed. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `acceptance` | An acceptance example or acceptance criterion is added, removed, or semantically changed. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
 | `non-goal` | A non-goal or scope boundary changes. | `3` | Supersede approval, invalidate dependants, require owner re-approval, and roll back Delivery. |
