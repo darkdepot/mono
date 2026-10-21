@@ -33,6 +33,7 @@ const EXPECTED_SKILLS = [
   "research",
   "review",
   "ship",
+  "tech-evaluation",
 ];
 
 function read(relativePath) {
@@ -138,6 +139,14 @@ function validateReadBudgetFixtures() {
       "Discovery mandatory file set differs from the stage, its entry reference and examples");
     const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
     require(budget.bytes === total && total <= 20_480, "Discovery actual mandatory total differs or exceeds 20 KB");
+  });
+  fixture("Tech Evaluation actual mandatory inputs and byte total", () => {
+    const expected = ["skills/tech-evaluation/SKILL.md", "skills/tech-evaluation/references/run.md", "skills/tech-evaluation/references/examples.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["tech-evaluation"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Tech Evaluation mandatory file set differs from the stage, its entry reference and examples");
+    const total = expected.reduce((sum, name) => sum + Buffer.byteLength(read(name)), 0);
+    require(budget.bytes === total && total <= 20_480, "Tech Evaluation actual mandatory total differs or exceeds 20 KB");
   });
   fixture("Handoff actual mandatory inputs and byte total", () => {
     const expected = ["skills/handoff/SKILL.md", "skills/handoff/references/run.md", "skills/handoff/references/examples.md"].sort();
@@ -5897,6 +5906,17 @@ const STRING_PINS = [
   ["references/orchestration.md","`recorded-late`"],
 ];
 const REQUIRED_HEADINGS = [
+  ["skills/tech-evaluation/SKILL.md", "mono:tech-evaluation"],
+  ["skills/tech-evaluation/SKILL.md", "Как ты думаешь"],
+  ["skills/tech-evaluation/SKILL.md", "Как ты говоришь"],
+  ["skills/tech-evaluation/SKILL.md", "Кто что решает"],
+  ["skills/tech-evaluation/references/run.md", "Вход"],
+  ["skills/tech-evaluation/references/run.md", "Повторный вход"],
+  ["skills/tech-evaluation/references/examples.md", "Страница"],
+  ["skills/tech-evaluation/references/page.md", "Утверждение"],
+  ["skills/tech-evaluation/references/spec.md", "Порядок записи"],
+  ["skills/tech-evaluation/references/helpers.md", "Задание помощнику"],
+  ["skills/tech-evaluation/references/orchestrator.md", "Когда этап ведёт оркестратор"],
   ["templates/tech-spec.md", "Решения"],
   ["templates/tech-spec.md", "Прикидка для Handoff"],
   ["references/lifecycle.md", "Задачи этапов"],
