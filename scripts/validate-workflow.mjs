@@ -449,9 +449,7 @@ function validateSkills() {
 function retiredAdapterReferenceAllowed(relativePath) {
   return (
     relativePath === "CHANGELOG.md" ||
-    relativePath === "scripts/validate-workflow.mjs" ||
-    relativePath.startsWith("plans/") ||
-    relativePath.startsWith("docs/spikes/")
+    relativePath === "scripts/validate-workflow.mjs"
   );
 }
 
@@ -474,8 +472,8 @@ function validateRetiredAdapterReferenceAllowlist() {
   if (retiredAdapterReferenceAllowed("README.md")) {
     fail("Retired adapter reference allowlist must reject active documentation");
   }
-  if (!retiredAdapterReferenceAllowed("plans/migration-fixture.md")) {
-    fail("Retired adapter reference allowlist must preserve historical migration documents");
+  if (!retiredAdapterReferenceAllowed("CHANGELOG.md")) {
+    fail("Retired adapter reference allowlist must preserve historical changelog entries");
   }
 
   const files = execFileSync("git", ["ls-files", "-co", "--exclude-standard"], {
@@ -5222,9 +5220,7 @@ function checkModelPolicy(base) {
   }
   for (const file of [...modelActiveFiles(base), "AGENTS.md"]) {
     const text = body(file);
-    const experimentalBenchData = file === "scripts/review-bench-routes.mjs" &&
-      text.split("\n")[0] === "// mono:experimental-bench-route-data";
-    if (file !== MODEL_POLICY_PATH && !experimentalBenchData) {
+    if (file !== MODEL_POLICY_PATH) {
       for (const id of executableModelIds(text)) errors.push(`${file}: executable model id outside policy: ${id}`);
     }
     for (const ref of modelRoleReferences(text)) {
@@ -5473,10 +5469,6 @@ function validateModelPolicyFixtures() {
     }
     for (const name of ["README.md", "references/execution-quality.md", "templates/orchestrator-brief.md", "scripts/verify.mjs"]) {
       negative(`active detector ${name}`, () => change(name, (text) => text + `\n${fabricated("claude", "stale")}\n`), `${name}: executable model id outside policy`);
-    }
-    negative("bench route data requires its header marker", () => change("scripts/review-bench-routes.mjs", (text) => text.replace("// mono:experimental-bench-route-data\n", "")), "scripts/review-bench-routes.mjs: executable model id outside policy");
-    for (const name of ["scripts/review-bench.mjs", "README.md", "references/execution-quality.md", "templates/orchestrator-brief.md"]) {
-      negative(`bench route marker cannot exempt another consumer ${name}`, () => change(name, (text) => `// mono:experimental-bench-route-data\n${text}\n${fabricated("gpt", "bench")}\n`), `${name}: executable model id outside policy`);
     }
     change("README.md", (text) => text + `\n${[...MODEL_ENUM_ALLOWLIST].join(" ")}\n`);
     check(); restore(); check();
@@ -6243,8 +6235,6 @@ const MACHINE_TOKENS = new Set([
   // MONO-93: command names, request/registry/config dictionary keys and values.
   "wait-ack", "handshake", "profile", "short", "full", "pinsVersion",
   "procStart", "last_wait", "consumedAt", "ackWaitSec", "stallSec",
-  "// mono:experimental-bench-route-data",
-  "scripts/review-bench-routes.mjs",
   "<!-- review-pilot:start -->",
   "<!-- review-pilot:matrix -->",
   "<!-- review-pilot:checkpoint -->",
