@@ -34,6 +34,28 @@ test('route preserves the recorded legacy path, with or without next', () => fix
   assert.deepEqual(check('route', 'pass').requiredRecords, []);
 }));
 
+test('route preserves the no-PRD legacy path without new-format records', () => fixture(({ change, check }) => {
+  change(p => { p.comments.pop(); });
+  assert.deepEqual(check('route', 'pass').requiredRecords, ['tech']);
+  change(p => { p.comments = []; });
+  const route = check('route', 'pass');
+  assert.deepEqual(route.requiredRecords, []);
+  assert.equal(route.next, 'handoff');
+  assert.equal(route.records.prd, null);
+}));
+
+test('no-PRD legacy path rejects dormant design at its writer', () => fixture(({ change, check }) => {
+  change(p => { p.comments = [{ id:'design', createdAt:'2026-10-21T04:00:00.000Z', updatedAt:'2026-10-21T04:00:00.000Z', body:'```text\nmono-design: approved project=broken\n```' }]; });
+  for (const command of ['route', 'tech', 'design'])
+    assert.equal(check(command, 'bad-record').stage, 'mono:design');
+}));
+
+test('no-PRD legacy path rejects a dormant tech design field', () => fixture(({ change, check }) => {
+  change(p => { p.comments.pop(); p.comments[0].body = p.comments[0].body.replace('by=owner', 'by=owner design=none'); });
+  for (const command of ['route', 'tech', 'design'])
+    assert.equal(check(command, 'bad-record').stage, 'mono:tech-evaluation');
+}));
+
 test('tech validates an unknown PRD route before returning no-record', () => fixture(({ change, check }) => {
   change(p => { p.comments.shift(); p.comments[0].body = p.comments[0].body.replace('next=tech-evaluation', 'next=unknown'); });
   check('tech', 'bad-record');

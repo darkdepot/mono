@@ -107,11 +107,13 @@ record; after it, fix forward. The PRD contract and its fingerprint stay unchang
 
 ### Record chain
 
-Whenever a PRD approval exists, Handoff entry, work-start recording and
-`mono:check` first save raw Project and complete comment responses with actual
-request cursors and run:
+Handoff entry, work-start recording and Project-first `mono:check` modes
+`discovery`, `tech`, `handoff` and `delivery` always first save raw Project and
+complete comment responses with actual request cursors and run:
 `node <pack-root>/scripts/idea-gate.mjs route --mode fresh --dump <dir> --config <path>`.
 Require exit 0, «Готово», JSON `pass` before deciding which stage checks to skip.
+This also applies without a PRD approval: old-path exemptions apply only after
+`pass`, and dormant Design records still stop at their writer.
 `requiredRecords` names the records to verify; route validates fields and closed
 dictionaries, not freshness or stage completion. `bad-record` stops at its named
 writer stage; it is never absence. `tech` also performs this validation before
