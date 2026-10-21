@@ -85,41 +85,41 @@ every bounded contract and its direct lifecycle consumers.
 
 | Contract source | Rule ID | Named consumers |
 | --- | --- | --- |
-| `references/contracts/tech-spec.md#TS-001` | `TS-001` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-002` | `TS-002` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-003` | `TS-003` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-004` | `TS-004` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-005` | `TS-005` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-006` | `TS-006` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-007` | `TS-007` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-008` | `TS-008` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-009` | `TS-009` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-010` | `TS-010` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-011` | `TS-011` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-012` | `TS-012` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-013` | `TS-013` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-014` | `TS-014` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-015` | `TS-015` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-016` | `TS-016` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-017` | `TS-017` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-018` | `TS-018` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-019` | `TS-019` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-020` | `TS-020` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-021` | `TS-021` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-022` | `TS-022` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-023` | `TS-023` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-024` | `TS-024` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-025` | `TS-025` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-026` | `TS-026` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-027` | `TS-027` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-028` | `TS-028` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-029` | `TS-029` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-030` | `TS-030` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-031` | `TS-031` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-032` | `TS-032` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-033` | `TS-033` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-034` | `TS-034` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
-| `references/contracts/tech-spec.md#TS-035` | `TS-035` | `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-001` | `TS-001` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-002` | `TS-002` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-003` | `TS-003` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-004` | `TS-004` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-005` | `TS-005` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-006` | `TS-006` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-007` | `TS-007` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-008` | `TS-008` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-009` | `TS-009` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-010` | `TS-010` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-011` | `TS-011` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-012` | `TS-012` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-013` | `TS-013` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-014` | `TS-014` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-015` | `TS-015` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-016` | `TS-016` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-017` | `TS-017` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-018` | `TS-018` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-019` | `TS-019` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-020` | `TS-020` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-021` | `TS-021` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-022` | `TS-022` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-023` | `TS-023` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-024` | `TS-024` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-025` | `TS-025` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-026` | `TS-026` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-027` | `TS-027` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-028` | `TS-028` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-029` | `TS-029` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-030` | `TS-030` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-031` | `TS-031` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-032` | `TS-032` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-033` | `TS-033` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-034` | `TS-034` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
+| `references/contracts/tech-spec.md#TS-035` | `TS-035` | `mono:tech-evaluation`, `mono:handoff`, `mono:ship`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 
 ## Issue parity
 

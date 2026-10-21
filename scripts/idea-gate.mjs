@@ -120,7 +120,7 @@ export function checkResearchSnapshot(snapshot, config = {}, ideaVerdict) {
 
 // Fences are opaque, including their whitespace. Only top-level ordinary lines
 // can declare sections; the same scanner extracts the comment's snapshot fence.
-function blocks(markdown) {
+function blocks(markdown, allowUnclosed = false) {
   if (typeof markdown !== 'string') fail('read-failed');
   const lines = markdown.split('\n'), result = [];
   for (let i = 0; i < lines.length; i++) {
@@ -134,7 +134,7 @@ function blocks(markdown) {
       if (close && close[1][0] === fence[0] && close[1].length >= fence.length) break;
       content.push(lines[i]);
     }
-    if (i === lines.length) fail('unsupported-format');
+    if (i === lines.length && !allowUnclosed) fail('unsupported-format');
     result.push({ text: lines.slice(start, i + 1).join('\n'), fenced: true, info: open[2].trim(), content: content.join('\n') });
   }
   return result;
@@ -482,6 +482,83 @@ function verifyDump(options, config) {
     headings, since: config.ideaGate?.since ?? IDEA_GATE_DEFAULT_SINCE });
 }
 
+function latestApproval(comments, marker, required, optional = []) {
+  const prefix = marker.slice(0, marker.indexOf(':') + 1);
+  const candidates = comments.map(comment => {
+    const fenced = blocks(comment.body, true);
+    const records = fenced.flatMap((block, index) => block.info === 'mono-tech-page' ? []
+      : (block.fenced ? block.content : block.text).split(/\r?\n/).map(line => line.trim())
+        .filter(line => line.startsWith(prefix)).map(line => ({ line, index })));
+    return { comment, records };
+  }).filter(candidate => candidate.records.length)
+    .sort((a, b) => date(b.comment.createdAt) - date(a.comment.createdAt));
+  if (!candidates.length) return null;
+  if (candidates.length > 1 && date(candidates[0].comment.createdAt) === date(candidates[1].comment.createdAt)) fail('bad-record');
+  const { comment, records } = candidates[0];
+  if (records.length !== 1 || !records[0].line.startsWith(marker + ' ')) fail('bad-record');
+  const fenced = blocks(comment.body), record = fenced[records[0].index], fields = {};
+  if (record.info !== 'text') fail('bad-record');
+  for (const token of records[0].line.slice(marker.length + 1).split(' ')) {
+    const match = token.match(/^([^=]+)=(.+)$/);
+    if (!match || Object.hasOwn(fields, match[1]) || ![...required, ...optional].includes(match[1])) fail('bad-record');
+    fields[match[1]] = match[2];
+  }
+  if (required.some(key => !Object.hasOwn(fields, key)) || !['owner', 'orchestrator'].includes(fields.by)) fail('bad-record');
+  return { comment, fields, fenced, record };
+}
+
+function checkTechDump(root, config) {
+  let projectId = null;
+  try {
+    const raw = readJson(path.join(root, 'project.json'));
+    const { project, records } = readDump(root, raw, config);
+    projectId = project.id;
+    const tech = latestApproval(records.comments, 'mono-tech: approved',
+      ['project', 'prd', 'prd-updatedAt', 'spec', 'spec-sha256', 'page-sha256', 'by']);
+    if (!tech) return { ok: false, code: 'no-record', projectId };
+    const { fields: t, fenced, record } = tech;
+    const pages = fenced.filter(block => block.info === 'mono-tech-page');
+    if (t.project !== projectId || !uuid(t.prd) || !uuid(t.spec) || !Number.isFinite(date(t['prd-updatedAt'])) ||
+        !/^[a-f0-9]{64}$/.test(t['spec-sha256']) || !/^[a-f0-9]{64}$/.test(t['page-sha256']) ||
+        pages.length !== 1 || !pages[0].content.trim() || fenced.indexOf(pages[0]) < fenced.indexOf(record) ||
+        sha256(pages[0].content + '\n') !== t['page-sha256']) fail('bad-record');
+    const approval = latestApproval(records.comments, 'mono-prd: approved', ['project', 'document', 'updatedAt', 'by'], ['next']);
+    if (!approval) fail('bad-record');
+    const { fields: p } = approval;
+    if (p.project !== projectId || !uuid(p.document) || !Number.isFinite(date(p.updatedAt)) ||
+        (p.next !== undefined && !['tech-evaluation', 'handoff'].includes(p.next))) fail('bad-record');
+    const prd = readJson(path.join(root, 'prd.json'));
+    const spec = readJson(path.join(root, 'tech-spec.json'));
+    for (const doc of [prd, spec]) {
+      if (!object(doc) || !uuid(doc.id) || typeof doc.content !== 'string' ||
+          (doc.project?.id ?? doc.projectId) !== projectId) fail('bad-record');
+    }
+    if (!Number.isFinite(date(prd.updatedAt))) fail('bad-record');
+    const code = t.prd !== p.document || prd.id !== p.document || t['prd-updatedAt'] !== p.updatedAt || prd.updatedAt !== p.updatedAt
+      ? 'stale-prd' : spec.id !== t.spec || sha256(spec.content) !== t['spec-sha256'] ? 'stale-spec' : 'pass';
+    return { ok: code === 'pass', code, projectId, recordId: tech.comment.id, documentId: spec.id };
+  } catch { return { ok: false, code: 'bad-record', projectId }; }
+}
+
+function techMain(argv) {
+  let result;
+  try {
+    const options = {};
+    while (argv.length) {
+      const key = argv.shift();
+      if (!['--mode', '--dump', '--config'].includes(key) || key in options || !argv.length) fail('bad-record');
+      options[key] = argv.shift();
+    }
+    if (options['--mode'] !== 'fresh' || !options['--dump']) fail('bad-record');
+    result = checkTechDump(options['--dump'], options['--config'] ? readJson(options['--config']) : {});
+  } catch { result = { ok: false, code: 'bad-record', projectId: null }; }
+  const reasons = { 'no-record': 'нет записи mono-tech; нужен Tech Evaluation', 'stale-prd': 'PRD изменился; нужен Tech Evaluation',
+    'stale-spec': 'тело Tech Spec изменилось; нужен Tech Evaluation', 'bad-record': 'запись или ответы Linear неполны либо повреждены' };
+  console.log(result.ok ? 'Готово' : `Стоп: ${reasons[result.code]}`);
+  console.log(JSON.stringify(result));
+  process.exitCode = result.ok ? 0 : 1;
+}
+
 const VERIFY_REASONS = {
   'no-record': 'комментарий из --expect не найден; прочитайте запись и все страницы комментариев заново',
   'other-project': 'проект или запись относятся к другому проекту; проверьте UUID и ответы Linear',
@@ -676,11 +753,14 @@ function main(argv) {
        idea-gate.mjs check --mode fresh --dump DIR --config CONFIG
        idea-gate.mjs check --mode fresh|approved --snapshot DIR [--config CONFIG]
        idea-gate.mjs research --snapshot DIR [--config CONFIG]
+       idea-gate.mjs tech --mode fresh --dump DIR [--config CONFIG]
        idea-gate.mjs research-draft --draft FILE [--config CONFIG] [--project UUID]
        idea-gate.mjs fingerprint --snapshot FILE [--config CONFIG]
 Dump: project.json and comments-N.json are raw Linear responses (N=1,2,...).
 Each response needs comments-N.request.json: {} for page 1, {"cursor":"previous response cursor"} thereafter.
 Save the actual request cursor; the final response has hasNextPage=false and no cursor.
+tech also reads raw prd.json and tech-spec.json: id, content, project.id (or projectId),
+and PRD updatedAt. It hashes the exact spec content and mono-tech-page lines with final LF.
 Only the fields the script reads are needed: project uuid, createdAt, status.name, description;
 per page comments, hasNextPage, cursor; per comment id, createdAt, updatedAt and body.
 verify accepts comments without body (they cannot match --expect); check --dump needs every body.
@@ -696,6 +776,7 @@ It never gates work; exit 1 means findings to fix before writing.`);
     return;
   }
   if (argv[0] === 'research-draft') return researchDraftMain(argv.slice(1));
+  if (argv[0] === 'tech') return techMain(argv.slice(1));
   if (['record', 'verify', 'helper'].includes(argv[0])) return authoringMain(argv);
   const research = argv[0] === 'research';
   let projectId = null, result;

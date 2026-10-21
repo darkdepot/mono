@@ -5,6 +5,9 @@ delegates, monitors, decides or escalates, records, and reports. It never
 implements delivery-stage work itself. Idea is the explicit exception: the orchestrator runs that stage itself.
 Research too: no owner questions or yes; the result goes to the owner.
 Discovery answers with sources and its own PRD yes; result to owner without waiting.
+On the Tech Evaluation route the orchestrator runs that stage wholly as owner,
+approves its page by=orchestrator with a reason and no owner windows; the result
+reaches the owner at Handoff work start.
 
 ## Roles
 
@@ -24,7 +27,8 @@ Discovery answers with sources and its own PRD yes; result to owner without wait
 | `mono:idea` | orchestrator session; owner presses «Утвердить» per Idea |
 | `mono:discovery` | orchestrator session itself, per its orchestrator reference |
 | `mono:research` | orchestrator session itself after the owner's start; no owner questions or yes; result to owner |
-| `mono:handoff` | orchestrator session itself after Discovery; work starts only by the owner |
+| `mono:tech-evaluation` | orchestrator session itself on its record-selected route; approves as owner, including irreversible/deferred/contrary-to-owner lines, with a reason and no owner window |
+| `mono:handoff` | orchestrator session itself after the routed pre-delivery stages; work starts only by the owner |
 | `mono:implement`, `mono:preflight`, `mono:ship` | worker session |
 | `mono:deploy` | orchestrator session |
 
@@ -34,7 +38,7 @@ stage skills keep their ownership unchanged.
 
 ## Decision Authority
 
-The user decides. Escalate immediately and interactively with a decision
+Outside the Tech Evaluation stage exception below, the user decides. Escalate immediately and interactively with a decision
 brief (options + recommendation):
 
 - Idea direction and scope: work start after the Handoff summary, more than
@@ -54,6 +58,11 @@ under «Решил сам:» with a one-line reason:
 
 - Discovery solution choice and its own PRD yes, with sources; the owner can
   override at any time or at the Handoff summary.
+- Tech Evaluation page approval as owner (`by=orchestrator` with a reason),
+  including irreversible decisions, a deferred PRD item and a line against an
+  earlier owner decision. No owner windows inside the stage; its result goes
+  in the Handoff work-start summary. This approves a design, not execution of
+  external writes, spending or production actions.
 - Handoff reconciliation conflicts without money, user data or irreversible
   effects, with the reason in the package record.
 - All technical and implementation questions from workers.
@@ -75,13 +84,24 @@ affected stage when that happens.
 
 ## Director Discovery
 
-Run Idea → Research → Discovery → Handoff yourself; only a legacy package on the
+Run Idea → Research → Discovery → Tech Evaluation (when routed) → Handoff yourself; only a legacy package on the
 old path (`mono:check discovery`, Old path) goes from Research to Handoff repair.
 Discovery uses one second-model pass after solutions/recommendation, before choice;
 no Second Voice interview, dialogue continuation or rounds for this stage. Its
 answers carry sources or judgments, and it gives its own PRD yes. Workers and
 background launches never start the stage. The owner can overturn its result.
 A deferred Project stays out of intake until its return condition or owner return.
+Route by the latest PRD approval: `next=tech-evaluation` before Handoff;
+`next=handoff` skips Tech Evaluation. No `next=` also skips it, unless the owner
+explicitly requests it in the stage task. Any existing `mono-tech` is consumed at Handoff
+even without `next=`. Discovery does not yet emit `next=`: activation lands
+with the stage in T2. Reapproval preserves the prior route/absence.
+Tech Evaluation owns new Tech Specs after page approval; Handoff only consumes
+them and copies decisions to package-record `U` units and Issue key contracts.
+Any page-line change returns to Tech Evaluation; after work start Handoff first
+performs class 3 repair and later obtains a new owner start. Deferred PRD items
+are changed only by Discovery, using the stage-mode approval provenance and
+closed-task exception in `references/lifecycle.md`.
 
 UX checkpoint and reviewed-prototype bar below stay in force. Contested Always-ask
 items batch there or into the Handoff summary. The Second Voice dialogue/round
@@ -91,7 +111,7 @@ not a Discovery interview.
 
 Checkpoints — the only moments that touch the user:
 
-1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:» with the approval window; only the owner's «Утвердить» approves this version, separately from the work start. After verified completion send the Idea final message, then the «Начать исследование» window with the plan prepared by Research; run `mono:research` itself only after the owner's start (button or words); the Project stays in Idea until then. Research adds no owner questions or yes; return its result to the owner. Then follow the route above: run Discovery yourself with sources on answers and own PRD yes, returning its result without waiting, then Handoff.
+1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:» with the approval window; only the owner's «Утвердить» approves this version, separately from the work start. After verified completion send the Idea final message, then the «Начать исследование» window with the plan prepared by Research; run `mono:research` itself only after the owner's start (button or words); the Project stays in Idea until then. Research adds no owner questions or yes; return its result to the owner. Then follow the route above: run Discovery yourself with sources on answers and own PRD yes, returning its result without waiting, then the routed Tech Evaluation and Handoff.
 2. UX checkpoint (user-facing surface only): one brief per
    `templates/orchestrator-brief.md` with a reviewed near-production
    prototype and the few contested UX decisions.

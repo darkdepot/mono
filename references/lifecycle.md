@@ -49,16 +49,16 @@ A Project without Research routes here, except a package approved before
 `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
 
 Stage transitions in the Russian stages. Idea → Research: only the owner starts it
-(button or words), in every mode. Research → next stage and Discovery → Handoff: in an
+(button or words), in every mode. Research → next stage and Discovery → next stage: in an
 owner session (Claude Code, Codex) the final message comes first, then «Начать <этап>» /
 «Ещё обсудить»; the stage never starts the next one itself. The owner's explicit words
-(«начинаем <этап>») also start a stage; only approving a document is button-only. The orchestrator starts both by itself, without waiting. Handoff → work: in every
+(«начинаем <этап>») also start a stage; only approving a document is button-only. The orchestrator starts subsequent stages itself, without waiting. Handoff → work: in every
 mode the final message, then the summary with «Начать работу» / «Ещё обсудить»; only
 the owner starts work (the button or «начинаем»), which also accepts the shown summary;
 the orchestrator never does. Every stage keeps its
 own plan first, has no time estimates or waiting lines, and sends the final message
-separately before any window or next stage. Approval anywhere is only «Утвердить» in a
-question window; host mechanics live in `owner-dialog.md`.
+separately before any window or next stage. In an owner-led stage approval is only «Утвердить» in a
+question window; orchestrator-led Discovery and Tech Evaluation use their own recorded approval; host mechanics live in `owner-dialog.md`.
 
 ## Discovery
 
@@ -73,8 +73,8 @@ do not start it. Details and the selected Research link stay in the Discovery ta
 Close/defer is decided by the lead: owner, or orchestrator with a reason. Close
 sets Canceled; defer keeps status, records the return condition in the closed task.
 Both exit without PRD or Handoff. Do not resume deferred work before the condition
-or an owner return. Otherwise gate: `mono:check discovery`, then `mono:handoff`.
-Until Design and Tech Evaluation exist, Handoff receives their open questions and
+or an owner return. Otherwise gate: `mono:check discovery`, then the route in the PRD approval below.
+Design can precede Tech Evaluation; until Design exists, Handoff receives
 «нужны макеты» (Research `interface: true` or a new screen/window in the solution).
 A raw implementation plan never authorizes code or Delivery.
 
@@ -94,6 +94,75 @@ package: with its approval). Migration alone
 never permits implementation. `no-record` on a new project returns to `mono:idea`.
 Implement checks `approved` before start.
 
+## Tech Evaluation
+
+The intended order is Discovery → Tech Evaluation → Handoff for ordinary and
+large Projects; tiny work goes directly to Handoff. Route by records, not dates:
+`next=tech-evaluation|handoff` in `mono-prd: approved`. A PRD approval without
+`next=` is the **Tech Evaluation old path**, skipping that stage unless the
+owner explicitly requests it in the stage task. It is separate from the
+Discovery old path (no PRD approval and an approved legacy package).
+An existing `mono-tech` record is consumed even without `next=`.
+This change is dormant: Discovery does not yet write `next=` or offer Tech
+Evaluation. The stage and route activation land together in T2 (MONO-224).
+Reapproval of the same PRD preserves the previous record's `next`, including
+its absence; changing size alone never rewrites that route.
+
+Tech Evaluation owns the technical decision and new Tech Spec. Owner-led: show
+one page, then «Утвердить» on that exact version, `by=owner`. Orchestrator-led:
+the orchestrator runs the whole stage as the owner, approves `by=orchestrator`
+with a reason, including irreversible decisions, a deferred PRD item and a
+line against an earlier owner decision. No owner window or escalation inside
+that stage; the owner sees its result at the Handoff work-start summary.
+Only the owner still starts work. This is a stage decision, not permission for
+external writes, spending or production actions.
+
+### Tech approval record
+
+One Project comment: first a `text` fence with the exact first line
+`mono-tech: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> spec=<uuid Tech Spec> spec-sha256=<sha256> page-sha256=<sha256> by=owner|orchestrator`,
+then a `mono-tech-page` fence with the exact approved page, then the approval
+provenance/reason outside the fences. Hash the page's lines between fences as
+UTF-8 with final LF. Hash the Spec's exact body returned by fresh Linear read-back.
+
+Order: approve the shown page; apply any deferral through Discovery below;
+write and read back Tech Spec; write the record; read it back and verify.
+Before writing, re-read PRD: a version different from the shown page requires
+a new page, except precisely the approved deferred item. The record is effective
+while `prd-updatedAt` equals the latest PRD approval (and its fresh document)
+and `spec-sha256` equals the fresh Spec body. Spec `updatedAt` is deliberately
+ignored because a document comment changes it. Latest means comment `createdAt`,
+not edit time. Never fall back from a damaged newer approval to an older one.
+
+Save raw Linear responses unchanged to `project.json`, every `comments-N.json`
+and `comments-N.request.json` ({} first, then the actual previous cursor),
+`prd.json`, `tech-spec.json`. Document fields: `id`, `content`, `project.id`
+(or `projectId`), PRD `updatedAt`. Run
+`node <pack-root>/scripts/idea-gate.mjs tech --mode fresh --dump <dir> --config <path>`.
+Require exit 0, «Готово» and JSON code `pass`; failure codes are `no-record`,
+`stale-prd`, `stale-spec`, `bad-record`, with «Стоп: <причина>». Reading instead
+of running the command cannot authorize the step.
+
+Handoff verifies at entry and before recording the start, only if the PRD
+record has `next=tech-evaluation` or the Project has `mono-tech`. Missing/stale
+approval then returns to Tech Evaluation. On the old path with no record,
+Handoff does not run the command; `no-record` there is not a stop. Before start,
+a PRD edit that changes no page line calls Tech Evaluation in the same touch
+to renew the record with the new PRD version without showing the page again;
+any page-line change requires a new page. After start, repair and accepted
+pre-ship drift own Spec changes, not a routine approval-freshness recheck.
+
+### Deferred PRD item
+
+Approval of a page with «предлагаю отложить» is the decision; no second stop.
+Tech Evaluation calls Discovery in the same touch. Only Discovery moves that
+item into «Что не входит в MVP», records a new `mono-prd: approved` preserving
+`next` (on the owner-requested old path, `next=tech-evaluation`), and appends a
+line to its closed stage task's decision comment without reopening the task.
+Owner-led: `by=owner` and «по нажатию на странице техлида <дата>».
+Orchestrator-led: `by=orchestrator` with the reason. Then Tech Evaluation writes
+the Spec and `mono-tech` with the new PRD version. It never edits PRD itself.
+
 ## Задачи этапов
 
 Задачи реализации (execution Issues) не включают задачи с меткой `Этап`.
@@ -109,7 +178,10 @@ Implementation — инженер.
 Каждый этап первым шагом (Research сразу после проверки входа и перехода из Idea) ищет свою задачу по проекту, метке `Этап` и началу
 названия: `Research:`, `Discovery:`, `Design:` или `Tech Evaluation:`. Название
 целиком: `Research: <проект>`, `Discovery: <проект>` и так же для остальных.
-Открытую берёт, закрытую при повторном входе открывает. Исключение: отложенная,
+Открытую берёт, закрытую при повторном входе открывает. Исключение для Discovery:
+перенос отложенного пункта по утверждённой странице техлида дописывает комментарий
+решений закрытой задачи без открытия (Tech Evaluation, «Deferred PRD item» выше).
+Другое исключение: отложенная,
 у которой условие возврата не наступило и владелец её не вернул; этап говорит,
 до чего отложено, и останавливается, задачу не открывает. Нет задачи: заводит по
 [шаблону задачи этапа](../templates/stage-task.md), исполнитель — владелец.

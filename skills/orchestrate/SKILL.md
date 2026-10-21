@@ -13,7 +13,12 @@ workers, answer technical questions autonomously, and escalate only product
 decisions to the user.
 
 `mono:orchestrate` runs Idea itself as the explicit stage-work exception.
-Research too: no owner questions or yes; the result goes to the owner. It inspects, delegates,
+Research too: no owner questions or yes; the result goes to the owner.
+Discovery and routed Tech Evaluation also run here. Tech Evaluation approves
+as owner (`by=orchestrator` with reason), including irreversible, deferred and
+contrary-to-owner decisions; no owner windows, result at Handoff work start.
+Its route stays dormant until Discovery emits `next=` with the stage in T2.
+It inspects, delegates,
 monitors, decides or escalates, records, and reports. Stage ownership is
 unchanged: `mono:implement` owns Delivery Start, `mono:preflight` owns
 local readiness, `mono:ship` owns the PR lifecycle, `mono:deploy` owns
