@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 function fixture(run) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-tech-gate-'));
@@ -88,5 +89,26 @@ test('latest created approval wins even when an old comment was edited later', (
   });
   check('pass');
   change('comments-1.json', p => { p.comments[1].body = p.comments[1].body.replace('by=owner', 'by=invalid'); });
+  check('bad-record');
+}));
+
+test('page and prose mentions are not approval records', () => fixture(({ change, check }) => {
+  change('comments-1.json', p => {
+    const tech = p.comments[0];
+    const page = tech.body.split('```mono-tech-page\n')[1].split('```')[0];
+    const revised = page + 'Маркер mono-prd: approved нужен в правилах.\n';
+    const hash = createHash('sha256').update(revised).digest('hex');
+    tech.body = tech.body.replace(page, revised).replace(/page-sha256=[a-f0-9]{64}/, `page-sha256=${hash}`);
+    p.comments.unshift({ id: 'status', createdAt: '2026-10-21T04:00:00.000Z', updatedAt: '2026-10-21T04:00:00.000Z',
+      body: 'Проверена запись `mono-tech: approved`; старый путь без `mono-prd: approved`.\n```json\nнезакрытая заметка' });
+  });
+  check('pass');
+}));
+
+test('a newer malformed approval fence is not replaced by the older valid record', () => fixture(({ change, check }) => {
+  change('comments-1.json', p => {
+    p.comments.unshift({ id: 'broken', createdAt: '2026-10-21T04:00:00.000Z', updatedAt: '2026-10-21T04:00:00.000Z',
+      body: '```text\nmono-tech: approved project=broken' });
+  });
   check('bad-record');
 }));

@@ -120,7 +120,7 @@ export function checkResearchSnapshot(snapshot, config = {}, ideaVerdict) {
 
 // Fences are opaque, including their whitespace. Only top-level ordinary lines
 // can declare sections; the same scanner extracts the comment's snapshot fence.
-function blocks(markdown) {
+function blocks(markdown, allowUnclosed = false) {
   if (typeof markdown !== 'string') fail('read-failed');
   const lines = markdown.split('\n'), result = [];
   for (let i = 0; i < lines.length; i++) {
@@ -134,7 +134,7 @@ function blocks(markdown) {
       if (close && close[1][0] === fence[0] && close[1].length >= fence.length) break;
       content.push(lines[i]);
     }
-    if (i === lines.length) fail('unsupported-format');
+    if (i === lines.length && !allowUnclosed) fail('unsupported-format');
     result.push({ text: lines.slice(start, i + 1).join('\n'), fenced: true, info: open[2].trim(), content: content.join('\n') });
   }
   return result;
@@ -483,7 +483,8 @@ function verifyDump(options, config) {
 }
 
 function latestApproval(comments, marker) {
-  const candidates = comments.filter(comment => comment.body.includes(`${marker}: approved`))
+  const candidates = comments.filter(comment => blocks(comment.body, true)
+    .some(block => block.info === 'text' && block.content.startsWith(marker)))
     .sort((a, b) => date(b.createdAt) - date(a.createdAt));
   if (candidates.length > 1 && date(candidates[0].createdAt) === date(candidates[1].createdAt)) fail('bad-record');
   return candidates[0];
@@ -491,10 +492,10 @@ function latestApproval(comments, marker) {
 
 function approvalFields(comment, marker, required, optional = []) {
   const fenced = blocks(comment.body);
-  const records = fenced.filter(block => block.info === 'text' && block.content.startsWith(`${marker}: approved `));
+  const records = fenced.filter(block => block.info === 'text' && block.content.startsWith(`${marker} `));
   if (records.length !== 1 || /[\r\n]/.test(records[0].content)) fail('bad-record');
   const fields = {};
-  for (const token of records[0].content.slice(`${marker}: approved `.length).split(' ')) {
+  for (const token of records[0].content.slice(marker.length + 1).split(' ')) {
     const match = token.match(/^([^=]+)=(.+)$/);
     if (!match || Object.hasOwn(fields, match[1]) || ![...required, ...optional].includes(match[1])) fail('bad-record');
     fields[match[1]] = match[2];
@@ -509,18 +510,18 @@ function checkTechDump(root, config) {
     const raw = readJson(path.join(root, 'project.json'));
     const { project, records } = readDump(root, raw, config);
     projectId = project.id;
-    const tech = latestApproval(records.comments, 'mono-tech');
+    const tech = latestApproval(records.comments, 'mono-tech: approved');
     if (!tech) return { ok: false, code: 'no-record', projectId };
-    const { fields: t, fenced, record } = approvalFields(tech, 'mono-tech',
+    const { fields: t, fenced, record } = approvalFields(tech, 'mono-tech: approved',
       ['project', 'prd', 'prd-updatedAt', 'spec', 'spec-sha256', 'page-sha256', 'by']);
     const pages = fenced.filter(block => block.info === 'mono-tech-page');
     if (t.project !== projectId || !uuid(t.prd) || !uuid(t.spec) || !Number.isFinite(date(t['prd-updatedAt'])) ||
         !/^[a-f0-9]{64}$/.test(t['spec-sha256']) || !/^[a-f0-9]{64}$/.test(t['page-sha256']) ||
         pages.length !== 1 || !pages[0].content.trim() || fenced.indexOf(pages[0]) < fenced.indexOf(record) ||
         sha256(pages[0].content + '\n') !== t['page-sha256']) fail('bad-record');
-    const approval = latestApproval(records.comments, 'mono-prd');
+    const approval = latestApproval(records.comments, 'mono-prd: approved');
     if (!approval) fail('bad-record');
-    const { fields: p } = approvalFields(approval, 'mono-prd', ['project', 'document', 'updatedAt', 'by'], ['next']);
+    const { fields: p } = approvalFields(approval, 'mono-prd: approved', ['project', 'document', 'updatedAt', 'by'], ['next']);
     if (p.project !== projectId || !uuid(p.document) || !Number.isFinite(date(p.updatedAt)) ||
         (p.next !== undefined && !['tech-evaluation', 'handoff'].includes(p.next))) fail('bad-record');
     const prd = readJson(path.join(root, 'prd.json'));
