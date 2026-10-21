@@ -202,7 +202,8 @@ large Projects; tiny work goes directly to Handoff. Route by records, not dates:
 `next=` is the **Tech Evaluation old path**, skipping that stage unless the
 owner explicitly requests it in the stage task. It is separate from the
 Discovery old path (no PRD approval and an approved legacy package).
-An existing `mono-tech` record is consumed even without `next=`.
+On the Design old path (PRD without `design=`), an existing `mono-tech` record is
+consumed even without `next=`.
 Discovery writes `next=tech-evaluation` for ordinary/large new PRD approvals
 and `next=handoff` for tiny ones; its final offers the recorded next stage.
 Reapproval of the same PRD preserves the previous record's `next`, including

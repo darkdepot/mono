@@ -98,6 +98,21 @@ test('newer image approval invalidates tech without changing PRD or image bytes'
   check('tech','stale-design');
 }));
 
+for (const needsDesign of [true, false]) test(`new direct Handoff route excludes historical tech, design=${needsDesign}`, () => fixture(({ change, check }) => {
+  change('prd.json', d => { d.updatedAt='2026-10-22T01:00:00.000Z'; });
+  change('comments-1.json', p => {
+    p.comments[2].body=p.comments[2].body.replace('2026-10-21T01:00:00.000Z','2026-10-22T01:00:00.000Z');
+    p.comments[1].body=p.comments[1].body.replace('2026-10-21T01:00:00.000Z','2026-10-22T01:00:00.000Z').replace('next=tech-evaluation','next=handoff');
+    if (!needsDesign) p.comments[2].body=p.comments[2].body.replace('design=needed next=design','design=not-needed next=handoff');
+  });
+  check('tech','stale-prd');
+  if (needsDesign) check('design','pass');
+  const route=check('route','pass');
+  assert.deepEqual(route.requiredRecords, needsDesign ? ['design'] : []);
+  assert.equal(route.next,'handoff');
+  assert.equal(route.records.tech,null);
+}));
+
 for (const replacement of ['design=needed next=handoff','design=not-needed next=design','design=unknown next=design','next=design'])
   test(`enabled route rejects incompatible PRD fields: ${replacement}`, () => fixture(({ change, check }) => {
     change('comments-1.json', p => { p.comments[2].body=p.comments[2].body.replace('design=needed next=design',replacement); });

@@ -565,11 +565,11 @@ function checkRouteDump(root, config) {
     requiredRecords.push('design');
     if (design) next = design.fields.next;
   }
-  if (next === 'tech-evaluation' || tech) requiredRecords.push('tech');
+  if (next === 'tech-evaluation' || (prd?.fields.design === undefined && tech)) requiredRecords.push('tech');
   if (tech && next !== 'design') next = 'handoff';
   return { ok: true, code: 'pass', projectId, requiredRecords, next,
     records: { prd: prd?.comment.id ?? null, design: prd?.fields.next === 'design' ? design?.comment.id ?? null : null,
-      tech: tech?.comment.id ?? null } };
+      tech: requiredRecords.includes('tech') ? tech?.comment.id ?? null : null } };
 }
 
 function checkTechDump(root, config) {
