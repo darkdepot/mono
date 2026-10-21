@@ -40,6 +40,18 @@ test('tech validates an unknown PRD route before returning no-record', () => fix
   assert.equal(check('route', 'bad-record').stage, 'mono:discovery');
 }));
 
+test('damaged tech remains blocked at its writer and never hides an upstream fault', () => fixture(({ change, check }) => {
+  change(p => { p.comments[0].body = p.comments[0].body.replace('Строим: одно', 'Строим: другое'); });
+  for (const command of ['route', 'tech'])
+    assert.equal(check(command, 'bad-record').stage, 'mono:tech-evaluation');
+  change(p => { p.comments[1].body = p.comments[1].body.replace('next=tech-evaluation', 'next=handoff'); });
+  for (const command of ['route', 'tech'])
+    assert.equal(check(command, 'bad-record').stage, 'mono:tech-evaluation');
+  change(p => { p.comments[1].body = p.comments[1].body.replace('next=handoff', 'next=unknown'); });
+  for (const command of ['route', 'tech'])
+    assert.equal(check(command, 'bad-record').stage, 'mono:discovery');
+}));
+
 for (const [name, mutate, stage] of [
   ['PRD design field', p => { p.comments[1].body = p.comments[1].body.replace('by=owner', 'by=owner design=not-needed'); }, 'mono:discovery'],
   ['PRD next design', p => { p.comments[1].body = p.comments[1].body.replace('next=tech-evaluation', 'next=design'); }, 'mono:discovery'],

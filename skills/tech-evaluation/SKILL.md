@@ -27,7 +27,7 @@ description: >-
 - `references/design.md`: после включения MONO-228 и годной записи дизайна, до чтения продукта и показа;
 - `references/helpers.md`: перед проверкой помощником и второй моделью;
 - `references/page.md`: до черновика страницы и её утверждения;
-- `references/spec.md`: до черновика Tech Spec и записи результата;
+- `references/spec.md`: до черновика Tech Spec, записи результата и при своей `bad-record` на входе;
 - `<корень>/references/contracts/tech-spec.md`: до черновика Tech Spec;
 - `<корень>/templates/tech-spec.md`: до черновика Tech Spec;
 - `references/orchestrator.md`: этап ведёт оркестратор.
