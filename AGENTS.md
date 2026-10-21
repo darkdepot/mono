@@ -16,6 +16,7 @@ Stages in `scripts/russian-stages.mjs` and `references/owner-dialog.md`: Russian
 
 - `mono:tech-evaluation` owns new Tech Spec after page approval; Handoff consumes it and repairs legacy Spec; Ship owns accepted pre-PR drift. Owner-led approval: `by=owner`. Orchestrator-led: `by=orchestrator` with reason, including irreversible/deferred/contrary-to-owner lines; no owner windows, result shown at Handoff work start.
 
+- `mono:design` owns mockups and consented design memory; it is dormant until MONO-228 activates entry and all record writers together. No live Design entry or new-format records in MONO-227; existing orchestrator rules stay.
 - `mono:tech-evaluation` chooses and checks the technical solution after Discovery; one approved page, then a short Spec; Handoff owns slicing.
 - A description routes; a skill owns one artifact or phase; a wrapper such as `mono:deliver` only sequences owners and keeps their rules with them.
 - `SKILL.md` carries what the model cannot infer; longer material sits in `references/` or `templates/` behind a Read when condition.

@@ -23,6 +23,7 @@ const EXPECTED_SKILLS = [
   "check",
   "deploy",
   "deliver",
+  "design",
   "discovery",
   "handoff",
   "idea",
@@ -139,6 +140,14 @@ function validateReadBudgetFixtures() {
       "Discovery mandatory file set differs from the stage, its entry reference and examples");
     const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
     require(budget.bytes === total && total <= 20_480, "Discovery actual mandatory total differs or exceeds 20 KB");
+  });
+  fixture("Design actual mandatory inputs and byte total", () => {
+    const expected = ["skills/design/SKILL.md", "skills/design/references/run.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["design"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Design mandatory inputs must exclude conditional drawing, memory and approval references");
+    const total = expected.reduce((sum, name) => sum + Buffer.byteLength(read(name)), 0);
+    require(budget.bytes === total && total <= 20_480, "Design actual mandatory total differs or exceeds 20 KB");
   });
   fixture("Tech Evaluation actual mandatory inputs and byte total", () => {
     const expected = ["skills/tech-evaluation/SKILL.md", "skills/tech-evaluation/references/run.md", "skills/tech-evaluation/references/examples.md"].sort();
@@ -5904,8 +5913,18 @@ const STRING_PINS = [
   ["references/review-rubric.md","`blocked`"],
   ["references/orchestration.md","EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle>"],
   ["references/orchestration.md","`recorded-late`"],
+  ["skills/design/references/approval.md", "mono-design: approved"],
+  ["references/lifecycle.md", "design="],
 ];
 const REQUIRED_HEADINGS = [
+  ["skills/design/SKILL.md", "mono:design"],
+  ["skills/design/SKILL.md", "Пока выключено"],
+  ["skills/design/SKILL.md", "Как ты думаешь"],
+  ["skills/design/SKILL.md", "Кто что решает"],
+  ["skills/design/references/run.md", "Задача этапа"],
+  ["skills/design/references/memory.md", "Первый запуск"],
+  ["skills/design/references/drawing.md", "Проверка по картинке"],
+  ["skills/design/references/approval.md", "Повторный вход"],
   ["skills/tech-evaluation/SKILL.md", "mono:tech-evaluation"],
   ["skills/tech-evaluation/SKILL.md", "Как ты думаешь"],
   ["skills/tech-evaluation/SKILL.md", "Как ты говоришь"],
@@ -6141,6 +6160,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "design", "mono-design: approved", "design=",
   "tech",
   "mono-tech: approved",
   "next=",
@@ -6819,7 +6839,7 @@ function validateCheckModeDeclaration() {
     if (!entry) break;
     modes.push(entry[1]);
   }
-  for (const mode of ["repair", "tech"]) {
+  for (const mode of ["repair", "tech", "design"]) {
     requireMachineToken(mode);
     if (modes.filter(value => value === mode).length !== 1) fail(`mono:check Modes: missing or duplicate ${mode} declaration`);
   }
