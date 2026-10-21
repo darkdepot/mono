@@ -1,54 +1,33 @@
 # AGENTS.md
 
-## Mission
-
-Define reusable Mono skills from idea to shipped PR; Linear holds Project/PRD/Tech Spec/Issue truth.
+This repo is the Mono pack: skills that take a product idea to a shipped PR, with Linear as the record. Two readers load this file: agents editing the pack, and the English workflow skills at run time (they read it first; the Russian stages do not). Every byte here counts against the worker read budget (`node scripts/read-budget.mjs`), so add only what an agent cannot find in the skill it runs.
 
 ## Language
 
-Write skills in English; stages rebuilt under «Mono как продукт» and `references/owner-dialog.md` in Russian. Machine tokens (commands/paths/keys/codes) stay English; Linear templates/examples stay Russian.
+Stages listed in `scripts/russian-stages.mjs` (idea, research, discovery, handoff) and `references/owner-dialog.md` are written in Russian; other skills in English. Linear artifacts, templates and examples use the project language (Russian here) so the owner can read them. Commands, paths, keys and codes stay English everywhere.
 
 ## Source Of Truth
 
-- Project entity: shaped outcome, lifecycle and relationships in metadata/resources/comments/handoff; body: only what/why/outcome/in/out.
-- PRD: WHAT (problem/operator/workflow/scenarios/requirements/acceptance). Tech Spec: HOW (architecture/contracts/failures/validation). Issue: one-PR contract with snapshot.
-- GitHub: branch/PR/review/CI/deploy/merge history only.
-- `mono:idea`: raw idea to an approved Project description; owner yes only.
-- `mono:research`: facts before a solution; «Исследование» document; no owner questions.
-- `mono:discovery`: up to three solutions, a choice, PRD with yes on the shown version.
-- `mono:handoff`: persists Project-first package/slicing before implementation; owns reviewed class 1–3 repair.
-- `mono:issue`: issue-only create-then-approve intake/body renewal; never handoff repair.
-- `mono:implement`: Delivery Start/code from approved Issues.
-- `mono:preflight`: local readiness/targeted verification/commit/certificate; mandatory `autoreview` (clean or approved declines), model from [role:autoreview](references/model-policy.md#roles), effort by risk.
-- `mono:ship`: accepted pre-ship drift, formal review/check, PR/docs-before-green/feedback/certificate.
-- `mono:deploy`: deploy delegation/evidence/post-ship/closeout/durable learnings.
-- `mono:orchestrate`: product control plane, dispatch/monitor/decisions and sole orchestrated Linear writer; runs Idea for owner yes, Research and Discovery itself; other stages keep their owners.
+- Linear holds the Project, PRD (what and why), Tech Spec (how), Issue (one-PR contract) and every owner approval as a comment. Obligations live in `references/contracts/`, shape in `templates/`.
+- GitHub holds branch, PR, review, CI and merge history.
+- Each skill's description and the README Skills table route between stages. The orchestrator runs Idea, Research, Discovery and Handoff itself and is the sole Linear writer; workers run implement, preflight and ship and queue Linear writes in reports. Project-first work starts on the owner's word after Handoff; issue-only work starts with owner approval through `mono:issue`.
 
 ## Skill Design Rules
 
-Use descriptions for routing, atomics for single artifacts and wrappers for orchestration. Read shared files progressively; never inline long templates. Keep phase owners separate: mono:deliver only sequences implement/preflight/ship; their rules stay with their owners. Orchestrator dispatches, confirms and monitors. Idea is its exception: answer questions with reasons, present the description and «Ответил сам:» for owner yes, separately from work start. Research too: no owner questions or yes; the result goes to the owner. Discovery: answers with sources and its own PRD yes; the result goes to the owner. Handoff follows; only the owner starts work. Implement/preflight/ship stay in workers.
-
-Review only reports quality/risk; check only reports readiness. Repair: handoff mutates Project-first, `mono:review artifact` judges classification, `mono:check repair` reports readiness, issue renews issue-only, ship owns accepted pre-ship drift. Apply accepted fixes only through these owners or explicit atomics.
-
-Pin autoreview model by policy role and effort by risk, never helper defaults. Project Updates inform deploy closeout; never gate any stage. Record user acceptance in Linear comments.
-
-Project repos keep only `.agents/mono-workflow.config.json`; never install/generate/vendor `.agents/skills/mono-*`, `.claude/skills/mono-*`, workflow lockfiles, local checkers or updater CI there.
-
-Install/update through the GitHub marketplace plugin; one repository layout and shared files. Compatibility, update condition and proof: [Installation](references/install.md).
+- A description routes; a skill owns one artifact or phase; a wrapper such as `mono:deliver` only sequences owners and keeps their rules with them.
+- `SKILL.md` carries what the model cannot infer; longer material sits in `references/` or `templates/` behind a Read when condition.
+- Review reports quality and risk, check reports readiness, and neither edits artifacts. Accepted fixes go through their owner: `mono:handoff` for package repair (classes in `references/repair-machine.md`), `mono:issue` for issue-only bodies, `mono:ship` for pre-ship drift.
+- Project updates report deploy closeout; delivery proceeds and keeps its verdict when an update is missing or fails.
+- Product repos carry only `.agents/mono-workflow.config.json`; the pack installs as a GitHub marketplace plugin ([Installation](references/install.md)).
 
 ## Change Discipline
 
-Open a Linear Issue before edits. Rules go through the orchestrator; update README in same PR.
-Task notes: `changelog.d/<ISSUE-KEY>.md`; releases: [Landing](references/landing.md#changelog-assembly).
+Open a Linear Issue before the first edit, so every change passes review and verification. Changes to skills, references and templates go through the orchestrator session, with affected README sections updated in the same PR. Each task adds `changelog.d/<ISSUE-KEY>.md`; releases assemble them per [Landing](references/landing.md#changelog-assembly).
 
 ## Validation
 
-Before finishing run `node scripts/verify.mjs`: `git diff --check` and all artifact/workflow checks.
+Run `node scripts/verify.mjs` before finishing; focused checks are in the README Validation section.
 
 ## Fixture Coupling
 
-`scripts/validate-workflow.mjs` checks files/sections/fields/IDs/order and script behavior on scratch copies; prose is freely rewordable. Allow only listed `MACHINE_TOKENS` pins: markers, labels, dictionary keys/values, placeholders, commands and paths. Reject unlisted pins and sentence regexes.
-
-Keep four `references/contracts/` files, SHA-256 fingerprints and consumer checks as bounded core; changing contract/fingerprint requires explicit contract change. Agent-only rules stay in text/review with skeleton checks; never pin or encode them twice.
-
-Classify removed pins: drop editorial wording, list machine tokens, use named fixtures for script behavior and skeletons for agent rules. Record classification/replacement in PR; never weaken invariants to pass.
+`scripts/validate-workflow.mjs` checks structure (files, headings, fields, IDs, order) and script behavior on scratch copies, so prose stays free to reword. A check that needs a literal adds it to `MACHINE_TOKENS` (markers, labels, dictionary values, placeholders, commands, paths); sentences stay unpinned. Script behavior is guarded by named fixtures, agent-only rules by skeleton checks and review, each encoded once. The four `references/contracts/` files keep SHA-256 fingerprints and consumer checks; change them only as an explicit contract change. When a pin goes away, record in the PR how it was classified and what replaces it, and keep the invariant it guarded.
