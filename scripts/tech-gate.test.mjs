@@ -169,7 +169,7 @@ for (const kind of ['mono-tech: approved', 'mono-prd: approved']) {
       mutate(page.comments.find(comment => comment.body.includes(kind)), page);
       page.comments.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     });
-    const result = check(kind === 'mono-prd: approved' && name === 'newer valid plus older invalid' ? 'stale-prd' : expected);
+    const result = check(expected);
     if (kind === 'mono-tech: approved' && name === 'newer valid plus older invalid') assert.equal(result.recordId, 'new-valid');
     if (kind === 'mono-tech: approved' && name === 'comment edited later') assert.equal(result.recordId, 'tech-record');
   }));

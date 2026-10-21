@@ -183,8 +183,9 @@ At every PRD reapproval,
 including the old path, Discovery decides design again, then size and `next`;
 not-needed with a previously absent `next` keeps its absence. A changed route
 invalidates downstream approvals; rerun with showing under the current mode.
-A new PRD approval requires lower records created after it even if its document
-version is unchanged. Same route: each stage itself decides whether its approved artifact changes.
+A new-format PRD approval requires lower records created after it even if its
+document version is unchanged; historical approvals without `design=` retain
+their previous freshness semantics until reapproval. Same route: each stage itself decides whether its approved artifact changes.
 Designer sees unchanged screens: new record, same images, new PRD version,
 no showing. Tech lead sees unchanged page: renewed record without showing.
 

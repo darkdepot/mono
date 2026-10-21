@@ -594,7 +594,7 @@ function checkTechDump(root, config) {
     if (!Number.isFinite(date(prd.updatedAt))) fail('bad-record');
     let code = 'pass';
     if (t.prd !== p.document || prd.id !== p.document || t['prd-updatedAt'] !== p.updatedAt || prd.updatedAt !== p.updatedAt ||
-        date(tech.comment.createdAt) <= date(approval.comment.createdAt))
+        (p.design !== undefined && date(tech.comment.createdAt) <= date(approval.comment.createdAt)))
       code = 'stale-prd';
     else if ((t.design ?? 'none') !== (design?.comment.id ?? 'none')) code = 'stale-design';
     else if (spec.id !== t.spec || sha256(spec.content) !== t['spec-sha256']) code = 'stale-spec';
