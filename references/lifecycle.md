@@ -103,10 +103,12 @@ large Projects; tiny work goes directly to Handoff. Route by records, not dates:
 owner explicitly requests it in the stage task. It is separate from the
 Discovery old path (no PRD approval and an approved legacy package).
 An existing `mono-tech` record is consumed even without `next=`.
-This change is dormant: Discovery does not yet write `next=` or offer Tech
-Evaluation. The stage and route activation land together in T2 (MONO-224).
+Discovery writes `next=tech-evaluation` for ordinary/large new PRD approvals
+and `next=handoff` for tiny ones; its final offers the recorded next stage.
 Reapproval of the same PRD preserves the previous record's `next`, including
-its absence; changing size alone never rewrites that route.
+its absence; changing size alone never rewrites that route. The sole exception
+is the deferred-item callback below: the owner-requested old path then records
+`next=tech-evaluation` (U5).
 
 Tech Evaluation owns the technical decision and new Tech Spec. Owner-led: show
 one page, then «Утвердить» on that exact version, `by=owner`. Orchestrator-led:
@@ -128,7 +130,9 @@ UTF-8 with final LF. Hash the Spec's exact body returned by fresh Linear read-ba
 Order: approve the shown page; apply any deferral through Discovery below;
 write and read back Tech Spec; write the record; read it back and verify.
 Before writing, re-read PRD: a version different from the shown page requires
-a new page, except precisely the approved deferred item. The record is effective
+a new page. Exceptions are precisely the approved deferred item and the Handoff
+reentry with an unchanged page described below; the first approval never reuses
+a page across PRD versions. The record is effective
 while `prd-updatedAt` equals the latest PRD approval (and its fresh document)
 and `spec-sha256` equals the fresh Spec body. Spec `updatedAt` is deliberately
 ignored because a document comment changes it. Latest means comment `createdAt`,
@@ -147,9 +151,11 @@ Handoff verifies at entry and before recording the start, only if the PRD
 record has `next=tech-evaluation` or the Project has `mono-tech`. Missing/stale
 approval then returns to Tech Evaluation. On the old path with no record,
 Handoff does not run the command; `no-record` there is not a stop. Before start,
-a PRD edit that changes no page line calls Tech Evaluation in the same touch
-to renew the record with the new PRD version without showing the page again;
-any page-line change requires a new page. After start, repair and accepted
+a PRD edit calls Tech Evaluation in the same touch. Only that stage decides
+whether a page line changes: unchanged renews the record with the new PRD
+version without showing the page again; changed requires a new page. This
+exception is only for Handoff reentry before start, never a PRD version change
+during the first approval. After start, repair and accepted
 pre-ship drift own Spec changes, not a routine approval-freshness recheck.
 
 ### Deferred PRD item

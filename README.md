@@ -3,11 +3,18 @@
 Текущий выпуск: **0.35.1**. См. [заметки выпуска](CHANGELOG.md#0351---2026-10-21).
 Private vulnerability reports: [SECURITY.md](SECURITY.md).
 
-## Правила перед Tech Evaluation
+## Tech Evaluation между Discovery и Handoff
 
-Подготовлен спящий маршрут Discovery → Tech Evaluation → Handoff для обычного
-и крупного проекта, мелочь сразу в Handoff. Сам этап и включение маршрута идут
-следом: пока Discovery не пишет `next=`, проекты продолжают прежний путь.
+Новый этап [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) выбирает одно
+техническое решение по утверждённым идее, исследованию и PRD. Сначала что можно
+не строить и что уже есть, затем минимум, который не придётся переделывать.
+Помощник проверяет настоящие случаи путём продукта, только на чтение; другая
+семья модели проверяет черновики страницы и Tech Spec. Владелец получает одну
+страницу простыми словами и кнопку «Утвердить», без технических вопросов.
+
+Discovery → Tech Evaluation → Handoff для обычного и крупного проекта, мелочь
+сразу в Handoff. Новое утверждение PRD пишет `next=` по размеру, финал предлагает
+соответствующее окно. Прежние утверждения сохраняют свой маршрут.
 Запись PRD без поля это старый путь Tech Evaluation; повторное утверждение
 сохраняет прежний маршрут. Проверка `mono:check tech` и команда
 `idea-gate.mjs tech --mode fresh --dump` проверяют `mono-tech: approved`, версию
@@ -18,8 +25,15 @@ PRD, точный текст страницы и тело Tech Spec, а не в�
 содержимого нет, отказы, выпуск и откат только по делу. Меняется строка страницы:
 возврат к техлиду, после старта через ремонт класса 3 с новым стартом владельца.
 Ведёт владелец: «Утвердить». Ведёт оркестратор: утверждает сам с причиной,
-включая необратимое и отложенный пункт PRD; владелец видит итог при старте
-работы в Handoff. Отложенный пункт переносит Discovery без второй остановки.
+включая необратимое, отложенный пункт PRD и строку против прежнего решения
+владельца. Handoff начинается сам после этапа; при старте работы его итог
+показывает «Техлид решил за тебя:» с этими решениями и причинами. Отдельного
+брифа по уже утверждённой оркестратором странице нет. Отложенный пункт переносит
+Discovery без второй остановки.
+После правки PRD из Handoff этап сам решает, меняется ли страница: прежняя
+страница даёт новую запись без показа; меняется строка, новая страница. Во время
+первого утверждения другая версия PRD всегда требует нового показа. Второе
+исключение: правка ровно отложенного пункта через Discovery.
 Формат и порядок записи: [жизненный цикл](references/lifecycle.md#tech-evaluation).
 Явная правка контрактов Tech Spec и проекта по решению владельца 21.10.2026;
 их SHA-256 обновлены, доставка снимка задач не меняется. Выпуска здесь нет.
@@ -280,6 +294,11 @@ Handoff is a listed Russian stage too: `node scripts/read-budget.mjs --skill han
 counts exactly `SKILL.md`, `references/run.md` and `references/examples.md`; record,
 review, scout, orchestrator and repair rules are conditional. Its activation cases
 live in [evals/handoff](evals/handoff/README.md).
+Tech Evaluation uses the same three mandatory files and 20,480-byte ceiling;
+`node scripts/read-budget.mjs --skill tech-evaluation --mandatory` measures it.
+Activation cases: [evals/tech-evaluation](evals/tech-evaluation/README.md).
+Claude validation, skill-doctor and evals run on the preflight-ready head before
+ship; the release and live owner run belong to MONO-225.
 The Russian `<корень>/` prefix belongs to listed stages; English stages use
 `<pack-root>/` in commands.
 [Activation evals](evals/idea/README.md)
@@ -1137,6 +1156,7 @@ this pack uses `/mono:ship` and `/mono:review`.
 | [mono:idea](skills/idea/SKILL.md) | Idea intake and recorded owner approval; Research starts only on the owner's start |
 | [mono:research](skills/research/SKILL.md) | Facts before a solution, Research document and next-step advice without owner questions |
 | [mono:discovery](skills/discovery/SKILL.md) | Solution found with the owner in conversation, explicit choice and version-approved PRD; owner or orchestrator mode |
+| [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) | One checked technical solution, one version-approved plain-language page, then a short Tech Spec; owner or orchestrator mode |
 | [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
 | [mono:handoff](skills/handoff/SKILL.md) | Team lead: reconciles approved inputs, slices (one Issue by default), one reviewed package record, Ready; work starts only by the owner; repair by the record |
 | [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |

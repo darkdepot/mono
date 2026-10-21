@@ -17,7 +17,7 @@ Research too: no owner questions or yes; the result goes to the owner.
 Discovery and routed Tech Evaluation also run here. Tech Evaluation approves
 as owner (`by=orchestrator` with reason), including irreversible, deferred and
 contrary-to-owner decisions; no owner windows, result at Handoff work start.
-Its route stays dormant until Discovery emits `next=` with the stage in T2.
+Discovery emits `next=` for new approvals; repeat approvals keep their route.
 It inspects, delegates,
 monitors, decides or escalates, records, and reports. Stage ownership is
 unchanged: `mono:implement` owns Delivery Start, `mono:preflight` owns

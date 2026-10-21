@@ -94,8 +94,11 @@ A deferred Project stays out of intake until its return condition or owner retur
 Route by the latest PRD approval: `next=tech-evaluation` before Handoff;
 `next=handoff` skips Tech Evaluation. No `next=` also skips it, unless the owner
 explicitly requests it in the stage task. Any existing `mono-tech` is consumed at Handoff
-even without `next=`. Discovery does not yet emit `next=`: activation lands
-with the stage in T2. Reapproval preserves the prior route/absence.
+even without `next=`. Discovery emits `next=` by size for new approvals.
+Reapproval preserves the prior route/absence. Handoff begins after the routed
+Tech Evaluation; its owner-start summary includes «Техлид решил за тебя:» with
+irreversible, deferred and contrary-to-owner decisions and reasons, without a
+separate brief for the page already approved `by=orchestrator`.
 Tech Evaluation owns new Tech Specs after page approval; Handoff only consumes
 them and copies decisions to package-record `U` units and Issue key contracts.
 Any page-line change returns to Tech Evaluation; after work start Handoff first

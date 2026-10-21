@@ -4,7 +4,7 @@ description: >-
   Проект с утверждёнными идеей, «Исследованием» и PRD: тимлид сверяет утверждённое,
   смотрит в код, режет на задачи, пишет запись пакета, ставит Ready и приносит итог
   с «Начать работу»; работу начинает только владелец. Также ремонт пакета
-  (mono:handoff repair). Этап Handoff пакета Mono после Discovery. Без PRD
+  (mono:handoff repair). Этап Handoff после Tech Evaluation по маршруту, иначе Discovery. Без PRD
   в mono:discovery, без «Исследования» в mono:research, сырая идея в mono:idea,
   один PR без проекта в mono:issue, изменения перед PR в mono:ship.
 ---
