@@ -186,6 +186,21 @@ sandbox.
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
 equal `VERSION`; only release tasks change them. Try unreleased code per README.
 
+### Release 0.35.1
+
+Доводка Idea, Research, Discovery и Handoff после первого живого прогона:
+показ версии PRD перед утверждением, предложения с источниками до вопросов о
+деталях, рамка из текущих слов владельца и сообщения с находками. Обязательное
+чтение этапов не выросло. Форматы совместимы; контракты, пины и скрипты доставки
+не менялись, общая quiescence не требуется.
+
+Обычные условия [Plugin Updates](#plugin-updates) сохраняются: before-update для
+заменяемого каталога, пауза затронутых запусков, установка и сверка обоих кэшей;
+установленная версия должна быть 0.35.1. Текущие попытки продолжаются только на
+сохранённом packRoot. После внешнего сбора preflight и до PR оркестратор запускает
+проверки Claude (`claude plugin validate . --strict`, `/skill-doctor`, evals
+срабатывания) и передаёт результат для PR; воркер их не запускает.
+
 ### Release 0.35.0
 
 Idea, Research, Discovery и Handoff пересобраны: утверждение только кнопкой
