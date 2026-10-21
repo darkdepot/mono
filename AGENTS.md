@@ -10,7 +10,7 @@ Stages listed in `scripts/russian-stages.mjs` (idea, research, discovery, handof
 
 - Linear holds the Project, PRD (what and why), Tech Spec (how), Issue (one-PR contract) and every owner approval as a comment. Obligations live in `references/contracts/`, shape in `templates/`.
 - GitHub holds branch, PR, review, CI and merge history.
-- Routing between stages lives in each skill's description and the README Skills table. In orchestrated mode the orchestrator runs Idea, Research, Discovery and Handoff in its own session and is the only Linear writer; workers run implement, preflight and ship and queue their Linear writes in reports. Work starts only on the owner's word after Handoff.
+- Each skill's description and the README Skills table route between stages. The orchestrator runs Idea, Research, Discovery and Handoff itself and is the sole Linear writer; workers run implement, preflight and ship and queue Linear writes in reports. Project-first work starts on the owner's word after Handoff; issue-only work starts with owner approval through `mono:issue`.
 
 ## Skill Design Rules
 
