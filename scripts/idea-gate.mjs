@@ -482,26 +482,29 @@ function verifyDump(options, config) {
     headings, since: config.ideaGate?.since ?? IDEA_GATE_DEFAULT_SINCE });
 }
 
-function latestApproval(comments, marker) {
-  const candidates = comments.filter(comment => blocks(comment.body, true)
-    .some(block => block.info === 'text' && block.content.startsWith(marker)))
-    .sort((a, b) => date(b.createdAt) - date(a.createdAt));
-  if (candidates.length > 1 && date(candidates[0].createdAt) === date(candidates[1].createdAt)) fail('bad-record');
-  return candidates[0];
-}
-
-function approvalFields(comment, marker, required, optional = []) {
-  const fenced = blocks(comment.body);
-  const records = fenced.filter(block => block.info === 'text' && block.content.startsWith(`${marker} `));
-  if (records.length !== 1 || /[\r\n]/.test(records[0].content)) fail('bad-record');
-  const fields = {};
-  for (const token of records[0].content.slice(marker.length + 1).split(' ')) {
+function latestApproval(comments, marker, required, optional = []) {
+  const prefix = marker.slice(0, marker.indexOf(':') + 1);
+  const candidates = comments.map(comment => {
+    const fenced = blocks(comment.body, true);
+    const records = fenced.flatMap((block, index) => block.info === 'mono-tech-page' ? []
+      : (block.fenced ? block.content : block.text).split(/\r?\n/).map(line => line.trim())
+        .filter(line => line.startsWith(prefix)).map(line => ({ line, index })));
+    return { comment, records };
+  }).filter(candidate => candidate.records.length)
+    .sort((a, b) => date(b.comment.createdAt) - date(a.comment.createdAt));
+  if (!candidates.length) return null;
+  if (candidates.length > 1 && date(candidates[0].comment.createdAt) === date(candidates[1].comment.createdAt)) fail('bad-record');
+  const { comment, records } = candidates[0];
+  if (records.length !== 1 || !records[0].line.startsWith(marker + ' ')) fail('bad-record');
+  const fenced = blocks(comment.body), record = fenced[records[0].index], fields = {};
+  if (record.info !== 'text') fail('bad-record');
+  for (const token of records[0].line.slice(marker.length + 1).split(' ')) {
     const match = token.match(/^([^=]+)=(.+)$/);
     if (!match || Object.hasOwn(fields, match[1]) || ![...required, ...optional].includes(match[1])) fail('bad-record');
     fields[match[1]] = match[2];
   }
   if (required.some(key => !Object.hasOwn(fields, key)) || !['owner', 'orchestrator'].includes(fields.by)) fail('bad-record');
-  return { fields, fenced, record: records[0] };
+  return { comment, fields, fenced, record };
 }
 
 function checkTechDump(root, config) {
@@ -510,18 +513,18 @@ function checkTechDump(root, config) {
     const raw = readJson(path.join(root, 'project.json'));
     const { project, records } = readDump(root, raw, config);
     projectId = project.id;
-    const tech = latestApproval(records.comments, 'mono-tech: approved');
-    if (!tech) return { ok: false, code: 'no-record', projectId };
-    const { fields: t, fenced, record } = approvalFields(tech, 'mono-tech: approved',
+    const tech = latestApproval(records.comments, 'mono-tech: approved',
       ['project', 'prd', 'prd-updatedAt', 'spec', 'spec-sha256', 'page-sha256', 'by']);
+    if (!tech) return { ok: false, code: 'no-record', projectId };
+    const { fields: t, fenced, record } = tech;
     const pages = fenced.filter(block => block.info === 'mono-tech-page');
     if (t.project !== projectId || !uuid(t.prd) || !uuid(t.spec) || !Number.isFinite(date(t['prd-updatedAt'])) ||
         !/^[a-f0-9]{64}$/.test(t['spec-sha256']) || !/^[a-f0-9]{64}$/.test(t['page-sha256']) ||
         pages.length !== 1 || !pages[0].content.trim() || fenced.indexOf(pages[0]) < fenced.indexOf(record) ||
         sha256(pages[0].content + '\n') !== t['page-sha256']) fail('bad-record');
-    const approval = latestApproval(records.comments, 'mono-prd: approved');
+    const approval = latestApproval(records.comments, 'mono-prd: approved', ['project', 'document', 'updatedAt', 'by'], ['next']);
     if (!approval) fail('bad-record');
-    const { fields: p } = approvalFields(approval, 'mono-prd: approved', ['project', 'document', 'updatedAt', 'by'], ['next']);
+    const { fields: p } = approval;
     if (p.project !== projectId || !uuid(p.document) || !Number.isFinite(date(p.updatedAt)) ||
         (p.next !== undefined && !['tech-evaluation', 'handoff'].includes(p.next))) fail('bad-record');
     const prd = readJson(path.join(root, 'prd.json'));
@@ -533,7 +536,7 @@ function checkTechDump(root, config) {
     if (!Number.isFinite(date(prd.updatedAt))) fail('bad-record');
     const code = t.prd !== p.document || prd.id !== p.document || t['prd-updatedAt'] !== p.updatedAt || prd.updatedAt !== p.updatedAt
       ? 'stale-prd' : spec.id !== t.spec || sha256(spec.content) !== t['spec-sha256'] ? 'stale-spec' : 'pass';
-    return { ok: code === 'pass', code, projectId, recordId: tech.id, documentId: spec.id };
+    return { ok: code === 'pass', code, projectId, recordId: tech.comment.id, documentId: spec.id };
   } catch { return { ok: false, code: 'bad-record', projectId }; }
 }
 

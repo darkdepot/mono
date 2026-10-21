@@ -27,10 +27,9 @@ When relevant, add populated sections: «Исходные требования»
 «Валидация», «Релиз и откат». For a backend, include real deployed enum domains,
 object shapes and edge records with sampling date/version, or the first probe.
 
-Apply `references/contracts/tech-spec.md`; preserve native literals. Trace HOW
-to R/AE or cross-cutting support; keep stable U IDs after splits/reordering.
-Record only non-inferable, expensive-to-redo decisions and deferred unknowns.
-Directional diagrams/pseudocode only, no copy-paste code/shell choreography.
+Apply `references/contracts/tech-spec.md`: stable U IDs, R/AE or cross-cutting
+trace, deferred unknowns. Directional diagrams/pseudocode only; no copy-paste
+code/shell choreography.
 
 Optional nested manifest: indented path/hash items and blank lines are allowed;
 column-zero fences contain raw UTF-8 with final LF;

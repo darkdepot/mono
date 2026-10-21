@@ -5,3 +5,5 @@
 - Added `idea-gate.mjs tech` raw Linear-response fixtures and verification. Owner-led and orchestrator-led approvals, deferred PRD items and legacy paths remain distinct. No release or snapshot-delivery change.
 
 Validation pins: removed the eight mandatory Tech Spec section headings because sections are conditional; retained the populated decision/estimate skeleton. New record markers are listed machine tokens; script behavior is covered by named tech-gate fixtures. No agent-rule sentence pins were added.
+
+- Approval selection now uses one fence/marker scanner for PRD and Tech records, tolerates surrounding text and blank/trailing whitespace, orders by creation time, and rejects a damaged newest record rather than falling back. Table fixtures cover both record kinds.

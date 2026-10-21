@@ -112,3 +112,65 @@ test('a newer malformed approval fence is not replaced by the older valid record
   });
   check('bad-record');
 }));
+
+for (const kind of ['mono-tech: approved', 'mono-prd: approved']) {
+  for (const [name, expected, mutate] of [
+    ['leading blank line', 'pass', comment => { comment.body = comment.body.replace('```text\n', '```text\n\n'); }],
+    ['trailing whitespace', 'pass', comment => { comment.body = comment.body.replace('\n```', ' \t\n```'); }],
+    ['surrounding text', 'pass', comment => {
+      comment.body = 'Before the record.\n\n' + comment.body.replace('```text\n', '```text\nContext.\n\n')
+        .replace('\n```', '\n\nEnd of context.\n```') + '\nAfter the record.';
+    }],
+    ['two records in one fence', 'bad-record', comment => {
+      const line = comment.body.split('\n').find(line => line.startsWith(kind));
+      comment.body = comment.body.replace(line, line + '\n' + line);
+    }],
+    ['two record fences in one comment', 'bad-record', comment => {
+      comment.body += '\n' + comment.body.slice(0, comment.body.indexOf('\n```') + 4);
+    }],
+    ['newer invalid plus older valid', 'bad-record', (comment, page) => {
+      const newer = structuredClone(comment);
+      newer.id = 'new-invalid'; newer.createdAt = newer.updatedAt = '2026-10-21T04:00:00.000Z';
+      newer.body = newer.body.replace('```text\n', '```text\n\n').replace('by=owner', 'by=invalid');
+      page.comments.push(newer);
+    }],
+    ['newer invalid status plus older valid', 'bad-record', (comment, page) => {
+      const newer = structuredClone(comment);
+      newer.id = 'new-invalid-status'; newer.createdAt = newer.updatedAt = '2026-10-21T04:00:00.000Z';
+      newer.body = newer.body.replace(': approved ', ': rejected ');
+      page.comments.push(newer);
+    }],
+    ['newer unfenced marker plus older valid', 'bad-record', (comment, page) => {
+      const newer = structuredClone(comment);
+      newer.id = 'new-unfenced'; newer.createdAt = newer.updatedAt = '2026-10-21T04:00:00.000Z';
+      newer.body = newer.body.replace('```text\n', '').replace('\n```', '');
+      page.comments.push(newer);
+    }],
+    ['newer wrong fence plus older valid', 'bad-record', (comment, page) => {
+      const newer = structuredClone(comment);
+      newer.id = 'new-wrong-fence'; newer.createdAt = newer.updatedAt = '2026-10-21T04:00:00.000Z';
+      newer.body = newer.body.replace('```text\n', '```json\n');
+      page.comments.push(newer);
+    }],
+    ['newer valid plus older invalid', 'pass', (comment, page) => {
+      const newer = structuredClone(comment);
+      newer.id = 'new-valid'; newer.createdAt = newer.updatedAt = '2026-10-21T04:00:00.000Z';
+      comment.body = comment.body.replace('by=owner', 'by=invalid');
+      page.comments.push(newer);
+    }],
+    ['comment edited later', 'pass', (comment, page) => {
+      const older = structuredClone(comment);
+      older.id = 'edited-old-invalid'; older.createdAt = '2026-10-21T00:00:00.000Z'; older.updatedAt = '2026-10-21T05:00:00.000Z';
+      older.body = older.body.replace('by=owner', 'by=invalid');
+      page.comments.push(older);
+    }],
+  ]) test(`${kind}: ${name}`, () => fixture(({ change, check }) => {
+    change('comments-1.json', page => {
+      mutate(page.comments.find(comment => comment.body.includes(kind)), page);
+      page.comments.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    });
+    const result = check(expected);
+    if (kind === 'mono-tech: approved' && name === 'newer valid plus older invalid') assert.equal(result.recordId, 'new-valid');
+    if (kind === 'mono-tech: approved' && name === 'comment edited later') assert.equal(result.recordId, 'tech-record');
+  }));
+}
