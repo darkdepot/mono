@@ -26,7 +26,9 @@ function fixture(run) {
   const manifest = { issue: 'MONO-999', recordId, images, dump: 'design-input' };
   fs.writeFileSync(path.join(source, 'design.json'), JSON.stringify(manifest));
   const body = `# Прочитать сначала\nДизайн: запись mono-design ${recordId}, images ${images}\n\n# Снимок контекста\nПравило: иконки одного набора.\n`;
-  try { run({ source, target, config, body, manifest }); }
+  const copy = (from = source, to = target, expectedProject = project) =>
+    copyDesignSnapshot(from, to, 'MONO-999', body, config, expectedProject);
+  try { run({ source, target, config, body, manifest, copy }); }
   finally {
     if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
     fs.rmSync(root, { recursive: true, force: true });
@@ -34,7 +36,7 @@ function fixture(run) {
 }
 
 test('dispatch copies the exact approved U2 version into the task snapshot', () => fixture(f => {
-  const result = copyDesignSnapshot(f.source, f.target, 'MONO-999', f.body, f.config);
+  const result = f.copy();
   assert.equal(result.recordId, recordId);
   assert.equal(result.images, images);
   assert.equal(result.directory, 'design');
@@ -43,12 +45,12 @@ test('dispatch copies the exact approved U2 version into the task snapshot', () 
     fs.readFileSync(path.join(f.source, 'design-input/approved', images.slice(0, 12), '01-screen.png')));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.target, 'design.json'))), result);
   const retry = path.join(f.target, '..', 'retry'); fs.mkdirSync(retry);
-  assert.deepEqual(copyDesignSnapshot(f.target, retry, 'MONO-999', f.body, f.config), result);
+  assert.deepEqual(f.copy(f.target, retry), result);
 }));
 
 test('a task without a design record receives no PNGs or manifest', () => fixture(f => {
   fs.rmSync(path.join(f.source, 'design.json'));
-  assert.equal(copyDesignSnapshot(f.source, f.target, 'MONO-999', '# Прочитать сначала\nДизайн: нет\n', f.config), null);
+  assert.equal(copyDesignSnapshot(f.source, f.target, 'MONO-999', '# Прочитать сначала\nДизайн: нет\n', f.config, project), null);
   assert.deepEqual(fs.readdirSync(f.target), []);
 }));
 
@@ -64,6 +66,12 @@ for (const fault of ['foreign-task', 'wrong-record', 'wrong-images', 'stale-prd'
       const doc = JSON.parse(fs.readFileSync(file)); doc.updatedAt = '2026-10-22T00:00:00.000Z';
       fs.writeFileSync(file, JSON.stringify(doc));
     }
-    assert.throws(() => copyDesignSnapshot(f.source, f.target, 'MONO-999', f.body, f.config));
+    assert.throws(() => f.copy());
+    assert.deepEqual(fs.readdirSync(f.target), []);
+  }));
+
+for (const expectedProject of ['66666666-6666-6666-6666-666666666666', null])
+  test(`a valid design from another Project cannot supply task screens: ${expectedProject}`, () => fixture(f => {
+    assert.throws(() => f.copy(f.source, f.target, expectedProject), /Project/);
     assert.deepEqual(fs.readdirSync(f.target), []);
   }));

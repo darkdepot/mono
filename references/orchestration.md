@@ -329,7 +329,8 @@ For a UI task with U2, its Read first must contain
 `design.json` in the source snapshot: {issue,recordId,images,dump}; `dump`
 points to fresh raw design-gate responses (Project, all comments/requests, PRD).
 The dispatch command runs `idea-gate.mjs design` itself using the product config,
-checks the selected record and copied image hash, and writes `snapshot/design/`
+checks the selected record, its Project against the task’s verified Project,
+and the copied image hash, and writes `snapshot/design/`
 PNGs plus normalized `snapshot/design.json` and the consumed raw responses in
 `snapshot/design-input/` for refused-attempt retries. It renders the final snapshot
 path in the worker prompt. Copies stay outside the worktree and are never

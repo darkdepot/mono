@@ -144,7 +144,7 @@ async function prepareDispatch(args) {
   const snapshot = path.join(output, "snapshot"), preparedSnapshot = fs.mkdtempSync(path.join(output, "snapshot-"));
   let designSnapshot;
   try {
-    designSnapshot = copyDesignSnapshot(args.snapshot, preparedSnapshot, issue, body, args.config);
+    designSnapshot = copyDesignSnapshot(args.snapshot, preparedSnapshot, issue, body, args.config, ideaResult.projectId);
     for (const name of [`issue-${issue}.md`, "approval.md", ...(issueOnly ? ["issue-only.json"] : ["project-brief.md", ...(profile === "full" ? ["prd.md", "tech-spec.md"] : [])])]) fs.copyFileSync(path.join(args.snapshot, name), path.join(preparedSnapshot, name));
     if (!issueOnly) {
       fs.cpSync(path.join(args.snapshot, 'idea'), path.join(preparedSnapshot, 'idea'), { recursive: true });

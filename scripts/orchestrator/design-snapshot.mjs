@@ -8,7 +8,7 @@ import { section } from './snapshot.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
-export function copyDesignSnapshot(source, target, issue, body, config) {
+export function copyDesignSnapshot(source, target, issue, body, config, projectId) {
   const readFirst = section(body, 'Прочитать сначала');
   const manifest = path.join(source, 'design.json');
   if (!fs.existsSync(manifest)) {
@@ -26,6 +26,8 @@ export function copyDesignSnapshot(source, target, issue, body, config) {
   const checked = JSON.parse(output.trim().split('\n').at(-1));
   if (!checked.ok || checked.code !== 'pass' || checked.recordId !== input.recordId)
     throw new Error('UI task design record is not the current approved record');
+  if (!projectId || checked.projectId !== projectId)
+    throw new Error('UI task and design record belong to different Projects');
   const names = fs.readdirSync(checked.directory).filter(name => name.endsWith('.png'))
     .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
   const prepared = fs.mkdtempSync(path.join(target, 'design-'));
