@@ -6,6 +6,79 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-10-22
+
+<!-- fragment: MONO-221 sha256:fb446293de97ec5aa7045ccadacfe1e8534bda84afd828fb66e947d8666cd4ee -->
+Общие инструкции Mono сокращены и приведены к текущему порядку работы: пакет ведёт оркестратор, реализацию — воркеры, старт даёт владелец. Удалены устаревшие планы, заметки проверок и инструмент сравнения ревьюеров, чтобы агенты читали действующие правила и не искали удалённые материалы. Служебные файлы macOS исключены из Git.
+
+<!-- fragment: MONO-223 sha256:4213ba4349eaa2246411d0245d03a5686778c771e5908e7bc829502b114096a8 -->
+### Changed
+
+- Prepared Tech Evaluation routing and effective page/PRD/Tech Spec approval checks in MONO-223; MONO-224 and MONO-228 activate the released stages and the final Design/size route.
+- Explicit contract change approved by the owner on 21.10.2026: Tech Evaluation owns new short Tech Specs after page approval; Project routing and both contract SHA-256 fingerprints updated. Handoff consumes approved decisions; page changes return to Tech Evaluation, after start through class 3 repair.
+- Added `idea-gate.mjs tech` raw Linear-response fixtures and verification. Owner-led and orchestrator-led approvals, deferred PRD items and legacy paths remain distinct. Snapshot delivery remains unchanged.
+
+Validation pins: removed the eight mandatory Tech Spec section headings because sections are conditional; retained the populated decision/estimate skeleton. New record markers are listed machine tokens; script behavior is covered by named tech-gate fixtures. No agent-rule sentence pins were added.
+
+- Approval selection now uses one fence/marker scanner for PRD and Tech records, tolerates surrounding text and blank/trailing whitespace, orders by creation time, and rejects a damaged newest record rather than falling back. Table fixtures cover both record kinds.
+
+<!-- fragment: MONO-224 sha256:2728259265046f53b8c060f963682dd7203236f2132559643e92d0f73d997048 -->
+Новый этап `mono:tech-evaluation`: одно решение техлида, проверка на настоящих
+случаях помощником и другой моделью, одна страница на утверждение и короткий
+Tech Spec. После нужного Design обычный и крупный проект идут в этап, мелочь
+в Handoff; повторное утверждение PRD пересчитывает дизайн, затем размер. Уточнены повторный вход из Handoff,
+отложенный пункт через Discovery без второй карточки и итог оркестратора
+«Техлид решил за тебя:». Добавлены примеры и evals срабатывания. Выпуск относится
+к MONO-225, живой прогон после установки — к MONO-229.
+
+<!-- fragment: MONO-225 sha256:ae8c2d333dc73357dc8784bb6cce268d0652c52283e2a988cd06b844098150d3 -->
+### Design и Tech Evaluation выпущены вместе
+
+- Выпуск 0.36.0 включает активные Design и Tech Evaluation: после Discovery нужен Design по записи PRD, затем Tech Evaluation или Handoff по размеру. Для Design должен быть открыт Paper; оркестратор выбирает и утверждает с причиной, первый набор эталонов подтверждает владелец.
+- Версии обоих плагинов равны VERSION. README и инструкция обновления описывают маршрут, установку и границу отката: после первой записи нового формата только исправление вперёд.
+- Перед ship проверки Claude выполняет оркестратор; живой прогон всей цепочки с владельцем перенесён после установки в MONO-229, находки выходят patch-выпуском.
+
+<!-- fragment: MONO-227 sha256:e8bd9642325135ac55c3e35075d8a0271ca6bc74b1e1e73a961c09be33341d2e -->
+Русский этап Design (подготовка MONO-227, включение MONO-228 в этом выпуске): память вкуса и продукта, эталоны,
+работа в Paper по размеру задачи, проверка картинок и неизменяемая запись
+утверждения. Проверка route проверяет закрытые словари цепи до пропуска этапов;
+tech больше не скрывает неизвестный маршрут ответом no-record. Команда design
+и привязка tech к дизайну проверяются на включённых временных фикстурах.
+MONO-228 включил этап и новый формат; старые записи сохраняют прежний путь до повторного утверждения PRD.
+Добавлены правила передачи макета техлиду и Handoff, бюджет чтения и evals;
+общий выпуск 0.36.0 относится к MONO-225, живой прогон после установки — к MONO-229. Контракты не менялись.
+Негодная запись техлида не запирает вход в её исправление: входы выше по цепи
+проверяются отдельно, а следующие этапы ждут новой годной записи и проверки цепи.
+В новой цепи прямой Handoff не требует прежнюю запись техлида; старый путь
+по-прежнему проверяет существующую запись.
+Отсутствие `next=` при `design=not-needed` допускается только после прежнего
+утверждения PRD без этого поля; первая запись и прежний маршрут дают `bad-record`.
+Вызовы route выполняются и без записи PRD, до послаблений старого пути:
+записи Design и поле design в tech больше не обходят проверку через
+старый одобренный пакет. Сам старый путь после pass сохранён.
+
+<!-- fragment: MONO-228 sha256:a714adae85f8d807203c6aada773057c5b74e0d366b696df512772666138a133 -->
+### Added
+
+- Design теперь включён по одной записи PRD: Discovery решает дизайн, затем
+  размер при каждом утверждении; проект идёт через нужные Design и Tech
+  Evaluation в Handoff. Старые записи сохраняют путь до повторного утверждения.
+- Оркестратор ведёт Design сам по памяти продукта и утверждает с причиной;
+  первый набор эталонов подтверждает владелец, пока остальные проекты идут.
+- UI-задачи получают правила вкуса текстом и конкретную версию PNG через
+  снимок диспатча; Live QA сравнивает экраны с ней до показа владельцу.
+
+### Changed
+
+- PC-001 явно включает решение о дизайне и цепь записей; отпечаток контракта
+  проекта обновлён. Убраны прежние правила UX-чекпоинта с выбором владельца.
+- Повторное утверждение PRD требует обновления нижних записей; новый маршрут
+  проходит этапы заново. Откат допустим до первой записи нового формата,
+  после неё — исправление вперёд. Общий выпуск 0.36.0 делает MONO-225,
+  живой прогон после установки — MONO-229.
+- Design может заменить свою повреждённую запись после отдельной проверки
+  входов и утверждения макета; полная цепь до успешной перепроверки остаётся FAIL.
+
 ## [0.35.1] - 2026-10-21
 
 <!-- fragment: MONO-218 sha256:51ce9c318ec9319d1efbc82ecdd6813dd52554a96d7a203961bc556f6a88ae47 -->

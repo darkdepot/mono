@@ -303,9 +303,10 @@ Workflow states:
 Rules:
 
 - This skill is a control plane: never implement, edit code, fix CI, or rewrite PRs
-  in this session; delegate that to workers. Discovery artifacts (prototypes,
-  mockups, review notes) stay orchestrator-owned. Stages before Handoff
-  (Idea, Research, Discovery) explicitly run here under their own rules;
+  in this session; delegate that to workers. Pre-Handoff artifacts (PRD, Paper
+  mockups, Tech Spec, review notes) stay orchestrator-owned. Stages before Handoff
+  (Idea, Research, Discovery, routed Design and Tech Evaluation) run here
+  under their own rules;
   implement/preflight/ship always stay in workers.
 - Narrow control-plane exception: under an explicit owner mandate the
   orchestrator MAY author operational and deploy-repair changes directly —
