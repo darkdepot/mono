@@ -191,7 +191,7 @@ equal `VERSION`; only release tasks change them. Try unreleased code per README.
 Этапы ведут один разговор с владельцем или делегированным оркестратором и сами
 пишут свои записи Linear. Контракт проекта явно разрешает делегированный старт
 с причиной и независимой проверкой; обычному проекту нужен старт владельца.
-Формы `mono-idea`, `mono-prd`, `mono-design`, `mono-tech`, `mono-package` прежние,
+Формы `mono-idea`, `mono-prd: approved`, `mono-design`, `mono-tech`, `mono-package` прежние,
 surface revision 4 сохраняется. Текущие попытки завершаются на сохранённом
 packRoot; общая quiescence не требуется. Обычные условия
 [Plugin Updates](#plugin-updates), включая before-update для заменяемого
