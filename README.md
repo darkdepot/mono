@@ -381,9 +381,10 @@ Design reads exactly its SKILL.md and references/run.md eagerly; drawing, memory
 approval references are conditional. Measure with
 `node scripts/read-budget.mjs --skill design --mandatory`.
 Activation cases: [evals/tech-evaluation](evals/tech-evaluation/README.md).
-Claude validation, skill-doctor and evals run on the preflight-ready head before
-ship; MONO-225 owns the combined 0.36.0 release, and MONO-229 owns the live owner
-run after installation.
+Claude validation, skill-doctor and host tests run on the preflight-ready head
+before ship; activation evals rerun only when skill descriptions or eval cases
+change. MONO-225 owns the combined 0.36.0 release, and MONO-229 owns the live
+owner run after installation.
 The Russian `<корень>/` prefix belongs to listed stages; English stages use
 `<pack-root>/` in commands.
 [Activation evals](evals/idea/README.md)
