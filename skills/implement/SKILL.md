@@ -69,18 +69,17 @@ Lane exit parks for superseding marker/Project-first restart; no retrofit.
 
 `mono-package`: ordinary start `by=owner`; delegated (latest Idea mark or earlier
 owner decision) allows `by=orchestrator` with reason; else Handoff, no code.
-Legacy: separate package/start approvals or bundled handoff; offer start/defer; «запускай реализацию» suffices. Start permits Delivery/branch/code.
+Legacy: package/start or bundled approval; offer start/defer; «запускай реализацию» permits Delivery/branch/code.
 Never infer approval.
 
 ## Engine and Start Comment
 
 Implementation workflow first; otherwise ce-work (code), Superpowers executing-plans
 (plan), test-driven-development (acceptance), systematic-debugging (repro), gstack qa
-(browser). Subagents require permitted slices; AFK forbids. Unavailable: apply
+(browser). Unavailable: apply
 `references/execution-quality.md`, record substitution.
 
 Russian queued start: Issue/package/approval/checks, scope, engine/reason,
 verification, learnings/helper absence, browser/manual/PR/deploy boundary.
 
 Statuses: implemented-needs-preflight, blocked, scope-drift-needs-handoff, needs-human.
-Final: Issue/sources/git/checks/drift, preflight next.

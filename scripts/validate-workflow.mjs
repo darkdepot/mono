@@ -406,12 +406,12 @@ const STAGE_VOICE_FILES = [
 function stageVoiceFaults(text) {
   const faults = [];
   for (const [executable, flag] of [["codex exec", "--ignore-user-config"], ["claude -p", "--strict-mcp-config"]]) {
-    requireMachineToken(executable); requireMachineToken(flag); requireMachineToken("-s read-only");
+    requireMachineToken(executable); requireMachineToken(flag); requireMachineToken("-s read-only"); requireMachineToken("--disable apps");
     // The localized model placeholder identifies stage invocations; package
     // Second Voice commands have their own policy placeholders and stay unchanged.
     const commands = text.split("\n").filter(line => line.includes(executable) && line.includes("<модель>"));
     if (commands.length !== 1 || !commands[0].includes(flag)
-      || (executable === "codex exec" && !commands[0].includes("-s read-only"))) faults.push(`${executable} isolated stage invocation`);
+      || (executable === "codex exec" && (!commands[0].includes("-s read-only") || !commands[0].includes("--disable apps")))) faults.push(`${executable} isolated stage invocation`);
   }
   return faults;
 }
@@ -435,7 +435,7 @@ function validateStageDelegation() {
   for (const file of STAGE_VOICE_FILES) {
     const text = read(file);
     for (const fault of stageVoiceFaults(text)) fail(`${file}: ${fault}`);
-    for (const flag of ["--ignore-user-config", "--strict-mcp-config"]) {
+    for (const flag of ["--ignore-user-config", "--strict-mcp-config", "--disable apps"]) {
       if (!stageVoiceFaults(text.replace(flag, "")).length) fail(`${file}: isolated-flag negative fixture passed`);
     }
   }
@@ -6239,7 +6239,7 @@ const REQUIRED_HEADINGS = [
 ];
 const MACHINE_TOKENS = new Set([
   // MONO-239: invocation flags, template fields/placeholders and dialogue skeleton.
-  "--ignore-user-config", "--strict-mcp-config", "-s read-only", "codex exec", "claude -p",
+  "--ignore-user-config", "--strict-mcp-config", "--disable apps", "-s read-only", "codex exec", "claude -p",
   "tools", "hooks", "PreToolUse", "Agent|Task", "command", "type",
   "{{tools}}", "{{hook_path}}", "{{linear_scout}}", "{{code_scout}}", "{{web_scout}}",
   "mono-{{product}}-{{stage}}", "Владелец из задания запуска", "Idea",

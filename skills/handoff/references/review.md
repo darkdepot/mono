@@ -15,7 +15,7 @@
 
 Один проход, только чтение, в фоне, параллельно с проверяющим. Модель и усилие
 роли по `<корень>/references/model-policy.md`. Из Claude Code роль `second-voice`:
-`codex exec --ignore-user-config -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null`;
+`codex exec --ignore-user-config --disable apps -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null`;
 из Codex роль `second-voice-alt`:
 `claude -p --strict-mcp-config --model <модель> --effort <усилие> "<задание>" < /dev/null`, нужна сеть.
 Для проверки пакета до записи оркестратор применяет свой протокол Second Voice,

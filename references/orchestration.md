@@ -141,9 +141,12 @@ report and proposed reason. Pass text/local paths, never Linear links: no owner
 connections. Resolve model/effort by policy, then use the appropriate invocation:
 
 ```bash
-codex exec --ignore-user-config -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null
+codex exec --ignore-user-config --disable apps -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null
 claude -p --strict-mcp-config --model <модель> --effort <усилие> "<задание>" < /dev/null
 ```
+
+`--disable apps` also blocks ChatGPT app connectors, enabled by default even
+when user config is ignored.
 
 Record verdict with model and reviewed-text version outside fences in that same
 approval comment, alongside reason; machine lines unchanged. Text or reason changes:

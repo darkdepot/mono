@@ -41,7 +41,7 @@ Claude Code: существующие агенты с этой моделью. C
 и отчёту помощника. Claude Code: `second-voice`; Codex: `second-voice-alt`;
 модель, усилие и команда по `<корень>/references/model-policy.md`. Для Codex:
 `claude -p --strict-mcp-config --model <модель> --effort <усилие> "<задание>" < /dev/null`;
-для Claude Code: `codex exec --ignore-user-config -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null`.
+для Claude Code: `codex exec --ignore-user-config --disable apps -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null`.
 Передний план, только чтение. Задание: где лишнее, какой случай не покрыт,
 не спрятано ли решение владельца, что сломается рядом, отвечает ли Spec на
 каждый открытый вопрос PRD, понятна ли страница без технических слов.

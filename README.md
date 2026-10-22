@@ -43,7 +43,8 @@ Linear, дизайн-Paper и поисковых инструментов. Ни�
 точный текст/версию и причину без подключений владельца; вердикт с моделью и
 версией вне заборов в той же записи. Изменился текст или причина: новая проверка.
 Строки второй модели этапов закреплены с `--ignore-user-config` и
-`--strict-mcp-config`. Владелец получает итог каждого этапа с «Утвердил сам,
+`--strict-mcp-config`, а Codex также с `--disable apps`: подключённые приложения
+не должны оставаться доступны через авторизацию ChatGPT. Владелец получает итог каждого этапа с «Утвердил сам,
 потому что…» и решениями за него первыми. Новые правила вкуса и первые эталоны
 по-прежнему его; его слово открывает утверждение заново. Подробности:
 [общий разговор](references/owner-dialog.md), [политика](references/orchestration.md).
@@ -401,8 +402,8 @@ read before body writes; Idea does not eagerly read the product's `AGENTS.md`.
 Verified-record recovery applies only when the current request neither changes nor
 adds to the idea; changed input takes the normal updated-description/owner-yes path.
 `node scripts/read-budget.mjs --skill idea --mandatory` reports its required
-corpus, explicitly including both scout task files; the complete mandatory set is
-reported bytes, below 20,480 without conditional reads. The recording reference and
+corpus, explicitly including both scout task files; the complete mandatory set stays
+below 20,480 without conditional reads. The recording reference and
 the Project contract are conditional and are read while the scouts search, before
 the description is shown; launch-context dialogue lives in conditional
 `references/owner-dialog.md`. Scout definitions are read

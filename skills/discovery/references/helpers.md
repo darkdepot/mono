@@ -26,7 +26,7 @@
 и рекомендацией, и не жди: не вернулась к моменту выбора, показывай без неё; пришла
 позже и против или с новым решением: одна строка до утверждения. Модель и усилие роли
 по `<корень>/references/model-policy.md`. Из Claude Code роль `second-voice`:
-`codex exec --ignore-user-config -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null`;
+`codex exec --ignore-user-config --disable apps -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null`;
 из Codex роль `second-voice-alt`: `claude -p --strict-mcp-config --model <модель> --effort <усилие> "<задание>" < /dev/null`,
 нужна сеть.
 

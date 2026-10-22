@@ -85,7 +85,7 @@ node <корень>/scripts/idea-gate.mjs helper --host claude-code|codex --conf
 Один проход без диалога, модель другой семьи: Claude Code роль `second-voice`,
 Codex роль `second-voice-alt`; модель и усилие роли по
 `<корень>/references/model-policy.md`. Только на чтение: из Claude Code
-`codex exec --ignore-user-config -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<вопрос>" < /dev/null`,
+`codex exec --ignore-user-config --disable apps -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<вопрос>" < /dev/null`,
 из Codex `claude -p --strict-mcp-config --model <модель> --effort <усилие> "<вопрос>" < /dev/null`;
 из Codex нужна сеть. С владельцем запускай на переднем плане с таймаутом команды
 `600000`, чтобы ход не кончался ожиданием. Вход: черновик и выдержки источников,
