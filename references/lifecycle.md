@@ -12,7 +12,7 @@ The stage session runs Idea; its orchestrator answers questions with reasons,
 shows the description/window to the owner and relays only their approval press.
 
 Exit requires the owner's approval of What / Why / Target outcome / prioritized
-Unknowns, given only by pressing «Утвердить» in the approval window (also under the
+Unknowns, given only by pressing an approval option from `references/owner-dialog.md` (also under the
 orchestrator; chat words never approve; without a window there is no approval and
 nothing is written), and successful `verify` for that exact Project record. The writing
 and recovery steps live only in `skills/idea/references/record.md`. After «Готово» the
@@ -26,10 +26,12 @@ approved package, stop before recording and route the correction through
 Unknowns stay in the record. No Research document, PRD, Tech Spec, Issue, implementation
 plan, ExecPlan or code is created here. A refusal returns to Idea.
 
-The next stage is Research (`mono:research`). Idea ends with a separate final message
-(Project, link, status Idea, team), then offers «Начать исследование» / «Ещё обсудить»
-with the research plan that Research prepares (`skills/research/references/plan.md`).
-Ordinary Projects need owner Research start by button or words. Delegated Projects
+The next stage is Research (`mono:research`). The description itself is the summary,
+with one line on what Research will check, immediately above the combined approval/start
+window from `references/owner-dialog.md`. Prepare the Research plan before showing it
+(`skills/research/references/plan.md`). After verified recording, give one recording line
+and honor the selected start or deferral; no second summary/window. A later explicit start
+reuses verified approval of the same version. Ordinary Projects need owner start. Delegated Projects
 (PC-019: latest Idea delegation mark or earlier explicit owner decision) allow
 orchestrator Research start after confirmed Idea approval. The Project stays in Idea until then.
 Idea approval is separate from the Handoff start.
@@ -72,7 +74,7 @@ fences in the same comment. Every stage result goes to owner immediately.
 `mono:discovery` takes the approved Idea record and Research («Исследование»),
 searches for the solution with the owner in conversation (own view, two or three
 solutions that differ by what the owner gets, a live example), obtains an explicit
-choice and writes the chosen solution's PRD in Linear with approval («Утвердить»)
+choice and writes the chosen solution's PRD in Linear with a clicked approval option
 bound to the shown document version. It runs in
 the owner session or a stage agent launched by the orchestrator; delivery workers
 (codex-cli, claude-cli) do not lead stages. Launch task alone identifies the owner. Details and the selected Research link stay in the Discovery task.
@@ -228,7 +230,8 @@ Changed routes invalidate lower approvals; same route allows renewal without
 showing only when that stage itself confirms unchanged screens/page.
 
 Tech Evaluation owns the technical decision and new Tech Spec. Owner-led: show
-one page, then «Утвердить» on that exact version, `by=owner`. Orchestrator-led:
+one page immediately above the combined approval/start window from `references/owner-dialog.md`,
+on that exact version, `by=owner`. Orchestrator-led:
 the stage agent runs the same stage; orchestrator approves `by=orchestrator`
 with a reason, including irreversible decisions, a deferred PRD item and a
 line against an earlier owner decision. No owner window or escalation inside
