@@ -17,10 +17,9 @@ function fixture(run) {
   fs.mkdirSync(path.join(repo, '.agents'), { recursive: true });
   const config = path.join(repo, '.agents', 'mono-workflow.config.json');
   fs.writeFileSync(config, JSON.stringify({ projectName:'Demo Product' }));
-  // The future switch is exercised only in a scratch copy, never a product setting.
+  // Isolate the home directory while exercising the shipped route switch.
   const script = path.join(root, 'idea-gate.mjs');
   fs.writeFileSync(script, fs.readFileSync(new URL('./idea-gate.mjs', import.meta.url), 'utf8')
-    .replace('const DESIGN_ROUTE_ENABLED = false;', 'const DESIGN_ROUTE_ENABLED = true;')
     .replace("const DESIGN_HOME = path.join(os.homedir(), '.mono-agent-workflow', 'design');", `const DESIGN_HOME = ${JSON.stringify(home)};`));
   fs.copyFileSync(new URL('./runtime.mjs', import.meta.url), path.join(root, 'runtime.mjs'));
   const change = (name, mutate) => {
@@ -118,6 +117,74 @@ for (const replacement of ['design=needed next=handoff','design=not-needed next=
     change('comments-1.json', p => { p.comments[2].body=p.comments[2].body.replace('design=needed next=design',replacement); });
     check('route','bad-record');
   }));
+
+test('first PRD approvals choose design before the size route', () => fixture(({ change, check }) => {
+  change('comments-1.json', p => { p.comments = [p.comments[2]]; });
+  assert.deepEqual(check('route', 'pass').requiredRecords, ['design']);
+  check('design', 'no-record');
+  check('tech', 'no-record');
+  for (const next of ['handoff', 'tech-evaluation']) {
+    change('comments-1.json', p => { p.comments[0].body = p.comments[0].body.replace(/design=\S+ next=\S+/, `design=not-needed next=${next}`); });
+    assert.deepEqual(check('route', 'pass').requiredRecords, next === 'handoff' ? [] : ['tech']);
+  }
+}));
+
+test('reapproval requires downstream renewal even when PRD bytes and version are unchanged', () => fixture(({ change, check }) => {
+  change('comments-1.json', p => {
+    const renewed = structuredClone(p.comments[2]);
+    renewed.id = 'renewed-prd';
+    renewed.createdAt = renewed.updatedAt = '2026-10-22T01:00:00.000Z';
+    p.comments.unshift(renewed);
+  });
+  check('design', 'stale-prd');
+  check('tech', 'stale-prd');
+  change('comments-1.json', p => {
+    p.comments[2].createdAt = '2026-10-22T02:00:00.000Z';
+    p.comments[2].id = 'renewed-design';
+  });
+  check('design', 'pass');
+  check('tech', 'stale-prd');
+}));
+
+test('reapproval adding a screen invalidates an old matching design and tech record', () => fixture(({ change, check }) => {
+  change('comments-1.json', p => {
+    const previous = structuredClone(p.comments[2]);
+    previous.id = 'previous-prd';
+    previous.createdAt = '2026-10-20T01:00:00.000Z';
+    previous.body = previous.body.replace('design=needed next=design', 'design=not-needed next=handoff');
+    p.comments[2].createdAt = '2026-10-22T01:00:00.000Z';
+    p.comments.push(previous);
+  });
+  assert.deepEqual(check('route', 'pass').requiredRecords, ['design', 'tech']);
+  check('design', 'stale-prd');
+  check('tech', 'stale-prd');
+}));
+
+test('size growth on reapproval routes a former tiny project to the tech lead', () => fixture(({ change, check }) => {
+  change('comments-1.json', p => {
+    const previous = structuredClone(p.comments[2]);
+    previous.id = 'previous-tiny-prd';
+    previous.body = previous.body.replace('design=needed next=design', 'design=not-needed next=handoff');
+    p.comments[2].body = p.comments[2].body.replace('design=needed next=design', 'design=not-needed next=tech-evaluation');
+    p.comments[2].createdAt = '2026-10-22T01:00:00.000Z';
+    p.comments.push(previous);
+    p.comments.splice(1, 1);
+  });
+  assert.deepEqual(check('route', 'pass').requiredRecords, ['tech']);
+  check('tech', 'stale-prd');
+}));
+
+for (const [field, replacement] of [['next=tech-evaluation', 'next=unknown'], ['by=owner', 'by=unknown'],
+  ['images=0e66fc587d5356f31cdfea5131276c0d91a3fb207004689e65920d7c964e5b73', 'images=broken']])
+  test(`every gate rejects an invalid design record field: ${replacement}`, () => fixture(({ change, check }) => {
+    change('comments-1.json', p => { p.comments[1].body = p.comments[1].body.replace(field, replacement); });
+    for (const command of ['route', 'design', 'tech']) assert.equal(check(command, 'bad-record').stage, 'mono:design');
+  }));
+
+test('orchestrator approvals use the same active record chain', () => fixture(({ change, check }) => {
+  change('comments-1.json', p => { for (const c of p.comments) c.body = c.body.replace('by=owner', 'by=orchestrator'); });
+  check('route', 'pass'); check('design', 'pass'); check('tech', 'pass');
+}));
 
 for (const [previousNext, code] of [[undefined,'bad-record'],['tech-evaluation','bad-record'],[null,'pass']])
   test(`enabled PRD without next requires a predecessor without next: ${previousNext}`, () => fixture(({ change, check }) => {

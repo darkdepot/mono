@@ -5,13 +5,13 @@ delegates, monitors, decides or escalates, records, and reports. It never
 implements delivery-stage work itself. Idea is the explicit exception: the orchestrator runs that stage itself.
 Research too: no owner questions or yes; the result goes to the owner.
 Discovery answers with sources and its own PRD yes; result to owner without waiting.
-On the Tech Evaluation route the orchestrator runs that stage wholly as owner,
+On the Design and Tech Evaluation routes the orchestrator runs each stage as owner,
 approves its page by=orchestrator with a reason and no owner windows; the result
 reaches the owner at Handoff work start.
 
 ## Roles
 
-- User: product decisions only — idea direction, scope, design, product risk,
+- User: product decisions only — idea direction, scope, first-product exemplars, taste-memory consent, product risk,
   deploy approval per policy. Talks only to the orchestrator session.
 - Orchestrator: one session per product; owns worker dispatch, monitoring, all
   Linear mutations during orchestration, technical decisions, deploy
@@ -27,6 +27,7 @@ reaches the owner at Handoff work start.
 | `mono:idea` | orchestrator session; owner presses «Утвердить» per Idea |
 | `mono:discovery` | orchestrator session itself, per its orchestrator reference |
 | `mono:research` | orchestrator session itself after the owner's start; no owner questions or yes; result to owner |
+| `mono:design` | orchestrator session itself on `next=design`; chooses by exemplars/taste, approves U2 with a reason; absent product memory waits for owner exemplars |
 | `mono:tech-evaluation` | orchestrator session itself on its record-selected route; approves as owner, including irreversible/deferred/contrary-to-owner lines, with a reason and no owner window |
 | `mono:handoff` | orchestrator session itself after the routed pre-delivery stages; work starts only by the owner |
 | `mono:implement`, `mono:preflight`, `mono:ship` | worker session |
@@ -38,15 +39,13 @@ stage skills keep their ownership unchanged.
 
 ## Decision Authority
 
-Outside the Tech Evaluation stage exception below, the user decides. Escalate immediately and interactively with a decision
+Outside the Design and Tech Evaluation stage decisions below, the user decides. Escalate immediately and interactively with a decision
 brief (options + recommendation):
 
 - Idea direction and scope: work start after the Handoff summary, more than
   three [execution Issues](lifecycle.md#задачи-этапов), scope drift.
-- Design and UX: always with prepared side-by-side variants (`/design-html`
-  when the runtime provides it; concrete textual variants otherwise). Under
-  Director Discovery, batch design/UX escalations into the UX checkpoint
-  unless they block discovery from continuing.
+- First-product design memory: ask whom to emulate with proposed exemplars.
+  Only that Project waits; other waves continue.
 - Product risk: money, user data, irreversible production actions, external
   access.
 - Deploy approval when the configured `deployApproval` policy requires it
@@ -58,6 +57,8 @@ under «Решил сам:» with a one-line reason:
 
 - Discovery solution choice and its own PRD yes, with sources; the owner can
   override at any time or at the Handoff summary.
+- Design direction and approval by exemplars/taste (`by=orchestrator` with a
+  reason), in this session. Taste rules still need owner consent.
 - Tech Evaluation page approval as owner (`by=orchestrator` with a reason),
   including irreversible decisions, a deferred PRD item and a line against an
   earlier owner decision. No owner windows inside the stage; its result goes
@@ -84,21 +85,28 @@ affected stage when that happens.
 
 ## Director Discovery
 
-Run Idea → Research → Discovery → Tech Evaluation (when routed) → Handoff yourself; only a legacy package on the
+Run Idea → Research → Discovery → Design (when routed) → Tech Evaluation (when routed) → Handoff yourself; only a legacy package on the
 old path (`mono:check discovery`, Old path) goes from Research to Handoff repair.
 Discovery uses one second-model pass after solutions/recommendation, before choice;
 no Second Voice interview, dialogue continuation or rounds for this stage. Its
 answers carry sources or judgments, and it gives its own PRD yes. Workers and
 background launches never start the stage. The owner can overturn its result.
 A deferred Project stays out of intake until its return condition or owner return.
-Route by the latest PRD approval: `next=tech-evaluation` before Handoff;
-`next=handoff` skips Tech Evaluation. No `next=` also skips it, unless the owner
-explicitly requests it in the stage task. Any existing `mono-tech` is consumed at Handoff
-even without `next=`. Discovery emits `next=` by size for new approvals.
-Reapproval preserves the prior route/absence. Handoff begins after the routed
-Tech Evaluation; its owner-start summary includes «Техлид решил за тебя:» with
-irreversible, deferred and contrary-to-owner decisions and reasons, without a
-separate brief for the page already approved `by=orchestrator`.
+At every PRD approval Discovery decides design first, then PRD size in one
+record. `design=needed next=design` starts Design here, then follow its `next`:
+ordinary/large to Tech Evaluation, tiny to Handoff. `design=not-needed` routes
+directly by size. Reapproval recomputes the route; only not-needed preserves
+previous absence of `next`. Without `design=`, keep the old recorded route
+until reapproval, including existing tech records on the old path.
+Run `route` before exemptions and verify all required records in chain order.
+Changed route invalidates lower records; the same route allows stage-owned
+renewal without showing only unchanged screens/page. Handoff starts itself
+after the last required stage, and its owner-start summary includes
+«Дизайнер решил за тебя:» next to «Техлид решил за тебя:», with reasons and links.
+Design chooses by exemplars/taste and records U2 `by=orchestrator` with a
+reason, no owner selection. No product memory: send one question whom to
+emulate with proposed exemplars; only this Project waits, other waves continue.
+
 Tech Evaluation owns new Tech Specs after page approval; Handoff only consumes
 them and copies decisions to package-record `U` units and Issue key contracts.
 Any page-line change returns to Tech Evaluation; after work start Handoff first
@@ -106,31 +114,21 @@ performs class 3 repair and later obtains a new owner start. Deferred PRD items
 are changed only by Discovery, using the stage-mode approval provenance and
 closed-task exception in `references/lifecycle.md`.
 
-UX checkpoint and reviewed-prototype bar below stay in force. Contested Always-ask
-items batch there or into the Handoff summary. The Second Voice dialogue/round
-protocol below belongs only to pre-write package review; a Discovery second-model
-pass follows the stage reference instead. Design-lens prototype review is a pass,
-not a Discovery interview.
+The Second Voice dialogue/round protocol below belongs only to pre-write
+package review; Discovery follows its one-pass stage reference. Design checks
+images under its own stage rules before recording approval.
 
 Checkpoints — the only moments that touch the user:
 
-1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:» with the approval window; only the owner's «Утвердить» approves this version, separately from the work start. After verified completion send the Idea final message, then the «Начать исследование» window with the plan prepared by Research; run `mono:research` itself only after the owner's start (button or words); the Project stays in Idea until then. Research adds no owner questions or yes; return its result to the owner. Then follow the route above: run Discovery yourself with sources on answers and own PRD yes, returning its result without waiting, then the routed Tech Evaluation and Handoff.
-2. UX checkpoint (user-facing surface only): one brief per
-   `templates/orchestrator-brief.md` with a reviewed near-production
-   prototype and the few contested UX decisions.
+1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:» with the approval window; only the owner's «Утвердить» approves this version, separately from the work start. After verified completion send the Idea final message, then the «Начать исследование» window with the plan prepared by Research; run `mono:research` itself only after the owner's start (button or words); the Project stays in Idea until then. Research adds no owner questions or yes; return its result to the owner. Then follow the route above: run Discovery yourself with sources on answers and own PRD yes, returning its result without waiting, then each routed Design/Tech Evaluation and Handoff.
+2. First-product exemplars: one «на кого равняться» question with proposed
+   exemplars and reasons, per `skills/design/references/orchestrator.md`.
 3. Work start: the Handoff summary (tasks, «Решил сам», «Ответил сам», what was
    reconciled) after the Project is Ready. Only the owner's «Начать работу» or
    «начинаем» starts work; the summary never holds other waves (window only while
    no wave is live, otherwise a text line), and the Project waits in Ready.
 4. Deploy approval per the configured `deployApproval` policy.
 5. Ad-hoc: risk acceptance and material scope drift — these never wait.
-
-Prototype bar for the UX checkpoint: prepared via `/design-html` when the
-runtime provides it (concrete textual variants otherwise), realistic
-product content, correct states, side-by-side variants where a genuine
-choice exists, and a design-lens Second Voice pass already applied
-(in-session review as fallback) — the prototype is near-production,
-never a first draft.
 
 Multi-idea intake: the user may bring several ideas in one session. Run
 `mono:idea` per idea, queue discovery, and run Director Discovery one
@@ -325,6 +323,23 @@ legacy-before-cutoff. `checkIdea` approved runs before attempt registration;
 refusal names code/project and consumes no attempt. Issue-only keeps its existing
 `issue-only.json` envelope (marker,label,fingerprint,config,ownerApproval,seam),
 passes seam to checkIdea and needs no Project files.
+
+For a UI task with U2, its Read first must contain
+`Дизайн: запись mono-design <id>,` and its full `images` hash. Prepare
+`design.json` in the source snapshot: {issue,recordId,images,dump}; `dump`
+points to fresh raw design-gate responses (Project, all comments/requests, PRD).
+The dispatch command runs `idea-gate.mjs design` itself using the product config,
+checks the selected record, its Project against the task’s verified Project,
+and the copied image hash, and writes `snapshot/design/`
+PNGs plus normalized `snapshot/design.json` and the consumed raw responses in
+`snapshot/design-input/` for refused-attempt retries. It renders the final snapshot
+path in the worker prompt. The AFK read exception covers only its pinned
+`snapshot/design.json` and `snapshot/design/*.png`, not other dispatch state.
+Copies stay outside the worktree and are never
+committed. Without a U2 record omit this manifest: no PNGs are supplied.
+An Issue naming U2 without its source manifest refuses dispatch. Textual
+owner/product taste rules come from the Issue's context snapshot, including
+UI work without mockups; home paths alone cannot substitute for those rules.
 
 After the Idea check and before registering an attempt, dispatch checks Research.
 For a Project package, read the Research document named by `id` or `url` in the
@@ -1849,7 +1864,7 @@ whom, why the decision is needed now, completed proof (tests, autoreview, CI,
 certificates as applicable), recommendation with rationale, exact options.
 Ask immediately and interactively; unblocked work continues in parallel.
 
-Brief integrity — five rules bind every brief and UX checkpoint; the
+Brief integrity — five rules bind every decision brief; the
 user-facing shapes live in `templates/orchestrator-brief.md`
 («Целостность брифа»):
 

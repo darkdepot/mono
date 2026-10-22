@@ -58,7 +58,7 @@ the owner starts work (the button or «начинаем»), which also accepts t
 the orchestrator never does. Every stage keeps its
 own plan first, has no time estimates or waiting lines, and sends the final message
 separately before any window or next stage. In an owner-led stage approval is only «Утвердить» in a
-question window; orchestrator-led Discovery and Tech Evaluation use their own recorded approval; host mechanics live in `owner-dialog.md`.
+question window; orchestrator-led Discovery, Design and Tech Evaluation use their own recorded approval; host mechanics live in `owner-dialog.md`.
 
 ## Discovery
 
@@ -74,8 +74,9 @@ Close/defer is decided by the lead: owner, or orchestrator with a reason. Close
 sets Canceled; defer keeps status, records the return condition in the closed task.
 Both exit without PRD or Handoff. Do not resume deferred work before the condition
 or an owner return. Otherwise gate: `mono:check discovery`, then the route in the PRD approval below.
-Design is dormant until MONO-228 activates it; currently Handoff receives
-«нужны макеты» (Research `interface: true` or a new screen/window in the solution).
+Discovery decides whether the solution changes what the user sees (Research
+`interface: true` or an affected screen/window), then PRD size. It writes one
+approval with `design=` and `next=`, with the design reason below.
 A raw implementation plan never authorizes code or Delivery.
 
 Discovery always follows Research. The old path is decided by records, not dates:
@@ -94,16 +95,13 @@ package: with its approval). Migration alone
 never permits implementation. `no-record` on a new project returns to `mono:idea`.
 Implement checks `approved` before start.
 
-## Design (dormant)
+## Design
 
-MONO-227 adds the stage and chain checks without activation. `DESIGN_ROUTE_ENABLED`
-in `scripts/idea-gate.mjs` is false, with no product override. MONO-228 activates
-entry, all new record writers and the Project contract together. Until then no
-path starts Design, creates its stage task or writes the new format; orchestrator
-rules stay unchanged. Any new-format record, including `design=` in PRD or tech,
-`next=design` or `mono-design`, is `bad-record`, never `no-record` or an old path.
-Any intervening release is safe. Rollback is possible only before the first such
-record; after it, fix forward. The PRD contract and its fingerprint stay unchanged.
+The Design switch and all new record writers are enabled together, without a
+product override or temporary route. Project contract PC-001 is explicitly
+updated; the PRD contract and its fingerprint stay unchanged.
+Rollback is possible only before the first new-format record (`mono-design`,
+PRD `design=` or `next=design`, tech `design=`); after it, fix forward.
 
 ### Record chain
 
@@ -113,7 +111,7 @@ complete comment responses with actual request cursors and run:
 `node <pack-root>/scripts/idea-gate.mjs route --mode fresh --dump <dir> --config <path>`.
 Require exit 0, «Готово», JSON `pass` before deciding which stage checks to skip.
 This also applies without a PRD approval: old-path exemptions apply only after
-`pass`, and dormant Design records still stop at their writer.
+`pass`. Damaged records stop at their writer.
 `requiredRecords` names the records to verify; route validates fields and closed
 dictionaries, not freshness or stage completion. `bad-record` stops at its named
 writer stage; it is never absence. `tech` also performs this validation before
@@ -121,7 +119,7 @@ returning `no-record`. The most recent approval by `createdAt` wins; no fallback
 from a damaged newer one. A PRD without `design=` is the Design old path, with
 or without `next=`; it keeps today's Tech Evaluation route. Records, never dates.
 
-The following format and behavior are **dormant until MONO-228**:
+The active record formats are:
 
 ```text
 mono-prd: approved project=<uuid> document=<uuid PRD> updatedAt=<ISO> design=needed|not-needed next=<stage> by=owner|orchestrator
@@ -138,7 +136,7 @@ predecessor to name `next=tech-evaluation`. Handoff and work start require a val
 record at every named stage; missing/stale design returns to Design, never skips.
 An existing tech record is still consumed on the old path, even without `next`.
 
-### Designer and approval (dormant)
+### Designer and approval
 
 `skills/design/SKILL.md` owns the designer, two-layer memory, Paper approval and
 `Design: <project>` task under the stage-task rules. Product memory is outside
@@ -172,15 +170,22 @@ Owner-led Discovery ends with «Начать Design»; Desktop opens a fresh des
 session via `mcp__ccd_session__start_session` using
 `$TMPDIR/mono-design/<project>/brief.md`; Codex/terminal use that file and their
 host's `mono:design` invocation. Designer ends with the next-stage window from
-its own `next`. This session route remains disabled in MONO-227.
+its own `next`. Under the orchestrator Design runs in its own session, without owner windows;
+the designer chooses by exemplars and taste, and approves `by=orchestrator`
+with a reason. No product memory: send the owner one question whom to emulate
+with proposed exemplars; only that Project waits, others continue. Consent is
+still required for taste memory. Handoff shows the design and tech decisions
+together before owner work start.
 
-### Reapproval and technical evaluation (dormant)
+### Reapproval and technical evaluation
 
-MONO-228 replaces today's route-preservation rule: at every PRD reapproval,
+At every PRD reapproval,
 including the old path, Discovery decides design again, then size and `next`;
 not-needed with a previously absent `next` keeps its absence. A changed route
 invalidates downstream approvals; rerun with showing under the current mode.
-Same route: each stage itself decides whether its approved artifact changes.
+A new-format PRD approval requires lower records created after it even if its
+document version is unchanged; historical approvals without `design=` retain
+their previous freshness semantics until reapproval. Same route: each stage itself decides whether its approved artifact changes.
 Designer sees unchanged screens: new record, same images, new PRD version,
 no showing. Tech lead sees unchanged page: renewed record without showing.
 
@@ -206,12 +211,13 @@ owner explicitly requests it in the stage task. It is separate from the
 Discovery old path (no PRD approval and an approved legacy package).
 On the Design old path (PRD without `design=`), an existing `mono-tech` record is
 consumed even without `next=`.
-Discovery writes `next=tech-evaluation` for ordinary/large new PRD approvals
-and `next=handoff` for tiny ones; its final offers the recorded next stage.
-Reapproval of the same PRD preserves the previous record's `next`, including
-its absence; changing size alone never rewrites that route. The sole exception
-is the deferred-item callback below: the owner-requested old path then records
-`next=tech-evaluation` (U5).
+Discovery first decides design at every approval, then size: needed goes to
+Design; its approval routes ordinary/large to Tech Evaluation and tiny to
+Handoff. Not-needed goes there directly. Reapproval recomputes the route by
+size; only not-needed with a previously absent `next=` preserves absence.
+The requested old-path deferred-item callback records `next=tech-evaluation`.
+Changed routes invalidate lower approvals; same route allows renewal without
+showing only when that stage itself confirms unchanged screens/page.
 
 Tech Evaluation owns the technical decision and new Tech Spec. Owner-led: show
 one page, then «Утвердить» on that exact version, `by=owner`. Orchestrator-led:
@@ -225,7 +231,7 @@ external writes, spending or production actions.
 ### Tech approval record
 
 One Project comment: first a `text` fence with the exact first line
-`mono-tech: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> spec=<uuid Tech Spec> spec-sha256=<sha256> page-sha256=<sha256> by=owner|orchestrator`,
+`mono-tech: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> spec=<uuid Tech Spec> spec-sha256=<sha256> page-sha256=<sha256> by=owner|orchestrator design=<latest mono-design id>|none`,
 then a `mono-tech-page` fence with the exact approved page, then the approval
 provenance/reason outside the fences. Hash the page's lines between fences as
 UTF-8 with final LF. Hash the Spec's exact body returned by fresh Linear read-back.
@@ -247,13 +253,13 @@ and `comments-N.request.json` ({} first, then the actual previous cursor),
 (or `projectId`), PRD `updatedAt`. Run
 `node <pack-root>/scripts/idea-gate.mjs tech --mode fresh --dump <dir> --config <path>`.
 Require exit 0, «Готово» and JSON code `pass`; failure codes are `no-record`,
-`stale-prd`, `stale-spec`, `bad-record`, with «Стоп: <причина>». Reading instead
+`stale-prd`, `stale-spec`, `stale-design`, `bad-record`, with «Стоп: <причина>». Reading instead
 of running the command cannot authorize the step.
 
-Handoff verifies at entry and before recording the start, only if the PRD
-record has `next=tech-evaluation` or the Project has `mono-tech`. Missing/stale
-approval then returns to Tech Evaluation. On the old path with no record,
-Handoff does not run the command; `no-record` there is not a stop. Before start,
+Handoff verifies at entry and before recording the start every stage named by
+`route.requiredRecords`, in order: Design then Tech Evaluation when required.
+Missing/stale approval returns to its stage. The old path without a required
+record keeps its exemptions, only after route validation. Before start,
 a PRD edit calls Tech Evaluation in the same touch. Only that stage decides
 whether a page line changes: unchanged renews the record with the new PRD
 version without showing the page again; changed requires a new page. This
@@ -265,12 +271,12 @@ pre-ship drift own Spec changes, not a routine approval-freshness recheck.
 
 Approval of a page with «предлагаю отложить» is the decision; no second stop.
 Tech Evaluation calls Discovery in the same touch. Only Discovery moves that
-item into «Что не входит в MVP», records a new `mono-prd: approved` preserving
-`next` (on the owner-requested old path, `next=tech-evaluation`), and appends a
+item into «Что не входит в MVP», records a new `mono-prd: approved`, deciding design then size again
+(on the owner-requested old path without mockups, `next=tech-evaluation`), and appends a
 line to its closed stage task's decision comment without reopening the task.
 Owner-led: `by=owner` and «по нажатию на странице техлида <дата>».
 Orchestrator-led: `by=orchestrator` with the reason. Then Tech Evaluation writes
-the Spec and `mono-tech` with the new PRD version. It never edits PRD itself.
+the Spec and `mono-tech` with the new PRD version and latest design id. It never edits PRD itself.
 
 ## Задачи этапов
 
@@ -489,7 +495,7 @@ Required:
 - Capture merged SHA, deploy target, and deploy verification evidence.
 - With `landing.install: "wave-drain"`, follow [Install](landing.md#install): keep the Issue In Review until `close`, with proof the installed version contains its merge commit.
 - Before the live sweep, verify the deployed version matches the certified merged SHA; for wave installation, verify T and the task's merge ancestry through its batch proof.
-- Run the live QA sweep on the deployed app for user-facing changes: functional smoke over the shipped Issue's PRD acceptance criteria plus design acceptance against the approved UX-checkpoint prototype (functional smoke alone when no prototype was approved).
+- Run Live QA in the browser session on the deployed app: functional smoke over shipped acceptance criteria plus comparison of changed screens to the exact U2 PNG version and textual taste rules. Without mockups compare taste rules alone; already-started projects with an approved legacy prototype retain it. Differences follow the ordinary deploy-defect/hotfix path before showing work to the owner.
 - Move a user-facing Issue to `Done` only after its own live pass is green.
 - On a live defect, file an immediate hotfix Issue out of queue and dispatch it (fix-forward); the defect Issue does not block the original Issue's `Done`.
 - Run or report `mono:check post-ship` after deploy evidence is known.
@@ -518,26 +524,26 @@ product and sequences the stages above through delegated workers.
 Required:
 
 - Gate ordering of this lifecycle preserved verbatim.
-- `mono:idea`, `mono:research`, `mono:discovery`, `mono:handoff`, and `mono:deploy` run in the
+- `mono:idea`, `mono:research`, `mono:discovery`, routed `mono:design` and
+  `mono:tech-evaluation`, `mono:handoff`, and `mono:deploy` run in the
   orchestrator session; `mono:implement`, `mono:preflight`, and
   `mono:ship` run in one worker session per Issue.
 - `mono:research` runs in the orchestrator session itself. No owner questions or
   yes; the result goes to the owner. Discovery answers with sources, chooses and
-  gives its own PRD yes; its result goes to the owner without waiting. Handoff then
-  runs itself; reconciliation conflicts without money, user data or irreversible
+  gives its own PRD yes; its result goes to the owner without waiting. Design and Tech Evaluation follow the record chain automatically, then
+  Handoff runs itself; reconciliation conflicts without money, user data or irreversible
   effects are the orchestrator's with a recorded reason. Idea still waits for the
   owner’s «Утвердить», Research and work for the owner’s start.
 - All Linear mutations during orchestration flow through the orchestrator
   (single writer); workers never write to Linear and queue stage-required
   mutations in mailbox reports.
-- Always-ask decisions (scope, design, product risk, deploy per policy) reach
-  the user as decision briefs — immediately when they block progress;
-  design/UX items arising during discovery batch into the UX checkpoint per
-  Director Discovery.
+- Always-ask decisions (scope, first-product exemplars, product risk, deploy per
+  policy) reach the user as prepared briefs; only that Project waits. Design
+  chooses and approves by exemplars/taste with a recorded reason, not an owner
+  choice; new taste rules still require owner consent.
 - Discovery under orchestration follows its stage reference: one second-model
   pass without interview or continued dialogue. Owner contacts: Idea description
-  approval, Research start, Research/Discovery results without waiting, UX checkpoint with a reviewed
-  prototype, the Handoff summary and work start (owner only; it never holds other
+  approval, Research start, Research/Discovery results without waiting, first-product exemplars, the Handoff summary and work start (owner only; it never holds other
   waves), deploy approval per policy, ad-hoc risk/scope drift.
 
 
@@ -549,8 +555,8 @@ Forbidden:
 - Moving stage ownership: Delivery Start stays with `mono:implement`, PR
   lifecycle with `mono:ship`, merge/deploy and closeout with
   `mono:deploy`.
-- Relaying discovery-skill question streams to the user one by one, or
-  presenting an unreviewed first-draft prototype at the UX checkpoint.
+- Relaying stage question streams or orchestrator Design choices to the owner;
+  first-product exemplars and consented taste memory keep their explicit rules.
 
 ## One Delivery Context
 

@@ -25,32 +25,17 @@ holds other waves, and the orchestrator never starts work itself. A brief for
 more than three Issues offers «Разбить проект» (recommended when it fits) and
 «Разрешить больше задач».
 
-Design questions: prepare side-by-side variants first (`/design-html` when the
-runtime provides it), open them, then ask. Never decide visual questions
-silently and never ask them text-only when the difference is visual.
+## Эталоны первого продукта
 
-## UX-чекпоинт (UX Checkpoint Brief)
-
-```text
-UX-чекпоинт: <проект> — прототип готов к твоему фидбэку
-
-Что смотрим: <ссылка/файл прототипа — near-production, уже прошёл внутренний design review>
-Контекст: <одно предложение — какую часть продукта это меняет>
-Решил сам: <ключевые product/UX-решения внутри прототипа, по строке с причиной>
-
-Нужно твоё решение:
-1. <контестный UX-вопрос: вариант A — рекомендую, почему / вариант B>
-2. <…или «только общий фидбэк по прототипу»>
-```
-
-The prototype must be near-production before the checkpoint: realistic
-product content, correct states, side-by-side variants where a genuine choice
-exists (`/design-html` when the runtime provides it), and an internal
-design-review pass already applied. Never bring a first draft.
+Когда памяти продукта нет, Design передаёт один вопрос «на кого равняться»:
+предложи сильные эталоны в два кольца с причиной у каждого. Ответ владельца
+подтверждает их; только этот проект ждёт, остальные идут. Направление и макет
+дизайнер выбирает сам по памяти и пишет U2 `by=orchestrator` с причиной.
+В Handoff строка дизайнера идёт рядом со строкой техлида до старта работы.
 
 ## Целостность брифа (Brief Integrity)
 
-These rules bind every Decision Brief and UX checkpoint that offers
+These rules bind every Decision Brief that offers
 numbered or lettered options — with or without a board or prototype
 (a plain Handoff summary included). Wave-1 precedent: a
 brief numbered 7 questions against a 5-section board; the owner's

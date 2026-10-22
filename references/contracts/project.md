@@ -18,12 +18,19 @@ owner's words). An existing Project in Discovery without a Research document rou
 to `mono:research`, except a package approved strictly before `researchGate.since` (config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` in
 `scripts/idea-gate.mjs`); without an approved PRD, a Project on the old path
 (`skills/check/SKILL.md`, mode `discovery`, Old path) routes to `mono:handoff` unless
-the owner explicitly requests Discovery, any other to `mono:discovery`. An approved PRD routes by `next=tech-evaluation|handoff`
-in its approval: ordinary and large Projects take Tech Evaluation before Handoff,
-tiny work goes straight to Handoff. No `next=` is the Tech Evaluation old path,
-which skips that stage unless the owner explicitly requests it; any existing
-`mono-tech` record is still consumed by Handoff. Discovery does not emit `next=`
-until the stage lands. Package repairs stay with `mono:handoff`.
+the owner explicitly requests Discovery, any other to `mono:discovery`. An approved PRD routes by one approval containing `design=needed|not-needed`
+and `next=design|tech-evaluation|handoff`, with the design reason below it.
+Needed always goes to Design; its approval then routes by PRD size: ordinary
+and large Projects to Tech Evaluation, tiny work to Handoff. Not-needed routes
+directly by size. At every reapproval Discovery decides design first, then size;
+changed routes invalidate downstream approvals. Not-needed preserves absence
+of `next=` only when the preceding PRD approval lacked it; a first record must
+have `next=`. A PRD approval without `design=` is the Design old path, not a
+stop or a date: keep its recorded Tech Evaluation route until reapproval.
+No `next=` is the Tech Evaluation old path, skipping it unless requested by
+the owner; Handoff still consumes existing `mono-tech` on that old path.
+Route validation precedes all exemptions, then every required Design and Tech
+approval must pass its command. Package repairs stay with `mono:handoff`.
 
 ## PC-002 — Concise product brief
 

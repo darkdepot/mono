@@ -6,9 +6,10 @@
 
 Use dispatch Issue/branch/worktree. No branch changes, sub-workers, session
 management, other-Issue edits or orchestrator state access (workers.json/ledger.md/
-control.json/dispatch/consumed/logs/other reports); own
-consumed/<KEY>-gate-ack-a<N>.json reads only. No secrets/.orchestrator commits or
-user questions: mailbox recommendation, stop. Only gates read registry/dispatch.
+control.json/dispatch/consumed/logs/other reports). Read-only: own
+consumed/<KEY>-gate-ack-a<N>.json and pinned own snapshot/design.json and
+snapshot/design/*.png. No secrets/.orchestrator commits or
+user questions: mailbox recommendation, stop. Other registry/dispatch reads: gates only.
 Report before stops; passed pause ack only. Sequenced stops park; standalone
 keeps statuses.
 
