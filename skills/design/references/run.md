@@ -14,14 +14,16 @@
 сессии по `orchestrator.md`, без отдельного запуска и окон.
 Discovery не создаёт чужую задачу этапа.
 
-1. `mono:check discovery` должен дать PASS на текущих входах. Нет: причина и
-   адрес нужного этапа; результата Design нет.
+1. Обычный вход: `mono:check discovery` PASS на текущих входах. Своя
+   `bad-record` допускает только вход исправления по `approval.md`; это не PASS.
+   Иной отказ: причина и адрес нужного этапа; результата Design нет.
 2. Сохрани свежие ответы Linear как есть: `project.json`, все `comments-N.json`
    с `comments-N.request.json` ({} первой, дальше фактический предыдущий cursor),
    `prd.json`. Маршрут проверяй до выбора пропускаемых этапов:
    `node <корень>/scripts/idea-gate.mjs route --mode fresh --dump <папка>/linear --config <конфиг>`.
-   Только exit 0, «Готово», JSON `pass`. `bad-record`: стоп к писавшему этапу,
-   не отсутствие записи. В PRD нужны `design=needed next=design`.
+   Обычно только exit 0, «Готово», JSON `pass`. `bad-record` с
+   `stage=mono:design`: исправление по `approval.md`; иной писатель — стоп к нему,
+   не отсутствие записи. Обычный вход требует `design=needed next=design` в PRD.
 3. Без `design=` старый путь Design по записи, а не дате: сессию не начинай.
    Просьба владельца о Design идёт через повторное утверждение PRD в Discovery;
    дизайнер не добавляет вторую пометку маршрута. `design=not-needed` тоже мимо

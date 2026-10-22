@@ -78,11 +78,14 @@ hotfix до показа владельцу. Начатые проекты с у
 Техлид читает макет; пункт на утверждённых экранах возвращает в Design новым
 кругом, пункт вне экранов может отложить строкой страницы: Discovery правит PRD,
 Design обновляет запись тех же картинок без показа, затем Spec/`mono-tech`.
-Повреждённая запись блокирует цепь и исправляется своим этапом с проверкой
-входов. Контракт PRD не меняется; PC-001 и его отпечаток изменены явно.
+Повреждённая запись блокирует цепь; её писатель отдельно проверяет входы,
+восстанавливает утверждённое или получает новое согласие и пишет замену.
+Полная проверка остаётся FAIL до успешной проверки новой записи и цепи.
+Контракт PRD не меняется; PC-001 и его отпечаток изменены явно.
 Откат возможен до первой записи нового формата, дальше только исправление вперёд.
-Выпуск и живой прогон всей цепочки — MONO-229; эта активация вливается только
-после MONO-225. [evals/design](evals/design/README.md) проверяются перед ship;
+Эта активация вливается без повышения версии; общий выпуск 0.36.0 с Tech
+Evaluation делает MONO-225, живой прогон после установки — MONO-229.
+[evals/design](evals/design/README.md) проверяются перед ship;
 обязательное чтение Discovery и Handoff — до 20 480 байт каждый.
 
 ## Задачи этапов и Ready
@@ -91,7 +94,7 @@ Research, Discovery, Design и Tech Evaluation первым шагом кажд�
 заводят свою задачу с меткой `Этап` (`Research: <проект>`, `Discovery: <проект>`
 и так далее). У Idea и Handoff задачи этапа нет. Записи о ходе работы — в
 комментариях задачи, результат — в документе проекта; задачи этапов не входят
-в набор задач реализации. Этапы активны по цепи записей; выпуск Design ведёт MONO-229.
+в набор задач реализации. Этапы активны по цепи записей; общий выпуск ведёт MONO-225.
 Правила повторного входа, роли и единое определение задач реализации — в
 [«Задачах этапов»](references/lifecycle.md#задачи-этапов), форма поручения —
 [в шаблоне](templates/stage-task.md). Каждый этап отвечает только за свою задачу.
@@ -348,7 +351,8 @@ approval references are conditional. Measure with
 `node scripts/read-budget.mjs --skill design --mandatory`.
 Activation cases: [evals/tech-evaluation](evals/tech-evaluation/README.md).
 Claude validation, skill-doctor and evals run on the preflight-ready head before
-ship; the release and live owner run belong to MONO-225.
+ship; MONO-225 owns the combined 0.36.0 release, and MONO-229 owns the live owner
+run after installation.
 The Russian `<корень>/` prefix belongs to listed stages; English stages use
 `<pack-root>/` in commands.
 [Activation evals](evals/idea/README.md)

@@ -23,7 +23,7 @@ description: >-
 - `<корень>/references/owner-dialog.md`: перед первым окном;
 - `references/memory.md`: перед чтением и изменением памяти;
 - `references/drawing.md`: до первого рисования и каждого показа;
-- `references/approval.md`: перед утверждением, повторным входом и финалом;
+- `references/approval.md`: перед утверждением, повторным входом, исправлением своей `bad-record` и финалом;
 - `references/orchestrator.md`: ведёт оркестратор; вместо окон и выбора владельца действуют эти правила.
 
 ## Как ты думаешь

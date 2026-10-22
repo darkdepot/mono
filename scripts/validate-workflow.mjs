@@ -5924,6 +5924,7 @@ const REQUIRED_HEADINGS = [
   ["skills/design/references/memory.md", "Первый запуск"],
   ["skills/design/references/drawing.md", "Проверка по картинке"],
   ["skills/design/references/approval.md", "Повторный вход"],
+  ["skills/design/references/approval.md", "Вход для исправления записи"],
   ["skills/tech-evaluation/SKILL.md", "mono:tech-evaluation"],
   ["skills/tech-evaluation/references/spec.md", "Вход для исправления записи"],
   ["skills/tech-evaluation/SKILL.md", "Как ты думаешь"],
