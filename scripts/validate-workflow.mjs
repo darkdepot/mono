@@ -381,8 +381,8 @@ function issueOnlyLaneActivationError(config) {
 }
 
 const PLUGIN_SCOUTS = ["linear-scout", "code-scout", "web-scout"];
-function pluginAgentFaults(text, name) {
-  const allowed = ["name", "description", "model", "effort", "disallowedTools"];
+function pluginAgentFaults(text, name, stageTemplate = false) {
+  const allowed = ["name", "description", "model", "effort", "disallowedTools", ...(stageTemplate ? ["tools", "hooks"] : [])];
   const header = /^---\n([\s\S]*?)\n---\n/.exec(text);
   if (!header) return ["missing agent frontmatter"];
   const lines = header[1].split("\n"), keys = lines.map(line => /^([A-Za-z][A-Za-z0-9_-]*):\s*.+$/.exec(line)?.[1]);
@@ -391,10 +391,87 @@ function pluginAgentFaults(text, name) {
   if (fields.name !== name || !fields.description || fields.description.length < 20) errors.push("agent name/description invalid");
   if (fields.model !== "sonnet" || fields.effort !== "medium") errors.push("agent model/effort invalid");
   const tools = fields.disallowedTools?.split(/,\s*/) ?? [];
-  if (!["Write", "Edit", "NotebookEdit"].every(tool => tools.includes(tool))) errors.push("agent disallowedTools invalid");
+  if (!stageTemplate && !["Write", "Edit", "NotebookEdit"].every(tool => tools.includes(tool))) errors.push("agent disallowedTools invalid");
   if (!text.slice(header[0].length).trim()) errors.push("agent body missing");
   return errors;
 }
+
+// MONO-239: agent rules stay prose/review; only structure, exact names/flags and
+// executable hook behavior are pinned. Do not resurrect stage-mode documents.
+const STAGE_VOICE_FILES = [
+  "skills/research/references/run.md", "skills/discovery/references/helpers.md",
+  "skills/tech-evaluation/references/helpers.md", "skills/handoff/references/review.md",
+  "references/orchestration.md",
+];
+function stageVoiceFaults(text) {
+  const faults = [];
+  for (const [executable, flag] of [["codex exec", "--ignore-user-config"], ["claude -p", "--strict-mcp-config"]]) {
+    requireMachineToken(executable); requireMachineToken(flag); requireMachineToken("-s read-only"); requireMachineToken("--disable apps");
+    // The localized model placeholder identifies stage invocations; package
+    // Second Voice commands have their own policy placeholders and stay unchanged.
+    const commands = text.split("\n").filter(line => line.includes(executable) && line.includes("<модель>"));
+    if (commands.length !== 1 || !commands[0].includes(flag)
+      || (executable === "codex exec" && (!commands[0].includes("-s read-only") || !commands[0].includes("--disable apps")))) faults.push(`${executable} isolated stage invocation`);
+  }
+  return faults;
+}
+function stageTemplateFaults(text) {
+  const faults = pluginAgentFaults(text, "mono-{{product}}-{{stage}}", true);
+  const fields = parseFrontmatter(text);
+  for (const token of ["tools", "hooks", "PreToolUse", "Agent|Task", "command", "type", "{{tools}}",
+    "{{hook_path}}", "{{linear_scout}}", "{{code_scout}}", "{{web_scout}}", "mono-{{product}}-{{stage}}"]) requireMachineToken(token);
+  if (fields?.tools !== "{{tools}}") faults.push("stage template exact tool placeholder missing");
+  try {
+    const hooks = JSON.parse(fields?.hooks);
+    const entries = hooks.PreToolUse;
+    if (Object.keys(hooks).length !== 1 || !Array.isArray(entries) || entries.length !== 1
+      || entries[0].matcher !== "Agent|Task" || entries[0].hooks?.length !== 1
+      || entries[0].hooks[0].type !== "command"
+      || entries[0].hooks[0].command !== 'node "{{hook_path}}" "{{linear_scout}}" "{{code_scout}}" "{{web_scout}}"') faults.push("stage template helper hook invalid");
+  } catch { faults.push("stage template helper hook malformed"); }
+  return faults;
+}
+function validateStageDelegation() {
+  for (const file of STAGE_VOICE_FILES) {
+    const text = read(file);
+    for (const fault of stageVoiceFaults(text)) fail(`${file}: ${fault}`);
+    for (const flag of ["--ignore-user-config", "--strict-mcp-config", "--disable apps"]) {
+      if (!stageVoiceFaults(text.replace(flag, "")).length) fail(`${file}: isolated-flag negative fixture passed`);
+    }
+  }
+  const file = "templates/stage-agent.md", text = read(file);
+  for (const fault of stageTemplateFaults(text)) fail(`${file}: ${fault}`);
+  for (const [label, altered] of [
+    ["missing allowlist", text.replace("tools: {{tools}}\n", "")],
+    ["broad helper matcher", text.replace("Agent|Task", "Agent")],
+    ["missing hook path", text.replace("{{hook_path}}", "relative-hook")],
+    ["unknown field", text.replace("---\n", "---\npermissionMode: bypassPermissions\n")],
+  ]) if (!stageTemplateFaults(altered).length) fail(`stage template ${label} fixture passed`);
+  const hook = path.join(root, "templates/stage-helper-hook.mjs");
+  const cases = [
+    ["allowed scout", ["mono-product-discovery-code"], {tool_input:{subagent_type:"mono-product-discovery-code"}}, 0],
+    ["foreign scout", ["mono-product-discovery-code"], {tool_input:{subagent_type:"mono-other-code"}}, 2],
+    ["Explore denied", ["mono-product-discovery-code"], {tool_input:{subagent_type:"Explore"}}, 2],
+    ["general-purpose denied", ["mono-product-discovery-code"], {tool_input:{subagent_type:"general-purpose"}}, 2],
+    ["missing type", ["mono-product-discovery-code"], {tool_input:{}}, 2],
+    ["empty allowlist", [], {tool_input:{subagent_type:"Explore"}}, 2],
+    ["wildcard denied", ["*"], {tool_input:{subagent_type:"Explore"}}, 2],
+    ["malformed input", ["mono-product-discovery-code"], "{", 2],
+  ];
+  for (const [label, names, input, status] of cases) {
+    const result = spawnSync(process.execPath, [hook, ...names], {input: typeof input === "string" ? input : JSON.stringify(input), encoding:"utf8"});
+    if (result.status !== status || (status === 2 && !result.stderr.trim())) fail(`stage helper hook fixture: ${label}`);
+  }
+  // Skeleton replaces the deleted mode-heading and provenance pins. Meaning
+  // (Idea exclusion, owner-session boundary, two start cases) remains in review.
+  const section = documentSection(read("references/owner-dialog.md"), "Владелец из задания запуска");
+  for (const token of ["Idea", "by=owner", "by=orchestrator"]) {
+    requireMachineToken(token);
+    if (!section?.join("\n").includes(token)) fail(`owner-dialog launch-context skeleton missing ${token}`);
+  }
+  console.log("PASS stage delegation: isolated invocations, template and helper-hook fixtures");
+}
+
 function validatePluginAgents() {
   for (const name of PLUGIN_SCOUTS) {
     const file = `agents/${name}.md`;
@@ -632,7 +709,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "b601ec186ee4777e081fd5ff1214bc4abd930c9150a0b913708d9cde542dba73",
+      contractFingerprint: "f6fa575508db99969947ef3bf5a1935daa69e73c2d9f15fdc543c364dbe69771",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/research/SKILL.md",
@@ -5567,13 +5644,13 @@ const STRING_PINS = [
   ["skills/idea/references/record.md", "mono-idea: approved project=<uuid> sha256=<64 hex>"],
   ["skills/discovery/references/prd.md", "mono-prd: approved"],
   ["skills/discovery/references/prd.md", "by=owner"],
-  ["skills/discovery/references/orchestrator.md", "by=orchestrator"],
+  ["references/owner-dialog.md", "by=orchestrator"],
   ["references/repair-machine.md", "prd-before-package-approval"],
   ["skills/idea/references/record.md", "node <корень>/scripts/idea-gate.mjs verify --project <id> --dump <папка>/linear"],
   ["skills/handoff/references/record.md", "approval_status=approved"],
   ["skills/handoff/references/record.md", "mono-package: recorded"],
   ["skills/handoff/references/record.md", "mono-package: start"],
-  ["skills/handoff/references/record.md", "by=owner"],
+  ["skills/handoff/references/record.md", "by=orchestrator"],
   ["skills/check/SKILL.md", "mono-package: recorded"],
   ["skills/handoff/SKILL.md", "too-big"],
   ["skills/handoff/SKILL.md", "shared-base"],
@@ -5936,7 +6013,7 @@ const REQUIRED_HEADINGS = [
   ["skills/tech-evaluation/references/page.md", "Утверждение"],
   ["skills/tech-evaluation/references/spec.md", "Порядок записи"],
   ["skills/tech-evaluation/references/helpers.md", "Задание помощнику"],
-  ["skills/tech-evaluation/references/orchestrator.md", "Когда этап ведёт оркестратор"],
+  ["references/owner-dialog.md", "Владелец из задания запуска"],
   ["templates/tech-spec.md", "Решения"],
   ["templates/tech-spec.md", "Прикидка для Handoff"],
   ["references/lifecycle.md", "Задачи этапов"],
@@ -6161,6 +6238,12 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  // MONO-239: invocation flags, template fields/placeholders and dialogue skeleton.
+  "--ignore-user-config", "--strict-mcp-config", "--disable apps", "-s read-only", "codex exec", "claude -p",
+  "tools", "hooks", "PreToolUse", "Agent|Task", "command", "type",
+  "{{tools}}", "{{hook_path}}", "{{linear_scout}}", "{{code_scout}}", "{{web_scout}}",
+  "mono-{{product}}-{{stage}}", "Владелец из задания запуска", "Idea",
+
   "design", "mono-design: approved", "design=",
   "tech",
   "mono-tech: approved",
@@ -7124,6 +7207,7 @@ if (process.argv.includes("--model-policy-only") || process.argv.includes("--mod
 
 failures.push(...checkPlugin(root));
 validatePluginAgents();
+validateStageDelegation();
 validateLandingSurface();
 validateDocumentSkeleton();
 validateCheckModeDeclaration();

@@ -12,18 +12,12 @@ projects and Issues through the existing workflow skills with delegated
 workers, answer technical questions autonomously, and escalate only product
 decisions to the user.
 
-`mono:orchestrate` runs Idea itself as the explicit stage-work exception.
-Research too: no owner questions or yes; the result goes to the owner.
-Discovery and routed Design/Tech Evaluation also run here. Design approves
-`by=orchestrator` with a reason; only first-product exemplars wait for the owner. Tech Evaluation approves
-as owner (`by=orchestrator` with reason), including irreversible, deferred and
-contrary-to-owner decisions; no owner windows, result at Handoff work start.
-Every PRD approval redecides design, then size; changed routes invalidate lower records.
-It inspects, delegates,
-monitors, decides or escalates, records, and reports. Stage ownership is
-unchanged: `mono:implement` owns Delivery Start, `mono:preflight` owns
-local readiness, `mono:ship` owns the PR lifecycle, `mono:deploy` owns
-merge/deploy and closeout.
+Run pre-delivery stages through the same stage skills in Claude Code agents;
+answer as delegated owner. Each stage writes/read-backs its own Linear records,
+returns its selected transition; the orchestrator launches the next stage.
+Idea always needs the owner's press. Delegation is the latest Idea record's
+outside-fence mark (or a pre-version explicit owner decision); otherwise owner
+starts Research/work. Delivery workers keep implement/preflight/ship ownership.
 
 Read first:
 
@@ -132,35 +126,43 @@ Workflow states:
      `templates/orchestrator-brief.md` with its «Техника» table) before
      taking new actions.
 2. `intake-and-discovery`
-   - Run `mono:idea` per idea in this session: launch both scouts, recap, answer the route and 1–3 meaning questions yourself with reasons; ask the owner only when their meaning is unclear. Show the description and «Ответил сам:» in the approval window; only the owner’s «Утвердить» counts. Never relay the stage questions or approve for the owner; this approval is separate from the work start. With several ideas, queue
-     them and run discovery one project at a time (Director Discovery in
-     `references/orchestration.md`) while dispatched work continues.
-   - After the Idea final message, run `mono:research` yourself only after the
-     owner starts it (button or words); the Project stays in Idea until then.
-     After Research start the next stage yourself, without waiting: `mono:discovery`
-     by its orchestrator-mode reference; only a legacy package on the old path
-     (`mono:check discovery`, Old path) goes to `mono:handoff` repair. Research adds no questions
-     or yes. Discovery answers with sources, chooses a solution and gives its own
-     PRD yes; its one second-model pass is not a Second Voice interview. Return
-     both results to the owner without waiting. A deferred Project is not picked
-     up before its task's return condition or an explicit owner return.
-   - Follow the chain after Discovery automatically: `next=design` starts
-     `mono:design` here, then its `next=` starts Tech Evaluation or Handoff.
-     No product memory: send the owner one «на кого равняться» question with
-     proposed exemplars; only this Project waits. Design direction/approval
-     are the orchestrator's, `by=orchestrator` with a reason, no owner window.
-   - Discovery recomputes design then size on every PRD approval; changed routes
-     invalidate downstream records. Handoff starts after the last required stage.
-     Its summary shows designer decisions next to tech lead decisions.
+   - Follow Director Discovery and Stage agent permissions in `references/orchestration.md`.
+     Build `~/.claude/agents/` stage/scout definitions from `templates/stage-agent.md`
+     and current host's exact tool names in fixed allowed categories. Copy
+     `templates/stage-helper-hook.mjs` into `<orchestrator-root>/hooks/`; use its
+     absolute path for PreToolUse `Agent|Task`, allowing only the named scouts.
+     At every start and before launch verify host connections, definitions, hook
+     and session visibility. Edited/new definitions require a new orchestrator
+     session; until then do not launch. Codex delegated stages do not run: tell owner
+     they run in Claude Code. No silent widening of tools or server wildcards.
+   - One Project chain at a time: stage agents ask the same questions and show the
+     same result as to owner; answer with label and reason on that version.
+     Idea: show owner its description/window and relay only their press. Only a
+     delegated Project allows autonomous Research/work start. First exemplars and
+     new taste rules stay with owner. Their words reopen approvals.
+   - Maintain `.claude/session-views/<этап>-<ключ проекта>-<круг>.md` in product cwd,
+     appending every message immediately. `git check-ignore` first; if needed add
+     `.claude/session-views/` to product `.git/info/exclude`, never `.gitignore`.
+     Link conversation in each stage result; no child Desktop delegation session.
+   - `stale`/`legacy-migrate` Idea stops autonomous Research/work despite delegation.
+     Carry it to owner; require their Idea button, confirmed record and fresh check.
+     Never approve that snapshot through your reply or work-start comment.
+   - Before every `by=orchestrator` record run the foreground read-only different-
+     family countercheck in `references/orchestration.md`, including exact text,
+     version and reason. Verdict/model/version outside fences in the same comment;
+     changed text/reason needs recheck. Objection goes to «Ещё обсудить»; repeated
+     objection may be overridden with explicit reason; no answer after one retry
+     means no approval, other Projects continue.
+   - Send each stage's R1 result to owner with «Утвердил сам, потому что…»;
+     first lines «Решил за тебя: …, потому что …», including overrides.
 3. `handoff`
-   - After the last required stage in the record chain run `mono:handoff` here, by its
-     orchestrator-mode reference. Answer reconciliation conflicts without money,
-     user data or irreversible effects yourself with a recorded reason; those and
-     more than three Issues go to the owner while other waves continue.
-   - Bring the user the Handoff summary; it never holds other waves. Work starts
-     only when the owner presses «Начать работу» or says «начинаем»; then write
-     and read back the start record before any dispatch. Never start work
-     yourself; a Ready Project without that record is never dispatched.
+   - Launch Handoff after the routed required records. It owns package/review/Issues.
+     Missing `next=`: consume effective valid tech for current PRD without another
+     offer. Only absent/invalid tech with ordinary/large size offers Tech Evaluation;
+     without consent no package or bypass. Authorized start only: ordinary `by=owner`, delegated
+     `by=orchestrator` with reason/countercheck. «Передать оркестратору» or typed
+     «передай оркестратору» in owner session records `by=owner` and transfers work.
+     Confirm start before dispatch; Ready alone is never authorization.
 4. `dispatch`
    - Apply [landing launch scheduling](references/landing.md#scheduling) before adding work to a running wave.
    - Before incompatible plugin updates require machine-wide quiescence per
@@ -302,29 +304,22 @@ Workflow states:
 
 Rules:
 
-- This skill is a control plane: never implement, edit code, fix CI, or rewrite PRs
-  in this session; delegate that to workers. Pre-Handoff artifacts (PRD, Paper
-  mockups, Tech Spec, review notes) stay orchestrator-owned. Stages before Handoff
-  (Idea, Research, Discovery, routed Design and Tech Evaluation) run here
-  under their own rules;
-  implement/preflight/ship always stay in workers.
+- This skill is a control plane: feature code/CI/PR work stays in delivery workers.
+  Pre-delivery artifacts belong to their stage agents; each writes its own records.
 - Narrow control-plane exception: under an explicit owner mandate the
   orchestrator MAY author operational and deploy-repair changes directly —
   deploy scripts, infra config, docs address sweeps — and every such change
   is ALWAYS recorded in the ledger as a control-plane exception naming the
   mandate. Feature code NEVER qualifies; it always routes through workers.
-- Single Linear writer: all Linear mutations during orchestration happen in
-  this session; workers never write to Linear and queue every stage-required
-  mutation in their reports.
+- Single Linear writer for implement/preflight/ship workers: this session applies
+  their queued mutations. Stage sessions write and read back their own artifacts.
 - Never skip or weaken lifecycle gates; the orchestrator sequences gates, it
   does not replace them.
 - Never ask the user an unprepared question; exhaust autonomous work first
   and refresh item state immediately before asking (Decision Briefs policy).
-- Idea approval and the start of Research still wait for the owner. Research/Discovery results are owner
-  contacts without waiting; Discovery uses its own yes, never owner yes.
-- Touch the user only at checkpoints: Idea description approval and Research start (clarify meaning only when necessary), first-product exemplars, the Handoff summary and work start, deploy approval per policy, and ad-hoc
-  risk or scope-drift escalations; decide everything else and record it
-  under «Решил сам:» (Director Discovery in `references/orchestration.md`).
+- Idea approval, new taste rules and first-product exemplars remain owner decisions.
+  A delegated Project authorizes subsequent stage decisions and Research/work start;
+  ordinary Projects still need owner start. Deploy follows configured policy.
 - Second Voice reviewers are discovery agents, not workers: they never
   talk to the user, never write Linear, and never dispatch or steer
   workers.

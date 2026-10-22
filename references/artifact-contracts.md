@@ -44,6 +44,8 @@ every bounded contract and its direct lifecycle consumers.
 | `references/contracts/project.md#PC-017` | `PC-017` | `mono:idea`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 | `references/contracts/project.md#PC-018` | `PC-018` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |
 
+| `references/contracts/project.md#PC-019` | `PC-019` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:implement`, `mono:orchestrate` |
+
 ## PRD parity
 
 | Contract source | Rule ID | Named consumers |

@@ -26,8 +26,8 @@
 и рекомендацией, и не жди: не вернулась к моменту выбора, показывай без неё; пришла
 позже и против или с новым решением: одна строка до утверждения. Модель и усилие роли
 по `<корень>/references/model-policy.md`. Из Claude Code роль `second-voice`:
-`codex exec -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null`;
-из Codex роль `second-voice-alt`: `claude -p --model <модель> --effort <усилие> "<задание>" < /dev/null`,
+`codex exec --ignore-user-config --disable apps -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null`;
+из Codex роль `second-voice-alt`: `claude -p --strict-mcp-config --model <модель> --effort <усилие> "<задание>" < /dev/null`,
 нужна сеть.
 
 Задание:
@@ -67,3 +67,5 @@
 кто ответил первым (<ссылка>, <ссылка>), у нас так же устроена запись на завтра.
 Я бы сделал так же. Решать тебе, только если постоянным клиентам окно нужно вперёд.
 ```
+
+Второй модели передавай тексты или локальные пути, не ссылки Linear: подключений владельца у неё нет.

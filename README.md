@@ -3,6 +3,56 @@
 Текущий выпуск: **0.36.0**. См. [заметки выпуска](CHANGELOG.md#0360---2026-10-22).
 Private vulnerability reports: [SECURITY.md](SECURITY.md).
 
+## Один владелец этапа
+
+Этап узнаёт владельца только из задания запуска. В сессии владельца следующий
+этап идёт там же, кроме отдельной сессии Design. В делегированном проекте
+оркестратор запускает те же этапы агентами Claude Code, отвечает им подписью
+варианта и причиной на показанной версии; исключение не действует для Idea и
+в сессии владельца. Идею всегда утверждает владелец кнопкой. Исполнитель-воркер
+(codex-cli, claude-cli) этап не ведёт; агент этапа ведёт и сам пишет/читает обратно
+свои записи Linear. Единственный писатель Linear для implement, preflight и ship
+это оркестратор, применяющий очереди исполнителей. Этап возвращает запись и
+выбранный переход; следующую сессию запускает оркестратор.
+
+Делегирование: в последней записи идеи вне заборов строка «Ведёт оркестратор:
+владелец принёс идею оркестратору <дата>.», повторяемая при переутверждении.
+Ранее отданный проект может опираться на явное решение владельца в комментарии
+проекта. Без обоих проект ведёт владелец. Только делегирование разрешает
+оркестратору начать Research и работу самому, со стартом `by=orchestrator`,
+причиной и вердиктом противовеса. Но `stale`/`legacy-migrate` идеи останавливает
+автономный Research и работу до новой кнопки владельца, подтверждённой записи
+и свежей проверки; старт оркестратора идею не переутверждает.
+Обычному проекту нужен `by=owner`.
+Окно Handoff: «Начать работу» / «Передать оркестратору» / «Ещё обсудить».
+Кнопка и набранное «передай оркестратору» пишут `by=owner` и передают работу.
+PRD без `next=`: Handoff проверяет действующую техоценку текущего PRD и при
+годной записи идёт дальше без повторного предложения. Только без годной записи
+для размера «обычное» или «проект» предлагает «Начать Tech Evaluation» / «Ещё
+обсудить»; без согласия не продолжает и пакет не пишет. Маршрутизатор и его тест прежние. Контракт проекта PC-001/013/014/016
+уточнён, новое правило PC-019 и его SHA-256 закреплены валидатором.
+
+Оркестратор собирает определения этапа и разведчиков в `~/.claude/agents/`
+под текущий хост: только точные имена файловых, терминальных, вспомогательных,
+Linear, дизайн-Paper и поисковых инструментов. Никаких звёздочек по серверу.
+[Шаблон](templates/stage-agent.md) вне `agents/`, рядом
+[хук](templates/stage-helper-hook.mjs) PreToolUse `Agent|Task`, допускающий только
+имена разведчиков этапа. Определения и путь хука сверяются при старте и перед
+запуском; после изменения нужна новая сессия. Это ограничение прямых вызовов,
+не изоляция. Делегированные этапы в Codex не запускаются. Разговор дописывается
+сразу в `.claude/session-views/<этап>-<ключ проекта>-<круг>.md` продукта,
+при необходимости исключённую через `.git/info/exclude`, со ссылкой в итоге.
+
+Перед каждой записью `by=orchestrator` независимая другая семья модели читает
+точный текст/версию и причину без подключений владельца; вердикт с моделью и
+версией вне заборов в той же записи. Изменился текст или причина: новая проверка.
+Строки второй модели этапов закреплены с `--ignore-user-config` и
+`--strict-mcp-config`, а Codex также с `--disable apps`: подключённые приложения
+не должны оставаться доступны через авторизацию ChatGPT. Владелец получает итог каждого этапа с «Утвердил сам,
+потому что…» и решениями за него первыми. Новые правила вкуса и первые эталоны
+по-прежнему его; его слово открывает утверждение заново. Подробности:
+[общий разговор](references/owner-dialog.md), [политика](references/orchestration.md).
+
 ## Tech Evaluation между Discovery и Handoff
 
 Выпущенный в 0.36.0 этап [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) выбирает одно
@@ -26,9 +76,8 @@ Private vulnerability reports: [SECURITY.md](SECURITY.md).
 возврат к техлиду, после старта через ремонт класса 3 с новым стартом владельца.
 Ведёт владелец: «Утвердить». Ведёт оркестратор: утверждает сам с причиной,
 включая необратимое, отложенный пункт PRD и строку против прежнего решения
-владельца. Handoff начинается сам после этапа; при старте работы его итог
-показывает «Техлид решил за тебя:» с этими решениями и причинами. Отдельного
-брифа по уже утверждённой оркестратором странице нет. Отложенный пункт переносит
+владельца. Оркестратор запускает Handoff после возвращения этапа; при старте работы его итог
+показывает «Техлид решил за тебя:» с этими решениями и причинами. Итог этапа сразу получает владелец. Отложенный пункт переносит
 Discovery без второй остановки.
 После правки PRD из Handoff этап сам решает, меняется ли страница: прежняя
 страница даёт новую запись без показа; меняется строка, новая страница. Во время
@@ -59,12 +108,12 @@ Discovery без второй остановки.
 владельца. PRD меняет Discovery одним касанием с утверждением макета.
 
 Владелец после Discovery видит «Начать Design»: свежая сессия дизайнера получает
-задание с PRD, исследованием, памятью и размером. У оркестратора Discovery,
-Design, Tech Evaluation и Handoff идут сами по цепи в его сессии; дизайнер
-выбирает направление по эталонам и вкусу, пишет `by=orchestrator` с причиной.
+задание с PRD, исследованием, памятью и размером. В делегированном проекте эти этапы идут агентами оркестратора;
+он выбирает направление по эталонам и вкусу, этап пишет `by=orchestrator`
+с причиной и вердиктом противовеса.
 Нет памяти продукта — один вопрос «на кого равняться» с предложенными эталонами;
 только этот проект ждёт, остальные идут. Итог Handoff показывает решение
-дизайнера рядом с решением техлида. Idea и старт работы остаются у владельца.
+дизайнера рядом с решением техлида. Idea остаётся у владельца; старт работы следует правилу делегирования выше.
 
 Утверждение U2 связывает Paper с неизменяемой папкой PNG и версией PRD.
 UI-задача получает строку дизайна и пути к памяти/картинкам, применимые правила
@@ -100,9 +149,9 @@ Research, Discovery, Design и Tech Evaluation первым шагом кажд�
 [в шаблоне](templates/stage-task.md). Каждый этап отвечает только за свою задачу.
 
 Handoff ставит Ready после записи пакета, задач и PASS проверки, до слова
-владельца: Ready значит «проверено и записано», а не «начато». Работу начинает
-только владелец кнопкой «Начать работу» или словом «начинаем»; оркестратор её
-не начинает. Если Ready в рабочем пространстве нет, проект остаётся в Discovery,
+владельца: Ready значит «проверено и записано», а не «начато». Обычный проект начинает
+владелец кнопкой или словами; делегированный допускает старт оркестратора
+с причиной и противовесом. Если Ready в рабочем пространстве нет, проект остаётся в Discovery,
 проверка это сообщает. Реализация начинается из Ready; Discovery допустим у
 старого проекта или при отсутствии Ready, если пакет прошёл проверки. Крупная
 правка после старта снимает прежний старт и требует нового; у старого пакета
@@ -156,7 +205,7 @@ revision 4, текущие попытки продолжаются на своё
 Этапы Idea, Research, Discovery и Handoff пересобраны как разговор с сильным
 менеджером проекта, продактом и тимлидом. Утверждение везде только кнопкой
 «Утвердить» в окне вопроса; слова в чате не согласие, без окна утверждения нет.
-Исследование начинает только владелец кнопкой «Начать исследование» или словами,
+В обычном проекте исследование начинает владелец кнопкой или словами,
 проект до этого в Idea. В сессии владельца после финала Research и Discovery окно
 «Начать <этап>» / «Ещё обсудить»; у оркестратора следующий этап начинается сам.
 Сроков и строк ожидания нет нигде.
@@ -165,8 +214,9 @@ Handoff больше не пишет PRD и Tech Spec и не просит от�
 Он сверяет утверждённое, спрашивает только про то, что меняет результат для
 пользователя, деньги, данные или необратимое, режет работу на одну задачу
 (до трёх по названной причине, больше только с твоим ответом), пишет одну запись
-пакета комментарием проекта и ставит Ready. Работу начинает только владелец:
-кнопкой «Начать работу» или словом «начинаем», и у оркестратора тоже.
+пакета комментарием проекта и ставит Ready. В обычном проекте работу начинает владелец:
+кнопкой «Начать работу» или словом «начинаем». Делегированный проект следует
+правилу делегирования выше.
 
 После Research новый проект идёт в Discovery. Исключение определяется по записям, а не по дате:
 это только пакет, одобренный прежним Handoff, без записи «да» на PRD; такие пакеты
@@ -207,7 +257,7 @@ PRD, одобрения пакета и записи «да», если теку
 
 После Idea теперь установлен Research (`mono:research`): факты до выбора решения,
 документ Linear «Исследование: <проект>» и совет о следующем шаге. Этап проходит
-без вопросов владельцу и без отдельного утверждения; оркестратор ведёт его сам.
+без вопросов владельцу и без отдельного утверждения; агент этапа ведёт его сам.
 Дальше — Discovery: решения, выбор и PRD с «да» на показанную версию.
 
 Проверка Research включена с **2026-10-19, 00:00 UTC** — первого полного дня UTC
@@ -331,12 +381,12 @@ raw idea → recorded owner approval → Project in Idea → owner starts Resear
 → mono:deploy → verification → Linear closeout and project update
 ```
 
-1. **Capture.** Bring a raw idea to `mono:idea`. Stage names stay English (Idea, Research, Discovery, Design, Tech Evaluation, Handoff); the rebuilt stage is Russian. The agent acts as the founder's project manager: its first message comes before any tool call and only from what the owner said (the idea in his words, then what it looks at and will bring), the host plan lists 3-4 steps in the idea's words, and there are no time estimates or waiting lines: results are shown as they land. Two read-only scouts search Linear and code in the background; the first result is shown as it lands and an early route question may come before the code result. The agent recaps with its own pick among priced options and asks meaning questions, at most three, each from the last answer, using the host choice tool (`AskUserQuestion` in Claude Code, `request_user_input_async` in Codex; one plain-text question with a recommendation without one). The agent says plainly when it would not build the idea as asked. The project name is shown before approval; the record is prepared while the owner reads, nothing is written to Linear before approval, and approval is only the «Утвердить» button in the question window («Утвердить» / «Ещё обсудить»): chat words like «да» continue the conversation, and without a window there is no approval. A route question is separate; scope belongs to later stages. Show What / Why / Target outcome / prioritized Unknowns and stop for the owner's approval of this version. Follow [the recording reference](skills/idea/references/record.md); «Готово» from `verify`, status Idea read back and `mono:check idea` finish the record. Decisions, doubts and side ideas from the conversation go into the notes block «Что всплыло в разговоре» for Research; later additions without a description change create no new record and reach Research through the session and its stage log. A returned Project with the three idea sections unchanged keeps body/package/status. Without them, write the approved body and keep the status; corrections follow the package-aware return rules below. The stage ends with a separate final message (Project, link, status Idea, team) and a «Начать исследование» / «Ещё обсудить» window with the research plan. Research (`mono:research`) starts only when the owner starts it, by button or words at any time, never automatically; «Ещё обсудить» continues the conversation and changes the description only through a new approval. For a Project that already exists, the owner's words in this conversation are the frame and the old description and documents are reference; when he names a known product pattern, the agent first looks at how comparable products do it. An unmistakable one-PR request routes to `mono:issue` only with the configured lane enabled and `ownerPrincipal` present. In orchestration, the orchestrator runs Idea itself, answers the questions with reasons and shows «Ответил сам:» in the same approval window; the owner alone presses «Утвердить», separately from the later work start; the final message comes first, then the owner starts Research. The research plan in the window is prepared by Research and reused after the start.
-2. **Research.** Run `mono:research` when the owner starts it after Idea approval, using raw Linear responses with `idea-gate check --mode fresh --dump`; entry is checked read-only (fresh `pass` and the owner's start for an Idea Project) before any Linear write, then the Project moves to Discovery and the stage task opens. The first action is one plain line and the stage's own plan in the host task list; the substantive start and any rebuilt plan come after entry with the scouts; each returning direction gets 2-3 lines on the plan question it moves; no time estimates; the final message is separate, then «Начать <next stage>» / «Ещё обсудить» in an owner session, while the orchestrator starts the next stage itself. Write a brief, gather internal and external facts through source scouts, check the advice against sources and a second model, then read back one Research («Исследование») document and one stage-task log comment. The document leads with the answer and advice («Кратко» answers every Idea question), one finding per Idea question with a conclusion as its heading, evidence codes only on «Откуда:» lines and dated sources; `idea-gate research-draft` checks the draft and the read-back before and after writing. No owner questions, separate yes, solution selection or execution Issues. The orchestrator runs this stage itself and returns the result. A tiny reversible project gets `not-required` with a reason; missing facts get `hold` and a cheap next check. Stop with advice and the next stage: `mono:discovery`, or `mono:handoff` repair only for a Project on the old path (`mono:check discovery`: an approved legacy package). Existing Projects without Research route here, except packages approved before `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
-3. **Discover.** Run `mono:discovery` after Idea and Research for every Project off the old path (`mono:check discovery`, Old path: an approved legacy package): a product partner argues with the framing, talks with the owner one open question at a time, shows two or three solutions that differ by what the owner gets and the recommended one on a real past project, then writes a short PRD of the chosen solution approved only with «Утвердить» on the shown `updatedAt`. Detail decisions that surface while writing the PRD are first checked against comparable products and our code and brought as proposals with sources; the owner chooses only what changes what he gets. The approval card sits under the version it approves: summary, «Решил сам», link, or «Было / Стало» for an edit. In an owner session the separate final message offers «Начать Design», «Начать Tech Evaluation» or «Начать Handoff» from the PRD approval record, alongside «Ещё обсудить»; the next stage never starts by itself there. Tiny work gets a short PRD without second model or builder. Close/defer can exit without PRD, with reason and return condition in the closed stage task. In orchestration the session runs the stage itself, answers with sources, gives its own yes and returns the result without waiting; the owner can overturn it.
-4. **Design.** Run `mono:design` when the PRD record says `design=needed next=design`; keep Paper open. The designer uses product/owner memory and exemplars, checks the images, and records the approved Paper page with immutable PNGs. The orchestrator runs Design itself, chooses the direction and approves `by=orchestrator` with a reason; only missing first-product exemplars require the owner’s «на кого равняться» answer. The Design record then routes to Tech Evaluation or Handoff by PRD size.
+1. **Capture.** Bring a raw idea to `mono:idea`. Stage names stay English (Idea, Research, Discovery, Design, Tech Evaluation, Handoff); the rebuilt stage is Russian. The agent acts as the founder's project manager: its first message comes before any tool call and only from what the owner said (the idea in his words, then what it looks at and will bring), the host plan lists 3-4 steps in the idea's words, and there are no time estimates or waiting lines: results are shown as they land. Two read-only scouts search Linear and code in the background; the first result is shown as it lands and an early route question may come before the code result. The agent recaps with its own pick among priced options and asks meaning questions, at most three, each from the last answer, using the host choice tool (`AskUserQuestion` in Claude Code, `request_user_input_async` in Codex; one plain-text question with a recommendation without one). The agent says plainly when it would not build the idea as asked. The project name is shown before approval; the record is prepared while the owner reads, nothing is written to Linear before approval, and approval is only the «Утвердить» button in the question window («Утвердить» / «Ещё обсудить»): chat words like «да» continue the conversation, and without a window there is no approval. A route question is separate; scope belongs to later stages. Show What / Why / Target outcome / prioritized Unknowns and stop for the owner's approval of this version. Follow [the recording reference](skills/idea/references/record.md); «Готово» from `verify`, status Idea read back and `mono:check idea` finish the record. Decisions, doubts and side ideas from the conversation go into the notes block «Что всплыло в разговоре» for Research; later additions without a description change create no new record and reach Research through the session and its stage log. A returned Project with the three idea sections unchanged keeps body/package/status. Without them, write the approved body and keep the status; corrections follow the package-aware return rules below. The stage ends with a separate final message (Project, link, status Idea, team) and a «Начать исследование» / «Ещё обсудить» window with the research plan. Research (`mono:research`) starts by the owner or delegated orchestrator per PC-019; «Ещё обсудить» continues the conversation and changes the description only through a new approval. For a Project that already exists, the owner's words in this conversation are the frame and the old description and documents are reference; when he names a known product pattern, the agent first looks at how comparable products do it. An unmistakable one-PR request routes to `mono:issue` only with the configured lane enabled and `ownerPrincipal` present. Under delegation the stage agent runs Idea, the orchestrator answers with reasons and shows the description/window to the owner; only the owner presses «Утвердить». After verified recording the orchestrator starts Research. The research plan in the window is prepared by Research and reused after the start.
+2. **Research.** Run `mono:research` on authorized owner/delegated-orchestrator start after Idea approval, using raw Linear responses with `idea-gate check --mode fresh --dump`; entry is checked read-only (fresh `pass` and authorized start for an Idea Project) before any Linear write, then the Project moves to Discovery and the stage task opens. The first action is one plain line and the stage's own plan in the host task list; the substantive start and any rebuilt plan come after entry with the scouts; each returning direction gets 2-3 lines on the plan question it moves; no time estimates; the final message is separate, then «Начать <next stage>» / «Ещё обсудить» in an owner session, while the orchestrator starts the next stage itself. Write a brief, gather internal and external facts through source scouts, check the advice against sources and a second model, then read back one Research («Исследование») document and one stage-task log comment. The document leads with the answer and advice («Кратко» answers every Idea question), one finding per Idea question with a conclusion as its heading, evidence codes only on «Откуда:» lines and dated sources; `idea-gate research-draft` checks the draft and the read-back before and after writing. No owner questions, separate yes, solution selection or execution Issues. The orchestrator launches the restricted Research stage agent and relays its result; that agent writes and reads back its own Linear records. A tiny reversible project gets `not-required` with a reason; missing facts get `hold` and a cheap next check. Stop with advice and the next stage: `mono:discovery`, or `mono:handoff` repair only for a Project on the old path (`mono:check discovery`: an approved legacy package). Existing Projects without Research route here, except packages approved before `researchGate.since` in config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` from `scripts/idea-gate.mjs`.
+3. **Discover.** Run `mono:discovery` after Idea and Research for every Project off the old path (`mono:check discovery`, Old path: an approved legacy package): a product partner argues with the framing, talks with the owner one open question at a time, shows two or three solutions that differ by what the owner gets and the recommended one on a real past project, then writes a short PRD of the chosen solution approved only with «Утвердить» on the shown `updatedAt`. Detail decisions that surface while writing the PRD are first checked against comparable products and our code and brought as proposals with sources; the owner chooses only what changes what he gets. The approval card sits under the version it approves: summary, «Решил сам», link, or «Было / Стало» for an edit. In an owner session the separate final message offers «Начать Design», «Начать Tech Evaluation» or «Начать Handoff» from the PRD approval record, alongside «Ещё обсудить»; the next stage never starts by itself there. Tiny work gets a short PRD without second model or builder. Close/defer can exit without PRD, with reason and return condition in the closed stage task. A delegated stage agent runs the same stage; orchestrator answers with sources and approves its shown version with reason/countercheck. The owner receives each result and can reopen it.
+4. **Design.** Run `mono:design` when the PRD record says `design=needed next=design`; keep Paper open. The designer uses product/owner memory and exemplars, checks the images, and records the approved Paper page with immutable PNGs. The orchestrator launches Design as a stage agent, chooses the direction and approves `by=orchestrator` with a reason; only missing first-product exemplars require the owner’s «на кого равняться» answer. The Design record then routes to Tech Evaluation or Handoff by PRD size.
 5. **Evaluate.** Run `mono:tech-evaluation` when the preceding PRD/Design record routes here, or on the owner’s explicit request for the Tech Evaluation old path. The lead checks one solution against real product cases and a second model family, then obtains approval of one plain-language page and writes a short Tech Spec. Orchestration approves with a reason; Handoff shows the decisions at work start. The fresh record chain and `mono:check tech` bind PRD, design, page and Spec.
-6. **Package.** Run `mono:handoff` after the last required Design/Tech Evaluation stage, or directly after Discovery when the record chain routes to Handoff. A team lead writes no new PRD or Tech Spec: it calls `mono:check discovery` once, checks the required record chain, reconciles Project, Research, approved PRD (and Tech Spec or design when they exist), asks the owner only when a choice changes what the user gets or what is out of scope, or is irreversible, loses data or costs money, and sends a needed PRD change to Discovery with renewed approval in the same touch. One background `mono:code-scout` looks at the product code; slicing gives one Issue by default, a second and third only for `too-big`, `shared-base` or `probe`, more only with the owner. The checker and a second voice review the draft before the first Linear write; then one package record (a Project comment), the Issues, `mono:check handoff` and Ready. The final message comes separately, then the summary with «Начать работу» / «Ещё обсудить»; only the owner starts work, also under the orchestrator. Legacy packages approved by the earlier Handoff keep their Tech Spec and repair rules; the old path is decided by records, not dates, and `discoveryGate.since` no longer routes. Documents alone never authorize Delivery.
+6. **Package.** Run `mono:handoff` after the last required Design/Tech Evaluation stage, or directly after Discovery when the record chain routes to Handoff. A team lead writes no new PRD or Tech Spec: it calls `mono:check discovery` once, checks the required record chain, reconciles Project, Research, approved PRD (and Tech Spec or design when they exist), asks the owner only when a choice changes what the user gets or what is out of scope, or is irreversible, loses data or costs money, and sends a needed PRD change to Discovery with renewed approval in the same touch. One background `mono:code-scout` looks at the product code; slicing gives one Issue by default, a second and third only for `too-big`, `shared-base` or `probe`, more only with the owner. The checker and a second voice review the draft before the first Linear write; then one package record (a Project comment), the Issues, `mono:check handoff` and Ready. The final message comes separately, then the summary with «Начать работу» / «Передать оркестратору» / «Ещё обсудить»; ordinary work needs owner start; delegated work accepts orchestrator start with reason/countercheck. Legacy packages approved by the earlier Handoff keep their Tech Spec and repair rules; the old path is decided by records, not dates, and `discoveryGate.since` no longer routes. Documents alone never authorize Delivery.
 7. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
 8. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review or `accepted-with-declines` with orchestrator-approved evidence. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts lead the Russian ready-certificate comment before its unchanged machine block. Codex full and final deep/risky work retain the local loop. Managed Claude Code uses external committed-head collection only, with no in-worker helper pass; its ready certificate names that review route and stop/resume startup. Preserve phase ownership.
 9. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
@@ -356,11 +406,11 @@ read before body writes; Idea does not eagerly read the product's `AGENTS.md`.
 Verified-record recovery applies only when the current request neither changes nor
 adds to the idea; changed input takes the normal updated-description/owner-yes path.
 `node scripts/read-budget.mjs --skill idea --mandatory` reports its required
-corpus, explicitly including both scout task files; the complete mandatory set is
-20,203 bytes, below 20,480 without conditional reads. The recording reference and
+corpus, explicitly including both scout task files; the complete mandatory set stays
+below 20,480 without conditional reads. The recording reference and
 the Project contract are conditional and are read while the scouts search, before
-the description is shown; orchestrator specifics live in a conditional
-`skills/idea/references/orchestrator.md`. Scout definitions are read
+the description is shown; launch-context dialogue lives in conditional
+`references/owner-dialog.md`. Scout definitions are read
 by the scouts themselves, not by Idea: Codex receives absolute definition paths
 and tells each subagent to read its own file first, skipping frontmatter. Both
 English read tiers stay valid for every stage. [The shared Russian-stage list](scripts/russian-stages.mjs)
@@ -596,7 +646,7 @@ On the short path, gates check registered pins and dataset bytes before returnin
 Scripts do not write to Linear; the orchestrator uses its connector. The installed collector handles empty/collection-only queues; `.agents/`
 pre-application uses `dispatch.mjs --preapply` under a recorded owner mandate, with a separate commit before start gates and artifact-owner repair before a new launch. Manifests use path/`sha256` list items with column-zero `text` fences, allowing nested item indentation and blank lines as serialized by Linear.
 
-The orchestrator is the single Linear writer. A worker uses its dispatched snapshot as its entire Linear context and queues every required comment, state change, link and certificate in its report. Publish the whole queue with the phase capsule; continue only after its durable confirmation. In-phase confirmation requests preserve drift-before-PR, ready-certificate-before-formal-review and In-Review-after-PR ordering. A queued write is not an applied write.
+The orchestrator is the single Linear writer for implement/preflight/ship workers. A worker uses its dispatched snapshot as its entire Linear context and queues every required comment, state change, link and certificate in its report. Publish the whole queue with the phase capsule; continue only after its durable confirmation. In-phase confirmation requests preserve drift-before-PR, ready-certificate-before-formal-review and In-Review-after-PR ordering. A queued write is not an applied write.
 
 After a lost response, the orchestrator reconciles every write against its durable result and external state, then applies only missing actions. Keep stable write IDs for reconciliation; changed payloads need new IDs. Resume the same context and phase from its capsule with the complete open queue, decisions, head and writable roots. Recheck pack identity on every resume. A head change never drops pending obligations.
 
@@ -609,7 +659,7 @@ On macOS, collection verification also grants the resolved Darwin user temp root
 | Role | Responsibility and decision boundary |
 | --- | --- |
 | Owner | Product scope, slicing, design, acceptance of risk, package/start approval, deploy approval per policy |
-| Orchestrator | One control session per product; inspect, dispatch, monitor, answer technical questions, apply/read back Linear writes, run discovery/handoff and deploy; never absorb code/preflight/ship |
+| Orchestrator | One control session per product; inspect, dispatch, monitor, answer technical questions, apply/read back Linear queues for implement/preflight/ship workers, launch restricted stage agents and relay their results, and run deploy; each stage agent writes and reads back its own Linear records; never absorb code/preflight/ship |
 | Delivery worker | One Issue/worktree/context; execute code, local readiness and ship in order; report evidence and queues; no Linear access, sub-workers, session management or owner questions in AFK mode |
 | Second Voice | Independent pre-write package challenge on the policy-selected cross-vendor route |
 | Autoreviewer | Independent code review using [role:autoreview](references/model-policy.md#roles) and risk-based effort; supply tool evidence |
@@ -1225,7 +1275,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-27.** Include a compact checked/not-checked boundary in every stage result and call uninspected work unverified, so the owner cannot infer unsupported confidence — [Checked / Not Checked](references/human-friendly-output.md#checked--not-checked).
 - **K-28.** Report a stop with completed work, the exact blocking point, unperformed work and the smallest unblock action, so unfinished work cannot be mistaken for ready — [Blocked / Timed-Out Shape](references/human-friendly-output.md#blocked--timed-out-shape).
 - **K-29.** Append only observed facts with actual recording times to the ledger and append corrections instead of rewriting history, so invented history cannot conceal delays — [Mailbox And Ledger](references/orchestration.md#mailbox-and-ledger).
-- **K-30.** Let only the orchestrator write Linear in orchestrated mode and have workers queue writes or questions with recommendations in reports, so two writers cannot create divergent truth — [Orchestration Mode Precedence](references/worker-contract.md#orchestration-mode-precedence).
+- **K-30.** Let only the orchestrator write Linear for implement, preflight and ship workers, which queue writes or questions with recommendations in reports; pre-delivery stage agents write and read back their own records, so each artifact has one writer — [Orchestration Mode Precedence](references/worker-contract.md#orchestration-mode-precedence).
 - **K-31.** Start every pack change with a Linear Issue before the first edit, so no shortcut evades review and verification — [Change Discipline](AGENTS.md#change-discipline).
 - **K-32.** Update affected checks with behavior changes using structure and named behavior fixtures, keep prose free of pins and agent-only rules free of a second machine encoding, and preserve the four bounded contracts and fingerprints unless explicitly changed, so editorial rewrites stay green while protected invariants remain checked — [Fixture Coupling](AGENTS.md#fixture-coupling).
 - **K-33.** Write Linear artifacts, comments, templates and examples in the configured project language (Russian here), the stages listed in `scripts/russian-stages.mjs` and `references/owner-dialog.md` in Russian, and other skills in English, so the owner can read the artifacts and models can execute the pack consistently — [Language](AGENTS.md#language).
@@ -1239,13 +1289,13 @@ this pack uses `/mono:ship` and `/mono:review`.
 
 | Skill | Use it for |
 | --- | --- |
-| [mono:idea](skills/idea/SKILL.md) | Idea intake and recorded owner approval; Research starts only on the owner's start |
+| [mono:idea](skills/idea/SKILL.md) | Idea intake and recorded owner approval; Research starts by owner or delegated orchestrator |
 | [mono:research](skills/research/SKILL.md) | Facts before a solution, Research document and next-step advice without owner questions |
 | [mono:discovery](skills/discovery/SKILL.md) | Solution found with the owner in conversation, explicit choice and version-approved PRD; owner or orchestrator mode |
 | [mono:design](skills/design/SKILL.md) | Designer stage after PRD routing, consented taste memory and immutable Paper/PNG approval; orchestrator chooses with reasons |
 | [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) | One checked technical solution, one version-approved plain-language page, then a short Tech Spec; owner or orchestrator mode |
 | [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
-| [mono:handoff](skills/handoff/SKILL.md) | Team lead: reconciles approved inputs, slices (one Issue by default), one reviewed package record, Ready; work starts only by the owner; repair by the record |
+| [mono:handoff](skills/handoff/SKILL.md) | Team lead: reconciles approved inputs, slices (one Issue by default), one reviewed package record, Ready; work starts by owner or delegated orchestrator; repair by the record |
 | [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |
 | [mono:check](skills/check/SKILL.md) | Readiness-only transition assessment |
 | [mono:deliver](skills/deliver/SKILL.md) | One delivery context sequencing its three phase owners |
