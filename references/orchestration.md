@@ -38,7 +38,10 @@ Delegated Project: latest Idea approval's outside-fence line
 reapproval. A Project delegated before this version can rely on an explicit owner
 decision in a Project comment. Without either the owner leads: only owner starts
 Research and work (`by=owner`). Do not add `by` to strict `mono-idea` records.
-Only delegated Projects allow the orchestrator to start Research and work itself,
+A `stale`/`legacy-migrate` Idea stops autonomous Research/work despite delegation:
+carry it to owner for button approval, confirmed new record and fresh check first.
+The orchestrator's reply or bundled start cannot approve that Idea snapshot.
+Only delegated Projects with that current approval allow autonomous Research/work,
 write start `by=orchestrator` with a reason, answer and approve after Idea, including
 irreversible, deferred and contrary-to-owner decisions. Stage approval does not
 execute external writes or spending. Configured merge/release/deploy policy (`deployApproval`) stays.
@@ -69,9 +72,10 @@ Every PRD approval decides design then size; `next=design` goes to Design then
 ordinary/large work to Tech Evaluation, tiny work to Handoff. Not-needed routes
 by size. Reapproval invalidates lower records when the route changes. Run `route`
 before exemptions, then verify required records in chain order. PRD without
-`next=` retains the router's old path, but Handoff reads size: ordinary/large must
-be offered «Начать Tech Evaluation» / «Ещё обсудить». Consent opens that old path;
-without it no package or continuation. Existing tech approvals are still consumed.
+`next=` retains the router's old path. Handoff verifies effective `mono-tech` for
+current PRD and consumes a valid record without another offer. Only absent/invalid
+tech with ordinary/large size gets «Начать Tech Evaluation» / «Ещё обсудить».
+Consent opens that old path; without it no package or continuation.
 Tech Evaluation owns new Tech Specs; Handoff consumes them and owns package repair.
 A changed tech page returns to its owner; class 3 repair needs a new authorized start.
 
@@ -330,7 +334,8 @@ For a package record, `tech-spec.md` holds the content of the current record's
 `mono-package` fence (its `- U<n>.` units, `## Кратко` and manifests stay
 parseable; the dispatch label `Tech Spec:` stays) and `approval.md` is the authorized
 start comment; before dispatch verify ordinary `by=owner`, or delegated
-`by=orchestrator` with reason/countercheck (latest Idea mark or earlier owner decision), listing this
+`by=orchestrator` with reason/countercheck (latest Idea mark or earlier owner decision),
+never bundling unapproved stale/legacy Idea: owner button/record/fresh check first; listing this
 Issue, and names the record version it started with its `sha256`; the current
 version is that one or is reached from it by a verified chain of class 1-2
 versions with protected surfaces and Issue set unchanged. A class 3 version after

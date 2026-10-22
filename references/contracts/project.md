@@ -28,8 +28,10 @@ of `next=` only when the preceding PRD approval lacked it; a first record must
 have `next=`. A PRD approval without `design=` is the Design old path, not a
 stop or a date: keep its recorded Tech Evaluation route until reapproval.
 No `next=` is the Tech Evaluation old path; the router remains unchanged. Handoff
-reads PRD size: ordinary or large requires offering «Начать Tech Evaluation» /
-«Ещё обсудить». Consent from the owner (or delegated orchestrator) is the request
+first verifies any effective `mono-tech` for the current PRD and consumes a valid
+record without another offer. Only without a valid tech record does ordinary or
+large size require «Начать Tech Evaluation» / «Ещё обсудить». Consent from the owner
+(or delegated orchestrator) is the request
 that opens Tech Evaluation on the old path. Without consent, Handoff stops before
 writing a package; discussion cannot bypass Tech Evaluation. Tiny work may skip it.
 Handoff still consumes existing `mono-tech` on that old path.
@@ -146,8 +148,12 @@ Only the latest Idea approval comment's outside-fence line
 «Ведёт оркестратор: владелец принёс идею оркестратору <дата>.» delegates a Project;
 repeat it on Idea reapproval. Projects delegated before this version may use an
 explicit owner decision in a Project comment. Without either, the owner leads.
-Do not add `by` to the strict `mono-idea` record. The owner always approves Idea;
-afterward the delegated orchestrator may start Research and work, answer stages
+Do not add `by` to the strict `mono-idea` record. The owner always approves Idea
+by pressing its approval button. A `stale` or `legacy-migrate` Idea record stops
+autonomous Research and work starts: the orchestrator carries it to the owner,
+waits for their new button approval, confirmed record and fresh check. Its own
+start cannot reapprove an Idea snapshot. After that the delegated orchestrator
+may start Research and work, answer stages
 and approve their shown versions with reasons, including irreversible decisions
 and changes to earlier owner decisions. Every `by=orchestrator` approval requires
 an independent read-only countercheck and its model/version verdict outside fences

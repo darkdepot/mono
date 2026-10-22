@@ -96,9 +96,11 @@ owner's answer in Handoff, then Discovery changes the PRD with a renewed approva
 the same touch and Handoff continues. After authorized start, normal repair/Ship
 drift applies, without rechecking PRD yes.
 
-The entry `fresh` check admits `pass`, `stale`, `legacy-migrate`; stale/legacy ideas
-are shown in the Handoff summary and recorded with authorized start (a legacy
-package: with its approval). Migration alone
+The entry `fresh` check admits `pass`; owner-led stale/legacy Ideas are shown in
+Handoff and carried only in owner-approved start (legacy: package approval).
+Delegated `stale`/`legacy-migrate` stops autonomous Research/work: carry Idea to
+owner, obtain their button approval, confirmed record and fresh check first.
+An orchestrator reply/start never approves that Idea snapshot. Migration alone
 never permits implementation. `no-record` on a new project returns to `mono:idea`.
 Implement checks `approved` before start.
 
@@ -211,11 +213,12 @@ omission means `none`. Mismatch with the latest design record yields
 The intended order is Discovery → Tech Evaluation → Handoff for ordinary and
 large Projects; tiny work goes directly to Handoff. Route by records, not dates:
 `next=tech-evaluation|handoff` in `mono-prd: approved`. A PRD approval without
-`next=` is the **Tech Evaluation old path**, skipping that stage unless the
-owner explicitly requests it in the stage task. It is separate from the
-Discovery old path (no PRD approval and an approved legacy package).
-On the Design old path (PRD without `design=`), an existing `mono-tech` record is
-consumed even without `next=`.
+`next=` is the **Tech Evaluation old path**; the router is unchanged. Handoff
+verifies any effective `mono-tech` for the current PRD: a valid record is consumed
+without another offer. Without one, ordinary/large PRD requires «Начать Tech Evaluation» /
+«Ещё обсудить». Owner/delegated consent is the request opening that route; without
+it no package or continuation. Tiny work may skip. This differs from Discovery's
+no-PRD old path. Existing tech is consumed even on the Design old path.
 Discovery first decides design at every approval, then size: needed goes to
 Design; its approval routes ordinary/large to Tech Evaluation and tiny to
 Handoff. Not-needed goes there directly. Reapproval recomputes the route by

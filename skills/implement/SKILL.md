@@ -35,8 +35,8 @@ Before start run `node <pack-root>/scripts/idea-gate.mjs check --mode approved -
 
 start-checkpoint validates approved package/start/handoff/seam/lifecycle. Dispatch
 branch/snapshot wins. gstack-learnings-search --limit 10; absence advisory.
-Record start; implement one PR with incremental checks. Missing artifacts allow discovery. Product/access/dirty/risk decisions → mailbox; material drift →
-scope-drift-needs-handoff. Russian stop comment. No PR/formal pre-ship checks.
+Record start; implement one PR with incremental checks. Product/access/dirty/risk decisions → mailbox; material drift →
+scope-drift-needs-handoff. No PR/formal pre-ship checks.
 
 Only existing tools/literal solutions. Repeated key/class: apply
 `references/review-admission.md` before edits.
@@ -67,8 +67,9 @@ Issue-only: fresh authenticated fingerprint approval/pre-start PASS. Move only
 Issue to started; record lifecycle/fingerprint/oracle/engine/verification, one PR.
 Lane exit parks for superseding marker/Project-first restart; no retrofit.
 
-`mono-package`: ordinary start `by=owner`; delegated (latest Idea mark or earlier
-owner decision) allows `by=orchestrator` with reason; else Handoff, no code.
+`mono-package`: ordinary `by=owner`; delegated `by=orchestrator` with reason
+(PC-019). Delegated `stale`/`legacy-migrate` Idea stops Research/work: owner button,
+confirmed Idea record and fresh check first; orchestrator cannot reapprove it.
 Legacy: package/start or bundled approval; offer start/defer; «запускай реализацию» permits Delivery/branch/code.
 Never infer approval.
 

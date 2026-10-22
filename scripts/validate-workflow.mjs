@@ -709,7 +709,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "7a38b6a823ee963821d7638e829ed254b3581d98d4c40cd0f10a3a3cf91f510f",
+      contractFingerprint: "f6fa575508db99969947ef3bf5a1935daa69e73c2d9f15fdc543c364dbe69771",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/research/SKILL.md",

@@ -144,6 +144,9 @@ Workflow states:
      appending every message immediately. `git check-ignore` first; if needed add
      `.claude/session-views/` to product `.git/info/exclude`, never `.gitignore`.
      Link conversation in each stage result; no child Desktop delegation session.
+   - `stale`/`legacy-migrate` Idea stops autonomous Research/work despite delegation.
+     Carry it to owner; require their Idea button, confirmed record and fresh check.
+     Never approve that snapshot through your reply or work-start comment.
    - Before every `by=orchestrator` record run the foreground read-only different-
      family countercheck in `references/orchestration.md`, including exact text,
      version and reason. Verdict/model/version outside fences in the same comment;
@@ -154,8 +157,9 @@ Workflow states:
      first lines «Решил за тебя: …, потому что …», including overrides.
 3. `handoff`
    - Launch Handoff after the routed required records. It owns package/review/Issues.
-     Missing `next=` with ordinary/large PRD offers Tech Evaluation; without consent
-     no package or bypass. Authorized start only: ordinary `by=owner`, delegated
+     Missing `next=`: consume effective valid tech for current PRD without another
+     offer. Only absent/invalid tech with ordinary/large size offers Tech Evaluation;
+     without consent no package or bypass. Authorized start only: ordinary `by=owner`, delegated
      `by=orchestrator` with reason/countercheck. «Передать оркестратору» or typed
      «передай оркестратору» in owner session records `by=owner` and transfers work.
      Confirm start before dispatch; Ready alone is never authorization.
