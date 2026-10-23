@@ -161,7 +161,7 @@ showing. The owner can change depth; platforms follow the affected product.
 Inspect exported images before every showing. Comments become an owner rule,
 product rule or one-off fix, with consent before recording a rule.
 
-Approved artboards are duplicated to Paper «Утверждено <ДД.ММ.ГГГГ>» and exported
+Approved artboards stay on the task’s Paper page; export them
 as `NN-<name>.png` (ASCII letters, digits, hyphens) into a new immutable version:
 `~/.mono-agent-workflow/design/<slug>/approved/<project uuid>/<first 12 of images>/`.
 Compute `images` within that folder using
@@ -177,14 +177,16 @@ A PRD correction uses one approval of mockups and «Было / Стало». Dis
 writes the PRD and its approval with `design=needed next=design`, then Design
 writes its record with the new `prd-updatedAt` in the same touch. Only the first
 succeeded: retry the second under the same approval. Designer never edits PRD.
-Owner-led Discovery ends with «Начать Design»; Desktop opens a fresh designer
+Owner-led Discovery offers «Утвердить и начать Design»; Desktop opens a fresh
 session via `mcp__ccd_session__start_session` using
-`$TMPDIR/mono-design/<project>/brief.md`; Codex/terminal use that file and their
-host's `mono:design` invocation. Designer ends with the next-stage window from
-its own `next`. Under delegation Design runs as an orchestrator stage agent, returning the shown
-version for orchestrator approval `by=orchestrator` with reason and countercheck. No product memory: send the owner one question whom to emulate
-with proposed exemplars; only that Project waits, others continue. Consent is
-still required for taste memory. Owner receives each stage result, with design/tech decisions also in Handoff.
+`$TMPDIR/mono-design/<project>/brief.md`; Codex/terminal use that brief with
+`mono:design`. Design ends after checked recording, without a
+next-stage window. Return: round marker to the waiting Claude Code parent;
+manual in Codex; agent turn end under delegation. Parent verifies the record
+before offering `next`. The orchestrator approves the shown version
+`by=orchestrator` with reason and countercheck. No product memory: the owner
+chooses proposed exemplars; only that Project waits. Taste memory needs owner
+consent. Owner gets each result; Handoff includes design/tech decisions.
 
 ### Reapproval and technical evaluation
 
