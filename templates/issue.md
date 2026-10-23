@@ -48,6 +48,14 @@ Rules:
 - Add PRD and Tech Spec as Linear resources/links when the connector supports it.
 - Do not use raw document URLs in the body when Linear chips can represent those entities.
 - Include an implementation-critical context snapshot.
+- For UI work, Read first includes a design line: exact mono-design record id,
+  Paper link and images hash, or no mockup; plus owner-taste, product-memory and
+  immutable PNG-version paths under `~/.mono-agent-workflow/design/`. Copy
+  applicable owner/product taste rules as text into `Снимок контекста` (including
+  reason, correct/incorrect examples, source and weight), even without mockups or
+  a Project. Explicitly say when no rules exist; unavailable existing rules block
+  preparation. Dispatch delivers approved PNGs in the task snapshot, outside the
+  worktree, without a commit; a worker reads those copies and the textual rules.
 - Do not copy PRD or Tech Spec wholesale into the Issue. Pull only the context needed for one PR.
 - Map the Issue scope to PRD requirement IDs and package-record or Tech Spec `U` units when available.
 - `Готовность агента` must say `AFK` or `HITL`. Bare tokens come first so `mono:check` can parse them; each must carry a Russian gloss: `AFK (агент справится без тебя)` or `HITL (нужно твоё участие: <что именно>)`. Use `AFK` only when a zero-context implementation agent can execute without new human judgment. Use `HITL` when product, design, external access, manual QA, or risk acceptance is still required, and name the exact dependency.

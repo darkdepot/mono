@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { digest, isMain, resolveRole } from './runtime.mjs';
 
 export const IDEA_GATE_DEFAULT_SINCE = '2026-10-18';
 export const RESEARCH_GATE_DEFAULT_SINCE = '2026-10-19';
+// Entry and all record writers activate together; no product override (U14).
+const DESIGN_ROUTE_ENABLED = true;
+const DESIGN_HOME = path.join(os.homedir(), '.mono-agent-workflow', 'design');
 const DEFAULT_HEADINGS = {
   ru: { what: 'Что', why: 'Зачем', outcome: 'Образ результата', unknowns: 'Неизвестные' },
   en: { what: 'What', why: 'Why', outcome: 'Target outcome', unknowns: 'Unknowns' },
@@ -120,7 +124,7 @@ export function checkResearchSnapshot(snapshot, config = {}, ideaVerdict) {
 
 // Fences are opaque, including their whitespace. Only top-level ordinary lines
 // can declare sections; the same scanner extracts the comment's snapshot fence.
-function blocks(markdown) {
+function blocks(markdown, allowUnclosed = false) {
   if (typeof markdown !== 'string') fail('read-failed');
   const lines = markdown.split('\n'), result = [];
   for (let i = 0; i < lines.length; i++) {
@@ -134,7 +138,7 @@ function blocks(markdown) {
       if (close && close[1][0] === fence[0] && close[1].length >= fence.length) break;
       content.push(lines[i]);
     }
-    if (i === lines.length) fail('unsupported-format');
+    if (i === lines.length && !allowUnclosed) fail('unsupported-format');
     result.push({ text: lines.slice(start, i + 1).join('\n'), fenced: true, info: open[2].trim(), content: content.join('\n') });
   }
   return result;
@@ -482,6 +486,186 @@ function verifyDump(options, config) {
     headings, since: config.ideaGate?.since ?? IDEA_GATE_DEFAULT_SINCE });
 }
 
+function latestApproval(comments, marker, required, optional = []) {
+  const prefix = marker.slice(0, marker.indexOf(':') + 1);
+  const candidates = comments.map(comment => {
+    const fenced = blocks(comment.body, true);
+    const records = fenced.flatMap((block, index) => block.info === 'mono-tech-page' ? []
+      : (block.fenced ? block.content : block.text).split(/\r?\n/).map(line => line.trim())
+        .filter(line => line.startsWith(prefix)).map(line => ({ line, index })));
+    return { comment, records };
+  }).filter(candidate => candidate.records.length)
+    .sort((a, b) => date(b.comment.createdAt) - date(a.comment.createdAt));
+  if (!candidates.length) return null;
+  if (candidates.length > 1 && date(candidates[0].comment.createdAt) === date(candidates[1].comment.createdAt)) fail('bad-record');
+  const { comment, records } = candidates[0];
+  if (records.length !== 1 || !records[0].line.startsWith(marker + ' ')) fail('bad-record');
+  const fenced = blocks(comment.body), record = fenced[records[0].index], fields = {};
+  if (record.info !== 'text') fail('bad-record');
+  for (const token of records[0].line.slice(marker.length + 1).split(' ')) {
+    const match = token.match(/^([^=]+)=(.+)$/);
+    if (!match || Object.hasOwn(fields, match[1]) || ![...required, ...optional].includes(match[1])) fail('bad-record');
+    fields[match[1]] = match[2];
+  }
+  if (required.some(key => !Object.hasOwn(fields, key)) || !['owner', 'orchestrator'].includes(fields.by)) fail('bad-record');
+  return { comment, fields, fenced, record };
+}
+
+function approvalChain(root, config) {
+  let projectId = null, stage = null;
+  try {
+    const raw = readJson(path.join(root, 'project.json'));
+    const { project, records } = readDump(root, raw, config);
+    projectId = project.id;
+    stage = 'mono:discovery';
+    const prd = latestApproval(records.comments, 'mono-prd: approved',
+      ['project', 'document', 'updatedAt', 'by'], ['next', 'design']);
+    if (prd) {
+      const p = prd.fields;
+      if (p.project !== projectId || !uuid(p.document) || !Number.isFinite(date(p.updatedAt)) ||
+          (p.next !== undefined && !['tech-evaluation', 'handoff', 'design'].includes(p.next)) ||
+          (p.design !== undefined && !['needed', 'not-needed'].includes(p.design)) ||
+          (!DESIGN_ROUTE_ENABLED && (p.design !== undefined || p.next === 'design')) ||
+          (p.design === 'needed' && p.next !== 'design') ||
+          (p.next === 'design' && p.design !== 'needed') ||
+          (p.design === 'not-needed' && p.next === 'design')) fail('bad-record');
+      if (p.design === 'not-needed' && p.next === undefined) {
+        const previous = latestApproval(records.comments.filter(comment => comment !== prd.comment),
+          'mono-prd: approved', ['project', 'document', 'updatedAt', 'by'], ['next', 'design']);
+        if (!previous || previous.fields.project !== projectId || previous.fields.next !== undefined) fail('bad-record');
+      }
+    }
+    stage = 'mono:design';
+    const design = latestApproval(records.comments, 'mono-design: approved',
+      ['project', 'prd', 'prd-updatedAt', 'paper', 'images', 'next', 'by']);
+    if (design) {
+      const d = design.fields;
+      if (!DESIGN_ROUTE_ENABLED || d.project !== projectId || !uuid(d.prd) ||
+          !Number.isFinite(date(d['prd-updatedAt'])) || !/^[a-f0-9]{64}$/.test(d.images) ||
+          !['tech-evaluation', 'handoff'].includes(d.next) || !/^https:\/\/[^\s]+$/.test(d.paper)) fail('bad-record');
+    }
+    stage = 'mono:tech-evaluation';
+    const tech = latestApproval(records.comments, 'mono-tech: approved',
+      ['project', 'prd', 'prd-updatedAt', 'spec', 'spec-sha256', 'page-sha256', 'by'], ['design']);
+    if (tech) {
+      const t = tech.fields, pages = tech.fenced.filter(block => block.info === 'mono-tech-page');
+      if ((!DESIGN_ROUTE_ENABLED && t.design !== undefined) || t.project !== projectId || !uuid(t.prd) ||
+          !uuid(t.spec) || !Number.isFinite(date(t['prd-updatedAt'])) ||
+          !/^[a-f0-9]{64}$/.test(t['spec-sha256']) || !/^[a-f0-9]{64}$/.test(t['page-sha256']) ||
+          (t.design !== undefined && t.design !== 'none' && !/^[A-Za-z0-9-]+$/.test(t.design)) ||
+          pages.length !== 1 || !pages[0].content.trim() ||
+          tech.fenced.indexOf(pages[0]) < tech.fenced.indexOf(tech.record) ||
+          sha256(pages[0].content + '\n') !== t['page-sha256']) fail('bad-record');
+    }
+    return { projectId, prd, design, tech };
+  } catch { return { ok: false, code: 'bad-record', projectId, stage }; }
+}
+
+function checkRouteDump(root, config) {
+  const chain = approvalChain(root, config);
+  if (chain.code) return chain;
+  const { projectId, prd, design, tech } = chain, requiredRecords = [];
+  let next = prd?.fields.next ?? 'handoff';
+  if (next === 'design') {
+    requiredRecords.push('design');
+    if (design) next = design.fields.next;
+  }
+  if (next === 'tech-evaluation' || (prd?.fields.design === undefined && tech)) requiredRecords.push('tech');
+  if (tech && next !== 'design') next = 'handoff';
+  return { ok: true, code: 'pass', projectId, requiredRecords, next,
+    records: { prd: prd?.comment.id ?? null, design: prd?.fields.next === 'design' ? design?.comment.id ?? null : null,
+      tech: requiredRecords.includes('tech') ? tech?.comment.id ?? null : null } };
+}
+
+function checkTechDump(root, config) {
+  const chain = approvalChain(root, config);
+  if (chain.code) return chain;
+  const { projectId, prd: approval, design, tech } = chain;
+  try {
+    if (!tech) return { ok: false, code: 'no-record', projectId };
+    if (!approval) fail('bad-record');
+    const t = tech.fields, p = approval.fields;
+    const prd = readJson(path.join(root, 'prd.json'));
+    const spec = readJson(path.join(root, 'tech-spec.json'));
+    for (const doc of [prd, spec]) {
+      if (!object(doc) || !uuid(doc.id) || typeof doc.content !== 'string' ||
+          (doc.project?.id ?? doc.projectId) !== projectId) fail('bad-record');
+    }
+    if (!Number.isFinite(date(prd.updatedAt))) fail('bad-record');
+    let code = 'pass';
+    if (t.prd !== p.document || prd.id !== p.document || t['prd-updatedAt'] !== p.updatedAt || prd.updatedAt !== p.updatedAt ||
+        (p.design !== undefined && date(tech.comment.createdAt) <= date(approval.comment.createdAt)))
+      code = 'stale-prd';
+    else if ((t.design ?? 'none') !== (design?.comment.id ?? 'none')) code = 'stale-design';
+    else if (spec.id !== t.spec || sha256(spec.content) !== t['spec-sha256']) code = 'stale-spec';
+    return { ok: code === 'pass', code, projectId, recordId: tech.comment.id, documentId: spec.id };
+  } catch { return { ok: false, code: 'bad-record', projectId, stage: 'mono:tech-evaluation' }; }
+}
+
+function designProductDirectory(config, repository) {
+  if (typeof config.projectName !== 'string' || !config.projectName.trim() || !repository) fail('bad-record');
+  const slug = config.projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (!slug) fail('bad-record');
+  for (let n = 1; ; n++) {
+    const directory = path.join(DESIGN_HOME, slug + (n === 1 ? '' : `-${n}`));
+    const memory = path.join(directory, 'memory.md');
+    if (!fs.existsSync(memory)) return directory;
+    const first = fs.readFileSync(memory, 'utf8').split(/\r?\n/)[0];
+    if (first === `Репозиторий: ${repository}`) return directory;
+  }
+}
+
+function checkDesignDump(root, config, repository) {
+  const chain = approvalChain(root, config);
+  if (chain.code) return chain;
+  const { projectId, prd: approval, design } = chain;
+  try {
+    if (!design) return { ok: false, code: 'no-record', projectId };
+    if (!approval) fail('bad-record');
+    const d = design.fields, p = approval.fields, prd = readJson(path.join(root, 'prd.json'));
+    if (!object(prd) || !uuid(prd.id) || typeof prd.content !== 'string' ||
+        (prd.project?.id ?? prd.projectId) !== projectId || !Number.isFinite(date(prd.updatedAt))) fail('bad-record');
+    if (d.prd !== p.document || prd.id !== p.document || d['prd-updatedAt'] !== p.updatedAt || prd.updatedAt !== p.updatedAt ||
+        date(design.comment.createdAt) <= date(approval.comment.createdAt))
+      return { ok: false, code: 'stale-prd', projectId, recordId: design.comment.id };
+    const directory = path.join(designProductDirectory(config, repository), 'approved', projectId, d.images.slice(0, 12));
+    let images;
+    try {
+      const names = fs.readdirSync(directory).filter(name => name.endsWith('.png'))
+        .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+      if (!names.length || names.some(name => !/^[0-9]{2}-[A-Za-z0-9-]+\.png$/.test(name) ||
+          !fs.lstatSync(path.join(directory, name)).isFile())) fail('stale-images');
+      images = sha256(names.map(name => `${sha256(fs.readFileSync(path.join(directory, name)))}  ${name}\n`).join(''));
+    } catch { return { ok: false, code: 'stale-images', projectId, recordId: design.comment.id }; }
+    const code = images === d.images ? 'pass' : 'stale-images';
+    return { ok: code === 'pass', code, projectId, recordId: design.comment.id, directory };
+  } catch { return { ok: false, code: 'bad-record', projectId, stage: 'mono:design' }; }
+}
+
+function approvalMain(command, argv) {
+  let result;
+  try {
+    const options = {};
+    while (argv.length) {
+      const key = argv.shift();
+      if (!['--mode', '--dump', '--config'].includes(key) || key in options || !argv.length) fail('bad-record');
+      options[key] = argv.shift();
+    }
+    if (options['--mode'] !== 'fresh' || !options['--dump']) fail('bad-record');
+    const check = { route: checkRouteDump, tech: checkTechDump, design: checkDesignDump }[command];
+    const configFile = options['--config'];
+    result = check(options['--dump'], configFile ? readJson(configFile) : {},
+      configFile ? path.dirname(path.dirname(path.resolve(configFile))) : null);
+  } catch { result = { ok: false, code: 'bad-record', projectId: null }; }
+  const reasons = { 'no-record': `нет записи mono-${command}; нужен этап ${command === 'design' ? 'Design' : 'Tech Evaluation'}`,
+    'stale-prd': 'PRD изменился; нужна новая запись этапа', 'stale-spec': 'тело Tech Spec изменилось; нужен Tech Evaluation',
+    'stale-images': 'картинки изменились или недоступны; нужен Design', 'stale-design': 'запись дизайна сменилась; нужен Tech Evaluation',
+    'bad-record': 'запись или ответы Linear неполны либо повреждены' };
+  console.log(result.ok ? 'Готово' : `Стоп: ${reasons[result.code]}${result.stage ? '; ' + result.stage : ''}`);
+  console.log(JSON.stringify(result));
+  process.exitCode = result.ok ? 0 : 1;
+}
+
 const VERIFY_REASONS = {
   'no-record': 'комментарий из --expect не найден; прочитайте запись и все страницы комментариев заново',
   'other-project': 'проект или запись относятся к другому проекту; проверьте UUID и ответы Linear',
@@ -676,11 +860,17 @@ function main(argv) {
        idea-gate.mjs check --mode fresh --dump DIR --config CONFIG
        idea-gate.mjs check --mode fresh|approved --snapshot DIR [--config CONFIG]
        idea-gate.mjs research --snapshot DIR [--config CONFIG]
+       idea-gate.mjs route|design|tech --mode fresh --dump DIR [--config CONFIG]
        idea-gate.mjs research-draft --draft FILE [--config CONFIG] [--project UUID]
        idea-gate.mjs fingerprint --snapshot FILE [--config CONFIG]
 Dump: project.json and comments-N.json are raw Linear responses (N=1,2,...).
 Each response needs comments-N.request.json: {} for page 1, {"cursor":"previous response cursor"} thereafter.
 Save the actual request cursor; the final response has hasNextPage=false and no cursor.
+route validates all record fields before selecting requiredRecords in the active Design chain.
+design reads raw prd.json and the immutable PNG version under ~/.mono-agent-workflow/design/;
+--config supplies projectName and its repository location.
+tech also reads raw prd.json and tech-spec.json: id, content, project.id (or projectId),
+and PRD updatedAt. It hashes the exact spec content and mono-tech-page lines with final LF.
 Only the fields the script reads are needed: project uuid, createdAt, status.name, description;
 per page comments, hasNextPage, cursor; per comment id, createdAt, updatedAt and body.
 verify accepts comments without body (they cannot match --expect); check --dump needs every body.
@@ -696,6 +886,7 @@ It never gates work; exit 1 means findings to fix before writing.`);
     return;
   }
   if (argv[0] === 'research-draft') return researchDraftMain(argv.slice(1));
+  if (['route', 'design', 'tech'].includes(argv[0])) return approvalMain(argv[0], argv.slice(1));
   if (['record', 'verify', 'helper'].includes(argv[0])) return authoringMain(argv);
   const research = argv[0] === 'research';
   let projectId = null, result;

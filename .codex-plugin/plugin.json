@@ -1,6 +1,6 @@
 {
   "name": "mono",
-  "version": "0.34.1",
+  "version": "0.37.0",
   "description": "Linear-backed delivery from an idea to a reviewed PR.",
   "author": { "name": "Mono" },
   "skills": "./skills/",

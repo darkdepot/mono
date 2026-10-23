@@ -91,7 +91,14 @@ Live QA gate:
 - Immediately before sweep re-read Issue/marker/verified label/authenticated approval, resolve seam and emit whole-body fingerprint. Issue-only must retain prepare's approved-fresh package, fingerprint and non-empty oracle; never infer oracle outside resolver.
 - On actual deployed app with real data walk shipped Issue's PRD acceptance and inspect console errors. Issue-only instead walks every oracle `acceptance_ids` AC1..ACn using `verify_steps`, recording pass/fail per ID; no missing IDs/nonexistent PRD substitutes.
 - Broken/stale marker, lost issue-only/approved-fresh, or changed oracle IDs/steps/fingerprint fails live QA and stops closeout; never label drift skipped.
-- Compare live design to approved UX-checkpoint prototype and repo standards, not personal taste. Without approved prototype skip design acceptance only; functional smoke remains required unless explicit permitted not-run reason.
+- Live QA runs in the browser session, never the worker sandbox. Capture affected
+  screens and compare to the exact U2 approved PNG version and the owner/product
+  taste rules in the Issue context, plus the product design system. A task without
+  mockups uses taste rules alone; missing required images/rules blocks this check.
+  Differences follow the ordinary deploy-defect path: hotfix and verify before
+  showing completed work to the owner. Already-started projects with an approved
+  legacy UX-checkpoint prototype retain that comparison. Functional smoke still
+  follows its required checks and explicit permitted not-run reasons.
 - On defect file/dispatch immediate out-of-queue hotfix Issue with acting-user `assignee: "me"` at creation; preserve existing assignments. Hotfix doesn't itself block original Done, but original still needs its own green live pass; hotfix gets live QA on shipment. Consult original preflight route: standard-reviewed defect triggers standard re-tier review under `references/autoreview-routing.md`.
 - Confirm on clean session/reload/transient state before classifying defect. Known flaky failure outside diff becomes separate tiny Issue, not gate failure.
 - Verify non-web artifacts where consumers use them. For a skill pack, select the live pass by its machine installation state, regardless of which product's orchestrator closes the deploy:

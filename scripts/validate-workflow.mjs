@@ -23,6 +23,7 @@ const EXPECTED_SKILLS = [
   "check",
   "deploy",
   "deliver",
+  "design",
   "discovery",
   "handoff",
   "idea",
@@ -33,6 +34,7 @@ const EXPECTED_SKILLS = [
   "research",
   "review",
   "ship",
+  "tech-evaluation",
 ];
 
 function read(relativePath) {
@@ -138,6 +140,30 @@ function validateReadBudgetFixtures() {
       "Discovery mandatory file set differs from the stage, its entry reference and examples");
     const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
     require(budget.bytes === total && total <= 20_480, "Discovery actual mandatory total differs or exceeds 20 KB");
+  });
+  fixture("Design actual mandatory inputs and byte total", () => {
+    const expected = ["skills/design/SKILL.md", "skills/design/references/run.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["design"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Design mandatory inputs must exclude conditional drawing, memory and approval references");
+    const total = expected.reduce((sum, name) => sum + Buffer.byteLength(read(name)), 0);
+    require(budget.bytes === total && total <= 20_480, "Design actual mandatory total differs or exceeds 20 KB");
+  });
+  fixture("Tech Evaluation actual mandatory inputs and byte total", () => {
+    const expected = ["skills/tech-evaluation/SKILL.md", "skills/tech-evaluation/references/run.md", "skills/tech-evaluation/references/examples.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["tech-evaluation"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Tech Evaluation mandatory file set differs from the stage, its entry reference and examples");
+    const total = expected.reduce((sum, name) => sum + Buffer.byteLength(read(name)), 0);
+    require(budget.bytes === total && total <= 20_480, "Tech Evaluation actual mandatory total differs or exceeds 20 KB");
+  });
+  fixture("Handoff actual mandatory inputs and byte total", () => {
+    const expected = ["skills/handoff/SKILL.md", "skills/handoff/references/run.md", "skills/handoff/references/examples.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["handoff"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Handoff mandatory file set differs from the stage, its entry reference and examples");
+    const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
+    require(budget.bytes === total && total <= 20_480, "Handoff actual mandatory total differs or exceeds 20 KB");
   });
   try {
     write("AGENTS.md", "# fixture\n");
@@ -355,8 +381,8 @@ function issueOnlyLaneActivationError(config) {
 }
 
 const PLUGIN_SCOUTS = ["linear-scout", "code-scout", "web-scout"];
-function pluginAgentFaults(text, name) {
-  const allowed = ["name", "description", "model", "effort", "disallowedTools"];
+function pluginAgentFaults(text, name, stageTemplate = false) {
+  const allowed = ["name", "description", "model", "effort", "disallowedTools", ...(stageTemplate ? ["tools", "hooks"] : [])];
   const header = /^---\n([\s\S]*?)\n---\n/.exec(text);
   if (!header) return ["missing agent frontmatter"];
   const lines = header[1].split("\n"), keys = lines.map(line => /^([A-Za-z][A-Za-z0-9_-]*):\s*.+$/.exec(line)?.[1]);
@@ -365,10 +391,87 @@ function pluginAgentFaults(text, name) {
   if (fields.name !== name || !fields.description || fields.description.length < 20) errors.push("agent name/description invalid");
   if (fields.model !== "sonnet" || fields.effort !== "medium") errors.push("agent model/effort invalid");
   const tools = fields.disallowedTools?.split(/,\s*/) ?? [];
-  if (!["Write", "Edit", "NotebookEdit"].every(tool => tools.includes(tool))) errors.push("agent disallowedTools invalid");
+  if (!stageTemplate && !["Write", "Edit", "NotebookEdit"].every(tool => tools.includes(tool))) errors.push("agent disallowedTools invalid");
   if (!text.slice(header[0].length).trim()) errors.push("agent body missing");
   return errors;
 }
+
+// MONO-239: agent rules stay prose/review; only structure, exact names/flags and
+// executable hook behavior are pinned. Do not resurrect stage-mode documents.
+const STAGE_VOICE_FILES = [
+  "skills/research/references/run.md", "skills/discovery/references/helpers.md",
+  "skills/tech-evaluation/references/helpers.md", "skills/handoff/references/review.md",
+  "references/orchestration.md",
+];
+function stageVoiceFaults(text) {
+  const faults = [];
+  for (const [executable, flag] of [["codex exec", "--ignore-user-config"], ["claude -p", "--strict-mcp-config"]]) {
+    requireMachineToken(executable); requireMachineToken(flag); requireMachineToken("-s read-only"); requireMachineToken("--disable apps");
+    // The localized model placeholder identifies stage invocations; package
+    // Second Voice commands have their own policy placeholders and stay unchanged.
+    const commands = text.split("\n").filter(line => line.includes(executable) && line.includes("<модель>"));
+    if (commands.length !== 1 || !commands[0].includes(flag)
+      || (executable === "codex exec" && (!commands[0].includes("-s read-only") || !commands[0].includes("--disable apps")))) faults.push(`${executable} isolated stage invocation`);
+  }
+  return faults;
+}
+function stageTemplateFaults(text) {
+  const faults = pluginAgentFaults(text, "mono-{{product}}-{{stage}}", true);
+  const fields = parseFrontmatter(text);
+  for (const token of ["tools", "hooks", "PreToolUse", "Agent|Task", "command", "type", "{{tools}}",
+    "{{hook_path}}", "{{linear_scout}}", "{{code_scout}}", "{{web_scout}}", "mono-{{product}}-{{stage}}"]) requireMachineToken(token);
+  if (fields?.tools !== "{{tools}}") faults.push("stage template exact tool placeholder missing");
+  try {
+    const hooks = JSON.parse(fields?.hooks);
+    const entries = hooks.PreToolUse;
+    if (Object.keys(hooks).length !== 1 || !Array.isArray(entries) || entries.length !== 1
+      || entries[0].matcher !== "Agent|Task" || entries[0].hooks?.length !== 1
+      || entries[0].hooks[0].type !== "command"
+      || entries[0].hooks[0].command !== 'node "{{hook_path}}" "{{linear_scout}}" "{{code_scout}}" "{{web_scout}}"') faults.push("stage template helper hook invalid");
+  } catch { faults.push("stage template helper hook malformed"); }
+  return faults;
+}
+function validateStageDelegation() {
+  for (const file of STAGE_VOICE_FILES) {
+    const text = read(file);
+    for (const fault of stageVoiceFaults(text)) fail(`${file}: ${fault}`);
+    for (const flag of ["--ignore-user-config", "--strict-mcp-config", "--disable apps"]) {
+      if (!stageVoiceFaults(text.replace(flag, "")).length) fail(`${file}: isolated-flag negative fixture passed`);
+    }
+  }
+  const file = "templates/stage-agent.md", text = read(file);
+  for (const fault of stageTemplateFaults(text)) fail(`${file}: ${fault}`);
+  for (const [label, altered] of [
+    ["missing allowlist", text.replace("tools: {{tools}}\n", "")],
+    ["broad helper matcher", text.replace("Agent|Task", "Agent")],
+    ["missing hook path", text.replace("{{hook_path}}", "relative-hook")],
+    ["unknown field", text.replace("---\n", "---\npermissionMode: bypassPermissions\n")],
+  ]) if (!stageTemplateFaults(altered).length) fail(`stage template ${label} fixture passed`);
+  const hook = path.join(root, "templates/stage-helper-hook.mjs");
+  const cases = [
+    ["allowed scout", ["mono-product-discovery-code"], {tool_input:{subagent_type:"mono-product-discovery-code"}}, 0],
+    ["foreign scout", ["mono-product-discovery-code"], {tool_input:{subagent_type:"mono-other-code"}}, 2],
+    ["Explore denied", ["mono-product-discovery-code"], {tool_input:{subagent_type:"Explore"}}, 2],
+    ["general-purpose denied", ["mono-product-discovery-code"], {tool_input:{subagent_type:"general-purpose"}}, 2],
+    ["missing type", ["mono-product-discovery-code"], {tool_input:{}}, 2],
+    ["empty allowlist", [], {tool_input:{subagent_type:"Explore"}}, 2],
+    ["wildcard denied", ["*"], {tool_input:{subagent_type:"Explore"}}, 2],
+    ["malformed input", ["mono-product-discovery-code"], "{", 2],
+  ];
+  for (const [label, names, input, status] of cases) {
+    const result = spawnSync(process.execPath, [hook, ...names], {input: typeof input === "string" ? input : JSON.stringify(input), encoding:"utf8"});
+    if (result.status !== status || (status === 2 && !result.stderr.trim())) fail(`stage helper hook fixture: ${label}`);
+  }
+  // Skeleton replaces the deleted mode-heading and provenance pins. Meaning
+  // (Idea exclusion, owner-session boundary, two start cases) remains in review.
+  const section = documentSection(read("references/owner-dialog.md"), "Владелец из задания запуска");
+  for (const token of ["Idea", "by=owner", "by=orchestrator"]) {
+    requireMachineToken(token);
+    if (!section?.join("\n").includes(token)) fail(`owner-dialog launch-context skeleton missing ${token}`);
+  }
+  console.log("PASS stage delegation: isolated invocations, template and helper-hook fixtures");
+}
+
 function validatePluginAgents() {
   for (const name of PLUGIN_SCOUTS) {
     const file = `agents/${name}.md`;
@@ -441,9 +544,7 @@ function validateSkills() {
 function retiredAdapterReferenceAllowed(relativePath) {
   return (
     relativePath === "CHANGELOG.md" ||
-    relativePath === "scripts/validate-workflow.mjs" ||
-    relativePath.startsWith("plans/") ||
-    relativePath.startsWith("docs/spikes/")
+    relativePath === "scripts/validate-workflow.mjs"
   );
 }
 
@@ -466,8 +567,8 @@ function validateRetiredAdapterReferenceAllowlist() {
   if (retiredAdapterReferenceAllowed("README.md")) {
     fail("Retired adapter reference allowlist must reject active documentation");
   }
-  if (!retiredAdapterReferenceAllowed("plans/migration-fixture.md")) {
-    fail("Retired adapter reference allowlist must preserve historical migration documents");
+  if (!retiredAdapterReferenceAllowed("CHANGELOG.md")) {
+    fail("Retired adapter reference allowlist must preserve historical changelog entries");
   }
 
   const files = execFileSync("git", ["ls-files", "-co", "--exclude-standard"], {
@@ -608,7 +709,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "a9869cf1c7aaeec30e7bd5f058094b90761d35534ae7b8eb7c9954f931756158",
+      contractFingerprint: "f6fa575508db99969947ef3bf5a1935daa69e73c2d9f15fdc543c364dbe69771",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/research/SKILL.md",
@@ -632,7 +733,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/tech-spec.md",
       ledgerSourcePath: "references/contracts/tech-spec.md",
       templatePath: "templates/tech-spec.md",
-      contractFingerprint: "17144e24db190a8b4117277e7954cb086f6505218a3954f220fcb4f99c9466ed",
+      contractFingerprint: "613c51ed55647f99e01825bd7ea1db497fda20d749274d59239a3a0d7ecb7f05",
       contractConsumers: [
         "skills/handoff/SKILL.md",
         "skills/ship/SKILL.md",
@@ -644,7 +745,7 @@ function validateArtifactContractParity() {
       ledgerSourcePath: "references/contracts/issue.md",
       templatePath: "templates/issue.md",
       contractFingerprint: "85fa3d5b6126a038b28567b3016a7662373cc213abdc862aaed882f479b56aa3",
-      contractConsumers: ["skills/issue/SKILL.md"],
+      contractConsumers: ["skills/issue/SKILL.md", "skills/handoff/SKILL.md"],
     },
   };
 
@@ -5214,9 +5315,7 @@ function checkModelPolicy(base) {
   }
   for (const file of [...modelActiveFiles(base), "AGENTS.md"]) {
     const text = body(file);
-    const experimentalBenchData = file === "scripts/review-bench-routes.mjs" &&
-      text.split("\n")[0] === "// mono:experimental-bench-route-data";
-    if (file !== MODEL_POLICY_PATH && !experimentalBenchData) {
+    if (file !== MODEL_POLICY_PATH) {
       for (const id of executableModelIds(text)) errors.push(`${file}: executable model id outside policy: ${id}`);
     }
     for (const ref of modelRoleReferences(text)) {
@@ -5466,10 +5565,6 @@ function validateModelPolicyFixtures() {
     for (const name of ["README.md", "references/execution-quality.md", "templates/orchestrator-brief.md", "scripts/verify.mjs"]) {
       negative(`active detector ${name}`, () => change(name, (text) => text + `\n${fabricated("claude", "stale")}\n`), `${name}: executable model id outside policy`);
     }
-    negative("bench route data requires its header marker", () => change("scripts/review-bench-routes.mjs", (text) => text.replace("// mono:experimental-bench-route-data\n", "")), "scripts/review-bench-routes.mjs: executable model id outside policy");
-    for (const name of ["scripts/review-bench.mjs", "README.md", "references/execution-quality.md", "templates/orchestrator-brief.md"]) {
-      negative(`bench route marker cannot exempt another consumer ${name}`, () => change(name, (text) => `// mono:experimental-bench-route-data\n${text}\n${fabricated("gpt", "bench")}\n`), `${name}: executable model id outside policy`);
-    }
     change("README.md", (text) => text + `\n${[...MODEL_ENUM_ALLOWLIST].join(" ")}\n`);
     check(); restore(); check();
     console.log("PASS model-policy enum allowlist");
@@ -5536,6 +5631,9 @@ function validateModelPolicyFixtures() {
 }
 
 const STRING_PINS = [
+  ["references/lifecycle.md", "mono-tech: approved"],
+  ["references/lifecycle.md", "mono-tech-page"],
+  ["skills/check/SKILL.md", "next="],
   ["references/lifecycle.md", "Этап"],
   ["templates/stage-task.md", "Этап"],
   ["skills/idea/SKILL.md", "mono:idea"],
@@ -5546,10 +5644,17 @@ const STRING_PINS = [
   ["skills/idea/references/record.md", "mono-idea: approved project=<uuid> sha256=<64 hex>"],
   ["skills/discovery/references/prd.md", "mono-prd: approved"],
   ["skills/discovery/references/prd.md", "by=owner"],
-  ["skills/discovery/references/orchestrator.md", "by=orchestrator"],
+  ["references/owner-dialog.md", "by=orchestrator"],
   ["references/repair-machine.md", "prd-before-package-approval"],
   ["skills/idea/references/record.md", "node <корень>/scripts/idea-gate.mjs verify --project <id> --dump <папка>/linear"],
-  ["skills/handoff/SKILL.md", "approval_status=approved"],
+  ["skills/handoff/references/record.md", "approval_status=approved"],
+  ["skills/handoff/references/record.md", "mono-package: recorded"],
+  ["skills/handoff/references/record.md", "mono-package: start"],
+  ["skills/handoff/references/record.md", "by=orchestrator"],
+  ["skills/check/SKILL.md", "mono-package: recorded"],
+  ["skills/handoff/SKILL.md", "too-big"],
+  ["skills/handoff/SKILL.md", "shared-base"],
+  ["skills/handoff/SKILL.md", "probe"],
   ["skills/implement/SKILL.md", "node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>"],
   // MONO-95: render placeholders replace angle-substitution prose.
   ["templates/orchestrator-dispatch.md","{{approval}}"],
@@ -5817,13 +5922,7 @@ const STRING_PINS = [
   ["templates/compact-instructions.md","product_name"],
   ["skills/deploy/SKILL.md","git rev-parse HEAD"],
   ["references/install.md","git show"],
-  ["skills/handoff/SKILL.md","references/artifact-intake.md"],
-  ["skills/handoff/SKILL.md","read"],
-  ["skills/handoff/SKILL.md","unavailable"],
-  ["skills/handoff/SKILL.md","stale_or_ignored"],
-  ["skills/handoff/SKILL.md","conflicts"],
-  ["skills/handoff/SKILL.md","decisions_carried_forward"],
-  ["skills/handoff/SKILL.md","confidence_boundary"],
+  ["skills/handoff/references/record.md","references/artifact-intake.md"],
   ["skills/implement/SKILL.md","Implementation workflow"],
   ["skills/implement/SKILL.md","implemented-needs-preflight"],
   ["skills/implement/SKILL.md","scope-drift-needs-handoff"],
@@ -5891,8 +5990,32 @@ const STRING_PINS = [
   ["references/review-rubric.md","`blocked`"],
   ["references/orchestration.md","EVENT:<stall|dead|spawn-fail|failed|completed-without-report|report|phase|phase-rejected|gate-ack|halt|idle>"],
   ["references/orchestration.md","`recorded-late`"],
+  ["skills/design/references/approval.md", "mono-design: approved"],
+  ["references/lifecycle.md", "design="],
 ];
 const REQUIRED_HEADINGS = [
+  ["skills/design/SKILL.md", "mono:design"],
+  ["skills/design/SKILL.md", "Как ты думаешь"],
+  ["skills/design/SKILL.md", "Кто что решает"],
+  ["skills/design/references/run.md", "Задача этапа"],
+  ["skills/design/references/memory.md", "Первый запуск"],
+  ["skills/design/references/drawing.md", "Проверка по картинке"],
+  ["skills/design/references/approval.md", "Повторный вход"],
+  ["skills/design/references/approval.md", "Вход для исправления записи"],
+  ["skills/tech-evaluation/SKILL.md", "mono:tech-evaluation"],
+  ["skills/tech-evaluation/references/spec.md", "Вход для исправления записи"],
+  ["skills/tech-evaluation/SKILL.md", "Как ты думаешь"],
+  ["skills/tech-evaluation/SKILL.md", "Как ты говоришь"],
+  ["skills/tech-evaluation/SKILL.md", "Кто что решает"],
+  ["skills/tech-evaluation/references/run.md", "Вход"],
+  ["skills/tech-evaluation/references/run.md", "Повторный вход"],
+  ["skills/tech-evaluation/references/examples.md", "Страница"],
+  ["skills/tech-evaluation/references/page.md", "Утверждение"],
+  ["skills/tech-evaluation/references/spec.md", "Порядок записи"],
+  ["skills/tech-evaluation/references/helpers.md", "Задание помощнику"],
+  ["references/owner-dialog.md", "Владелец из задания запуска"],
+  ["templates/tech-spec.md", "Решения"],
+  ["templates/tech-spec.md", "Прикидка для Handoff"],
   ["references/lifecycle.md", "Задачи этапов"],
   ["templates/stage-task.md", "Роль"],
   ["templates/stage-task.md", "Вводные со ссылками"],
@@ -5922,14 +6045,6 @@ const REQUIRED_HEADINGS = [
   ["templates/prd.md","Допущения"],
   ["templates/prd.md","Открытые вопросы"],
   ["templates/prd.md","Связи"],
-  ["templates/tech-spec.md","Исходные требования"],
-  ["templates/tech-spec.md","Контракты и границы"],
-  ["templates/tech-spec.md","Реальные ответы бэкенда"],
-  ["templates/tech-spec.md","Единицы реализации"],
-  ["templates/tech-spec.md","Влияние на остальную систему"],
-  ["templates/tech-spec.md","Что может сломаться и как защищаемся"],
-  ["templates/tech-spec.md","Валидация"],
-  ["templates/tech-spec.md","Релиз и откат"],
   ["templates/issue.md","Прочитать сначала"],
   ["templates/issue.md","Готовность агента"],
   ["templates/issue.md","Зависимости"],
@@ -6030,7 +6145,7 @@ const REQUIRED_HEADINGS = [
   ["references/human-friendly-output.md","Product Language For The Owner"],
   ["skills/check/SKILL.md","Mono Check"],
   ["skills/deploy/SKILL.md","Mono Deploy"],
-  ["skills/handoff/SKILL.md","Mono Handoff"],
+  ["skills/handoff/SKILL.md","mono:handoff"],
   ["skills/implement/SKILL.md","Mono Implement"],
   ["skills/issue/SKILL.md","Mono Issue"],
   ["skills/orchestrate/SKILL.md","Mono Orchestrate"],
@@ -6078,7 +6193,7 @@ const REQUIRED_HEADINGS = [
   ["references/orchestration.md","Sandbox ladder"],
   ["references/orchestration.md","Worker model selection"],
   ["references/install.md","Project Config Contract"],
-  ["templates/orchestrator-brief.md","UX-чекпоинт (UX Checkpoint Brief)"],
+  ["templates/orchestrator-brief.md","Эталоны первого продукта"],
   ["README.md","Skills"],
 
   ["references/orchestration.md","Two-Phase Dispatch Handshake"],
@@ -6123,7 +6238,19 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  // MONO-239: invocation flags, template fields/placeholders and dialogue skeleton.
+  "--ignore-user-config", "--strict-mcp-config", "--disable apps", "-s read-only", "codex exec", "claude -p",
+  "tools", "hooks", "PreToolUse", "Agent|Task", "command", "type",
+  "{{tools}}", "{{hook_path}}", "{{linear_scout}}", "{{code_scout}}", "{{web_scout}}",
+  "mono-{{product}}-{{stage}}", "Владелец из задания запуска", "Idea",
+
+  "design", "mono-design: approved", "design=",
+  "tech",
+  "mono-tech: approved",
+  "next=",
+  "mono-tech-page",
   "mono-prd: approved", "by=owner", "by=orchestrator", "prd-before-package-approval",
+  "mono-package: recorded", "mono-package: start", "too-big", "shared-base", "probe",
   "Этап", // MONO-183: Linear stage-task label, not editorial wording.
   "mono-research", "ready", "hold", "not-required", "web-scout", "mono:research",
   "reader", "subagent", "definitions",
@@ -6200,6 +6327,7 @@ const MACHINE_TOKENS = new Set([
   "{{mailbox}}",
   "{{marker}}",
   "{{model_routes}}",
+  "{{design_context}}",
   "{{moves}}",
   "{{outcome}}",
   "{{owner_approval}}",
@@ -6233,8 +6361,6 @@ const MACHINE_TOKENS = new Set([
   // MONO-93: command names, request/registry/config dictionary keys and values.
   "wait-ack", "handshake", "profile", "short", "full", "pinsVersion",
   "procStart", "last_wait", "consumedAt", "ackWaitSec", "stallSec",
-  "// mono:experimental-bench-route-data",
-  "scripts/review-bench-routes.mjs",
   "<!-- review-pilot:start -->",
   "<!-- review-pilot:matrix -->",
   "<!-- review-pilot:checkpoint -->",
@@ -6788,7 +6914,7 @@ function validateLandingBehavior() {
   catch (error) { fail(`landing named scratch fixtures: ${error.message}`); }
 }
 function validateCheckModeDeclaration() {
-  requireMachineToken("Modes:"); requireMachineToken("repair");
+  requireMachineToken("Modes:");
   const lines = documentSection(read("skills/check/SKILL.md"), "Mono Check") || [];
   const starts = lines.flatMap((line, index) => line === "Modes:" ? [index] : []);
   const modes = [];
@@ -6798,7 +6924,10 @@ function validateCheckModeDeclaration() {
     if (!entry) break;
     modes.push(entry[1]);
   }
-  if (modes.filter((mode) => mode === "repair").length !== 1) fail("mono:check Modes: missing or duplicate repair declaration");
+  for (const mode of ["repair", "tech", "design"]) {
+    requireMachineToken(mode);
+    if (modes.filter(value => value === mode).length !== 1) fail(`mono:check Modes: missing or duplicate ${mode} declaration`);
+  }
 }
 function readTierBounds(text, file = "") {
   const now = (isRussianStage(file) ? /^(?:Read now|Прочитай сразу)(?:\s|:|$).*$/m : /^Read now(?:\s|:|$).*$/m).exec(text);
@@ -6937,19 +7066,20 @@ function validateAe6Fixtures() {
     change("README.md", (text) => text.replace(/^(- \*\*K-31\.\*\* )/m, "$1In this pack, "));
     check(); restore(); check();
     console.log("PASS README rule prose rewording: green");
-    change("scripts/russian-stages.mjs", text => text.replace(/(export const RUSSIAN_STAGES = )\[[^\]]*\]/, `$1${JSON.stringify([...RUSSIAN_STAGES, "handoff"])}`));
-    change("skills/handoff/SKILL.md", text => text
+    change("scripts/russian-stages.mjs", text => text.replace(/(export const RUSSIAN_STAGES = )\[[^\]]*\]/, `$1${JSON.stringify([...RUSSIAN_STAGES, "issue"])}`));
+    change("skills/issue/SKILL.md", text => text
       .replace(/^Read first:\n/m, "")
       .replace(/^Read now.*$/m, "Прочитай сразу:")
-      .replace(/^Read when.*$/m, "Прочитай, когда:\n- `<корень>/references/contracts/project.md`: перед записью.")
       .replace(/^1\. `AGENTS.md`\n/m, "")
-      .replace(/^2\. `references\/contracts\/project.md`\n/m, "")
+      .replace(/^2\. `references\/contracts\/issue.md`\n/m, "")
+      .replaceAll("`references/contracts/issue.md`", "the Issue contract")
+      .replace(/^Read when.*$/m, "Прочитай, когда:\n- `<корень>/references/contracts/issue.md`: перед записью.")
       .replace(/(?<!<корень>\/)references\//g, "<корень>/references/")
       .replace(/^(- `[^`]+`) — /gm, "$1: "));
     check();
     const listedBudget = JSON.parse(runNode(["--input-type=module", "-e",
-      `import { measureReadBudget } from ${JSON.stringify(file("scripts/read-budget.mjs"))}; console.log(JSON.stringify(measureReadBudget(${JSON.stringify(scratch)}, { skills: ["handoff"], includeConditional: false })));`]));
-    if (listedBudget.files.some(entry => entry.path === "references/contracts/project.md")) fail("listed Russian stage conditional contract leaked into mandatory read budget");
+      `import { measureReadBudget } from ${JSON.stringify(file("scripts/read-budget.mjs"))}; console.log(JSON.stringify(measureReadBudget(${JSON.stringify(scratch)}, { skills: ["issue"], includeConditional: false })));`]));
+    if (listedBudget.files.some(entry => entry.path === "references/contracts/issue.md")) fail("listed Russian stage conditional contract leaked into mandatory read budget");
     restore(); check();
     console.log("PASS AE6 listed Russian stage: Russian tiers, no first AGENTS read, conditional contract and pack-root paths green");
     negative("unlisted stage with Russian read tiers", () => change("skills/check/SKILL.md", text => text
@@ -6958,9 +7088,10 @@ function validateAe6Fixtures() {
     negative("unlisted stage without first AGENTS read", () => change("skills/check/SKILL.md", text => text.replace(/^1\. `AGENTS.md`\n/m, "")), "AGENTS.md must be the first eager read");
     negative("unlisted stage with colon condition", () => change("skills/check/SKILL.md", text => text.replace(/^(- `[^`]+`) — /m, "$1: ")), "conditional read needs a path and a condition");
     negative("unlisted stage with Russian pack-root path", () => change("skills/check/SKILL.md", text => text.replace("2. `references/readiness-gates.md`", "2. `<корень>/references/readiness-gates.md`")), "missing pack file <корень>/references/readiness-gates.md");
-    negative("unlisted stage with conditional Project contract", () => change("skills/handoff/SKILL.md", text => text
-      .replace(/^2\. `references\/contracts\/project.md`\n/m, "")
-      .replace(/^Read when.*$/m, "$&\n- `references/contracts/project.md` — before fixture write.")), "must read references/contracts/project.md as its normative artifact source");
+    negative("unlisted stage with conditional Issue contract", () => change("skills/issue/SKILL.md", text => text
+      .replace(/^2\. `references\/contracts\/issue.md`\n/m, "")
+      .replace(/^Read when.*$/m, "$&\n- `references/contracts/issue.md` — before fixture write.")), "must read references/contracts/issue.md as its normative artifact source");
+    negative("Handoff conditional Issue contract removed", () => change("skills/handoff/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/issue\.md`:[^\n]+\n/m, "")), "must read references/contracts/issue.md as its normative artifact source");
     negative("Discovery conditional PRD contract removed", () => change("skills/discovery/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/prd\.md`:[^\n]+\n/m, "")), "must read references/contracts/prd.md as its normative artifact source");
     negative("Idea conditional Project contract removed", () => change("skills/idea/SKILL.md", text => text.replace(/^- `<корень>\/references\/contracts\/project\.md`:[^\n]+\n/m, "")), "must read references/contracts/project.md as its normative artifact source");
     negative("required section removed", () => change("references/issue-only-lane.md", (text) => text.replace("### Post-`ready` exit\n", "")), "missing or duplicate section");
@@ -6989,6 +7120,8 @@ function validateAe6Fixtures() {
       '  "question": "<question text, or null>",\n', "")), "missing mandatory machine field");
     negative("repair mode declaration removed with prose intact", () => change("skills/check/SKILL.md", (text) => text.replace(
       "- `repair`\n", "")), "Modes: missing or duplicate repair declaration");
+    negative("tech mode declaration removed with prose intact", () => change("skills/check/SKILL.md", (text) => text.replace(
+      "- `tech`\n", "")), "Modes: missing or duplicate tech declaration");
     change("skills/deploy/SKILL.md", (text) => text.replace(/^(\d+)(\. `cost`:)/m, (_, ordinal, suffix) => `${ordinal === "99" ? "98" : "99"}${suffix}`));
     check(); restore(); check();
     console.log("PASS AE6 cost step renumbering: green");
@@ -7074,6 +7207,7 @@ if (process.argv.includes("--model-policy-only") || process.argv.includes("--mod
 
 failures.push(...checkPlugin(root));
 validatePluginAgents();
+validateStageDelegation();
 validateLandingSurface();
 validateDocumentSkeleton();
 validateCheckModeDeclaration();

@@ -1,118 +1,164 @@
 # Orchestration Policy
 
-Control-plane policy for `mono:orchestrate`. The orchestrator inspects,
-delegates, monitors, decides or escalates, records, and reports. It never
-implements delivery-stage work itself. Idea is the explicit exception: the orchestrator runs that stage itself.
-Research too: no owner questions or yes; the result goes to the owner.
-Discovery answers with sources and its own PRD yes; result to owner without waiting.
+Control-plane policy for `mono:orchestrate`: inspect, delegate, monitor, decide,
+record and report. Delivery code stays in implement/preflight/ship workers.
+Pre-delivery stages run the same skills in stage agents, with the orchestrator
+answering as the delegated owner; a stage session owns its artifact and read-back.
 
 ## Roles
 
-- User: product decisions only — idea direction, scope, design, product risk,
-  deploy approval per policy. Talks only to the orchestrator session.
-- Orchestrator: one session per product; owns worker dispatch, monitoring, all
-  Linear mutations during orchestration, technical decisions, deploy
-  delegation, and the ledger.
-- Workers: one Issue each; run `mono:deliver`, whose implement/preflight/ship phases keep their owners in one session and worktree under the AFK
-  contract from `templates/orchestrator-dispatch.md`; they never write to
-  Linear directly.
+- Owner: always approves Idea, first-product exemplars and new taste-memory rules;
+  may reopen any approval by speaking in the orchestrator chat.
+- Orchestrator: one product session; dispatch, monitoring, technical decisions,
+  ledger and deploy. Single Linear writer only for implement/preflight/ship workers,
+  which queue their mutations in reports. Stage agents write their own records.
+- Stage agent: one stage, its own dialogue and tools, confirmed record and selected
+  transition returned to the orchestrator. Never starts the next stage or stage agents.
+- Worker: one Issue, `mono:deliver` phases under the AFK contract, no direct Linear writes.
 
 ## Stage Ownership
 
 | Stage | Runs in |
 | --- | --- |
-| `mono:idea` | orchestrator session; owner presses «Утвердить» per Idea |
-| `mono:discovery` | orchestrator session itself, per its orchestrator reference |
-| `mono:research` | orchestrator session itself after the owner's start; no owner questions or yes; result to owner |
-| `mono:handoff` | orchestrator session itself after Discovery; work starts only by the owner |
-| `mono:implement`, `mono:preflight`, `mono:ship` | worker session |
+| `mono:idea` | stage agent; orchestrator shows owner its description/window and relays only the owner's press |
+| `mono:research` | stage agent after authorized start; no owner questions or separate approval |
+| `mono:discovery` | stage agent; orchestrator answers with reasons and approves the shown PRD |
+| `mono:design` | stage agent when routed; first-product exemplars and taste consent remain with owner |
+| `mono:tech-evaluation` | stage agent when routed; orchestrator approves the shown page with a reason |
+| `mono:handoff` | stage agent after required stages; records package, then authorized work start |
+| `mono:implement`, `mono:preflight`, `mono:ship` | delivery worker session |
 | `mono:deploy` | orchestrator session |
 
-Gate ordering from `references/lifecycle.md` is preserved verbatim. The
-orchestrator sequences gates; it never skips, weakens, or replaces them, and
-stage skills keep their ownership unchanged.
+Gates in `references/lifecycle.md` keep their owners and order; no waiver.
 
 ## Decision Authority
 
-The user decides. Escalate immediately and interactively with a decision
-brief (options + recommendation):
+Delegated Project: latest Idea approval's outside-fence line
+«Ведёт оркестратор: владелец принёс идею оркестратору <дата>.». Repeat on Idea
+reapproval. A Project delegated before this version can rely on an explicit owner
+decision in a Project comment. Without either the owner leads: only owner starts
+Research and work (`by=owner`). Do not add `by` to strict `mono-idea` records.
+A `stale`/`legacy-migrate` Idea stops autonomous Research/work despite delegation:
+carry it to owner for button approval, confirmed new record and fresh check first.
+The orchestrator's reply or bundled start cannot approve that Idea snapshot.
+Only delegated Projects with that current approval allow autonomous Research/work,
+write start `by=orchestrator` with a reason, answer and approve after Idea, including
+irreversible, deferred and contrary-to-owner decisions. Stage approval does not
+execute external writes or spending. Configured merge/release/deploy policy (`deployApproval`) stays.
 
-- Idea direction and scope: work start after the Handoff summary, more than
-  three [execution Issues](lifecycle.md#задачи-этапов), scope drift.
-- Design and UX: always with prepared side-by-side variants (`/design-html`
-  when the runtime provides it; concrete textual variants otherwise). Under
-  Director Discovery, batch design/UX escalations into the UX checkpoint
-  unless they block discovery from continuing.
-- Product risk: money, user data, irreversible production actions, external
-  access.
-- Deploy approval when the configured `deployApproval` policy requires it
-  (`always`, or any risk class except `tiny` under `risky-only`; only `tiny`
-  proceeds without asking).
+Before each `by=orchestrator` record apply the countercheck below. The owner keeps
+Idea approval, first-product exemplars and consent to new taste rules. Their words
+reopen any approval. Owner-led stage sessions never accept another agent's reply
+as a press; the sole exception is a stage launched by the orchestrator, never Idea.
 
-The orchestrator decides itself and records every such decision in the ledger
-under «Решил сам:» with a one-line reason:
-
-- Discovery solution choice and its own PRD yes, with sources; the owner can
-  override at any time or at the Handoff summary.
-- Handoff reconciliation conflicts without money, user data or irreversible
-  effects, with the reason in the package record.
-- All technical and implementation questions from workers.
-- Technical review-finding acceptance, CI repair, and PR stabilization
-  routing.
-- Merge/deploy for risk classes the configured `deployApproval` allows (all
-  classes under `never`).
-
-Narrow control-plane exception: under an explicit owner mandate the
-orchestrator may author operational and deploy-repair changes directly —
-deploy scripts, infra config, docs address sweeps. Every such change is
-always recorded in the ledger as a control-plane exception naming the
-mandate; feature code never qualifies and always routes through workers.
-Wave-1 precedent: deploy-repair ops PRs authored under the owner's explicit
-«исправь» mandate and honestly ledgered.
-
-The user can override any recorded orchestrator decision later; reopen the
-affected stage when that happens.
+Narrow control-plane exception: an explicit owner mandate may permit operational
+and deploy-repair changes (scripts, infra config, docs sweeps), recorded in the ledger
+with that mandate; feature code always routes through delivery workers.
 
 ## Director Discovery
 
-Run Idea → Research → Discovery → Handoff yourself; only a legacy package on the
-old path (`mono:check discovery`, Old path) goes from Research to Handoff repair.
-Discovery uses one second-model pass after solutions/recommendation, before choice;
-no Second Voice interview, dialogue continuation or rounds for this stage. Its
-answers carry sources or judgments, and it gives its own PRD yes. Workers and
-background launches never start the stage. The owner can overturn its result.
-A deferred Project stays out of intake until its return condition or owner return.
+Run the chain through stage agents one Project at a time while delivery waves
+continue. Deferred Projects wait for their return condition or owner return.
+Launch prompt states owner context, exact stage-agent and scout names, product,
+source inputs and round. Owner-led next stages remain in the same session, except
+Design in a separate session whose parent ran Discovery. A delegated stage ends
+with a verified record and selected transition; the orchestrator launches the next
+stage session. A Discovery callback from Design/Tech Evaluation is performed in
+that session under Discovery rules, with orchestrator's version-bound reason and
+countercheck for PRD approval. Preserve partial Design → Discovery → Design recovery;
+return only after the stage's own record is confirmed.
 
-UX checkpoint and reviewed-prototype bar below stay in force. Contested Always-ask
-items batch there or into the Handoff summary. The Second Voice dialogue/round
-protocol below belongs only to pre-write package review; a Discovery second-model
-pass follows the stage reference instead. Design-lens prototype review is a pass,
-not a Discovery interview.
+Every PRD approval decides design then size; `next=design` goes to Design then
+ordinary/large work to Tech Evaluation, tiny work to Handoff. Not-needed routes
+by size. Reapproval invalidates lower records when the route changes. Run `route`
+before exemptions, then verify required records in chain order. PRD without
+`next=` retains the router's old path. Handoff verifies effective `mono-tech` for
+current PRD and consumes a valid record without another offer. Only absent/invalid
+tech with ordinary/large size gets «Начать Tech Evaluation» / «Ещё обсудить».
+Consent opens that old path; without it no package or continuation.
+Tech Evaluation owns new Tech Specs; Handoff consumes them and owns package repair.
+A changed tech page returns to its owner; class 3 repair needs a new authorized start.
 
-Checkpoints — the only moments that touch the user:
+Stage agents use the same dialogue as owner sessions. Their last turn contains
+the result and window labels as text. Reply with exact label and reason on that
+version; agent records `by=orchestrator`, reason and countercheck outside fences,
+then reads back. Idea instead requires the owner's press in the orchestrator window.
+Do not relay other stage questions to the owner. After every stage send the owner
+its R1 result (conclusion, decisions, exclusions/reason, next, link; 120 words,
+Handoff 150), plus «Утвердил сам, потому что…». Decisions on their behalf come first:
+«Решил за тебя: …, потому что …». Show exceptions and deferred/irreversible choices.
 
-1. Idea approval: run `mono:idea` yourself, including both scouts and the recap. Answer the route question and 1–3 meaning questions from the conversation, facts and prior decisions, each with a reason; never forward them to the owner. Ask only when the owner’s meaning remains unclear. Show the description and «Ответил сам:» with the approval window; only the owner's «Утвердить» approves this version, separately from the work start. After verified completion send the Idea final message, then the «Начать исследование» window with the plan prepared by Research; run `mono:research` itself only after the owner's start (button or words); the Project stays in Idea until then. Research adds no owner questions or yes; return its result to the owner. Then follow the route above: run Discovery yourself with sources on answers and own PRD yes, returning its result without waiting, then Handoff.
-2. UX checkpoint (user-facing surface only): one brief per
-   `templates/orchestrator-brief.md` with a reviewed near-production
-   prototype and the few contested UX decisions.
-3. Work start: the Handoff summary (tasks, «Решил сам», «Ответил сам», what was
-   reconciled) after the Project is Ready. Only the owner's «Начать работу» or
-   «начинаем» starts work; the summary never holds other waves (window only while
-   no wave is live, otherwise a text line), and the Project waits in Ready.
-4. Deploy approval per the configured `deployApproval` policy.
-5. Ad-hoc: risk acceptance and material scope drift — these never wait.
+Handoff offers «Начать работу» / «Передать оркестратору» / «Ещё обсудить».
+In an ordinary Project the button or typed «передай оркестратору» records
+`by=owner` and transfers delivery to the orchestrator. A delegated Project accepts
+orchestrator start with reason/countercheck. Ready alone never starts delivery.
 
-Prototype bar for the UX checkpoint: prepared via `/design-html` when the
-runtime provides it (concrete textual variants otherwise), realistic
-product content, correct states, side-by-side variants where a genuine
-choice exists, and a design-lens Second Voice pass already applied
-(in-session review as fallback) — the prototype is near-production,
-never a first draft.
+## Stage agent permissions and visible dialogue
 
-Multi-idea intake: the user may bring several ideas in one session. Run
-`mono:idea` per idea, queue discovery, and run Director Discovery one
-project at a time while dispatched delivery work continues in parallel;
-show the discovery queue in the status table.
+Use `templates/stage-agent.md` and its adjacent `templates/stage-helper-hook.mjs`.
+The template is outside `agents/` so the plugin cannot register placeholders.
+Build stage and scout definitions under `~/.claude/agents/` using product/stage-specific
+names, never overriding owner-session `mono:*-scout`. Use only exact tool names
+from current host connections, no server wildcard. Default categories: files,
+terminal, helpers, Linear, Paper for design, web search. No mail, finance, browser,
+screen, Desktop sessions or windows without owner action. Host-added tools (e.g.
+`advisor`) are not owner connections and are outside the list. This limits direct
+calls, not isolation; terminal remains for verification and the isolated second model.
+
+Desktop names `mcp__<uuid>__…` differ from CLI `mcp__claude_ai_<Имя>__…`: assemble
+for the orchestrator's host; wrong names mean no access. Map each allowed exact
+name to its category, leave all other connections absent. New connections stay
+excluded until explicitly added. Scouts get their own exact allowlists plus read-only
+restrictions. Launch prompt supplies their private names; stage uses only those.
+`Agent(type)` does not restrict helpers: stage frontmatter must carry PreToolUse
+matcher `Agent|Task`, invoking the hook with the allowed scout names. It reads
+`tool_input.subagent_type`, rejects other types on stderr with exit 2. Copy the hook
+to `<orchestrator-root>/hooks/` when building definitions and put its absolute path
+in the header; never use a versioned plugin-cache or session-temp operational path.
+
+At every orchestrator start and before each stage launch verify definitions, exact
+tool names against live host connections, no project definition override, scout
+names, hook bytes/path and current session visibility. New/edited definitions are
+visible only to a session started afterward: start a fresh orchestrator session
+before delegation. Missing, unverified or invisible definitions: do not launch;
+report the reason while other Projects proceed. Codex cannot select a restricted
+role/type for its subagent: delegated stages do not run there. Tell the owner:
+«Этапы делегированного проекта идут в Claude Code». Do not substitute broader rights.
+
+Append every stage/orchestrator message immediately to
+`.claude/session-views/<этап>-<ключ проекта>-<круг>.md` in the product working
+directory; link that file in each owner stage result. Not the orchestrator root:
+Desktop opens chat file links only inside session folders. Check `git check-ignore`;
+if unignored, append `.claude/session-views/` to the product `.git/info/exclude`,
+leaving `.gitignore` unchanged. Do not use a child Desktop session for delegation:
+the tested orchestrator session cannot launch it and messages cannot reach a
+session launched by the orchestrator. Design under delegation is an agent too;
+its end of turn returns control. Owner-led separate-session Design stays separate.
+
+## Approval countercheck
+
+Before every `by=orchestrator` record (PRD including renewals/Design callbacks,
+mockup, tech page, work start, package-repair approval), run a different-family
+second model per `references/model-policy.md`, read-only, foreground. Give result,
+exact approved text/version, PRD, earlier owner decisions, stage second-model
+report and proposed reason. Pass text/local paths, never Linear links: no owner
+connections. Resolve model/effort by policy, then use the appropriate invocation:
+
+```bash
+codex exec --ignore-user-config --disable apps -m <модель> -c model_reasoning_effort=<усилие> -s read-only "<задание>" < /dev/null
+claude -p --strict-mcp-config --model <модель> --effort <усилие> "<задание>" < /dev/null
+```
+
+`--disable apps` also blocks ChatGPT app connectors, enabled by default even
+when user config is ignored.
+
+Record verdict with model and reviewed-text version outside fences in that same
+approval comment, alongside reason; machine lines unchanged. Text or reason changes:
+check again. Objection: reply «Ещё обсудить» with it. Repeated objection on the same
+point: decide, retain objection/rejection reason in record; first owner-result line:
+«Решил за тебя: … вопреки второй модели, потому что …». No response after one retry:
+no approval; report reason and continue other Projects. This countercheck is separate
+from the unchanged package Second Voice dialogue below.
 
 ### Second Voice
 
@@ -286,12 +332,14 @@ languages.linear (Russian→ru, English→en; otherwise configure ideaGate.headi
 after all pages. `issue-context.json` = {issueId,issueKey,projectId} from the Issue.
 For a package record, `tech-spec.md` holds the content of the current record's
 `mono-package` fence (its `- U<n>.` units, `## Кратко` and manifests stay
-parseable; the dispatch label `Tech Spec:` stays) and `approval.md` is the owner's
-start comment; before dispatch verify that the start is `by=owner`, lists this
+parseable; the dispatch label `Tech Spec:` stays) and `approval.md` is the authorized
+start comment; before dispatch verify ordinary `by=owner`, or delegated
+`by=orchestrator` with reason/countercheck (latest Idea mark or earlier owner decision),
+never bundling unapproved stale/legacy Idea: owner button/record/fresh check first; listing this
 Issue, and names the record version it started with its `sha256`; the current
 version is that one or is reached from it by a verified chain of class 1-2
 versions with protected surfaces and Issue set unchanged. A class 3 version after
-it needs a new owner start; never rewrite the old start. A legacy package keeps
+it needs a new authorized start; never rewrite the old start. A legacy package keeps
 its Tech Spec and approval comment.
 `approval.md` is the exact start or package approval comment; `approval.json` =
 {commentId,createdAt,bodySha256}, SHA-256 of its UTF-8 bytes. That comment must
@@ -302,6 +350,23 @@ legacy-before-cutoff. `checkIdea` approved runs before attempt registration;
 refusal names code/project and consumes no attempt. Issue-only keeps its existing
 `issue-only.json` envelope (marker,label,fingerprint,config,ownerApproval,seam),
 passes seam to checkIdea and needs no Project files.
+
+For a UI task with U2, its Read first must contain
+`Дизайн: запись mono-design <id>,` and its full `images` hash. Prepare
+`design.json` in the source snapshot: {issue,recordId,images,dump}; `dump`
+points to fresh raw design-gate responses (Project, all comments/requests, PRD).
+The dispatch command runs `idea-gate.mjs design` itself using the product config,
+checks the selected record, its Project against the task’s verified Project,
+and the copied image hash, and writes `snapshot/design/`
+PNGs plus normalized `snapshot/design.json` and the consumed raw responses in
+`snapshot/design-input/` for refused-attempt retries. It renders the final snapshot
+path in the worker prompt. The AFK read exception covers only its pinned
+`snapshot/design.json` and `snapshot/design/*.png`, not other dispatch state.
+Copies stay outside the worktree and are never
+committed. Without a U2 record omit this manifest: no PNGs are supplied.
+An Issue naming U2 without its source manifest refuses dispatch. Textual
+owner/product taste rules come from the Issue's context snapshot, including
+UI work without mockups; home paths alone cannot substitute for those rules.
 
 After the Idea check and before registering an attempt, dispatch checks Research.
 For a Project package, read the Research document named by `id` or `url` in the
@@ -1826,7 +1891,7 @@ whom, why the decision is needed now, completed proof (tests, autoreview, CI,
 certificates as applicable), recommendation with rationale, exact options.
 Ask immediately and interactively; unblocked work continues in parallel.
 
-Brief integrity — five rules bind every brief and UX checkpoint; the
+Brief integrity — five rules bind every decision brief; the
 user-facing shapes live in `templates/orchestrator-brief.md`
 («Целостность брифа»):
 

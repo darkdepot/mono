@@ -61,9 +61,11 @@ Tech Spec:
 
 - Defines HOW and traces to PRD requirements.
 - Implementation units are stable and independently understandable.
-- Failure modes, validation, rollout, and rollback are concrete.
+- New Specs are written only by Tech Evaluation after page approval; legacy repair is Handoff, accepted pre-ship drift Ship. The effective `mono-tech` record and fresh Spec read-back agree.
+- Only non-inferable, expensive-to-redo details remain, with concrete validation and applicable failure/release/rollback decisions; no empty sections.
 - Deep/risky specs use the interface as the test surface and pass the deletion-test smell check.
-- No-spec exception is justified when present.
+- No-spec exception is justified when present; it cannot replace the Spec on the Tech Evaluation route. Old-path/tiny package records retain their `U` decisions.
+- Handoff carries approved Spec decisions into `U` units and Issue key contracts; any change to a page line returns to Tech Evaluation (after start, class 3 repair first).
 
 Issue:
 
@@ -110,7 +112,7 @@ Each finding must include:
 - Evidence: short quote or artifact section reference.
 - Impact: what goes wrong if ignored.
 - Recommendation: concrete next action.
-- Owner workflow: `mono:handoff`, `mono:implement`, `mono:preflight`, `mono:ship`, `mono:deploy`, `mono:issue`, or human decision.
+- Owner workflow: `mono:tech-evaluation`, `mono:discovery`, `mono:handoff`, `mono:implement`, `mono:preflight`, `mono:ship`, `mono:deploy`, `mono:issue`, or human decision.
 
 ## Report Shape
 

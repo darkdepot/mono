@@ -56,16 +56,6 @@ function sectionBetween(content, startHeading, endHeading) {
 
 for (const [file, snippets] of [
   [
-    "skills/handoff/SKILL.md",
-    [
-      "Do not rely on lint scripts to make artifacts good.",
-      "Run a content-shape review on the package",
-      "PRD as product truth with requirement IDs",
-      "Tech Spec as implementation truth that traces HOW decisions back to PRD requirements",
-      "Issue slicing, `AFK`/`HITL` readiness",
-    ],
-  ],
-  [
     "references/contracts/prd.md",
     [
       "## PR-026 — Invention self-review",

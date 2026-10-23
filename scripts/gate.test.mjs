@@ -586,9 +586,10 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         if (fixture.path === 'executed') {
           // A valid decline makes this findings receipt pass under the current gate rules.
           const d = declineFixture().entry, finding = findingIdentity(latest, 0);
+          const approvedAt = new Date().toISOString();
           await recordDecision({ evidenceRoot: evidence, issue: entry.issue, entry: classSeal({ ...d, head,
             receipt: { collectionId: latest.collectionId, runId: latest.runId, digest: digest(latest) }, finding,
-            recordedAt: new Date().toISOString(), approvedAt: new Date().toISOString() }) });
+            recordedAt: approvedAt, approvedAt }) });
           assert.deepEqual(await admit(request), admission, 'completed admission remains idempotent');
           const result = call(request); assert.equal(result.status, 0, result.stdout); assert.match(result.stdout, /accepted-with-declines/);
           assert.deepEqual(fs.readFileSync(receiptFile), sealedReceipt); assert.deepEqual(fs.readFileSync(historyFile), sealedReceipt);
