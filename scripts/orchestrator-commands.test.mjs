@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { extractSnapshot, references, section } from "./orchestrator/snapshot.mjs";
@@ -2478,6 +2478,83 @@ test('retry-collector-cleanup-error: a cleanup refusal does not mask the primary
       await stopFixtureProcess(result.afterCleanup.descendant.pid);
     }
   }
+});
+
+// Darwin timers stop counting while the host sleeps (MONO-214 a1 woke 76 minutes
+// past its deadline). A wall-clock jump after launch models that wake; the real
+// run deadline stays ten minutes away, so only wall-clock deadlines can trip.
+async function clockJumpScenario(run) {
+  await collectionRetryFixture('timeout', async f => {
+    f.entry.confirmationTimeoutSec = 3600; f.entry.collectionTimeoutSec = 600; f.entry.collectionRetries = 0;
+    atomicJson(f.registry, { [f.options.issue]: f.entry }); f.publish();
+    const offsetFile = path.join(f.scratch, 'clock-offset'), preload = path.join(f.scratch, 'clock-offset.mjs');
+    fs.writeFileSync(offsetFile, '0');
+    write(preload, `import fs from 'node:fs';const now=Date.now.bind(Date);
+Date.now=()=>{try{return now()+Number(fs.readFileSync(${JSON.stringify(offsetFile)},'utf8'))}catch{return now()}};\n`);
+    const live = pid => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
+    const launched = async () => {
+      const until = Date.now() + 8000;
+      while (!readJson(f.stateFile).descendant && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
+      assert.ok(readJson(f.stateFile).descendant, 'the gate and its descendant start before the clock jump');
+      return readJson(f.startFile).gate;
+    };
+    const dead = async (gate, ms) => {
+      const until = Date.now() + ms;
+      while ((live(-gate.processGroup) || live(readJson(f.stateFile).descendant)) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 25));
+      return !live(-gate.processGroup) && !live(readJson(f.stateFile).descendant);
+    };
+    // A gate can register before the startup wait fails; cleanup reads the registration itself.
+    const registered = () => { try { return readJson(f.startFile).gate ?? null; } catch { return null; } };
+    try { await run({ ...f, offsetFile, preload, launched, registered, dead }); }
+    finally {
+      const gate = registered();
+      if (gate && live(-gate.processGroup)) process.kill(-gate.processGroup, 'SIGKILL');
+    }
+  });
+}
+
+test('retry-clock-jump-collector: the collector stops a gate once wall-clock time passes the run deadline', async () => {
+  await clockJumpScenario(async f => {
+    const now = Date.now, polled = f.poll();
+    let gate, settled = false;
+    polled.finally(() => { settled = true; }).catch(() => {});
+    try {
+      gate = await f.launched();
+      Date.now = () => now.call(Date) + 700_000;
+      const until = now.call(Date) + 10_000;
+      while (!settled && now.call(Date) < until) await new Promise(resolve => setTimeout(resolve, 25));
+      assert.ok(settled, 'the collector must stop the gate within seconds of passing its wall-clock deadline');
+      await polled;
+    } finally {
+      Date.now = now;
+      if (!settled) {
+        const registered = f.registered();
+        if (registered) try { process.kill(-registered.processGroup, 'SIGKILL'); } catch {}
+        await Promise.race([polled.catch(() => {}), new Promise(resolve => setTimeout(resolve, 10_000))]);
+      }
+    }
+    assert.match(fs.readFileSync(path.join(f.options.root, 'reports/MONO-999-collector-a1.log'), 'utf8'), /gate run timed out without completion/);
+    assert.match(readJson(f.attention).reason, /timed-out.*exhausted/);
+    assert.ok(await f.dead(gate, 0), 'the whole gate group is dead');
+    assert.equal(fs.existsSync(f.confirmation), false);
+  });
+});
+
+test('retry-clock-jump-watchdog: the gate watchdog enforces its wall-clock deadline after its collector dies', async () => {
+  await clockJumpScenario(async f => {
+    const module = new URL('./orchestrator/collector.mjs', import.meta.url).href;
+    const env = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(f.preload).href}`.trim() };
+    const parent = spawn(process.execPath, ['--input-type=module', '-e', `const {collectOnce}=await import(${JSON.stringify(module)});await collectOnce(${JSON.stringify(f.options)});`],
+      { stdio: 'ignore', detached: true, env });
+    const closed = new Promise(resolve => parent.once('close', resolve));
+    try {
+      const gate = await f.launched();
+      parent.kill('SIGKILL'); await closed;
+      assert.equal(await f.dead(gate, 1000), false, 'the gate outlives its collector until the deadline');
+      fs.writeFileSync(f.offsetFile, '700000');
+      assert.ok(await f.dead(gate, 3000), 'the gate watchdog must kill its whole group once wall-clock time passes its deadline');
+    } finally { parent.kill('SIGKILL'); await closed; }
+  });
 });
 
 test('ship-bot-policy: current pins override recovered admission; foreign attempt decision is refused', () => {
