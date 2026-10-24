@@ -10,6 +10,15 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writeWatcherFixture } from './plugin-fixture.mjs';
 
+function windowHookFixture(root) {
+  const hooks = JSON.parse(fs.readFileSync(new URL('../hooks/hooks.json', import.meta.url), 'utf8'));
+  fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'hooks/hooks.json'), JSON.stringify(hooks));
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'scripts/window-guard.mjs'), '');
+  return hooks.hooks;
+}
+
 test('plugin layout shares the repository paths and reads VERSION identity', () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-layout-')));
   try {
@@ -68,7 +77,7 @@ test('plugin checks reject version drift, a root manifest and any missing skill 
   const write = (file, value) => { fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true }); fs.writeFileSync(path.join(root, file), value); };
   try {
     write('VERSION', '0.22.0\n');
-    const valid = { name: 'mono', version: '0.22.0', skills: './skills/' };
+    const valid = { name: 'mono', version: '0.22.0', skills: './skills/', hooks: windowHookFixture(root) };
     for (const tool of ['claude', 'codex']) write(`.${tool}-plugin/plugin.json`, JSON.stringify(valid));
     write('skills/fixture/SKILL.md', 'Read `references/shared.md` and run `scripts/worker.mjs`.');
     write('references/shared.md', 'shared'); write('scripts/worker.mjs', '');
@@ -100,7 +109,8 @@ test('plugin paths distinguish skill references from explicit pack-root referenc
   };
   try {
     write('VERSION', '0.32.0\n');
-    for (const tool of ['claude', 'codex']) write(`.${tool}-plugin/plugin.json`, JSON.stringify({ name: 'mono', version: '0.32.0' }));
+    const hooks = windowHookFixture(root);
+    for (const tool of ['claude', 'codex']) write(`.${tool}-plugin/plugin.json`, JSON.stringify({ name: 'mono', version: '0.32.0', hooks }));
     write('skills/idea/SKILL.md', 'Прочитай сразу: `references/examples.md`.\nПрочитай, когда:\n- `<корень>/references/contracts/project.md`: перед записью.\nRun `node <корень>/scripts/idea-gate.mjs`.');
     write('skills/idea/references/examples.md', '# Examples');
     write('references/contracts/project.md', '# Contract');
@@ -176,4 +186,51 @@ test('dispatch pins the plugin script folder and refuses resume when that folder
     if (pid) { try { process.kill(pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; } }
     fs.rmSync(scratch, { recursive: true, force: true });
   }
+});
+
+test('window hook registration is checked for both hosts, root path and main-session events', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-window-hooks-'));
+  const write = (file, value) => {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.writeFileSync(path.join(root, file), JSON.stringify(value));
+  };
+  try {
+    fs.writeFileSync(path.join(root, 'VERSION'), '0.37.0\n');
+    fs.mkdirSync(path.join(root, 'skills'));
+    const hooks = windowHookFixture(root);
+    const manifest = { name: 'mono', version: '0.37.0' };
+    const restore = () => {
+      write('hooks/hooks.json', { hooks });
+      write('.claude-plugin/plugin.json', manifest);
+      write('.codex-plugin/plugin.json', { ...manifest, hooks });
+    };
+    restore();
+    assert.deepEqual(checkPlugin(root), [], 'Claude auto-discovery and Codex inline hooks');
+    for (const host of ['claude', 'codex']) {
+      const registration = (value) => host === 'claude'
+        ? write('hooks/hooks.json', { hooks: value })
+        : write('.codex-plugin/plugin.json', { ...manifest, hooks: value });
+      const bad = structuredClone(hooks);
+      bad.Stop[0].hooks[0].command = 'node /version/0.37.0/scripts/window-guard.mjs';
+      registration(bad);
+      assert.match(checkPlugin(root).join('\n'), /must run window-guard through \$\{CLAUDE_PLUGIN_ROOT\}/);
+      restore();
+      registration({ ...hooks, SubagentStop: hooks.Stop });
+      assert.match(checkPlugin(root).join('\n'), /must register only/);
+      restore();
+      registration({ PreToolUse: hooks.PreToolUse, Stop: hooks.Stop });
+      assert.match(checkPlugin(root).join('\n'), /must register only/);
+      restore();
+      const wrongMatcher = structuredClone(hooks);
+      wrongMatcher.PreToolUse[0].matcher = 'Bash|AskUserQuestion';
+      registration(wrongMatcher);
+      assert.match(checkPlugin(root).join('\n'), /must match Bash/);
+      restore();
+    }
+    write('.codex-plugin/plugin.json', manifest);
+    assert.match(checkPlugin(root).join('\n'), /codex-plugin.*must register only/);
+    restore();
+    fs.unlinkSync(path.join(root, 'hooks/hooks.json'));
+    assert.match(checkPlugin(root).join('\n'), /claude-plugin.*ENOENT/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
