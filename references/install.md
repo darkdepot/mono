@@ -5,7 +5,7 @@
 Install from the GitHub marketplace repository `darkdepot/mono`, never a local
 folder. The version cache is `packRoot`; the marketplace clone is
 not. The plugin has the repository layout: `skills/`, `references/`, `templates/`,
-`scripts/`, `AGENTS.md`, `VERSION`.
+`scripts/`, `hooks/`, `AGENTS.md`, `VERSION`.
 
 ## Plugin Updates
 
@@ -85,6 +85,35 @@ node '<new-pack-root>/scripts/watch-workers.mjs' --root /path/to/own/product-sta
 Observe a fresh `watcher.json` pulse from that process. Keep launch halts until
 verification and watcher restart finish; `watcher-required` names the start
 command if the pulse is absent, stale or does not match a live process.
+
+## Window Hooks and Trust
+
+The plugin carries `hooks/hooks.json` for Claude Code and event registration in
+`.codex-plugin/plugin.json`, both using `scripts/window-guard.mjs`. Registration
+alone does not prove host support: the early live check found `plugin_hooks`
+removed in Codex. Do not promise window protection there until the stage check
+returns «защита включена» with `session_id`.
+
+Where Codex supports plugin hooks, trust Mono at startup with «Trust all and
+continue» or through `/hooks`. An update can require renewed trust because the
+host binds it to plugin content. In Claude Code, verify Mono is enabled through
+`/plugin` and hooks are enabled in settings. Never enable a removed feature flag.
+
+Before each stage window, follow [owner dialogue](owner-dialog.md): check first,
+end the turn with the summary or position and exact option lines, then open the
+marked window after continuation. The check prints «защита выключена», fails,
+returns empty/unexpected output or no `session_id`: no window. End with the
+summary, one environment-specific hint, then text options:
+
+- Codex: «доверь хуки Mono: при запуске «Trust all and continue» или /hooks;
+  утвердить можно у оркестратора».
+- Claude Code: «проверь, что плагин Mono включён (/plugin) и хуки не выключены
+  в настройках; утвердить можно у оркестратора».
+
+Without a Codex window tool (`request_user_input` or `request_user_input_async`),
+no check is needed; end with text options and where to approve. Stage helpers
+run neither checks nor windows. Empty window answers approve nothing and do not
+reopen the window automatically. These rules apply to the new pack, not old installs.
 
 ## Compatibility
 
@@ -290,7 +319,7 @@ T; тег `v0.36.0` указывает на T, оба кэша совпадаю�
 
 Idea, Research, Discovery и Handoff пересобраны: утверждение только кнопкой
 «Утвердить» в окне вопроса (Claude Code `AskUserQuestion`, Codex
-`request_user_input_async`; без окна утверждения нет), исследование начинает
+`request_user_input` / `request_user_input_async`; без окна утверждения нет), исследование начинает
 владелец, переходы после Research и Discovery в сессии владельца по кнопке
 «Начать <этап>», у оркестратора сами. Новый общий `references/owner-dialog.md`.
 

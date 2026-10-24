@@ -472,6 +472,21 @@ function validateStageDelegation() {
   console.log("PASS stage delegation: isolated invocations, template and helper-hook fixtures");
 }
 
+function validateStageWindowRules() {
+  // Agent-only order is reviewed; skeleton pins only commands, fields and paths.
+  const dialogue = read("references/owner-dialog.md");
+  for (const token of ["scripts/window-guard.mjs", "check --options", "session_id",
+    "metadata.source", "mono_", "request_user_input", "request_user_input_async"]) {
+    requireMachineToken(token);
+    if (!dialogue.includes(token)) fail(`stage window dialogue missing ${token}`);
+  }
+  for (const stage of ["idea", "research", "discovery", "design", "tech-evaluation", "handoff", "orchestrate"]) {
+    requireMachineToken("owner-dialog.md");
+    if (!read(`skills/${stage}/SKILL.md`).includes("owner-dialog.md"))
+      fail(`stage window rules missing dialogue reference: ${stage}`);
+  }
+}
+
 function validatePluginAgents() {
   for (const name of PLUGIN_SCOUTS) {
     const file = `agents/${name}.md`;
@@ -6238,6 +6253,9 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  // MONO-250: window command, tool/field names and shared dialogue path.
+  "scripts/window-guard.mjs", "check --options", "session_id", "metadata.source", "mono_",
+  "request_user_input", "request_user_input_async", "owner-dialog.md",
   // MONO-239: invocation flags, template fields/placeholders and dialogue skeleton.
   "--ignore-user-config", "--strict-mcp-config", "--disable apps", "-s read-only", "codex exec", "claude -p",
   "tools", "hooks", "PreToolUse", "Agent|Task", "command", "type",
@@ -7208,6 +7226,7 @@ if (process.argv.includes("--model-policy-only") || process.argv.includes("--mod
 failures.push(...checkPlugin(root));
 validatePluginAgents();
 validateStageDelegation();
+validateStageWindowRules();
 validateLandingSurface();
 validateDocumentSkeleton();
 validateCheckModeDeclaration();
