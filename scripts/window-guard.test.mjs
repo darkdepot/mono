@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
@@ -220,4 +220,60 @@ test('literal Unicode escapes carry apostrophes without shell interpolation', t 
   assert.equal(alive.status, 0, alive.stderr);
   assert.equal(alive.stdout, `защита включена\nsession_id=${session}\n`);
   assert.equal(f.stop(ending(labels), { session_id: session }).decision, 'block');
+});
+
+test('concurrent hook processes can consume only one session permit', async t => {
+  const f = fixture(t);
+  f.check(); f.stop();
+  // Widen the read/consume race at the filesystem boundary, without a production test flag.
+  const delay = path.join(f.dir, 'delay.mjs');
+  fs.writeFileSync(delay, `import fs from 'node:fs';
+const read = fs.readFileSync;
+fs.readFileSync = function(file, ...args) {
+  const value = read.call(this, file, ...args);
+  if (String(file).endsWith('.json') && String(value).includes('"permit"'))
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+  return value;
+};
+`);
+  const results = await Promise.all(Array.from({ length: 8 }, () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--import', delay, script], { env: f.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let output = '', error = '';
+    child.stdout.on('data', chunk => output += chunk);
+    child.stderr.on('data', chunk => error += chunk);
+    child.on('error', reject);
+    child.on('close', code => {
+      try { assert.equal(code, 0, error); assert.equal(error, ''); resolve(output ? JSON.parse(output) : null); }
+      catch (cause) { reject(cause); }
+    });
+    child.stdin.end(JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'session-1', tool_name: 'request_user_input_async',
+      tool_input: { questions: [{ options: choices[0] }] } }));
+  })));
+  assert.equal(results.filter(result => result === null).length, 1, 'exactly one window passes');
+  assert.equal(results.filter(result => decision(result) === 'deny').length, 7);
+  assert.equal(f.stop(), null);
+});
+
+test('owner prompt waits for an in-flight session transition before clearing it', async t => {
+  const f = fixture(t);
+  f.check(); f.stop();
+  const file = path.join(f.dir, fs.readdirSync(f.dir)[0]);
+  const { withLock } = await import('./runtime.mjs');
+  let finished;
+  await withLock(`${file}.lock`, async () => {
+    finished = new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [script], { env: f.env, stdio: ['pipe', 'pipe', 'pipe'] });
+      let output = '', error = '';
+      child.stdout.on('data', chunk => output += chunk);
+      child.stderr.on('data', chunk => error += chunk);
+      child.on('error', reject);
+      child.on('close', code => { try { assert.equal(code, 0, error); assert.equal(output, ''); assert.equal(error, ''); resolve(); } catch (cause) { reject(cause); } });
+      child.stdin.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'session-1' }));
+    });
+    await new Promise(resolve => setTimeout(resolve, 150));
+  });
+  await finished;
+  assert.equal(fs.existsSync(file), false);
+  assert.equal(f.stop(), null);
+  assert.equal(decision(f.window()), 'deny');
 });

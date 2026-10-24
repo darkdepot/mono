@@ -16,7 +16,7 @@ function windowHookFixture(root) {
   fs.writeFileSync(path.join(root, 'hooks/hooks.json'), JSON.stringify(hooks));
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   fs.writeFileSync(path.join(root, 'scripts/window-guard.mjs'), '');
-  return hooks.hooks;
+  return hooks;
 }
 
 test('plugin layout shares the repository paths and reads VERSION identity', () => {
@@ -200,29 +200,34 @@ test('window hook registration is checked for both hosts, root path and main-ses
     const hooks = windowHookFixture(root);
     const manifest = { name: 'mono', version: '0.37.0' };
     const restore = () => {
-      write('hooks/hooks.json', { hooks });
+      write('hooks/hooks.json', hooks);
       write('.claude-plugin/plugin.json', manifest);
       write('.codex-plugin/plugin.json', { ...manifest, hooks });
     };
     restore();
-    assert.deepEqual(checkPlugin(root), [], 'Claude auto-discovery and Codex inline hooks');
+    assert.deepEqual(checkPlugin(root), [], 'Claude auto-discovery and Codex HooksFile envelope');
+    write('.codex-plugin/plugin.json', { ...manifest, hooks: hooks.hooks });
+    assert.match(checkPlugin(root).join('\n'), /must register only/, 'reject a bare Codex event map');
+    write('.codex-plugin/plugin.json', { ...manifest, hooks: './hooks/hooks.json' });
+    assert.deepEqual(checkPlugin(root), [], 'Codex supports a shared hook file path');
+    restore();
     for (const host of ['claude', 'codex']) {
       const registration = (value) => host === 'claude'
-        ? write('hooks/hooks.json', { hooks: value })
+        ? write('hooks/hooks.json', value)
         : write('.codex-plugin/plugin.json', { ...manifest, hooks: value });
       const bad = structuredClone(hooks);
-      bad.Stop[0].hooks[0].command = 'node /version/0.37.0/scripts/window-guard.mjs';
+      bad.hooks.Stop[0].hooks[0].command = 'node /version/0.37.0/scripts/window-guard.mjs';
       registration(bad);
       assert.match(checkPlugin(root).join('\n'), /must run window-guard through \$\{CLAUDE_PLUGIN_ROOT\}/);
       restore();
-      registration({ ...hooks, SubagentStop: hooks.Stop });
+      registration({ hooks: { ...hooks.hooks, SubagentStop: hooks.hooks.Stop } });
       assert.match(checkPlugin(root).join('\n'), /must register only/);
       restore();
-      registration({ PreToolUse: hooks.PreToolUse, Stop: hooks.Stop });
+      registration({ hooks: { PreToolUse: hooks.hooks.PreToolUse, Stop: hooks.hooks.Stop } });
       assert.match(checkPlugin(root).join('\n'), /must register only/);
       restore();
       const wrongMatcher = structuredClone(hooks);
-      wrongMatcher.PreToolUse[0].matcher = 'Bash|AskUserQuestion';
+      wrongMatcher.hooks.PreToolUse[0].matcher = 'Bash|AskUserQuestion';
       registration(wrongMatcher);
       assert.match(checkPlugin(root).join('\n'), /must match Bash/);
       restore();

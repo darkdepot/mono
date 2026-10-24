@@ -2,48 +2,8 @@
   "name": "mono",
   "version": "0.37.0",
   "description": "Linear-backed delivery from an idea to a reviewed PR.",
-  "author": {
-    "name": "Mono"
-  },
+  "author": { "name": "Mono" },
   "skills": "./skills/",
-  "interface": {
-    "displayName": "Mono",
-    "shortDescription": "Deliver approved Linear Issues to reviewed PRs."
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "^(Bash|AskUserQuestion|request_user_input|request_user_input_async)$",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/window-guard.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/window-guard.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/window-guard.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
+  "interface": { "displayName": "Mono", "shortDescription": "Deliver approved Linear Issues to reviewed PRs." },
+  "hooks": "./hooks/hooks.json"
 }

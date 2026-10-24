@@ -12,6 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { withLock } from './runtime.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const script = fileURLToPath(import.meta.url);
 const denyReason = 'запусти проверку и закончи ход итогом с вариантами последними строками';
@@ -65,7 +67,7 @@ function readState(file) {
 function cleanup(directory) {
   let entries;
   try { entries = fs.readdirSync(directory); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
-  for (const entry of entries.filter(name => /^window-[a-f0-9]{64}\.json$/.test(name))) {
+  for (const entry of entries.filter(name => /^window-[a-f0-9]{64}\.json(?:\.lock)?$/.test(name))) {
     const file = path.join(directory, entry);
     try { if (Date.now() - fs.statSync(file).mtimeMs > day) fs.unlinkSync(file); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -88,7 +90,7 @@ function matchesSummary(message, options) {
   const words = lines.slice(0, -endings.length).join(' ').split(/\s+/).filter(word => /[\p{L}\p{N}]/u.test(word));
   return words.length >= 20;
 }
-function handle(event) {
+async function handle(event) {
   const isWindow = event.hook_event_name === 'PreToolUse' && windowTool(event.tool_name);
   let stageWindow = isWindow && (marked(event.tool_input) || approval(windowOptions(event.tool_input)));
   try {
@@ -98,31 +100,44 @@ function handle(event) {
       if (!expected) return;
     } else if (!isWindow && !['Stop', 'UserPromptSubmit'].includes(event.hook_event_name)) return;
     const file = stateFile(event.session_id);
-    const state = readState(file);
     const options = isWindow ? windowOptions(event.tool_input) : null;
-    stageWindow ||= isWindow && same(options, state.expected);
+    const snapshot = readState(file);
+    stageWindow ||= isWindow && same(options, snapshot.expected);
     cleanup(path.dirname(file));
-    if (expected) {
-      saveState(file, { expected, continuations: 0 });
-      const output = `защита включена\nsession_id=${event.session_id}\n`;
-      // Single-quote shell escaping also covers an arbitrary host session_id.
-      const quoted = `'${output.replaceAll("'", "'\\''")}'`;
-      return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...event.tool_input, command: `printf '%s' ${quoted}` } } };
+    if (isWindow && !stageWindow) return;
+    if (!isWindow && !expected && !snapshot.expected && !snapshot.permit) return;
+    const deadline = Date.now() + 1000;
+    for (;;) {
+      try {
+        return await withLock(`${file}.lock`, () => {
+          const state = readState(file);
+          if (expected) {
+            saveState(file, { expected, continuations: 0 });
+            const output = `защита включена\nsession_id=${event.session_id}\n`;
+            // Single-quote shell escaping also covers an arbitrary host session_id.
+            const quoted = `'${output.replaceAll("'", "'\\''")}'`;
+            return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...event.tool_input, command: `printf '%s' ${quoted}` } } };
+          }
+          if (event.hook_event_name === 'UserPromptSubmit') { clearState(file); return; }
+          if (isWindow) {
+            if (!stageWindow) return;
+            if (options && same(options, state.permit) && same(options, state.expected)) { clearState(file); return; }
+            return deny();
+          }
+          if (!validOptions(state.expected)) return;
+          const continuations = state.continuations ?? 0;
+          const matches = matchesSummary(event.last_assistant_message, state.expected);
+          if (!matches && state.permit) saveState(file, { expected: state.expected, continuations });
+          if (continuations >= 2) return;
+          if (!matches && (event.stop_hook_active || continuations > 0)) return;
+          saveState(file, { expected: state.expected, continuations: continuations + 1, ...(matches ? { permit: state.expected } : {}) });
+          return { decision: 'block', reason: matches ? 'открой окно с этими вариантами без нового текста' : repairReason };
+        });
+      } catch (error) {
+        if (error.code !== 'ELOCKED' || Date.now() >= deadline) throw error;
+        await delay(20);
+      }
     }
-    if (event.hook_event_name === 'UserPromptSubmit') { clearState(file); return; }
-    if (isWindow) {
-      if (!stageWindow) return;
-      if (options && same(options, state.permit) && same(options, state.expected)) { clearState(file); return; }
-      return deny();
-    }
-    if (!validOptions(state.expected)) return;
-    const continuations = state.continuations ?? 0;
-    const matches = matchesSummary(event.last_assistant_message, state.expected);
-    if (!matches && state.permit) saveState(file, { expected: state.expected, continuations });
-    if (continuations >= 2) return;
-    if (!matches && (event.stop_hook_active || continuations > 0)) return;
-    saveState(file, { expected: state.expected, continuations: continuations + 1, ...(matches ? { permit: state.expected } : {}) });
-    return { decision: 'block', reason: matches ? 'открой окно с этими вариантами без нового текста' : repairReason };
   } catch {
     // Never break ordinary work, even if session storage is unavailable.
     if (stageWindow) return deny();
@@ -144,7 +159,7 @@ Only hook mode writes session state; check alone always reports disabled.`);
   console.log('защита выключена');
 } else if (!args.length) {
   try {
-    const result = handle(JSON.parse(fs.readFileSync(0, 'utf8')));
+    const result = await handle(JSON.parse(fs.readFileSync(0, 'utf8')));
     if (result) console.log(JSON.stringify(result));
   } catch { /* Malformed host input cannot identify a stage window. */ }
 }

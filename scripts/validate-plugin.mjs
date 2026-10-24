@@ -16,7 +16,7 @@ function checkWindowHooks(root, manifest, file) {
   // Claude auto-discovers hooks/hooks.json; Codex declares its hooks in the manifest.
   const declared = manifest.hooks ?? (file.startsWith('.claude-plugin/') ? './hooks/hooks.json' : null);
   const hooks = typeof declared === 'string' && declared === './hooks/hooks.json'
-    ? JSON.parse(fs.readFileSync(path.join(root, declared), 'utf8')).hooks : declared;
+    ? JSON.parse(fs.readFileSync(path.join(root, declared), 'utf8')).hooks : declared?.hooks;
   if (!hooks || JSON.stringify(Object.keys(hooks).sort()) !== JSON.stringify(['PreToolUse', 'Stop', 'UserPromptSubmit']))
     return [`${file}: window hooks must register only PreToolUse, Stop and UserPromptSubmit`];
   const failures = [];
