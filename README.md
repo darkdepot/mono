@@ -39,7 +39,10 @@ Linear, дизайн-Paper и поисковых инструментов. Ни�
 [хук](templates/stage-helper-hook.mjs) PreToolUse `Agent|Task`, допускающий только
 имена разведчиков этапа. Определения и путь хука сверяются при старте и перед
 запуском; после изменения нужна новая сессия. Это ограничение прямых вызовов,
-не изоляция. Делегированные этапы в Codex не запускаются. Разговор дописывается
+не изоляция. Плагин также содержит [хуки окна](hooks/hooks.json) для Claude Code
+и регистрацию тех же событий в `.codex-plugin/plugin.json`: общий скрипт
+[`window-guard.mjs`](scripts/window-guard.mjs), без сети и Linear.
+Делегированные этапы в Codex не запускаются. Разговор дописывается
 сразу в `.claude/session-views/<этап>-<ключ проекта>-<круг>.md` продукта,
 при необходимости исключённую через `.git/info/exclude`, со ссылкой в итоге.
 
@@ -1424,7 +1427,9 @@ Run before completing a change:
 node scripts/verify.mjs
 ```
 
-The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
+The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures, including window-hook event fixtures in
+`scripts/window-guard.test.mjs` and hook registration checks for both hosts.
+Scratch validation copies include `hooks/` alongside the scout-hook template. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
 Use focused checks while editing:
 
@@ -1432,6 +1437,9 @@ Use focused checks while editing:
 node scripts/validate-workflow.mjs --readme-only
 node scripts/validate-workflow.mjs --model-policy-fixtures
 node scripts/read-budget.mjs
+node --test scripts/window-guard.test.mjs
+node scripts/validate-plugin.mjs
+claude plugin validate . --strict
 node scripts/lint-mono-artifacts.mjs
 node --test scripts/route-gate.test.mjs scripts/design-gate.test.mjs scripts/tech-gate.test.mjs
 ```
