@@ -137,8 +137,9 @@ Workflow states:
      they run in Claude Code. No silent widening of tools or server wildcards.
    - One Project chain at a time: stage agents ask the same questions and show the
      same result as to owner; answer with label and reason on that version.
-     Idea: show owner its description/window and relay only their press. Only a
-     delegated Project allows autonomous Research/work start. First exemplars and
+     Idea in your session: follow references/owner-dialog.md — check, description
+     at turn end with option lines, then marked window; relay only owner's press.
+     Only a delegated Project allows autonomous Research/work start. First exemplars and
      new taste rules stay with owner. Their words reopen approvals.
    - Maintain `.claude/session-views/<этап>-<ключ проекта>-<круг>.md` in product cwd,
      appending every message immediately. `git check-ignore` first; if needed add

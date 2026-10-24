@@ -45,7 +45,10 @@ test('check replacement enables this session; summary grants exactly one window'
   assert.equal(alive.status, 0, alive.stderr);
   assert.equal(alive.stdout, 'защита включена\nsession_id=session-1\n');
   assert.equal(fs.readdirSync(f.dir).length, 1);
-  assert.equal(decision(f.window()), 'deny');
+  const denied = f.window();
+  assert.equal(decision(denied), 'deny');
+  assert.equal(denied.hookSpecificOutput.permissionDecisionReason,
+    `запусти node '${script}' check --options '[["A","B"]]' с точными подписями окна, затем закончи ход итогом с вариантами последними строками`);
   assert.equal(f.stop().decision, 'block');
   assert.equal(f.window(), null);
   assert.equal(f.stop(ending(), { stop_hook_active: true }), null);
@@ -56,7 +59,7 @@ test('wrong ending repairs once, corrected ending grants on stop_hook_active', t
   const f = fixture(t);
   f.check();
   const repair = f.stop(ending([['Другой', 'Второй']]));
-  assert.equal(repair.reason, 'закончи ход итогом не короче 20 слов и вариантами последними строками');
+  assert.equal(repair.reason, 'закончи ход итогом не короче 20 слов; последние строки: «A» / «B», одна строка на вопрос окна с точными подписями');
   assert.equal(decision(f.window()), 'deny');
   assert.equal(f.stop(ending(), { stop_hook_active: true }).decision, 'block');
   assert.equal(f.stop(), null, 'at most two continuations');
@@ -83,7 +86,7 @@ test('multiple questions, blank trailing lines and exact twenty-word boundary', 
   assert.equal(f.window(options), null);
   f.check(options);
   assert.equal(f.stop(ending(options, twenty.split(' ').slice(1).join(' '))).reason,
-    'закончи ход итогом не короче 20 слов и вариантами последними строками');
+    'закончи ход итогом не короче 20 слов; последние строки: «A» / «B», одна строка на вопрос окна с точными подписями');
   assert.equal(decision(f.window(options)), 'deny');
 });
 
@@ -235,7 +238,7 @@ test('a URL with many path segments is one word, not a summary', t => {
   const f = fixture(t);
   f.check();
   const url = 'https://example.invalid/' + Array(30).fill('segment').join('/');
-  assert.equal(f.stop(ending(choices, url)).reason, 'закончи ход итогом не короче 20 слов и вариантами последними строками');
+  assert.equal(f.stop(ending(choices, url)).reason, 'закончи ход итогом не короче 20 слов; последние строки: «A» / «B», одна строка на вопрос окна с точными подписями');
   assert.equal(decision(f.window()), 'deny');
 });
 

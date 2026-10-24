@@ -17,8 +17,8 @@ import { withLock } from './runtime.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const script = fileURLToPath(import.meta.url);
-const denyReason = 'запусти проверку и закончи ход итогом с вариантами последними строками';
-const repairReason = 'закончи ход итогом не короче 20 слов и вариантами последними строками';
+const denyReason = `запусти node '${script}' check --options '[["A","B"]]' с точными подписями окна, затем закончи ход итогом с вариантами последними строками`;
+const repairReason = 'закончи ход итогом не короче 20 слов; последние строки: «A» / «B», одна строка на вопрос окна с точными подписями';
 const day = 24 * 60 * 60 * 1000;
 const windowTool = name => name === 'AskUserQuestion' || /^request_user_input(?:_async)?$/.test(name ?? '');
 const same = (a, b) => a != null && b != null && JSON.stringify(a) === JSON.stringify(b);
