@@ -128,6 +128,36 @@ test('every complete approval set is denied without check, irrespective of label
   }
 });
 
+test('mixed async approval and free-text questions require permission in either order', t => {
+  const f = fixture(t);
+  const approval = { title: 'Утвердить результат?', options: ['Утвердить', 'Ещё обсудить'] };
+  const freeText = { title: 'Комментарий' };
+  for (const questions of [[approval, freeText], [freeText, approval]]) {
+    assert.equal(decision(f.window(null, { tool_name: 'request_user_input_async', tool_input: { questions } })), 'deny');
+  }
+});
+
+test('mixed async approval consumes a verified matching summary permit exactly once', t => {
+  const f = fixture(t), options = [['Утвердить', 'Ещё обсудить']];
+  const input = { tool_name: 'request_user_input_async', tool_input: { questions: [
+    { title: 'Утвердить результат?', options: options[0] }, { title: 'Комментарий' },
+  ] } };
+  f.check(options);
+  assert.equal(f.stop(ending(options)).decision, 'block');
+  assert.equal(f.window(null, input), null);
+  assert.equal(decision(f.window(null, input)), 'deny');
+  assert.equal(f.stop(ending(options), { stop_hook_active: true }), null);
+});
+
+test('foreign mixed async question with one approval label passes without spending permission', t => {
+  const f = fixture(t);
+  f.check(); f.stop();
+  assert.equal(f.window(null, { tool_name: 'request_user_input_async', tool_input: { questions: [
+    { title: 'Что выбрать?', options: ['Утвердить', 'Отказаться'] }, { title: 'Комментарий' },
+  ] } }), null);
+  assert.equal(f.window(), null);
+});
+
 test('Claude marker wins over unparseable options; unmarked unknown shapes are foreign', t => {
   const f = fixture(t);
   for (const tool_input of [{ metadata: { source: 'mono' } }, { questions: [{ metadata: { source: 'mono' }, options: [{}] }] }]) {

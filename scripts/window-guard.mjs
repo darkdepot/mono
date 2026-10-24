@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * Stage command (one labels array per question, in display order):
+ * Stage command (one labels array per choice question, in display order):
  * node '<pack-root>/scripts/window-guard.mjs' check --options '[["A","B"]]'
+ * Omit free-text questions without options.
  * Use single quotes around the absolute script path and JSON; encode a literal
  * apostrophe in a label as \u0027. No shell prefixes, suffixes or substitutions.
- * Final nonempty lines: «A» / «B» (one line per question), with >=20 words above.
+ * Final nonempty lines: «A» / «B» (one line per choice question), with >=20 words above.
  * Only hook mode writes session state; check alone always reports disabled.
  */
 import fs from 'node:fs';
@@ -26,16 +27,22 @@ const validOptions = options => Array.isArray(options) && options.length > 0 && 
     typeof label === 'string' && label.trim() === label && label.length > 0 && !/[\r\n]/.test(label)));
 const deny = () => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: denyReason } });
 
+function questionOptions(question) {
+  return Array.isArray(question?.options) ? question.options.map(option => typeof option === 'string' ? option : option?.label) : null;
+}
 function windowOptions(input) {
-  const options = input?.questions?.map?.(question => question?.options?.map?.(option => typeof option === 'string' ? option : option?.label));
+  if (!Array.isArray(input?.questions)) return null;
+  const options = input.questions.filter(question => question?.options !== undefined).map(questionOptions);
   return validOptions(options) ? options : null;
 }
 function marked(input) {
   return input?.metadata?.source === 'mono' || (Array.isArray(input?.questions) && input.questions.some(question =>
     question?.metadata?.source === 'mono' || (typeof question?.id === 'string' && question.id.startsWith('mono_'))));
 }
-function approval(options) {
-  return options?.some(labels => {
+function approval(input) {
+  return Array.isArray(input?.questions) && input.questions.some(question => {
+    const labels = questionOptions(question);
+    if (!validOptions([labels])) return false;
     const set = [...labels].sort();
     const equals = expected => same(set, [...expected].sort());
     return equals(['Утвердить', 'Ещё обсудить']) ||
@@ -43,7 +50,7 @@ function approval(options) {
       (labels.length === 2 && labels.some(label => /^Начать .+/.test(label)) && labels.includes('Ещё обсудить')) ||
       (labels.length === 3 && labels.some(label => /^Утвердить и начать .+/.test(label)) &&
         labels.includes('Утвердить, продолжу позже') && labels.includes('Ещё обсудить'));
-  }) ?? false;
+  });
 }
 function checkOptions(command) {
   // This intentionally accepts only the documented literal command, not shell code.
@@ -92,7 +99,7 @@ function matchesSummary(message, options) {
 }
 async function handle(event) {
   const isWindow = event.hook_event_name === 'PreToolUse' && windowTool(event.tool_name);
-  let stageWindow = isWindow && (marked(event.tool_input) || approval(windowOptions(event.tool_input)));
+  let stageWindow = isWindow && (marked(event.tool_input) || approval(event.tool_input));
   try {
     let expected;
     if (event.hook_event_name === 'PreToolUse' && event.tool_name === 'Bash') {
@@ -146,11 +153,12 @@ async function handle(event) {
 
 const args = process.argv.slice(2);
 if (args[0] === '--help' || args[0] === '-h') {
-  console.log(`Stage command (one labels array per question, in display order):
+  console.log(`Stage command (one labels array per choice question, in display order):
 node '<pack-root>/scripts/window-guard.mjs' check --options '[["A","B"]]'
+Omit free-text questions without options.
 Use single quotes around the absolute script path and JSON; encode a literal
 apostrophe in a label as \\u0027. No shell prefixes, suffixes or substitutions.
-Final nonempty lines: «A» / «B» (one line per question), with >=20 words above.
+Final nonempty lines: «A» / «B» (one line per choice question), with >=20 words above.
 Without hooks: защита выключена. With hooks: защита включена and session_id=<id>.
 Hook mode: node scripts/window-guard.mjs < event.json
 Events: PreToolUse (Bash, AskUserQuestion, request_user_input, request_user_input_async), Stop, UserPromptSubmit.
