@@ -44,6 +44,13 @@ jobs:
           node-version: 22
       - name: Validate tag data and extract notes
         run: node scripts/release-notes.mjs --tag "$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.md"
+      - name: Publish deterministic Codex package tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/codex-package.mjs --tag "$RELEASE_TAG" --write-tag
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+            push origin "refs/tags/codex-$RELEASE_TAG"
       - name: Publish once
         env:
           GH_TOKEN: ${{ github.token }}

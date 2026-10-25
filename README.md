@@ -1047,48 +1047,43 @@ require comparable completed waves under the cost protocol.
 
 ### Users without an orchestrator
 
-Use this setup on a user machine where no Mono orchestrator runs tasks. Both
-tools track the GitHub marketplace's main branch:
+Use this setup on a user machine where no Mono orchestrator runs tasks. Claude
+Code tracks the GitHub marketplace's main branch. Codex uses the published
+`codex-v<VERSION>` tag, which installs an exact release tree from `plugins/mono`
+without Git clone metadata. Choose a version whose Codex package tag has been
+published; do not substitute `main` or the source tag `v<VERSION>`.
 
 ```bash
 claude plugin marketplace add darkdepot/mono
 claude plugin install mono@mono-marketplace
-codex plugin marketplace add darkdepot/mono
+codex plugin marketplace add darkdepot/mono --ref codex-v<VERSION>
 codex plugin add mono@mono-marketplace
 ```
 
 In Claude Code, enable automatic updates for `mono-marketplace` through
-`/plugin` → Marketplaces, or set `"autoUpdate": true` on that marketplace in
-`extraKnownMarketplaces`. Alternatively, update the marketplace and plugin
-manually:
+`/plugin` → Marketplaces, or update manually:
 
 ```bash
 claude plugin marketplace update mono-marketplace
 claude plugin update mono@mono-marketplace
 ```
 
-In Codex, update the marketplace snapshot, then install the plugin from it:
-
-```bash
-codex plugin marketplace upgrade mono-marketplace
-codex plugin add mono@mono-marketplace
-```
-
-If your Codex marketplace was registered with `--ref v<VERSION>`, `upgrade`
-keeps it on that tag. Move it to main once, then use the two update commands
-above for future updates:
+Codex keeps a pinned marketplace on its tag. For another release, or to migrate
+from a root-based installation, register the published package tag and reinstall:
 
 ```bash
 codex plugin marketplace remove mono-marketplace
-codex plugin marketplace add darkdepot/mono
+codex plugin marketplace add darkdepot/mono --ref codex-v<VERSION>
 codex plugin add mono@mono-marketplace
 ```
 
-Restart sessions after installation or an update so they load the installed
-skills. Follow the [GitHub release pages](https://github.com/darkdepot/mono/releases)
-for news about versions. A release page announces a release, but an update from
-main does **not** guarantee that the installed files match that release's tag:
-main may contain merged changes that have not yet been released.
+Restart sessions after installation or an update. Follow the
+[GitHub release pages](https://github.com/darkdepot/mono/releases) for versions.
+The first migration removes clone metadata from the plugin and needs one renewed
+hook review. Reinstalling the same immutable package preserves the content
+fingerprint and saved trust; changed release content still needs review. The
+installer never writes hook approvals. Claude's main-based updates can contain
+changes not yet in a release tag.
 
 On a machine where an orchestrator runs tasks, use the procedure below instead:
 disable automatic updates, pin Codex to a release tag, check the update condition
@@ -1099,7 +1094,7 @@ and compare the installed cache with the released Git tree.
 Register [darkdepot/mono](https://github.com/darkdepot/mono) as the GitHub marketplace;
 no repository clone is needed to install. Replace `<VERSION>` below with the
 released `VERSION` whose tag points to the verified landing tip T. Claude Code
-uses the repository's main branch; Codex pins the marketplace to that version tag.
+uses the repository's main branch; Codex pins the marketplace to `codex-v<VERSION>`.
 Follow
 [source verification and update conditions](references/install.md#plugin-updates)
 for each installation. For machines moving to plugins, follow
@@ -1108,7 +1103,7 @@ for each installation. For machines moving to plugins, follow
 ```bash
 claude plugin marketplace add darkdepot/mono
 claude plugin install mono@mono-marketplace
-codex plugin marketplace add darkdepot/mono --ref v<VERSION>
+codex plugin marketplace add darkdepot/mono --ref codex-v<VERSION>
 codex plugin add mono@mono-marketplace
 ```
 
@@ -1118,14 +1113,12 @@ local folder, including unrelated files.
 Immediately after each installation or update:
 
 Compare each tool's version cache with T's Git tree: paths, types, executable
-modes, content object hashes and symlink targets must match. Only extra service
-objects at these exact paths relative to the version-folder root are allowed:
-Codex directory `.git/` and regular file `.codex-marketplace-install.json`;
-Claude Code directory `.in_use/`. These tool-specific exceptions never exclude
-released files from comparison. The Codex file must be valid JSON with `revision`
-equal to the full tag commit; invalid JSON, absent/different revision or another
-object type fails. Every other extra, missing or changed object fails. Do not
-substitute clone proof.
+modes, content object hashes and symlink targets must match. The Codex distribution
+must pass [Codex package proof](references/install.md#codex-package-proof): its `plugins/mono`
+tree equals T's tree and its provenance names T. The Codex version folder must
+contain no `.git` or extra service files. Only Claude Code's extra directory
+`.in_use/` is allowed; it never excludes a released file from comparison.
+Every other extra, missing or changed object fails. Do not substitute clone proof.
 If either comparison differs, do not close the wave, release launch halts or
 start tasks from the new installation. The installing orchestrator records
 the mismatch, corrects the source and repeats the full verification of both tools.
@@ -1224,21 +1217,19 @@ After migration, the pack's deploy live pass uses [plugin installation proof](re
    product state. Do not use a wildcard deletion to remove an unexplained
    lookalike. The installing orchestrator registers the GitHub repository as
    the marketplace in both tools and installs using
-   [Plugin Installation](#plugin-installation), with Codex pinned to `v<VERSION>`.
+   [Plugin Installation](#plugin-installation), with Codex pinned to `codex-v<VERSION>`.
    Before any command that replaces a version folder, run `before-update` against
    that actual folder across **all** products, even for a same-version reinstall;
    keep launches halted and wait for any named attempts. Immediately after
    installation:
 
    Compare each tool's version cache with T's Git tree: paths, types, executable
-   modes, content object hashes and symlink targets must match. Only extra service
-   objects at these exact paths relative to the version-folder root are allowed:
-   Codex directory `.git/` and regular file `.codex-marketplace-install.json`;
-   Claude Code directory `.in_use/`. These tool-specific exceptions never exclude
-   released files from comparison. The Codex file must be valid JSON with `revision`
-   equal to the full tag commit; invalid JSON, absent/different revision or another
-   object type fails. Every other extra, missing or changed object fails. Do not
-   substitute clone proof.
+   modes, content object hashes and symlink targets must match. The Codex distribution
+   must pass [Codex package proof](references/install.md#codex-package-proof): its `plugins/mono`
+   tree equals T's tree and its provenance names T. The Codex version folder must
+   contain no `.git` or extra service files. Only Claude Code's extra directory
+   `.in_use/` is allowed; it never excludes a released file from comparison.
+   Every other extra, missing or changed object fails. Do not substitute clone proof.
    Follow
    [Plugin Updates](references/install.md#plugin-updates) for later releases.
 5. **Verify installation before closing the wave.** Check every legacy skills
