@@ -24,6 +24,11 @@ function packageFixture(t, { symlink = false } = {}) {
   for (const host of ['codex', 'claude']) write(`.${host}-plugin/plugin.json`, JSON.stringify({
     name: 'mono', version: '1.2.3', hooks: './hooks/hooks.json',
   }));
+  write('.agents/plugins/marketplace.json', JSON.stringify({
+    name: 'mono-marketplace',
+    plugins: [{ name: 'mono', source: { source: 'local', path: './' },
+      policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' }, category: 'Coding' }],
+  }));
   write('hooks/hooks.json', JSON.stringify({ hooks: Object.fromEntries(['PreToolUse', 'Stop', 'UserPromptSubmit'].map(event => [event,
     [{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/scripts/noop.mjs"' }] }],
   ])) }));
@@ -93,7 +98,7 @@ test('Codex packaging refuses missing tags, version mismatches and submodules', 
 
 // CI pins the official CLI; local runs opt in with MONO_CODEX_BIN. All writes,
 // including test trust, stay in this fixture's private profile. No turn starts.
-test('real Codex preserves hook trust after a fresh same-version Git installation', {
+test('real Codex migrates legacy installs and preserves trust on same-version reinstall', {
   skip: !process.env.MONO_CODEX_BIN,
   timeout: 60000,
 }, async t => {
@@ -145,7 +150,18 @@ test('real Codex preserves hook trust after a fresh same-version Git installatio
     return JSON.parse(cli('plugin', 'add', 'mono@mono-marketplace', '--json')).installedPath;
   };
   const packageTag = codexPackage(root, 'v1.2.3', { writeTag: true }).distributionTag;
+  const legacyPath = install('v1.2.3');
+  assert.equal(fs.existsSync(path.join(legacyPath, '.git')), true);
+  const legacy = await hooks();
+  await rpc('config/batchWrite', {
+    edits: [{ keyPath: 'hooks.state', mergeStrategy: 'upsert',
+      value: Object.fromEntries(legacy.map(hook => [hook.key, { trusted_hash: hook.currentHash }])) }],
+    reloadUserConfig: true,
+  });
+  assert.ok((await hooks()).every(hook => hook.trustStatus === 'trusted'));
+  cli('plugin', 'marketplace', 'remove', 'mono-marketplace', '--json');
   const firstPath = install(packageTag);
+  assert.equal(firstPath, legacyPath);
   assert.equal(fs.existsSync(path.join(firstPath, '.git')), false);
   const installedFiles = [];
   const inspect = (directory, prefix = '') => {
@@ -159,6 +175,8 @@ test('real Codex preserves hook trust after a fresh same-version Git installatio
   assert.deepEqual(installedFiles.sort(), git('ls-tree', '-r', '--name-only', 'v1.2.3').split('\n').sort());
   assert.ok(fs.statSync(path.join(firstPath, 'scripts/noop.mjs')).mode & 0o111);
   const first = await hooks();
+  assert.ok(first.every(hook => hook.trustStatus === 'modified'));
+  assert.notDeepEqual(first.map(hook => hook.currentHash), legacy.map(hook => hook.currentHash));
   await rpc('config/batchWrite', {
     edits: [{ keyPath: 'hooks.state', mergeStrategy: 'upsert',
       value: Object.fromEntries(first.map(hook => [hook.key, { trusted_hash: hook.currentHash }])) }],
