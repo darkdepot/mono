@@ -19,4 +19,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+      - name: Install the pinned Codex CLI for packaging acceptance
+        # Keep this CLI off PATH: packaging acceptance does not require the
+        # host sandbox proofs, which GitHub's Linux runner cannot execute.
+        run: npm install --prefix "$RUNNER_TEMP/mono-codex-cli" @openai/codex@0.164.0
       - run: node scripts/verify.mjs
+        env:
+          MONO_CODEX_BIN: ${{ runner.temp }}/mono-codex-cli/node_modules/.bin/codex

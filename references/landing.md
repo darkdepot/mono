@@ -306,7 +306,7 @@ substitute for first application.
 For Mono, installation happens once at the end of a wave, after its release task
 lands. Install from the GitHub marketplace repository `darkdepot/mono` when its
 main branch tip equals the verified T: Claude Code refreshes the marketplace
-then the plugin; Codex re-registers the marketplace on `v<VERSION>` before
+then the plugin; Codex re-registers the marketplace on `codex-v<VERSION>` before
 installing. Keep the
 launch halt and the landed, stopped attempt records until installation is
 verified and `close` succeeds; do not require this product's registry to be empty
@@ -318,14 +318,12 @@ using any folder the tool deletes or overwrites, wait for the named attempts,
 then immediately after installation/update:
 
 Compare each tool's version cache with T's Git tree: paths, types, executable
-modes, content object hashes and symlink targets must match. Only extra service
-objects at these exact paths relative to the version-folder root are allowed:
-Codex directory `.git/` and regular file `.codex-marketplace-install.json`;
-Claude Code directory `.in_use/`. These tool-specific exceptions never exclude
-released files from comparison. The Codex file must be valid JSON with `revision`
-equal to the full tag commit; invalid JSON, absent/different revision or another
-object type fails. Every other extra, missing or changed object fails. Do not
-substitute clone proof.
+modes, content object hashes and symlink targets must match. The Codex distribution
+must pass [Codex package proof](install.md#codex-package-proof): its `plugins/mono`
+tree equals T's tree and its provenance names T. The Codex version folder must
+contain no `.git` or extra service files. Only Claude Code's extra directory
+`.in_use/` is allowed; it never excludes a released file from comparison.
+Every other extra, missing or changed object fails. Do not substitute clone proof.
 Do not register a local folder as a marketplace. On any mismatch,
 do not close the wave, release launch halts or start tasks from the new installation;
 the installing orchestrator records it, corrects the source and repeats the full

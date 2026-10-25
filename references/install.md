@@ -17,12 +17,13 @@ Disable automatic updates. Install/update deliberately after a release task,
 when GitHub main equals the verified landing tip T. Without a new release, do
 not install a wave: unchanged version metadata cannot prove its bytes released.
 
-Initial installation (replace `<VERSION>` with `VERSION` at T):
+Initial installation (replace `<VERSION>` with `VERSION` at T and require the
+published `codex-v<VERSION>` package tag; see [package proof](#codex-package-proof)):
 
 ```bash
 claude plugin marketplace add darkdepot/mono
 claude plugin install mono@mono-marketplace
-codex plugin marketplace add darkdepot/mono --ref v<VERSION>
+codex plugin marketplace add darkdepot/mono --ref codex-v<VERSION>
 codex plugin add mono@mono-marketplace
 ```
 
@@ -39,7 +40,7 @@ marketplace on the same tag. On the orchestrator machine, remove its clone
 
 ```bash
 codex plugin marketplace remove mono-marketplace
-codex plugin marketplace add darkdepot/mono --ref v<VERSION>
+codex plugin marketplace add darkdepot/mono --ref codex-v<VERSION>
 codex plugin add mono@mono-marketplace
 ```
 
@@ -61,14 +62,12 @@ so it needs the condition too. Tasks keep their original absolute `packRoot`.
 Immediately after each install/update:
 
 Compare each tool's version cache with T's Git tree: paths, types, executable
-modes, content object hashes and symlink targets must match. Only extra service
-objects at these exact paths relative to the version-folder root are allowed:
-Codex directory `.git/` and regular file `.codex-marketplace-install.json`;
-Claude Code directory `.in_use/`. These tool-specific exceptions never exclude
-released files from comparison. The Codex file must be valid JSON with `revision`
-equal to the full tag commit; invalid JSON, absent/different revision or another
-object type fails. Every other extra, missing or changed object fails. Do not
-substitute clone proof.
+modes, content object hashes and symlink targets must match. The Codex distribution
+must pass [Codex package proof](#codex-package-proof): its `plugins/mono`
+tree equals T's tree and its provenance names T. The Codex version folder must
+contain no `.git` or extra service files. Only Claude Code's extra directory
+`.in_use/` is allowed; it never excludes a released file from comparison.
+Every other extra, missing or changed object fails. Do not substitute clone proof.
 Any mismatch blocks wave close, removing launch halts and starting tasks from
 the new installation. Record/correct the source, then repeat the full comparison
 and version/tag proof of **both** tools. Accept proof only when both match.
@@ -96,7 +95,11 @@ returns «защита включена» with `session_id`.
 
 Where Codex supports plugin hooks, trust Mono at startup with «Trust all and
 continue» or through `/hooks`. An update can require renewed trust because the
-host binds it to plugin content. In Claude Code, verify Mono is enabled through
+host binds it to plugin content. The first migration to `codex-v<VERSION>`
+requires renewed review because the old package included `.git`. Reinstalling
+the same immutable distribution keeps the fingerprint and saved trust; real
+content changes still require review. Never copy or synthesize approval records
+as part of installation. In Claude Code, verify Mono is enabled through
 `/plugin` and hooks are enabled in settings. Never enable a removed feature flag.
 
 Before each stage window, follow [owner dialogue](owner-dialog.md): check first,
@@ -158,6 +161,58 @@ git rev-parse "v$(git show "$T:VERSION")^{commit}"
 Both tools' versions must equal `VERSION` at T and the tag must resolve to T,
 together with matching cache trees. [Migration](../README.md#migrate-from-the-local-installer)
 and [plugin live proof](landing.md#plugin-installation-proof) own their boundaries.
+
+## Codex Package Proof
+
+The release workflow publishes `codex-v<VERSION>` before announcing the release.
+`scripts/codex-package.mjs` reads the existing source tag `v<VERSION>` as Git
+objects and wraps its exact tree under `plugins/mono/`. The root marketplace
+points there; Codex copies that subdirectory and leaves `.git` outside the
+installed plugin. No post-install deletion or hook-trust bypass is needed.
+The package commit has T as its parent and deterministic identity, timestamp,
+message and tree. Repeating publication reuses it; a conflicting existing tag
+fails without replacement. Source tags and the working tree are unchanged.
+Packaging refuses submodules and symbolic links: Codex's subdirectory installer
+omits symlinks, so allowing them would silently lose released payload files.
+
+From the verified source checkout after fetching both tags, require:
+
+```bash
+git rev-parse "v<VERSION>^{commit}"
+git rev-parse "v<VERSION>^{tree}"
+git rev-parse "codex-v<VERSION>:plugins/mono"
+git show "codex-v<VERSION>:release.json"
+node scripts/codex-package.mjs --tag v<VERSION>
+git rev-parse "codex-v<VERSION>^{commit}"
+```
+
+The first SHA must equal T. The two tree SHAs must be identical. `release.json`
+must name that source tag, source commit and source tree. The rebuilt
+`distributionCommit` must equal the published package commit. Then compare the
+installed version folder against T's tree with no Codex service-file exceptions.
+Missing package tags, `.git` directories/files, or any extra/missing/changed
+payload object block activation. The installed `VERSION` remains the original
+release version; the wrapper commit is not a new source release.
+
+An existing source release may receive its first Codex package by manually
+running the current release workflow on the default branch with that original
+`v<VERSION>` tag. The payload remains the original release tree, including its
+historical documentation; use this current installation procedure for migration.
+The first package publication does not waive `before-update`, stopped-attempt or
+watcher conditions for replacing a shared installed folder.
+Historical rollback commands below use legacy root-based tags and can restore
+the old metadata-related prompts. To keep stable fingerprints for an older
+release, publish its Codex package first and use the current procedure above.
+
+Acceptance uses an isolated Git marketplace and Codex profile:
+
+```bash
+MONO_CODEX_BIN=/absolute/path/to/codex node --test scripts/codex-package.test.mjs
+```
+
+CI runs it with Codex 0.164.0. It installs twice after re-cloning the marketplace,
+requires no `.git`, equal hook fingerprints and preserved test trust, and proves
+changed hook content invalidates that trust. No hook or agent turn is executed.
 
 ## Project Config Contract
 
