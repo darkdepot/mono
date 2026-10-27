@@ -14,7 +14,7 @@ function stateFile(root, issue, attempt) {
 // Literal canonical Issue section; ambiguous/missing input stops capture rather
 // than guessing a shorter acceptance list.
 export function acceptanceCriteria(body) {
-  let section = false, depth = 0, marker = false, fence = null, sections = 0;
+  let section = false, depth = 0, marker = false, fence = null, sections = 0, listIndent = null;
   const criteria = [];
   for (const line of body.split(/\r?\n/u)) {
     const delimiter = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
@@ -40,8 +40,11 @@ export function acceptanceCriteria(body) {
       marker = true; continue;
     }
     if (!marker) fail('Готово, когда: required before acceptance bullets');
-    const bullet = /^[-*+]\s+(.+)$/u.exec(line);
-    if (bullet) criteria.push(normalize(bullet[1]));
+    const bullet = /^( {0,3})(?:[-*+]|\d+[.)])\s+(.+)$/u.exec(line);
+    if (bullet && (listIndent === null || bullet[1].length === listIndent)) {
+      listIndent = bullet[1].length;
+      criteria.push(normalize(bullet[2]));
+    } else if (bullet && bullet[1].length < listIndent) fail('inconsistent acceptance list indentation');
     else if (/^\s+\S/u.test(line) && criteria.length) criteria[criteria.length - 1] += ' ' + normalize(line);
     else fail('acceptance bullet list required');
   }

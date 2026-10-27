@@ -11,8 +11,8 @@ function capture(root, source = approvedIssue) {
   return captureCriteria({ root, issue: 'MONO-993', attempt: 1, issueFile: source });
 }
 
-function report(root) {
-  capture(root);
+function report(root, source = approvedIssue) {
+  capture(root, source);
   const head = 'b'.repeat(40);
   return { issue: 'MONO-993', stage: 'mono-deliver', attempt: 1, packVersion: 'test', surfaceRevision: 4,
     phase: 'code', sequence: 1, kind: 'phase', head, phase_result: 'implemented-needs-preflight',
@@ -163,5 +163,28 @@ test('approved-list deliberate breakage makes the omission regression red', () =
     assert.match(result.stdout, /Missing expected exception/);
     assert.match(result.stdout, /not ok.*omitted approved criterion/);
     assert.doesNotMatch(result.stdout + result.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const style of ['numbered-dot', 'numbered-parenthesis-indented']) test(`approved-list capture and publication accept ${style} Issue criteria`, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-numbered-criteria-'));
+  try {
+    let body = fs.readFileSync('scripts/fixtures/implementation-numbered-issue.md', 'utf8');
+    if (style === 'numbered-parenthesis-indented') body = body.replace(/^(\d+)\. /gm, '   $1) ');
+    const source = path.join(root, 'issue-start.md'); fs.writeFileSync(source, body);
+    const expected = ['AC1: Пустое имя отклоняется', 'AC2: Список сохраняет прежние заметки', 'AC3: Число заметок обновляется'];
+    const candidate = report(root, source);
+    assert.deepEqual(capture(root, source).criteria, expected);
+    candidate.criteria = expected.map(criterion => ({ ...candidate.criteria[0], criterion }));
+    assert.deepEqual(publishPhase(candidate, path.join(root, 'reports/out.json')).criteria.map(c=>c.criterion), expected);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('approved-list capture keeps nested and wrapped text within its parent criterion', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-criteria-continuation-'));
+  try {
+    const source = path.join(root, 'issue-start.md');
+    fs.writeFileSync(source, '# Критерии приемки\nГотово, когда:\n1. AC1: Первое условие\n   продолжается\n   * Деталь первого\n2. AC2: Второе условие\n');
+    assert.deepEqual(capture(root, source).criteria, ['AC1: Первое условие продолжается * Деталь первого', 'AC2: Второе условие']);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
