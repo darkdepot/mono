@@ -21,8 +21,13 @@ test('implement teaching fixture creates isolated Git repos with real green and 
         assert.equal(before.head, execFileSync('git',['rev-parse','HEAD'],{cwd:repo,encoding:'utf8'}).trim());
         assert.notEqual(before.worktree_fingerprint, treeFingerprint(repo), 'same HEAD is not proof after a dirty edit');
       }
+      const context = JSON.parse(fs.readFileSync(path.join(repo,'fixture-context.json')));
+      if (id !== 'projectless') {
+        assert.deepEqual(context.seam, { package_kind: 'project-first', lifecycle_state_entity: 'project',
+          behavioral_oracle: null, risk_class: null, approval_status: 'absent' });
+        assert.equal(context.approval.status, 'approved', 'package approval is separate from resolver seam');
+      }
       if (id === 'projectless') {
-        const context = JSON.parse(fs.readFileSync(path.join(repo,'fixture-context.json')));
         assert.equal(context.seam.package_kind, 'issue-only');
         assert.equal(context.seam.approval_status, 'approved-fresh');
         assert.equal(context.issue.projectId, null);

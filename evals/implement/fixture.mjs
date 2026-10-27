@@ -56,7 +56,7 @@ export function createFixture(id) {
   const projectless = id === 'projectless';
   write('marker.md', `mono-issue-only marker\nMarker version: 1\nScope fingerprint: ${fingerprint}\nAcceptance IDs: ${scenario.criteria.map((_,i)=>`AC${i+1}`).join(', ')}\nRisk class: standard\nApproval: ${fingerprint} (approved by owner 2026-10-27)\n`);
   write('config.json', JSON.stringify({ issueOnlyLane: { enabled: true, ownerPrincipal: 'fixture-owner' } }, null, 2));
-  let seam = { package_kind: 'project-first', lifecycle_state_entity: 'project', behavioral_oracle: null, risk_class: 'standard', approval_status: 'approved' };
+  let seam = JSON.parse(execFileSync(process.execPath, [resolver, '--issue', path.join(repo, 'issue.md')], { encoding: 'utf8' }));
   if (projectless) seam = JSON.parse(execFileSync(process.execPath, [resolver, '--issue', path.join(repo,'issue.md'), '--marker',path.join(repo,'marker.md'), '--config',path.join(repo,'config.json'), '--label','issue-only', '--approval-verified',fingerprint], { encoding: 'utf8' }));
   write('fixture-context.json', JSON.stringify({ fixture: true, scenario: id, status: scenario.status,
     issue: { key: 'TRAIN-1', body: issueBody, projectId: projectless ? null : 'fixture-project', status: 'Backlog' },
