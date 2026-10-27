@@ -1285,7 +1285,7 @@ node scripts/project-config.mjs --repo /path/to/product --project-name Product -
 node scripts/project-config.mjs --repo /path/to/product --check
 ```
 
-Configure product/team names, Linear/repository languages, narrow artifact roots, implementation, ship, documentation, review-feedback and deploy workflows, and the required `autoreviewHelper` prerequisite. Optional workflows may be `null`; a missing deploy workflow blocks deployment. Optional QA/authentication policy defines how live verification accesses the product; owner-session access requires permission. `--clean` removes legacy generated Mono and previous-brand workflow files while migrating project policy.
+Configure product/team names, Linear/repository languages, narrow artifact roots, ship, documentation, review-feedback and deploy workflows, and the required `autoreviewHelper` prerequisite. `workflows.implementation` remains valid for existing configs but is no longer read by mono:implement; no external implementation engine or learnings helper is needed. Optional workflows may be `null`; a missing deploy workflow blocks deployment. Optional QA/authentication policy defines how live verification accesses the product; owner-session access requires permission. `--clean` removes legacy generated Mono and previous-brand workflow files while migrating project policy.
 
 Optional `models.roles` overrides model routes within the [role/transport matrix](references/model-policy.md#product-overrides).
 Autoreview accepts claude, kimi, pi or codex with `effortByRisk` for all five risk keys.
@@ -1400,6 +1400,33 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-33.** Write Linear artifacts, comments, templates and examples in the configured project language (Russian here), the stages listed in `scripts/russian-stages.mjs` and `references/owner-dialog.md` in Russian, and other skills in English, so the owner can read the artifacts and models can execute the pack consistently — [Language](AGENTS.md#language).
 - **K-34.** Route pack rule changes through a Linear Issue and the orchestrator, updating affected README sections in the same PR, so owner intent and the shipped description stay synchronized — [Change Discipline](AGENTS.md#change-discipline).
 
+## Разработка и отчёт
+
+`mono:implement` написан на русском и работает в Claude Code и Codex, с оркестратором
+и без него, по утверждённой задаче пакета или mono:issue без проекта. До правки
+выбирает доказательство по последствиям; тесты называют поломку и проверяют настоящее
+поведение. Итог: две-три строки для владельца, затем «Не проверено», «Найдена поломка»
+и доказательства по каждому «Готово, когда», включая несделанное. Для экрана сверху
+прямо «экран в браузере не проверен»; вкус и PNG остаются входами, живая сверка у Deploy.
+При старте утверждённые пункты «Готово, когда» сохраняются отдельно от отчёта
+через `delivery-state.mjs capture-criteria`: из снимка Issue или стартового чтения
+Linear без оркестратора. Список неизменяемый; публикация требует полного совпадения
+порядка и текста, разрешая только нормализацию пробелов. Захват поддерживает
+обычные и нумерованные списки; вложенный текст остаётся внутри своего пункта.
+Метки секции и начала списка определены в [шаблоне Issue](templates/issue.md)
+только для русского и английского. Иные метки, отсутствующая или неоднозначная
+секция дают `blocked` с ожидаемыми метками до записи состояния.
+`phase_result` остаётся строкой; `criteria`, `summary`, `not_built`, `not_verified`
+обязательны в каждом итоговом кодовом отчёте независимо от версии. Поломка и
+несделанное не публикуются как `implemented-needs-preflight`. Preflight не меняется.
+Стартовый комментарий и его подтверждение прежние; упрощение, resume и цепочка
+предшественниц относятся к MONO-233, выпуск и пилот к MONO-234.
+
+[Набор evals/implement](evals/implement/README.md): маршрут отдельно от поведения.
+Локально: `node --test scripts/implementation-report.test.mjs scripts/implement-evals.test.mjs`.
+Тест создаёт учебный Git-репозиторий во временной папке. Живые сценарии после T2
+запускает оркестратор по одному разу в каждом хосте; их результат здесь не заявлен.
+
 ## Skills
 
 Invoke pack skills with the plugin namespace: `/mono:idea`, `/mono:handoff`,
@@ -1418,7 +1445,7 @@ this pack uses `/mono:ship` and `/mono:review`.
 | [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |
 | [mono:check](skills/check/SKILL.md) | Readiness-only transition assessment |
 | [mono:deliver](skills/deliver/SKILL.md) | One delivery context sequencing its three phase owners |
-| [mono:implement](skills/implement/SKILL.md) | Delivery Start and approved code execution |
+| [mono:implement](skills/implement/SKILL.md) | Свой инженерный этап: старт, код и доказательства каждого критерия; один отчёт для Preflight |
 | [mono:preflight](skills/preflight/SKILL.md) | Local verification, independent autoreview, commit and ready certificate |
 | [mono:ship](skills/ship/SKILL.md) | Accepted pre-ship drift, PR, docs, feedback and green certificate |
 | [mono:deploy](skills/deploy/SKILL.md) | Merge/deploy delegation, verification, closeout and learnings |

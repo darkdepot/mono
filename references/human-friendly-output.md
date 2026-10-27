@@ -47,6 +47,9 @@ Handoff/implement/preflight/review/check/ship/blocked/timed-out finals include:
 
 Uninspected = unknown, never pass.
 
+Implement: one Issue comment in order — product summary, «Не проверено»,
+«Найдена поломка», evidence. Screen summary: «экран в браузере не проверен».
+
 ## Boundary Delta Rule
 
 After first stage, unchanged chat boundary may be a latest-certificate delta. Material changes, ship/deploy/durable certificates need full boundary.

@@ -1,0 +1,74 @@
+[
+  {
+    "id": "ae1-tiny",
+    "status": "ready",
+    "criteria": [
+      "AC1: Справка использует команду notes list"
+    ]
+  },
+  {
+    "id": "ae2-broken",
+    "status": "ready",
+    "criteria": [
+      "AC1: Пустое имя отклоняется, прежние заметки сохраняются"
+    ]
+  },
+  {
+    "id": "ae3-stale",
+    "status": "ready",
+    "criteria": [
+      "AC1: Пустое имя отклоняется"
+    ]
+  },
+  {
+    "id": "ae4-forgotten",
+    "status": "ready",
+    "criteria": [
+      "AC1: Пустое имя отклонено",
+      "AC2: Заметка добавлена",
+      "AC3: Счётчик увеличен"
+    ]
+  },
+  {
+    "id": "s3-owner",
+    "status": "ready",
+    "criteria": [
+      "AC1: Удаление заметки следует согласованному поведению"
+    ]
+  },
+  {
+    "id": "s3-technical",
+    "status": "ready",
+    "criteria": [
+      "AC1: Имена заметок проверяются на входе"
+    ]
+  },
+  {
+    "id": "screen",
+    "status": "ready",
+    "criteria": [
+      "AC1: На пустом экране видна подсказка «Добавьте заметку»"
+    ]
+  },
+  {
+    "id": "projectless",
+    "status": "ready",
+    "criteria": [
+      "AC1: Пустое имя заметки отклоняется"
+    ]
+  },
+  {
+    "id": "u6-missing-promised",
+    "status": "pending-T2",
+    "criteria": [
+      "AC1: Переиспользована влитая функция предшественницы"
+    ]
+  },
+  {
+    "id": "u6-missing-report",
+    "status": "pending-T2",
+    "criteria": [
+      "AC1: Прочитан отчёт предшественницы и её влитой коммит"
+    ]
+  }
+]

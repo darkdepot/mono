@@ -22,5 +22,19 @@
     ],
     "open_queue": []
   },
-  "phase_result": "implemented-needs-preflight"
+  "phase_result": "implemented-needs-preflight",
+  "summary": "Строка справки исправлена. Передаю на проверку перед PR.",
+  "criteria": [
+    {
+      "criterion": "Справка называет действующую команду",
+      "done": true,
+      "outcome": "confirmed",
+      "proof": "Исключение: поведение не меняется; только текст справки",
+      "result": "Просмотр diff: изменена одна строка",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "worktree_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "not_built": [],
+  "not_verified": []
 }

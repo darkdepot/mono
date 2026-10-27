@@ -31,7 +31,8 @@ Resume/restart/compaction: identity, own capsule/confirmation, grants, gh PR fac
 Continue that phase; missing/conflicting inputs park. New head stales proof, not queues.
 Start: gate.mjs start --request <file>; implement handshake; wait mode runs wait-ack after ack.
 
-1. Implement; publish code/full queue, confirm, enter readiness.
+1. Implement; publish the two-layer code report (all criteria, exclusions and gaps)
+   with its full queue; confirm, enter readiness only without broken/unfinished work.
 2. Preflight/commit; publish preflight-collect confirmation-request. Confirm,
    gate.mjs preflight collect:false, worker failure rules. Pass: publish ready
    certificate once; confirm before formal review.

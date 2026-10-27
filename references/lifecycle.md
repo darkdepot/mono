@@ -432,9 +432,8 @@ Required:
 - The authorized start record per PC-016/019 (legacy: package approval) covers the current Issue set and allows implementation start.
 - Required review findings resolved, accepted, or explicitly deferred.
 - Implementation starts from the approved Issue(s), not from raw discovery output.
-- `mono:implement` verifies or obtains implementation-start approval, moves the Project to Delivery, runs or reports `mono:check delivery`, records the start comment, and selects the implementation engine.
+- `mono:implement` verifies or obtains implementation-start approval, moves the Project to Delivery, runs or reports `mono:check delivery`, records the start comment, and implements the Issue with its own engineering rules.
 - `mono:implement` exits as `implemented-needs-preflight`, `blocked`, `scope-drift-needs-handoff`, or `needs-human`.
-- Prior operational learnings consulted through `gstack-learnings-search` when the helper is available, advisory only.
 
 Forbidden:
 

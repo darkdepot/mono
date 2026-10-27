@@ -1,6 +1,6 @@
 # Issue Template
 
-Use Russian for Linear Issue description.
+Use the configured Linear language (Russian by default) for the Issue description.
 
 Required sections:
 
@@ -64,6 +64,7 @@ Rules:
 - `Ключевые контракты` should name stable behavior, types, config shapes, endpoints, invariants, or domain contracts that matter for implementation. Do not use it as a brittle file-by-file edit script.
 - `Текущее поведение`, `Желаемое поведение`, and `Шаги воспроизведения` are required for bug or performance Issues. For other work, keep them only when useful or mark them `Не относится` when a full template is being rendered. If reproduction is not possible yet, say that explicitly and describe the smallest useful feedback loop to build.
 - Include concrete validation, acceptance criteria starting `Готово, когда:`, and non-goals.
+- In English Issues the section is `# Acceptance criteria` and the list starts with `Done when:`.
 - Acceptance criteria should be checkable by another implementation agent without reading the whole discovery conversation.
 - Do not attach PRD or Tech Spec docs to the Issue.
 - Include validation commands or exact manual checks.
