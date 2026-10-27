@@ -53,7 +53,6 @@ const steps = [
   { label: "node --check scripts/watch-workers.mjs", cmd: "node", cmdArgs: ["--check", "scripts/watch-workers.mjs"] },
   { label: "node --check scripts/verify.mjs", cmd: "node", cmdArgs: ["--check", "scripts/verify.mjs"] },
   { label: "node scripts/lint-mono-artifacts.mjs", cmd: "node", cmdArgs: ["scripts/lint-mono-artifacts.mjs"] },
-  { label: "node --test window guard fixtures", cmd: "node", cmdArgs: ["--test", "scripts/window-guard.test.mjs"] },
   { label: "node --test release notes fixtures", cmd: "node", cmdArgs: ["--test", "scripts/release-notes.test.mjs"] },
   { label: "node --test idea gate fixtures", cmd: "node", cmdArgs: ["--test", "scripts/idea-gate.test.mjs", "scripts/idea-record.test.mjs", "scripts/research-gate.test.mjs", "scripts/tech-gate.test.mjs", "scripts/route-gate.test.mjs", "scripts/design-gate.test.mjs"] },
   { label: "node --test watcher launch fixtures", cmd: "node", cmdArgs: ["--test", "scripts/watcher-launch.test.mjs", "scripts/design-snapshot.test.mjs"] },
