@@ -25,3 +25,20 @@ One behavior proof → smallest satisfying change → repeat; refactor after gre
 ## Architecture Lens
 
 Deep/risky: module = interface/implementation; interface = caller invariants/order/errors/config; seam = interface location; adapter = implementation. The interface is the test surface. Apply the deletion test: removal should redistribute meaningful complexity; reject pass-through/shallow modules. One adapter is hypothetical, two evidence a real seam.
+
+## Implementation Proof
+
+Before edits, choose proof for every acceptance criterion. Permissions/access,
+user data, money, state transitions (including gates and pack delivery), external
+services and releases: write significant states as a table in the report's evidence
+layer before editing; test each state and deliberately break behavior to show each
+test turns red. This is working evidence, not a separate step or gate.
+Other behavior: a test failing on old code or a characterization of existing behavior.
+Text without behavior: record the exception «поведение не меняется» and why.
+Startup/import failures and stub responses prove nothing about the target behavior.
+
+Each test names the defect it catches, uses a real consumer and an expectation
+independent of the tested code. A mismatch means fix code or stop, never fit the
+expectation to the implementation. Unrun/skipped tests do not count. A sentence
+in a skill file does not prove agent behavior; use behavioral scenarios.
+After an edit touches checked behavior, rerun its proof on the delivered state.

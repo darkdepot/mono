@@ -55,7 +55,35 @@ export function validatePhase(report) {
     ids.add(write.id);
   }
   validatePilotFields(report);
+  // Start records keep their existing queue. Every code exit carries evidence,
+  // regardless of the package version that produced it.
+  if (report.phase === "code" && report.phase_result !== undefined && report.phase_result !== "in-progress")
+    validateImplementationReport(report);
   return report;
+}
+function validateImplementationReport(report) {
+  const text = value => typeof value === "string" && value.trim().length > 0;
+  const error = detail => { throw new Error(`invalid implementation report: ${detail}`); };
+  if (!["implemented-needs-preflight", "blocked", "scope-drift-needs-handoff", "needs-human"].includes(report.phase_result))
+    error("unknown phase_result");
+  if (!text(report.summary) || !Array.isArray(report.not_built) || !Array.isArray(report.not_verified) ||
+      !Array.isArray(report.criteria) || !report.criteria.length) error("summary, criteria, not_built and not_verified required");
+  if (report.not_built.some(entry => !text(entry?.what) || !text(entry?.reason)) ||
+      report.not_verified.some(entry => !text(entry?.what) || !text(entry?.why) || !text(entry?.risk)))
+    error("incomplete exclusions or verification gaps");
+  const criteria = new Set();
+  for (const item of report.criteria) {
+    if (!text(item?.criterion) || criteria.has(item.criterion) || typeof item.done !== "boolean" ||
+        !["confirmed", "unverified", "broken"].includes(item.outcome) || !text(item.proof) || !text(item.result) ||
+        !/^[a-f0-9]{40}$/.test(item.head ?? "") || !/^[a-f0-9]{64}$/.test(item.worktree_fingerprint ?? ""))
+      error("invalid or duplicate criterion/evidence");
+    criteria.add(item.criterion);
+    if (item.outcome === "confirmed" && (!item.done || item.head !== report.head)) error("unfinished or stale confirmed criterion");
+    if (item.outcome === "unverified" && !report.not_verified.some(entry => entry.what === item.criterion))
+      error("unverified criterion needs what/why/risk");
+    if (report.phase_result === "implemented-needs-preflight" && (!item.done || item.outcome === "broken"))
+      error("broken or unfinished work must be blocked");
+  }
 }
 // Proposal validation is structural. Only the orchestrator can accept a disposition
 // or progress claim; confirmation continues to bind the entire unchanged report.

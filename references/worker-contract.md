@@ -43,7 +43,7 @@ Amendment/resume cannot apply a repaired manifest.
 ## Two-Phase Dispatch Handshake
 
 Initial moves only, including Issue activation in Delivery Project. Pre-move
-snapshot is correct. Before ack run implement 1–4/lane pre-start delivery check.
+snapshot is correct. Before ack verify implement entry/approval/seam/lane pre-start delivery check.
 On gate completion/blocker/stop write reports/<ISSUE-KEY>-gate-ack-a<N>.json;
 denial: same name in <worktree>/.orchestrator, never both.
 
@@ -188,6 +188,28 @@ new head/new stateFile, preserve old state, same task attempt. No machine bound 
 ship-gate attempts; the unchanged window waives nothing, costing time. Review
 thresholds/declines/class stops/caps stay unchanged.
 
+## Implementation exit evidence
+
+Every code exit, regardless of packVersion: criteria (nonempty), summary (2–3
+product-language lines), not_built and not_verified arrays (may be empty).
+Start records/queues unchanged; phase_result stays a status string.
+criteria: every «Готово, когда» item verbatim/in order, never omit/weaken unfinished
+work; «Как проверить» separately in verification_items. Fields: criterion, done
+(boolean), outcome (confirmed|unverified|broken), proof (method chosen before edits),
+result (observed, not promised), head (40 hex), worktree_fingerprint (64 hex at check).
+confirmed requires done:true/delivered head; relevant edits stale earlier success,
+even without a commit. Fingerprint: SHA-256 of binary diff from HEAD and sorted
+untracked path/content hashes, excluding reports; record command.
+not_built: [{what,reason}]; not_verified: [{what,why,risk}], one per unverified
+criterion with what equal to criterion. unverified/done:true = built, untested;
+done:false = unfinished. Broken never becomes unverified.
+Screen summary: «экран в браузере не проверен». Tiny text-only report: 3–4 lines.
+One Issue comment: summary → «Не проверено» → «Найдена поломка» → evidence
+(criteria, significant-state table written before edits, exclusions, decisions).
+Breakage/unfinished/no progress → blocked, saved state. implemented-needs-preflight:
+every done:true, no broken; publication refuses missing criteria/broken/unfinished
+success. Preflight unchanged.
+
 ## Worker Report
 
 Path: ~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-mono-deliver.json;
@@ -206,6 +228,9 @@ verbatim verification, AFK stops.
   "sourceCommit": "<dispatch sourceCommit, omit when absent>",
   "surfaceRevision": <repeat the dispatch pin, integer>,
   "branch": "<branch>",
+  "summary": "<2–3 product-language lines>",
+  "criteria": [{"criterion":"<acceptance item>","done":true,"outcome":"confirmed","proof":"<method>","result":"<observation>","head":"<sha>","worktree_fingerprint":"<sha256>"}],
+  "not_built": [], "not_verified": [],
   "changed_files": [],
   "tests": { "run": "<commands>", "result": "<outcome>" },
   "verification_items": [

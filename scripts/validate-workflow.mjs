@@ -92,7 +92,7 @@ function validateReadBudgetFixtures() {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, content);
   };
-  const base = "Read first:\n\nRead now:\n1. `AGENTS.md`\n2. `references/shared.md`\n\nRead when:\n- `references/shared.md` — any condition.\n";
+  const base = "Read first:\n\nRead now:\n1. `AGENTS.md`\n2. `<pack-root>/references/shared.md`\n\nRead when:\n- `<pack-root>/references/shared.md` — any condition.\n";
   const fixture = (name, action) => {
     try { action(); console.log(`PASS read-budget fixture: ${name}`); }
     catch (error) { fail(`read-budget fixture ${name}: ${error.message}`); }
@@ -164,6 +164,14 @@ function validateReadBudgetFixtures() {
       "Handoff mandatory file set differs from the stage, its entry reference and examples");
     const total = expected.reduce((sum, file) => sum + fs.statSync(path.join(root, file)).size, 0);
     require(budget.bytes === total && total <= 20_480, "Handoff actual mandatory total differs or exceeds 20 KB");
+  });
+  fixture("Implement actual mandatory inputs and byte total", () => {
+    const expected = ["skills/implement/SKILL.md", "skills/implement/references/start.md", "references/execution-quality.md"].sort();
+    const budget = measureReadBudget(root, { skills: ["implement"], includeConditional: false });
+    require(JSON.stringify(budget.files.map(entry => entry.path).sort()) === JSON.stringify(expected),
+      "Implement mandatory file set differs from the stage, startup and engineering rules");
+    const total = expected.reduce((sum, name) => sum + Buffer.byteLength(read(name)), 0);
+    require(budget.bytes === total && total <= 20_480, "Implement actual mandatory total differs or exceeds 20 KB");
   });
   try {
     write("AGENTS.md", "# fixture\n");
@@ -251,11 +259,6 @@ function validateReadBudgetFixtures() {
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 
-if (process.argv.includes("--read-budget-fixtures")) {
-  validateReadBudgetFixtures();
-  if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
-  process.exit(0);
-}
 
 function artifactContractPinError(pin) {
   if (!exists(pin.path)) return `Missing artifact contract adapter: ${pin.path}`;
@@ -5669,7 +5672,7 @@ const STRING_PINS = [
   ["skills/handoff/SKILL.md", "too-big"],
   ["skills/handoff/SKILL.md", "shared-base"],
   ["skills/handoff/SKILL.md", "probe"],
-  ["skills/implement/SKILL.md", "node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>"],
+  ["skills/implement/references/start.md", "node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>"],
   // MONO-95: render placeholders replace angle-substitution prose.
   ["templates/orchestrator-dispatch.md","{{approval}}"],
   ["templates/orchestrator-dispatch.md","{{attempt}}"],
@@ -5937,10 +5940,8 @@ const STRING_PINS = [
   ["skills/deploy/SKILL.md","git rev-parse HEAD"],
   ["references/install.md","git show"],
   ["skills/handoff/references/record.md","references/artifact-intake.md"],
-  ["skills/implement/SKILL.md","Implementation workflow"],
   ["skills/implement/SKILL.md","implemented-needs-preflight"],
   ["skills/implement/SKILL.md","scope-drift-needs-handoff"],
-  ["skills/implement/SKILL.md","gstack-learnings-search"],
   ["skills/preflight/SKILL.md","mono-preflight certificate"],
   ["skills/preflight/SKILL.md","Issue(s):"],
   ["skills/preflight/SKILL.md","Branch:"],
@@ -6008,6 +6009,14 @@ const STRING_PINS = [
   ["references/lifecycle.md", "design="],
 ];
 const REQUIRED_HEADINGS = [
+  ["skills/implement/SKILL.md", "mono:implement"],
+  ["skills/implement/SKILL.md", "Как ты думаешь"],
+  ["skills/implement/SKILL.md", "Как ты говоришь"],
+  ["skills/implement/SKILL.md", "Работа"],
+  ["skills/implement/SKILL.md", "Остановка"],
+  ["skills/implement/references/start.md", "Вход и старт"],
+  ["references/execution-quality.md", "Implementation Proof"],
+  ["references/worker-contract.md", "Implementation exit evidence"],
   ["skills/design/SKILL.md", "mono:design"],
   ["skills/design/SKILL.md", "Как ты думаешь"],
   ["skills/design/SKILL.md", "Кто что решает"],
@@ -6042,7 +6051,6 @@ const REQUIRED_HEADINGS = [
   ["references/worker-contract.md", "Two-Phase Dispatch Handshake"],
   ["references/worker-contract.md", "Delivery Reports and Capsule"],
   ["references/autoreview-routing.md", "Certificate Evidence"],
-  ["skills/implement/SKILL.md", "Engine and Start Comment"],
   ["skills/preflight/SKILL.md", "Workflow"],
   ["skills/deliver/SKILL.md", "Sequence and Recovery"],
   ["references/repair-machine.md","Class 2 effect fixture: snapshot-sync"],
@@ -6149,7 +6157,6 @@ const REQUIRED_HEADINGS = [
   ["references/contracts/tech-spec.md","TS-016 — Unreachable backend fallback"],
   ["references/orchestration.md","Orchestration Mode Precedence"],
   ["references/orchestration.md","Pack identity gate invocation"],
-  ["skills/implement/SKILL.md","Orchestration branch of `start-checkpoint`"],
   ["templates/orchestrator-dispatch.md","Gate Phase"],
   ["references/orchestration.md","Cost Telemetry"],
   ["templates/orchestrator-brief.md","Цена волны (Wave Cost Summary)"],
@@ -6160,14 +6167,12 @@ const REQUIRED_HEADINGS = [
   ["skills/check/SKILL.md","Mono Check"],
   ["skills/deploy/SKILL.md","Mono Deploy"],
   ["skills/handoff/SKILL.md","mono:handoff"],
-  ["skills/implement/SKILL.md","Mono Implement"],
   ["skills/issue/SKILL.md","Mono Issue"],
   ["skills/orchestrate/SKILL.md","Mono Orchestrate"],
   ["skills/preflight/SKILL.md","Mono Preflight"],
   ["skills/review/SKILL.md","Mono Review"],
   ["skills/ship/SKILL.md","Mono Ship"],
   ["templates/ship-status-ux.md","Ship status UX (interactive mode)"],
-  ["skills/implement/SKILL.md","Context-seam branch at Delivery Start"],
   ["references/readiness-gates.md","Review Gate Policy"],
   ["references/orchestration.md","Unavailable route"],
   ["templates/prd.md","PRD Template"],
@@ -6765,6 +6770,13 @@ const MACHINE_TOKENS = new Set([
 // Prose is deliberately not an input to these predicates. The four artifact
 // contracts retain their existing bounded fingerprints in validateArtifactContractParity.
 let rejectedStringPins = 0;
+
+if (process.argv.includes("--read-budget-fixtures")) {
+  validateReadBudgetFixtures();
+  if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
+  process.exit(0);
+}
+
 function requireMachineToken(token) {
   if (!MACHINE_TOKENS.has(token)) {
     rejectedStringPins++;
@@ -6862,7 +6874,7 @@ function validateDocumentSkeleton() {
 
   // Agent rules remain prose/review; verify only changed section step skeletons.
   for (const [file, section, count] of [
-    ["skills/implement/SKILL.md", "Orchestration branch of `start-checkpoint`", 7],
+    ["skills/implement/SKILL.md", "Работа", 3],
     ["skills/preflight/SKILL.md", "Workflow", 7],
     ["skills/deliver/SKILL.md", "Sequence and Recovery", 3],
   ]) {
@@ -7054,12 +7066,12 @@ function validateAe6Fixtures() {
     // Prefixing contextual wording preserves the rule and works after a prior
     // editorial rewrite too; no baseline sentence is required by the fixture.
     for (const [name, heading] of [
-      ["skills/implement/SKILL.md", "Mono Implement"],
+      ["skills/implement/SKILL.md", "Как ты думаешь"],
       ["references/issue-only-lane.md", "Post-`ready` exit"],
       ["references/orchestration.md", "Cost Telemetry"],
     ]) change(name, (text) => {
       const paragraph = documentSection(text, heading)?.join("\n").split(/\n\s*\n/)
-        .map((block) => block.trim()).find((block) => /^[A-Za-z]/.test(block) &&
+        .map((block) => block.trim()).find((block) => /^\p{L}/u.test(block) &&
           !/^[A-Za-z][A-Za-z -]*:/.test(block) && /[.!?]$/.test(block));
       if (!paragraph) throw new Error(`AE6 missing prose paragraph: ${name} / ${heading}`);
       return text.replace(paragraph, "In this workflow, " + paragraph[0].toLowerCase() + paragraph.slice(1));
