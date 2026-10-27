@@ -137,12 +137,16 @@ Workflow states:
      they run in Claude Code. No silent widening of tools or server wildcards.
    - One Project chain at a time: stage agents ask the same questions and show the
      same result as to owner; answer with label and reason on that version.
-     Idea in your session: follow references/owner-dialog.md — check, description
-     at turn end with option lines, then marked window; relay only owner's press.
+     Idea in your session: follow references/owner-dialog.md — finish service
+     work, description in chat, immediately the window in the same message with
+     no intervening call or turn end; relay only owner's press. Idea shown-version
+     files and notes are written by shell after the press, before Linear writes.
      Only a delegated Project allows autonomous Research/work start. First exemplars and
      new taste rules stay with owner. Their words reopen approvals.
    - Maintain `.claude/session-views/<этап>-<ключ проекта>-<круг>.md` in product cwd,
-     appending every message immediately. `git check-ignore` first; if needed add
+     append by shell before the owner summary or after the window response,
+     never between summary and window; Idea description/notes after the press.
+     `git check-ignore` first; if needed add
      `.claude/session-views/` to product `.git/info/exclude`, never `.gitignore`.
      Link conversation in each stage result; no child Desktop delegation session.
    - `stale`/`legacy-migrate` Idea stops autonomous Research/work despite delegation.

@@ -475,8 +475,7 @@ function validateStageDelegation() {
 function validateStageWindowRules() {
   // Agent-only order is reviewed; skeleton pins only commands, fields and paths.
   const dialogue = read("references/owner-dialog.md");
-  for (const token of ["scripts/window-guard.mjs", "check --options", "session_id",
-    "metadata.source", "mono_", "request_user_input", "request_user_input_async"]) {
+  for (const token of ["request_user_input", "request_user_input_async"]) {
     requireMachineToken(token);
     if (!dialogue.includes(token)) fail(`stage window dialogue missing ${token}`);
   }
@@ -5442,7 +5441,7 @@ function checkModelPolicy(base) {
 function validateModelPolicyFixtures() {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-model-policy-"));
   try {
-    for (const name of ["skills", "agents", "references", "templates", "scripts", "hooks", "AGENTS.md", "README.md"]) {
+    for (const name of ["skills", "agents", "references", "templates", "scripts", "AGENTS.md", "README.md"]) {
       fs.cpSync(path.join(root, name), path.join(scratch, name), { recursive: true });
     }
     const script = path.join(scratch, "scripts/validate-workflow.mjs");
@@ -6253,8 +6252,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
-  // MONO-250: window command, tool/field names and shared dialogue path.
-  "scripts/window-guard.mjs", "check --options", "session_id", "metadata.source", "mono_",
+  // Window tools and shared dialogue path; step order is reviewed.
   "request_user_input", "request_user_input_async", "owner-dialog.md",
   // MONO-239: invocation flags, template fields/placeholders and dialogue skeleton.
   "--ignore-user-config", "--strict-mcp-config", "--disable apps", "-s read-only", "codex exec", "claude -p",
@@ -7048,7 +7046,7 @@ function validateAe6Fixtures() {
     if (failures.length === before) console.log(`PASS AE6 ${label}: red, restored green`);
   }
   try {
-    for (const name of ["skills", "agents", "references", "templates", "scripts", "hooks", "AGENTS.md", "README.md", "CHANGELOG.md", "examples", "VERSION", ".claude-plugin", ".codex-plugin"]) {
+    for (const name of ["skills", "agents", "references", "templates", "scripts", "AGENTS.md", "README.md", "CHANGELOG.md", "examples", "VERSION", ".claude-plugin", ".codex-plugin"]) {
       fs.cpSync(path.join(root, name), file(name), { recursive: true });
     }
     check();

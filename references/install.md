@@ -86,35 +86,6 @@ Observe a fresh `watcher.json` pulse from that process. Keep launch halts until
 verification and watcher restart finish; `watcher-required` names the start
 command if the pulse is absent, stale or does not match a live process.
 
-## Window Hooks and Trust
-
-The plugin carries `hooks/hooks.json` for Claude Code and event registration in
-`.codex-plugin/plugin.json`, both using `scripts/window-guard.mjs`. Registration
-alone does not prove host support: the early live check found `plugin_hooks`
-removed in Codex. Do not promise window protection there until the stage check
-returns «защита включена» with `session_id`.
-
-Where Codex supports plugin hooks, trust Mono at startup with «Trust all and
-continue» or through `/hooks`. An update can require renewed trust because the
-host binds it to plugin content. In Claude Code, verify Mono is enabled through
-`/plugin` and hooks are enabled in settings. Never enable a removed feature flag.
-
-Before each stage window, follow [owner dialogue](owner-dialog.md): check first,
-end the turn with the summary or position and exact option lines, then open the
-marked window after continuation. The check prints «защита выключена», fails,
-returns empty/unexpected output or no `session_id`: no window. End with the
-summary, one environment-specific hint, then text options:
-
-- Codex: «доверь хуки Mono: при запуске «Trust all and continue» или /hooks;
-  утвердить можно у оркестратора».
-- Claude Code: «проверь, что плагин Mono включён (/plugin) и хуки не выключены
-  в настройках; утвердить можно у оркестратора».
-
-Without a Codex window tool (`request_user_input` or `request_user_input_async`),
-no check is needed; end with text options and where to approve. Stage helpers
-run neither checks nor windows. Empty window answers approve nothing and do not
-reopen the window automatically. These rules apply to the new pack, not old installs.
-
 ## Compatibility
 
 Identity is `packVersion` from `VERSION`, positive integer `surfaceRevision` from
@@ -215,20 +186,13 @@ sandbox.
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
 equal `VERSION`; only release tasks change them. Try unreleased code per README.
 
-### Release 0.38.0
+### Release 0.38.1
 
-Пак впервые поставляет хуки окна: `hooks/hooks.json` для Claude Code и
-регистрацию событий в `.codex-plugin/plugin.json`. Перед окном этап проверяет
-живые хуки, заканчивает ход итогом или позицией и вариантами, затем открывает
-окно после продолжения хода. Чужое окно с полным набором подписей утверждения
-Mono тоже требует текста; одна совпадающая подпись его не блокирует.
-
-В Codex хуки плагина могут быть недоступны: проверка печатает «защита выключена»,
-этап идёт текстовым путём с подсказкой. Где поддержка есть, доверь хуки через
-«Trust all and continue» при запуске или `/hooks`; после смены версии пака
-доверие может потребоваться снова. В Claude Code проверь Mono через `/plugin`
-и включённые хуки в настройках. Полный порядок и текстовый путь без инструмента
-окна — [Window Hooks and Trust](#window-hooks-and-trust).
+Защита окон снята: этап завершает служебную работу, пишет итог обычным текстом
+в чат и сразу под ним открывает окно в том же сообщении, без промежуточных
+вызовов и конца хода. Показанная версия Idea и заметки пишутся после нажатия;
+черновики остальных этапов до итога. Доверие хукам Mono в Codex больше не нужно.
+Порядок и путь Codex без инструмента окна — [разговор с владельцем](owner-dialog.md).
 
 После установки сессии этапов начинаются заново. Формы записей и surface
 revision 4 прежние; текущие попытки заканчиваются на сохранённом packRoot,
@@ -238,27 +202,22 @@ revision 4 прежние; текущие попытки заканчивают�
 
 После внешнего preflight и до ship оркестратор выполняет
 `claude plugin validate . --strict`, skill-doctor и eval; воркер ждёт результата.
-После merge оркестратор ставит `v0.38.0` и устанавливает оба хоста один раз на
+После merge оркестратор ставит `v0.38.1` и устанавливает оба хоста один раз на
 волну по [Plugin Updates](#plugin-updates) и
 [Wave Installation Source](#wave-installation-source). Обе установленные версии
-равны **0.38.0** и `VERSION` на проверенном T, тег указывает на T, оба кэша
+равны **0.38.1** и `VERSION` на проверенном T, тег указывает на T, оба кэша
 совпадают с его Git-деревом. Воркер не ставит тег и не устанавливает пак.
 
-Решение оркестратора 8dab8cc4 от 25.10.2026 переносит живую проверку U10 после
-установки. Оркестратор проходит применимые условия в Claude Desktop, терминале
-Claude Code, Codex CLI и приложении Codex, записывает результат по условию и среде
-с выдержкой или снимком в MONO-251 и отдельно наблюдение о повторном доверии Codex.
-Без инструмента окна условия 1, 2, 4, 5 неприменимы; доказываются текстовый путь,
-верный признак и возврат помощника этапа. Прогон ещё предстоит: выпуск не заявляет
-успех живых проверок. Провал 1 возвращает проект в Discovery, 5 — в Tech Evaluation;
-2, 3, 4, 6, 7 требуют ремонта пакета, недоступное приложение Codex оставляет проверку
-незавершённой. Исправления доставляются следующим выпуском пака; локальные копии
-не устанавливаются. Затем оркестратор записывает срез транскриптов первого живого
-прогона комментарием проекта; до записи проект не закрывается.
-
-Откат — установка прежней версии пака; записи не удаляются, попытки не
-перенаправляются на другой packRoot. При выключенных или недоверенных хуках
-этапы используют текстовый путь; ограничения новых форматов из
+После установки оркестратор проверяет четыре среды: Claude Desktop, терминал
+Claude Code, Codex CLI и приложение Codex. В каждой окно утверждения и окно
+выбора, в одной ещё повтор после правки; экран и транскрипт отдельно. Также
+возврат итога и вариантов помощником делегированного этапа (R8). По транскриптам
+первого живого прогона доля окон с итогом или позицией в том же сообщении должна
+быть 100%, включая все шесть этапов и выборы; этап без окон досматривается
+отдельным прогоном. Результаты записывает оркестратор; до них проект не закрыт.
+Выпуск не заявляет успех этих проверок. Провал чинится порядком этапа, без новых
+хуков, меток или проверок окна. Откат — установка 0.37.0; записи не удаляются,
+попытки не перенаправляются на другой packRoot. Ограничения новых форматов из
 [Release 0.36.0](#release-0360) сохраняются.
 
 ### Release 0.37.0
