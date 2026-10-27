@@ -193,6 +193,12 @@ thresholds/declines/class stops/caps stay unchanged.
 Every code exit, regardless of packVersion: criteria (nonempty), summary (2–3
 product-language lines), not_built and not_verified arrays (may be empty).
 Start records/queues unchanged; phase_result stays a status string.
+At start, capture-criteria reads the approved Issue acceptance bullets after
+«Готово, когда:» (dispatch snapshot issue file; standalone delivery-start Issue read)
+into immutable <root>/reports/<KEY>-criteria-a<N>.json. Never from report fields.
+Publication reads this stored list by Issue/attempt, rejects missing/extra/reordered/
+reworded items before writes; only whitespace normalization. Capture cannot replace
+existing state. Standalone root is local .orchestrator, never committed.
 criteria: every «Готово, когда» item verbatim/in order, never omit/weaken unfinished
 work; «Как проверить» separately in verification_items. Fields: criterion, done
 (boolean), outcome (confirmed|unverified|broken), proof (method chosen before edits),

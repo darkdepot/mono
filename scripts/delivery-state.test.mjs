@@ -339,6 +339,10 @@ test('pre-rename stage and certificate fixture confirms and expands without chan
   const code = JSON.parse(fs.readFileSync(path.join(checkout, 'scripts/fixtures/short-code-report.json'), 'utf8'));
   code.capsule.writable_roots = [reports];
   try {
+    const { captureCriteria } = await import("./delivery-state.mjs");
+    const issueFile = path.join(root, "issue-start-read.md");
+    fs.writeFileSync(issueFile, "# Критерии приемки\nГотово, когда:\n* Справка называет действующую команду\n");
+    captureCriteria({ root, issue: code.issue, attempt: code.attempt, issueFile });
     const publishedCode = publishPhase(code, path.join(reports, 'MONO-993-phase-code.json'));
     const codeConfirmation = await confirmQueue(publishedCode, root, () => { throw new Error('empty queue never calls adapter'); });
     assert.deepEqual(codeConfirmation.results, []);

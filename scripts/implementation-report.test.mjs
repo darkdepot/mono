@@ -4,16 +4,22 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { publishPhase } from './delivery-state.mjs';
+import { captureCriteria, publishPhase } from './delivery-state.mjs';
+
+const approvedIssue = path.resolve('scripts/fixtures/implementation-approved-issue.md');
+function capture(root, source = approvedIssue) {
+  return captureCriteria({ root, issue: 'MONO-993', attempt: 1, issueFile: source });
+}
 
 function report(root) {
+  capture(root);
   const head = 'b'.repeat(40);
   return { issue: 'MONO-993', stage: 'mono-deliver', attempt: 1, packVersion: 'test', surfaceRevision: 4,
     phase: 'code', sequence: 1, kind: 'phase', head, phase_result: 'implemented-needs-preflight',
     summary: 'Справка исправлена. Передаю на проверку перед PR.', not_built: [], not_verified: [],
-    criteria: [{ criterion: 'Справка называет действующую команду', done: true, outcome: 'confirmed',
+    criteria: ['Справка называет действующую команду', 'Список содержит все команды', 'Ошибочная команда объясняет исправление'].map(criterion => ({ criterion, done: true, outcome: 'confirmed',
       proof: 'Характеристика: вызов команды с --help', result: 'Команда завершилась с кодом 0', head,
-      worktree_fingerprint: 'c'.repeat(64) }],
+      worktree_fingerprint: 'c'.repeat(64) })),
     linear_mutations_pending: [], capsule: { phase: 'code', head, open_queue: [], decisions: [], writable_roots: [root] } };
 }
 
@@ -39,11 +45,11 @@ for (const [name, mutate] of cases) test(`implementation-publication refuses ${n
   try {
     const candidate = report(root); mutate(candidate);
     const output = path.join(root, 'reports/MONO-993-phase-code.json');
-    assert.throws(() => publishPhase(candidate, output), /implementation report/);
+    assert.throws(() => publishPhase(candidate, output, undefined, root), /implementation report/);
     assert.equal(fs.existsSync(output), false);
     fs.mkdirSync(path.dirname(output), { recursive: true });
     fs.writeFileSync(output, 'preserve previous report bytes\n');
-    assert.throws(() => publishPhase(candidate, output), /implementation report/);
+    assert.throws(() => publishPhase(candidate, output, undefined, root), /implementation report/);
     assert.equal(fs.readFileSync(output, 'utf8'), 'preserve previous report bytes\n');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -57,7 +63,7 @@ test('implementation-publication accepts complete confirmed and explicitly unver
         why: 'Нет доступа к установленному приложению', risk: 'Справка может расходиться с установленной версией' }];
       const input = path.join(root, `${outcome}.json`), output = path.join(root, outcome, 'reports/MONO-993-phase-code.json');
       fs.writeFileSync(input, JSON.stringify(candidate));
-      const result = spawnSync(process.execPath, ['scripts/delivery-state.mjs', 'publish', '--report', input, '--output', output], { encoding: 'utf8' });
+      const result = spawnSync(process.execPath, ['scripts/delivery-state.mjs', 'publish', '--report', input, '--output', output, '--root', root], { encoding: 'utf8' });
       assert.equal(result.status, 0, result.stderr);
       assert.deepEqual(JSON.parse(fs.readFileSync(output)).criteria, candidate.criteria);
     }
@@ -71,9 +77,91 @@ test('implementation-publication keeps broken and unfinished work visible as blo
       const candidate = report(root); candidate.phase_result = 'blocked'; candidate.criteria[0].outcome = outcome;
       candidate.criteria[0].done = false;
       if (outcome === 'unverified') candidate.not_verified = [{ what: candidate.criteria[0].criterion, why: 'Не сделано', risk: 'Критерий не выполнен' }];
-      assert.equal(publishPhase(candidate, path.join(root, outcome, 'reports/MONO-993-phase-code.json')).phase_result, 'blocked');
+      assert.equal(publishPhase(candidate, path.join(root, outcome, 'reports/MONO-993-phase-code.json'), undefined, root).phase_result, 'blocked');
     }
     const candidate = report(root); candidate.phase_result = 'blocked'; candidate.criteria[0].done = false;
-    assert.throws(() => publishPhase(candidate, path.join(root, 'invalid.json')), /implementation report/);
+    assert.throws(() => publishPhase(candidate, path.join(root, 'invalid.json'), undefined, root), /implementation report/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const [name, mutate] of [
+  ['omitted approved criterion', r => r.criteria.splice(1, 1)],
+  ['extra criterion', r => r.criteria.push({ ...r.criteria[0], criterion: 'Непросимый новый экран' })],
+  ['reordered criteria', r => r.criteria.reverse()],
+  ['reworded criterion', r => { r.criteria[0].criterion = 'Справка примерно верна'; }],
+]) test(`approved-list publication refuses ${name} before any write`, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-approved-list-'));
+  try {
+    const candidate = report(root); mutate(candidate);
+    const output = path.join(root, 'reports/MONO-993-phase-code.json');
+    assert.throws(() => publishPhase(candidate, output), /approved criteria/);
+    assert.equal(fs.existsSync(output), false);
+    fs.writeFileSync(output, 'preserve previous bytes');
+    assert.throws(() => publishPhase(candidate, output), /approved criteria/);
+    assert.equal(fs.readFileSync(output, 'utf8'), 'preserve previous bytes');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('approved-list publication accepts the exact list and whitespace-only changes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-approved-list-'));
+  try {
+    for (const whitespace of [false, true]) {
+      const candidate = report(root);
+      if (whitespace) candidate.criteria[1].criterion = '  Список  содержит\nвсе команды  ';
+      assert.deepEqual(publishPhase(candidate, path.join(root, `reports/exact-${whitespace}.json`)).criteria, candidate.criteria);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('approved-list publication refuses missing state instead of trusting a report-supplied list', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-approved-list-'));
+  try {
+    const candidate = report(root);
+    fs.unlinkSync(path.join(root, 'reports/MONO-993-criteria-a1.json'));
+    candidate.approved_criteria = candidate.criteria.map(x => x.criterion);
+    assert.throws(() => publishPhase(candidate, path.join(root, 'reports/out.json')), /approved criteria/);
+    assert.equal(fs.existsSync(path.join(root, 'reports/out.json')), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('approved-list capture freezes dispatch and standalone Issue-start sources', () => {
+  for (const lane of ['snapshot/issue-MONO-993.md', 'issue-start-read.md']) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-approved-source-'));
+    try {
+      const source = path.join(root, lane);
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      fs.copyFileSync(approvedIssue, source);
+      const cli = spawnSync(process.execPath, ['scripts/delivery-state.mjs', 'capture-criteria', '--issue', 'MONO-993', '--attempt', '1', '--issue-file', source, '--root', root], { encoding: 'utf8' });
+      assert.equal(cli.status, 0, cli.stderr);
+      const state = JSON.parse(cli.stdout.split('\n')[0]), file = path.join(root, 'reports/MONO-993-criteria-a1.json');
+      const bytes = fs.readFileSync(file);
+      assert.deepEqual(state.criteria, ['Справка называет действующую команду', 'Список содержит все команды', 'Ошибочная команда объясняет исправление']);
+      assert.deepEqual(capture(root, source), state);
+      fs.appendFileSync(source, '\nEdited after start\n');
+      assert.throws(() => capture(root, source), /immutable/);
+      assert.deepEqual(fs.readFileSync(file), bytes);
+      const alternate = path.join(root, 'other.md'); fs.copyFileSync(approvedIssue, alternate);
+      assert.throws(() => capture(root, alternate), /immutable/);
+      assert.deepEqual(fs.readFileSync(file), bytes);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test('approved-list deliberate breakage makes the omission regression red', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-approved-mutation-'));
+  try {
+    fs.cpSync(path.resolve('scripts'), path.join(root, 'scripts'), { recursive: true });
+    const file = path.join(root, 'scripts/delivery-criteria.mjs');
+    const source = fs.readFileSync(file, 'utf8');
+    const comparison = "  if (reported.length !== state.criteria.length || reported.some((criterion, index) => criterion !== state.criteria[index]))\n    fail('report must contain the full ordered approved criteria list');";
+    assert.ok(source.includes(comparison), 'mutation must target the actual comparison');
+    fs.writeFileSync(file, source.replace(comparison, '  // Deliberate scratch breakage: skip the approved-list comparison.'));
+    const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', '--test-name-pattern=approved-list publication refuses omitted approved criterion', 'scripts/implementation-report.test.mjs'], {
+      cwd: root, encoding: 'utf8', env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT')),
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /Missing expected exception/);
+    assert.match(result.stdout, /not ok.*omitted approved criterion/);
+    assert.doesNotMatch(result.stdout + result.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

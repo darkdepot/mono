@@ -10,6 +10,9 @@ import { validateEntry } from "./decisions.mjs";
 
 import { workerTransport } from "./worker-transport.mjs";
 
+import { captureCriteria, requireApprovedCriteria } from "./delivery-criteria.mjs";
+export { captureCriteria } from "./delivery-criteria.mjs";
+
 export const PHASES = ["code", "preflight", "ship"];
 export const PARKED_REASONS = ["blocked", "needs-decision", "needs-human", "drift-candidate", "timed-out", "scope-drift-needs-handoff", "write-unconfirmed", "evidence-limit"];
 export function correlatedDeliveryReport(report, stat, entry, logStat, stallSec = 120) {
@@ -205,6 +208,8 @@ export function classifyQueue(report, root) {
 export function publishPhase(report, output, previousConfirmation, root = previousConfirmation
   ? path.dirname(path.dirname(previousConfirmation)) : path.dirname(path.dirname(output))) {
   validatePhase(report);
+  if (report.phase === "code" && report.phase_result !== undefined && report.phase_result !== "in-progress")
+    requireApprovedCriteria(report, root);
   if (report.phase === "ship" && report.kind === "phase" && report.status === "green") validateShipCertificate(report);
   const content = value => { const { publishedAt, ...rest } = value; return rest; };
   const previous = fs.existsSync(output) ? validatePhase(readJson(output)) : null;
@@ -332,8 +337,12 @@ export async function waitForGateAck({ root, issue, attempt, ack, moves, config 
 if (isMain(import.meta.url)) {
   try {
     const [command, ...rest] = process.argv.slice(2); const args = flags(rest);
-    if (command === "--help" || args.help) console.log("Usage: delivery-state.mjs publish --report <file> --output <file> [--confirmation <previous ack>] [--root <orchestrator root>] | wait-ack --root <root> --issue <KEY> --attempt <N> --ack <path> --moves <json-file> [--config <file>] | confirm --report <file> --root <dir> --adapter <executable> [--config <file>] | wait --report <file> --confirmation <file> [--config <file>]\nPhase: {issue,stage:'mono-deliver',attempt,packVersion,sourceCommit,surfaceRevision,phase:'code|preflight|ship',sequence,kind:'phase|confirmation-request',head,linear_mutations_pending:[{id,operation,target,payload}],capsule:{phase,head,open_queue:[same writes],decisions:[],writable_roots:[dispatch grants]}}. publish adds publishedAt, so resumed waits retain the original deadline. Publish/confirm require all earlier sequence confirmations and the latest earlier phase reports for this attempt. Confirmations retain their report snapshot. Fallback publish supplies --root explicitly (or the previous standard mailbox confirmation); confirm reads predecessor reports from the current report directory and the root mailbox, refusing conflicting copies. A single append #/certificate pointer within a payload string expands to report.certificate before hashing/applying; changed certificate needs a new write ID. Adapter stdin: {action:'reconcile|apply',issue,attempt,idempotencyKey,write}; reconcile returns {state:'present|missing|unknown',evidence}; present needs evidence, missing must be positively observed. IDs persist across retries; results bind the current attempt.");
-    else if (command === "wait-ack") {
+    if (command === "--help" || args.help) console.log("Usage: delivery-state.mjs capture-criteria --issue <KEY> --attempt <N> --issue-file <approved Issue read> --root <delivery root> | publish --report <file> --output <file> [--confirmation <previous ack>] [--root <orchestrator root>] | wait-ack --root <root> --issue <KEY> --attempt <N> --ack <path> --moves <json-file> [--config <file>] | confirm --report <file> --root <dir> --adapter <executable> [--config <file>] | wait --report <file> --confirmation <file> [--config <file>]\nPhase: {issue,stage:'mono-deliver',attempt,packVersion,sourceCommit,surfaceRevision,phase:'code|preflight|ship',sequence,kind:'phase|confirmation-request',head,linear_mutations_pending:[{id,operation,target,payload}],capsule:{phase,head,open_queue:[same writes],decisions:[],writable_roots:[dispatch grants]}}. publish adds publishedAt, so resumed waits retain the original deadline. Publish/confirm require all earlier sequence confirmations and the latest earlier phase reports for this attempt. Confirmations retain their report snapshot. Fallback publish supplies --root explicitly (or the previous standard mailbox confirmation); confirm reads predecessor reports from the current report directory and the root mailbox, refusing conflicting copies. A single append #/certificate pointer within a payload string expands to report.certificate before hashing/applying; changed certificate needs a new write ID. Adapter stdin: {action:'reconcile|apply',issue,attempt,idempotencyKey,write}; reconcile returns {state:'present|missing|unknown',evidence}; present needs evidence, missing must be positively observed. IDs persist across retries; results bind the current attempt.");
+    else if (command === "capture-criteria") {
+      const captured = captureCriteria({ root: args.root, issue: args.issue, attempt: Number(args.attempt), issueFile: args["issue-file"] });
+      console.log(JSON.stringify(captured));
+      console.log("delivery-state capture-criteria: pass");
+    } else if (command === "wait-ack") {
       const record = await waitForGateAck({ root: args.root, issue: args.issue, attempt: Number(args.attempt),
         ack: args.ack, moves: readJson(args.moves), config: args.config });
       console.log(JSON.stringify(record));

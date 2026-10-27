@@ -28,6 +28,11 @@
 Задача без проекта: issue-only-lane, только Issue в started, обратное чтение;
 Project/PRD/Spec не требуй. Документы одни не разрешают старт.
 
+До кода сохрани критерии один раз: `node <pack-root>/scripts/delivery-state.mjs capture-criteria --issue <KEY> --attempt <N> --issue-file <file> --root <delivery-root>`.
+С диспатчем file — `snapshot/issue-<KEY>.md`; без него — тело Issue из чтения
+при старте. Состояние: `<delivery-root>/reports/<KEY>-criteria-a<N>.json`, неизменно.
+Без оркестратора delivery-root — локальный `.orchestrator`; не коммить.
+
 Комментарий старта/очередь прежние: full — задача/пакет/утверждение/допуск,
 объём, способ работы, проверки и границы; short — capsule.decisions/начало ready.
 До кода подтверди всю очередь, даже пустую; без оркестратора запиши/прочитай обратно.

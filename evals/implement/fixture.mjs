@@ -48,7 +48,7 @@ export function createFixture(id) {
   write('help.md', '# Notes\n\nList notes: notes ls\n');
   write('screen.html', '<!doctype html><html lang="ru"><title>Заметки</title><main><h1>Заметки</h1><ul></ul></main></html>\n');
   write('.gitignore', 'report.json\nevidence.jsonl\n');
-  const issueBody = `# Цель PR\n${scenario.criteria.join('; ')}\n\n# Что сделать\nТолько согласованное поведение учебных заметок.\n\n# Критерии приемки\n${scenario.criteria.map(c => `- ${c}`).join('\n')}\n\n# Как проверить\n- node --test notes.test.mjs\n\n# Что не входит\n- Новые сервисы, PR, выкладка\n\n# Ревью-гейт\nРиск: standard. Ревью: ready, блокирующих находок нет.\n`;
+  const issueBody = `# Цель PR\n${scenario.criteria.join('; ')}\n\n# Что сделать\nТолько согласованное поведение учебных заметок.\n\n# Критерии приемки\nГотово, когда:\n${scenario.criteria.map(c => `- ${c}`).join('\n')}\n\n# Как проверить\n- node --test notes.test.mjs\n\n# Что не входит\n- Новые сервисы, PR, выкладка\n\n# Ревью-гейт\nРиск: standard. Ревью: ready, блокирующих находок нет.\n`;
   write('issue.md', issueBody);
   // Use the real resolver's whole-body emitter, never a guessed scope hash.
   const resolver = path.join(here, '../../scripts/resolve-issue-context.mjs');
