@@ -32,7 +32,7 @@ export function treeFingerprint(repo) {
   const hash = createHash('sha256');
   hash.update(execFileSync('git', ['diff', '--binary', 'HEAD'], { cwd: repo }));
   const files = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: repo, encoding: 'utf8' })
-    .split('\0').filter(Boolean).filter(name => !['report.json', 'evidence.jsonl'].includes(name)).sort();
+    .split('\0').filter(Boolean).filter(name => !['report.json', 'evidence.jsonl', 'evidence-before.json'].includes(name)).sort();
   for (const name of files) hash.update(name + '\0' + createHash('sha256').update(fs.readFileSync(path.join(repo, name))).digest('hex') + '\0');
   return hash.digest('hex');
 }
@@ -70,7 +70,9 @@ export function createFixture(id) {
   if (id === 'ae3-stale') {
     const result = spawnSync(process.execPath, ['--test','notes.test.mjs'], { cwd: repo, encoding: 'utf8', env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT')) });
     if (result.status !== 0) throw new Error('Stale-proof setup did not actually pass: ' + result.stdout + result.stderr);
-    write('evidence-before.json', JSON.stringify({ head: git(['rev-parse','HEAD']), worktree_fingerprint: treeFingerprint(repo), command: 'node --test notes.test.mjs', exit: result.status, output: result.stdout }, null, 2));
+    const fingerprint = treeFingerprint(repo);
+    write('evidence-before.json', JSON.stringify({ head: git(['rev-parse','HEAD']), worktree_fingerprint: fingerprint, command: 'node --test notes.test.mjs', exit: result.status, output: result.stdout }, null, 2));
+    if (treeFingerprint(repo) !== fingerprint) throw new Error('Evidence-only writes changed the code fingerprint');
     write('notes.mjs', broken);
   }
   return repo;

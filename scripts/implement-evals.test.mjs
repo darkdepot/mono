@@ -20,6 +20,11 @@ test('implement teaching fixture creates isolated Git repos with real green and 
         assert.equal(before.exit, 0);
         assert.equal(before.head, execFileSync('git',['rev-parse','HEAD'],{cwd:repo,encoding:'utf8'}).trim());
         assert.notEqual(before.worktree_fingerprint, treeFingerprint(repo), 'same HEAD is not proof after a dirty edit');
+        const changed = fs.readFileSync(path.join(repo, 'notes.mjs'));
+        const baseline = execFileSync('git', ['show', 'HEAD:notes.mjs'], { cwd: repo });
+        fs.writeFileSync(path.join(repo, 'notes.mjs'), baseline);
+        assert.equal(treeFingerprint(repo), before.worktree_fingerprint, 'evidence-only writes must not change the code fingerprint');
+        fs.writeFileSync(path.join(repo, 'notes.mjs'), changed);
       }
       const context = JSON.parse(fs.readFileSync(path.join(repo,'fixture-context.json')));
       if (id !== 'projectless') {
