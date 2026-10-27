@@ -188,3 +188,49 @@ test('approved-list capture keeps nested and wrapped text within its parent crit
     assert.deepEqual(capture(root, source).criteria, ['AC1: Первое условие продолжается * Деталь первого', 'AC2: Второе условие']);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+for (const style of ['English list', 'English numbered']) test(`approved-list canonical capture accepts ${style}`, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-english-criteria-'));
+  try {
+    let body = fs.readFileSync('scripts/fixtures/implementation-english-issue.md', 'utf8');
+    if (style === 'English numbered') { let n = 0; body = body.replace(/^- /gm, () => `${++n}. `); }
+    const source = path.join(root, 'issue-start.md'); fs.writeFileSync(source, body);
+    const cli = spawnSync(process.execPath, ['scripts/delivery-state.mjs', 'capture-criteria', '--issue', 'MONO-993', '--attempt', '1', '--issue-file', source, '--root', root], { encoding: 'utf8' });
+    assert.equal(cli.status, 0, cli.stderr);
+    const expected = ['AC1: Empty names are rejected', 'AC2: Existing notes are retained', 'AC3: The note count updates'];
+    assert.deepEqual(JSON.parse(cli.stdout.split('\n')[0]).criteria, expected);
+    const candidate = report(root, source);
+    candidate.criteria = expected.map(criterion => ({ ...candidate.criteria[0], criterion }));
+    assert.deepEqual(publishPhase(candidate, path.join(root, 'reports/out.json')).criteria.map(c => c.criterion), expected);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const name of ['missing-criteria', 'ambiguous-criteria', 'unsupported-language']) test(`approved-list canonical capture refuses ${name} before any write`, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-canonical-refusal-'));
+  try {
+    const source = path.resolve(`scripts/fixtures/implementation-${name}-issue.md`);
+    const cli = spawnSync(process.execPath, ['scripts/delivery-state.mjs', 'capture-criteria', '--issue', 'MONO-993', '--attempt', '1', '--issue-file', source, '--root', root], { encoding: 'utf8' });
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    assert.match(cli.stderr, /blocked/);
+    for (const label of ['# Критерии приемки', 'Готово, когда:', '# Acceptance criteria', 'Done when:']) assert.ok(cli.stderr.includes(label), cli.stderr);
+    assert.deepEqual(fs.readdirSync(root), [], 'refusal must precede even creation of delivery state directory');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('approved-list deliberate removal of English support makes the English regression red', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-english-mutation-'));
+  try {
+    fs.cpSync(path.resolve('scripts'), path.join(root, 'scripts'), { recursive: true });
+    const file = path.join(root, 'scripts/delivery-criteria.mjs');
+    const source = fs.readFileSync(file, 'utf8'), english = "  ['Acceptance criteria', 'Done when:'],\n";
+    assert.ok(source.includes(english), 'mutation must target the English label pair');
+    fs.writeFileSync(file, source.replace(english, ''));
+    const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', '--test-name-pattern=^approved-list canonical capture accepts English list$', 'scripts/implementation-report.test.mjs'], {
+      cwd: root, encoding: 'utf8', env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT')),
+    });
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /not ok.*canonical capture accepts English list/);
+    assert.match(result.stdout, /approved criteria/);
+    assert.doesNotMatch(result.stdout + result.stderr, /ERR_MODULE_NOT_FOUND|SyntaxError/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

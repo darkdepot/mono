@@ -11,45 +11,51 @@ function stateFile(root, issue, attempt) {
   return path.join(root, 'reports', `${issue}-criteria-a${attempt}.json`);
 }
 
+const acceptanceLabels = new Map([
+  ['Критерии приемки', 'Готово, когда:'],
+  ['Acceptance criteria', 'Done when:'],
+]);
+
 // Literal canonical Issue section; ambiguous/missing input stops capture rather
 // than guessing a shorter acceptance list.
 export function acceptanceCriteria(body) {
-  let section = false, depth = 0, marker = false, fence = null, sections = 0, listIndent = null;
+  const invalid = detail => fail(`${detail}; blocked; expected "# Критерии приемки" / "Готово, когда:" or "# Acceptance criteria" / "Done when:"`);
+  let section = false, depth = 0, marker = false, fence = null, sections = 0, listIndent = null, expectedMarker;
   const criteria = [];
   for (const line of body.split(/\r?\n/u)) {
     const delimiter = /^ {0,3}(`{3,}|~{3,})/u.exec(line);
     if (delimiter) {
       if (!fence) fence = delimiter[1];
       else if (delimiter[1][0] === fence[0] && delimiter[1].length >= fence.length) fence = null;
-      if (section) fail('fenced acceptance content is ambiguous');
+      if (section) invalid('fenced acceptance content is ambiguous');
       continue;
     }
     if (fence) continue;
     const heading = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/u.exec(line);
     if (heading) {
       if (section && heading[1].length <= depth) section = false;
-      if (/^Критерии при[её]мки\s*:?$/iu.test(heading[2])) {
-        if (++sections > 1) fail('duplicate acceptance section');
-        section = true; depth = heading[1].length;
-      } else if (section) fail('nested acceptance heading is ambiguous');
+      if (acceptanceLabels.has(heading[2])) {
+        if (++sections > 1) invalid('duplicate acceptance section');
+        section = true; depth = heading[1].length; expectedMarker = acceptanceLabels.get(heading[2]);
+      } else if (section) invalid('nested acceptance heading is ambiguous');
       continue;
     }
     if (!section || !line.trim()) continue;
-    if (/^Готово, когда:\s*$/u.test(line.trim())) {
-      if (marker || criteria.length) fail('duplicate acceptance marker');
+    if (line.trim() === expectedMarker) {
+      if (marker || criteria.length) invalid('duplicate acceptance marker');
       marker = true; continue;
     }
-    if (!marker) fail('Готово, когда: required before acceptance bullets');
+    if (!marker) invalid('canonical list marker required before acceptance bullets');
     const bullet = /^( {0,3})(?:[-*+]|\d+[.)])\s+(.+)$/u.exec(line);
     if (bullet && (listIndent === null || bullet[1].length === listIndent)) {
       listIndent = bullet[1].length;
       criteria.push(normalize(bullet[2]));
-    } else if (bullet && bullet[1].length < listIndent) fail('inconsistent acceptance list indentation');
+    } else if (bullet && bullet[1].length < listIndent) invalid('inconsistent acceptance list indentation');
     else if (/^\s+\S/u.test(line) && criteria.length) criteria[criteria.length - 1] += ' ' + normalize(line);
-    else fail('acceptance bullet list required');
+    else invalid('acceptance bullet list required');
   }
   if (sections !== 1 || !marker || !criteria.length || new Set(criteria).size !== criteria.length)
-    fail('nonempty unambiguous acceptance list required');
+    invalid('nonempty unambiguous acceptance list required');
   return criteria;
 }
 
