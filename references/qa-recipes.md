@@ -34,7 +34,13 @@
    ```bash
    git clone --no-hardlinks <source-repository> <copy>
    git -C <copy> remote remove origin
+   git -C <copy> checkout --detach <head>
+   git -C <copy> rev-parse HEAD > <evidence>/checked-head.txt
    ```
+
+   До установки зависимостей полный SHA должен совпасть с запрошенным `<head>`;
+   при несовпадении остановить проход, пункты «не проверено». PID, cwd и маркер
+   сборки ниже подтверждают сервер этой копии, но не заменяют привязку к коммиту.
 
    В пробе основной checkout и его `.git` не менялись, статус до и после
    совпал. Удаление remote защищает от случайного push из копии.
