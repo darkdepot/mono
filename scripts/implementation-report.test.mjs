@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { captureCriteria, publishPhase } from './delivery-state.mjs';
+import { captureCriteria, publishPhase, validatePhase, confirmQueue } from './delivery-state.mjs';
 
 test('criteria-relative-root resolves from the working copy before persisting', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-relative-root-'));
@@ -33,6 +33,8 @@ for (const [name, file, before, after, pattern] of [
   ['capture-refusal-publication', 'delivery-criteria.mjs', 'const stop = report.pre_capture_stop;', 'return null; const stop = report.pre_capture_stop;', '^stop-after-capture-refusal-'],
   ['start-refusal-publication', 'delivery-criteria.mjs', 'const stop = report.pre_capture_stop;', 'return null; const stop = report.pre_capture_stop;', '^stop-after-start-refusal'],
   ['completed-without-capture', 'delivery-criteria.mjs', "fail('missing immutable delivery-start capture');", 'return;', '^work-without-capture'],
+  ['saved-refusal-source', 'delivery-criteria.mjs', "typeof stop.source_text === 'string' ? stop.source_text : ", '', '^saved-capture-refusal'],
+  ['initial-refusal-source', 'delivery-state.mjs', 'delete report.pre_capture_stop.source_text;', 'void 0;', '^work-without-capture'],
 ]) test(`implementation deliberate-break ${name} makes the named regression red`, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-implementation-mutation-'));
   try {
@@ -106,7 +108,30 @@ test('work-without-capture still refuses completed and ordinary stopped reports'
     const stop = preCaptureReport(root, { kind: 'capture-refused', issue_file: approvedIssue,
       command: 'capture-criteria', exit: 1, reason: 'Pretend refusal of valid input' });
     assert.throws(() => publishPhase(stop, path.join(root, 'stop.json')), /implementation report/);
+    assert.throws(() => publishPhase({...stop,pre_capture_stop:{...stop.pre_capture_stop,source_text:'# Missing acceptance'}},
+      path.join(root,'forged-source.json')), /implementation report/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('saved-capture-refusal survives source refresh or deletion without changing its published evidence', async () => {
+  for (const change of ['refresh', 'delete']) {
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-saved-refusal-'));
+    try {
+      const source=path.join(root,'issue.md');
+      fs.writeFileSync(source,fs.readFileSync('scripts/fixtures/implementation-missing-criteria-issue.md'));
+      const candidate=preCaptureReport(root,{kind:'capture-refused',issue_file:source,command:'capture-criteria',exit:1,reason:'Раздел отсутствует'});
+      const output=path.join(root,'reports/MONO-993-phase-code.json');
+      const saved=publishPhase(candidate,output),body=saved.linear_mutations_pending[0].payload.body;
+      if(change==='refresh')fs.writeFileSync(source,fs.readFileSync(approvedIssue));else fs.unlinkSync(source);
+      assert.doesNotThrow(()=>validatePhase(saved));
+      const ack=await confirmQueue(saved,root,async(action,write)=>{
+        assert.equal(action,'reconcile');assert.equal(write.payload.body,body);
+        return {state:'present',evidence:'fixture read-back of the original unchanged refusal comment'};
+      });
+      assert.equal(ack.status,'confirmed');
+      assert.deepEqual(publishPhase(saved,output),saved,'lost-response replay preserves the exact saved report');
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+  }
 });
 
 test('ambiguous-heading-level reports refusal without inventing missing labels', () => {

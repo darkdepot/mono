@@ -88,7 +88,7 @@ export function captureCriteria({ root, issue, attempt, issueFile }) {
 }
 
 // The only exits that have no approved list are refusals before capture.
-// A capture refusal is checked against its source, never a report-supplied list.
+// Publication observes the actual rejected source; saved reports retain that evidence.
 export function preCaptureStop(report) {
   const stop = report.pre_capture_stop;
   if (!stop || report.phase !== 'code' || report.kind !== 'phase' || !Array.isArray(report.criteria) || report.criteria.length ||
@@ -100,10 +100,10 @@ export function preCaptureStop(report) {
   if (stop.kind === 'start-refused') return typeof stop.verdict === 'string' && stop.verdict.trim() &&
     (stop.exit !== 0 || stop.verdict !== 'pass') ? { reason: stop.reason, expected_format, missing_labels: [] } : null;
   if (report.phase_result !== 'blocked' || stop.exit === 0 || !path.isAbsolute(stop.issue_file ?? '')) return null;
-  const body = fs.readFileSync(stop.issue_file, 'utf8');
+  const body = typeof stop.source_text === 'string' ? stop.source_text : fs.readFileSync(stop.issue_file, 'utf8');
   try { acceptanceCriteria(body); } catch (error) {
     const lines = body.split(/\r?\n/u);
-    return { reason: `${stop.reason}; ${error.message}`, expected_format,
+    return { reason: `${stop.reason}; ${error.message}`, expected_format, source_text: body,
       missing_labels: expected_format.filter((_, index) => !lines.some(line => index === 0
         ? acceptanceLabels.has(acceptanceHeading(line)?.[2]) : [...acceptanceLabels.values()].includes(line.trim()))) };
   }

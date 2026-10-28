@@ -299,6 +299,18 @@ export function classifyQueue(report, root) {
 export function publishPhase(report, output, previousConfirmation, root = previousConfirmation
   ? path.dirname(path.dirname(previousConfirmation)) : path.dirname(path.dirname(output))) {
   validatePhase(report);
+  if (report.phase === 'code' && report.pre_capture_stop?.kind === 'capture-refused') {
+    const history = codeHistory(root, report, path.dirname(output));
+    const saved = fs.existsSync(history) ? readJson(history) : null;
+    // Only exact replay may reuse source evidence; a new publication observes the actual source.
+    if (!saved || canonical(saved) !== canonical(report)) {
+      report = structuredClone(report);
+      delete report.pre_capture_stop.source_text;
+      const refusal = preCaptureStop(report);
+      if (refusal) report.pre_capture_stop.source_text = refusal.source_text;
+      validatePhase(report);
+    }
+  }
   if (implementationExit(report)) requireApprovedCriteria(report, root);
   const previous = fs.existsSync(output) ? validatePhase(readJson(output)) : null;
   report = preparePublication(report, previous, root, path.dirname(output));
