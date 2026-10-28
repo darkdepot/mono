@@ -138,8 +138,8 @@ Workflow states:
    - One Project chain at a time: stage agents ask the same questions and show the
      same result as to owner; answer with label and reason on that version.
      Idea in your session: follow references/owner-dialog.md — finish service
-     work, description in chat, immediately the window in the same message with
-     no intervening call or turn end; relay only owner's press. Idea shown-version
+     work; question carries the decision/recommendation and option tradeoffs;
+     host-specific window/description order; relay only owner's press. Idea shown-version
      files and notes are written by shell after the press, before Linear writes.
      Only a delegated Project allows autonomous Research/work start. First exemplars and
      new taste rules stay with owner. Their words reopen approvals.
