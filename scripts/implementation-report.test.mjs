@@ -33,6 +33,7 @@ for (const [name, file, before, after, pattern] of [
   ['capture-refusal-publication', 'delivery-criteria.mjs', 'const stop = report.pre_capture_stop;', 'return null; const stop = report.pre_capture_stop;', '^stop-after-capture-refusal-'],
   ['start-refusal-publication', 'delivery-criteria.mjs', 'const stop = report.pre_capture_stop;', 'return null; const stop = report.pre_capture_stop;', '^stop-after-start-refusal'],
   ['completed-without-capture', 'delivery-criteria.mjs', "fail('missing immutable delivery-start capture');", 'return;', '^work-without-capture'],
+  ['missing-top-level-head', 'delivery-state.mjs', '  validatePhase(report);\n  if (report.phase ===', '  report.head ??= report.capsule.head; validatePhase(report);\n  if (report.phase ===', '^publication-missing-top-level-head'],
   ['saved-refusal-source', 'delivery-criteria.mjs', "typeof stop.source_text === 'string' ? stop.source_text : ", '', '^saved-capture-refusal'],
   ['initial-refusal-source', 'delivery-state.mjs', 'delete report.pre_capture_stop.source_text;', 'void 0;', '^work-without-capture'],
 ]) test(`implementation deliberate-break ${name} makes the named regression red`, () => {
@@ -161,6 +162,17 @@ function report(root, source = approvedIssue) {
       worktree_fingerprint: 'c'.repeat(64) })),
     linear_mutations_pending: [], capsule: { phase: 'code', head, open_queue: [], decisions: [], writable_roots: [root] } };
 }
+
+test('publication-missing-top-level-head refuses a capsule-only head before writing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-missing-report-head-'));
+  try {
+    const candidate = report(root), output = path.join(root, 'reports/MONO-993-phase-code.json');
+    delete candidate.head;
+    assert.throws(() => publishPhase(candidate, output, undefined, root), /invalid phase identity/);
+    assert.equal(fs.existsSync(output), false);
+    assert.equal(candidate.capsule.head, candidate.criteria[0].head, 'nested proof is present but cannot replace delivered identity');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 const cases = [
   ['missing criteria', r => { delete r.criteria; }],

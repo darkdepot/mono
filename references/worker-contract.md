@@ -29,7 +29,7 @@ Append `--source-commit` when the dispatch supplies `sourceCommit`.
 
 ```bash
 node '<pack-root>/scripts/verify-pack-state.mjs' identity \
-  --pack-root '<pack-root>' --pack-version '<dispatch packVersion>' \
+  --pack-root '<pack-root>' --pack-version '<pin>' \
   --surface-revision '<dispatch surfaceRevision>'
 ```
 
@@ -145,10 +145,10 @@ report/chat omit human lead.
 
 ## Delivery Reports and Capsule
 
-One dispatch: green/parked terminal; ready/implemented-needs-preflight intermediate.
+Dispatch: green/parked terminal; ready/implemented-needs-preflight intermediate.
 Stops park, no respawn; standalone retains statuses/certificates.
 reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json or denied-write .orchestrator,
-never both. Final fields + phase/positive increasing sequence/kind
+never both. Final fields + phase/increasing positive sequence/kind
 (phase|confirmation-request)/head/phase_result. Capsule phase/head match;
 open_queue=ordered linear_mutations_pending. Writes: stable id/operation/target/
 payload; changed payload→new ID, new report→new collectionId. Keep obligations
@@ -156,22 +156,21 @@ across heads, omit confirmed writes; certificate: append #/certificate once.
 
 Publish/wait: delivery-state.mjs; confirmation:
 confirmations/<ISSUE-KEY>-phase-<phase>-a<N>-s<sequence>.confirmed.json.
-Wait rejects paths inside dispatch-derived capsule.writable_roots; binds report
-digest/issue/attempt/phase/sequence/verified results. Reconcile Linear writes/collection receipts; apply missing only, fsync
+Wait rejects dispatch-derived capsule.writable_roots paths; binds report digest/issue/attempt/phase/
+sequence/verified results. Reconcile writes/collection receipts; apply missing only, fsync
 consumed/<ISSUE-KEY>-a<N>/ results; confirm whole queue. Unknown/conflict/read-error
-or partial/stale/foreign confirmation blocks. Reconcile lost responses/comments.
-Resume active dispatch/capsule and actual branch after interruption; preserve done/
-foreign changes, never reset/repeat applied moves/writes. Timeout
+or partial/stale/foreign confirmation blocks. Reconcile lost replies/comments.
+Resume dispatch/capsule/actual branch; preserve done/foreign changes; never reset/
+repeat applied moves/writes. Timeout
 orchestration.delivery.confirmationTimeoutSec (default 1800 seconds) parks
 write-unconfirmed (запись не подтверждена).
 
-Only the generated implemented-needs-preflight comment defers waiting. Unknown/other
-writes and empty queues wait. publish generates full code-exit comments; stops wait
-in their queue, no start-comment queue. Preflight carries pending code comments;
-revisions use new IDs and mark old comments stale, pending or applied. Immutable
-sequence snapshots beside phase reports bind capsule.deferred_reports sequence/
-reportDigest. Predecessor checks verify fingerprints/carried/replacing comments.
-Preflight confirms all before formal review, no extra Ship check. Green requires
+Only generated implemented-needs-preflight comments defer waiting; other/unknown
+writes and empty queues wait. publish generates full code-exit comments; stops wait,
+no start-comment queue. Preflight carries pending code comments;
+revisions use new IDs and mark old comments stale, pending or applied. Immutable sequence snapshots beside phase reports bind capsule.deferred_reports
+sequence/reportDigest; predecessor checks verify fingerprints/carried/replacing comments.
+Preflight confirms all before formal review, no extra Ship check. Green needs
 all obligations. Confirm drift before PR, ready before review, In Review/PR chip after PR.
 
 Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
@@ -179,7 +178,7 @@ Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
 worktree/orchestrator. Orchestrator collect:true only; worker collect:false.
 Keys grant no writes; hostile operator out of scope (one user/host).
 
-After amend use "Effective attempt pins" pins.v<n>.json, no report version field.
+Amend: "Effective attempt pins" pins.v<n>.json; no report version field.
 Commit; collect:false exit 2 is pending. Publish only returned publishRequest in
 payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
@@ -197,86 +196,84 @@ existing window/review thresholds/declines/class stops/caps unchanged.
 
 ## Implementation exit evidence
 
-Code exits (any packVersion): criteria, summary (2–3 product-language lines),
+Code exits: criteria, summary (2–3 product-language lines),
 not_built/not_verified arrays (possibly empty); phase_result string.
-After start admission capture-criteria freezes snapshot Issue/standalone start-read
+After admission capture-criteria freezes Issue snapshot/standalone start-read
 «Готово, когда:» into <root>/reports/<KEY>-criteria-a<N>.json, never report fields.
-Immutable; publication checks every item in order before writes: no omission,
-addition, rewording or reorder, whitespace normalization only. Standalone root:
+Immutable; publication checks each item in order before writes: no omission/addition/
+rewording/reorder, whitespace normalization only. Standalone:
 uncommitted .orchestrator. «Как проверить» separately in verification_items.
 criteria: criterion, done:boolean, outcome:confirmed|unverified|broken,
 proof (before edits), result (observed), head (40 hex), worktree_fingerprint (64 hex).
 confirmed: done:true, command exit 0 on recorded delivered head/fingerprint after
-last relevant edit, including dirty edits. Passing subtests of failed runs cannot
-confirm; narrow successful runs can. Fingerprint only by
+last relevant edit, including dirty edits. Failed-run subtests cannot confirm; narrow passing runs can. Fingerprint only by
 `node <pack-root>/scripts/worktree-fingerprint.mjs --worktree <worktree> --delivery-root <delivery-root>`;
-command in criterion proof. SHA-256 stream: `git diff --binary HEAD`, then sorted
+Command in criterion proof. SHA-256: `git diff --binary HEAD`, then sorted
 nonignored untracked files (`git ls-files --others --exclude-standard`), each:
 path, NUL, content SHA-256 hex, NUL. Both sources exclude only delivery-root paths
-when inside the worktree (`.orchestrator/` standalone). No homemade hashes/other
-exclusions; report/chronology in delivery-root.
+when inside the worktree (`.orchestrator/` standalone). No other hashes/exclusions; report/chronology in delivery-root.
 not_built:[{what,reason}]; not_verified:[{what,why,risk}], one per unverified
 criterion, what=criterion. unverified/done:true built/untested; done:false unfinished;
 broken never becomes unverified. Screen visibility without browser: unverified,
 even with passing HTML tests. Summary: «экран в браузере не проверен».
 Tiny text-only summary exactly 3 lines: result; «поведение не меняется» exception
-with reason/check boundary; Preflight handoff. Lower evidence layers do not count.
-One Issue comment: summary → «Не проверено» → «Найдена поломка» → evidence
+with reason/check boundary; Preflight handoff. Evidence layers excluded.
+Issue comment: summary → «Не проверено» → «Найдена поломка» → evidence
 (criteria, significant-state table before edits, exclusions, decisions).
 Breakage/unfinished/no progress: blocked, saved state. implemented-needs-preflight:
 all done:true/no broken; publication rejects incomplete success.
 
-Only pre-capture refusals permit empty criteria without a saved list:
+Empty criteria without capture only for pre-capture refusals:
 capture refusal (missing/ambiguous/unsupported-language section): blocked;
 start refusal: blocked|needs-human. pre_capture_stop: kind=capture-refused|start-refused,
 command/exit/reason; capture also absolute issue_file, start also verdict.
-Exit 0 with pass is not refusal. Comment: refusal reason, expected format
+Exit 0/pass is no refusal. Comment: reason, expected format
 «# Критерии приемки» / «Готово, когда:», missing labels only when absent.
-Never invent criteria. Other reports require capture/full ordered comparison;
+Never invent criteria; other reports require capture/full ordered comparison;
 completed work without it is refused.
 
 ## Worker Report
 
 Path: ~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-mono-deliver.json;
-denial: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON,
+denied: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON;
 verbatim verification, AFK stops.
 
 ```json
 {
-  "issue": "<ISSUE-KEY>",
-  "stage": "mono-deliver",
-  "attempt": 1,
-  "status": "<green | parked>",
-  "reason": "<parked reason|null if green>",
-  "text": "<outcome/evidence/next/owner>",
-  "packVersion": "<dispatch packVersion>",
-  "sourceCommit": "<dispatch sourceCommit, omit when absent>",
-  "surfaceRevision": <repeat the dispatch pin, integer>,
-  "branch": "<branch>",
-  "summary": "<summary>",
-  "criteria": [{"criterion":"<criterion>","done":true,"outcome":"confirmed","proof":"<method>","result":"<observation>","head":"<sha>","worktree_fingerprint":"<sha256>"}],
-  "not_built": [], "not_verified": [],
-  "changed_files": [],
-  "tests": { "run": "<commands>", "result": "<result>" },
-  "verification_items": [
-    { "item": "<item>", "status": "pass | deferred | not-run", "evidence": "<reason/owner>" }
+  "issue":"<ISSUE-KEY>",
+  "stage":"mono-deliver",
+  "attempt":1,
+  "status":"<green | parked>",
+  "reason":"<parked reason|null if green>",
+  "text":"<result/proof/next/owner>",
+  "packVersion":"<pin>",
+  "sourceCommit":"<pin, omit if absent>",
+  "surfaceRevision":<repeat the dispatch pin, integer>,
+  "branch":"<branch>",
+  "head":"<sha>",
+  "phase_result":"<outcome>",
+  "summary":"<summary>",
+  "criteria":[{"criterion":"<text>","done":true,"outcome":"confirmed","proof":"<proof>","result":"<result>","head":"<sha>","worktree_fingerprint":"<sha256>"}],
+  "not_built":[],"not_verified":[],
+  "changed_files":[],
+  "tests":{"run":"<cmd>","result":"<result>"},
+  "verification_items":[
+    {"item":"<item>","status":"pass | deferred | not-run","evidence":"<reason/owner>"}
   ],
-  "question": "<text|null>",
-  "recommendation": "<text|null>",
-  "linear_mutations_pending": [],
-  "capsule": { "phase": "<code | preflight | ship>", "head": "<sha>", "open_queue": [], "decisions": [], "local_passes": [{"id":"<stable pass id>","head":"<reviewed sha>","result":"<clean|findings>"}], "writable_roots": ["<dispatch grant>"] },
-  "certificate": "<certificate|null>",
-  "notes": "<facts|null>",
-  "next": "<mono:deploy|recovery owner>"
+  "question":"<text|null>",
+  "recommendation":"<text|null>",
+  "linear_mutations_pending":[],
+  "capsule":{"phase":"<code | preflight | ship>","head":"<sha>","open_queue":[],"decisions":[],"local_passes":[{"id":"<id>","head":"<sha>","result":"<clean|findings>"}],"writable_roots":["<grant>"] },
+  "certificate":"<text|null>",
+  "notes":"<facts|null>",
+  "next":"<mono:deploy|recovery owner>"
 }
 ```
 
 Parked reasons: blocked, needs-decision, needs-human, drift-candidate, timed-out,
 scope-drift-needs-handoff, write-unconfirmed, evidence-limit (предел доказательств).
-Decisions: exact question/recommendation. Orchestrator reflects parked in Linear
-this turn/read-back. Green: confirmed queues/current-head gates pass.
+Decisions: exact question/recommendation. Orchestrator records parks in Linear this turn/read-back. Green: confirmed queues/current-head gates pass.
 
 Keep every Issue «Как проверить» line verbatim/in order in verification_items;
-pass | deferred | not-run, never unrun pass; name deferred owner. Evidence names
-judgment check and inspected state. Repeat pins; standalone dispatched status,
+pass | deferred | not-run, never unrun pass; name deferred owner. Name judgment/state. Repeat pins; standalone dispatched status,
 sequenced intermediate.

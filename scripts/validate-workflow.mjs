@@ -6257,6 +6257,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "head", "phase_result",
   // Window tools and shared dialogue path; step order is reviewed.
   "request_user_input", "request_user_input_async", "owner-dialog.md",
   // MONO-239: invocation flags, template fields/placeholders and dialogue skeleton.
@@ -7087,6 +7088,9 @@ function validateAe6Fixtures() {
     }
     restore(); check();
     console.log("PASS AE6 equivalent prose: skill, lane and cost rewordings green");
+    for (const field of ["head", "phase_result"]) negative(`worker report missing top-level ${field}`,
+      () => change("references/worker-contract.md", text => text.replace(new RegExp(`^  "${field}":\\s*[^\\n]+\\n`, "m"), "")),
+      "worker report: missing mandatory machine field");
     negative("README rule target renamed", () => change("AGENTS.md", (text) => text.replace("## Change Discipline\n", "## Renamed fixture\n")), "README.md K-31:");
     negative("README required section removed", () => change("README.md", (text) => text.replace("## Gates\n", "")), "README.md: missing or duplicate required section Gates");
     negative("README target file missing", () => change("README.md", (text) => text.replace("AGENTS.md#change-discipline", "missing.md#change-discipline").replaceAll("AGENTS.md#change-discipline", "missing.md#change-discipline")), "README.md K-31:");
@@ -7200,7 +7204,7 @@ function validateMachineShapes() {
     if (!record || required.some((field) => !Object.hasOwn(record, field))) fail(`${label}: missing mandatory machine field`);
   }
   const report = example("references/worker-contract.md", (value) => value.issue === "<ISSUE-KEY>" && Object.hasOwn(value, "stage"));
-  fields(report, ["issue", "stage", "status", "packVersion", "sourceCommit", "surfaceRevision", "branch", "changed_files", "tests", "verification_items", "question", "recommendation", "linear_mutations_pending", "certificate", "notes", "next"], "worker report");
+  fields(report, ["issue", "stage", "head", "phase_result", "status", "packVersion", "sourceCommit", "surfaceRevision", "branch", "changed_files", "tests", "verification_items", "question", "recommendation", "linear_mutations_pending", "certificate", "notes", "next"], "worker report");
   if (report) {
     fields(report.tests, ["run", "result"], "report tests");
     fields(report.verification_items?.[0], ["item", "status", "evidence"], "verification item");
