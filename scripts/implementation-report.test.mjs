@@ -86,6 +86,7 @@ test('stop-after-start-refusal publishes blocked or integrity stop before captur
       assert.match(out.linear_mutations_pending[0].payload.body, /Проверка старта отказала/);
       assert.match(out.linear_mutations_pending[0].payload.body, /# Критерии приемки/);
       assert.doesNotMatch(out.linear_mutations_pending[0].payload.body, /Недостающие метки/);
+      assert.throws(() => publishPhase({ ...r, kind: 'confirmation-request' }, path.join(root, 'reports/bad.json')), /implementation report/);
       assert.throws(() => publishPhase({ ...r, pre_capture_stop: { ...r.pre_capture_stop, exit: 0, verdict: 'pass' } }, path.join(root, 'bad.json')), /implementation report/);
       const incomplete = { ...r, pre_capture_stop: { ...r.pre_capture_stop } }; delete incomplete.pre_capture_stop.verdict;
       assert.throws(() => publishPhase(incomplete, path.join(root, 'bad.json')), /implementation report/);

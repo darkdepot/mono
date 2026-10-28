@@ -91,7 +91,7 @@ export function captureCriteria({ root, issue, attempt, issueFile }) {
 // A capture refusal is checked against its source, never a report-supplied list.
 export function preCaptureStop(report) {
   const stop = report.pre_capture_stop;
-  if (!stop || !Array.isArray(report.criteria) || report.criteria.length ||
+  if (!stop || report.phase !== 'code' || report.kind !== 'phase' || !Array.isArray(report.criteria) || report.criteria.length ||
       !['blocked', 'needs-human'].includes(report.phase_result) ||
       !['capture-refused', 'start-refused'].includes(stop.kind) ||
       !Number.isInteger(stop.exit) || stop.exit < 0 ||
