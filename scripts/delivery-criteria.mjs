@@ -18,6 +18,7 @@ const acceptanceLabels = new Map([
   ['Критерии приемки', 'Готово, когда:'],
   ['Acceptance criteria', 'Done when:'],
 ]);
+const acceptanceHeading = line => /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/u.exec(line);
 
 // Literal canonical Issue section; ambiguous/missing input stops capture rather
 // than guessing a shorter acceptance list.
@@ -34,7 +35,7 @@ export function acceptanceCriteria(body) {
       continue;
     }
     if (fence) continue;
-    const heading = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/u.exec(line);
+    const heading = acceptanceHeading(line);
     if (heading) {
       if (section && heading[1].length <= depth) section = false;
       if (acceptanceLabels.has(heading[2])) {
@@ -101,8 +102,10 @@ export function preCaptureStop(report) {
   if (report.phase_result !== 'blocked' || stop.exit === 0 || !path.isAbsolute(stop.issue_file ?? '')) return null;
   const body = fs.readFileSync(stop.issue_file, 'utf8');
   try { acceptanceCriteria(body); } catch (error) {
+    const lines = body.split(/\r?\n/u);
     return { reason: `${stop.reason}; ${error.message}`, expected_format,
-      missing_labels: expected_format.filter(label => !body.split(/\r?\n/u).some(line => line.trim() === label)) };
+      missing_labels: expected_format.filter((_, index) => !lines.some(line => index === 0
+        ? acceptanceLabels.has(acceptanceHeading(line)?.[2]) : [...acceptanceLabels.values()].includes(line.trim()))) };
   }
   return null;
 }

@@ -107,6 +107,19 @@ test('work-without-capture still refuses completed and ordinary stopped reports'
     assert.throws(() => publishPhase(stop, path.join(root, 'stop.json')), /implementation report/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('ambiguous-heading-level reports refusal without inventing missing labels', () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-refusal-labels-'));
+  try {
+    const source=path.join(root,'ambiguous.md');
+    fs.writeFileSync(source,fs.readFileSync('scripts/fixtures/implementation-ambiguous-criteria-issue.md','utf8')
+      .replace('# Критерии приемки','## Критерии приемки ##'));
+    assert.throws(()=>capture(root,source),/duplicate acceptance section/);
+    const r=preCaptureReport(root,{kind:'capture-refused',issue_file:source,command:'capture-criteria',exit:1,reason:'Неоднозначный раздел'});
+    const out=publishPhase(r,path.join(root,'reports/out.json'));
+    assert.doesNotMatch(out.linear_mutations_pending[0].payload.body,/Недостающие метки/);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
 function capture(root, source = approvedIssue) {
   return captureCriteria({ root, issue: 'MONO-993', attempt: 1, issueFile: source });
 }
