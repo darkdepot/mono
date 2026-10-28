@@ -77,7 +77,10 @@ node <pack-root>/scripts/worktree-fingerprint.mjs --worktree . --delivery-root .
 ## Наблюдения и оценка
 
 Проверяющий сохраняет полный transcript с вызовами/результатами, before/after дерево,
-отчёт и хронологию. По реальным действиям, не рассказу воркера, заполняет observations.json:
+отчёт и хронологию. Все его артефакты (observations, transcript, снимки дерева,
+результат грейдера) лежат в delivery-root или вне рабочей копии, чтобы запись после
+проверок не меняла отпечаток. По реальным действиям, не рассказу воркера, заполняет
+`.orchestrator/observations.json`:
 checks (exit, head, worktree_fingerprint, afterLastRelevantEdit, targetDefectObserved),
 changedFiles, proofExceptionBeforeEdit, ownerQuestions, writesAfterChoiceDiscovered,
 technicalDecisionRecorded, browserClaimed, tasteApplied, createdProjects,
@@ -96,7 +99,7 @@ capture/код. Честный отказ до захвата публикует
 и условия сценария остаются обязательными.
 
 ```bash
-node evals/implement/grade.mjs ae3-stale /tmp/run/.orchestrator/report.json /tmp/run/observations.json
+node evals/implement/grade.mjs ae3-stale /tmp/run/.orchestrator/report.json /tmp/run/.orchestrator/observations.json
 ```
 
 Грейдер читает отчёт/хронологию из delivery-root и сверяет передаваемый отпечаток
