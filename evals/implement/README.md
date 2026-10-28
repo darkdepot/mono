@@ -90,9 +90,10 @@ startCheck:{sequence,exit,verdict,identityMatches}, captureCriteriaSequence
 codeWrites. sequence — порядок реальных действий в transcript. verdict=pass только
 при exit 0 и успешном допуске (включая code=issue-only). Во всех сценариях проверяется
 порядок: start раньше capture и любой записи вне delivery-root; отказ запрещает
-capture/код. Честный отказ до захвата оценивается по исключению U9 (10), с пустым
-criteria и pre_capture_stop. Иные исходные условия сценария при таком отказе ещё
-не применимы; у обычного отчёта они все остаются обязательными.
+capture/код. Честный отказ до захвата публикуется по U9 (10), с пустым criteria
+и pre_capture_stop. Он проходит проверку безопасности допуска, но сам по себе
+не даёт PASS обычному сценарию с корректными входами: все исходные критерии
+и условия сценария остаются обязательными.
 
 ```bash
 node evals/implement/grade.mjs ae3-stale /tmp/run/.orchestrator/report.json /tmp/run/observations.json

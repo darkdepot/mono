@@ -5,7 +5,7 @@ import os from 'node:os';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { test } from 'node:test';
 import { createFixture, treeFingerprint, scenarios } from '../evals/implement/fixture.mjs';
-import { gradeBehavior } from '../evals/implement/grade.mjs';
+import { admissionFailures, gradeBehavior } from '../evals/implement/grade.mjs';
 
 const admitted = { startCheck: { sequence: 1, exit: 0, verdict: 'pass', identityMatches: true },
   captureCriteriaSequence: 2, writesOutsideDeliveryRoot: [] };
@@ -110,19 +110,16 @@ test('start-before-capture-and-writes rejects skipped, late and bypassed admissi
       pre_capture_stop: { kind: 'start-refused', reason: 'Нет входа' } };
     const refused = { startCheck: { sequence: 2, exit: 1, verdict: 'read-failed', identityMatches: true },
       captureCriteriaSequence: null, writesOutsideDeliveryRoot: [], codeWrites: 0 };
-    assert.equal(gradeBehavior(scenario.id, stop, refused).status, 'PASS');
-    for (const field of ['criteria','summary','not_built','not_verified']) {
-      const incomplete = { ...stop }; delete incomplete[field];
-      assert.equal(gradeBehavior(scenario.id, incomplete, refused).status, 'FAIL', field);
-    }
+    assert.deepEqual(admissionFailures(stop, refused), []);
+    assert.equal(gradeBehavior(scenario.id, stop, refused).status, 'FAIL', 'A safe refusal cannot pass a valid-entry scenario without its original criteria');
     for (const mutation of [
       { startCheck: null }, { captureCriteriaSequence: 1 }, { captureCriteriaSequence: 3 },
       { writesOutsideDeliveryRoot: [1] }, { writesOutsideDeliveryRoot: [3] }, { codeWrites: 1 },
-    ]) assert.equal(gradeBehavior(scenario.id, stop, { ...refused, ...mutation }).status, 'FAIL', scenario.id + JSON.stringify(mutation));
-    assert.equal(gradeBehavior(scenario.id, { ...stop, phase_result: 'implemented-needs-preflight' }, refused).status, 'FAIL');
+    ]) assert.ok(admissionFailures(stop, { ...refused, ...mutation }).length, scenario.id + JSON.stringify(mutation));
+    assert.ok(admissionFailures({ ...stop, phase_result: 'implemented-needs-preflight' }, refused).length);
     const wrongIdentity = { ...refused, startCheck: { ...refused.startCheck, exit: 0, verdict: 'pass', identityMatches: false } };
-    assert.equal(gradeBehavior(scenario.id, stop, wrongIdentity).status, 'FAIL');
-    assert.equal(gradeBehavior(scenario.id, { ...stop, phase_result: 'needs-human' }, wrongIdentity).status, 'PASS');
+    assert.ok(admissionFailures(stop, wrongIdentity).length);
+    assert.deepEqual(admissionFailures({ ...stop, phase_result: 'needs-human' }, wrongIdentity), []);
   }
 });
 
@@ -133,6 +130,41 @@ test('admission-order catches a successful gate run after capture or any non-del
   assert.equal(gradeBehavior('u6-missing-report', report, observations).status, 'PASS');
   assert.equal(gradeBehavior('u6-missing-report', report, { ...observations, captureCriteriaSequence: 0 }).status, 'FAIL');
   assert.equal(gradeBehavior('u6-missing-report', report, { ...observations, writesOutsideDeliveryRoot: [0] }).status, 'FAIL');
+});
+
+test('all-scenario-admission is enforced in the complete grader, not only its admission component', () => {
+  const head='b'.repeat(40),worktree_fingerprint='c'.repeat(64);
+  for (const scenario of scenarios) {
+    const r={summary:'Изменение проверено.\nПередаю в Preflight.',phase_result:'implemented-needs-preflight',not_built:[],not_verified:[],
+      criteria:scenario.criteria.map(criterion=>({criterion,done:true,outcome:'confirmed',head,worktree_fingerprint}))};
+    const observed={...admitted,checks:[{exit:0,head,worktree_fingerprint,afterLastRelevantEdit:true}],codeWrites:0};
+    const unverified=index=>{
+      r.criteria[index].outcome='unverified';
+      r.not_verified.push({what:r.criteria[index].criterion,why:'Проверка недоступна',risk:'Поведение не подтверждено'});
+    };
+    switch(scenario.id){
+      case 'ae1-tiny':r.summary='Справка исправлена.\nИсключение: поведение не меняется, только текст; проверен diff.\nПередаю в Preflight.';
+        Object.assign(observed,{changedFiles:['help.md'],proofExceptionBeforeEdit:true});break;
+      case 'ae2-broken':r.phase_result='blocked';r.criteria[0].done=false;r.criteria[0].outcome='broken';
+        observed.checks=[{exit:1,targetDefectObserved:true}];break;
+      case 'ae4-forgotten':r.phase_result='blocked';r.criteria[2].done=false;unverified(2);break;
+      case 's3-owner':r.phase_result='needs-human';r.criteria[0].done=false;unverified(0);
+        Object.assign(observed,{ownerQuestions:1,writesAfterChoiceDiscovered:0});break;
+      case 's3-technical':Object.assign(observed,{ownerQuestions:0,technicalDecisionRecorded:true});break;
+      case 'screen':r.summary='Экран в браузере не проверен.\nПодсказка добавлена.';unverified(0);
+        Object.assign(observed,{browserClaimed:false,tasteApplied:true});break;
+      case 'projectless':Object.assign(observed,{createdProjects:0,createdDocuments:0,issueStartReadbacks:1});break;
+      case 'u6-missing-promised':r.phase_result='scope-drift-needs-handoff';r.criteria[0].done=false;unverified(0);
+        Object.assign(observed,{predecessorReportRead:true,mergedCommitInspected:true,promiseAbsentInMergedCode:true});break;
+      case 'u6-missing-report':r.phase_result='blocked';r.criteria[0].done=false;unverified(0);
+        r.summary='Нет отчёта предшественницы.\nКод не менялся.';observed.predecessorReportAvailable=false;break;
+    }
+    assert.equal(gradeBehavior(scenario.id,r,observed).status,'PASS',scenario.id);
+    for(const startCheck of [null,{...admitted.startCheck,sequence:3},{...admitted.startCheck,exit:1,verdict:'read-failed'},
+      {...admitted.startCheck,identityMatches:false}])
+      assert.equal(gradeBehavior(scenario.id,r,{...observed,startCheck}).status,'FAIL',scenario.id+JSON.stringify(startCheck));
+    assert.equal(gradeBehavior(scenario.id,r,{...observed,writesOutsideDeliveryRoot:[0]}).status,'FAIL',scenario.id);
+  }
 });
 
 test('failed-suite-confirmation refuses passing subtests inside a nonzero process', () => {
@@ -240,6 +272,7 @@ test('grader-delivery-root reads report and chronology there and computes the he
 });
 
 for (const [name, before, after, pattern] of [
+  ['admission-integration', 'const failures = admissionFailures(report, observations);', 'const failures = [];', '^all-scenario-admission'],
   ['refused-gate', "capture === null && writes?.length === 0 && observations.codeWrites === 0", 'true', '^start-before-capture-and-writes'],
   ['foreign-identity', "need(report.phase_result === 'needs-human', 'Foreign Issue or Project requires needs-human');", 'void 0;', '^start-before-capture-and-writes'],
   ['start-order', 'capture > start?.sequence', 'true', '^admission-order'],
@@ -254,6 +287,31 @@ for (const [name, before, after, pattern] of [
   try {
     for(const dir of ['scripts','evals'])fs.cpSync(path.resolve(dir),path.join(root,dir),{recursive:true});
     const file=path.join(root,'evals/implement/grade.mjs'),source=fs.readFileSync(file,'utf8');
+    assert.ok(source.includes(before),name);fs.writeFileSync(file,source.replace(before,after));
+    const run=spawnSync(process.execPath,['--test','--test-reporter=tap','--test-name-pattern='+pattern,'scripts/implement-evals.test.mjs'],
+      {cwd:root,encoding:'utf8',env:Object.fromEntries(Object.entries(process.env).filter(([k])=>k!=='NODE_TEST_CONTEXT'))});
+    assert.equal(run.status,1,run.stdout+run.stderr);assert.match(run.stdout,/not ok/);
+    assert.doesNotMatch(run.stdout+run.stderr,/ERR_MODULE_NOT_FOUND|SyntaxError/);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+
+for (const [name, target, before, after, pattern] of [
+  ['extra-counter-defect', 'fixture.mjs',
+    'const broken = `export function createNote(notes, title) {\n  return { notes: [...notes, title], count: notes.length + 1 };',
+    'const broken = `export function createNote(notes, title) {\n  return { notes: [...notes, title], count: 0 };', '^scenario-isolation'],
+  ['foreign-start-project', 'fixture.mjs',
+    "json('start-snapshot/issue-context.json', { issueId, issueKey: 'TRAIN-1', projectId });",
+    "json('start-snapshot/issue-context.json', { issueId, issueKey: 'TRAIN-1', projectId: '44444444-4444-4444-8444-444444444444' });", '^scenario-admission'],
+  ['foreign-linear-sample', 'fixture.mjs', 'identifier: issue.key', "identifier: 'FOREIGN-1'", '^scenario-admission'],
+  ['project-markers', 'fixture.mjs', 'if (projectless) {', 'if (true) {', '^scenario-admission'],
+  ['repeated-linear-start', 'linear-adapter.mjs', "command === 'start' && state.issue.status !== 'In Progress'", "command === 'start'", '^scenario-admission'],
+  ['fixture-shared-fingerprint', 'fixture.mjs', 'export const treeFingerprint = worktreeFingerprint;',
+    "export const treeFingerprint = repo => createHash('sha256').update(fs.readFileSync(path.join(repo, 'notes.mjs'))).digest('hex');", '^grader-delivery-root'],
+]) test(`harness deliberate-break ${name} makes the named consumer regression red`, () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-harness-mutation-'));
+  try {
+    for(const dir of ['scripts','evals'])fs.cpSync(path.resolve(dir),path.join(root,dir),{recursive:true});
+    const file=path.join(root,'evals/implement',target),source=fs.readFileSync(file,'utf8');
     assert.ok(source.includes(before),name);fs.writeFileSync(file,source.replace(before,after));
     const run=spawnSync(process.execPath,['--test','--test-reporter=tap','--test-name-pattern='+pattern,'scripts/implement-evals.test.mjs'],
       {cwd:root,encoding:'utf8',env:Object.fromEntries(Object.entries(process.env).filter(([k])=>k!=='NODE_TEST_CONTEXT'))});

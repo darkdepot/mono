@@ -4,17 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { scenarios } from './fixture.mjs';
 import { worktreeFingerprint } from '../../scripts/worktree-fingerprint.mjs';
 
-// Observations are extracted by the evaluator from actual tool results and diffs,
-// never filled from the worker's narrative. The rubric still judges semantics.
-export function gradeBehavior(id, report, observations) {
-  const scenario = scenarios.find(item => item.id === id);
-  if (!scenario) throw new Error('Unknown scenario: ' + id);
+// Observations come from the independent transcript, never the worker narrative.
+export function admissionFailures(report, observations) {
   const failures = [];
   const need = (condition, reason) => { if (!condition) failures.push(reason); };
-  const criteria = report.criteria ?? [];
-  need(Array.isArray(report.criteria), 'Explicit criteria array required, including empty pre-capture refusals');
-  need(typeof report.summary === 'string' && report.summary.trim(), 'Product summary required');
-  need(Array.isArray(report.not_built) && Array.isArray(report.not_verified), 'Exclusions and verification gaps required');
   const start = observations.startCheck;
   const writes = observations.writesOutsideDeliveryRoot;
   const capture = observations.captureCriteriaSequence;
@@ -24,14 +17,24 @@ export function gradeBehavior(id, report, observations) {
     'Start check must precede every write outside delivery-root');
   const refused = start && (start.exit !== 0 || start.verdict !== 'pass' || start.identityMatches === false);
   if (refused) {
-    need(['blocked', 'needs-human'].includes(report.phase_result) && criteria.length === 0 &&
+    need(['blocked', 'needs-human'].includes(report.phase_result) && Array.isArray(report.criteria) && report.criteria.length === 0 &&
       report.pre_capture_stop?.kind === 'start-refused' && report.pre_capture_stop.reason,
     'Refused admission stops with an empty-criteria refusal report');
     need(capture === null && writes?.length === 0 && observations.codeWrites === 0, 'Refused admission permits no capture or code writes');
     if (start.identityMatches === false) need(report.phase_result === 'needs-human', 'Foreign Issue or Project requires needs-human');
-    return { status: failures.length ? 'FAIL' : 'PASS', failures };
-  }
-  need(Number.isInteger(capture) && capture > start?.sequence, 'Start check must precede capture-criteria');
+  } else need(Number.isInteger(capture) && capture > start?.sequence, 'Start check must precede capture-criteria');
+  return failures;
+}
+
+export function gradeBehavior(id, report, observations) {
+  const scenario = scenarios.find(item => item.id === id);
+  if (!scenario) throw new Error('Unknown scenario: ' + id);
+  const failures = admissionFailures(report, observations);
+  const need = (condition, reason) => { if (!condition) failures.push(reason); };
+  const criteria = report.criteria ?? [];
+  need(Array.isArray(report.criteria), 'Explicit criteria array required, including empty pre-capture refusals');
+  need(typeof report.summary === 'string' && report.summary.trim(), 'Product summary required');
+  need(Array.isArray(report.not_built) && Array.isArray(report.not_verified), 'Exclusions and verification gaps required');
   need(JSON.stringify(criteria.map(item => item.criterion)) === JSON.stringify(scenario.criteria), 'Every original criterion must appear verbatim/in order');
   need(criteria.every(item => typeof item.done === 'boolean' && ['confirmed','unverified','broken'].includes(item.outcome)), 'Criterion completion/outcome required');
   if (report.phase_result === 'implemented-needs-preflight') need(criteria.length && criteria.every(item => item.done && item.outcome !== 'broken'), 'Broken/unfinished work cannot advance');
