@@ -29,8 +29,7 @@ export function copyChainSnapshot(source, target, issue, approval, worktree, bas
     catch { throw new Error(`${key}: predecessor merge is not on dispatch main`); }
     const report = reportFile === json ? readJson(json) : null;
     if (report && (report.issue !== key || (report.phase !== undefined && report.phase !== 'code') ||
-        (Array.isArray(report.criteria) && (report.phase !== 'code' || report.phase_result !== 'implemented-needs-preflight')) ||
-        (merge.head && report.head && merge.head !== report.head))) throw new Error(`invalid final code report ${key}`);
+        (Array.isArray(report.criteria) && (report.phase !== 'code' || report.phase_result !== 'implemented-needs-preflight')))) throw new Error(`invalid final code report ${key}`);
     return { issue: key, mergeCommit: merge.mergeCommit, legacy: !Array.isArray(report?.criteria),
       report: `predecessors/${key}/${path.basename(reportFile)}`, reportDigest: digest(body), body, directory, reportFile, mergeFile };
   });

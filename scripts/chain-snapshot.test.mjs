@@ -57,3 +57,15 @@ test('chain dispatch blocks missing reports and commits outside main', () => fix
   assert.throws(f.copy, /not on dispatch main/);
   assert.deepEqual(fs.readdirSync(f.target), []);
 }));
+
+test('chain dispatch accepts an earlier code head when Preflight commits advance the merged head', () => fixture(f => {
+  const git = (...args) => execFileSync('git', ['-C', f.root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'Preflight commit and review fix');
+  const merged = git('rev-parse', 'HEAD');
+  f.write(path.join(f.directory, 'merge.json'), { issue: f.key, mergeCommit: merged, head: merged });
+  f.write(path.join(f.directory, 'code-report.json'), { issue: f.key, phase: 'code', phase_result: 'implemented-needs-preflight', head: f.base, criteria: [{ criterion: 'Команда работает' }] });
+  const result = copyChainSnapshot(f.source, f.target, 'MONO-993', 'mono-package: start issues=T1:MONO-991,T2:MONO-993', f.root, merged);
+  assert.equal(result.predecessors[0].mergeCommit, merged);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.target, 'predecessors', f.key, 'code-report.json'))).head, f.base);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.target, 'predecessors', f.key, 'merge.json'))).head, merged);
+}));
