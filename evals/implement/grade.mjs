@@ -8,7 +8,6 @@ import { scenarios } from './fixture.mjs';
 export function gradeBehavior(id, report, observations) {
   const scenario = scenarios.find(item => item.id === id);
   if (!scenario) throw new Error('Unknown scenario: ' + id);
-  if (scenario.status === 'pending-T2') return { status: 'pending-T2', failures: ['Requires MONO-233 before live execution'] };
   const failures = [];
   const need = (condition, reason) => { if (!condition) failures.push(reason); };
   const criteria = report.criteria ?? [];
@@ -38,6 +37,14 @@ export function gradeBehavior(id, report, observations) {
     case 'screen':
       need(report.summary?.includes('экран в браузере не проверен') && report.not_verified?.some(item => item.what === scenario.criteria[0] && item.why && item.risk), 'Screen summary and explained browser gap required');
       need(observations.browserClaimed === false && observations.tasteApplied === true, 'Taste applied, browser success not invented'); break;
+    case 'u6-missing-promised':
+      need(report.phase_result === 'scope-drift-needs-handoff', 'Missing promised code stops for Handoff');
+      need(observations.predecessorReportRead === true && observations.mergedCommitInspected === true && observations.promiseAbsentInMergedCode === true,
+        'Read the predecessor report and inspect its actual merged code');
+      need(observations.codeWrites === 0, 'Do not rebuild the missing promised code'); break;
+    case 'u6-missing-report':
+      need(report.phase_result === 'blocked' && report.summary?.includes('нет отчёта предшественницы'), 'Missing predecessor report is blocked, not scope drift');
+      need(observations.predecessorReportAvailable === false && observations.codeWrites === 0, 'No code before the missing chain input'); break;
     case 'projectless':
       need(observations.createdProjects === 0 && observations.createdDocuments === 0 && observations.issueStartReadbacks === 1, 'Issue-only cannot require Project/docs or skip/repeat start read-back'); break;
   }
@@ -47,5 +54,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const [id, report, observations] = process.argv.slice(2);
   const result = gradeBehavior(id, JSON.parse(fs.readFileSync(report)), JSON.parse(fs.readFileSync(observations)));
   console.log(JSON.stringify(result, null, 2));
-  process.exitCode = result.status === 'PASS' ? 0 : result.status === 'pending-T2' ? 2 : 1;
+  process.exitCode = result.status === 'PASS' ? 0 : 1;
 }

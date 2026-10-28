@@ -277,6 +277,7 @@ export function checkSpawnAvailability(request) {
   const attempts = fs.existsSync(attemptsFile) ? readJson(attemptsFile) : {};
   const used = attempts[request.issue] ?? 0;
   if (!Number.isInteger(used) || used < 0) throw new Error("invalid attempt registry");
+  if (request.attempt !== undefined && request.attempt !== used + 1) throw new Error('stale dispatch attempt');
   if (used >= deliveryConfig(request.config).attemptCap) throw new Error("attempt cap reached");
   return { file, registry, attemptsFile, attempts, used };
 }
@@ -292,7 +293,7 @@ export async function spawnWorker(request, preparation = {}) {
     const { file, registry, attemptsFile, attempts, used } = checkSpawnAvailability(request);
     try {
       await preparation.beforeStart?.();
-      startGate(request);
+      startGate(request, { beforeSpawn: true });
       if (!path.isAbsolute(request.dispatchFile ?? "")) throw new Error("absolute dispatch file required");
       const prompt = fs.readFileSync(request.dispatchFile, "utf8");
       const model_policy = { role: request.role, ...modelRoutes.roles[request.role] };

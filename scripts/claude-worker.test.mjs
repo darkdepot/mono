@@ -176,7 +176,7 @@ async function fixture(run, { auth, config, missingTool = false, shortWindow = f
       OPENAI_API_KEY: secret, CLAUDE_CODE_OAUTH_TOKEN: secret });
     const roots = [repo, path.join(repo, ".git"), path.join(root, "reports"), temp].sort();
     const request = { root, issue: "MONO-999", worktree: repo, branch: "fixture", base: git("rev-parse", "HEAD"),
-      packRoot: pack, skillsRoot: skills, packVersion: fs.readFileSync(path.join(pack, "VERSION"), "utf8").trim(), surfaceRevision: 4,
+      packRoot: pack, skillsRoot: skills, packVersion: fs.readFileSync(path.join(pack, "VERSION"), "utf8").trim(), surfaceRevision: 5,
       role: "worker-claude", transport: "claude-cli", dispatchFile: path.join(root, "task.md"),
       evidenceRoot: path.join(scratch, "evidence"), writable_roots: [temp], workerWritableRoots: roots,
       gates: [], lifecycle_moves: [], config: path.join(repo, ".agents/mono-workflow.config.json"),

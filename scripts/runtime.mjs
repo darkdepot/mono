@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 export const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
-export const SURFACE_REVISION = 4;
+export const SURFACE_REVISION = 5;
 export function runtimePackRoot() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 }

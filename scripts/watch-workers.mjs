@@ -44,7 +44,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { validatePhase, validateConfirmation, confirmationPath, correlatedDeliveryReport } from "./delivery-state.mjs";
+import { validatePhase, validateConfirmation, confirmationPath, correlatedDeliveryReport, requiresConfirmation } from "./delivery-state.mjs";
 import { atomicJson, deliveryConfig, processStart, IDENTITY_FIELDS, identity, packLayout, runtimePackRoot } from "./runtime.mjs";
 
 import { workerTransport } from "./worker-transport.mjs";
@@ -1168,6 +1168,7 @@ function checkPhase(log, entry, nowMs) {
   }
   phases.sort((a, b) => b.publishedAtMs - a.publishedAtMs || b.report.sequence - a.report.sequence);
   const latest = phases[0]; if (!latest) return false;
+  if (!requiresConfirmation(latest.report)) return { waiting: false, pending: false };
   const confirmation = confirmationPath(latest.report, args.root);
   try { validateConfirmation(latest.report, JSON.parse(fs.readFileSync(confirmation, "utf8"))); return false; } catch { /* still awaiting whole queue */ }
   const timeout = entry.confirmationTimeoutSec ?? deliveryConfig().confirmationTimeoutSec;

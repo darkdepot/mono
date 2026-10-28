@@ -16,9 +16,9 @@ keeps statuses.
 ## Orchestration Mode Precedence
 
 Snapshot replaces Linear/resolver; skill owns rules, dispatch facts. Queue after
-gates; confirm application/read-back before progress. Disclose lag; never judge
-unapplied state or infer/skip checks. Missing inputs block. Standalone parks
-needs-decision; interactive retains direct access/approval and handshake.
+gates; confirm before dependent work except the code-report case below. Disclose
+lag; no judging unapplied state/inferred/skipped checks. Missing inputs block.
+Standalone parks needs-decision; interactive keeps direct access/approval/handshake.
 
 ## Pack identity gate invocation
 
@@ -123,12 +123,12 @@ Missing context/disposition blocks; repair: handoff/issue renewal/ship drift.
 ## Execution and artifact handling
 
 Apply `references/execution-quality.md`/`references/artifact-quality.md`.
-Intake: explicit paths → snapshot/reviews → decisions → configured roots → gstack;
-no broad scans; absent roots unavailable. Approved Linear outranks scratch;
-carry only compatible stale choices. Stop before writes on missing/conflicting
-scope/proof/risk/slicing; no stale certificates. Notes: read/unavailable/stale_or_ignored/conflicts/
-decisions_carried_forward/confidence_boundary (omit empty), one Russian sentence.
-Translate roles; no local body copies.
+Intake: paths → snapshot/reviews → decisions → configured roots → gstack. No broad
+scans; absent roots unavailable. Approved Linear outranks scratch; carry compatible
+stale choices only. Missing/conflicting scope/proof/risk/slicing stops writes;
+no stale certificates/local body copies. Translate roles. Notes (omit empty):
+read/unavailable/stale_or_ignored/conflicts/decisions_carried_forward/confidence_boundary,
+one Russian sentence.
 
 ## Certificate recovery
 
@@ -138,48 +138,51 @@ report/chat omit human lead.
 
 ## Delivery Reports and Capsule
 
-Mono-deliver: one dispatch; terminal green/parked, intermediate ready/
-implemented-needs-preflight. Stops park; no stage respawn. Standalone retains
-statuses/certificates.
+One dispatch; terminal green/parked, intermediate ready/implemented-needs-preflight.
+Stops park, no stage respawn; standalone retains statuses/certificates.
+Phase: reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json; denied: worktree
+.orchestrator, never both. Final fields plus phase/positive increasing sequence/
+kind (phase/confirmation-request)/head/phase_result. Capsule phase/head match;
+open_queue = ordered linear_mutations_pending. Writes: stable id/operation/target/
+payload; changed payload → new ID, new report → new collectionId. Obligations survive
+heads; omit confirmed writes. Certificate: append #/certificate once.
 
-Phase: reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json; denial: same name in
-worktree .orchestrator, never both. Final fields plus phase/positive increasing
-sequence/kind (phase/confirmation-request)/head/phase_result.
-Capsule phase/head match; open_queue = ordered linear_mutations_pending.
-Writes: stable id/operation/target/payload; changed payload → new ID; obligations
-survive heads. Omit confirmed writes; new report needs new collectionId. Keep
-ID only for an unchanged report. Certificate: append #/certificate once. Short: confirm empty code queue; start
-facts in capsule.decisions/Russian ready lead; unchanged machine core.
-
-Publish/wait through delivery-state.mjs. Confirmation path:
+Publish/wait: delivery-state.mjs; confirmation:
 confirmations/<ISSUE-KEY>-phase-<phase>-a<N>-s<sequence>.confirmed.json.
 Wait rejects paths inside dispatch-derived capsule.writable_roots; binds report
-digest/issue/attempt/phase/sequence/verified results. Reconcile writes against
-Linear, collections against receipts; apply missing only, fsync results
-under consumed/<ISSUE-KEY>-a<N>/, confirm whole queue. Unknown/conflict/read-error
-or partial/stale/foreign confirmation blocks. Reconcile lost responses/comments;
-empty queues wait too. Resume capsule after break/compaction; timeout
+digest/issue/attempt/phase/sequence/verified results. Reconcile Linear writes/collection receipts; apply missing only, fsync
+consumed/<ISSUE-KEY>-a<N>/ results; confirm whole queue. Unknown/conflict/read-error
+or partial/stale/foreign confirmation blocks. Reconcile lost responses/comments.
+Resume active dispatch/capsule and actual branch after interruption; preserve done/
+foreign changes, never reset/repeat applied moves/writes. Timeout
 orchestration.delivery.confirmationTimeoutSec (default 1800 seconds) parks
 write-unconfirmed (запись не подтверждена).
 
-Confirm in-phase queues before dependent work: accepted drift before PR, ready
-certificate before formal review, In Review/PR chip after PR.
+Only the generated implemented-needs-preflight Issue comment skips waiting.
+Other/unknown writes and empty queues wait. publish generates every code exit's
+full comment; stopped reports wait in their own queue. No start-comment queue.
+Pending code comments carry to Preflight; a revision gets a new ID and marks the
+old comment stale, applied or pending. Immutable sequence snapshots beside phase
+reports bind capsule.deferred_reports sequence/reportDigest. Predecessor checks
+allow only this exception, verifying fingerprints and carried/replacing comments.
+Preflight confirms the whole queue before formal review; no extra Ship check.
+Green needs all obligations. Confirm accepted drift
+before PR, ready before formal review, In Review/PR chip after PR.
 
 Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
 ~/.mono-agent-workflow/evidence/<product>/ outside ALL grants, including
 worktree/orchestrator. Orchestrator collect:true only; worker collect:false.
 Keys grant no writes; hostile operator out of scope (one user/host).
 
-After amend collect with resume's "Effective attempt pins" pins.v<n>.json;
-no report version field. Commit; pinned collect:false exit 2 is pending, not pass.
-Publish only publishRequest in payload.request, kind=confirmation-request:
+After amend use "Effective attempt pins" pins.v<n>.json, no report version field.
+Commit; collect:false exit 2 is pending. Publish only returned publishRequest in
+payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
 target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate even
 on failure; confirmation proves completion only. Verify collect:false.
 Findings: apply references/review-admission.md. Repeated key/class parks needs-decision
 before edits/new requests; otherwise fix/recommit/request or propose decline.
 Transient: same head/route, increment n/sequence.
-Ready on pass.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
 head/merge-base receipt before judgment; no string substitutes.
@@ -190,19 +193,16 @@ thresholds/declines/class stops/caps stay unchanged.
 
 ## Implementation exit evidence
 
-Every code exit, regardless of packVersion: criteria (nonempty), summary (2–3
-product-language lines), not_built and not_verified arrays (may be empty).
-Start records/queues unchanged; phase_result stays a status string.
-At start, capture-criteria reads the approved Issue acceptance bullets after
-«Готово, когда:» (dispatch snapshot issue file; standalone delivery-start Issue read)
-into immutable <root>/reports/<KEY>-criteria-a<N>.json. Never from report fields.
-Publication reads this stored list by Issue/attempt, rejects missing/extra/reordered/
-reworded items before writes; only whitespace normalization. Capture cannot replace
-existing state. Standalone root is local .orchestrator, never committed.
-criteria: every «Готово, когда» item verbatim/in order, never omit/weaken unfinished
-work; «Как проверить» separately in verification_items. Fields: criterion, done
-(boolean), outcome (confirmed|unverified|broken), proof (method chosen before edits),
-result (observed, not promised), head (40 hex), worktree_fingerprint (64 hex at check).
+Code exits: nonempty criteria, summary (2–3 product-language lines), not_built/
+not_verified arrays (may be empty), any packVersion. phase_result stays a string.
+At start capture-criteria freezes approved «Готово, когда:» bullets from snapshot
+Issue or standalone delivery-start read, never report fields, into
+<root>/reports/<KEY>-criteria-a<N>.json. No replacement. Publication compares the
+ordered list before writes: no missing/extra/reordered/reworded items, whitespace
+normalization only. Standalone root: uncommitted .orchestrator.
+«Как проверить» separately in verification_items. criteria fields: criterion, done
+(boolean), outcome (confirmed|unverified|broken), proof (chosen before edits), result
+(observed), head (40 hex), worktree_fingerprint (64 hex at check).
 confirmed requires done:true/delivered head; relevant edits stale earlier success,
 even without a commit. Fingerprint: SHA-256 of binary diff from HEAD and sorted
 untracked path/content hashes, excluding reports; record command.

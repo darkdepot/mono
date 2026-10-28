@@ -163,7 +163,7 @@ Start acknowledgement uses `resume`: write the gate acknowledgement and stop.
 The orchestrator applies and reads back the moves, then resumes this same session
 with the amendment. A request for start-handshake `wait` is refused.
 
-Phase and collection confirmations still wait in place. Run the pack's plain
+Phase and collection barriers follow worker-contract; only its closed code-report case defers to Preflight. Run the pack's plain
 `node '<pack-root>/scripts/delivery-state.mjs' wait --report '<own phase report>'
 --confirmation '<confirmation path>' --config '<project config>'` invocation in
 the foreground. Use the full confirmation timeout under the launcher's raised
@@ -188,6 +188,9 @@ Emit the resolved command below; it is invocation data, not a second gate defini
 ```
 
 ## Context Snapshot
+
+Chain input (final predecessor reports and merged commits, copied into this
+attempt snapshot): {{chain_context}}
 
 Design input: {{design_context}}
 
@@ -251,7 +254,7 @@ queued comment.
 
 ## Recovery
 
-On interruption resume the same thread with the current snapshot amendment and the latest own phase capsule/confirmation paths. Re-run identity and continue that phase; do not generate a stage-specific dispatch or resume template. Require a confirmed whole queue before advancing.
+On interruption resume the same thread with the current snapshot amendment and the latest own phase capsule/confirmation paths. Re-run identity and continue that phase; do not generate a stage-specific dispatch or resume template. Apply the worker-contract closed code-report exception; all other queues confirm before advancing.
 
 Set write.id=request.collectionId=preflight-collect:HEAD:n; increment n per collection request on that head. Preserve the ID on lost-response reconciliation; a failed run is recorded, its retry gets a new ID.
 

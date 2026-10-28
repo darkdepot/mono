@@ -10,12 +10,15 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writeWatcherFixture } from './plugin-fixture.mjs';
 
+// U2's incompatible protocol change; expected values do not come from runtime.
+const currentProtocol = 5, previousProtocol = 4;
+
 test('plugin layout shares the repository paths and reads VERSION identity', () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mono-plugin-layout-')));
   try {
     fs.writeFileSync(path.join(root, 'VERSION'), '0.22.0\n');
     const layout = packLayout(root);
-    assert.deepEqual(layout.identity(), { packVersion: '0.22.0', surfaceRevision: 4 });
+    assert.deepEqual(layout.identity(), { packVersion: '0.22.0', surfaceRevision: currentProtocol });
     assert.equal(layout.skill('deliver'), path.join(root, 'skills/deliver/SKILL.md'));
     assert.equal(layout.template('orchestrator-dispatch.md'), path.join(root, 'templates/orchestrator-dispatch.md'));
     assert.equal(layout.policyDirectory, path.join(root, 'references'));
@@ -35,12 +38,12 @@ test('plugin identity accepts compatible versions and refuses a different report
     fs.writeFileSync(path.join(root, 'VERSION'), '0.23.0\n');
     const command = ['scripts/verify-pack-state.mjs', 'identity', '--pack-root', root,
       '--pack-version', '99.0.0', '--source-commit', 'a'.repeat(40), '--surface-revision'];
-    const compatible = spawnSync(process.execPath, [...command, '4'], { encoding: 'utf8' });
+    const compatible = spawnSync(process.execPath, [...command, String(currentProtocol)], { encoding: 'utf8' });
     assert.equal(compatible.status, 0, compatible.stderr);
     assert.match(compatible.stdout, /pack-state: identity verified/);
-    const incompatible = spawnSync(process.execPath, [...command, '5'], { encoding: 'utf8' });
+    const incompatible = spawnSync(process.execPath, [...command, String(previousProtocol)], { encoding: 'utf8' });
     assert.equal(incompatible.status, 1);
-    assert.match(incompatible.stderr, /surfaceRevision expected 5 but installed 4; start a new attempt/);
+    assert.ok(incompatible.stderr.includes(`surfaceRevision expected ${previousProtocol} but installed ${currentProtocol}; start a new attempt`));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -153,12 +156,13 @@ test('dispatch pins the plugin script folder and refuses resume when that folder
     const launched = JSON.parse(run(process.execPath, [path.join(pack, 'scripts/orchestrator/dispatch.mjs'), '--issue', 'MONO-999', '--root', root, '--config', config, '--snapshot', snapshot, '--skills-root', helper, '--worker-writable-roots', writable])); pid = launched.pid;
     const saved = JSON.parse(fs.readFileSync(path.join(root, 'workers.json')))['MONO-999'];
     assert.equal(saved.packRoot, pack); assert.equal(saved.skillsRoot, helper); assert.equal(saved.sourceCommit, undefined);
-    const pins = JSON.parse(fs.readFileSync(launched.pins.file)); assert.equal(pins.packRoot, pack); assert.equal(pins.surfaceRevision, 4);
+    const pins = JSON.parse(fs.readFileSync(launched.pins.file)); assert.equal(pins.packRoot, pack); assert.equal(pins.surfaceRevision, currentProtocol);
     const rendered = fs.readFileSync(launched.dispatchFile, 'utf8'); assert.ok(rendered.includes(path.join(pack, 'skills/deliver/SKILL.md')));
     assert.ok(rendered.includes(`--pack-root '${pack}'`)); assert.ok(!rendered.includes('--source-commit'));
     const spawnRequest = JSON.parse(fs.readFileSync(launched.spawnFile));
     for (const [folder, reason] of [[pack, /packRoot must be outside/], [helper, /installed skillsRoot must be outside/]]) {
       const guarded = { ...spawnRequest, issue: 'MONO-997', writable_roots: [temp, folder], workerWritableRoots: [...spawnRequest.workerWritableRoots, folder].sort() };
+      delete guarded.attempt; // Exercise the direct-spawn grant boundary independently of dispatch identity.
       const file = path.join(scratch, 'guarded.json'); write(file, guarded);
       const result = spawnSync(process.execPath, [path.join(pack, 'scripts/orchestrator/spawn.mjs'), '--request', file], { cwd: repo, env, encoding: 'utf8' });
       assert.equal(result.status, 1); assert.match(result.stderr, reason);

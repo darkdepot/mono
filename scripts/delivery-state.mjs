@@ -11,9 +11,14 @@ import { validateEntry } from "./decisions.mjs";
 import { workerTransport } from "./worker-transport.mjs";
 
 import { captureCriteria, requireApprovedCriteria } from "./delivery-criteria.mjs";
+import { implementationComment, implementationExit, deferredImplementation, literalImplementationComment } from './implementation-comment.mjs';
 export { captureCriteria } from "./delivery-criteria.mjs";
 
 export const PHASES = ["code", "preflight", "ship"];
+export function requiresConfirmation(report) {
+  validatePhase(report);
+  return !deferredImplementation(report);
+}
 export const PARKED_REASONS = ["blocked", "needs-decision", "needs-human", "drift-candidate", "timed-out", "scope-drift-needs-handoff", "write-unconfirmed", "evidence-limit"];
 export function correlatedDeliveryReport(report, stat, entry, logStat, stallSec = 120) {
   return workerTransport(entry?.transport)?.correlatesReports === true && entry.stage === "mono-deliver" && identity(entry) && identity(report) &&
@@ -58,8 +63,7 @@ export function validatePhase(report) {
     ids.add(write.id);
   }
   validatePilotFields(report);
-  // Start records keep their existing queue. Every code exit carries evidence,
-  // regardless of the package version that produced it.
+  // Unknown writes remain barriers; only the exact generated report can defer.
   if (report.phase === "code" && report.phase_result !== undefined && report.phase_result !== "in-progress")
     validateImplementationReport(report);
   return report;
@@ -146,7 +150,10 @@ export function requirePredecessors(report, root, reportsDir, action) {
   function confirmed(phase, sequence, published) {
     const label = `phase ${phase} sequence ${sequence}`;
     const file = confirmationPath({ ...report, phase, sequence }, root);
-    if (!fs.existsSync(file)) throw new Error(`${label} is not confirmed; wait for it before ${action} ${report.phase}`);
+    if (!fs.existsSync(file)) {
+      if (phase === 'code' && deferredProof(report, sequence, published, root)) return;
+      throw new Error(`${label} is not confirmed; wait for it before ${action} ${report.phase}`);
+    }
     const ack = readJson(file), predecessor = validatePhase(ack.report);
     if (!sameAttempt(predecessor) || predecessor.phase !== phase || predecessor.sequence !== sequence ||
         (published && canonical(published) !== canonical(predecessor))) throw new Error(`${label} confirmation does not match its published report/attempt`);
@@ -164,6 +171,89 @@ export function requirePredecessors(report, root, reportsDir, action) {
     for (let sequence = 1; sequence <= latest.sequence; sequence++) confirmed(phase, sequence, sequence === latest.sequence ? latest : null);
   }
   for (let sequence = 1; sequence < report.sequence; sequence++) confirmed(report.phase, sequence);
+}
+function codeHistory(root, report, directory = path.join(root, 'reports')) {
+  return path.join(directory, `${report.issue}-phase-code-a${report.attempt}-s${report.sequence}.json`);
+}
+function codeReference(report) { return { sequence: report.sequence, reportDigest: digest(report) }; }
+function deferredSnapshots(context, root) {
+  return (context.capsule.deferred_reports ?? []).map(ref => {
+    if (!Number.isInteger(ref.sequence) || ref.sequence < 1 || !/^[a-f0-9]{64}$/.test(ref.reportDigest ?? ''))
+      throw new Error('invalid deferred code report fingerprint');
+    const identity = { ...context, sequence: ref.sequence };
+    const files = [...new Set([codeHistory(root, identity), ...context.capsule.writable_roots.map(grant =>
+      codeHistory(root, identity, path.join(grant, '.orchestrator')))])].filter(file => fs.existsSync(file));
+    if (!files.length) throw new Error('deferred code report snapshot missing');
+    const prior = validatePhase(readJson(files[0]));
+    if (files.some(file => digest(readJson(file)) !== ref.reportDigest)) throw new Error('conflicting deferred code report fingerprints');
+    if (digest(prior) !== ref.reportDigest) throw new Error('deferred code report fingerprint mismatch');
+    if (prior.issue !== context.issue || prior.attempt !== context.attempt || prior.phase !== 'code' ||
+        prior.sequence !== ref.sequence || IDENTITY_FIELDS.some(key => prior[key] !== context[key]) || !deferredImplementation(prior))
+      throw new Error('only the complete implemented code report may defer');
+    return prior;
+  });
+}
+function deferredProof(report, sequence, published, root) {
+  const contexts = [...(['code', 'preflight'].includes(report.phase) ? [report] : []),
+    ...verifiedConfirmations(report, root).map(ack => ack.report)];
+  for (const context of contexts) {
+    const snapshots = deferredSnapshots(context, root), prior = snapshots.find(r => r.sequence === sequence);
+    if (!prior) continue;
+    if (published && digest(prior) !== digest(published)) throw new Error('published code report fingerprint mismatch');
+    const write = implementationComment(prior);
+    const covering = [context, ...snapshots].filter(r => implementationExit(r) &&
+      (implementationComment(r).id === write.id || r.superseded_reports?.includes(write.id)));
+    if (covering.some(r => context.capsule.open_queue.some(w => canonical(w) === canonical(implementationComment(r))))) return true;
+  }
+  return false;
+}
+function latestCode(report, root, reportsDir) {
+  const name = `${report.issue}-phase-code.json`;
+  const files = [...new Set([path.join(root, 'reports', name), path.join(reportsDir, name),
+    ...report.capsule.writable_roots.map(grant => path.join(grant, '.orchestrator', name))])].filter(file => fs.existsSync(file));
+  if (!files.length) return null;
+  const code = validatePhase(readJson(files[0]));
+  if (files.some(file => canonical(readJson(file)) !== canonical(code))) throw new Error('conflicting code mailboxes');
+  if (code.issue !== report.issue || code.attempt !== report.attempt || IDENTITY_FIELDS.some(key => code[key] !== report[key]))
+    throw new Error('foreign code report attempt/identity');
+  return code;
+}
+function preparePublication(input, previous, root, reportsDir) {
+  const report = structuredClone(input);
+  if (implementationExit(report)) {
+    report.capsule.deferred_reports = previous?.capsule.deferred_reports ?? [];
+    // An identical retry retains its original supersession list and publication.
+    report.superseded_reports = previous?.superseded_reports ?? [];
+    let write = implementationComment(report);
+    if (previous && implementationExit(previous)) {
+      const old = implementationComment(previous);
+      if (write.id !== old.id) report.superseded_reports = [...new Set([...report.superseded_reports, old.id])];
+      report.capsule.deferred_reports = previous.capsule.deferred_reports ?? [];
+      if (deferredImplementation(previous) && report.sequence > previous.sequence) report.capsule.deferred_reports = [...report.capsule.deferred_reports, codeReference(previous)]
+        .filter((ref, index, all) => all.findIndex(r => r.sequence === ref.sequence) === index);
+      report.capsule.open_queue = report.capsule.open_queue.filter(w => canonical(w) !== canonical(old));
+    }
+    write = implementationComment(report);
+    const superseded = new Set(report.superseded_reports);
+    report.capsule.open_queue = report.capsule.open_queue.filter(w => canonical(w) !== canonical(write) &&
+      !(superseded.has(w.id) && literalImplementationComment(w) && canonical(w) === canonical({
+        id: w.id, operation: 'comment', target: report.issue, payload: { body: w.payload.body },
+      })));
+    report.capsule.open_queue.push(write);
+  } else if (report.phase === 'preflight') {
+    const code = latestCode(report, root, reportsDir);
+    if (code && deferredImplementation(code)) {
+      const write = implementationComment(code);
+      const already = verifiedConfirmations(report, root).some(ack => ack.results.some(r => r.id === write.id && r.writeDigest === digest(write)));
+      const prepared = previous?.issue === report.issue && previous.phase === report.phase && previous.attempt === report.attempt &&
+        previous.sequence === report.sequence && previous.head === report.head &&
+        previous.capsule.open_queue.some(w => canonical(w) === canonical(write));
+      if ((!already || prepared) && !report.capsule.open_queue.some(w => canonical(w) === canonical(write))) report.capsule.open_queue.unshift(write);
+      report.capsule.deferred_reports = [...(code.capsule.deferred_reports ?? []), codeReference(code)];
+    }
+  }
+  report.linear_mutations_pending = report.capsule.open_queue;
+  return report;
 }
 function verifiedConfirmations(report, root) {
   const dir = path.join(root, "confirmations");
@@ -208,13 +298,16 @@ export function classifyQueue(report, root) {
 export function publishPhase(report, output, previousConfirmation, root = previousConfirmation
   ? path.dirname(path.dirname(previousConfirmation)) : path.dirname(path.dirname(output))) {
   validatePhase(report);
+  if (implementationExit(report)) requireApprovedCriteria(report, root);
+  const previous = fs.existsSync(output) ? validatePhase(readJson(output)) : null;
+  report = preparePublication(report, previous, root, path.dirname(output));
+  validatePhase(report);
   if (report.phase === "code" && report.phase_result !== undefined && report.phase_result !== "in-progress")
     requireApprovedCriteria(report, root);
   if (report.phase === "ship" && report.kind === "phase" && report.status === "green") validateShipCertificate(report);
   const content = value => { const { publishedAt, ...rest } = value; return rest; };
-  const previous = fs.existsSync(output) ? validatePhase(readJson(output)) : null;
   const identical = previous && canonical(content(previous)) === canonical(content(report));
-  const published = { ...report, publishedAt: new Date().toISOString() };
+  let published = { ...report, publishedAt: new Date().toISOString() };
   if (!identical) {
     const used = verifiedConfirmations(published, root).map(ack => ack.report);
     if (previous?.issue === report.issue && previous.attempt === report.attempt) used.push(previous);
@@ -228,14 +321,25 @@ export function publishPhase(report, output, previousConfirmation, root = previo
   if (fs.existsSync(output)) {
     if (identical) return previous;
     const ackPath = previousConfirmation ?? confirmationPath(previous, root);
-    if (!fs.existsSync(ackPath)) throw new Error("previous phase report is unconfirmed");
-    validateConfirmation(previous, readJson(ackPath));
+    if (!fs.existsSync(ackPath)) {
+      if (!deferredImplementation(previous) || !deferredProof(report, previous.sequence, previous, root))
+        throw new Error("previous phase report is unconfirmed");
+    } else validateConfirmation(previous, readJson(ackPath));
     if (report.attempt !== previous.attempt || report.sequence <= previous.sequence) throw new Error("phase report sequence must advance in the same attempt; archive reconciled old attempts first");
+  }
+  if (implementationExit(published)) {
+    const history = codeHistory(root, published, path.dirname(output));
+    if (fs.existsSync(history)) {
+      const saved = readJson(history);
+      if (canonical(content(saved)) !== canonical(content(published))) throw new Error('immutable code report fingerprint mismatch');
+      published = saved;
+    } else atomicJson(history, published);
   }
   atomicJson(output, published);
   return published;
 }
-function resolveWrite(write, report) {
+export function resolveWrite(write, report) {
+  if (literalImplementationComment(write)) return write;
   function resolve(value) {
     if (typeof value === "string" && value.includes("append #/certificate")) {
       if (typeof report.certificate !== "string" || !report.certificate.trim()) throw new Error("certificate pointer has no certificate");
@@ -290,6 +394,7 @@ export async function confirmQueue(report, root, adapter, reportsDir = path.join
 }
 export async function waitForConfirmation(report, file, timeoutSec, pollSec = 1) {
   validatePhase(report);
+  if (!requiresConfirmation(report)) return;
   validateEvidenceGrants(file, report.capsule.writable_roots, "confirmation path");
   const started = Date.parse(report.publishedAt);
   if (!Number.isFinite(started) || started > Date.now()) throw new Error("invalid barrier publication time");

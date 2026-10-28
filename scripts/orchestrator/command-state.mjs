@@ -6,7 +6,7 @@ import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, wit
 import { readJournal, currentEntries } from '../decisions.mjs';
 import { buildReviewLedger, repeatedClasses, recordClassStop } from '../review-ledger.mjs';
 import { capDecisionDigest, reserveReviewCollection, validateCapAdmission } from '../review-cap.mjs';
-import { validatePhase, requirePredecessors, classifyQueue, confirmationPath, validateConfirmation } from "../delivery-state.mjs";
+import { validatePhase, requirePredecessors, classifyQueue, confirmationPath, validateConfirmation, resolveWrite } from "../delivery-state.mjs";
 import { checkIdea, IDEA_GATE_DEFAULT_SINCE } from '../idea-gate.mjs';
 
 export function dispatchIdea(directory, config, issue, lane = null) {
@@ -113,16 +113,7 @@ export function correlatedPhase(root, file) {
 }
 
 export function expandedWrite(write, report) {
-  const expand = value => {
-    if (typeof value === "string" && value.includes("append #/certificate")) {
-      if (!report.certificate?.trim() || value.split("append #/certificate").length !== 2) throw new Error("invalid certificate pointer");
-      return value.replace("append #/certificate", () => report.certificate);
-    }
-    if (Array.isArray(value)) return value.map(expand);
-    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, expand(child)]));
-    return value;
-  };
-  return expand(write);
+  return resolveWrite(write, report);
 }
 
 // Validate the full queue without adapter calls or confirmation side effects.

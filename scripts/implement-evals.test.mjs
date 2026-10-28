@@ -41,13 +41,13 @@ test('implement teaching fixture creates isolated Git repos with real green and 
   }
 });
 
-test('implement U8 scenarios retain behavioral rubrics, with chain cases explicitly pending T2', () => {
+test('implement U8 scenarios retain behavioral rubrics, with both chain cases ready after T2', () => {
   assert.equal(scenarios.length, 10);
   for (const scenario of scenarios) {
     const dir = path.join('evals/implement/behavior', scenario.id);
     const rubric = fs.readFileSync(path.join(dir,'graders/behavior.md'),'utf8');
     assert.match(rubric, /1\. /); assert.match(rubric, /2\. /); assert.match(rubric, /3\. /);
-    assert.equal(scenario.status, scenario.id.startsWith('u6-') ? 'pending-T2' : 'ready');
+    assert.equal(scenario.status, 'ready');
   }
   const routes = fs.readdirSync('evals/implement').filter(name => fs.existsSync(`evals/implement/${name}/graders/implement-invocation.md`));
   assert.equal(routes.length, 7);
@@ -70,7 +70,7 @@ test('behavior grader rejects a forgotten criterion, old green and broken-as-unv
   assert.equal(gradeBehavior('ae2-broken',broken,{checks:[{exit:1,targetDefectObserved:true}]}).status,'FAIL');
   broken.phase_result='blocked';broken.criteria[0].outcome='broken';
   assert.equal(gradeBehavior('ae2-broken',broken,{checks:[{exit:1,targetDefectObserved:true}]}).status,'PASS');
-  assert.equal(gradeBehavior('u6-missing-report',{},{}).status,'pending-T2');
+  assert.equal(gradeBehavior('u6-missing-report',{},{}).status,'FAIL');
 });
 
 test('legacy workflows.implementation stays accepted by the real project config checker', () => {
@@ -83,4 +83,18 @@ test('legacy workflows.implementation stays accepted by the real project config 
     const result=spawnSync(process.execPath,['scripts/project-config.mjs','--repo',repo,'--check'],{encoding:'utf8'});
     assert.equal(result.status,0,result.stdout+result.stderr);
   } finally { fs.rmSync(repo,{recursive:true,force:true}); }
+});
+test('chain graders require inspected input, correct stop and zero code writes', async () => {
+  const { gradeBehavior } = await import('../evals/implement/grade.mjs');
+  for (const id of ['u6-missing-promised', 'u6-missing-report']) {
+    const report = { summary: id.endsWith('report') ? 'Остановлено: нет отчёта предшественницы' : 'Обещанной функции нет в коде',
+      phase_result: id.endsWith('report') ? 'blocked' : 'scope-drift-needs-handoff', not_built: [], not_verified: [],
+      criteria: scenarios.find(s => s.id === id).criteria.map(criterion => ({ criterion, done: false, outcome: 'unverified' })) };
+    const observations = { codeWrites: 0, predecessorReportRead: true, mergedCommitInspected: true,
+      promiseAbsentInMergedCode: true, predecessorReportAvailable: false };
+    assert.equal(gradeBehavior(id, report, observations).status, 'PASS');
+    assert.equal(gradeBehavior(id, report, { ...observations, codeWrites: 1 }).status, 'FAIL');
+    assert.equal(gradeBehavior(id, { ...report, phase_result: 'implemented-needs-preflight' }, observations).status, 'FAIL');
+    assert.equal(gradeBehavior(id, report, {}).status, 'FAIL');
+  }
 });

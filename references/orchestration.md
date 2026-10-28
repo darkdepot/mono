@@ -269,7 +269,7 @@ set Ready and bring the owner the summary.
 ## Orchestration Mode Precedence
 
 Apply the Orchestration Mode Precedence section of `references/worker-contract.md`.
-Consume every phase report/full write queue through Delivery Write Barriers below before confirming progression; consume final green/parked separately. The resume sweep is crash recovery,
+Apply Delivery Write Barriers below; only the closed code-report exception in worker-contract defers confirmation to Preflight; consume final green/parked separately. The resume sweep is crash recovery,
 never the normal application path. Dispatch lifecycle moves use the handshake
 below: gates precede application and the worker resumes only on verified state.
 Never defer a check onto a queued mutation or describe pending state as applied.
@@ -329,7 +329,19 @@ project relation and Project, then paginate every Project comment. Normalize:
 `idea/project.json` = {id,createdAt,status,body,language}; language from
 languages.linear (Russian→ru, English→en; otherwise configure ideaGate.headings).
 `idea/idea-records.json` = {complete:true,comments:[{id,createdAt,body}]}; true only
-after all pages. `issue-context.json` = {issueId,issueKey,projectId} from the Issue.
+after all pages. `issue-context.json` = {issueId,issueKey,projectId,blockedBy:[Issue keys]} from
+all Linear Blocked by relations; explicit [] when absent. For package starts,
+dispatch selects only blockers in approval.md's issues= set. Without that token
+there is no declared package chain; ordinary external blockers produce no chain input. Before launching a
+chain task, supply predecessors/<KEY>/code-report.json (final code phase report)
+or code-report.md (legacy published report) and merge.json = {issue,mergeCommit,head}
+from the merged PR. Dispatch verifies merge ancestry on fetched origin/main,
+copies both into snapshot/predecessors/, writes chain.json and embeds the full
+reports/commit inputs in the dispatch. Missing input refuses blocked «нет отчёта
+предшественницы»; no predecessor means no chain files, even with stray sources.
+A legacy report has no promised list; compare only its merged commit. Workers
+start from these inputs and main, stop scope-drift-needs-handoff if promised code
+is absent, never rebuild it. Scheduling remains Handoff/orchestrator-owned.
 For a package record, `tech-spec.md` holds the content of the current record's
 `mono-package` fence (its `- U<n>.` units, `## Кратко` and manifests stay
 parseable; the dispatch label `Tech Spec:` stays) and `approval.md` is the authorized
@@ -471,6 +483,13 @@ fixture records pre-change extracts; scratch dispatch compares its output bytes
 against that baseline. The delivery reading corpus does not grow.
 
 ## Two-Phase Dispatch Handshake
+
+The one startup confirmation binds the active registry attempt and current pins,
+including no-move starts, and preserves approved package/risk coherence. The existing
+start gate checks root/Issue/attempt/pins against the registry before code; only its
+internal pre-spawn call may admit the next unregistered attempt. Stale dispatches
+refuse even when branch, base and pack coincide. No start-comment queue.
+Reconcile consumed moves before resume; never apply a present move again.
 
 **No dispatch-moment lifecycle move is applied before the worker's gate-ack.**
 This section owns the protocol referenced by dispatch, `mono:implement` and
@@ -1508,6 +1527,15 @@ corpus; report source and scratch-plugin read-budget measurements.
 
 ## Delivery Write Barriers
 
+Only the generated implemented-needs-preflight code-report Issue comment skips
+waiting. Unknown/other writes and stopped reports wait; no start-comment queue.
+Use the worker-contract closed list: pending code comments carry into Preflight,
+new versions replace them and mark old comments stale. Preflight's whole queue
+confirms before formal review; timeout parks write-unconfirmed. Predecessor
+checks verify report fingerprints even for deferred code. This adds no Ship gate.
+The watcher emits the code phase event but does not treat that deferred comment
+as a blocked writer; other phase waits keep their existing deadline/liveness rules.
+
 Poll phase reports as well as events; events accelerate, never prove application.
 Use installed `scripts/orchestrator/accept.mjs ack --root DIR --issue KEY
 --attempt N`: validate the sole ack location, registry correlation, gate coverage
@@ -1657,7 +1685,7 @@ boundary is missing. Record the probe independently of the command exit code; a 
 an existing authenticated receipt matching request.collectionId and all pins before repeating collection; failed
 reviews are completed runs too, not missing actions. Return present evidence as
 {receipt: <evidenceRoot>/history/<runId>.json, receiptDigest: <SHA-256 of canonical envelope>, gate: <exact gate answer>}, including a fail. The runtime checks immutable history identity, digest, signature and collection ID before confirming or accepting confirmation; the mutable head receipt is never confirmation evidence. Fsync that result
-and confirm through the same runtime. Publish and confirm enforce code → preflight → ship: read the latest earlier phase reports and every earlier sequence confirmation for the attempt before proceeding. Confirmations retain the report snapshot, so overwritten phase files do not erase sequence evidence. Missing or mismatched predecessors refuse before adapter calls. Fallback publication supplies --root; confirmation reads the report directory and root mailbox and refuses conflicting copies. Worker collect:false must pass before ready;
+and confirm through the same runtime. Publish and confirm enforce code → preflight → ship: read the latest earlier phase reports and earlier sequence confirmations, allowing only the fingerprint-bound code-report deferral above. Confirmations retain the report snapshot, so overwritten phase files do not erase sequence evidence. Missing or mismatched predecessors refuse before adapter calls. Fallback publication supplies --root; confirmation reads the report directory and root mailbox and refuses conflicting copies. Worker collect:false must pass before ready;
 A review fix uses a new head/write ID. Use write.id=request.collectionId=preflight-collect:<head>:<n>. Increment n for each collection request on that head, including transient retries after a recorded failure; also advance the phase sequence. Never reuse the failed collection ID for a new run; a lost response retains its original ID. Bind confirmation evidence to the immutable history receipt as well as the current head receipt. Never let a worker collect or select new
 pins. Preserve failed receipts. Configure confirmationTimeoutSec BEFORE dispatch
 to cover verification plus review. Defaults: `confirmationTimeoutSec=1800`,
