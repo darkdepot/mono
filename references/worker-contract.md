@@ -224,7 +224,7 @@ with reason/check boundary; Preflight handoff. Lower evidence layers do not coun
 One Issue comment: summary → «Не проверено» → «Найдена поломка» → evidence
 (criteria, significant-state table before edits, exclusions, decisions).
 Breakage/unfinished/no progress: blocked, saved state. implemented-needs-preflight:
-all done:true/no broken; publication rejects incomplete success. Preflight unchanged.
+all done:true/no broken; publication rejects incomplete success.
 
 Only pre-capture refusals permit empty criteria without a saved list:
 capture refusal (missing/ambiguous/unsupported-language section): blocked;
@@ -232,8 +232,8 @@ start refusal: blocked|needs-human. pre_capture_stop: kind=capture-refused|start
 command/exit/reason; capture also absolute issue_file, start also verdict.
 Exit 0 with pass is not refusal. Comment: refusal reason, expected format
 «# Критерии приемки» / «Готово, когда:», missing labels only when absent.
-Never invent criteria; all other reports require capture/full ordered comparison,
-including completed work without a saved list, which is refused.
+Never invent criteria. Other reports require capture/full ordered comparison;
+completed work without it is refused.
 
 ## Worker Report
 
@@ -253,13 +253,13 @@ verbatim verification, AFK stops.
   "sourceCommit": "<dispatch sourceCommit, omit when absent>",
   "surfaceRevision": <repeat the dispatch pin, integer>,
   "branch": "<branch>",
-  "summary": "<2–3 product-language lines>",
-  "criteria": [{"criterion":"<acceptance item>","done":true,"outcome":"confirmed","proof":"<method>","result":"<observation>","head":"<sha>","worktree_fingerprint":"<sha256>"}],
+  "summary": "<summary>",
+  "criteria": [{"criterion":"<criterion>","done":true,"outcome":"confirmed","proof":"<method>","result":"<observation>","head":"<sha>","worktree_fingerprint":"<sha256>"}],
   "not_built": [], "not_verified": [],
   "changed_files": [],
   "tests": { "run": "<commands>", "result": "<result>" },
   "verification_items": [
-    { "item": "<verbatim verification line>", "status": "pass | deferred | not-run", "evidence": "<reason/owner>" }
+    { "item": "<item>", "status": "pass | deferred | not-run", "evidence": "<reason/owner>" }
   ],
   "question": "<text|null>",
   "recommendation": "<text|null>",
