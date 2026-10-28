@@ -28,11 +28,13 @@ Scripts: dispatched pack root.
 ## Sequence and Recovery
 
 Resume/restart/compaction: identity, own capsule/confirmation, grants, gh PR facts.
-Continue that phase; missing/conflicting inputs park. New head stales proof, not queues.
+Recover active dispatch/branch/capsule per worker-contract; missing/conflicting
+inputs park. New head stales proof, not queues.
 Start: gate.mjs start --request <file>; implement handshake; wait mode runs wait-ack after ack.
 
 1. Implement; publish the two-layer code report (all criteria, exclusions and gaps)
-   with its full queue; confirm, enter readiness only without broken/unfinished work.
+   with its full queue. Only its generated implemented-needs-preflight comment
+   defers confirmation to Preflight; all other queues wait. No broken/unfinished work advances.
 2. Preflight/commit; publish preflight-collect confirmation-request. Confirm,
    gate.mjs preflight collect:false, worker failure rules. Pass: publish ready
    certificate once; confirm before formal review.

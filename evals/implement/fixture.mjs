@@ -62,11 +62,19 @@ export function createFixture(id) {
     issue: { key: 'TRAIN-1', body: issueBody, projectId: projectless ? null : 'fixture-project', status: 'Backlog' },
     seam, verified_label: projectless ? 'issue-only' : null, approval: { author: 'fixture-owner', fingerprint, status: 'approved', start: true },
     review: { status: 'ready', findings: [] }, design: id === 'screen' ? { mockup: null, taste: 'Простой текст, без карточек и новых кнопок' } : null,
-    predecessor: id === 'u6-missing-promised' ? { report: { summary: 'Добавлена normalizeTitle' }, merged: true } : null,
+    predecessor: id.startsWith('u6-') ? { issue: 'TRAIN-0', relation: 'Blocked by', samePackage: true,
+      report: id === 'u6-missing-promised' ? { summary: 'Добавлена normalizeTitle', criteria: [{ criterion: 'Экспортирована normalizeTitle', done: true, outcome: 'confirmed' }] } : null } : null,
     boundary: 'Offline fixture data only; transcript/read-backs are scenario evidence, not live Linear proof.' }, null, 2));
   // Preserve provider response examples as reading inputs, without calling Linear.
   fs.cpSync(path.join(here, '../../scripts/fixtures/idea-gate/probe/codex'), path.join(repo, 'linear-response-examples'), { recursive: true });
   git(['init', '-q']); git(['add', '.']); git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Teaching repository baseline']);
+  if (id.startsWith('u6-')) {
+    const context = JSON.parse(fs.readFileSync(path.join(repo, 'fixture-context.json')));
+    context.predecessor.mergeCommit = git(['rev-parse', 'HEAD']);
+    write('fixture-context.json', JSON.stringify(context, null, 2));
+    git(['add', 'fixture-context.json']);
+    git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','Supply verified predecessor commit']);
+  }
   if (id === 'ae3-stale') {
     const result = spawnSync(process.execPath, ['--test','notes.test.mjs'], { cwd: repo, encoding: 'utf8', env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT')) });
     if (result.status !== 0) throw new Error('Stale-proof setup did not actually pass: ' + result.stdout + result.stderr);

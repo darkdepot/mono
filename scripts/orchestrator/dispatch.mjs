@@ -8,6 +8,7 @@ import { atomicJson, readJson, isMain, deliveryConfig, shipBotChecks, RISK_KEYS,
 import { commandFlags, allowedFlags, sha256File, dispatchIdea, ideaBinding } from "./command-state.mjs";
 import { extractSnapshot, section } from "./snapshot.mjs";
 import { copyDesignSnapshot } from "./design-snapshot.mjs";
+import { copyChainSnapshot } from './chain-snapshot.mjs';
 import { preapplyManifest, preapplyMandate, applyPreapply } from "./preapply.mjs";
 import { workerTransport } from "../worker-transport.mjs";
 import { spawnWorker } from "./launch.mjs";
@@ -142,9 +143,10 @@ async function prepareDispatch(args) {
   pins.reviewDatasetDigest = sha256File(pins.reviewDataset);
   atomicJson(gateFile, gate); atomicJson(movesFile, moves);
   const snapshot = path.join(output, "snapshot"), preparedSnapshot = fs.mkdtempSync(path.join(output, "snapshot-"));
-  let designSnapshot;
+  let designSnapshot, chainSnapshot;
   try {
     designSnapshot = copyDesignSnapshot(args.snapshot, preparedSnapshot, issue, body, args.config, ideaResult.projectId);
+    chainSnapshot = copyChainSnapshot(args.snapshot, preparedSnapshot, issue, approval, worktree, base);
     for (const name of [`issue-${issue}.md`, "approval.md", ...(issueOnly ? ["issue-only.json"] : ["project-brief.md", ...(profile === "full" ? ["prd.md", "tech-spec.md"] : [])])]) fs.copyFileSync(path.join(args.snapshot, name), path.join(preparedSnapshot, name));
     if (!issueOnly) {
       fs.cpSync(path.join(args.snapshot, 'idea'), path.join(preparedSnapshot, 'idea'), { recursive: true });
@@ -165,6 +167,8 @@ async function prepareDispatch(args) {
   } finally { fs.rmSync(preparedSnapshot, { recursive: true, force: true }); }
   pins.idea = ideaBinding(snapshot, ideaResult);
   atomicJson(pinsFile, pins); const pinsDigest = sha256File(pinsFile);
+  Object.assign(gate, { root: args.root, issue, attempt, risk, critical, pins: { file: pinsFile, digest: pinsDigest } });
+  atomicJson(gateFile, gate);
   fs.writeFileSync(path.join(output, "pins.sha256"), `${pinsDigest}\n`);
   const request = { ...gate, root: args.root, issue, role, modelRoutes, modelReason: reason, transport: transport.transport, dispatchFile, evidenceRoot,
     ...(backupSwitch ? { backupSwitch } : {}),
@@ -192,6 +196,7 @@ async function prepareDispatch(args) {
     context_seam: JSON.stringify(seam), decisions: approval, moves: JSON.stringify(moves), gates: JSON.stringify(gates), gate_ack: ack,
     wait_or_resume: moves.length ? handshake === "wait" ? `After writing ack run exactly one matching blocking shell command. If you wrote the mailbox ack: ${waitCommand(ack)}. If mailbox writing was denied and you wrote the fallback ack: ${waitCommand(fallbackAck)}. Use the actual file you wrote; never create both. Do no other work while it runs. Deadline ack mtime + ackWaitSec; expiry parks write-unconfirmed and exits. Valid own consumption read-backs amend state: post-move delivery check, no identity rerun. Blocked ack precedes terminal report.` : "Stop/exit after ack; resume amendment must contain every applied move/read-back; rerun identity/check. Blocked ack precedes terminal report." : "Gate phase: not applicable — this dispatch carries no lifecycle move.",
     snapshot_note: extracts.note ?? "Referenced definitions with transitive coverage and always-included common sections", spawn_request: spawnFile, base,
+    chain_context: chainSnapshot ? JSON.stringify(chainSnapshot, null, 2) : 'No Blocked by predecessor within this package.',
     design_context: designSnapshot ? JSON.stringify({ ...designSnapshot, directory: path.join(snapshot, 'design') }) : 'No approved mockup for this task; apply textual taste rules from Issue context.' };
   if (landing) Object.assign(values, { landing_paths: landing.serialPaths?.length ? landing.serialPaths.map(p => `\`${p}\``).join(", ") : "не заданы",
     landing_fragments: landing.changelog?.fragmentDir ?? "не задан", landing_release: String(release) });
@@ -212,7 +217,7 @@ async function prepareDispatch(args) {
       try { fs.writeSync(fd, `- ${stamp} ${preapplyLine}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     }
     if (preapplied) fs.appendFileSync(dispatchFile, `\n## Предприменённые изменения\n\nКоммит: ${preapplied.commit}\n\n| path | sha256 |\n| --- | --- |\n${preapplied.files.map(file => `| ${file.path} | ${file.sha256} |`).join("\n")}\n`);
-    const gateOutput = run("../gate.mjs", ["start", "--request", gateFile]);
+    const gateOutput = run("../gate.mjs", ["start", "--request", gateFile, "--before-spawn", "true"]);
     if (!gateOutput.includes("gate start: pass")) throw new Error(gateOutput.trim());
   };
   const onRefusal = () => {

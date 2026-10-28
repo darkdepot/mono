@@ -520,6 +520,21 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       assert.deepEqual(names(), ["approval.json", "approval.md", "idea", "issue-MONO-999.md", "issue-context.json", "prd-extract.md", "project-brief.md", "spec-extract.md"]);
       retry(snapshot, "full");
       assert.deepEqual(names(), ["approval.json", "approval.md", "idea", "issue-MONO-999.md", "issue-context.json", "prd.md", "project-brief.md", "tech-spec.md"]);
+      ideaDispatchFixture(snapshot, 'MONO-999', input => {
+        input.context.blockedBy = ['MONO-998'];
+        input.body += '\nmono-package: start issues=T1:MONO-998,T2:MONO-999';
+      });
+      const merged = git('rev-parse', 'origin/main');
+      write(path.join(snapshot, 'predecessors/MONO-998/code-report.md'), 'Предшественница: команды работают.');
+      write(path.join(snapshot, 'predecessors/MONO-998/merge.json'), { issue: 'MONO-998', mergeCommit: merged });
+      retry(snapshot, 'full');
+      assert.equal(readJson(path.join(preparedSnapshot, 'chain.json')).predecessors[0].mergeCommit, merged);
+      assert.match(fs.readFileSync(path.join(root, 'dispatch/MONO-999-a1/dispatch.md'), 'utf8'), /Предшественница: команды работают/);
+      assert.equal(fs.readFileSync(path.join(preparedSnapshot, 'predecessors/MONO-998/code-report.md'), 'utf8'), 'Предшественница: команды работают.');
+      ideaDispatchFixture(snapshot);
+      retry(snapshot, 'full');
+      assert.equal(fs.existsSync(path.join(preparedSnapshot, 'chain.json')), false, 'stray source reports do not create a chain');
+      assert.equal(fs.existsSync(path.join(preparedSnapshot, 'predecessors')), false);
       const laneSource = path.join(scratch, "refused-lane-snapshot");
       write(path.join(laneSource, "issue-MONO-999.md"), body); write(path.join(laneSource, "approval.md"), "Approved lane fixture.");
       write(path.join(laneSource, "issue-only.json"), { marker: "fixture marker", label: "issue-only", fingerprint: createHash("sha256").update(body).digest("hex"),

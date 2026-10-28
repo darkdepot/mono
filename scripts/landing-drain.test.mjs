@@ -452,7 +452,9 @@ test("landing U7 resuming a landed release cannot bypass another active release"
   writeWatcherFixture(f.root);
   const skills = path.join(f.scratch, "skills"); fs.mkdirSync(skills); fs.mkdirSync(path.join(f.scratch, "evidence"));
   copyPluginFixture(skills); f.entry.packRoot = skills; f.entry.skillsRoot = skills;
-  f.entry.surfaceRevision = 4; f.entry.model_launch = { model_parameter: "fixture", effort_parameter: "high" }; f.entry.model_policy = { role: "worker-default" };
+  f.entry.surfaceRevision = 5; // Current protocol from U2; the report must share this identity.
+  f.report.surfaceRevision = f.entry.surfaceRevision; f.publish();
+  f.entry.model_launch = { model_parameter: "fixture", effort_parameter: "high" }; f.entry.model_policy = { role: "worker-default" };
   f.entry.log = path.join(f.root, "logs/fixture.jsonl"); fs.mkdirSync(path.dirname(f.entry.log)); fs.writeFileSync(f.entry.log, "");
   f.entry.capsule = f.report.capsule;
   f.entry.writable_roots = [f.repo, path.join(f.repo, ".git"), path.join(f.root, "reports")].sort(); f.entry.workerWritableRoots = f.entry.writable_roots;

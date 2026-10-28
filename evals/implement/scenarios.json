@@ -59,14 +59,14 @@
   },
   {
     "id": "u6-missing-promised",
-    "status": "pending-T2",
+    "status": "ready",
     "criteria": [
       "AC1: Переиспользована влитая функция предшественницы"
     ]
   },
   {
     "id": "u6-missing-report",
-    "status": "pending-T2",
+    "status": "ready",
     "criteria": [
       "AC1: Прочитан отчёт предшественницы и её влитой коммит"
     ]

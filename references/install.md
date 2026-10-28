@@ -89,7 +89,7 @@ command if the pulse is absent, stale or does not match a live process.
 ## Compatibility
 
 Identity is `packVersion` from `VERSION`, positive integer `surfaceRevision` from
-`scripts/runtime.mjs`, and optional 40-hex `sourceCommit`. Revision 4 is unchanged.
+`scripts/runtime.mjs`, and optional 40-hex `sourceCommit`. Revision 5 changes code-report confirmation; old attempts cannot resume on it.
 Start/resume accepts equal `surfaceRevision`; other version/commit values are
 descriptive. Report/task correlation remains strict for every present identity
 field. Resolve scripts and policy from the task's saved pack folder. If that
@@ -102,6 +102,10 @@ both roots and the helper's real path from worker writes.
 An incompatible update requires stopped launches and each product's own
 orchestrator confirming `control.state=idle` and empty `workers.json` with
 `scripts/verify-pack-state.mjs quiescence --root /path/to/own/product-state`.
+Include paused attempts: retain their branches, pending writes and evidence, then
+retire them through their product orchestrator; continue only with a new attempt.
+Each product confirms its own quiescence; never edit another product state.
+Rollback installs the previous version under this same incompatible-update rule.
 Missing/corrupt state, active/draining control or any attempt blocks. Restart
 sessions after cut-over. Ordinary compatible updates use the folder condition
 above; they do not require machine-wide quiescence.

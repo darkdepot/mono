@@ -344,17 +344,15 @@ test('pre-rename stage and certificate fixture confirms and expands without chan
     fs.writeFileSync(issueFile, "# Критерии приемки\nГотово, когда:\n* Справка называет действующую команду\n");
     captureCriteria({ root, issue: code.issue, attempt: code.attempt, issueFile });
     const publishedCode = publishPhase(code, path.join(reports, 'MONO-993-phase-code.json'));
-    const codeConfirmation = await confirmQueue(publishedCode, root, () => { throw new Error('empty queue never calls adapter'); });
-    assert.deepEqual(codeConfirmation.results, []);
-    assert.equal(validateConfirmation(publishedCode, codeConfirmation), true);
+    assert.equal(publishedCode.capsule.open_queue.length, 1, 'code exit queues its report instead of an empty startup barrier');
     const publishedReady = publishPhase(ready, path.join(reports, 'MONO-993-phase-preflight.json'));
-    let applied;
+    const applied = new Map();
     const confirmation = await confirmQueue(publishedReady, root, (action, write) => {
-      if (action === 'apply') { applied = write; return; }
-      return applied ? { state: 'present', evidence: 'fixture comment read-back' } : { state: 'missing' };
+      if (action === 'apply') { applied.set(write.id, write); return; }
+      return applied.has(write.id) ? { state: 'present', evidence: 'fixture comment read-back' } : { state: 'missing' };
     });
-    const body = applied.payload.body;
-    assert.match(body, /^Начал реализацию/);
+    const body = [...applied.values()].find(write => write.id === ready.capsule.open_queue[0].id).payload.body;
+    assert.match(body, /^Справка исправлена/);
     assert.ok(body.includes('Autoreview loop: 0 local passes + 1 collection'));
     assert.equal(body.split('```\n')[1].split('\n```')[0], ready.certificate);
     assert.ok(ready.certificate.startsWith('mono-preflight certificate\nPreflight: ready\n'));

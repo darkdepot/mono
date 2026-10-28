@@ -227,6 +227,9 @@ Workflow states:
      Ack/report ambiguity requires transport/worktree reconciliation. A blocked
      ack waits for its correlated report before consumption; rejected attempt
      requires a new verified attempt, never same-attempt nudge.
+   - No start-comment queue. Only the generated implemented-needs-preflight
+     Issue report defers to Preflight; do not block its worker. Carry/replacement,
+     fingerprints and stopped-report confirmation: worker-contract.
    - Consume phase events AND poll phase files. Validate capsule and full queue;
      start `scripts/orchestrator/collector.mjs start --root DIR --issue KEY
      --attempt N` outside worker sandboxes for empty/collection-only queues; inspect

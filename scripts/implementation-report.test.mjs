@@ -58,12 +58,13 @@ test('implementation-publication accepts complete confirmed and explicitly unver
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-code-report-'));
   try {
     for (const outcome of ['confirmed', 'unverified']) {
-      const candidate = report(root); candidate.criteria[0].outcome = outcome;
+      const caseRoot = path.join(root, outcome);
+      const candidate = report(caseRoot); candidate.criteria[0].outcome = outcome;
       if (outcome === 'unverified') candidate.not_verified = [{ what: candidate.criteria[0].criterion,
         why: 'Нет доступа к установленному приложению', risk: 'Справка может расходиться с установленной версией' }];
       const input = path.join(root, `${outcome}.json`), output = path.join(root, outcome, 'reports/MONO-993-phase-code.json');
       fs.writeFileSync(input, JSON.stringify(candidate));
-      const result = spawnSync(process.execPath, ['scripts/delivery-state.mjs', 'publish', '--report', input, '--output', output, '--root', root], { encoding: 'utf8' });
+      const result = spawnSync(process.execPath, ['scripts/delivery-state.mjs', 'publish', '--report', input, '--output', output, '--root', caseRoot], { encoding: 'utf8' });
       assert.equal(result.status, 0, result.stderr);
       assert.deepEqual(JSON.parse(fs.readFileSync(output)).criteria, candidate.criteria);
     }
@@ -74,10 +75,11 @@ test('implementation-publication keeps broken and unfinished work visible as blo
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-code-report-'));
   try {
     for (const outcome of ['broken', 'unverified']) {
-      const candidate = report(root); candidate.phase_result = 'blocked'; candidate.criteria[0].outcome = outcome;
+      const caseRoot = path.join(root, outcome);
+      const candidate = report(caseRoot); candidate.phase_result = 'blocked'; candidate.criteria[0].outcome = outcome;
       candidate.criteria[0].done = false;
       if (outcome === 'unverified') candidate.not_verified = [{ what: candidate.criteria[0].criterion, why: 'Не сделано', risk: 'Критерий не выполнен' }];
-      assert.equal(publishPhase(candidate, path.join(root, outcome, 'reports/MONO-993-phase-code.json'), undefined, root).phase_result, 'blocked');
+      assert.equal(publishPhase(candidate, path.join(caseRoot, 'reports/MONO-993-phase-code.json'), undefined, caseRoot).phase_result, 'blocked');
     }
     const candidate = report(root); candidate.phase_result = 'blocked'; candidate.criteria[0].done = false;
     assert.throws(() => publishPhase(candidate, path.join(root, 'invalid.json'), undefined, root), /implementation report/);
@@ -106,9 +108,10 @@ test('approved-list publication accepts the exact list and whitespace-only chang
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-approved-list-'));
   try {
     for (const whitespace of [false, true]) {
-      const candidate = report(root);
+      const caseRoot = path.join(root, String(whitespace));
+      const candidate = report(caseRoot);
       if (whitespace) candidate.criteria[1].criterion = '  Список  содержит\nвсе команды  ';
-      assert.deepEqual(publishPhase(candidate, path.join(root, `reports/exact-${whitespace}.json`)).criteria, candidate.criteria);
+      assert.deepEqual(publishPhase(candidate, path.join(caseRoot, 'reports/exact.json')).criteria, candidate.criteria);
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

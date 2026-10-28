@@ -8,7 +8,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout } from "./runtime.mjs";
-import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact } from "./orchestrator/command-state.mjs";
+import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File } from "./orchestrator/command-state.mjs";
 
 import { acceptedDeclines, readJournal } from './decisions.mjs';
 
@@ -77,8 +77,30 @@ const requireThat = (truth, reason) => { if (!truth) throw new Error(reason); };
 class ShipPending extends Error {}
 const cleanTree = (cwd) => requireThat(git(cwd, "status", "--porcelain", "--untracked-files=all") === "", "working tree is dirty");
 
-export function startGate(request) {
+export function startGate(request, { beforeSpawn = false } = {}) {
   requireThat(identity(request), "missing pack identity");
+  if (request.attempt !== undefined) {
+    requireThat(path.isAbsolute(request.root ?? '') && /^[A-Z][A-Z0-9]*-\d+$/.test(request.issue) &&
+      Number.isInteger(request.attempt) && request.attempt > 0, 'invalid startup dispatch binding');
+    const file = path.join(request.root, 'dispatch', `${request.issue}-a${request.attempt}`, 'pins.json');
+    requireThat(request.pins?.file === file && sha256File(file) === request.pins.digest, 'stale dispatch pins');
+    const registry = readJson(path.join(request.root, 'workers.json')), entry = registry[request.issue];
+    const attemptsFile = path.join(request.root, 'attempts.json');
+    const used = fs.existsSync(attemptsFile) ? readJson(attemptsFile)[request.issue] ?? 0 : 0;
+    let pins;
+    if (beforeSpawn) {
+      requireThat(used + 1 === request.attempt && (!entry || entry.attempt < request.attempt), 'stale dispatch attempt');
+      pins = readJson(file);
+    } else {
+      requireThat(used === request.attempt && entry?.attempt === request.attempt && entry.stage === 'mono-deliver' &&
+        entry.worktree === request.worktree && entry.branch === request.branch && identity(entry) &&
+        ['packVersion', 'sourceCommit', 'surfaceRevision'].every(key => canonical(entry[key] ?? null) === canonical(request[key] ?? null)), 'stale dispatch attempt');
+      requireThat(canonical(collectionPinsBinding(entry)) === canonical(request.pins), 'stale dispatch pins');
+      pins = effectivePins(entry);
+    }
+    for (const key of ['worktree', 'branch', 'base', 'packRoot', 'packVersion', 'sourceCommit', 'surfaceRevision', 'risk', 'critical'])
+      requireThat(canonical(request[key] ?? null) === canonical(pins[key] ?? null), `stale dispatch field: ${key}`);
+  }
   const output = execFileSync(process.execPath, [path.join(scriptDir, "verify-pack-state.mjs"), "identity",
     "--pack-root", request.packRoot,
     "--pack-version", request.packVersion, ...(request.sourceCommit ? ["--source-commit", request.sourceCommit] : []), "--surface-revision", String(request.surfaceRevision)], { encoding: "utf8" });
@@ -799,6 +821,8 @@ if (isMain(import.meta.url)) {
     const args = flags(rest);
     if (name === "--help" || args.help) console.log(`Usage: gate.mjs start|preflight|ship --request <json>
 start request: {worktree, branch, base, packRoot, skillsRoot, packVersion, sourceCommit, surfaceRevision}
+  Generated dispatch adds {root,issue,attempt,risk,critical,pins:{file,digest}}; start verifies the active registered attempt and current pins before code.
+  The orchestrator's locked pre-launch invocation uses --before-spawn true for the next unregistered attempt; worker invocation omits it.
 preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,risk,critical,baseRef,evidenceRoot,workerWritableRoots:[],reviewDataset?,reviewDatasetVersion?,pins?:{file,digest},modelRoutes?,collect,verification:{command,args}}
   modelRoutes pins immutable base/configDigest/roles from resolveModelRoutes; overrides require pins.
   risk is the final approved/diff risk; critical is a concrete escalation reason or null.
@@ -829,7 +853,7 @@ ship request: {preflight:<complete preflight collect:false request>, repo:"owner
     else {
       requireThat(["start", "preflight", "ship"].includes(name), "unknown gate");
       const request = readJson(args.request);
-      const reason = name === "start" ? startGate(request) : name === "preflight" ? await preflightGate(request) : await shipGate(request);
+      const reason = name === "start" ? startGate(request, { beforeSpawn: args['before-spawn'] === 'true' }) : name === "preflight" ? await preflightGate(request) : await shipGate(request);
       if (name === "preflight" && reason.publishRequest) {
         console.log(`gate preflight: pending: ${reason.publishRequest.collectionId}`);
         console.log(JSON.stringify(reason)); process.exitCode = 2;
