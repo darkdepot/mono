@@ -1502,6 +1502,12 @@ Treat Markdown as agent instructions. Protect executable behavior with fixtures,
 
 ## Validation
 
+Наблюдённые способы поднять безопасную копию и сохранить доказательства для
+веба, терминального пака и мобильного симулятора собраны в
+[рецептах QA](references/qa-recipes.md). Там же — результат загрузки WebM в
+Linear, ограничения пробы, требования к хосту и время шагов. Это справочник;
+скилл тестировщика, сертификат и ворота в этой работе не добавляются.
+
 Run before completing a change:
 
 ```bash
