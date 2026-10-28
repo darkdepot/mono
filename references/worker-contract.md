@@ -29,7 +29,7 @@ Append `--source-commit` when the dispatch supplies `sourceCommit`.
 
 ```bash
 node '<pack-root>/scripts/verify-pack-state.mjs' identity \
-  --pack-root '<pack-root>' --pack-version '<pin>' \
+  --pack-root '<pack-root>' --pack-version '<dispatch packVersion>' \
   --surface-revision '<dispatch surfaceRevision>'
 ```
 
@@ -247,12 +247,12 @@ verbatim verification, AFK stops.
   "reason":"<parked reason|null if green>",
   "text":"<result/proof/next/owner>",
   "packVersion":"<pin>",
-  "sourceCommit":"<pin, omit if absent>",
+  "sourceCommit":"<optional pin>",
   "surfaceRevision":<repeat the dispatch pin, integer>,
   "branch":"<branch>",
   "head":"<sha>",
-  "phase_result":"<outcome>",
-  "summary":"<summary>",
+  "phase_result":"<result>",
+  "summary":"<lines>",
   "criteria":[{"criterion":"<text>","done":true,"outcome":"confirmed","proof":"<proof>","result":"<result>","head":"<sha>","worktree_fingerprint":"<sha256>"}],
   "not_built":[],"not_verified":[],
   "changed_files":[],
@@ -260,13 +260,13 @@ verbatim verification, AFK stops.
   "verification_items":[
     {"item":"<item>","status":"pass | deferred | not-run","evidence":"<reason/owner>"}
   ],
-  "question":"<text|null>",
-  "recommendation":"<text|null>",
+  "question":"<str|null>",
+  "recommendation":"<str|null>",
   "linear_mutations_pending":[],
   "capsule":{"phase":"<code | preflight | ship>","head":"<sha>","open_queue":[],"decisions":[],"local_passes":[{"id":"<id>","head":"<sha>","result":"<clean|findings>"}],"writable_roots":["<grant>"] },
-  "certificate":"<text|null>",
-  "notes":"<facts|null>",
-  "next":"<mono:deploy|recovery owner>"
+  "certificate":"<str|null>",
+  "notes":"<str|null>",
+  "next":"<mono:deploy|owner>"
 }
 ```
 
