@@ -331,7 +331,8 @@ languages.linear (Russian→ru, English→en; otherwise configure ideaGate.headi
 `idea/idea-records.json` = {complete:true,comments:[{id,createdAt,body}]}; true only
 after all pages. `issue-context.json` = {issueId,issueKey,projectId,blockedBy:[Issue keys]} from
 all Linear Blocked by relations; explicit [] when absent. For package starts,
-dispatch selects only blockers in approval.md's issues= set. Before launching a
+dispatch selects only blockers in approval.md's issues= set. Without that token
+there is no declared package chain; ordinary external blockers produce no chain input. Before launching a
 chain task, supply predecessors/<KEY>/code-report.json (final code phase report)
 or code-report.md (legacy published report) and merge.json = {issue,mergeCommit,head}
 from the merged PR. Dispatch verifies merge ancestry on fetched origin/main,

@@ -234,14 +234,21 @@ function preparePublication(input, previous, root, reportsDir) {
       report.capsule.open_queue = report.capsule.open_queue.filter(w => canonical(w) !== canonical(old));
     }
     write = implementationComment(report);
-    report.capsule.open_queue = report.capsule.open_queue.filter(w => canonical(w) !== canonical(write));
+    const superseded = new Set(report.superseded_reports);
+    report.capsule.open_queue = report.capsule.open_queue.filter(w => canonical(w) !== canonical(write) &&
+      !(superseded.has(w.id) && literalImplementationComment(w) && canonical(w) === canonical({
+        id: w.id, operation: 'comment', target: report.issue, payload: { body: w.payload.body },
+      })));
     report.capsule.open_queue.push(write);
   } else if (report.phase === 'preflight') {
     const code = latestCode(report, root, reportsDir);
     if (code && deferredImplementation(code)) {
       const write = implementationComment(code);
       const already = verifiedConfirmations(report, root).some(ack => ack.results.some(r => r.id === write.id && r.writeDigest === digest(write)));
-      if (!already && !report.capsule.open_queue.some(w => canonical(w) === canonical(write))) report.capsule.open_queue.unshift(write);
+      const prepared = previous?.issue === report.issue && previous.phase === report.phase && previous.attempt === report.attempt &&
+        previous.sequence === report.sequence && previous.head === report.head &&
+        previous.capsule.open_queue.some(w => canonical(w) === canonical(write));
+      if ((!already || prepared) && !report.capsule.open_queue.some(w => canonical(w) === canonical(write))) report.capsule.open_queue.unshift(write);
       report.capsule.deferred_reports = [...(code.capsule.deferred_reports ?? []), codeReference(code)];
     }
   }

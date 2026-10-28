@@ -11,6 +11,7 @@ export function copyChainSnapshot(source, target, issue, approval, worktree, bas
   const blockers = context.blockedBy ?? [];
   if (!Array.isArray(blockers) || blockers.some(key => !/^[A-Z][A-Z0-9]*-\d+$/.test(key))) throw new Error('invalid Blocked by snapshot');
   const token = /(?:^|\s)issues=([^\s]+)/u.exec(approval)?.[1];
+  if (!token) return null;
   if (token && !Array.isArray(context.blockedBy)) throw new Error('approved package requires an explicit Blocked by snapshot');
   const members = token?.split(',').map(item => /^[^:]+:([A-Z][A-Z0-9]*-\d+)$/u.exec(item)?.[1]) ?? [];
   if (blockers.length && (!members.includes(issue) || members.some(key => !key))) throw new Error('Blocked by requires the approved package Issue set');

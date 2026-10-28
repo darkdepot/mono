@@ -44,6 +44,11 @@ test('chain dispatch accepts legacy JSON without a criteria or phase field', () 
   f.write(path.join(f.directory, 'code-report.json'), { issue: f.key, stage: 'mono-implement', status: 'implemented-needs-preflight' });
   assert.equal(f.copy().predecessors[0].legacy, true);
 }));
+test('a project Issue without a declared package gets no chain input for an external blocker', () => fixture(f => {
+  f.write(path.join(f.source, 'issue-context.json'), { blockedBy: ['OTHER-1'] });
+  assert.equal(copyChainSnapshot(f.source, f.target, 'MONO-993', 'Approved project Issue', f.root, f.base), null);
+  assert.deepEqual(fs.readdirSync(f.target), []);
+}));
 test('chain dispatch blocks missing reports and commits outside main', () => fixture(f => {
   fs.unlinkSync(path.join(f.directory, 'code-report.json'));
   assert.throws(f.copy, /blocked: нет отчёта предшественницы/);

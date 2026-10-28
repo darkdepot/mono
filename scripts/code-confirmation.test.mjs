@@ -152,6 +152,52 @@ test('code boundary: fallback publication keeps its immutable snapshot in the wr
     await confirmQueue(ready, f.root, () => ({ state: 'present', evidence: 'fallback report read back' }));
   } finally { f.close(); }
 });
+test('code boundary: capsule-based revision retries remove all superseded generated writes', () => {
+  const f = fixture();
+  try {
+    const first = publishPhase(f.code, f.file('code'));
+    const input = structuredClone(first); input.sequence = 2; input.summary = 'Справка и диагностика исправлены.';
+    const revised = publishPhase(input, f.file('code'));
+    assert.equal(revised.capsule.open_queue.length, 1);
+    assert.deepEqual(publishPhase(input, f.file('code')), revised);
+  } finally { f.close(); }
+});
+test('code boundary: supersession never removes an unknown write borrowing the old report ID', () => {
+  const f = fixture();
+  try {
+    const first = publishPhase(f.code, f.file('code'));
+    const input = structuredClone(first); input.sequence = 2; input.summary = 'Справка обновлена.';
+    const unknown = input.capsule.open_queue[0]; unknown.payload.extra = 'unknown obligation';
+    const report = publishPhase(input, f.file('code'));
+    assert.ok(report.capsule.open_queue.some(write => JSON.stringify(write) === JSON.stringify(unknown)));
+    assert.equal(requiresConfirmation(report), true);
+  } finally { f.close(); }
+});
+test('code boundary: confirmation arriving before an identical Preflight retry cannot change its prepared queue', async () => {
+  const f = fixture();
+  try {
+    publishPhase(f.code, f.file('code'));
+    const input = f.preflight();
+    const write = { id: 'ready', operation: 'comment', target: input.issue, payload: { body: 'Проверка завершена.' } };
+    input.capsule.open_queue = input.linear_mutations_pending = [write];
+    const ready = publishPhase(input, f.file('preflight'));
+    assert.equal(ready.capsule.open_queue.length, 2);
+    await confirmQueue(ready, f.root, () => ({ state: 'present', evidence: 'whole queue read back' }));
+    assert.deepEqual(publishPhase(input, f.file('preflight')), ready);
+  } finally { f.close(); }
+});
+test('code boundary: stopped publication preserves the complete free-form evidence and test result', () => {
+  const f = fixture();
+  try {
+    const input = { ...f.code, phase_result: 'blocked', text: 'Сохранено исправление команды.\n\n| Состояние | Результат |\n| Ошибка чтения | Воспроизведена |',
+      tests: { run: 'node --test notes.test.mjs', result: 'Один тест выявил ошибку чтения' },
+      changed_files: ['notes.mjs'], notes: 'Доступ к сервису отсутствует.' };
+    const report = publishPhase(input, f.file('code'));
+    const body = report.capsule.open_queue[0].payload.body;
+    for (const value of [input.text, input.tests.run, input.tests.result, input.changed_files[0], input.notes]) assert.ok(body.includes(value));
+    assert.equal(requiresConfirmation(report), true);
+  } finally { f.close(); }
+});
 for (const [name, file, before, after, regression] of [
   ['unknown-write allowlist bypass', 'scripts/implementation-comment.mjs',
     'queue.length === 1 && canonical(queue[0]) === canonical(implementationComment(report))', 'queue.length === 1',
