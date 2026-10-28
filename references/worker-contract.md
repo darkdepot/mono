@@ -119,21 +119,20 @@ premature code/Delivery/missing review; no fail-closed package creation.
 
 ## Review contract
 
-Read-only package/config/branch/PR; no artifact/comment/Issue/PR/lifecycle/approval/
-worker writes. Outcomes: ready/advisory-ready/needs-fixes/blocked. Apply artifact/
+Read package/config/branch/PR only; no writes. Outcomes: ready/advisory-ready/needs-fixes/blocked. Apply artifact/
 execution quality, coherence/feasibility/one-PR/durable AFK-HITL, applicable UI/
 security/data/ship/deep-risky architecture. Valid lane needs no Project/docs.
 Return verdict/meaning/mode/risk/gate-reason/inspected/boundary/next; findings
 (blocking/proposed-fix/decision/fyi): artifact/evidence/impact/recommendation/owner.
-Missing context/disposition blocks. Repair owners: handoff/issue renewal/ship drift.
+Missing context/disposition blocks; repairs: handoff/issue renewal/ship drift.
 
 ## Execution and artifact handling
 
 Apply `references/execution-quality.md`/`references/artifact-quality.md`.
-Intake: paths → snapshot/reviews → decisions → configured roots → gstack, no broad
-scans; absent roots unavailable. Approved Linear outranks scratch; carry compatible
-stale choices only. Missing/conflicting scope/proof/risk/slicing stops writes;
-no stale certificates/local body copies. Translate roles. Notes (omit empty):
+Intake: paths → snapshot/reviews → decisions → configured roots → gstack; no broad
+scans, absent roots unavailable. Approved Linear outranks scratch; only compatible
+stale choices carry. Missing/conflicting scope/proof/risk/slicing stops writes;
+no stale certificates/local bodies. Translate roles. Nonempty notes:
 read/unavailable/stale_or_ignored/conflicts/decisions_carried_forward/confidence_boundary,
 one Russian sentence.
 
@@ -179,7 +178,7 @@ worktree/orchestrator. Orchestrator collect:true only; worker collect:false.
 Keys grant no writes; hostile operator out of scope (one user/host).
 
 Amend: "Effective attempt pins" pins.v<n>.json; no report version field.
-Commit; collect:false exit 2 is pending. Publish only returned publishRequest in
+Commit; collect:false exit 2=pending. Queue only returned publishRequest in
 payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
 target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate even
@@ -196,7 +195,7 @@ existing window/review thresholds/declines/class stops/caps unchanged.
 
 ## Implementation exit evidence
 
-Code exits: criteria, summary (2–3 product-language lines),
+Code exits (blocked/needs-human too): criteria, summary (2–3 product-language lines),
 not_built/not_verified arrays (possibly empty); phase_result string.
 After admission capture-criteria freezes Issue snapshot/standalone start-read
 «Готово, когда:» into <root>/reports/<KEY>-criteria-a<N>.json, never report fields.
@@ -216,8 +215,7 @@ not_built:[{what,reason}]; not_verified:[{what,why,risk}], one per unverified
 criterion, what=criterion. unverified/done:true built/untested; done:false unfinished;
 broken never becomes unverified. Screen visibility without browser: unverified,
 even with passing HTML tests. Summary: «экран в браузере не проверен».
-Tiny text-only summary exactly 3 lines: result; «поведение не меняется» exception
-with reason/check boundary; Preflight handoff. Evidence layers excluded.
+Tiny text-only: verbatim «поведение не меняется» (no inserted words) in pre-edit evidence and summary line 2 with reason/check boundary; summary exactly 3 lines: result / exception / Preflight handoff; evidence excluded.
 Issue comment: summary → «Не проверено» → «Найдена поломка» → evidence
 (criteria, significant-state table before edits, exclusions, decisions).
 Breakage/unfinished/no progress: blocked, saved state. implemented-needs-preflight:
@@ -235,8 +233,7 @@ completed work without it is refused.
 ## Worker Report
 
 Path: ~/.mono-agent-workflow/orchestrator/<product>/reports/<ISSUE-KEY>-mono-deliver.json;
-denied: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON;
-verbatim verification, AFK stops.
+denied: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON.
 
 ```json
 {
@@ -247,7 +244,7 @@ verbatim verification, AFK stops.
   "reason":"<parked reason|null if green>",
   "text":"<result/proof/next/owner>",
   "packVersion":"<pin>",
-  "sourceCommit":"<optional pin>",
+  "sourceCommit":"<pin, omit if absent>",
   "surfaceRevision":<repeat the dispatch pin, integer>,
   "branch":"<branch>",
   "head":"<sha>",
@@ -272,8 +269,7 @@ verbatim verification, AFK stops.
 
 Parked reasons: blocked, needs-decision, needs-human, drift-candidate, timed-out,
 scope-drift-needs-handoff, write-unconfirmed, evidence-limit (предел доказательств).
-Decisions: exact question/recommendation. Orchestrator records parks in Linear this turn/read-back. Green: confirmed queues/current-head gates pass.
+Decisions: exact question/recommendation. Orchestrator records/reads back parks in Linear this turn.
 
-Keep every Issue «Как проверить» line verbatim/in order in verification_items;
-pass | deferred | not-run, never unrun pass; name deferred owner. Name judgment/state. Repeat pins; standalone dispatched status,
-sequenced intermediate.
+Issue «Как проверить»: verbatim/in order in verification_items;
+pass | deferred | not-run, no unrun pass; deferred owner and judgment/state. Repeat pins; standalone dispatched status, sequenced intermediate.
