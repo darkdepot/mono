@@ -83,47 +83,54 @@ fallback.
 
 ## Context seam
 
-Before lifecycle/scope gates resolve Issue/marker/config/verified label/
-authenticated approval/emit-fingerprint from dispatch snapshot. Whole-body
-SHA-256 only; no inferred oracle/lane/sixth field. Retain parent/marker/label/
-approval provenance for fallback. Project-first needs approved
-Project/PRD/Spec-record-or-exception/Issue; candidate escape is not proof.
-Apply `references/issue-only-lane.md` Context Contract/Resolver/fallback,
-candidate/freeze/exit: `approval_status=approved-fresh`, matching fingerprints/
-owner, eligible risk, oracle acceptance/verification. Valid lane needs no Project
-docs; broken markers never downgrade. Implement integrity error → needs-human;
-missing Project prerequisites → park/restart. Preflight candidate/missing docs/
-deep-risky escalation → drift-candidate/fallback/higher-risk review, never ready
-outside lane. Ship bad approval stops gates/PR → no-promotion handoff.
+Before lifecycle/scope gates: snapshot Issue/marker/config/verified label/
+authenticated approval/emit-fingerprint. Whole-body SHA-256; no inferred oracle/
+lane/sixth field. Keep parent/marker/label/approval provenance for fallback.
+Project-first: approved Project/PRD/Spec-record-or-exception/Issue; candidate is not proof.
+Apply `references/issue-only-lane.md` Context Contract/Resolver/fallback/candidate/
+freeze/exit: `approval_status=approved-fresh`, matching fingerprints/owner, eligible
+risk, oracle acceptance/verification. Valid lane needs no Project docs; broken
+markers never downgrade. Implement: integrity→needs-human, missing prerequisites→
+park/restart. Preflight candidate/missing docs/deep-risky escalation→drift-candidate/
+fallback/higher-risk review, never ready outside lane. Ship bad approval→stop gates/PR,
+no-promotion handoff.
+
+Project start: by=owner; PC-019 allows by=orchestrator with reason/countercheck
+(model/version outside the fence in that comment) only with «Ведёт оркестратор»
+outside the last Idea approval fence or earlier explicit owner Project comment.
+Delegated stale/legacy-migrate Idea needs a new owner button, confirmed record and
+fresh check. Legacy package/start or bundled approval can authorize code;
+«запускай реализацию» permits Delivery/branch/code; documents alone do not.
+[PC-016/PC-019](contracts/project.md).
 
 ## Delivery and pre-ship gates
 
-Readiness-only, no findings/writes/repair/install. PASS inspected/unblocked; FAIL
+Readiness-only; no findings/writes/repair/install. PASS inspected/unblocked; FAIL
 violation; BLOCKED unavailable. Return mode/meaning/boundary/unblock;
 failure: FAIL - Linear <mode> not ready.
 Delivery: Delivery Project/current PRD/Spec-record-or-exception/approved Issues/start/
 coherent risk-review; docs alone fail. Issue-only pre-activation: oracle/marker/
-label/fresh authenticated approval/review; started/terminal fails. Read-back/retry:
+label/fresh authenticated approval/review; started/terminal fails. Retry/read-back:
 configured started/nonterminal, no Project for issue-only.
-Pre-ship: diff/Issue match, current recoverable preflight/review/artifacts, synced
+Pre-ship: diff/Issue match, recoverable current preflight/review/artifacts, synced
 drift, no stale PR chips/raw URLs; lane oracle/fingerprint replaces docs. Bad
 approval stops PR/gates. Reject wrong roles, mechanics/full copies/brittle scripts,
 premature code/Delivery/missing review; no fail-closed package creation.
 
 ## Review contract
 
-Review package/config/branch/PR read-only, no artifact/comment/Issue/PR/lifecycle/
-approval/worker writes. Outcomes: ready/advisory-ready/needs-fixes/blocked. Apply
-artifact/execution quality, coherence/feasibility/one-PR/durable AFK-HITL,
-applicable UI/security/data/ship/deep-risky architecture. Valid lane needs no
-Project/docs. Return verdict/meaning/mode/risk/gate-reason/inspected/boundary/next;
-blocking/proposed-fix/decision/fyi: artifact/evidence/impact/recommendation/owner.
-Missing context/disposition blocks; repair: handoff/issue renewal/ship drift.
+Read-only package/config/branch/PR; no artifact/comment/Issue/PR/lifecycle/approval/
+worker writes. Outcomes: ready/advisory-ready/needs-fixes/blocked. Apply artifact/
+execution quality, coherence/feasibility/one-PR/durable AFK-HITL, applicable UI/
+security/data/ship/deep-risky architecture. Valid lane needs no Project/docs.
+Return verdict/meaning/mode/risk/gate-reason/inspected/boundary/next; findings
+(blocking/proposed-fix/decision/fyi): artifact/evidence/impact/recommendation/owner.
+Missing context/disposition blocks. Repair owners: handoff/issue renewal/ship drift.
 
 ## Execution and artifact handling
 
 Apply `references/execution-quality.md`/`references/artifact-quality.md`.
-Intake: paths → snapshot/reviews → decisions → configured roots → gstack. No broad
+Intake: paths → snapshot/reviews → decisions → configured roots → gstack, no broad
 scans; absent roots unavailable. Approved Linear outranks scratch; carry compatible
 stale choices only. Missing/conflicting scope/proof/risk/slicing stops writes;
 no stale certificates/local body copies. Translate roles. Notes (omit empty):
@@ -132,20 +139,20 @@ one Russian sentence.
 
 ## Certificate recovery
 
-Recover latest marker-bearing Linear comment/resource; quote markers only there.
+Latest marker-bearing Linear comment/resource only: quote markers there.
 Apply `references/human-friendly-output.md` Machine Blocks In Linear Comments;
 report/chat omit human lead.
 
 ## Delivery Reports and Capsule
 
-One dispatch; terminal green/parked, intermediate ready/implemented-needs-preflight.
-Stops park, no stage respawn; standalone retains statuses/certificates.
-Phase: reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json; denied: worktree
-.orchestrator, never both. Final fields plus phase/positive increasing sequence/
-kind (phase/confirmation-request)/head/phase_result. Capsule phase/head match;
-open_queue = ordered linear_mutations_pending. Writes: stable id/operation/target/
-payload; changed payload → new ID, new report → new collectionId. Obligations survive
-heads; omit confirmed writes. Certificate: append #/certificate once.
+One dispatch: green/parked terminal; ready/implemented-needs-preflight intermediate.
+Stops park, no respawn; standalone retains statuses/certificates.
+reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json or denied-write .orchestrator,
+never both. Final fields + phase/positive increasing sequence/kind
+(phase|confirmation-request)/head/phase_result. Capsule phase/head match;
+open_queue=ordered linear_mutations_pending. Writes: stable id/operation/target/
+payload; changed payload→new ID, new report→new collectionId. Keep obligations
+across heads, omit confirmed writes; certificate: append #/certificate once.
 
 Publish/wait: delivery-state.mjs; confirmation:
 confirmations/<ISSUE-KEY>-phase-<phase>-a<N>-s<sequence>.confirmed.json.
@@ -158,16 +165,14 @@ foreign changes, never reset/repeat applied moves/writes. Timeout
 orchestration.delivery.confirmationTimeoutSec (default 1800 seconds) parks
 write-unconfirmed (запись не подтверждена).
 
-Only the generated implemented-needs-preflight Issue comment skips waiting.
-Other/unknown writes and empty queues wait. publish generates every code exit's
-full comment; stopped reports wait in their own queue. No start-comment queue.
-Pending code comments carry to Preflight; a revision gets a new ID and marks the
-old comment stale, applied or pending. Immutable sequence snapshots beside phase
-reports bind capsule.deferred_reports sequence/reportDigest. Predecessor checks
-allow only this exception, verifying fingerprints and carried/replacing comments.
-Preflight confirms the whole queue before formal review; no extra Ship check.
-Green needs all obligations. Confirm accepted drift
-before PR, ready before formal review, In Review/PR chip after PR.
+Only the generated implemented-needs-preflight comment defers waiting. Unknown/other
+writes and empty queues wait. publish generates full code-exit comments; stops wait
+in their queue, no start-comment queue. Preflight carries pending code comments;
+revisions use new IDs and mark old comments stale, pending or applied. Immutable
+sequence snapshots beside phase reports bind capsule.deferred_reports sequence/
+reportDigest. Predecessor checks verify fingerprints/carried/replacing comments.
+Preflight confirms all before formal review, no extra Ship check. Green requires
+all obligations. Confirm drift before PR, ready before review, In Review/PR chip after PR.
 
 Pin product/evidenceRoot/packRoot/skillsRoot/risk/critical/verification/grants.
 ~/.mono-agent-workflow/evidence/<product>/ outside ALL grants, including
@@ -186,35 +191,49 @@ Transient: same head/route, increment n/sequence.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
 head/merge-base receipt before judgment; no string substitutes.
-Orchestrator rechecks preflight before ship. A ship-fix amendment names the next ship-gate attempt:
-new head/new stateFile, preserve old state, same task attempt. No machine bound on
-ship-gate attempts; the unchanged window waives nothing, costing time. Review
-thresholds/declines/class stops/caps stay unchanged.
+Orchestrator rechecks preflight before ship. Ship-fix amendment: next ship-gate
+attempt, new head/stateFile; preserve old state/task attempt. No gate-attempt cap;
+existing window/review thresholds/declines/class stops/caps unchanged.
 
 ## Implementation exit evidence
 
-Code exits: nonempty criteria, summary (2–3 product-language lines), not_built/
-not_verified arrays (may be empty), any packVersion. phase_result stays a string.
-At start capture-criteria freezes approved «Готово, когда:» bullets from snapshot
-Issue or standalone delivery-start read, never report fields, into
-<root>/reports/<KEY>-criteria-a<N>.json. No replacement. Publication compares the
-ordered list before writes: no missing/extra/reordered/reworded items, whitespace
-normalization only. Standalone root: uncommitted .orchestrator.
-«Как проверить» separately in verification_items. criteria fields: criterion, done
-(boolean), outcome (confirmed|unverified|broken), proof (chosen before edits), result
-(observed), head (40 hex), worktree_fingerprint (64 hex at check).
-confirmed requires done:true/delivered head; relevant edits stale earlier success,
-even without a commit. Fingerprint: SHA-256 of binary diff from HEAD and sorted
-untracked path/content hashes, excluding reports; record command.
-not_built: [{what,reason}]; not_verified: [{what,why,risk}], one per unverified
-criterion with what equal to criterion. unverified/done:true = built, untested;
-done:false = unfinished. Broken never becomes unverified.
-Screen summary: «экран в браузере не проверен». Tiny text-only report: 3–4 lines.
+Code exits (any packVersion): criteria, summary (2–3 product-language lines),
+not_built/not_verified arrays (possibly empty); phase_result string.
+After start admission capture-criteria freezes snapshot Issue/standalone start-read
+«Готово, когда:» into <root>/reports/<KEY>-criteria-a<N>.json, never report fields.
+Immutable; publication checks every item in order before writes: no omission,
+addition, rewording or reorder, whitespace normalization only. Standalone root:
+uncommitted .orchestrator. «Как проверить» separately in verification_items.
+criteria: criterion, done:boolean, outcome:confirmed|unverified|broken,
+proof (before edits), result (observed), head (40 hex), worktree_fingerprint (64 hex).
+confirmed: done:true, command exit 0 on recorded delivered head/fingerprint after
+last relevant edit, including dirty edits. Passing subtests of failed runs cannot
+confirm; narrow successful runs can. Fingerprint only by
+`node <pack-root>/scripts/worktree-fingerprint.mjs --worktree <worktree> --delivery-root <delivery-root>`;
+command in criterion proof. SHA-256 stream: `git diff --binary HEAD`, then sorted
+nonignored untracked files (`git ls-files --others --exclude-standard`), each:
+path, NUL, content SHA-256 hex, NUL. Both sources exclude only delivery-root paths
+when inside the worktree (`.orchestrator/` standalone). No homemade hashes/other
+exclusions; report/chronology in delivery-root.
+not_built:[{what,reason}]; not_verified:[{what,why,risk}], one per unverified
+criterion, what=criterion. unverified/done:true built/untested; done:false unfinished;
+broken never becomes unverified. Screen visibility without browser: unverified,
+even with passing HTML tests. Summary: «экран в браузере не проверен».
+Tiny text-only summary exactly 3 lines: result; «поведение не меняется» exception
+with reason/check boundary; Preflight handoff. Lower evidence layers do not count.
 One Issue comment: summary → «Не проверено» → «Найдена поломка» → evidence
-(criteria, significant-state table written before edits, exclusions, decisions).
-Breakage/unfinished/no progress → blocked, saved state. implemented-needs-preflight:
-every done:true, no broken; publication refuses missing criteria/broken/unfinished
-success. Preflight unchanged.
+(criteria, significant-state table before edits, exclusions, decisions).
+Breakage/unfinished/no progress: blocked, saved state. implemented-needs-preflight:
+all done:true/no broken; publication rejects incomplete success. Preflight unchanged.
+
+Only pre-capture refusals permit empty criteria without a saved list:
+capture refusal (missing/ambiguous/unsupported-language section): blocked;
+start refusal: blocked|needs-human. pre_capture_stop: kind=capture-refused|start-refused,
+command/exit/reason; capture also absolute issue_file, start also verdict.
+Exit 0 with pass is not refusal. Comment: refusal reason, expected format
+«# Критерии приемки» / «Готово, когда:», missing labels only when absent.
+Never invent criteria; all other reports require capture/full ordered comparison,
+including completed work without a saved list, which is refused.
 
 ## Worker Report
 
@@ -228,8 +247,8 @@ verbatim verification, AFK stops.
   "stage": "mono-deliver",
   "attempt": 1,
   "status": "<green | parked>",
-  "reason": "<dictionary reason for parked; null for green>",
-  "text": "<outcome, evidence, next action and owner>",
+  "reason": "<parked reason|null if green>",
+  "text": "<outcome/evidence/next/owner>",
   "packVersion": "<dispatch packVersion>",
   "sourceCommit": "<dispatch sourceCommit, omit when absent>",
   "surfaceRevision": <repeat the dispatch pin, integer>,
@@ -238,17 +257,17 @@ verbatim verification, AFK stops.
   "criteria": [{"criterion":"<acceptance item>","done":true,"outcome":"confirmed","proof":"<method>","result":"<observation>","head":"<sha>","worktree_fingerprint":"<sha256>"}],
   "not_built": [], "not_verified": [],
   "changed_files": [],
-  "tests": { "run": "<commands>", "result": "<outcome>" },
+  "tests": { "run": "<commands>", "result": "<result>" },
   "verification_items": [
     { "item": "<verbatim verification line>", "status": "pass | deferred | not-run", "evidence": "<reason/owner>" }
   ],
-  "question": "<question text, or null>",
-  "recommendation": "<recommendation, or null>",
+  "question": "<text|null>",
+  "recommendation": "<text|null>",
   "linear_mutations_pending": [],
   "capsule": { "phase": "<code | preflight | ship>", "head": "<sha>", "open_queue": [], "decisions": [], "local_passes": [{"id":"<stable pass id>","head":"<reviewed sha>","result":"<clean|findings>"}], "writable_roots": ["<dispatch grant>"] },
-  "certificate": "<certificate text or null>",
-  "notes": "<runtime facts or null>",
-  "next": "<mono:deploy | named recovery owner>"
+  "certificate": "<certificate|null>",
+  "notes": "<facts|null>",
+  "next": "<mono:deploy|recovery owner>"
 }
 ```
 

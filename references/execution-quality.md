@@ -42,3 +42,5 @@ independent of the tested code. A mismatch means fix code or stop, never fit the
 expectation to the implementation. Unrun/skipped tests do not count. A sentence
 in a skill file does not prove agent behavior; use behavioral scenarios.
 After an edit touches checked behavior, rerun its proof on the delivered state.
+Confirm only with command exit 0 at recorded head/fingerprint; passing subtests
+of failed runs do not confirm. Screen visibility without browser stays unverified.

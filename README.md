@@ -520,7 +520,7 @@ raw idea → recorded owner approval → Project in Idea → owner or delegated 
 5. **Evaluate.** Run `mono:tech-evaluation` on the record route or explicit old-path request. The lead checks one solution against real product cases and a second model family before showing its plain-text page: up to 130 words, «Тебе решить» always second, behavior instead of mechanisms, last line «Дальше» with a link. The page itself is the summary immediately before «Утвердить и начать Handoff» / «Утвердить, продолжу позже» / «Ещё обсудить». After the click, freshly read inputs, write and read back Tech Spec and approval, run the record command and `mono:check tech`, then close the task. One recording line replaces the old repeated page and second transition window. Deferral does not start Handoff. Version and retry rules are shared; the existing PRD/Design partial-write exceptions remain. Handoff consumes the verified record chain.
 6. **Package.** Run `mono:handoff` after the last required stage. Reconcile approved Project, Research, PRD and required Design/Tech Evaluation records; Handoff writes no new PRD or Tech Spec. A code scout checks the product; slice into one Issue unless `too-big`, `shared-base` or `probe` warrants more, with owner permission above three. Review drafts before writing. Write and read back package and Issues, run separate `mono:check handoff` and `mono:check issue` calls, then set and read back Ready, all before the summary. One summary up to 150 words sits immediately above «Начать работу» / «Передать оркестратору» / «Ещё обсудить». After the choice, freshly verify the shown version and write only the start record, read it back and check before implementation. A changed version needs «Было / Стало» and a new window; a failed retry blocks transition. Ordinary work requires owner start, delegated work accepts orchestrator start with reason and countercheck. Legacy repair rules remain; documents alone never authorize Delivery.
 7. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
-8. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review or `accepted-with-declines` with orchestrator-approved evidence. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts lead the Russian ready-certificate comment before its unchanged machine block. Codex full and final deep/risky work retain the local loop. Managed Claude Code uses external committed-head collection only, with no in-worker helper pass; its ready certificate names that review route and stop/resume startup. Preserve phase ownership.
+8. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review or `accepted-with-declines` with orchestrator-approved evidence. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts live in the code report; the Russian ready-certificate comment retains its machine block. Codex full and final deep/risky work retain the local loop. Managed Claude Code uses external committed-head collection only, with no in-worker helper pass; its ready certificate names that review route and stop/resume startup. Preserve phase ownership.
 9. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
 10. **Deploy and close.** `mono:deploy` verifies that the current PR head matches the green certificate, applies the configured approval policy, and delegates the configured deploy workflow. Verify delivery and run live acceptance where users consume the result. Close the Issue only after its delivery requirements pass; publish the informational project update, report cost, record useful learnings, and retire the worker. Only the shipment of the last open Project Issue may complete that Project.
 
@@ -780,7 +780,7 @@ On the short path, gates check registered pins and dataset bytes before returnin
 Scripts do not write to Linear; the orchestrator uses its connector. The installed collector handles empty/collection-only queues; `.agents/`
 pre-application uses `dispatch.mjs --preapply` under a recorded owner mandate, with a separate commit before start gates and artifact-owner repair before a new launch. Manifests use path/`sha256` list items with column-zero `text` fences, allowing nested item indentation and blank lines as serialized by Linear.
 
-The orchestrator is the single Linear writer for implement/preflight/ship workers. A worker uses its dispatched snapshot as its entire Linear context and queues every required comment, state change, link and certificate in its report. Publish the whole queue with the phase capsule; continue only after its durable confirmation. In-phase confirmation requests preserve drift-before-PR, ready-certificate-before-formal-review and In-Review-after-PR ordering. A queued write is not an applied write.
+The orchestrator is the single Linear writer for implement/preflight/ship workers. A worker uses its dispatched snapshot as its entire Linear context and queues every required comment, state change, link and certificate in its report. Publish the whole queue with the phase capsule. Only the generated implemented-needs-preflight code comment defers waiting until the whole Preflight queue is confirmed; all other writes wait for durable confirmation. In-phase confirmation requests preserve drift-before-PR, ready-certificate-before-formal-review and In-Review-after-PR ordering. A queued write is not an applied write.
 
 After a lost response, the orchestrator reconciles every write against its durable result and external state, then applies only missing actions. Keep stable write IDs for reconciliation; changed payloads need new IDs. Resume the same context and phase from its capsule with the complete open queue, decisions, head and writable roots. Recheck pack identity on every resume. A head change never drops pending obligations.
 
@@ -1432,7 +1432,10 @@ Linear без оркестратора. Список неизменяемый; �
 только для русского и английского. Иные метки, отсутствующая или неоднозначная
 секция дают `blocked` с ожидаемыми метками до записи состояния.
 `phase_result` остаётся строкой; `criteria`, `summary`, `not_built`, `not_verified`
-обязательны в каждом итоговом кодовом отчёте независимо от версии. Поломка и
+обязательны в каждом итоговом кодовом отчёте независимо от версии. Только отказ
+старта или захвата до сохранения списка допускает пустой `criteria`: причина,
+ожидаемый формат раздела, отсутствующие метки лишь когда их действительно нет.
+Остальные отчёты без списка отказываются. Поломка и
 несделанное не публикуются как `implemented-needs-preflight`.
 На старте одна сверка действующего задания; отдельного комментария старта нет.
 Только комментарий завершённой разработки идёт без ожидания: подтверждается всей
@@ -1443,12 +1446,22 @@ Linear без оркестратора. Список неизменяемый; �
 коммит; без входа задача останавливается, обещанное не строится заново.
 Протокол несовместим (surfaceRevision 5): обновление и откат только при покое
 каждого продукта, включая приостановленные попытки, по [Installation](references/install.md#quiescence).
-Старые попытки продолжаются только новыми. Выпуск и пилот — MONO-234.
+Старые попытки продолжаются только новыми. Выпуск 0.39.0 несовместим с прежним
+протоколом. Установка при выкладке; пилот и замер после выпуска у оркестратора.
+До захвата и кода — одна проверка старта; чужая задача/проект в снимке останавливает.
+Отпечаток считает `scripts/worktree-fingerprint.mjs`, исключая только delivery-root
+внутри рабочей копии; там же отчёт и хронология. `confirmed` требует команды с кодом 0
+на записанных коммите/отпечатке после последней правки. Видимость без браузера остаётся
+`unverified`. У мелкой текстовой правки ровно три строки summary: результат;
+исключение с причиной и граница проверки; передача в Preflight.
+QA и приёмка на работающем продукте — следующий проект, не часть этого этапа.
 
 [Набор evals/implement](evals/implement/README.md): маршрут отдельно от поведения.
 Локально: `node --test scripts/implementation-report.test.mjs scripts/implement-evals.test.mjs`.
-Тест создаёт учебный Git-репозиторий во временной папке. Живые сценарии после T2
-запускает оркестратор по одному разу в каждом хосте; их результат здесь не заявлен.
+Тест создаёт учебный Git-репозиторий во временной папке. Повторный круг 20 сценариев
+на голове PR выпуска после зелёной сдачи запускает оркестратор; голова содержит main,
+после круга код не меняется. Вливание только при 20/20 и совпадении дерева main с
+проверенной головой. Результат живого круга здесь не заявлен.
 
 ## Skills
 
