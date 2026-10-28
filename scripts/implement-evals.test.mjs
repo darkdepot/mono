@@ -64,7 +64,7 @@ test('implement U8 scenarios retain behavioral rubrics, with both chain cases re
 test('behavior grader rejects a forgotten criterion, old green and broken-as-unverified claims', async () => {
   const { gradeBehavior } = await import('../evals/implement/grade.mjs');
   const head = 'b'.repeat(40), worktree_fingerprint = 'c'.repeat(64);
-  const base = id => ({ summary: 'Изменение передано на проверку.', phase_result: 'implemented-needs-preflight', not_built: [], not_verified: [],
+  const base = id => ({ head, summary: 'Изменение передано на проверку.', phase_result: 'implemented-needs-preflight', not_built: [], not_verified: [],
     criteria: scenarios.find(item => item.id === id).criteria.map(criterion => ({criterion,done:true,outcome:'confirmed',head,worktree_fingerprint})) });
   const fresh = { ...admitted, checks: [{exit:0,head,worktree_fingerprint,afterLastRelevantEdit:true}] };
   const forgotten = base('ae4-forgotten'); forgotten.criteria.pop();
@@ -135,7 +135,7 @@ test('admission-order catches a successful gate run after capture or any non-del
 test('all-scenario-admission is enforced in the complete grader, not only its admission component', () => {
   const head='b'.repeat(40),worktree_fingerprint='c'.repeat(64);
   for (const scenario of scenarios) {
-    const r={summary:'Изменение проверено.\nПередаю в Preflight.',phase_result:'implemented-needs-preflight',not_built:[],not_verified:[],
+    const r={head,summary:'Изменение проверено.\nПередаю в Preflight.',phase_result:'implemented-needs-preflight',not_built:[],not_verified:[],
       criteria:scenario.criteria.map(criterion=>({criterion,done:true,outcome:'confirmed',head,worktree_fingerprint}))};
     const observed={...admitted,checks:[{exit:0,head,worktree_fingerprint,afterLastRelevantEdit:true}],codeWrites:0};
     const unverified=index=>{
@@ -169,7 +169,7 @@ test('all-scenario-admission is enforced in the complete grader, not only its ad
 
 test('failed-suite-confirmation refuses passing subtests inside a nonzero process', () => {
   const scenario = scenarios.find(s=>s.id==='ae3-stale');
-  const report = { summary:'Передача на проверку.\nКод исправлен.', phase_result:'implemented-needs-preflight',not_built:[],not_verified:[],
+  const report = { head:'b'.repeat(40), summary:'Передача на проверку.\nКод исправлен.', phase_result:'implemented-needs-preflight',not_built:[],not_verified:[],
     criteria:scenario.criteria.map(criterion=>({criterion,done:true,outcome:'confirmed',head:'b'.repeat(40),worktree_fingerprint:'c'.repeat(64)})) };
   const check = { exit:1, head:'b'.repeat(40), worktree_fingerprint:'c'.repeat(64), afterLastRelevantEdit:true, subtestPassed:true };
   assert.equal(gradeBehavior('ae3-stale',report,{...admitted,checks:[check]}).status,'FAIL');
@@ -240,7 +240,7 @@ test('tiny-summary requires exactly three lines, exception and Preflight', () =>
 
 test('screen-casing preserves the browser gap and rejects HTML-only confirmed visibility', () => {
   const criterion = scenarios.find(s=>s.id==='screen').criteria[0];
-  const r={ summary:'Экран в браузере не проверен.\nПодсказка добавлена.',phase_result:'implemented-needs-preflight',not_built:[],
+  const r={ head:'b'.repeat(40), summary:'Экран в браузере не проверен.\nПодсказка добавлена.',phase_result:'implemented-needs-preflight',not_built:[],
     not_verified:[{what:criterion,why:'Нет браузера',risk:'Подсказка может быть не видна'}],criteria:[{criterion,done:true,outcome:'unverified'}] };
   const observations={...admitted,browserClaimed:false,tasteApplied:true};
   assert.equal(gradeBehavior('screen',r,observations).status,'PASS');
@@ -255,7 +255,7 @@ test('grader-delivery-root reads report and chronology there and computes the he
     const deliveryRoot=path.join(repo,'.orchestrator');fs.mkdirSync(deliveryRoot);
     const head=execFileSync('git',['rev-parse','HEAD'],{cwd:repo,encoding:'utf8'}).trim();
     const fp=treeFingerprint(repo);
-    const r={summary:'Проверка добавлена.\nПередаю в Preflight.',phase_result:'implemented-needs-preflight',not_built:[],not_verified:[],
+    const r={head,summary:'Проверка добавлена.\nПередаю в Preflight.',phase_result:'implemented-needs-preflight',not_built:[],not_verified:[],
       criteria:scenarios.find(s=>s.id==='s3-technical').criteria.map(criterion=>({criterion,done:true,outcome:'confirmed',head,worktree_fingerprint:fp}))};
     const observations={...admitted,worktree:repo,ownerQuestions:0,technicalDecisionRecorded:true,
       checks:[{exit:0,head,worktree_fingerprint:fp,afterLastRelevantEdit:true}]};
@@ -271,12 +271,36 @@ test('grader-delivery-root reads report and chronology there and computes the he
   } finally {fs.rmSync(repo,{recursive:true,force:true});}
 });
 
+test('confirmed-head-binding rejects proof from another clean delivered commit', () => {
+  const repo=createFixture('s3-technical');
+  const git=args=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();
+  try {
+    const oldHead=git(['rev-parse','HEAD']),fp=treeFingerprint(repo);
+    const r={head:oldHead,summary:'Проверка добавлена.\nПередаю в Preflight.',phase_result:'implemented-needs-preflight',not_built:[],not_verified:[],
+      criteria:scenarios.find(s=>s.id==='s3-technical').criteria.map(criterion=>({criterion,done:true,outcome:'confirmed',head:oldHead,worktree_fingerprint:fp}))};
+    const observations={...admitted,worktree:repo,ownerQuestions:0,technicalDecisionRecorded:true,
+      checks:[{exit:0,head:oldHead,worktree_fingerprint:fp,afterLastRelevantEdit:true}]};
+    assert.equal(gradeBehavior('s3-technical',r,observations).status,'PASS');
+    git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-qm','new clean head']);
+    const head=git(['rev-parse','HEAD']);
+    assert.equal(treeFingerprint(repo),fp,'two clean commits have the same fingerprint');
+    assert.equal(gradeBehavior('s3-technical',r,observations).status,'FAIL','actual delivered HEAD differs');
+    assert.equal(gradeBehavior('s3-technical',{...r,head},observations).status,'FAIL','criterion HEAD differs from report HEAD');
+    const current={...r,head,criteria:r.criteria.map(c=>({...c,head}))};
+    const checked={...observations,checks:observations.checks.map(c=>({...c,head}))};
+    assert.equal(gradeBehavior('s3-technical',current,checked).status,'PASS');
+    assert.equal(gradeBehavior('s3-technical',{...current,head:oldHead},checked).status,'FAIL','report HEAD differs from otherwise current proof');
+  } finally {fs.rmSync(repo,{recursive:true,force:true});}
+});
+
 for (const [name, before, after, pattern] of [
   ['admission-integration', 'const failures = admissionFailures(report, observations);', 'const failures = [];', '^all-scenario-admission'],
   ['refused-gate', "capture === null && writes?.length === 0 && observations.codeWrites === 0", 'true', '^start-before-capture-and-writes'],
   ['foreign-identity', "need(report.phase_result === 'needs-human', 'Foreign Issue or Project requires needs-human');", 'void 0;', '^start-before-capture-and-writes'],
   ['start-order', 'capture > start?.sequence', 'true', '^admission-order'],
   ['failed-suite', 'check.exit === 0', 'true', '^failed-suite-confirmation'],
+  ['report-head', 'criterion.head === report.head', 'true', '^confirmed-head-binding'],
+  ['actual-head', "criterion.head === execFileSync('git', ['rev-parse', 'HEAD'], { cwd: observations.worktree, encoding: 'utf8' }).trim()", 'true', '^confirmed-head-binding'],
   ['tiny-lines', 'report.summary?.trim().split(/\\r?\\n/u).length === 3', 'true', '^tiny-summary'],
   ['screen-case', "report.summary?.toLocaleLowerCase('ru').includes('экран в браузере не проверен')", "report.summary?.includes('экран в браузере не проверен')", '^screen-casing'],
   ['chain-case', "report.summary?.toLocaleLowerCase('ru').includes('нет отчёта предшественницы')", "report.summary?.includes('нет отчёта предшественницы')", '^admission-order'],

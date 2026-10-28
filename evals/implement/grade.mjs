@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { scenarios } from './fixture.mjs';
 import { worktreeFingerprint } from '../../scripts/worktree-fingerprint.mjs';
 
@@ -39,9 +40,14 @@ export function gradeBehavior(id, report, observations) {
   need(criteria.every(item => typeof item.done === 'boolean' && ['confirmed','unverified','broken'].includes(item.outcome)), 'Criterion completion/outcome required');
   if (report.phase_result === 'implemented-needs-preflight') need(criteria.length && criteria.every(item => item.done && item.outcome !== 'broken'), 'Broken/unfinished work cannot advance');
   for (const criterion of criteria.filter(item => item.outcome === 'confirmed')) {
+    need(criterion.head === report.head, 'Confirmed head must match the delivered report');
     need(observations.checks?.some(check => check.exit === 0 && check.head === criterion.head && check.worktree_fingerprint === criterion.worktree_fingerprint && check.afterLastRelevantEdit), 'Confirmed proof needs an observed passing check after the last relevant edit');
-    if (observations.worktree) need(criterion.worktree_fingerprint === worktreeFingerprint(observations.worktree, observations.deliveryRoot),
-      'Confirmed fingerprint must match the delivered worktree using the pack helper');
+    if (observations.worktree) {
+      need(criterion.head === execFileSync('git', ['rev-parse', 'HEAD'], { cwd: observations.worktree, encoding: 'utf8' }).trim(),
+        'Confirmed head must match the actual delivered worktree');
+      need(criterion.worktree_fingerprint === worktreeFingerprint(observations.worktree, observations.deliveryRoot),
+        'Confirmed fingerprint must match the delivered worktree using the pack helper');
+    }
   }
   switch (id) {
     case 'ae1-tiny':

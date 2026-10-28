@@ -38,17 +38,37 @@ test('fingerprint-delivery-root excludes only tracked and untracked delivery pat
   } finally { fs.rmSync(repo, { recursive: true, force: true }); }
 });
 
-for (const [name, before, after] of [
+test('fingerprint-untracked-symlinks hashes Git link contents, including directory and dangling targets', () => {
+  const repo=fs.mkdtempSync(path.join(os.tmpdir(),'mono-fingerprint-links-'));
+  const git=args=>execFileSync('git',args,{cwd:repo});
+  try {
+    git(['init','-q']);fs.writeFileSync(path.join(repo,'code'),'base');git(['add','.']);
+    git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','base']);
+    for(const [name,target] of [['directory-link','.git'],['file-link','code'],['missing-link','absent']])
+      fs.symlinkSync(target,path.join(repo,name));
+    const expected=createHash('sha256');
+    for(const [name,target] of [['directory-link','.git'],['file-link','code'],['missing-link','absent']])
+      expected.update(name+'\0'+createHash('sha256').update(target).digest('hex')+'\0');
+    const before=worktreeFingerprint(repo);
+    assert.equal(before,expected.digest('hex'));
+    fs.unlinkSync(path.join(repo,'missing-link'));fs.symlinkSync('other-absent',path.join(repo,'missing-link'));
+    assert.notEqual(worktreeFingerprint(repo),before,'changing a link target changes the Git content');
+  } finally {fs.rmSync(repo,{recursive:true,force:true});}
+});
+
+for (const [name, before, after, pattern='^fingerprint-delivery-root'] of [
   ['tracked-delivery', "inside ? ['--', '.', `:(top,exclude,literal)${relative}`] : []", '[]'],
   ['untracked-delivery', "!(inside && (name === relative || name.startsWith(relative + '/')))", 'true'],
-  ['untracked-code', "for (const name of files) hash.update", 'for (const name of []) hash.update'],
+  ['untracked-code', 'for (const name of files)', 'for (const name of [])'],
+  ['symlink-content', "fs.lstatSync(file).isSymbolicLink() ? fs.readlinkSync(file, { encoding: 'buffer' }) : fs.readFileSync(file)",
+    'fs.readFileSync(file)', '^fingerprint-untracked-symlinks'],
 ]) test(`fingerprint deliberate-break ${name} makes the consumer regression red`, () => {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-fingerprint-mutation-'));
   try {
     fs.cpSync(path.resolve('scripts'),path.join(root,'scripts'),{recursive:true});
     const file=path.join(root,'scripts/worktree-fingerprint.mjs'),source=fs.readFileSync(file,'utf8');
     assert.ok(source.includes(before),name);fs.writeFileSync(file,source.replace(before,after));
-    const run=spawnSync(process.execPath,['--test','--test-reporter=tap','--test-name-pattern=^fingerprint-delivery-root','scripts/worktree-fingerprint.test.mjs'],
+    const run=spawnSync(process.execPath,['--test','--test-reporter=tap','--test-name-pattern='+pattern,'scripts/worktree-fingerprint.test.mjs'],
       {cwd:root,encoding:'utf8',env:Object.fromEntries(Object.entries(process.env).filter(([k])=>k!=='NODE_TEST_CONTEXT'))});
     assert.equal(run.status,1,run.stdout+run.stderr);assert.match(run.stdout,/not ok/);
     assert.doesNotMatch(run.stdout+run.stderr,/ERR_MODULE_NOT_FOUND|SyntaxError/);

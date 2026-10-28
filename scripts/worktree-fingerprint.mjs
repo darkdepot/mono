@@ -18,8 +18,11 @@ export function worktreeFingerprint(repo = process.cwd(), deliveryRoot = path.jo
   const hash = createHash('sha256').update(git(['diff', '--binary', 'HEAD', ...paths]));
   const files = git(['ls-files', '--others', '--exclude-standard', '-z']).toString().split('\0')
     .filter(name => name && !(inside && (name === relative || name.startsWith(relative + '/')))).sort();
-  for (const name of files) hash.update(name + '\0' + createHash('sha256')
-    .update(fs.readFileSync(path.join(repo, name))).digest('hex') + '\0');
+  for (const name of files) {
+    const file = path.join(repo, name);
+    const content = fs.lstatSync(file).isSymbolicLink() ? fs.readlinkSync(file, { encoding: 'buffer' }) : fs.readFileSync(file);
+    hash.update(name + '\0' + createHash('sha256').update(content).digest('hex') + '\0');
+  }
   return hash.digest('hex');
 }
 
