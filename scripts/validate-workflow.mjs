@@ -7076,6 +7076,8 @@ function validateAe6Fixtures() {
       if (!paragraph) throw new Error(`AE6 missing prose paragraph: ${name} / ${heading}`);
       return text.replace(paragraph, "In this workflow, " + paragraph[0].toLowerCase() + paragraph.slice(1));
     });
+    change("references/worker-contract.md", text => text.replace(/("question"\s*:\s*)(null|"(?:[^"\\]|\\.)*")/u,
+      (_, field, value) => field + JSON.stringify("Reworded " + JSON.parse(value))));
     check();
     // Re-run the entire AE6 suite against already reworded documents. The
     // child still exercises every fixture; only recursive rehearsal stops.
@@ -7145,7 +7147,7 @@ function validateAe6Fixtures() {
     negative("forbidden template heading", () => change("templates/project.md", (text) => text.replace(
       "# Что\n", "# Lifecycle\n\n# Что\n")), "forbidden workflow heading Lifecycle");
     negative("report field removed", () => change("references/worker-contract.md", (text) => text.replace(
-      '  "question": "<question text, or null>",\n', "")), "missing mandatory machine field");
+      /"question"\s*:\s*(?:null|"(?:[^"\\]|\\.)*")\s*,/u, "")), "missing mandatory machine field");
     negative("repair mode declaration removed with prose intact", () => change("skills/check/SKILL.md", (text) => text.replace(
       "- `repair`\n", "")), "Modes: missing or duplicate repair declaration");
     negative("tech mode declaration removed with prose intact", () => change("skills/check/SKILL.md", (text) => text.replace(
