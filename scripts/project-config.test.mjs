@@ -289,3 +289,39 @@ test('preapply mandate CLI accepts absent/empty/comment URL and rejects malforme
     }
   } finally { fs.rmSync(root, {recursive:true, force:true}); }
 });
+
+test('qa recipe CLI validates modes, assigned port, copy identity, data and action restrictions', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-qa-config-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    const qa = { mode: 'terminal', install: [], start: 'node scripts/verify.mjs',
+      ready: { command: 'pwd && git rev-parse HEAD', identity: 'Detached copy and expected full SHA' },
+      data: { source: 'local-fixtures', description: 'Local fixtures only' }, forbiddenActions: ['No external writes'] };
+    const cases = [[undefined, true], [qa, true], [{ ...qa, mode: 'web', start: 'serve --port=$QA_PORT' }, true],
+      [{ ...qa, mode: 'mobile', start: 'build API_PORT=$QA_PORT' }, true],
+      [null, false], [[], false], [{}, false], [{ ...qa, extra: true }, false],
+      [{ ...qa, mode: 'other' }, false], [{ ...qa, mode: 'web' }, false], [{ ...qa, install: '' }, false],
+      [{ ...qa, ready: { command: 'true' } }, false], [{ ...qa, forbiddenActions: [] }, false],
+      [{ ...qa, data: { source: 'production', description: 'Any writes' } }, false],
+      [{ ...qa, data: { source: 'qaAuth', description: 'Test login' } }, false]];
+    for (const [value, valid] of cases) {
+      config.qa = value;
+      fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify(config));
+      const result = spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+      assert.equal(result.status, valid ? 0 : 1, `${JSON.stringify(value)}: ${result.stderr}`);
+      if (!valid) assert.match(result.stderr, /qa:/);
+    }
+    config.qa = { ...qa, data: { source: 'qaAuth', description: 'Test login' } }; config.qaAuth = 'test-account';
+    fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify(config));
+    assert.equal(spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check']).status, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('qa role inherits pack policy and permits compatible product override', () => {
+  const route = runtime.resolveRole('qa', {});
+  assert.equal(route.engine, 'claude'); assert.equal(route.model, runtime.roleDefaults(process.cwd()).qa.model); assert.equal(route.effort, 'high');
+  const override = runtime.resolveRole('qa', { models: { roles: { qa: { model: 'claude-example', effort: 'medium' } } } });
+  assert.equal(override.model, 'claude-example'); assert.equal(override.effort, 'medium');
+  assert.throws(() => runtime.resolveRole('qa', { models: { roles: { qa: { engine: 'codex' } } } }), /unsupported engine/);
+});

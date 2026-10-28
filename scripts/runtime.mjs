@@ -434,7 +434,7 @@ export function deliveryConfig(source) {
 export const ROLE_ENGINES = {
   orchestrator: ['claude'], 'second-voice': ['codex'], 'second-voice-alt': ['claude'],
   'worker-default': ['codex'], 'worker-complex': ['codex'], 'worker-claude': ['claude'],
-  autoreview: ['claude', 'kimi', 'pi', 'codex'], 'idea-helper': ['codex', 'claude'], scout: ['codex', 'claude'],
+  autoreview: ['claude', 'kimi', 'pi', 'codex'], 'idea-helper': ['codex', 'claude'], scout: ['codex', 'claude'], qa: ['claude'],
 };
 export const RISK_KEYS = ['tiny', 'standard', 'deep', 'risky', 'riskyCritical'];
 const NATIVE_PROVIDERS = { claude: 'anthropic', codex: 'openai', kimi: 'moonshot', pi: 'openai' };

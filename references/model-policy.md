@@ -15,6 +15,7 @@ Link `role:<role>` to `#roles`; report values.
 | `worker-claude` | `claude-opus-5` | `high` | Claude worker; see below. | Owner, 2026-09-06. |
 | `idea-helper` | claude-code: `claude-opus-5-5`; codex: `gpt-6.1-sol` | `high` | Read-only idea facts. | Owner, 2026-10-16. |
 | `scout` | claude-code: `sonnet`; codex: `gpt-6-luna` | claude-code: `medium`; codex: `high` | Read-only scouts. | Owner, 2026-10-17. |
+| `qa` | `claude-opus-5-5` | `high` | Independent QA; models.roles override. | Owner. |
 | `autoreview` | `claude-opus-5` | [Canonical Routes](autoreview-routing.md#canonical-routes) | Reviewer. | Owner, 2026-09-06. |
 
 `idea-helper`/`scout`: `resolveRole` takes actual `host: "claude-code"|"codex"`
