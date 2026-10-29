@@ -4,9 +4,149 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { captureCriteria, publishPhase } from './delivery-state.mjs';
+import { captureCriteria, publishPhase, validatePhase, confirmQueue } from './delivery-state.mjs';
+
+test('criteria-relative-root resolves from the working copy before persisting', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-relative-root-'));
+  try {
+    const cli = spawnSync(process.execPath, [path.resolve('scripts/delivery-state.mjs'), 'capture-criteria',
+      '--issue', 'MONO-993', '--attempt', '1', '--issue-file', path.resolve('scripts/fixtures/implementation-approved-issue.md'), '--root', '.orchestrator'],
+    { cwd: root, encoding: 'utf8' });
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(fs.existsSync(path.join(root, '.orchestrator/reports/MONO-993-criteria-a1.json')), true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+for (const [name, options, message] of [
+  ['root', { root: '' }, /delivery root/],
+  ['issue', { issue: '../MONO-993' }, /issue key/],
+  ['attempt', { attempt: 0 }, /attempt number/],
+]) test(`criteria-invalid-${name} explains the actual identity refusal`, () => {
+  assert.throws(() => captureCriteria({ root: os.tmpdir(), issue: 'MONO-993', attempt: 1,
+    issueFile: path.resolve('scripts/fixtures/implementation-approved-issue.md'), ...options }), message);
+});
+
+for (const [name, file, before, after, pattern] of [
+  ['relative-root', 'delivery-criteria.mjs', 'root = path.resolve(root);', "if (!path.isAbsolute(root)) fail('absolute root required'); root = path.resolve(root);", '^criteria-relative-root'],
+  ['root-diagnostic', 'delivery-criteria.mjs', "fail('delivery root must name a directory')", "fail('delivery identity required')", '^criteria-invalid-root'],
+  ['issue-diagnostic', 'delivery-criteria.mjs', "fail('invalid issue key')", "fail('delivery identity required')", '^criteria-invalid-issue'],
+  ['attempt-diagnostic', 'delivery-criteria.mjs', "fail('attempt number must be a positive integer')", "fail('delivery identity required')", '^criteria-invalid-attempt'],
+  ['capture-refusal-publication', 'delivery-criteria.mjs', 'const stop = report.pre_capture_stop;', 'return null; const stop = report.pre_capture_stop;', '^stop-after-capture-refusal-'],
+  ['start-refusal-publication', 'delivery-criteria.mjs', 'const stop = report.pre_capture_stop;', 'return null; const stop = report.pre_capture_stop;', '^stop-after-start-refusal'],
+  ['completed-without-capture', 'delivery-criteria.mjs', "fail('missing immutable delivery-start capture');", 'return;', '^work-without-capture'],
+  ['missing-top-level-head', 'delivery-state.mjs', '  validatePhase(report);\n  if (report.phase ===', '  report.head ??= report.capsule.head; validatePhase(report);\n  if (report.phase ===', '^publication-missing-top-level-head'],
+  ['saved-refusal-source', 'delivery-criteria.mjs', "typeof stop.source_text === 'string' ? stop.source_text : ", '', '^saved-capture-refusal'],
+  ['initial-refusal-source', 'delivery-state.mjs', 'delete report.pre_capture_stop.source_text;', 'void 0;', '^work-without-capture'],
+]) test(`implementation deliberate-break ${name} makes the named regression red`, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-implementation-mutation-'));
+  try {
+    fs.cpSync(path.resolve('scripts'), path.join(root,'scripts'),{recursive:true});
+    const target=path.join(root,'scripts',file), source=fs.readFileSync(target,'utf8');
+    assert.ok(source.includes(before),name);fs.writeFileSync(target,source.replace(before,after));
+    const run=spawnSync(process.execPath,['--test','--test-reporter=tap','--test-name-pattern='+pattern,'scripts/implementation-report.test.mjs'],
+      {cwd:root,encoding:'utf8',env:Object.fromEntries(Object.entries(process.env).filter(([k])=>k!=='NODE_TEST_CONTEXT'))});
+    assert.equal(run.status,1,run.stdout+run.stderr);assert.match(run.stdout,/not ok/);
+    assert.doesNotMatch(run.stdout+run.stderr,/ERR_MODULE_NOT_FOUND|SyntaxError/);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
 
 const approvedIssue = path.resolve('scripts/fixtures/implementation-approved-issue.md');
+
+function preCaptureReport(root, stop) {
+  const r = report(root);
+  fs.unlinkSync(path.join(root, 'reports/MONO-993-criteria-a1.json'));
+  return { ...r, phase_result: 'blocked', criteria: [], pre_capture_stop: stop };
+}
+for (const fixture of ['missing-criteria', 'ambiguous-criteria', 'unsupported-language'])
+  test(`stop-after-capture-refusal-${fixture} publishes actual refusal with no invented criteria`, () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-pre-capture-'));
+    try {
+      const source = path.resolve(`scripts/fixtures/implementation-${fixture}-issue.md`);
+      assert.throws(() => capture(root, source), /blocked/);
+      const r = preCaptureReport(root, { kind: 'capture-refused', issue_file: source,
+        command: 'node scripts/delivery-state.mjs capture-criteria ...', exit: 1, reason: 'Захват отказал: неоднозначный или отсутствующий раздел' });
+      const out = publishPhase(r, path.join(root, 'reports/stop.json'));
+      assert.deepEqual(out.criteria, []);
+      const body = out.linear_mutations_pending[0].payload.body;
+      assert.match(body, /# Критерии приемки/); assert.match(body, /Готово, когда:/);
+      assert.match(body, /Захват отказал/);
+      if (fixture === 'ambiguous-criteria') assert.doesNotMatch(body, /Недостающие метки/);
+      else assert.match(body, /Недостающие метки/);
+      assert.equal(out.phase_result, 'blocked');
+      assert.throws(() => publishPhase({ ...r, phase_result: 'implemented-needs-preflight' }, path.join(root, 'reports/bad.json')), /implementation report/);
+      assert.throws(() => publishPhase({ ...r, phase_result: 'needs-human' }, path.join(root, 'reports/bad.json')), /implementation report/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+test('stop-after-start-refusal publishes blocked or integrity stop before capture', () => {
+  for (const status of ['blocked', 'needs-human']) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-start-refused-'));
+    try {
+      const r = preCaptureReport(root, { kind: 'start-refused', command: 'node scripts/idea-gate.mjs check --mode approved ...',
+        exit: 1, verdict: 'read-failed', reason: 'Проверка старта отказала' });
+      r.phase_result = status;
+      const out = publishPhase(r, path.join(root, 'reports/stop.json'));
+      assert.deepEqual(out.criteria, []);
+      assert.match(out.linear_mutations_pending[0].payload.body, /Проверка старта отказала/);
+      assert.match(out.linear_mutations_pending[0].payload.body, /# Критерии приемки/);
+      assert.doesNotMatch(out.linear_mutations_pending[0].payload.body, /Недостающие метки/);
+      assert.throws(() => publishPhase({ ...r, kind: 'confirmation-request' }, path.join(root, 'reports/bad.json')), /implementation report/);
+      assert.throws(() => publishPhase({ ...r, pre_capture_stop: { ...r.pre_capture_stop, exit: 0, verdict: 'pass' } }, path.join(root, 'bad.json')), /implementation report/);
+      const incomplete = { ...r, pre_capture_stop: { ...r.pre_capture_stop } }; delete incomplete.pre_capture_stop.verdict;
+      assert.throws(() => publishPhase(incomplete, path.join(root, 'bad.json')), /implementation report/);
+      capture(root);
+      assert.throws(() => publishPhase(r, path.join(root, 'reports/bad.json')), /cannot replace an existing approved list/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test('work-without-capture still refuses completed and ordinary stopped reports', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-no-capture-'));
+  try {
+    const r = report(root);
+    fs.unlinkSync(path.join(root, 'reports/MONO-993-criteria-a1.json'));
+    for (const phase_result of ['implemented-needs-preflight', 'blocked', 'needs-human', 'scope-drift-needs-handoff'])
+      assert.throws(() => publishPhase({ ...r, phase_result }, path.join(root, 'out.json')), /missing immutable/);
+    const stop = preCaptureReport(root, { kind: 'capture-refused', issue_file: approvedIssue,
+      command: 'capture-criteria', exit: 1, reason: 'Pretend refusal of valid input' });
+    assert.throws(() => publishPhase(stop, path.join(root, 'stop.json')), /implementation report/);
+    assert.throws(() => publishPhase({...stop,pre_capture_stop:{...stop.pre_capture_stop,source_text:'# Missing acceptance'}},
+      path.join(root,'forged-source.json')), /implementation report/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('saved-capture-refusal survives source refresh or deletion without changing its published evidence', async () => {
+  for (const change of ['refresh', 'delete']) {
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-saved-refusal-'));
+    try {
+      const source=path.join(root,'issue.md');
+      fs.writeFileSync(source,fs.readFileSync('scripts/fixtures/implementation-missing-criteria-issue.md'));
+      const candidate=preCaptureReport(root,{kind:'capture-refused',issue_file:source,command:'capture-criteria',exit:1,reason:'Раздел отсутствует'});
+      const output=path.join(root,'reports/MONO-993-phase-code.json');
+      const saved=publishPhase(candidate,output),body=saved.linear_mutations_pending[0].payload.body;
+      if(change==='refresh')fs.writeFileSync(source,fs.readFileSync(approvedIssue));else fs.unlinkSync(source);
+      assert.doesNotThrow(()=>validatePhase(saved));
+      const ack=await confirmQueue(saved,root,async(action,write)=>{
+        assert.equal(action,'reconcile');assert.equal(write.payload.body,body);
+        return {state:'present',evidence:'fixture read-back of the original unchanged refusal comment'};
+      });
+      assert.equal(ack.status,'confirmed');
+      assert.deepEqual(publishPhase(saved,output),saved,'lost-response replay preserves the exact saved report');
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+  }
+});
+
+test('ambiguous-heading-level reports refusal without inventing missing labels', () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-refusal-labels-'));
+  try {
+    const source=path.join(root,'ambiguous.md');
+    fs.writeFileSync(source,fs.readFileSync('scripts/fixtures/implementation-ambiguous-criteria-issue.md','utf8')
+      .replace('# Критерии приемки','## Критерии приемки ##'));
+    assert.throws(()=>capture(root,source),/duplicate acceptance section/);
+    const r=preCaptureReport(root,{kind:'capture-refused',issue_file:source,command:'capture-criteria',exit:1,reason:'Неоднозначный раздел'});
+    const out=publishPhase(r,path.join(root,'reports/out.json'));
+    assert.doesNotMatch(out.linear_mutations_pending[0].payload.body,/Недостающие метки/);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
 function capture(root, source = approvedIssue) {
   return captureCriteria({ root, issue: 'MONO-993', attempt: 1, issueFile: source });
 }
@@ -22,6 +162,17 @@ function report(root, source = approvedIssue) {
       worktree_fingerprint: 'c'.repeat(64) })),
     linear_mutations_pending: [], capsule: { phase: 'code', head, open_queue: [], decisions: [], writable_roots: [root] } };
 }
+
+test('publication-missing-top-level-head refuses a capsule-only head before writing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-missing-report-head-'));
+  try {
+    const candidate = report(root), output = path.join(root, 'reports/MONO-993-phase-code.json');
+    delete candidate.head;
+    assert.throws(() => publishPhase(candidate, output, undefined, root), /invalid phase identity/);
+    assert.equal(fs.existsSync(output), false);
+    assert.equal(candidate.capsule.head, candidate.criteria[0].head, 'nested proof is present but cannot replace delivered identity');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 const cases = [
   ['missing criteria', r => { delete r.criteria; }],
