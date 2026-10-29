@@ -186,6 +186,24 @@ sandbox.
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
 equal `VERSION`; only release tasks change them. Try unreleased code per README.
 
+### Release 0.38.2
+
+Исправление ворот preflight, выпущенное с ветки от `v0.38.1`, а не с main: main
+несёт ещё не выпущенный этап разработки. Ворота принимают итог ревью по частям
+(`autoreview chunked …`) так же, как обычный; остальные правила прежние. Тег
+`v0.38.2` стоит на вершине этой ветки, обе установки берутся с тега:
+
+```bash
+claude plugin marketplace add 'https://github.com/darkdepot/mono.git#v0.38.2'
+claude plugin install mono@mono-marketplace
+codex plugin marketplace add darkdepot/mono --ref v0.38.2
+codex plugin add mono@mono-marketplace
+```
+
+Перед заменой маркетплейса и перед установкой Codex действуют условия
+[Plugin Updates](#plugin-updates). Следующий выпуск с main возвращает маркетплейс
+Claude на main и сам содержит это исправление.
+
 ### Release 0.38.1
 
 Защита окон снята: этап завершает служебную работу, пишет итог обычным текстом
