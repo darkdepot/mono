@@ -171,6 +171,8 @@ function validFinding(f) {
     typeof f.code_location?.file_path==='string'&&f.code_location.file_path.trim()&&Number.isSafeInteger(f.code_location.line)&&f.code_location.line>0;
 }
 
+// A review split into several passes labels its single merged verdict "autoreview chunked".
+const verdictPrefix = /^autoreview (?:chunked )?(?:clean|filtered|scoped-clean|findings|incorrect|incomplete):/;
 const verdictLines = new Set([
   "autoreview clean: no accepted/actionable findings reported",
   "autoreview filtered: no findings at the requested priority; not a correctness certificate",
@@ -183,8 +185,9 @@ function validateReviewLines(output, route, report = null) {
     const values = fields.filter(line => line.startsWith(`${key}:`));
     requireThat(values.length === 1 && values[0] === `${key}: ${expected}`, "autoreview output route/scope incomplete or ambiguous");
   }
-  requireThat(lines.filter(line => /^autoreview (?:clean|filtered|scoped-clean|findings|incorrect|incomplete):/.test(line)).length === 1 &&
-    (report ? lines.includes(`autoreview findings: ${report.findings.length}`) : lines.some(line => verdictLines.has(line))), "autoreview clean result missing or ambiguous");
+  const verdicts = lines.filter(line => verdictPrefix.test(line)).map(line => line.replace(/^autoreview chunked /, "autoreview "));
+  requireThat(verdicts.length === 1 &&
+    (report ? verdicts[0] === `autoreview findings: ${report.findings.length}` : verdictLines.has(verdicts[0])), "autoreview clean result missing or ambiguous");
   const overall = lines.filter(line => line.startsWith("overall:"));
   requireThat(overall.length === 1 && (report ? overall[0].startsWith(`overall: ${report.overall_correctness} (`) : /^overall: patch is correct \(/.test(overall[0])), "autoreview correctness result missing or ambiguous");
 }
@@ -196,7 +199,7 @@ export function validReviewInvocation(actual, fixed) {
 // refuses the result instead of silently dropping evidence used by validation.
 export function captureOutput({ tailBytes = 8192, retainedBytes = 1024 * 1024 } = {}) {
   let pending = "", tail = "", kept = "", retentionError = null, discarding = false;
-  const requiredPrefix = /^(autoreview target:|engine:|model:|thinking:|overall:|autoreview (?:clean|filtered|scoped-clean|findings|incorrect|incomplete):|(?:claude|codex) usage:|mono-boundary-denied:)/;
+  const requiredPrefix = /^(autoreview target:|engine:|model:|thinking:|overall:|autoreview (?:chunked )?(?:clean|filtered|scoped-clean|findings|incorrect|incomplete):|(?:claude|codex) usage:|mono-boundary-denied:)/;
   const requiredLine = line => requiredPrefix.test(line);
   const consume = line => {
     if (requiredLine(line) || /^(?:bundle: [0-9]+ bytes; )?review passes: [0-9]+$/.test(line)) {
