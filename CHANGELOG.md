@@ -6,6 +6,13 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.38.2] - 2026-10-29
+
+<!-- fragment: MONO-277 sha256:df0d19a768b1a4e425ea873b513f50d5e8c2bbe6bc44aca4ea2c003110b22b64 -->
+### Ворота preflight принимают ревью большого диффа по частям
+
+- Большой дифф ревью проходит по частям и печатает итог с меткой `autoreview chunked`. Ворота preflight теряли эту строку и отказывали чистому ревью: «autoreview clean result missing or ambiguous» (сбор ZENI-687 29.10.2026). Теперь итог по частям сохраняется и проверяется так же, как обычный: чистый проходит, с находками идёт по ветке находок, две строки итога по-прежнему отклоняются. Остальные правила ворот не менялись.
+
 ## [0.38.1] - 2026-10-27
 
 <!-- fragment: MONO-253 sha256:fb572e34b7298eb016cf853130d88f847686236476b289603a7a1be93d389eb7 -->
