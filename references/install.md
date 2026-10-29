@@ -190,6 +190,16 @@ sandbox.
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
 equal `VERSION`; only release tasks change them. Try unreleased code per README.
 
+### Release 0.40.0
+
+Добавлен скилл `mono:qa` и проверка `mono-qa certificate`; ворота перед
+вливанием не включены. Surface revision 5 прежний: общая quiescence не
+требуется, текущие попытки продолжаются на сохранённом packRoot. Условия
+[Plugin Updates](#plugin-updates), включая before-update для заменяемого
+каталога Codex, сохраняются. После merge оркестратор ставит `v0.40.0` и
+устанавливает оба хоста; обе версии равны **0.40.0**, оба кэша совпадают с
+Git-деревом тега. Откат — установка 0.39.1.
+
 ### Release 0.39.1
 
 Выпуск объединяет 0.39.0 (новый этап разработки, surface revision 5) и
