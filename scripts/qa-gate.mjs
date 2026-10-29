@@ -43,7 +43,8 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
       const held = project.heldIssues ?? [];
       need(Array.isArray(held) && new Set(held).size === held.length && held.every(key => implementation.some(row => row.issue === key)), 'invalid held issues');
       final = project.finalIssue ?? (unfinished.length === 1 ? unfinished[0].issue : null);
-      if (unfinished.length === 1) need(final === unfinished[0].issue, 'final issue differs from last unfinished implementation');
+      if (unfinished.length === 1 && !held.includes(unfinished[0].issue))
+        need(final === unfinished[0].issue, 'final issue differs from last unfinished implementation');
       if (held.length) need(typeof final === 'string' && held.includes(final), 'held tasks need a final issue');
       if (held.includes(issue) || final === issue) {
         need(typeof final === 'string', 'final issue required');

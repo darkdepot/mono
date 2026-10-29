@@ -95,3 +95,23 @@ test('held predecessor and final bug successor both require the successor projec
   project.issues[0].head = 'd'.repeat(40); f.state.tasks[f.issue].head = 'd'.repeat(40); f.saveState();
   assert.match(qaDeliveryState(nextInput).reason, /build changed/);
 });
+
+for (const held of [true, false]) {
+  test(`${held ? 'held successor' : 'fresh final'} selection after successor terminal status`, t => {
+    const f = fixture(t), next = 'EXAMPLE-2', nextHead = 'c'.repeat(40);
+    f.save(); f.save('task', next, nextHead);
+    f.state.tasks[f.issue].project = 'project'; f.state.tasks[next] = { project: 'project', head: nextHead };
+    const project = f.state.projects.project = { finalIssue: next, heldIssues: held ? [f.issue, next] : [], issues: [
+      { issue: f.issue, head: f.head, statusType: 'started', labels: [] },
+      { issue: next, head: nextHead, statusType: 'completed', labels: [] }
+    ] };
+    f.save('project', next, nextHead, project.issues.map(({ issue, head }) => ({ issue, head })));
+    f.saveState();
+    assert.equal(qaDeliveryState(f.input).state, held ? 'passed' : 'failed');
+    if (held) {
+      project.issues[0].head = 'd'.repeat(40); f.state.tasks[f.issue].head = 'd'.repeat(40); f.saveState();
+      assert.match(qaDeliveryState({ ...f.input, issue: next, head: nextHead,
+        shipCertificate: `mono-ship green certificate\nShip: green\nIssue(s): ${next}\nHead SHA: ${nextHead}\nPR: #2` }).reason, /build changed/);
+    }
+  });
+}
