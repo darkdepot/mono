@@ -207,10 +207,12 @@ proof (before edits), result (observed), head (40 hex), worktree_fingerprint (64
 confirmed: done:true, command exit 0 on recorded delivered head/fingerprint after
 last relevant edit, including dirty edits. Failed-run subtests cannot confirm; narrow passing runs can. Fingerprint only by
 `node <pack-root>/scripts/worktree-fingerprint.mjs --worktree <worktree> --delivery-root <delivery-root>`;
-Command in criterion proof. SHA-256: `git diff --binary HEAD`, then sorted
-nonignored untracked files (`git ls-files --others --exclude-standard`), each:
-path, NUL, content SHA-256 hex, NUL. Both sources exclude only delivery-root paths
-when inside the worktree (`.orchestrator/` standalone). No other hashes/exclusions; report/chronology in delivery-root.
+Command in proof; SHA-256: `git diff --binary HEAD`, sorted
+`git ls-files --others --exclude-standard` path/NUL/value/NUL:
+file=SHA-256(content) hex, nested repo dir=gitlink:<full HEAD SHA|none if unborn>
+(no nested contents/edits); both omit only in-tree delivery-root
+(`.orchestrator/` standalone); unreadable: nonzero refusal, path/reason;
+report/log: delivery-root.
 not_built:[{what,reason}]; not_verified:[{what,why,risk}], one per unverified
 criterion, what=criterion. unverified/done:true built/untested; done:false unfinished;
 broken never becomes unverified. Screen visibility without browser: unverified,

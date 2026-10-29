@@ -56,11 +56,73 @@ test('fingerprint-untracked-symlinks hashes Git link contents, including directo
   } finally {fs.rmSync(repo,{recursive:true,force:true});}
 });
 
+function nestedFixture(run) {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-fingerprint-nested-'));
+  const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  const commit = cwd => git(cwd, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', 'fixture']);
+  try {
+    git(repo, ['init', '-q']); commit(repo);
+    const nested = path.join(repo, 'nested'); fs.mkdirSync(nested); git(nested, ['init', '-q']);
+    run({ repo, nested, git, commit });
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+}
+
+const gitlinkDigest = sha => createHash('sha256').update('nested/\0gitlink:' + sha + '\0').digest('hex');
+
+test('fingerprint-nested-committed uses full gitlink HEAD, sorted with files, and ignores nested dirty contents', () => {
+  nestedFixture(({repo, nested, git, commit}) => {
+    fs.writeFileSync(path.join(nested, 'input'), 'first'); git(nested, ['add', '.']); commit(nested);
+    const sha = git(nested, ['rev-parse', 'HEAD']);
+    assert.equal(git(repo, ['ls-files', '--others', '--exclude-standard']), 'nested/');
+    assert.equal(worktreeFingerprint(repo), gitlinkDigest(sha));
+    fs.writeFileSync(path.join(nested, 'input'), 'dirty'); fs.writeFileSync(path.join(nested, 'extra'), 'untracked');
+    assert.equal(worktreeFingerprint(repo), gitlinkDigest(sha));
+    const expected = createHash('sha256');
+    fs.writeFileSync(path.join(repo, 'a file'), 'a'); fs.writeFileSync(path.join(repo, 'z file'), 'z');
+    expected.update('a file\0' + createHash('sha256').update('a').digest('hex') + '\0');
+    expected.update('nested/\0gitlink:' + sha + '\0');
+    expected.update('z file\0' + createHash('sha256').update('z').digest('hex') + '\0');
+    assert.equal(worktreeFingerprint(repo), expected.digest('hex'));
+  });
+});
+
+test('fingerprint-nested-unborn uses gitlink:none before the first commit', () => {
+  nestedFixture(({repo, nested, git}) => {
+    fs.writeFileSync(path.join(nested, 'input'), 'not committed');
+    assert.equal(git(repo, ['ls-files', '--others', '--exclude-standard']), 'nested/');
+    assert.equal(worktreeFingerprint(repo), gitlinkDigest('none'));
+  });
+});
+
+test('fingerprint-nested-moved-head changes when the nested repository commits', () => {
+  nestedFixture(({repo, nested, git, commit}) => {
+    commit(nested); const first = worktreeFingerprint(repo);
+    assert.equal(first, gitlinkDigest(git(nested, ['rev-parse', 'HEAD'])));
+    commit(nested); const next = worktreeFingerprint(repo);
+    assert.notEqual(next, first);
+    assert.equal(next, gitlinkDigest(git(nested, ['rev-parse', 'HEAD'])));
+  });
+});
+
+test('fingerprint-unreadable-entry refuses unreadable files with path and reason', () => {
+  nestedFixture(({repo}) => {
+    fs.writeFileSync(path.join(repo, 'unreadable-file'), 'secret'); fs.chmodSync(path.join(repo, 'unreadable-file'), 0);
+    const run = spawnSync(process.execPath, [path.resolve('scripts/worktree-fingerprint.mjs'), '--worktree', repo], {encoding: 'utf8', timeout: 10000});
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    assert.match(run.stderr, /unreadable-file: EACCES/);
+    assert.equal(run.stdout, '');
+  });
+});
+
 for (const [name, before, after, pattern='^fingerprint-delivery-root'] of [
   ['tracked-delivery', "inside ? ['--', '.', `:(top,exclude,literal)${relative}`] : []", '[]'],
   ['untracked-delivery', "!(inside && (name === relative || name.startsWith(relative + '/')))", 'true'],
   ['untracked-code', 'for (const name of files)', 'for (const name of [])'],
-  ['symlink-content', "fs.lstatSync(file).isSymbolicLink() ? fs.readlinkSync(file, { encoding: 'buffer' }) : fs.readFileSync(file)",
+  ['nested-committed', "value = 'gitlink:' + sha", "value = 'gitlink:none'", '^fingerprint-nested-committed'],
+  ['nested-unborn', "sha = 'none'", "throw new Error('unborn rejected')", '^fingerprint-nested-unborn'],
+  ['nested-moved-head', "sha = head.stdout.trim()", "sha = nested(['rev-list', '--max-parents=0', 'HEAD']).stdout.trim()", '^fingerprint-nested-moved-head'],
+  ['unreadable-entry', "catch (error) { throw new Error(`${name}: ${error.message}`); }", "catch (error) { continue; }", '^fingerprint-unreadable-entry'],
+  ['symlink-content', "stat.isSymbolicLink() ? fs.readlinkSync(file, { encoding: 'buffer' }) : fs.readFileSync(file)",
     'fs.readFileSync(file)', '^fingerprint-untracked-symlinks'],
 ]) test(`fingerprint deliberate-break ${name} makes the consumer regression red`, () => {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'mono-fingerprint-mutation-'));

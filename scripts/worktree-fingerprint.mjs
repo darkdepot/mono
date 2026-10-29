@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { flags, isMain } from './runtime.mjs';
 
 export function worktreeFingerprint(repo = process.cwd(), deliveryRoot = path.join(repo, '.orchestrator')) {
@@ -20,8 +20,30 @@ export function worktreeFingerprint(repo = process.cwd(), deliveryRoot = path.jo
     .filter(name => name && !(inside && (name === relative || name.startsWith(relative + '/')))).sort();
   for (const name of files) {
     const file = path.join(repo, name);
-    const content = fs.lstatSync(file).isSymbolicLink() ? fs.readlinkSync(file, { encoding: 'buffer' }) : fs.readFileSync(file);
-    hash.update(name + '\0' + createHash('sha256').update(content).digest('hex') + '\0');
+    try {
+      const stat = fs.lstatSync(file);
+      let value;
+      if (stat.isDirectory()) {
+        const nested = args => spawnSync('git', ['--git-dir', path.join(file, '.git'), ...args], { encoding: 'utf8' });
+        const head = nested(['rev-parse', '--verify', '--quiet', 'HEAD']);
+        let sha;
+        if (head.status === 0) sha = head.stdout.trim();
+        else {
+          if (head.status !== 1) throw new Error(head.error?.message || head.stderr.trim() || 'cannot read nested HEAD');
+          const ref = nested(['symbolic-ref', '--quiet', 'HEAD']);
+          if (ref.status !== 0) throw new Error(ref.error?.message || ref.stderr.trim() || 'cannot read unborn HEAD reference');
+          const branch = nested(['show-ref', '--verify', '--quiet', ref.stdout.trim()]);
+          if (branch.status !== 1) throw new Error(branch.error?.message || branch.stderr.trim() || 'nested HEAD is not an unborn branch');
+          sha = 'none';
+        }
+        value = 'gitlink:' + sha;
+      } else {
+        if (!stat.isFile() && !stat.isSymbolicLink()) throw new Error('unsupported entry type');
+        const content = stat.isSymbolicLink() ? fs.readlinkSync(file, { encoding: 'buffer' }) : fs.readFileSync(file);
+        value = createHash('sha256').update(content).digest('hex');
+      }
+      hash.update(name + '\0' + value + '\0');
+    } catch (error) { throw new Error(`${name}: ${error.message}`); }
   }
   return hash.digest('hex');
 }
