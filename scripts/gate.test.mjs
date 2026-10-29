@@ -1007,3 +1007,38 @@ test('ship-bot-policy: project configuration requires nonempty unique check name
   for (const botChecks of [[], null, 'Greptile Review', [' '], ['Bot', 'Bot'], [' Bot']])
     assert.throws(() => shipBotChecks({ orchestration: { ship: { botChecks } } }), /botChecks/);
 });
+
+// Large diffs are reviewed in several passes; autoreview then labels the verdict "autoreview chunked".
+const chunkedClean='autoreview chunked scoped-clean: no accepted/actionable findings in the selected Git scope and priority';
+function chunkedCapture(verdicts){
+  const capture=captureOutputForChunks({tailBytes:64});
+  capture.write('autoreview target: branch\nengine: claude\nmodel: policy-model\nthinking: high\nbundle: 723735 bytes; review passes: 2\n');
+  capture.write('noise\n'.repeat(100)+verdicts.join('\n')+'\nReview passes returned. chunk 1/2: 0 finding(s), chunk 2/2: 0 finding(s).\n');
+  capture.write('overall: patch is correct (0.75)\nMerged explanation.\nchunk 1/2 overall: patch is correct (0.75)\nChunk one.\nchunk 2/2 overall: patch is correct (0.82)\nChunk two.\n');
+  return capture.finish();
+}
+import {captureOutput as captureOutputForChunks} from './gate.mjs';
+test('chunked scoped-clean review is retained and passes preflight',()=>{
+  const route={model:'policy-model',effort:'high'},result=chunkedCapture([chunkedClean]);
+  assert.ok(result.output.split('\n').includes(chunkedClean));
+  assert.equal((result.output.match(/overall:/g)||[]).length,1);
+  assert.doesNotThrow(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...result},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route));
+});
+test('chunked findings are not clean and route to the findings path',()=>{
+  const route={model:'policy-model',effort:'high'},result=chunkedCapture(['autoreview chunked findings: 1']);
+  assert.ok(result.output.includes('autoreview chunked findings: 1\n'));
+  assert.throws(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...result},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route),/clean result missing or ambiguous/);
+  const f=declineFixture();
+  f.receipt.review.output=f.receipt.review.output.replace('autoreview findings: 1','autoreview chunked findings: 1');
+  const digest=sha(f.receipt),{recordDigest,...content}=f.entry;
+  content.receipt={...content.receipt,digest};content.finding={...content.finding,id:`${digest}:0:${content.finding.digest}`};
+  f.journal.entries=[seal(content)];
+  assert.match(validatePreflight(f.receipt,f.receipt.head,f.receipt.base,f.receipt.route,f.journal),/accepted-with-declines/);
+});
+test('two verdict lines stay ambiguous when one of them is chunked',()=>{
+  const route={model:'policy-model',effort:'high'};
+  for(const verdicts of [[chunkedClean,'autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority'],[chunkedClean,chunkedClean],[chunkedClean,'autoreview chunked findings: 1']]){
+    const result=chunkedCapture(verdicts);
+    assert.throws(()=>validatePreflight({head,base:'base',route,verification:{exitCode:0},review:{exitCode:0,...result},loop:{iterations:1,residualFindings:[],disposition:'clean'}},head,'base',route),/clean result missing or ambiguous/);
+  }
+});

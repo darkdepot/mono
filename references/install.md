@@ -190,6 +190,24 @@ sandbox.
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
 equal `VERSION`; only release tasks change them. Try unreleased code per README.
 
+### Release 0.39.1
+
+Выпуск объединяет 0.39.0 (новый этап разработки, surface revision 5) и
+исправление ворот 0.38.2, вышедшее с ветки `release/0.38.x`. 0.39.0 не
+устанавливается: в нём нет исправления ворот.
+
+Обновление несовместимое: [Quiescence](#quiescence) каждого продукта перед
+установкой и при откате. Если маркетплейс Claude закреплён на теге `v0.38.2`
+(`extraKnownMarketplaces.mono-marketplace.source.ref` в `~/.claude/settings.json`),
+сначала убрать `ref`, затем обновить маркетплейс и плагин. После merge
+оркестратор ставит `v0.39.1` и устанавливает оба хоста один раз по
+[Plugin Updates](#plugin-updates) и
+[Wave Installation Source](#wave-installation-source). Обе установленные версии
+равны **0.39.1** и `VERSION` на проверенном коммите, тег указывает на него, оба
+кэша совпадают с его Git-деревом. Проверка ворот: настоящая квитанция ревью по
+частям проходит `captureOutput` и `validatePreflight` установленной копии.
+Откат — установка 0.38.2 по тем же правилам покоя.
+
 ### Release 0.38.1
 
 Защита окон снята: этап завершает служебную работу, пишет итог обычным текстом
