@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { validateShipCertificate } from "../ship-certificate.mjs";
+import { qaDeliveryState, requireQaPassed } from '../qa-gate.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
 import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, withLock, shipBotChecks, baseModelConfig, validateLanding, processStart } from "../runtime.mjs";
@@ -140,7 +141,7 @@ export function effectivePins(entry) {
 }
 
 // Consumes sealed ship evidence, never the open-PR gate: that PR may be merged.
-export function landedShip(root, entry, repo) {
+export function confirmedShip(root, entry) {
   const files = [path.join(root, "reports", `${entry.issue}-phase-ship.json`),
     path.join(entry.worktree, ".orchestrator", `${entry.issue}-phase-ship.json`)].filter(file => fs.existsSync(file));
   if (files.length !== 1) throw new Error("ship report absent or in both locations");
@@ -148,12 +149,25 @@ export function landedShip(root, entry, repo) {
   if (report.issue !== entry.issue || report.attempt !== entry.attempt || report.phase !== "ship" || report.status !== "green")
     throw new Error("ship report is not green for this attempt");
   validateConfirmation(report, readJson(confirmationPath(report, root)));
+  validateShipCertificate(report);
+  return { report };
+}
+
+function qaConfig(entry) {
+  if (!entry?.worktree) return {};
+  const file = path.join(entry.worktree, '.agents/mono-workflow.config.json');
+  return fs.existsSync(file) ? readJson(file) : {};
+}
+
+export function landedShip(root, entry, repo, config = qaConfig(entry)) {
+  const { report } = confirmedShip(root, entry);
   const { repo: certificateRepo, pr } = validateShipCertificate(report, repo);
   repo = certificateRepo;
   if (!repo) throw new Error("numeric ship certificate requires the record repository");
   const pins = effectivePins(entry);
   const branch = pins.baseRef?.replace(/^refs\/remotes\//, "").replace(/^origin\//, "").replace(/^refs\/heads\//, "");
   if (!branch || branch.startsWith("-") || /[\s~^:?*\[\\]/.test(branch)) throw new Error("landing branch unavailable in pins");
+  requireQaPassed({ root, config, issue: entry.issue, head: report.head, shipCertificate: report.certificate });
   return { repo, pr, head: report.head, branch };
 }
 
@@ -169,11 +183,20 @@ export function landingRecords(root) {
   return records;
 }
 
-export function attemptState(root, entry) {
-  const active = reason => ({ issue: entry?.issue, attempt: entry?.attempt, state: "active", reason });
+export function attemptState(root, entry, config) {
+  let qa;
+  const active = reason => ({ issue: entry?.issue, attempt: entry?.attempt, state: "active", reason, ...(qa ? { qa } : {}) });
   try {
     if (!identity(entry) || entry.stage !== "mono-deliver") return active("attempt identity unavailable");
+    config ??= qaConfig(entry);
     effectivePins(entry);
+    const shipFile = path.join(root, 'reports', `${entry.issue}-phase-ship.json`);
+    const fallback = path.join(entry.worktree, '.orchestrator', `${entry.issue}-phase-ship.json`);
+    if (fs.existsSync(shipFile) || fs.existsSync(fallback)) {
+      const { report } = confirmedShip(root, entry);
+      qa = qaDeliveryState({ root, config, issue: entry.issue, head: report.head, shipCertificate: report.certificate });
+      if (!['passed', 'not-connected'].includes(qa.state)) return active(qa.reason);
+    }
     if (!Number.isInteger(entry.pid) || entry.pid <= 0 || !entry.thread_id) return active("unfinished start or suspended attempt");
     let stopped = false;
     try { process.kill(entry.pid, 0); }
@@ -185,11 +208,11 @@ export function attemptState(root, entry) {
     }
     const landed = landingRecords(root).filter(record => record.issue === entry.issue && record.attempt === entry.attempt);
     if (landed.length !== 1) return active("matching landing record absent, malformed or ambiguous");
-    const ship = landedShip(root, entry, landed[0].repo);
+    const ship = landedShip(root, entry, landed[0].repo, config);
     if (["repo", "pr", "head"].some(key => landed[0][key] !== ship[key]) ||
         !/^[a-f0-9]{40}$/.test(landed[0].mergeSha ?? "") || !Number.isFinite(Date.parse(landed[0].mergedAt)))
       return active("matching landing record absent, malformed or ambiguous");
-    return { issue: entry.issue, attempt: entry.attempt, state: "landed", reason: "matching landing recorded and worker stopped" };
+    return { issue: entry.issue, attempt: entry.attempt, state: "landed", reason: "matching landing recorded and worker stopped", ...(qa ? { qa } : {}) };
   } catch (error) { return active(error.message); }
 }
 

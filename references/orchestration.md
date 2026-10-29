@@ -1125,6 +1125,84 @@ retire the entry.
 State the chosen binding in the first status update, and never block on a
 transport feature the runtime lacks.
 
+## Independent QA before merge
+
+After every confirmed green ship, resolve the recipe from the product config's
+`qa` block or the product's explicit `<!-- mono-qa product: NAME -->` record in
+`references/qa-recipes.md`. Examples, `workflows.qa`, `qaAuth` and assignment
+files do not connect a product. No recipe: do not launch a tester; preserve the
+existing merge path and record «тестировщик не подключён» in closeout.
+
+For connected products launch **mono:qa on the host**, on role `qa`, outside the
+worker's copy. Give it the task, approved PRD/design, current PR head, confirmed
+ship certificate, current main as test-merge base and recipe. Save its expectation
+list before actions. The tester publishes and reads back its report, certificate
+and main recording in the task; the project pass also publishes its report in the
+Project. Worker self-assessment cannot replace this pass.
+
+Failed/unverified holds merge and wave installation. Send concrete bugs, steps,
+expected/actual and evidence through the existing ship-fix amendment, preserving
+the task attempt and prior ship state. After new head passes ship, launch QA again
+on the **entire list**, with fresh evidence; do not reuse prior green items or cap
+QA attempts. Recheck disputed items yourself; keep false alarms in the report with
+the removal reason. Missing/contradictory expectations stay unverified until a
+recorded decision; changed user-visible behavior goes to the owner before rerun.
+
+### Current host inputs
+
+Only the host writes `<root>/qa/state.json`, refreshed from **all paginated**
+Project Issues in Linear and their current GitHub heads before preparation,
+merge, landing record, and installation verification. Missing/unknown facts are
+blocking. Keep it outside every worker grant; never accept it from a worker.
+Each `tasks[KEY]` has the exact current `head` and explicit `project` (ID or null).
+Each `projects[ID].issues` row has `issue`, `head`, `statusType`, `labels` (names).
+Include stage Issues too, with their actual labels. Only completed/canceled/
+duplicate are terminal; unknown status types remain unfinished. Build composition
+contains every non-canceled/non-duplicate implementation and its source PR head,
+including shipped work, excluding label `Этап`; it is independent of the QA result.
+
+Before QA, save `<root>/qa/<KEY>/<head>/task-expected.json` using the inputs of
+`scripts/qa-certificate.mjs` (base, kind, evidenceRoot, expectedItems, taskCriteria).
+After publication/read-back save `task-report.json` with the certificate string.
+For final QA use `project-expected.json` and `project-report.json` at the final
+Issue/head. Save expectations independently before the pass, never extract IDs,
+kind or composition from the completed certificate. The gate overwrites task,
+head, scope, recipe source, mode and task ship from current inputs; base remains
+the tested base. Moving main alone does not restart QA.
+
+`delivery-state.mjs qa-status --root <root> --config <config> --report <ship-report>`
+returns the same QA state used by deploy preparation, landing record/status and
+wave verification: `waiting` (exit 2), `failed` (1), `passed` or `not-connected` (0).
+Ship green remains a code/review milestone **before QA**, not permission to merge.
+Do not require QA in the worker's ship publication: the host launches it afterwards.
+Run `scripts/orchestrator/qa.mjs prepare --root <root> --config <config> --issue <KEY>
+--attempt <N> --head <fresh-PR-head>` before any merge, including per-merge products.
+The landing queue rechecks the same validator before record and wave verification.
+A short no-behavior task certificate needs a reason and an independently selected
+kind; it never substitutes for project coverage. Given-version or assignment-file
+certificates never open gates, even if their verdict is green.
+
+### Final project pass
+
+When exactly one unfinished implementation without label `Этап` remains, retain
+`projects[ID].finalIssue = KEY` and run final QA on its test merge over **all R and
+AE of the approved PRD**. This Issue still needs its own task certificate. Hold
+its merge and wave installation until the project certificate matches the current
+build. Retain finalIssue through merge/installation; do not drop the hold when
+Linear status becomes terminal. Changed tasks or heads invalidate the final
+certificate; rerun the full final list and publish/read back the new project report.
+Earlier tasks may deploy individually when merge deploys immediately, each after
+its own green task certificate.
+
+A final-pass bug becomes a new approved implementation Issue, branched from the
+held task's branch, and becomes `finalIssue`. Retain **both** in `heldIssues`, with
+each in `tasks` and `issues`; additional bugs extend the same held chain. Run task
+QA for each, final QA at the successor's head/test merge with the whole build.
+After green, merge held predecessors then the successor in dependency order;
+all remain bound to the same final composition during landing and installation.
+Keep its QA expected ship certificate bound to that successor's issue/head.
+Do not repair product code in the tester session or silently waive a disputed item.
+
 ## Deploy and closeout
 
 The orchestrator applies [Merge validation](landing.md#merge-validation): ordinary

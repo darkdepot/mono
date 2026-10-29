@@ -230,6 +230,22 @@ Handoff ставит Ready после записи пакета, задач и P
 правка после старта снимает прежний старт и требует нового; у старого пакета
 класс 3 переводит Delivery или Ready обратно в Discovery.
 
+## QA перед вливанием
+
+После зелёного ship оркестратор подключённого продукта зовёт `mono:qa` на хосте.
+Подготовка deploy и очередь посадки ждут зелёный сертификат текущего head;
+после ship-fix весь список проходится заново. Последняя задача реализации
+дополнительно ждёт финальный проход всех R/AE PRD на текущем составе сборки.
+Изменился состав — финальный сертификат больше не годится. Правка без поведения
+проходит с коротким сертификатом и причиной; продукт без рецепта продолжает
+прежний путь с записью «тестировщик не подключён».
+
+Хостовые входы и команды: [Independent QA before merge](references/orchestration.md#independent-qa-before-merge).
+Состояние `waiting|failed|passed|not-connected` одинаково для подготовки deploy,
+очереди и `delivery-state.mjs qa-status`. Пак подключается терминальным рецептом;
+примеры вымышленного продукта в справочнике подключением не являются.
+Проверка после выкладки сохраняется.
+
 ## Обновление до 0.40.0
 
 Новый скилл `mono:qa`: независимый тестировщик проверяет задачу или весь проект
@@ -731,6 +747,7 @@ A gate proves only its stated boundary. `mono:review` returns quality/risk findi
 | `gate.mjs preflight` | Current committed head/merge-base has successful verification and authentic clean or accepted-with-declines review evidence on the required model/effort route; missing, stale, fabricated or incomplete evidence fails |
 | Pre-ship review and check | Diff matches the Issue, readiness is recoverable, required review is complete, artifacts are current and accepted drift is synchronized |
 | `gate.mjs ship` | PR is open on the certified head, checks and bot review cover that head, threads and bot remarks are resolved/disposed, closure replies are published, no own review draft or outstanding change request remains, and mergeability is acceptable under policy |
+| Independent QA before merge | Connected products require current-head task QA; held final work also requires project QA matching the current build. Ship green precedes this gate |
 | Deploy verification and live QA | Certified change was merged and delivered to the target; acceptance was checked where consumed, with explicit evidence or a permitted recorded skip |
 
 Ship also requires recorded valid outcomes for pre-ship review, readiness, and documentation. Apply only the repository's accepted check exceptions. Pending or unknown evidence is not success; terminal failures stop the gate. A new head invalidates its old proof. The gate accumulates evidence on the current head, waits the configured quiet interval after events, and stops at its deadline rather than waiting forever.
@@ -1313,8 +1330,8 @@ its own orchestrator's responsibility.
 
 ## Project Config
 
-Optional `qa` defines the independent tester's copy recipe. It does not enable
-merge gates by itself; gate integration follows the pilot. `workflows.qa` remains
+Optional `qa` defines the independent tester's copy recipe and enables the
+current-head QA merge gate after green ship. `workflows.qa` remains
 an optional workflow string and `qaAuth` an access policy, neither is a recipe.
 
 ```json
@@ -1591,7 +1608,7 @@ Scratch validation copies include the scout-hook template. Runtime fixture files
 Use focused checks while editing:
 
 ```bash
-node --test scripts/qa-certificate.test.mjs scripts/qa-evals.test.mjs scripts/project-config.test.mjs
+node --test scripts/qa-certificate.test.mjs scripts/qa-evals.test.mjs scripts/project-config.test.mjs scripts/landing-drain.test.mjs
 node scripts/validate-workflow.mjs --readme-only
 node scripts/validate-workflow.mjs --model-policy-fixtures
 node scripts/read-budget.mjs

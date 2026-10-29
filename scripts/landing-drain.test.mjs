@@ -482,3 +482,123 @@ test("landing U7 plugin layout runs record, status, verify and close outside sou
   r = f.run("close", ["--install-sha", f.tip, "--evidence", "all roots checked"]); assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.deepEqual(JSON.parse(fs.readFileSync(f.pending)), []);
 });
+
+
+function qaFixture(t) {
+  const f = fixture(t);
+  const config = JSON.parse(fs.readFileSync(f.config));
+  config.qa = { mode: 'terminal', install: [], start: 'node --version',
+    ready: { command: 'git rev-parse HEAD', identity: 'detached copy SHA' },
+    data: { source: 'local-fixtures', description: 'scratch inputs' }, forbiddenActions: ['external writes'] };
+  atomicJson(f.config, config);
+  fs.mkdirSync(path.join(f.repo, '.agents'));
+  atomicJson(path.join(f.repo, '.agents/mono-workflow.config.json'), config);
+  const qaRoot = path.join(f.root, 'qa'), dir = path.join(qaRoot, f.issue, f.head);
+  fs.mkdirSync(dir, { recursive: true });
+  const evidence = path.join(dir, 'session.cast'); fs.writeFileSync(evidence, 'recorded scratch session');
+  const expected = { issue: f.issue, head: f.head, base: f.mergeSha, scope: 'task', mode: 'ship',
+    recipeSource: 'config', kind: 'behavior', evidenceRoot: qaRoot, expectedItems: ['C1'], taskCriteria: ['C1'] };
+  const certificate = { ...expected, gateEligible: true, verdict: 'passed',
+    items: [{ id: 'C1', source: 'task', expectation: 'Reject missing certificate', outcome: 'passed', evidence: [evidence] }] };
+  const current = { tasks: { [f.issue]: { head: f.head, project: null } }, projects: {} };
+  const saveState = () => atomicJson(path.join(qaRoot, 'state.json'), current);
+  const save = (scope = 'task', cert = certificate, exp = expected, target = dir) => {
+    atomicJson(path.join(target, scope + '-report.json'), { certificate: 'mono-qa certificate\n' + JSON.stringify(cert) });
+    atomicJson(path.join(target, scope + '-expected.json'), exp);
+  };
+  saveState();
+  const prepare = () => spawnSync(process.execPath, [path.resolve('scripts/orchestrator/qa.mjs'), 'prepare',
+    '--root', f.root, '--config', f.config, '--issue', f.issue, '--attempt', '1', '--head', f.head], { env: f.env, encoding: 'utf8' });
+  const qaStatus = () => spawnSync(process.execPath, [path.resolve('scripts/delivery-state.mjs'), 'qa-status',
+    '--root', f.root, '--config', f.config, '--report', f.reportFile], { env: f.env, encoding: 'utf8' });
+  return { ...f, dir, expected, certificate, current, save, saveState, prepare, qaStatus };
+}
+
+for (const scenario of ['missing', 'foreign-head', 'foreign-issue', 'failed', 'unverified', 'given-version', 'file-recipe', 'short-without-reason']) {
+  test(`QA deploy preparation and landing refuse ${scenario} without writes`, t => {
+    const f = qaFixture(t);
+    if (scenario !== 'missing') {
+      if (scenario === 'foreign-head') f.certificate.head = 'f'.repeat(40);
+      if (scenario === 'foreign-issue') f.certificate.issue = 'MONO-999';
+      if (['failed', 'unverified'].includes(scenario)) f.certificate.verdict = scenario;
+      if (scenario === 'given-version') Object.assign(f.certificate, { mode: scenario, gateEligible: false });
+      if (scenario === 'file-recipe') Object.assign(f.certificate, { recipeSource: 'file', gateEligible: false });
+      if (scenario === 'short-without-reason') {
+        f.expected.kind = f.certificate.kind = 'no-behavior'; delete f.certificate.items;
+      }
+      f.save();
+    }
+    const r = f.prepare(); assert.notEqual(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout + r.stderr, /QA|qa/);
+    assertRecordRefused(f, [], /QA|qa/, '901');
+    const status = f.qaStatus(); assert.notEqual(status.status, 0, status.stdout + status.stderr);
+    assert.match(status.stdout, /waiting|failed/);
+    atomicJson(f.pending, [f.record]);
+    const shared = state.attemptState(f.root, f.entry);
+    assert.equal(shared.state, 'active'); assert.match(shared.reason, /QA|qa/);
+    assert.notEqual(f.run('status').status, 0);
+  });
+}
+
+for (const short of [false, true]) {
+  test(`QA deploy preparation and landing accept green ${short ? 'short' : 'behavior'} certificate`, t => {
+    const f = qaFixture(t);
+    if (short) {
+      f.expected.kind = f.certificate.kind = 'no-behavior'; f.certificate.reason = 'Punctuation only'; delete f.certificate.items;
+    }
+    f.save();
+    assert.equal(f.prepare().status, 0);
+    assert.equal(f.qaStatus().status, 0);
+    const r = f.run('record', ['--issue', f.issue, '--attempt', '1', '--pr', '901']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(f.run('status').status, 0);
+    // Advancing main is deliberately not compared to the recorded QA base.
+    f.mock.tip = 'e'.repeat(40); f.github(); assert.equal(f.prepare().status, 0);
+  });
+}
+
+test('QA final project certificate blocks landing and wave on missing or changed composition', t => {
+  const f = qaFixture(t); f.save();
+  f.current.tasks[f.issue].project = 'example-project';
+  const project = f.current.projects['example-project'] = { issues: [
+    { issue: 'MONO-900', head: 'c'.repeat(40), statusType: 'completed', labels: [] },
+    { issue: f.issue, head: f.head, statusType: 'started', labels: [] },
+    { issue: 'MONO-899', statusType: 'started', labels: ['Этап'] }
+  ] };
+  f.saveState();
+  assert.notEqual(f.prepare().status, 0, 'last implementation needs a project certificate');
+  assertRecordRefused(f, [], /project|QA/, '901');
+  const build = project.issues.filter(row => !row.labels.includes('Этап')).map(({ issue, head }) => ({ issue, head }));
+  const cert = { ...f.certificate, scope: 'project', project: 'example-project', build };
+  const exp = { ...f.expected, scope: 'project', project: 'example-project', build,
+    expectedItems: ['R1', 'AE1'], taskCriteria: [] };
+  cert.items = exp.expectedItems.map(id => ({ ...f.certificate.items[0], id, source: 'requirement' }));
+  f.save('project', cert, exp);
+  atomicJson(f.pending, []);
+  assert.equal(f.prepare().status, 0);
+  assert.equal(f.run('record', ['--issue', f.issue, '--attempt', '1', '--pr', '901']).status, 0);
+  atomicJson(path.join(f.root, 'control.json'), { halt: true });
+  const verified = f.run('verify', ['--install-sha', f.tip, '--worktree', f.repo]);
+  assert.equal(verified.status, 0, verified.stdout + verified.stderr);
+  for (const change of ['head', 'add', 'remove']) {
+    const original = structuredClone(project.issues);
+    if (change === 'head') project.issues[0].head = 'd'.repeat(40);
+    if (change === 'add') project.issues.push({ issue: 'MONO-898', head: 'd'.repeat(40), statusType: 'completed', labels: [] });
+    if (change === 'remove') project.issues.shift();
+    f.saveState();
+    assert.notEqual(f.prepare().status, 0, change);
+    assert.notEqual(f.run('verify', ['--install-sha', f.tip, '--worktree', f.repo]).status, 0, change);
+    project.issues = original;
+  }
+});
+
+test('QA no recipe preserves deploy and landing and reports tester not connected', t => {
+  const f = qaFixture(t);
+  atomicJson(f.config, { landing: { install: 'wave-drain' } });
+  const r = f.prepare(); assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /тестировщик не подключён/);
+  assert.equal(f.run('record', ['--issue', f.issue, '--attempt', '1', '--pr', '901']).status, 0);
+  f.report.certificate = f.report.certificate.replace('https://github.com/owner/repo/pull/901', '#901');
+  f.publish();
+  const numeric = f.prepare();
+  assert.equal(numeric.status, 0, numeric.stdout + numeric.stderr);
+});

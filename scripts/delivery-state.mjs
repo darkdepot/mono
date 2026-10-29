@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import { validateShipCertificate } from "./ship-certificate.mjs";
+import { qaDeliveryState } from './qa-gate.mjs';
+export { qaDeliveryState } from './qa-gate.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -456,7 +458,14 @@ if (isMain(import.meta.url)) {
   try {
     const [command, ...rest] = process.argv.slice(2); const args = flags(rest);
     if (command === "--help" || args.help) console.log("Usage: delivery-state.mjs capture-criteria --issue <KEY> --attempt <N> --issue-file <approved Issue read> --root <delivery root> | publish --report <file> --output <file> [--confirmation <previous ack>] [--root <orchestrator root>] | wait-ack --root <root> --issue <KEY> --attempt <N> --ack <path> --moves <json-file> [--config <file>] | confirm --report <file> --root <dir> --adapter <executable> [--config <file>] | wait --report <file> --confirmation <file> [--config <file>]\nPhase: {issue,stage:'mono-deliver',attempt,packVersion,sourceCommit,surfaceRevision,phase:'code|preflight|ship',sequence,kind:'phase|confirmation-request',head,linear_mutations_pending:[{id,operation,target,payload}],capsule:{phase,head,open_queue:[same writes],decisions:[],writable_roots:[dispatch grants]}}. publish adds publishedAt, so resumed waits retain the original deadline. Publish/confirm require all earlier sequence confirmations and the latest earlier phase reports for this attempt. Confirmations retain their report snapshot. Fallback publish supplies --root explicitly (or the previous standard mailbox confirmation); confirm reads predecessor reports from the current report directory and the root mailbox, refusing conflicting copies. A single append #/certificate pointer within a payload string expands to report.certificate before hashing/applying; changed certificate needs a new write ID. Adapter stdin: {action:'reconcile|apply',issue,attempt,idempotencyKey,write}; reconcile returns {state:'present|missing|unknown',evidence}; present needs evidence, missing must be positively observed. IDs persist across retries; results bind the current attempt.");
-    else if (command === "capture-criteria") {
+    else if (command === 'qa-status') {
+      const report = validatePhase(readJson(args.report));
+      validateShipCertificate(report);
+      const qa = qaDeliveryState({ root: args.root, config: readJson(args.config), issue: report.issue,
+        head: report.head, shipCertificate: report.certificate });
+      console.log(JSON.stringify(qa));
+      process.exitCode = qa.state === 'waiting' ? 2 : qa.state === 'failed' ? 1 : 0;
+    } else if (command === "capture-criteria") {
       const captured = captureCriteria({ root: args.root, issue: args.issue, attempt: Number(args.attempt), issueFile: args["issue-file"] });
       console.log(JSON.stringify(captured));
       console.log("delivery-state capture-criteria: pass");

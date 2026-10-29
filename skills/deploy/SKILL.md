@@ -41,6 +41,34 @@ Workflow:
 1. `prepare`: fetch current Issue, marker, verified labels, authenticated owner fingerprint, PR and config. Resolve five-field seam and emit live whole-body fingerprint before package-specific fetches. Project lane fetches Project/PRD/Spec; issue lane requires issue-only/approved-fresh, non-empty oracle and tiny|standard risk, with Project/docs `n/a`.
 2. `prepare`: recover latest green certificate from comments/resources; absent/superseded/non-green routes to ship. Require matching PR number/URL/current head; changed head routes back to stabilization. Confirm checks/Greptile/reviews/threads/merge remain certificate-compatible.
 3. `prepare`: consult `gstack-learnings-search --type operational --limit 10` if available; surface relevant deploy/queue quirks before delegation. Advisory only, record unavailable/none.
+
+   Before approval or merge, require independent QA. Run
+   `node '<pack-root>/scripts/orchestrator/qa.mjs' prepare --root <root> --config <config> --issue <KEY> --attempt <N> --head <current-PR-head>`.
+   It consumes confirmed ship and host QA inputs; a missing, non-green,
+   ineligible or different-head certificate refuses preparation. The last
+   implementation also requires the current project composition certificate;
+   held predecessors require that same final pass. Short no-behavior certificates
+   still need a reason and independently expected kind. Refresh host state from
+   Linear/GitHub before this command and again immediately before merge and wave
+   installation. Changed head returns to ship, then the whole QA list. Changed
+   main alone retains QA. No recipe: record «тестировщик не подключён» in closeout
+   and continue the existing deploy path. This gate precedes deployment; Live QA
+   below remains required after delivery.
+
+   Host inputs are `<root>/qa/state.json` (`tasks` maps Issue to current head and
+   project/null; `projects` carries all Issues with source head, statusType and
+   label names, persisted finalIssue and heldIssues). Before QA save independent
+   `task-expected.json`; after publication/read-back save `task-report.json` in
+   `<root>/qa/<KEY>/<head>/`. The final Issue/head also holds project-expected.json
+   and project-report.json. Use the certificate validator's expected input shape.
+   Refresh all paginated Project Issues and GitHub heads; never derive expected
+   IDs, kind or project composition from the completed certificate. Keep these
+   files outside worker grants. Missing facts block; a main shift alone does not
+   change the tested base. Explicit registry product markers connect recipes;
+   examples and assignment files do not. The single unfinished implementation
+   without `Этап` needs final QA; retain that hold through installation. A final
+   bug successor branches from the held task and joins heldIssues, becomes
+   finalIssue and repeats full project QA; merge the held chain in order.
 4. `approve`: apply `deployApproval` (absent = `always`). `always` requires explicit approval bound to current PR/head; record in-session approval as a Russian Issue comment before deploy. Wrong PR/old head is stale. `risky-only` requires approval for standard/deep/risky or unknown risk; only tiny proceeds without it. `never` proceeds without asking and is reported. When needed, stop `needs-human` and present:
 
 ```text

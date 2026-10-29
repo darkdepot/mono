@@ -500,7 +500,7 @@ Merge/deploy a green PR and close out Linear only after delivery evidence exists
 
 Required:
 
-- Read the latest `mono-ship green certificate`.
+- Read current `mono-ship green certificate` and connected-product QA; final task also needs project QA.
 - Verify current PR head SHA still matches the certificate head SHA.
 - Confirm the configured `Deploy workflow` exists and is not `None`.
 - Delegate merge/deploy to the configured Deploy workflow.
