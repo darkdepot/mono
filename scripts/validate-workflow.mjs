@@ -31,6 +31,7 @@ const EXPECTED_SKILLS = [
   "issue",
   "orchestrate",
   "preflight",
+  "qa",
   "research",
   "review",
   "ship",
@@ -5158,7 +5159,7 @@ function validateProjectUpdateSurface() {
 const MODEL_POLICY_PATH = "references/model-policy.md";
 const MODEL_ROLES = [
   "orchestrator", "second-voice", "second-voice-alt", "worker-default",
-  "worker-complex", "worker-claude", "autoreview", "idea-helper", "scout",
+  "worker-complex", "worker-claude", "autoreview", "idea-helper", "scout", "qa",
 ];
 const MODEL_ENUM_ALLOWLIST = new Set([
   "claude-code-desktop", "claude-5", "gpt-worker", "gpt-5",
@@ -5648,6 +5649,11 @@ function validateModelPolicyFixtures() {
 }
 
 const STRING_PINS = [
+  ["skills/qa/SKILL.md", "mono:qa"],
+  ["skills/qa/SKILL.md", "mono-qa certificate"],
+  ["skills/qa/SKILL.md", "given-version"],
+  ["templates/qa-output.md", "expectedItems"],
+  ["templates/qa-output.md", "taskCriteria"],
   ["references/lifecycle.md", "mono-tech: approved"],
   ["references/lifecycle.md", "mono-tech-page"],
   ["skills/check/SKILL.md", "next="],
@@ -6009,6 +6015,15 @@ const STRING_PINS = [
   ["references/lifecycle.md", "design="],
 ];
 const REQUIRED_HEADINGS = [
+  ["skills/qa/SKILL.md", "Вход"],
+  ["skills/qa/SKILL.md", "Ожидания до первого действия"],
+  ["skills/qa/SKILL.md", "Копия и данные"],
+  ["skills/qa/SKILL.md", "Проход и исходы"],
+  ["skills/qa/SKILL.md", "Отчёт и сертификат"],
+  ["templates/qa-output.md", "Ожидания и результаты"],
+  ["templates/qa-output.md", "Баги"],
+  ["templates/qa-output.md", "Итог владельцу"],
+  ["templates/qa-output.md", "Машинная форма"],
   ["skills/implement/SKILL.md", "mono:implement"],
   ["skills/implement/SKILL.md", "Как ты думаешь"],
   ["skills/implement/SKILL.md", "Как ты говоришь"],
@@ -6257,6 +6272,8 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  // QA routing, certificate fields and modes; behavior is tested in QA fixtures.
+  "qa", "mono:qa", "mono-qa certificate", "given-version", "expectedItems", "taskCriteria",
   "head", "phase_result",
   // Window tools and shared dialogue path; step order is reviewed.
   "request_user_input", "request_user_input_async", "owner-dialog.md",

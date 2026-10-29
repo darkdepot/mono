@@ -8,6 +8,8 @@ import { preapplyMandate } from "./orchestrator/preapply.mjs";
 import { configuredBackup } from "./orchestrator/backup-switch.mjs";
 import { validateIdeaGate, validateResearchGate } from "./idea-gate.mjs";
 
+import { validateQaConfig } from "./qa-recipe.mjs";
+
 const CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.json";
 const LEGACY_CONFIG_RELATIVE_PATH = ".agents/mono-workflow.config.md";
 const PREVIOUS_CONFIG_RELATIVE_PATH = ".agents/linear-workflow.config.json";
@@ -256,6 +258,9 @@ function validateConfig(config, failures) {
         "Project config issueOnlyLane.ownerPrincipal must be a non-empty stable Linear user ID when the lane is enabled"
       );
     }
+  }
+  if ("qa" in config) {
+    try { validateQaConfig(config.qa, config); } catch (error) { failures.push(error.message); }
   }
   if ("qaAuth" in config) {
     const allowed = ["cookie-import", "test-account", "owner-session"];

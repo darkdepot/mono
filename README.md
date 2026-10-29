@@ -1304,6 +1304,37 @@ its own orchestrator's responsibility.
 
 ## Project Config
 
+Optional `qa` defines the independent tester's copy recipe. It does not enable
+merge gates by itself; gate integration follows the pilot. `workflows.qa` remains
+an optional workflow string and `qaAuth` an access policy, neither is a recipe.
+
+```json
+{
+  "qa": {
+    "mode": "terminal",
+    "install": [],
+    "start": "node scripts/verify.mjs",
+    "ready": {
+      "command": "pwd && git rev-parse HEAD",
+      "identity": "cwd is the detached QA copy and full SHA matches the requested version"
+    },
+    "data": {"source": "local-fixtures", "description": "Only local pack fixtures"},
+    "forbiddenActions": ["No publication, Linear mutations or real data writes"]
+  }
+}
+```
+
+`mode` is `web|terminal|mobile`; `install` is an array (empty if unnecessary).
+`start` must use the assigned `$QA_PORT` for web/mobile. `ready.command` plus
+`ready.identity` must prove this copy answers (listener PID/cwd/build marker for
+web). `data.source` is `read-only|synthetic|qaAuth|local-fixtures`; describe its
+boundary, and select a valid `qaAuth` policy for that source. `forbiddenActions`
+is a nonempty list of external action restrictions. Unknown recipe fields fail.
+Without `qa`, use only this product's record in [QA recipes](references/qa-recipes.md).
+An unconnected product can supply a recipe file for a given-version run; that
+certificate cannot open gates. `models.roles.qa` overrides the pack QA role.
+
+
 Optional `orchestration.preapply.mandate` names the owner comment URL; absent/empty means no pre-application mandate.
 
 
@@ -1481,7 +1512,7 @@ QA и приёмка на работающем продукте — следую
 
 Invoke pack skills with the plugin namespace: `/mono:idea`, `/mono:handoff`,
 and the names below. Short `/ship` and `/review` may belong to other skills;
-this pack uses `/mono:ship` and `/mono:review`.
+this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, never a foreign `/qa`.
 
 | Skill | Use it for |
 | --- | --- |
@@ -1498,6 +1529,7 @@ this pack uses `/mono:ship` and `/mono:review`.
 | [mono:implement](skills/implement/SKILL.md) | Свой инженерный этап: старт, код и доказательства каждого критерия; один отчёт для Preflight |
 | [mono:preflight](skills/preflight/SKILL.md) | Local verification, independent autoreview, commit and ready certificate |
 | [mono:ship](skills/ship/SKILL.md) | Accepted pre-ship drift, PR, docs, feedback and green certificate |
+| [mono:qa](skills/qa/SKILL.md) | Независимая проверка готовой задачи или всего проекта на хосте: ожидания до действий, доказательства, баги и сертификат; заданная версия без права вливания |
 | [mono:deploy](skills/deploy/SKILL.md) | Merge/deploy delegation, verification, closeout and learnings |
 | [mono:orchestrate](skills/orchestrate/SKILL.md) | Product control plane: dispatch, monitoring, decisions and Linear writes |
 
@@ -1533,7 +1565,10 @@ Treat Markdown as agent instructions. Protect executable behavior with fixtures,
 веба, терминального пака и мобильного симулятора собраны в
 [рецептах QA](references/qa-recipes.md). Там же — результат загрузки WebM в
 Linear, ограничения пробы, требования к хосту и время шагов. Это справочник;
-скилл тестировщика, сертификат и ворота в этой работе не добавляются.
+тестировщик [mono:qa](skills/qa/SKILL.md) использует его на хосте.
+Проверка сертификата: `node scripts/qa-certificate.mjs <report.json> <expected.json>`;
+[отдельный шаблон](templates/qa-output.md) описывает task/project, короткий и
+given-version сертификаты. Ворота включаются отдельной работой после пилота.
 
 Run before completing a change:
 
@@ -1547,6 +1582,7 @@ Scratch validation copies include the scout-hook template. Runtime fixture files
 Use focused checks while editing:
 
 ```bash
+node --test scripts/qa-certificate.test.mjs scripts/qa-evals.test.mjs scripts/project-config.test.mjs
 node scripts/validate-workflow.mjs --readme-only
 node scripts/validate-workflow.mjs --model-policy-fixtures
 node scripts/read-budget.mjs
