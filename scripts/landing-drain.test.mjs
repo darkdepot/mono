@@ -90,6 +90,7 @@ function fixture(t, commandScript = script) {
   const pinsFile = path.join(root, `dispatch/${issue}-a1/pins.json`);
   atomicJson(pinsFile, { baseRef: "origin/main", worktree: repo, release: true });
   const entry = { issue, attempt: 1, stage: "mono-deliver", worktree: repo, pid: 99999999, procStart: "old process", thread_id: "thread",
+    config,
     packVersion: "fixture", sourceCommit: mergeSha, surfaceRevision: 4, spawned_at: "2020-01-01T00:00:00Z",
     pins: { file: pinsFile, digest: state.sha256File(pinsFile) }, pinsVersion: 0 };
   const reportFile = path.join(root, `reports/${issue}-phase-ship.json`);
@@ -508,7 +509,7 @@ function qaFixture(t) {
   };
   saveState();
   const prepare = () => spawnSync(process.execPath, [path.resolve('scripts/orchestrator/qa.mjs'), 'prepare',
-    '--root', f.root, '--config', f.config, '--issue', f.issue, '--attempt', '1', '--head', f.head], { env: f.env, encoding: 'utf8' });
+    '--root', f.root, '--config', f.config, '--issue', f.issue, '--head', f.head, '--ship-report', f.reportFile], { env: f.env, encoding: 'utf8' });
   const qaStatus = () => spawnSync(process.execPath, [path.resolve('scripts/delivery-state.mjs'), 'qa-status',
     '--root', f.root, '--config', f.config, '--report', f.reportFile], { env: f.env, encoding: 'utf8' });
   return { ...f, dir, expected, certificate, current, save, saveState, prepare, qaStatus };
@@ -601,4 +602,62 @@ test('QA no recipe preserves deploy and landing and reports tester not connected
   f.publish();
   const numeric = f.prepare();
   assert.equal(numeric.status, 0, numeric.stdout + numeric.stderr);
+});
+
+test('QA no-recipe preparation does not require orchestrator worker records', t => {
+  const f = fixture(t);
+  const r = spawnSync(process.execPath, [path.resolve('scripts/orchestrator/qa.mjs'), 'prepare', '--config', f.config], { env: f.env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /тестировщик не подключён/);
+});
+
+test('QA default observers read host config even when worker config is missing', t => {
+  const f = qaFixture(t); f.entry.config = f.config; f.registry();
+  fs.unlinkSync(path.join(f.repo, '.agents/mono-workflow.config.json'));
+  atomicJson(f.pending, [f.record]);
+  const result = state.attemptState(f.root, f.entry);
+  assert.equal(result.state, 'active', JSON.stringify(result));
+  assert.equal(result.qa.state, 'waiting');
+  assert.throws(() => state.landedShip(f.root, f.entry), /QA/);
+});
+
+test('QA default observers ignore stale worker recipe when host has no recipe', t => {
+  const f = qaFixture(t); f.entry.config = f.config; f.registry();
+  atomicJson(f.config, { landing: { install: 'wave-drain' } });
+  atomicJson(f.pending, [f.record]);
+  const result = state.attemptState(f.root, f.entry);
+  assert.equal(result.state, 'landed', JSON.stringify(result));
+  assert.equal(result.qa.state, 'not-connected');
+});
+
+test('QA unknown host configuration cannot establish a landed attempt', t => {
+  const f = fixture(t); delete f.entry.config; f.registry();
+  atomicJson(f.pending, [f.record]);
+  const result = state.attemptState(f.root, f.entry);
+  assert.equal(result.state, 'active', JSON.stringify(result));
+});
+
+test('QA legacy dispatch recovers the original host config, never the worker copy', t => {
+  const f = qaFixture(t); delete f.entry.config; f.registry();
+  atomicJson(path.join(path.dirname(f.entry.pins.file), 'spawn.json'), { root: f.root, issue: f.issue,
+    attempt: 1, worktree: f.repo, pins: f.entry.pins, config: f.config });
+  fs.unlinkSync(path.join(f.repo, '.agents/mono-workflow.config.json'));
+  atomicJson(f.pending, [f.record]);
+  assert.equal(state.attemptState(f.root, f.entry).qa.state, 'waiting');
+  f.save(); assert.equal(state.attemptState(f.root, f.entry).state, 'landed');
+  assert.throws(() => state.landedShip(f.root, f.entry, undefined, {}), /host configuration mismatch/);
+});
+
+test('QA connected standalone preparation uses read-back ship and still requires QA', t => {
+  const f = qaFixture(t);
+  fs.unlinkSync(path.join(f.root, 'workers.json'));
+  fs.unlinkSync(f.confirmFile);
+  const recovered = path.join(f.root, 'qa', 'read-back-ship.json');
+  atomicJson(recovered, { issue: f.issue, head: f.head, certificate: f.report.certificate });
+  const run = head => spawnSync(process.execPath, [path.resolve('scripts/orchestrator/qa.mjs'), 'prepare',
+    '--root', f.root, '--config', f.config, '--issue', f.issue, '--head', head, '--ship-report', recovered], { env: f.env, encoding: 'utf8' });
+  assert.notEqual(run(f.head).status, 0, 'connected product cannot skip missing QA');
+  f.save();
+  const good = run(f.head); assert.equal(good.status, 0, good.stdout + good.stderr);
+  assert.notEqual(run('f'.repeat(40)).status, 0, 'read-back certificate is still bound to live head');
 });

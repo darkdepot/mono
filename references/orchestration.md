@@ -1175,9 +1175,19 @@ returns the same QA state used by deploy preparation, landing record/status and
 wave verification: `waiting` (exit 2), `failed` (1), `passed` or `not-connected` (0).
 Ship green remains a code/review milestone **before QA**, not permission to merge.
 Do not require QA in the worker's ship publication: the host launches it afterwards.
+Save the green certificate read back from Issue comments/resources as host JSON
+with `issue`, `head`, `certificate`; this is not a worker-registration requirement.
 Run `scripts/orchestrator/qa.mjs prepare --root <root> --config <config> --issue <KEY>
---attempt <N> --head <fresh-PR-head>` before any merge, including per-merge products.
-The landing queue rechecks the same validator before record and wave verification.
+--head <fresh-PR-head> --ship-report <read-back-ship.json>` before any merge, including per-merge products.
+No recipe resolves before reading ship files or worker state, so the command also
+works with only `--config` on that path. Connected standalone deployments supply
+the same read-back JSON and host QA inputs without an orchestrator registry.
+The landing queue retains its confirmed ship checks and rechecks QA before record
+and wave verification. Default state readers use the trusted host config path
+recorded as `entry.config` at launch. Legacy dispatches recover that exact path
+from their correlated existing `spawn.json`; no worker checkout fallback exists.
+Unavailable host metadata stays unknown/active, never inferred disconnected.
+Explicit config must agree with a recorded host config when one is available.
 A short no-behavior task certificate needs a reason and an independently selected
 kind; it never substitutes for project coverage. Given-version or assignment-file
 certificates never open gates, even if their verdict is green.

@@ -43,8 +43,9 @@ Workflow:
 3. `prepare`: consult `gstack-learnings-search --type operational --limit 10` if available; surface relevant deploy/queue quirks before delegation. Advisory only, record unavailable/none.
 
    Before approval or merge, require independent QA. Run
-   `node '<pack-root>/scripts/orchestrator/qa.mjs' prepare --root <root> --config <config> --issue <KEY> --attempt <N> --head <current-PR-head>`.
-   It consumes confirmed ship and host QA inputs; a missing, non-green,
+   `node '<pack-root>/scripts/orchestrator/qa.mjs' prepare --root <root> --config <config> --issue <KEY> --head <current-PR-head> --ship-report <read-back-ship.json>`.
+   Save the recovered green certificate as host JSON with issue, head and certificate.
+   The command consumes this read-back and host QA inputs; a missing, non-green,
    ineligible or different-head certificate refuses preparation. The last
    implementation also requires the current project composition certificate;
    held predecessors require that same final pass. Short no-behavior certificates
@@ -53,7 +54,10 @@ Workflow:
    installation. Changed head returns to ship, then the whole QA list. Changed
    main alone retains QA. No recipe: record «тестировщик не подключён» in closeout
    and continue the existing deploy path. This gate precedes deployment; Live QA
-   below remains required after delivery.
+   below remains required after delivery. Resolve no-recipe products before worker
+   state: `prepare --config <config>` returns the skip note without registry, pins
+   or local ship files. Connected standalone work supplies the read-back JSON and
+   host QA inputs directly; it needs no registered worker.
 
    Host inputs are `<root>/qa/state.json` (`tasks` maps Issue to current head and
    project/null; `projects` carries all Issues with source head, statusType and
@@ -63,7 +67,10 @@ Workflow:
    and project-report.json. Use the certificate validator's expected input shape.
    Refresh all paginated Project Issues and GitHub heads; never derive expected
    IDs, kind or project composition from the completed certificate. Keep these
-   files outside worker grants. Missing facts block; a main shift alone does not
+   files outside worker grants. Default observers use the launch-recorded host
+   config path (legacy: correlated spawn.json), never a worker checkout fallback.
+   Unknown host config blocks; explicit config must agree with the recorded source.
+   Missing facts block; a main shift alone does not
    change the tested base. Explicit registry product markers connect recipes;
    examples and assignment files do not. The single unfinished implementation
    without `Этап` needs final QA; retain that hold through installation. A final

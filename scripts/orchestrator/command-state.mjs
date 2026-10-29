@@ -153,13 +153,26 @@ export function confirmedShip(root, entry) {
   return { report };
 }
 
-function qaConfig(entry) {
-  if (!entry?.worktree) return {};
-  const file = path.join(entry.worktree, '.agents/mono-workflow.config.json');
-  return fs.existsSync(file) ? readJson(file) : {};
+function qaConfig(root, entry, provided) {
+  let file = entry.config;
+  if (file === undefined && entry.pins) {
+    const launchFile = path.join(path.dirname(entry.pins.file), 'spawn.json');
+    if (fs.existsSync(launchFile)) {
+      const launch = readJson(launchFile);
+      if (launch.root !== root || launch.issue !== entry.issue || launch.attempt !== entry.attempt ||
+          launch.worktree !== entry.worktree || canonical(launch.pins) !== canonical(entry.pins))
+        throw new Error('QA: host configuration launch identity mismatch');
+      file = launch.config;
+    }
+  }
+  if (file === undefined && provided !== undefined) return provided;
+  if (!path.isAbsolute(file ?? '')) throw new Error('QA: trusted host configuration unavailable');
+  const current = readJson(file);
+  if (provided !== undefined && canonical(current) !== canonical(provided)) throw new Error('QA: host configuration mismatch');
+  return current;
 }
 
-export function landedShip(root, entry, repo, config = qaConfig(entry)) {
+export function landedShip(root, entry, repo, config) {
   const { report } = confirmedShip(root, entry);
   const { repo: certificateRepo, pr } = validateShipCertificate(report, repo);
   repo = certificateRepo;
@@ -167,7 +180,7 @@ export function landedShip(root, entry, repo, config = qaConfig(entry)) {
   const pins = effectivePins(entry);
   const branch = pins.baseRef?.replace(/^refs\/remotes\//, "").replace(/^origin\//, "").replace(/^refs\/heads\//, "");
   if (!branch || branch.startsWith("-") || /[\s~^:?*\[\\]/.test(branch)) throw new Error("landing branch unavailable in pins");
-  requireQaPassed({ root, config, issue: entry.issue, head: report.head, shipCertificate: report.certificate });
+  requireQaPassed({ root, config: qaConfig(root, entry, config), issue: entry.issue, head: report.head, shipCertificate: report.certificate });
   return { repo, pr, head: report.head, branch };
 }
 
@@ -188,8 +201,8 @@ export function attemptState(root, entry, config) {
   const active = reason => ({ issue: entry?.issue, attempt: entry?.attempt, state: "active", reason, ...(qa ? { qa } : {}) });
   try {
     if (!identity(entry) || entry.stage !== "mono-deliver") return active("attempt identity unavailable");
-    config ??= qaConfig(entry);
     effectivePins(entry);
+    config = qaConfig(root, entry, config);
     const shipFile = path.join(root, 'reports', `${entry.issue}-phase-ship.json`);
     const fallback = path.join(entry.worktree, '.orchestrator', `${entry.issue}-phase-ship.json`);
     if (fs.existsSync(shipFile) || fs.existsSync(fallback)) {

@@ -35,6 +35,7 @@ function fixture(t, commandScript = script) {
     if (file) { fs.writeFileSync(path.join(worktree, file), content); git(worktree, "add", "."); git(worktree, "commit", "-m", issue); }
     const pins = path.join(root, `dispatch/${issue}-a1/pins.json`); atomicJson(pins, { base, baseRef: "origin/main", worktree });
     workers[issue] = { issue, attempt: 1, stage: "mono-deliver", worktree, pid: null, thread_id: null,
+      config,
       packVersion: "fixture", sourceCommit: base, surfaceRevision: 4, spawned_at: "2020-01-01T00:00:00Z",
       pins: { file: pins, digest: sha256File(pins) }, pinsVersion: 0 }; save(); return worktree;
   }
