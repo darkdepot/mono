@@ -1,4 +1,5 @@
 ---
+allowed_tools: [Read, Glob, Grep, Skill]
 tags: [qa]
 ---
 

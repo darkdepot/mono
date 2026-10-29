@@ -8,7 +8,9 @@ test('QA invocation graders require mono:qa and explicitly reject foreign qa', (
   assert.equal(cases.length, 7);
   for (const entry of cases) {
     const dir = path.join('evals/qa', entry.name);
-    assert.ok(fs.readFileSync(path.join(dir, 'prompt.md'), 'utf8').length > 60);
+    const prompt = fs.readFileSync(path.join(dir, 'prompt.md'), 'utf8');
+    assert.ok(prompt.length > 60);
+    assert.match(prompt, /^---\n(?:(?!---)[^\n]*\n)*allowed_tools: \[Read, Glob, Grep, Skill\]\n/, `${entry.name}: routing eval must be able to invoke Skill and read its instructions`);
     const grader = fs.readFileSync(path.join(dir, 'graders/qa-invocation.md'), 'utf8');
     assert.match(grader, /type: tool_used\ntool: Skill/);
     const pattern = new RegExp(/^input_match: '(.*)'$/m.exec(grader)[1]);
