@@ -37,7 +37,7 @@ function evidenceFile(file, root) {
 export function validateQaCertificate(report, expected) {
   need(object(expected), 'expected identity required');
   const raw = report?.certificate;
-  need(typeof raw === 'string' && raw.startsWith(QA_MARKER + '\n') && raw.split(QA_MARKER).length === 2, 'one marker required');
+  need(typeof raw === 'string' && raw.startsWith(QA_MARKER + '\n'), 'one marker required');
   const cert = JSON.parse(raw.slice(QA_MARKER.length).trim());
   need(object(cert), 'JSON object required');
   need(['task', 'project'].includes(cert.scope) && cert.scope === expected.scope, 'scope mismatch');

@@ -123,3 +123,10 @@ test('CLI validates the same certificate and fails on foreign head', t => {
   expected.head = 'f'.repeat(40); fs.writeFileSync(expectedFile, JSON.stringify(expected));
   assert.equal(run().status, 1);
 });
+
+
+test('certificate expectations may mention the certificate marker without becoming a second header', t => {
+  const { cert, check } = fixture(t);
+  cert.items[0].expectation = 'Emits a mono-qa certificate for the tested task';
+  assert.equal(check().verdict, 'passed');
+});

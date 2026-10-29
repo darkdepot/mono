@@ -300,6 +300,8 @@ test('qa recipe CLI validates modes, assigned port, copy identity, data and acti
       data: { source: 'local-fixtures', description: 'Local fixtures only' }, forbiddenActions: ['No external writes'] };
     const cases = [[undefined, true], [qa, true], [{ ...qa, mode: 'web', start: 'serve --port=$QA_PORT' }, true],
       [{ ...qa, mode: 'mobile', start: 'build API_PORT=$QA_PORT' }, true],
+      [{ ...qa, mode: 'web', start: 'serve --port=${QA_PORT}' }, true],
+      [{ ...qa, mode: 'mobile', start: 'build API_PORT=${QA_PORT}' }, true],
       [null, false], [[], false], [{}, false], [{ ...qa, extra: true }, false],
       [{ ...qa, mode: 'other' }, false], [{ ...qa, mode: 'web' }, false], [{ ...qa, install: '' }, false],
       [{ ...qa, ready: { command: 'true' } }, false], [{ ...qa, forbiddenActions: [] }, false],

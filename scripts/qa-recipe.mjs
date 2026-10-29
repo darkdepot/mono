@@ -10,7 +10,7 @@ export function validateQaConfig(qa, config = {}) {
   need(['web', 'terminal', 'mobile'].includes(qa.mode), 'mode must be web, terminal or mobile');
   need(Array.isArray(qa.install) && qa.install.every(text), 'install must be an array of commands (empty when no installation is needed)');
   need(text(qa.start), 'start is required');
-  if (qa.mode !== 'terminal') need(qa.start.includes('$QA_PORT'), 'start must use the assigned $QA_PORT');
+  if (qa.mode !== 'terminal') need(qa.start.includes('$QA_PORT') || qa.start.includes('${QA_PORT}'), 'start must use the assigned $QA_PORT');
   need(object(qa.ready) && Object.keys(qa.ready).every(key => ['command', 'identity'].includes(key))
     && text(qa.ready.command) && text(qa.ready.identity), 'ready requires command and copy identity proof');
   need(object(qa.data) && Object.keys(qa.data).every(key => ['source', 'description'].includes(key))
