@@ -6257,6 +6257,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "head", "phase_result",
   // Window tools and shared dialogue path; step order is reviewed.
   "request_user_input", "request_user_input_async", "owner-dialog.md",
   // MONO-239: invocation flags, template fields/placeholders and dialogue skeleton.
@@ -7076,6 +7077,8 @@ function validateAe6Fixtures() {
       if (!paragraph) throw new Error(`AE6 missing prose paragraph: ${name} / ${heading}`);
       return text.replace(paragraph, "In this workflow, " + paragraph[0].toLowerCase() + paragraph.slice(1));
     });
+    change("references/worker-contract.md", text => text.replace(/("question"\s*:\s*)(null|"(?:[^"\\]|\\.)*")/u,
+      (_, field, value) => field + JSON.stringify("Reworded " + JSON.parse(value))));
     check();
     // Re-run the entire AE6 suite against already reworded documents. The
     // child still exercises every fixture; only recursive rehearsal stops.
@@ -7085,6 +7088,9 @@ function validateAe6Fixtures() {
     }
     restore(); check();
     console.log("PASS AE6 equivalent prose: skill, lane and cost rewordings green");
+    for (const field of ["head", "phase_result"]) negative(`worker report missing top-level ${field}`,
+      () => change("references/worker-contract.md", text => text.replace(new RegExp(`^  "${field}":\\s*[^\\n]+\\n`, "m"), "")),
+      "worker report: missing mandatory machine field");
     negative("README rule target renamed", () => change("AGENTS.md", (text) => text.replace("## Change Discipline\n", "## Renamed fixture\n")), "README.md K-31:");
     negative("README required section removed", () => change("README.md", (text) => text.replace("## Gates\n", "")), "README.md: missing or duplicate required section Gates");
     negative("README target file missing", () => change("README.md", (text) => text.replace("AGENTS.md#change-discipline", "missing.md#change-discipline").replaceAll("AGENTS.md#change-discipline", "missing.md#change-discipline")), "README.md K-31:");
@@ -7145,7 +7151,7 @@ function validateAe6Fixtures() {
     negative("forbidden template heading", () => change("templates/project.md", (text) => text.replace(
       "# Что\n", "# Lifecycle\n\n# Что\n")), "forbidden workflow heading Lifecycle");
     negative("report field removed", () => change("references/worker-contract.md", (text) => text.replace(
-      '  "question": "<question text, or null>",\n', "")), "missing mandatory machine field");
+      /"question"\s*:\s*(?:null|"(?:[^"\\]|\\.)*")\s*,/u, "")), "missing mandatory machine field");
     negative("repair mode declaration removed with prose intact", () => change("skills/check/SKILL.md", (text) => text.replace(
       "- `repair`\n", "")), "Modes: missing or duplicate repair declaration");
     negative("tech mode declaration removed with prose intact", () => change("skills/check/SKILL.md", (text) => text.replace(
@@ -7198,7 +7204,7 @@ function validateMachineShapes() {
     if (!record || required.some((field) => !Object.hasOwn(record, field))) fail(`${label}: missing mandatory machine field`);
   }
   const report = example("references/worker-contract.md", (value) => value.issue === "<ISSUE-KEY>" && Object.hasOwn(value, "stage"));
-  fields(report, ["issue", "stage", "status", "packVersion", "sourceCommit", "surfaceRevision", "branch", "changed_files", "tests", "verification_items", "question", "recommendation", "linear_mutations_pending", "certificate", "notes", "next"], "worker report");
+  fields(report, ["issue", "stage", "head", "phase_result", "status", "packVersion", "sourceCommit", "surfaceRevision", "branch", "changed_files", "tests", "verification_items", "question", "recommendation", "linear_mutations_pending", "certificate", "notes", "next"], "worker report");
   if (report) {
     fields(report.tests, ["run", "result"], "report tests");
     fields(report.verification_items?.[0], ["item", "status", "evidence"], "verification item");

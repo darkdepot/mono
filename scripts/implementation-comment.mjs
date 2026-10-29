@@ -1,10 +1,16 @@
 import { canonical, digest } from './runtime.mjs';
+import { preCaptureStop } from './delivery-criteria.mjs';
 
 export function implementationComment(report) {
+  const refusal = preCaptureStop(report);
   const lines = [report.summary, '', 'Не проверено',
     ...report.not_verified.map(x => `- ${x.what}: ${x.why}. Риск: ${x.risk}`), '', 'Найдена поломка',
     ...report.criteria.filter(x => x.outcome === 'broken').map(x => `- ${x.criterion}: ${x.result}`), '', 'Доказательства',
     `phase_result=${report.phase_result}; reason=${report.reason ?? 'none'}`,
+    ...(refusal ? [`Остановка до захвата: ${refusal.reason}`,
+      `Команда: ${report.pre_capture_stop.command}; exit=${report.pre_capture_stop.exit}`,
+      `Ожидаемый формат: ${refusal.expected_format.join(' → ')}`,
+      ...(refusal.missing_labels.length ? [`Недостающие метки: ${refusal.missing_labels.join(', ')}`] : [])] : []),
     ...report.criteria.map(x => `- ${x.criterion}: done=${x.done}, ${x.outcome}. ${x.proof}. ${x.result}. head=${x.head}; worktree=${x.worktree_fingerprint}`),
     ...(report.verification_items ?? []).map(x => `- ${x.item}: ${x.status}. ${x.evidence}`),
     ...(report.text ? ['', report.text] : []),

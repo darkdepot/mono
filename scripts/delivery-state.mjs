@@ -10,7 +10,7 @@ import { validateEntry } from "./decisions.mjs";
 
 import { workerTransport } from "./worker-transport.mjs";
 
-import { captureCriteria, requireApprovedCriteria } from "./delivery-criteria.mjs";
+import { captureCriteria, requireApprovedCriteria, preCaptureStop } from "./delivery-criteria.mjs";
 import { implementationComment, implementationExit, deferredImplementation, literalImplementationComment } from './implementation-comment.mjs';
 export { captureCriteria } from "./delivery-criteria.mjs";
 
@@ -74,7 +74,8 @@ function validateImplementationReport(report) {
   if (!["implemented-needs-preflight", "blocked", "scope-drift-needs-handoff", "needs-human"].includes(report.phase_result))
     error("unknown phase_result");
   if (!text(report.summary) || !Array.isArray(report.not_built) || !Array.isArray(report.not_verified) ||
-      !Array.isArray(report.criteria) || !report.criteria.length) error("summary, criteria, not_built and not_verified required");
+      !Array.isArray(report.criteria) || (!report.criteria.length && !preCaptureStop(report))) error("summary, criteria, not_built and not_verified required");
+  if (report.pre_capture_stop && !preCaptureStop(report)) error("invalid pre-capture refusal");
   if (report.not_built.some(entry => !text(entry?.what) || !text(entry?.reason)) ||
       report.not_verified.some(entry => !text(entry?.what) || !text(entry?.why) || !text(entry?.risk)))
     error("incomplete exclusions or verification gaps");
@@ -298,6 +299,18 @@ export function classifyQueue(report, root) {
 export function publishPhase(report, output, previousConfirmation, root = previousConfirmation
   ? path.dirname(path.dirname(previousConfirmation)) : path.dirname(path.dirname(output))) {
   validatePhase(report);
+  if (report.phase === 'code' && report.pre_capture_stop?.kind === 'capture-refused') {
+    const history = codeHistory(root, report, path.dirname(output));
+    const saved = fs.existsSync(history) ? readJson(history) : null;
+    // Only exact replay may reuse source evidence; a new publication observes the actual source.
+    if (!saved || canonical(saved) !== canonical(report)) {
+      report = structuredClone(report);
+      delete report.pre_capture_stop.source_text;
+      const refusal = preCaptureStop(report);
+      if (refusal) report.pre_capture_stop.source_text = refusal.source_text;
+      validatePhase(report);
+    }
+  }
   if (implementationExit(report)) requireApprovedCriteria(report, root);
   const previous = fs.existsSync(output) ? validatePhase(readJson(output)) : null;
   report = preparePublication(report, previous, root, path.dirname(output));

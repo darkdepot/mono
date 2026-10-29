@@ -1,44 +1,34 @@
 # Вход и старт
 
-Читай задачу, пакет, `.agents/mono-workflow.config.json`, Git/базу. Диспатч заменяет Linear и фиксирует ветку; иначе свежие Linear/комментарии.
-Допуск/Context seam — worker-contract; находки Handoff закрыты/приняты/отложены.
-Целостность нарушена — `needs-human`, нет входа — `blocked`.
+Читай config/Git/базу; диспатч задаёт ветку/контекст, иначе свежие Linear/комментарии.
+Допуск/Context seam — worker-contract; Handoff-находки закрыты/приняты/отложены.
 
-До старта: `node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>`.
-Корень установленного пака; без диспатча свежий снимок. Отказ не обходи:
-нет идеи — mono:idea, нет старта — итог Handoff; legacy-migrate не допуск.
+До capture-criteria и любой записи кода — одна проверка старта:
+без диспатча `node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>`;
+с диспатчем handshake при переходах, иначе start gate. Установленный пак,
+свежий снимок. Отказ/ненулевой код/не `pass`: нет входа `blocked`, целостность
+`needs-human`. Утверждение из контекста/фикстуры отказ не заменяет; legacy-migrate
+не допуск. Отчёт остановки в файл и сессию, публикация по worker-contract.
+Чужая задача/проект в снимке или утверждении — `needs-human` до кода/захвата.
 
-С диспатчем identity, снимок/утверждения, допуск, Two-Phase Dispatch Handshake
-из worker-contract. После переходов проверка Delivery по обратному чтению,
-без повтора identity. Resume по контракту. Без переходов текущее состояние.
-Без оркестратора утверждённый пакет/старт, перевод Ready (старый Discovery без Ready)
-в Delivery и mono:check delivery; прочитай обратно.
+Диспатч: Two-Phase Dispatch Handshake/Resume по worker-contract; после переходов
+Delivery/read-back без повтора identity, иначе текущее состояние. Самостоятельно:
+утверждённый пакет/старт, Ready (старый Discovery без Ready) → Delivery,
+mono:check delivery/read-back. issue-only-lane: только Issue → started/read-back.
 
-Обычный проект требует старта `by=owner`. Делегирование по PC-019 — строка
-«Ведёт оркестратор» вне забора в последнем утверждении Idea или раннее явное решение
-владельца в комментарии проекта. Только тогда допустим `by=orchestrator` с причиной
-и независимым вердиктом модели/версии вне забора в том же комментарии. Без этих
-оснований ведёт владелец. Делегированная stale/legacy-migrate идея требует новой
-кнопки владельца, подтверждённой записи и свежей проверки; старт оркестратора её
-не переутверждает. Источник: [PC-016/PC-019](<корень>/references/contracts/project.md).
-Старый пакет: явный package/start или общее утверждение, разрешающее реализацию;
-«запускай реализацию» разрешает Delivery, ветку и код. Документы не согласие.
-Задача без проекта: issue-only-lane, только Issue в started, обратное чтение;
-Project/PRD/Spec не требуй.
+Старт/PC-016/PC-019 — Context seam в worker-contract.
 
-До кода сохрани критерии один раз: `node <pack-root>/scripts/delivery-state.mjs capture-criteria --issue <KEY> --attempt <N> --issue-file <file> --root <delivery-root>`.
-С диспатчем file — `snapshot/issue-<KEY>.md`; без него — тело Issue из чтения
-при старте. Состояние: `<delivery-root>/reports/<KEY>-criteria-a<N>.json`, неизменно.
-Без оркестратора delivery-root — локальный `.orchestrator`; не коммить.
-
+После допуска, до кода, из корня рабочей копии:
+`node <pack-root>/scripts/delivery-state.mjs capture-criteria --issue <KEY> --attempt <N> --issue-file <file> --root <delivery-root>`.
+file: snapshot/issue-<KEY>.md либо стартовое чтение Issue. Самостоятельно
+`--root .orchestrator`: абсолютный путь от текущей папки.
+`<delivery-root>/reports/<KEY>-criteria-a<N>.json` неизменно; не коммить.
+Отказ захвата — blocked, публикация без выдуманных критериев по worker-contract.
 Чужие движки/помощник уроков не нужны.
 
-С диспатчем одна сверка: handshake при переходах, иначе start gate. Устаревший диспатч
-или иной риск/пакет останавливает работу. Старт в capsule.decisions и отчёте,
-без комментария/очереди старта. Resume: действующее задание/ветка, сохранить
-сделанное/чужое, не повторять применённое.
-
-Цепочка — Blocked by в пакете. Сначала отчёт предшественницы/влитой коммит из
-диспатча и main после посадки. Нет входа — blocked «нет отчёта предшественницы»;
-обещанного нет в коде — scope-drift-needs-handoff, не строй заново. Старый отчёт
-без criteria: сверяй лишь коммит. Без оркестратора те же входы из Linear/GitHub.
+Устаревшее задание/иной риск/пакет — стоп. Старт в capsule.decisions/отчёте,
+без комментария. Resume: сохранить сделанное/чужое, не повторять применённое.
+Blocked by в пакете: сначала отчёт/влитой коммит предшественницы, main после посадки.
+Нет входа — blocked, summary дословно «нет отчёта предшественницы»; обещанного нет —
+scope-drift-needs-handoff, не строй заново. Старый отчёт без criteria: только коммит.
+Самостоятельно входы из Linear/GitHub.
