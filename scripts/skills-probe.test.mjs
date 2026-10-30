@@ -59,6 +59,45 @@ test('each new user turn discards earlier text for strings, blocks and tool resu
   }
 });
 
+test('result and system init delimit turns without an intervening user event', t => {
+  const write = scratch(t);
+  const window = structuredClone(control().events.find(r => r.line === 139).event);
+  const summary = { type: 'assistant', message: { content: [{ type: 'text', text: 'Earlier turn' }] } };
+  const thinking = { type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'New turn' }] } };
+  const result = { type: 'result', subtype: 'success' }, init = { type: 'system', subtype: 'init' };
+  for (const boundary of [[result], [init], [result, init]]) {
+    const events = [summary, ...boundary, thinking, window];
+    const file = write('no-user.jsonl', events.map(e => JSON.stringify(e)).join('\n'));
+    const report = probeClaude(file);
+    assert.equal(report.status, 'failed', JSON.stringify(boundary));
+    assert.deepEqual(report.windows[0].textLines, []);
+    assert.deepEqual(report.windows[0].thinkingLines, [events.length - 1]);
+    assert.equal(report.windows[0].toolResult, null);
+    assert.equal(cli(file).status, 1);
+    events.splice(events.length - 1, 0, summary);
+    assert.equal(probeClaude(write('current-turn.jsonl', events.map(e => JSON.stringify(e)).join('\n'))).status, 'passed');
+  }
+  const sameTurn = [summary, { type: 'system', subtype: 'thinking_tokens' }, window];
+  assert.equal(probeClaude(write('same-turn.jsonl', sameTurn.map(e => JSON.stringify(e)).join('\n'))).status, 'passed');
+});
+
+test('real-stream boundary cut rejects line 286 text for the QA window at line 294', t => {
+  const write = scratch(t);
+  const file = fixture('claude', 'trace-turn-boundary-v0.41.0');
+  const report = probeClaude(file);
+  assert.equal(report.status, 'failed');
+  assert.equal(report.windows.length, 1);
+  assert.match(report.windows[0].evidence, /:294$/);
+  assert.deepEqual(report.windows[0].textLines, []);
+  assert.deepEqual(report.windows[0].thinkingLines, [293]);
+  assert.equal(report.windows[0].toolResult, null);
+  assert.equal(cli(file).status, 1);
+  const sample = read('claude', 'trace-turn-boundary-v0.41.0');
+  assert.equal(sample.events.some(r => r.event.type === 'user'), false);
+  sample.events = sample.events.filter(r => ![288, 290].includes(r.line));
+  assert.equal(probeClaude(write('no-boundary.json', sample)).status, 'passed');
+});
+
 test('damaged child envelopes invalidate the passing control before children are skipped', t => {
   const write = scratch(t);
   for (const event of [{ type: 'assistant' }, { type: 'user' },
@@ -161,6 +200,7 @@ test('missing window and corrupt input are harness gaps, never passed or reprodu
 test('damaged event envelopes and used fields invalidate both passing and failing traces', t => {
   const write = scratch(t);
   const invalid = [null, [], {}, { type: null }, { type: '' }, { type: ' ' }, { type: 3 }, { type: [] },
+    ...[null, [], 3, ''].map(subtype => ({ type: 'system', subtype })),
     { type: 'system', parent_tool_use_id: {} }, { type: 'system', parent_tool_use_id: false },
     { type: 'assistant' }, { type: 'assistant', message: [] },
     { type: 'assistant', message: { content: null } },

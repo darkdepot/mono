@@ -1,0 +1,124 @@
+{
+  "run": "idea41-claude-1",
+  "lines": [
+    286,
+    294
+  ],
+  "note": "Boundary events cut from the real stream. The QA reproduction replaces the original Bash at line 294 with AskUserQuestion from the passing control. Unrelated host metadata omitted; prior text and thinking redacted.",
+  "events": [
+    {
+      "line": 286,
+      "event": {
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "<previous-turn text>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "line": 287,
+      "event": {
+        "type": "system",
+        "subtype": "post_turn_summary"
+      }
+    },
+    {
+      "line": 288,
+      "event": {
+        "type": "result",
+        "subtype": "success"
+      }
+    },
+    {
+      "line": 289,
+      "event": {
+        "type": "system",
+        "subtype": "task_summary"
+      }
+    },
+    {
+      "line": 290,
+      "event": {
+        "type": "system",
+        "subtype": "init"
+      }
+    },
+    {
+      "line": 291,
+      "event": {
+        "type": "system",
+        "subtype": "thinking_tokens"
+      }
+    },
+    {
+      "line": 292,
+      "event": {
+        "type": "system",
+        "subtype": "thinking_tokens"
+      }
+    },
+    {
+      "line": 293,
+      "event": {
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "<thinking>"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "line": 294,
+      "event": {
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "<tool-use-id>",
+              "name": "AskUserQuestion",
+              "input": {
+                "questions": [
+                  {
+                    "question": "Утверждаем описание: напоминание за день и перенос клиентом без участия мастера? Советую сразу начать Research: идея ясна, а главный риск, доставка напоминания, проверяется только там.",
+                    "header": "Утверждение",
+                    "multiSelect": false,
+                    "options": [
+                      {
+                        "label": "Утвердить и начать Research (Recommended)",
+                        "description": "Запишу утверждение и сразу начну проверку / принимаем перенос без подтверждения мастера"
+                      },
+                      {
+                        "label": "Утвердить, продолжу позже",
+                        "description": "Описание сохранится в Linear / Research подождёт твоего старта"
+                      },
+                      {
+                        "label": "Ещё обсудить",
+                        "description": "Можно поменять рамку идеи / запись и Research откладываются"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

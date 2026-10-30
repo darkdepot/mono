@@ -21,6 +21,12 @@ export function claudeWindows(rows, source) {
     if (!object(event) || !nonempty(event.type)) throw new Error(`line ${line}: invalid trace event`);
     if (event.parent_tool_use_id != null && !nonempty(event.parent_tool_use_id))
       throw new Error(`line ${line}: invalid parent_tool_use_id`);
+    if (event.type === 'system' && event.subtype !== undefined && !nonempty(event.subtype))
+      throw new Error(`line ${line}: invalid system subtype`);
+    if (!event.parent_tool_use_id && (event.type === 'result' || (event.type === 'system' && event.subtype === 'init'))) {
+      text = []; thinking = []; toolResult = null;
+      continue;
+    }
     if (!['user', 'assistant'].includes(event.type)) continue;
     if (!object(event.message)) throw new Error(`line ${line}: invalid message`);
     const blocks = event.message.content;
