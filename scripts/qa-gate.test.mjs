@@ -59,6 +59,32 @@ test('independent expectations prevent a short certificate from skipping behavio
   assert.match(qaDeliveryState(f.input).reason, /kind mismatch/);
 });
 
+test('earlier task QA passes while a later unstarted issue has no PR head', t => {
+  const f = fixture(t); f.save(); f.state.tasks[f.issue].project = 'project';
+  f.state.projects.project = { issues: [
+    { issue: f.issue, head: f.head, statusType: 'started', mergedAt: null, labels: [] },
+    { issue: 'EXAMPLE-2', statusType: 'unstarted', mergedAt: null, labels: [] }
+  ] };
+  f.saveState();
+  assert.deepEqual(qaDeliveryState(f.input), { state: 'passed', reason: 'task QA passed' });
+});
+
+test('final project QA still refuses a build member without a head', t => {
+  const f = fixture(t); f.save(); f.state.tasks[f.issue].project = 'project';
+  const merged = { issue: 'EXAMPLE-2', head: 'c'.repeat(40), statusType: 'completed',
+    mergedAt: '2026-10-01T00:00:00Z', labels: [] };
+  const project = f.state.projects.project = { issues: [
+    { issue: f.issue, head: f.head, statusType: 'started', mergedAt: null, labels: [] }, merged
+  ] };
+  f.save('project', f.issue, f.head, project.issues.map(({ issue, head }) => ({ issue, head })));
+  delete merged.head; f.saveState();
+  const result = qaDeliveryState(f.input);
+  assert.equal(result.state, 'failed');
+  assert.match(result.reason, /project build head missing/);
+  merged.head = 'c'.repeat(40); f.saveState();
+  assert.equal(qaDeliveryState(f.input).state, 'passed');
+});
+
 test('landing progress selects the last PR despite lifecycle status and stale final hint', t => {
   const f = fixture(t); f.save(); f.state.tasks[f.issue].project = 'project';
   const project = f.state.projects.project = { issues: [

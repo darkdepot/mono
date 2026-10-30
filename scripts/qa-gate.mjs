@@ -43,7 +43,6 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
       need(eligible.every(row => row.mergedAt === null || (typeof row.mergedAt === 'string'
         && Number.isFinite(Date.parse(row.mergedAt)))), 'current project merge progress required');
       build = eligible.map(({ issue, head }) => ({ issue, head }));
-      need(build.every(row => sha(row.head)), 'project build head missing');
       const unmerged = eligible.filter(row => row.mergedAt === null);
       const held = project.heldIssues ?? [];
       need(Array.isArray(held) && new Set(held).size === held.length && held.every(key => eligible.some(row => row.issue === key)), 'invalid held issues');
@@ -60,6 +59,7 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
       }
       if (held.includes(issue) || final === issue) {
         need(typeof final === 'string', 'final issue required');
+        need(build.every(row => sha(row.head)), 'project build head missing');
         const target = implementation.find(row => row.issue === final);
         need(target && sha(target.head), 'final issue/head missing');
         need(state.tasks?.[final]?.head === target.head && state.tasks[final].project === task.project, 'final task state mismatch');

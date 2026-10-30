@@ -1206,7 +1206,10 @@ selects its last Issue; no chain means task QA only. Before wave installation,
 when all PRs are merged, the last held Issue is final, or the latest GitHub merge
 when there is no chain; ambiguous merge order blocks. Neither Linear lifecycle
 nor a saved finalIssue selects it. The build lists all eligible implementation
-Issues and heads, including merged held Issues. Changed tasks or heads invalidate the final
+Issues and heads, including merged held Issues. Require every build head only
+when project QA is required; earlier task-only PRs may land while later unstarted
+Issues have no PR/head (their mergedAt is null and they count as unmerged).
+Changed tasks or heads invalidate the final
 certificate; rerun the full final list and publish/read back the new project report.
 Earlier tasks may deploy individually when merge deploys immediately, each after
 its own green task certificate.
