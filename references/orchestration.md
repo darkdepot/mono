@@ -1203,8 +1203,8 @@ build. The sole unmerged Issue is final even when a previous held chain has merg
 With multiple unmerged Issues, a nonempty held chain must contain every one of
 them; otherwise preparation fails with a held-chain conflict. A matching chain
 selects its last Issue; no chain means task QA only. Before wave installation,
-when all PRs are merged, the last held Issue is final, or the latest GitHub merge
-when there is no chain; ambiguous merge order blocks. Neither Linear lifecycle
+when all PRs are merged, the latest GitHub merge is final, including held Issues;
+ambiguous merge order blocks. Neither Linear lifecycle
 nor a saved finalIssue selects it. The build lists all eligible implementation
 Issues and heads, including merged held Issues. Require every build head only
 when project QA is required; earlier task-only PRs may land while later unstarted

@@ -598,6 +598,32 @@ test('QA final project certificate blocks landing and wave on missing or changed
   }
 });
 
+test('QA wave installation keeps the later final certificate after a held chain merges', t => {
+  const f = qaFixture(t), finalIssue = 'MONO-902', finalHead = 'e'.repeat(40); f.save();
+  f.current.tasks[f.issue].project = 'example-project';
+  f.current.tasks['MONO-900'] = { head: 'd'.repeat(40), project: 'example-project' };
+  f.current.tasks[finalIssue] = { head: finalHead, project: 'example-project' };
+  const project = f.current.projects['example-project'] = { heldIssues: [f.issue, 'MONO-900'], issues: [
+    { issue: f.issue, head: f.head, statusType: 'started', mergedAt: f.record.mergedAt, labels: [] },
+    { issue: 'MONO-900', head: 'd'.repeat(40), statusType: 'started', mergedAt: '2026-10-02T00:00:00Z', labels: [] },
+    { issue: finalIssue, head: finalHead, statusType: 'started', mergedAt: null, labels: [] }
+  ] };
+  const build = project.issues.map(({ issue, head }) => ({ issue, head }));
+  const identity = { issue: finalIssue, head: finalHead, scope: 'project', project: 'example-project', build };
+  f.save('project', { ...f.certificate, ...identity }, { ...f.expected, ...identity,
+    shipCertificate: `mono-ship green certificate\nShip: green\nIssue(s): ${finalIssue}\nHead SHA: ${finalHead}\nPR: #902` },
+    path.join(f.root, 'qa', finalIssue, finalHead));
+  f.saveState();
+  assert.equal(f.prepare().status, 0, 'held predecessor accepts the sole unmerged final project certificate');
+  atomicJson(f.pending, []);
+  const recorded = f.run('record', ['--issue', f.issue, '--attempt', '1', '--pr', '901']);
+  assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
+  project.issues.at(-1).mergedAt = '2026-10-03T00:00:00Z'; f.saveState();
+  atomicJson(path.join(f.root, 'control.json'), { halt: true });
+  const result = f.run('verify', ['--install-sha', f.tip, '--worktree', f.repo]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
 test('QA no recipe preserves deploy and landing and reports tester not connected', t => {
   const f = qaFixture(t);
   atomicJson(f.config, { landing: { install: 'wave-drain' } });

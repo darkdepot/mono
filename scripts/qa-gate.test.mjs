@@ -160,7 +160,7 @@ const finalCases = [
   { name: 'sole unmerged without a hold', unmerged: [2], held: [], final: 2 },
   { name: 'merged held chain cannot hide a new sole unmerged PR', unmerged: [2], held: [0, 1], final: 2 },
   { name: 'sole unmerged overrides a merged last held successor', unmerged: [0], held: [0, 1], final: 0 },
-  { name: 'all merged retain the last held successor', unmerged: [], held: [0, 1], final: 1 },
+  { name: 'all merged use latest merge despite a completed held chain', unmerged: [], held: [0, 1], final: 2 },
   { name: 'all merged without hold use latest merge', unmerged: [], held: [], final: 2 },
   { name: 'multiple unmerged entirely in hold use last held', unmerged: [0, 1], held: [0, 1], final: 1 },
   { name: 'multiple unmerged entirely in hold retain a merged last held', unmerged: [0, 1], held: [0, 1, 2], final: 2 },
@@ -206,3 +206,44 @@ for (const scenario of finalCases) {
     assert.equal(qaDeliveryState(input).reason, 'task and project QA passed');
   });
 }
+
+for (const laterTask of [false, true]) {
+  test(`project QA survives final merge ${laterTask ? 'after a completed held chain' : 'of the held successor'}`, t => {
+    const f = fixture(t);
+    const rows = [0, 1, ...(laterTask ? [2] : [])].map(i => ({ issue: `EXAMPLE-${i + 1}`,
+      head: String.fromCharCode(97 + i).repeat(40), statusType: 'started', labels: [],
+      mergedAt: i === 2 ? null : `2026-10-0${i + 1}T00:00:00Z` }));
+    const project = f.state.projects.project = { heldIssues: rows.slice(0, 2).map(row => row.issue), issues: rows };
+    for (const row of rows) {
+      f.state.tasks[row.issue] = { head: row.head, project: 'project' };
+      f.save('task', row.issue, row.head);
+    }
+    const target = rows.at(-1);
+    f.save('project', target.issue, target.head, rows.map(({ issue, head }) => ({ issue, head })));
+    const input = row => ({ ...f.input, issue: row.issue, head: row.head,
+      shipCertificate: `mono-ship green certificate\nShip: green\nIssue(s): ${row.issue}\nHead SHA: ${row.head}\nPR: #1` });
+    f.saveState();
+    assert.equal(requireQaPassed(input(target)).state, 'passed', 'current final certificate passes before installation');
+    if (laterTask) { target.mergedAt = '2026-10-03T00:00:00Z'; f.saveState(); }
+    for (const row of project.issues) {
+      assert.equal(requireQaPassed(input(row)).reason, 'task and project QA passed',
+        'latest merged final certificate authorizes the complete held wave');
+    }
+    fs.unlinkSync(path.join(f.root, 'qa', target.issue, target.head, 'project-report.json'));
+    assert.equal(qaDeliveryState(input(target)).state, 'waiting', 'task QA alone still cannot authorize installation');
+  });
+}
+
+test('all-merged held chain refuses ambiguous latest merge', t => {
+  const f = fixture(t), next = 'EXAMPLE-2', nextHead = 'c'.repeat(40);
+  f.state.tasks[f.issue].project = 'project'; f.state.tasks[next] = { project: 'project', head: nextHead };
+  const project = f.state.projects.project = { heldIssues: [f.issue, next], issues: [
+    { issue: f.issue, head: f.head, statusType: 'started', mergedAt: '2026-10-01T00:00:00Z', labels: [] },
+    { issue: next, head: nextHead, statusType: 'started', mergedAt: '2026-10-01T00:00:00Z', labels: [] }
+  ] };
+  f.save(); f.save('project', next, nextHead, project.issues.map(({ issue, head }) => ({ issue, head })));
+  f.saveState();
+  const result = qaDeliveryState(f.input);
+  assert.equal(result.state, 'failed');
+  assert.match(result.reason, /latest project landing is ambiguous/);
+});

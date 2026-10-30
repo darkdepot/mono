@@ -5,3 +5,4 @@
 - Final QA follows PR landing progress through wave installation. Standalone preparation and status accept the same read-back record; preparation names missing required flags.
 - A sole unmerged PR supersedes a completed held chain; multiple unmerged PRs conflicting with a held chain block preparation. Final QA covers all eligible source heads.
 - Earlier task-only PRs can land before later Issues have a PR/head; complete build heads remain mandatory for project QA.
+- After all PRs merge, final QA follows the latest eligible merge even after a completed held chain; ambiguous latest timestamps block installation. The latest final certificate remains valid through wave installation.

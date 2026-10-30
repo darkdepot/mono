@@ -50,8 +50,7 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
       else if (unmerged.length > 1) {
         need(!held.length || unmerged.every(row => held.includes(row.issue)), 'held chain conflicts with unmerged work');
         final = held.at(-1) ?? null;
-      } else if (held.length) final = held.at(-1);
-      else {
+      } else {
         const latest = Math.max(...eligible.map(row => Date.parse(row.mergedAt)));
         const last = eligible.filter(row => Date.parse(row.mergedAt) === latest);
         need(last.length === 1, 'latest project landing is ambiguous');

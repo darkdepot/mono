@@ -76,7 +76,7 @@ Workflow:
    without `Этап` needs final QA regardless of a previous held chain. Multiple
    unmerged tasks with a hold must all belong to it, or preparation refuses;
    a matching chain selects its last task, no hold requires task QA only.
-   After all PRs merge, the last held task (otherwise latest merge) retains
+   After all PRs merge, the latest merged task (including held tasks) retains
    the final hold through installation. Lifecycle status and saved finalIssue do not
    select it; unknown merge progress or ambiguous order blocks. A final
    bug successor branches from the held task and joins heldIssues, becomes
