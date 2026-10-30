@@ -1,0 +1,76 @@
+{
+ "host": "claude-code 2.1.311",
+ "policy": "correction",
+ "request": {
+  "type": "control_request",
+  "request": {
+   "subtype": "can_use_tool",
+   "tool_name": "AskUserQuestion",
+   "input": {
+    "questions": [
+     {
+      "question": "Какой цвет берём?",
+      "header": "Цвет",
+      "options": [
+       {
+        "label": "Синий (Recommended)",
+        "description": "спокойный"
+       },
+       {
+        "label": "Зелёный",
+        "description": "яркий"
+       },
+       {
+        "label": "Ещё обсудить",
+        "description": "решим позже"
+       }
+      ],
+      "multiSelect": false
+     }
+    ]
+   }
+  }
+ },
+ "response": {
+  "type": "control_response",
+  "response": {
+   "subtype": "success",
+   "request_id": "<uuid>",
+   "response": {
+    "behavior": "allow",
+    "updatedInput": {
+     "questions": [
+      {
+       "question": "Какой цвет берём?",
+       "header": "Цвет",
+       "options": [
+        {
+         "label": "Синий (Recommended)",
+         "description": "спокойный"
+        },
+        {
+         "label": "Зелёный",
+         "description": "яркий"
+        },
+        {
+         "label": "Ещё обсудить",
+         "description": "решим позже"
+        }
+       ],
+       "multiSelect": false
+      }
+     ],
+     "answers": {
+      "Какой цвет берём?": "Синий, но светлее"
+     }
+    }
+   }
+  }
+ },
+ "toolResult": {
+  "type": "tool_result",
+  "content": "The user answered: \"Какой цвет берём?\"=\"Синий, но светлее\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+  "tool_use_id": "<tool-use-id>"
+ },
+ "modelNext": "Результат инструмента дословно:\n\nThe user answered: \"Какой цвет берём?\"=\"Синий, но светлее\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.\n\nПонял как: берём синий, но более светлый оттенок, чем предложенный вариант."
+}

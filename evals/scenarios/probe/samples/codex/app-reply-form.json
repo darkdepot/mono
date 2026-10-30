@@ -1,0 +1,6 @@
+{
+ "host": "codex app",
+ "source": "4 selected-option app answers, captured 30.10.2026",
+ "form": "<send_user_message_question_reply>\n[{\"questionItemId\":\"[\\\"request_user_input_async\\\",\\\"<call-id>\\\",0]\",\"question\":\"<question title>\",\"answer\":\"<option label>\"}]\n</send_user_message_question_reply>\n",
+ "place": "user message of a new turn after task_complete; same place as exec resume"
+}
