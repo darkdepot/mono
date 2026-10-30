@@ -287,6 +287,17 @@ Workflow states:
      per policy): escalate immediately and interactively with a decision
      brief. First-product exemplars carry proposed references and reasons.
 7. `deploy-and-closeout`
+   - After every green ship, including a ship-fix return, apply Independent QA
+     before merge in `references/orchestration.md`. Connected products run
+     `mono:qa` on the host before `mono:deploy`; workers never certify themselves.
+     A non-green result holds merge and installation. Bugs return as ship-fix;
+     new head repeats ship and the entire expectation list without an attempt
+     limit. Recheck disputed verdicts yourself and record reasons for removed
+     false alarms; changed user-visible behavior goes to the owner before rerun.
+     The sole unmerged implementation without `Этап` also needs final project
+     QA over all R/AE. Keep held tasks and bug successors blocked until that
+     composition passes; publish/read back its report in the Project. No recipe:
+     do not call QA, record «тестировщик не подключён» and continue normally.
    - When a worker reports `green` (mono-ship green certificate), run
      `mono:deploy` from this session per the configured Deploy workflow
      and `deployApproval` policy, including its mandatory Live QA gate

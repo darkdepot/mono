@@ -5649,6 +5649,12 @@ function validateModelPolicyFixtures() {
 }
 
 const STRING_PINS = [
+  ["skills/orchestrate/SKILL.md", "mono:qa"],
+  ["skills/deploy/SKILL.md", "scripts/orchestrator/qa.mjs"],
+  ["references/orchestration.md", "qa/state.json"],
+  ["references/orchestration.md", "heldIssues"],
+  ["references/orchestration.md", "finalIssue"],
+  ["references/qa-recipes.md", "<!-- mono-qa product: Mono Agent Workflow -->"],
   ["skills/qa/SKILL.md", "mono:qa"],
   ["skills/qa/SKILL.md", "mono-qa certificate"],
   ["skills/qa/SKILL.md", "given-version"],
@@ -6015,6 +6021,9 @@ const STRING_PINS = [
   ["references/lifecycle.md", "design="],
 ];
 const REQUIRED_HEADINGS = [
+  ["references/orchestration.md", "Independent QA before merge"],
+  ["references/orchestration.md", "Current host inputs"],
+  ["references/orchestration.md", "Final project pass"],
   ["skills/qa/SKILL.md", "Вход"],
   ["skills/qa/SKILL.md", "Ожидания до первого действия"],
   ["skills/qa/SKILL.md", "Копия и данные"],
@@ -6274,6 +6283,8 @@ const REQUIRED_HEADINGS = [
 const MACHINE_TOKENS = new Set([
   // QA routing, certificate fields and modes; behavior is tested in QA fixtures.
   "qa", "mono:qa", "mono-qa certificate", "given-version", "expectedItems", "taskCriteria",
+  "scripts/orchestrator/qa.mjs", "qa/state.json", "heldIssues", "finalIssue",
+  "<!-- mono-qa product: Mono Agent Workflow -->",
   "head", "phase_result",
   // Window tools and shared dialogue path; step order is reviewed.
   "request_user_input", "request_user_input_async", "owner-dialog.md",

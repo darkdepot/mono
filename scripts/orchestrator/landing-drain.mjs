@@ -65,7 +65,7 @@ async function record(args) {
       repo = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/?$/.exec(origin)?.[1]?.replace(/\.git$/, "");
       if (!repo) throw new Error("GitHub record repository unavailable; provide --repo OWNER/NAME");
     }
-    const ship = landedShip(args.root, entry, repo);
+    const ship = landedShip(args.root, entry, repo, readJson(args.config));
     if (pr !== ship.pr) throw new Error("PR does not match confirmed ship certificate");
     const data = mergedPull(ship, pr);
     const value = { repo: ship.repo, issue: args.issue, attempt, pr, head: ship.head, mergeSha: data.merge_commit_sha, mergedAt: data.merged_at };
@@ -82,10 +82,10 @@ async function record(args) {
     return { code: 0, outcome: "recorded", record: saved };
   })));
 }
-function statusUnderLaunchLock(root) {
+function statusUnderLaunchLock(root, config) {
   const registry = readJson(path.join(root, "workers.json"));
   if (!registry || typeof registry !== "object" || Array.isArray(registry)) throw new Error("invalid worker registry");
-  const attempts = Object.entries(registry).map(([issue, entry]) => entry?.issue === issue ? attemptState(root, entry) :
+  const attempts = Object.entries(registry).map(([issue, entry]) => entry?.issue === issue ? attemptState(root, entry, config) :
     { issue, state: "active", reason: "registry issue identity mismatch" });
   const blockers = attempts.filter(entry => entry.state === "active");
   return { code: blockers.length ? 2 : 0, outcome: blockers.length ? "blocked" : "ready", attempts, blockers };
@@ -109,13 +109,13 @@ async function verify(args) {
   requireHalt(args.root);
   return locked(path.join(args.root, "launch.lock"), () => locked(`${pendingFile(args.root)}.lock`, async () => {
     requireHalt(args.root);
-    const readiness = statusUnderLaunchLock(args.root);
+    const readiness = statusUnderLaunchLock(args.root, readJson(args.config));
     if (readiness.code !== 0) throw new Error(`active attempts block installation: ${readiness.blockers.map(row => `${row.issue}: ${row.reason}`).join("; ")}`);
     const records = pending(args.root).sort((a, b) => a.issue < b.issue ? -1 : a.issue > b.issue ? 1 : a.attempt - b.attempt);
     if (!records.length) throw new Error("no pending installation records");
     let repo, branch;
     for (const record of records) {
-      const ship = landedShip(args.root, registryEntry(args.root, record.issue, record.attempt), record.repo);
+      const ship = landedShip(args.root, registryEntry(args.root, record.issue, record.attempt), record.repo, readJson(args.config));
       if (repo && (repo !== ship.repo || branch !== ship.branch)) throw new Error("batch contains different repositories/landing branches");
       repo = ship.repo; branch = ship.branch;
       if (ship.pr !== record.pr || ship.head !== record.head || ship.repo !== record.repo) throw new Error("pending record differs from confirmed certificate");
@@ -178,7 +178,7 @@ if (isMain(import.meta.url)) {
       if (!path.isAbsolute(args.root ?? "") || !args.config) throw new Error("absolute --root and --config required");
       const policy = validateLanding(readJson(args.config));
       const result = policy?.install !== "wave-drain" ? { code: 0, outcome: "not configured" } :
-        command === "record" ? await record(args) : command === "status" ? await locked(path.join(args.root, "launch.lock"), () => statusUnderLaunchLock(args.root)) : command === "verify" ? await verify(args) : await close(args);
+        command === "record" ? await record(args) : command === "status" ? await locked(path.join(args.root, "launch.lock"), () => statusUnderLaunchLock(args.root, readJson(args.config))) : command === "verify" ? await verify(args) : await close(args);
       console.log(args.json ? JSON.stringify(result) : `landing-drain: ${result.outcome}\n${JSON.stringify(result, null, 2)}`); process.exitCode = result.code;
     }
   } catch (error) { console.error(`landing-drain: stop: ${error.message}`); process.exitCode = 1; }

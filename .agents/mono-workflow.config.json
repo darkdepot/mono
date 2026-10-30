@@ -194,5 +194,21 @@
         "date": "2026-09-30"
       }
     ]
+  },
+  "qa": {
+    "mode": "terminal",
+    "install": [],
+    "start": "node scripts/verify.mjs",
+    "ready": {
+      "command": "pwd && git rev-parse HEAD",
+      "identity": "cwd is the detached copy and full SHA matches the requested version"
+    },
+    "data": {
+      "source": "local-fixtures",
+      "description": "Local pack fixtures in the detached copy"
+    },
+    "forbiddenActions": [
+      "No publication, external mutations or real data writes"
+    ]
   }
 }

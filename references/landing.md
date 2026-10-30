@@ -235,12 +235,11 @@ after success on the same SHA; they do not qualify GitHub's external behavior.
 `landing.install: "wave-drain"` defers installation until every registered,
 unretired attempt is `landed`. The shared `attemptState` function in
 `orchestrator/command-state.mjs` also governs release uniqueness. It recognizes
-`landed` only with verified pins, a matching confirmed green ship report and
-landing record for that Issue/attempt, and a stopped worker: its pid is dead or
-its current process start differs from `procStart`. A live pid with a landing,
-unfinished start, pause, missing pins, foreign or unreadable report, or any
-uncertainty remains `active`. State readers name the reason; they never retire
-attempts. Installed archives retain the landing identity after pending removal.
+`landed` needs verified pins, confirmed green ship, connected-product QA (task
+and required project composition), a matching landing record and a stopped worker
+(dead pid or changed `procStart`). Live workers, unfinished starts, pauses,
+missing pins, unreadable/foreign reports and uncertainty stay `active` with a
+reason. Readers never retire attempts; archives retain landing identity.
 
 The orchestrator uses `landing-drain.mjs` from the checkout, or
 `<pack-root>/scripts/orchestrator/landing-drain.mjs` once

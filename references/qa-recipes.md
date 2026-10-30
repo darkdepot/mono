@@ -145,6 +145,8 @@ QA_PORT=<port> QA_OUTPUT_DIR=<evidence>/playwright npx playwright test --config 
 
 ## terminal: полный рецепт пака Mono
 
+<!-- mono-qa product: Mono Agent Workflow -->
+
 Источник — проверяемая версия пака, данные — его локальные скрипты и fixtures.
 Сеть, настоящий продукт и порт серверу не нужны. Создать detached worktree,
 сохранив основной checkout и его ветку:

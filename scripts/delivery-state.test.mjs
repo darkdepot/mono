@@ -393,7 +393,8 @@ test('ship-green-certificate: publication and landing share issue/head/PR valida
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-ship-certificate-'));
   const head = 'a'.repeat(40), issue = 'MONO-162';
   const entry = { issue, attempt: 1, stage: 'mono-deliver', packVersion: 'test', surfaceRevision: 4,
-    worktree: root, spawned_at: new Date(Date.now() - 1000).toISOString(), pinsVersion: 0 };
+    worktree: root, config: path.join(root, 'config.json'), spawned_at: new Date(Date.now() - 1000).toISOString(), pinsVersion: 0 };
+  fs.writeFileSync(entry.config, JSON.stringify({}));
   const file = phase => path.join(root, 'reports', `${issue}-phase-${phase}.json`);
   const candidate = phase => ({ ...entry, phase, sequence: 1, kind: 'phase', head,
     linear_mutations_pending: [], capsule: { phase, head, open_queue: [], decisions: [], writable_roots: [root] } });

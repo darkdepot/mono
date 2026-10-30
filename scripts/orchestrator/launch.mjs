@@ -328,6 +328,7 @@ export async function spawnWorker(request, preparation = {}) {
       const entry = { issue: request.issue, transport: transport.transport, stage: "mono-deliver", attempt, ...launch,
         attemptMarker: crypto.randomUUID(),
         thread_id: transport.startupEvent ? crypto.randomUUID() : null, pid: null, worktree: request.worktree, branch: request.branch, product_name: request.product_name,
+        ...(typeof request.config === 'string' ? { config: path.resolve(request.config) } : {}),
         packVersion: request.packVersion, sourceCommit: request.sourceCommit, surfaceRevision: request.surfaceRevision,
         packRoot: request.packRoot,
         skillsRoot: request.skillsRoot, spawned_at: new Date().toISOString(), last_activity_at: null, log, dispatchFile: request.dispatchFile,
