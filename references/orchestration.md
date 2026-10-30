@@ -1199,9 +1199,14 @@ When exactly one unmerged implementation without label `Этап` remains, run
 final QA on its test merge over **all R and
 AE of the approved PRD**. This Issue still needs its own task certificate. Hold
 its merge and wave installation until the project certificate matches the current
-build. Before wave installation, when all PRs are merged, the latest GitHub merge
-identifies the final task; ambiguous merge order blocks. Neither Linear lifecycle
-nor a saved finalIssue selects it. Changed tasks or heads invalidate the final
+build. The sole unmerged Issue is final even when a previous held chain has merged.
+With multiple unmerged Issues, a nonempty held chain must contain every one of
+them; otherwise preparation fails with a held-chain conflict. A matching chain
+selects its last Issue; no chain means task QA only. Before wave installation,
+when all PRs are merged, the last held Issue is final, or the latest GitHub merge
+when there is no chain; ambiguous merge order blocks. Neither Linear lifecycle
+nor a saved finalIssue selects it. The build lists all eligible implementation
+Issues and heads, including merged held Issues. Changed tasks or heads invalidate the final
 certificate; rerun the full final list and publish/read back the new project report.
 Earlier tasks may deploy individually when merge deploys immediately, each after
 its own green task certificate.

@@ -73,8 +73,11 @@ Workflow:
    Missing facts block; a main shift alone does not
    change the tested base. Explicit registry product markers connect recipes;
    examples and assignment files do not. The single unmerged implementation
-   without `Этап` needs final QA; after all PRs merge, the latest merge retains
-   that hold through installation. Lifecycle status and saved finalIssue do not
+   without `Этап` needs final QA regardless of a previous held chain. Multiple
+   unmerged tasks with a hold must all belong to it, or preparation refuses;
+   a matching chain selects its last task, no hold requires task QA only.
+   After all PRs merge, the last held task (otherwise latest merge) retains
+   the final hold through installation. Lifecycle status and saved finalIssue do not
    select it; unknown merge progress or ambiguous order blocks. A final
    bug successor branches from the held task and joins heldIssues, becomes
    the last held successor and repeats full project QA; merge the held chain in order.

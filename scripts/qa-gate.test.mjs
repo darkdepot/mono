@@ -121,11 +121,62 @@ for (const held of [true, false]) {
     ] };
     f.save('project', next, nextHead, project.issues.map(({ issue, head }) => ({ issue, head })));
     f.saveState();
-    assert.equal(qaDeliveryState(f.input).state, held ? 'passed' : 'waiting');
-    if (held) {
-      project.issues[0].head = 'd'.repeat(40); f.state.tasks[f.issue].head = 'd'.repeat(40); f.saveState();
-      assert.match(qaDeliveryState({ ...f.input, issue: next, head: nextHead,
-        shipCertificate: `mono-ship green certificate\nShip: green\nIssue(s): ${next}\nHead SHA: ${nextHead}\nPR: #2` }).reason, /build changed/);
+    assert.equal(qaDeliveryState(f.input).state, 'waiting', 'sole unmerged task supersedes a merged held successor');
+    f.save('project', f.issue, f.head, project.issues.map(({ issue, head }) => ({ issue, head })));
+    assert.equal(qaDeliveryState(f.input).state, 'passed');
+    project.issues.push({ issue: 'EXAMPLE-3', head: 'd'.repeat(40), statusType: 'completed',
+      mergedAt: '2026-09-30T00:00:00Z', labels: [] }); f.saveState();
+    assert.match(qaDeliveryState(f.input).reason, /build changed/);
+  });
+}
+
+const finalCases = [
+  { name: 'sole unmerged without a hold', unmerged: [2], held: [], final: 2 },
+  { name: 'merged held chain cannot hide a new sole unmerged PR', unmerged: [2], held: [0, 1], final: 2 },
+  { name: 'sole unmerged overrides a merged last held successor', unmerged: [0], held: [0, 1], final: 0 },
+  { name: 'all merged retain the last held successor', unmerged: [], held: [0, 1], final: 1 },
+  { name: 'all merged without hold use latest merge', unmerged: [], held: [], final: 2 },
+  { name: 'multiple unmerged entirely in hold use last held', unmerged: [0, 1], held: [0, 1], final: 1 },
+  { name: 'multiple unmerged entirely in hold retain a merged last held', unmerged: [0, 1], held: [0, 1, 2], final: 2 },
+  { name: 'multiple unmerged with a new PR conflict with hold', unmerged: [1, 2], held: [0, 1], conflict: true },
+  { name: 'multiple unmerged without hold need task QA only', unmerged: [1, 2], held: [] }
+];
+
+for (const scenario of finalCases) {
+  test(`final selection: ${scenario.name}`, t => {
+    const f = fixture(t);
+    const rows = [0, 1, 2].map(i => ({ issue: `EXAMPLE-${i + 1}`, head: String.fromCharCode(97 + i).repeat(40),
+      statusType: 'started', labels: [], mergedAt: scenario.unmerged.includes(i) ? null : `2026-10-0${i + 1}T00:00:00Z` }));
+    const project = f.state.projects.project = { heldIssues: scenario.held.map(i => rows[i].issue),
+      finalIssue: rows[0].issue, issues: [...rows,
+        { issue: 'EXAMPLE-STAGE', statusType: 'started', labels: ['Этап'] },
+        { issue: 'EXAMPLE-CANCELED', statusType: 'canceled', labels: [] },
+        { issue: 'EXAMPLE-DUPLICATE', statusType: 'duplicate', labels: [] }] };
+    for (const row of rows) {
+      f.state.tasks[row.issue] = { head: row.head, project: 'project' };
+      f.save('task', row.issue, row.head);
     }
+    f.saveState();
+    const target = rows[scenario.final ?? scenario.unmerged[0]];
+    const input = { ...f.input, issue: target.issue, head: target.head,
+      shipCertificate: `mono-ship green certificate\nShip: green\nIssue(s): ${target.issue}\nHead SHA: ${target.head}\nPR: #1` };
+    const initial = qaDeliveryState(input);
+    if (scenario.conflict) {
+      assert.equal(initial.state, 'failed');
+      assert.match(initial.reason, /held chain conflicts with unmerged work/);
+      return;
+    }
+    if (scenario.final === undefined) {
+      assert.equal(initial.state, 'passed');
+      assert.equal(initial.reason, 'task QA passed');
+      return;
+    }
+    assert.equal(initial.state, 'waiting', 'task certificate alone cannot authorize the final PR or install');
+    const build = rows.map(({ issue, head }) => ({ issue, head }));
+    f.save('project', target.issue, target.head, build.slice(0, 2));
+    assert.match(qaDeliveryState(input).reason, /build changed/, 'new eligible issue invalidates the prior composition');
+    f.save('project', target.issue, target.head, build);
+    assert.equal(qaDeliveryState(input).state, 'passed');
+    assert.equal(qaDeliveryState(input).reason, 'task and project QA passed');
   });
 }

@@ -42,11 +42,17 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
       need(eligible.some(row => row.issue === issue), 'current implementation is canceled or duplicate');
       need(eligible.every(row => row.mergedAt === null || (typeof row.mergedAt === 'string'
         && Number.isFinite(Date.parse(row.mergedAt)))), 'current project merge progress required');
+      build = eligible.map(({ issue, head }) => ({ issue, head }));
+      need(build.every(row => sha(row.head)), 'project build head missing');
       const unmerged = eligible.filter(row => row.mergedAt === null);
       const held = project.heldIssues ?? [];
       need(Array.isArray(held) && new Set(held).size === held.length && held.every(key => eligible.some(row => row.issue === key)), 'invalid held issues');
-      final = held.length ? held.at(-1) : unmerged.length === 1 ? unmerged[0].issue : null;
-      if (!held.length && unmerged.length === 0) {
+      if (unmerged.length === 1) final = unmerged[0].issue;
+      else if (unmerged.length > 1) {
+        need(!held.length || unmerged.every(row => held.includes(row.issue)), 'held chain conflicts with unmerged work');
+        final = held.at(-1) ?? null;
+      } else if (held.length) final = held.at(-1);
+      else {
         const latest = Math.max(...eligible.map(row => Date.parse(row.mergedAt)));
         const last = eligible.filter(row => Date.parse(row.mergedAt) === latest);
         need(last.length === 1, 'latest project landing is ambiguous');
@@ -57,8 +63,6 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
         const target = implementation.find(row => row.issue === final);
         need(target && sha(target.head), 'final issue/head missing');
         need(state.tasks?.[final]?.head === target.head && state.tasks[final].project === task.project, 'final task state mismatch');
-        build = eligible.map(({ issue, head }) => ({ issue, head }));
-        need(build.every(row => sha(row.head)), 'project build head missing');
         final = target;
       } else final = null;
     }
