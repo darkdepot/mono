@@ -12,7 +12,7 @@ function validQuestion(question) {
     question.options.every(option => option && nonempty(option.label) && nonempty(option.description));
 }
 
-// The host probe's narrow Claude check: visible text since the last tool result.
+// The host probe's narrow Claude check: visible text in the current parent turn.
 // Thinking content is supplementary evidence and never the detection rule.
 export function claudeWindows(rows, source) {
   const windows = [], seen = new Set();
@@ -21,31 +21,32 @@ export function claudeWindows(rows, source) {
     if (!object(event) || !nonempty(event.type)) throw new Error(`line ${line}: invalid trace event`);
     if (event.parent_tool_use_id != null && !nonempty(event.parent_tool_use_id))
       throw new Error(`line ${line}: invalid parent_tool_use_id`);
-    if (event.parent_tool_use_id) continue;
     if (!['user', 'assistant'].includes(event.type)) continue;
     if (!object(event.message)) throw new Error(`line ${line}: invalid message`);
     const blocks = event.message.content;
-    if (event.type === 'user' && typeof blocks === 'string') continue;
-    if (!Array.isArray(blocks) || blocks.some(block => !object(block) || !nonempty(block.type)))
+    const userString = event.type === 'user' && typeof blocks === 'string';
+    if (!userString && (!Array.isArray(blocks) || blocks.some(block => !object(block) || !nonempty(block.type))))
       throw new Error(`line ${line}: invalid message content`);
-    if (event.type === 'user' && blocks.some(block => block.type === 'tool_result' && !nonempty(block.tool_use_id)))
+    if (event.type === 'user' && !userString && blocks.some(block => block.type === 'tool_result' && !nonempty(block.tool_use_id)))
       throw new Error(`line ${line}: invalid tool_result id`);
-    if (event.type === 'user' && Array.isArray(blocks) && blocks.some(b => b.type === 'tool_result')) {
-      text = []; thinking = []; toolResult = line;
+    if (event.type === 'user') {
+      if (event.parent_tool_use_id) continue;
+      text = []; thinking = [];
+      toolResult = !userString && blocks.some(b => b.type === 'tool_result') ? line : null;
+      continue;
     }
-    if (event.type !== 'assistant') continue;
     for (const block of blocks) {
-      if (block.type === 'text') {
-        if (typeof block.text !== 'string') throw new Error(`line ${line}: invalid text block`);
-        if (block.text.trim()) text.push(line);
-      }
-      if (block.type === 'thinking') thinking.push(line);
+      if (block.type === 'text' && typeof block.text !== 'string')
+        throw new Error(`line ${line}: invalid text block`);
       if (block.type === 'tool_use' && (!nonempty(block.id) || !nonempty(block.name)))
         throw new Error(`line ${line}: invalid tool_use`);
-      if (block.type !== 'tool_use' || block.name !== 'AskUserQuestion') continue;
-      if (!nonempty(block.id) || !Array.isArray(block.input?.questions) || !block.input.questions.length ||
-          !block.input.questions.every(validQuestion))
+      if (block.type === 'tool_use' && block.name === 'AskUserQuestion' &&
+          (!Array.isArray(block.input?.questions) || !block.input.questions.length || !block.input.questions.every(validQuestion)))
         throw new Error(`line ${line}: malformed AskUserQuestion`);
+      if (event.parent_tool_use_id) continue;
+      if (block.type === 'text' && /[^\s\u200B\u200C\u200D\u2060\uFEFF]/u.test(block.text)) text.push(line);
+      if (block.type === 'thinking') thinking.push(line);
+      if (block.type !== 'tool_use' || block.name !== 'AskUserQuestion') continue;
       if (seen.has(block.id)) continue;
       seen.add(block.id);
       windows.push({

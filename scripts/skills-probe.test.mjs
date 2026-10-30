@@ -39,6 +39,64 @@ test('recorded v0.38.1 defect fails at the original window line; fixed control p
   assert.equal(cli(fixture('claude', 'trace-control-v0.41.0-approval')).status, 0);
 });
 
+test('each new user turn discards earlier text for strings, blocks and tool results', t => {
+  const write = scratch(t);
+  const window = structuredClone(control().events.find(r => r.line === 139).event);
+  const summary = { type: 'assistant', message: { content: [{ type: 'text', text: 'Visible position' }] } };
+  for (const content of ['Continue', [{ type: 'text', text: 'Continue' }], [],
+    [{ type: 'tool_result', tool_use_id: 'tool', content: 'ok' }]]) {
+    const user = { type: 'user', message: { content } };
+    const stream = [summary, window, user, { ...window,
+      message: { content: [{ ...window.message.content[0], id: 'next-window' }] } }];
+    const file = write('two-turns.jsonl', stream.map(event => JSON.stringify(event)).join('\n'));
+    const report = probeClaude(file);
+    assert.equal(report.status, 'failed', JSON.stringify(content));
+    assert.deepEqual(report.windows.map(w => w.status), ['passed', 'failed']);
+    assert.deepEqual(report.windows[1].textLines, []);
+    assert.equal(cli(file).status, 1);
+    stream.splice(3, 0, summary);
+    assert.equal(probeClaude(write('current-turn.jsonl', stream.map(event => JSON.stringify(event)).join('\n'))).status, 'passed');
+  }
+});
+
+test('damaged child envelopes invalidate the passing control before children are skipped', t => {
+  const write = scratch(t);
+  for (const event of [{ type: 'assistant' }, { type: 'user' },
+    { type: 'assistant', message: { content: null } },
+    { type: 'assistant', message: { content: [{}] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: null }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool' }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result' }] } }]) {
+    const sample = control();
+    sample.events.push({ line: 200, event: { ...event, parent_tool_use_id: 'child' } });
+    for (const input of [JSON.stringify(sample), sample.events.map(row => JSON.stringify(row.event)).join('\n')]) {
+      const file = write('damaged-child.jsonl', input);
+      assert.equal(probeClaude(file).status, 'unverified', JSON.stringify(event));
+      assert.equal(cli(file).status, 2);
+    }
+  }
+  const sample = control();
+  sample.events.push({ line: 200, event: { ...structuredClone(sample.events.find(r => r.line === 139).event), parent_tool_use_id: 'child' } });
+  const report = probeClaude(write('valid-child.json', sample));
+  assert.equal(report.status, 'passed');
+  assert.equal(report.windows.length, 1);
+});
+
+test('whitespace and zero-width characters alone are not visible text', t => {
+  const write = scratch(t);
+  const invisible = ['\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF', ' \t\n\u200B\u200C\u200D\u2060\uFEFF'];
+  for (const text of invisible) {
+    const sample = control();
+    const block = sample.events.find(r => r.line === 138).event.message.content[0];
+    block.text = text;
+    const file = write('invisible.json', sample);
+    assert.equal(probeClaude(file).status, 'failed', JSON.stringify(text));
+    assert.equal(cli(file).status, 1);
+    block.text += 'Я';
+    assert.equal(probeClaude(write('visible-character.json', sample)).status, 'passed');
+  }
+});
+
 test('absence of visible text detects the defect even when thinking is hidden or absent', t => {
   const write = scratch(t);
   for (const replacement of ['', 'unrelated thought', null]) {
