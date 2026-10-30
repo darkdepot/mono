@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { readJsonLines } from './transports/journal.mjs';
 
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
+const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 function validQuestion(question) {
   return question && nonempty(question.question) && nonempty(question.header) &&
     (question.multiSelect === undefined || typeof question.multiSelect === 'boolean') &&
@@ -17,16 +18,30 @@ export function claudeWindows(rows, source) {
   const windows = [], seen = new Set();
   let text = [], thinking = [], toolResult = null;
   for (const { value: event, line } of rows) {
+    if (!object(event) || !nonempty(event.type)) throw new Error(`line ${line}: invalid trace event`);
+    if (event.parent_tool_use_id != null && !nonempty(event.parent_tool_use_id))
+      throw new Error(`line ${line}: invalid parent_tool_use_id`);
     if (event.parent_tool_use_id) continue;
-    const blocks = event.message?.content;
+    if (!['user', 'assistant'].includes(event.type)) continue;
+    if (!object(event.message)) throw new Error(`line ${line}: invalid message`);
+    const blocks = event.message.content;
+    if (event.type === 'user' && typeof blocks === 'string') continue;
+    if (!Array.isArray(blocks) || blocks.some(block => !object(block) || !nonempty(block.type)))
+      throw new Error(`line ${line}: invalid message content`);
+    if (event.type === 'user' && blocks.some(block => block.type === 'tool_result' && !nonempty(block.tool_use_id)))
+      throw new Error(`line ${line}: invalid tool_result id`);
     if (event.type === 'user' && Array.isArray(blocks) && blocks.some(b => b.type === 'tool_result')) {
       text = []; thinking = []; toolResult = line;
     }
     if (event.type !== 'assistant') continue;
-    if (!Array.isArray(blocks)) throw new Error(`line ${line}: assistant content must be an array`);
     for (const block of blocks) {
-      if (block.type === 'text' && block.text?.trim()) text.push(line);
+      if (block.type === 'text') {
+        if (typeof block.text !== 'string') throw new Error(`line ${line}: invalid text block`);
+        if (block.text.trim()) text.push(line);
+      }
       if (block.type === 'thinking') thinking.push(line);
+      if (block.type === 'tool_use' && (!nonempty(block.id) || !nonempty(block.name)))
+        throw new Error(`line ${line}: invalid tool_use`);
       if (block.type !== 'tool_use' || block.name !== 'AskUserQuestion') continue;
       if (!nonempty(block.id) || !Array.isArray(block.input?.questions) || !block.input.questions.length ||
           !block.input.questions.every(validQuestion))
@@ -53,7 +68,7 @@ export function probeClaude(filename) {
     let rows;
     if (sample?.events) {
       if (!Array.isArray(sample.events) || sample.events.some((row, i) =>
-        !Number.isInteger(row.line) || row.line < 1 || !row.event || typeof row.event !== 'object' ||
+        !object(row) || !Number.isInteger(row.line) || row.line < 1 ||
         (i > 0 && row.line <= sample.events[i - 1].line))) throw new Error('invalid trace excerpt');
       rows = sample.events.map(row => ({ value: row.event, line: row.line }));
     } else {
@@ -61,7 +76,6 @@ export function probeClaude(filename) {
       if (parsed.errors.length) throw new Error(parsed.errors.join('; '));
       rows = parsed.events;
     }
-    if (rows.some(row => !row.value || typeof row.value !== 'object')) throw new Error('invalid trace event');
     const windows = claudeWindows(rows, filename);
     const status = !windows.length ? 'unverified' : windows.some(w => w.status === 'failed') ? 'failed' : 'passed';
     return { check: 'claude-text-before-window', status, windows,

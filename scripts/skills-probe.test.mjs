@@ -58,7 +58,7 @@ test('absence of visible text detects the defect even when thinking is hidden or
 test('stream boundary resets stale text; child windows and duplicate events do not count', t => {
   const write = scratch(t);
   const window = structuredClone(control().events.find(r => r.line === 139).event);
-  const result = { type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } };
+  const result = { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool', content: 'ok' }] } };
   const text = { type: 'assistant', message: { content: [{ type: 'text', text: 'Old summary' }] } };
   const child = { ...structuredClone(window), parent_tool_use_id: 'child' };
   const rows = [text, result, child, window, window];
@@ -98,6 +98,44 @@ test('missing window and corrupt input are harness gaps, never passed or reprodu
     assert.equal(cli(file).status, 2);
   }
   assert.equal(probeClaude('/nonexistent/trace.jsonl').status, 'unverified');
+});
+
+test('damaged event envelopes and used fields invalidate both passing and failing traces', t => {
+  const write = scratch(t);
+  const invalid = [null, [], {}, { type: null }, { type: '' }, { type: ' ' }, { type: 3 }, { type: [] },
+    { type: 'system', parent_tool_use_id: {} }, { type: 'system', parent_tool_use_id: false },
+    { type: 'assistant' }, { type: 'assistant', message: [] },
+    { type: 'assistant', message: { content: null } },
+    { type: 'assistant', message: { content: [null] } },
+    { type: 'assistant', message: { content: [[]] } },
+    { type: 'assistant', message: { content: [{}] } },
+    { type: 'assistant', message: { content: [{ type: 4 }] } },
+    { type: 'assistant', message: { content: [{ type: 'text' }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: null }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 3 }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool' }] } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash' }] } },
+    { type: 'user' }, { type: 'user', message: { content: null } },
+    { type: 'user', message: { content: [[]] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } },
+  ];
+  for (const sample of [control(), defect()]) {
+    for (const event of invalid) {
+      const events = [...sample.events, { line: sample.events.at(-1).line + 1, event }];
+      for (const input of [JSON.stringify({ events }), events.map(row => JSON.stringify(row.event)).join('\n')]) {
+        const file = write('damaged-trace.jsonl', input);
+        const result = cli(file);
+        assert.equal(result.status, 2, `must reject ${JSON.stringify(event)}`);
+        const report = JSON.parse(result.stdout);
+        assert.equal(report.status, 'unverified');
+        assert.deepEqual(report.windows, [], 'damaged evidence cannot retain a pass or defect');
+      }
+    }
+  }
+  const events = [...control().events,
+    { line: 200, event: { type: 'future_event' } },
+    { line: 201, event: { type: 'user', message: { content: 'An ordinary user message' } } }];
+  assert.equal(probeClaude(write('valid-extra-events.json', { events })).status, 'passed');
 });
 
 const expectedAnswers = {
