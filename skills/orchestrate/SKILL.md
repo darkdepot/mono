@@ -294,7 +294,7 @@ Workflow states:
      new head repeats ship and the entire expectation list without an attempt
      limit. Recheck disputed verdicts yourself and record reasons for removed
      false alarms; changed user-visible behavior goes to the owner before rerun.
-     The sole unfinished implementation without `Этап` also needs final project
+     The sole unmerged implementation without `Этап` also needs final project
      QA over all R/AE. Keep held tasks and bug successors blocked until that
      composition passes; publish/read back its report in the Project. No recipe:
      do not call QA, record «тестировщик не подключён» and continue normally.

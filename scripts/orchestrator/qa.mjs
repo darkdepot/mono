@@ -16,9 +16,14 @@ export function prepareQa({ root, config, issue, head, shipReport }) {
 if (isMain(import.meta.url)) {
   try {
     const [command, ...argv] = process.argv.slice(2), args = commandFlags(argv);
-    if (command !== 'prepare') throw new Error('expected prepare');
+    const usage = 'Usage: qa.mjs prepare --config <file> [--root <root> --issue <KEY> --head <SHA> --ship-report <file>]';
+    if (command !== 'prepare') throw new Error(usage);
     allowedFlags(args, ['root', 'config', 'issue', 'head', 'ship-report']);
-    const qa = prepareQa({ ...args, config: readJson(args.config), shipReport: args['ship-report'] });
+    if (!args.config) throw new Error(`${usage}\nmissing --config`);
+    const config = readJson(args.config);
+    if (qaRecipeSource(config)) for (const key of ['root', 'issue', 'head', 'ship-report'])
+      if (!args[key]) throw new Error(`${usage}\nmissing --${key}`);
+    const qa = prepareQa({ ...args, config, shipReport: args['ship-report'] });
     console.log(JSON.stringify(qa));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

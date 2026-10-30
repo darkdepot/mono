@@ -1155,9 +1155,10 @@ Project Issues in Linear and their current GitHub heads before preparation,
 merge, landing record, and installation verification. Missing/unknown facts are
 blocking. Keep it outside every worker grant; never accept it from a worker.
 Each `tasks[KEY]` has the exact current `head` and explicit `project` (ID or null).
-Each `projects[ID].issues` row has `issue`, `head`, `statusType`, `labels` (names).
-Include stage Issues too, with their actual labels. Only completed/canceled/
-duplicate are terminal; unknown status types remain unfinished. Build composition
+Each `projects[ID].issues` row has `issue`, `head`, `statusType`, `labels` (names)
+and `mergedAt`: the freshly read GitHub PR `merged_at`, or explicit null for an
+unmerged PR. Missing merge progress blocks; Linear status never implies landing.
+Include stage Issues too, with their actual labels. Build composition
 contains every non-canceled/non-duplicate implementation and its source PR head,
 including shipped work, excluding label `Этап`; it is independent of the QA result.
 
@@ -1194,20 +1195,21 @@ certificates never open gates, even if their verdict is green.
 
 ### Final project pass
 
-When exactly one unfinished implementation without label `Этап` remains, retain
-`projects[ID].finalIssue = KEY` and run final QA on its test merge over **all R and
+When exactly one unmerged implementation without label `Этап` remains, run
+final QA on its test merge over **all R and
 AE of the approved PRD**. This Issue still needs its own task certificate. Hold
 its merge and wave installation until the project certificate matches the current
-build. Retain finalIssue through merge/installation; do not drop the hold when
-Linear status becomes terminal. Changed tasks or heads invalidate the final
+build. Before wave installation, when all PRs are merged, the latest GitHub merge
+identifies the final task; ambiguous merge order blocks. Neither Linear lifecycle
+nor a saved finalIssue selects it. Changed tasks or heads invalidate the final
 certificate; rerun the full final list and publish/read back the new project report.
 Earlier tasks may deploy individually when merge deploys immediately, each after
 its own green task certificate.
 
 A final-pass bug becomes a new approved implementation Issue, branched from the
-held task's branch, and becomes `finalIssue`. Retain **both** in `heldIssues`, with
+held task's branch. Retain **both** in `heldIssues` in dependency order, with
 each in `tasks` and `issues`; additional bugs extend the same held chain. Run task
-QA for each, final QA at the successor's head/test merge with the whole build.
+QA for each, final QA at the last held successor's head/test merge with the whole build.
 After green, merge held predecessors then the successor in dependency order;
 all remain bound to the same final composition during landing and installation.
 Keep its QA expected ship certificate bound to that successor's issue/head.

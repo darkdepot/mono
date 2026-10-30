@@ -59,18 +59,28 @@ test('independent expectations prevent a short certificate from skipping behavio
   assert.match(qaDeliveryState(f.input).reason, /kind mismatch/);
 });
 
-test('only stage labels and terminal status types remove tasks from final detection', t => {
+test('landing progress selects the last PR despite lifecycle status and stale final hint', t => {
   const f = fixture(t); f.save(); f.state.tasks[f.issue].project = 'project';
   const project = f.state.projects.project = { issues: [
-    { issue: f.issue, head: f.head, statusType: 'started', labels: [] },
-    { issue: 'EXAMPLE-2', head: 'c'.repeat(40), statusType: 'unstarted', labels: [] },
+    { issue: f.issue, head: f.head, statusType: 'started', mergedAt: null, labels: [] },
+    { issue: 'EXAMPLE-2', head: 'c'.repeat(40), statusType: 'unstarted', mergedAt: null, labels: [] },
     { issue: 'EXAMPLE-3', statusType: 'started', labels: ['Этап'] }
   ] };
   f.saveState(); assert.equal(qaDeliveryState(f.input).state, 'passed', 'two unfinished implementation tasks need task QA only');
   project.issues[1].statusType = 'unknown'; f.saveState();
   assert.equal(qaDeliveryState(f.input).state, 'passed', 'unknown status stays unfinished');
-  project.issues[1].statusType = 'completed'; f.saveState();
-  assert.equal(qaDeliveryState(f.input).state, 'waiting', 'last unfinished implementation requires project QA');
+  project.issues[1].mergedAt = '2026-10-01T00:00:00Z';
+  project.finalIssue = 'EXAMPLE-2'; f.saveState();
+  assert.equal(qaDeliveryState(f.input).state, 'waiting', 'last unmerged PR requires project QA even with stale final hint');
+  const build = project.issues.filter(row => !row.labels.includes('Этап')).map(({ issue, head }) => ({ issue, head }));
+  f.save('project', f.issue, f.head, build);
+  assert.equal(qaDeliveryState(f.input).state, 'passed');
+  project.issues[0].mergedAt = '2026-10-02T00:00:00Z'; f.saveState();
+  assert.equal(qaDeliveryState(f.input).state, 'passed', 'wave install retains project QA after all PRs merge');
+  fs.unlinkSync(path.join(f.root, 'qa', f.issue, f.head, 'project-report.json'));
+  assert.equal(qaDeliveryState(f.input).state, 'waiting', 'wave cannot install with task QA only');
+  delete project.issues[1].mergedAt; f.saveState();
+  assert.equal(qaDeliveryState(f.input).state, 'failed', 'lifecycle status cannot substitute for missing merge progress');
 });
 
 test('held predecessor and final bug successor both require the successor project certificate', t => {
@@ -78,8 +88,8 @@ test('held predecessor and final bug successor both require the successor projec
   f.save(); f.save('task', next, nextHead);
   f.state.tasks[f.issue].project = 'project'; f.state.tasks[next] = { project: 'project', head: nextHead };
   const project = f.state.projects.project = { finalIssue: next, heldIssues: [f.issue, next], issues: [
-    { issue: f.issue, head: f.head, statusType: 'started', labels: [] },
-    { issue: next, head: nextHead, statusType: 'started', labels: [] }
+    { issue: f.issue, head: f.head, statusType: 'started', mergedAt: null, labels: [] },
+    { issue: next, head: nextHead, statusType: 'started', mergedAt: null, labels: [] }
   ] };
   f.saveState(); assert.equal(qaDeliveryState(f.input).state, 'waiting');
   const build = project.issues.map(({ issue, head }) => ({ issue, head }));
@@ -92,6 +102,10 @@ test('held predecessor and final bug successor both require the successor projec
   assert.equal(qaDeliveryState(f.input).state, 'passed', 'merging held predecessor does not alter source-head composition');
   project.issues[1].statusType = 'completed'; f.saveState();
   assert.equal(qaDeliveryState(nextInput).state, 'passed', 'persisted final hold survives terminal statuses until install');
+  project.issues[0].mergedAt = '2026-10-01T00:00:00Z';
+  project.issues[1].mergedAt = '2026-10-02T00:00:00Z';
+  delete project.finalIssue; f.saveState();
+  assert.equal(qaDeliveryState(f.input).state, 'passed', 'held dependency order retains successor without saved final hint');
   project.issues[0].head = 'd'.repeat(40); f.state.tasks[f.issue].head = 'd'.repeat(40); f.saveState();
   assert.match(qaDeliveryState(nextInput).reason, /build changed/);
 });
@@ -102,12 +116,12 @@ for (const held of [true, false]) {
     f.save(); f.save('task', next, nextHead);
     f.state.tasks[f.issue].project = 'project'; f.state.tasks[next] = { project: 'project', head: nextHead };
     const project = f.state.projects.project = { finalIssue: next, heldIssues: held ? [f.issue, next] : [], issues: [
-      { issue: f.issue, head: f.head, statusType: 'started', labels: [] },
-      { issue: next, head: nextHead, statusType: 'completed', labels: [] }
+      { issue: f.issue, head: f.head, statusType: 'started', mergedAt: null, labels: [] },
+      { issue: next, head: nextHead, statusType: 'completed', mergedAt: '2026-10-01T00:00:00Z', labels: [] }
     ] };
     f.save('project', next, nextHead, project.issues.map(({ issue, head }) => ({ issue, head })));
     f.saveState();
-    assert.equal(qaDeliveryState(f.input).state, held ? 'passed' : 'failed');
+    assert.equal(qaDeliveryState(f.input).state, held ? 'passed' : 'waiting');
     if (held) {
       project.issues[0].head = 'd'.repeat(40); f.state.tasks[f.issue].head = 'd'.repeat(40); f.saveState();
       assert.match(qaDeliveryState({ ...f.input, issue: next, head: nextHead,

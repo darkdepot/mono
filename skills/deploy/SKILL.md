@@ -61,7 +61,7 @@ Workflow:
 
    Host inputs are `<root>/qa/state.json` (`tasks` maps Issue to current head and
    project/null; `projects` carries all Issues with source head, statusType and
-   label names, persisted finalIssue and heldIssues). Before QA save independent
+   label names, GitHub mergedAt/null and heldIssues in dependency order). Before QA save independent
    `task-expected.json`; after publication/read-back save `task-report.json` in
    `<root>/qa/<KEY>/<head>/`. The final Issue/head also holds project-expected.json
    and project-report.json. Use the certificate validator's expected input shape.
@@ -72,10 +72,12 @@ Workflow:
    Unknown host config blocks; explicit config must agree with the recorded source.
    Missing facts block; a main shift alone does not
    change the tested base. Explicit registry product markers connect recipes;
-   examples and assignment files do not. The single unfinished implementation
-   without `Этап` needs final QA; retain that hold through installation. A final
+   examples and assignment files do not. The single unmerged implementation
+   without `Этап` needs final QA; after all PRs merge, the latest merge retains
+   that hold through installation. Lifecycle status and saved finalIssue do not
+   select it; unknown merge progress or ambiguous order blocks. A final
    bug successor branches from the held task and joins heldIssues, becomes
-   finalIssue and repeats full project QA; merge the held chain in order.
+   the last held successor and repeats full project QA; merge the held chain in order.
 4. `approve`: apply `deployApproval` (absent = `always`). `always` requires explicit approval bound to current PR/head; record in-session approval as a Russian Issue comment before deploy. Wrong PR/old head is stale. `risky-only` requires approval for standard/deep/risky or unknown risk; only tiny proceeds without it. `never` proceeds without asking and is reported. When needed, stop `needs-human` and present:
 
 ```text

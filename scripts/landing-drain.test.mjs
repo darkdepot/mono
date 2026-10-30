@@ -561,8 +561,8 @@ test('QA final project certificate blocks landing and wave on missing or changed
   const f = qaFixture(t); f.save();
   f.current.tasks[f.issue].project = 'example-project';
   const project = f.current.projects['example-project'] = { issues: [
-    { issue: 'MONO-900', head: 'c'.repeat(40), statusType: 'completed', labels: [] },
-    { issue: f.issue, head: f.head, statusType: 'started', labels: [] },
+    { issue: 'MONO-900', head: 'c'.repeat(40), statusType: 'started', mergedAt: '2026-09-30T00:00:00Z', labels: [] },
+    { issue: f.issue, head: f.head, statusType: 'started', mergedAt: null, labels: [] },
     { issue: 'MONO-899', statusType: 'started', labels: ['Этап'] }
   ] };
   f.saveState();
@@ -577,13 +577,19 @@ test('QA final project certificate blocks landing and wave on missing or changed
   atomicJson(f.pending, []);
   assert.equal(f.prepare().status, 0);
   assert.equal(f.run('record', ['--issue', f.issue, '--attempt', '1', '--pr', '901']).status, 0);
+  project.issues[1].mergedAt = f.record.mergedAt; f.saveState();
   atomicJson(path.join(f.root, 'control.json'), { halt: true });
+  const projectReport = path.join(f.dir, 'project-report.json');
+  const reportBytes = fs.readFileSync(projectReport); fs.unlinkSync(projectReport);
+  assert.notEqual(f.run('verify', ['--install-sha', f.tip, '--worktree', f.repo]).status, 0,
+    'all merged PRs still need project QA before wave installation');
+  fs.writeFileSync(projectReport, reportBytes);
   const verified = f.run('verify', ['--install-sha', f.tip, '--worktree', f.repo]);
   assert.equal(verified.status, 0, verified.stdout + verified.stderr);
   for (const change of ['head', 'add', 'remove']) {
     const original = structuredClone(project.issues);
     if (change === 'head') project.issues[0].head = 'd'.repeat(40);
-    if (change === 'add') project.issues.push({ issue: 'MONO-898', head: 'd'.repeat(40), statusType: 'completed', labels: [] });
+    if (change === 'add') project.issues.push({ issue: 'MONO-898', head: 'd'.repeat(40), statusType: 'completed', mergedAt: '2026-09-29T00:00:00Z', labels: [] });
     if (change === 'remove') project.issues.shift();
     f.saveState();
     assert.notEqual(f.prepare().status, 0, change);
@@ -657,7 +663,35 @@ test('QA connected standalone preparation uses read-back ship and still requires
   const run = head => spawnSync(process.execPath, [path.resolve('scripts/orchestrator/qa.mjs'), 'prepare',
     '--root', f.root, '--config', f.config, '--issue', f.issue, '--head', head, '--ship-report', recovered], { env: f.env, encoding: 'utf8' });
   assert.notEqual(run(f.head).status, 0, 'connected product cannot skip missing QA');
+  const status = () => spawnSync(process.execPath, [path.resolve('scripts/delivery-state.mjs'), 'qa-status',
+    '--root', f.root, '--config', f.config, '--report', recovered], { env: f.env, encoding: 'utf8' });
+  const waiting = status(); assert.match(waiting.stdout, /waiting/, waiting.stderr);
+  assert.equal(JSON.parse(waiting.stdout).state, 'waiting');
   f.save();
   const good = run(f.head); assert.equal(good.status, 0, good.stdout + good.stderr);
+  assert.deepEqual(JSON.parse(status().stdout), JSON.parse(good.stdout), 'one standalone record gives identical QA status');
+  f.certificate.head = 'f'.repeat(40); f.save();
+  assert.equal(JSON.parse(status().stdout).state, 'failed');
+  assert.notEqual(run(f.head).status, 0);
   assert.notEqual(run('f'.repeat(40)).status, 0, 'read-back certificate is still bound to live head');
+  atomicJson(recovered, { issue: f.issue, head: f.head, certificate: f.report.certificate, stage: 'mono-deliver' });
+  const malformedWorker = status();
+  assert.notEqual(malformedWorker.status, 0);
+  assert.match(malformedWorker.stderr, /invalid phase identity/, 'worker-shaped records still require the full worker contract');
+});
+
+test('QA preparation names missing required flags without a Node path error', t => {
+  const f = qaFixture(t);
+  const script = path.resolve('scripts/orchestrator/qa.mjs');
+  const cases = [ [[], 'config'], [['--config', f.config], 'root'],
+    [['--config', f.config, '--root', f.root], 'issue'],
+    [['--config', f.config, '--root', f.root, '--issue', f.issue], 'head'],
+    [['--config', f.config, '--root', f.root, '--issue', f.issue, '--head', f.head], 'ship-report'] ];
+  for (const [args, flag] of cases) {
+    const result = spawnSync(process.execPath, [script, 'prepare', ...args], { env: f.env, encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Usage:/);
+    assert.match(result.stderr, new RegExp(`missing --${flag}`));
+    assert.doesNotMatch(result.stderr, /Received undefined|The "path" argument/);
+  }
 });

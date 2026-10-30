@@ -8,7 +8,6 @@ const registry = fileURLToPath(new URL('../references/qa-recipes.md', import.met
 const sha = value => /^[a-f0-9]{40}$/.test(value ?? '');
 const need = (ok, message) => { if (!ok) throw new Error(`QA: ${message}`); };
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
-const terminal = type => ['completed', 'canceled', 'duplicate'].includes(type);
 
 export function qaRecipeSource(config) {
   if (Object.hasOwn(config, 'qa')) { validateQaConfig(config.qa, config); return 'config'; }
@@ -39,20 +38,26 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
       const implementation = project.issues.filter(row => !row.labels.includes('Этап'));
       const current = implementation.find(row => row.issue === issue);
       need(current?.head === head, 'current project task/head mismatch');
-      const unfinished = implementation.filter(row => !terminal(row.statusType));
+      const eligible = implementation.filter(row => !['canceled', 'duplicate'].includes(row.statusType));
+      need(eligible.some(row => row.issue === issue), 'current implementation is canceled or duplicate');
+      need(eligible.every(row => row.mergedAt === null || (typeof row.mergedAt === 'string'
+        && Number.isFinite(Date.parse(row.mergedAt)))), 'current project merge progress required');
+      const unmerged = eligible.filter(row => row.mergedAt === null);
       const held = project.heldIssues ?? [];
-      need(Array.isArray(held) && new Set(held).size === held.length && held.every(key => implementation.some(row => row.issue === key)), 'invalid held issues');
-      final = project.finalIssue ?? (unfinished.length === 1 ? unfinished[0].issue : null);
-      if (unfinished.length === 1 && !held.includes(unfinished[0].issue))
-        need(final === unfinished[0].issue, 'final issue differs from last unfinished implementation');
-      if (held.length) need(typeof final === 'string' && held.includes(final), 'held tasks need a final issue');
+      need(Array.isArray(held) && new Set(held).size === held.length && held.every(key => eligible.some(row => row.issue === key)), 'invalid held issues');
+      final = held.length ? held.at(-1) : unmerged.length === 1 ? unmerged[0].issue : null;
+      if (!held.length && unmerged.length === 0) {
+        const latest = Math.max(...eligible.map(row => Date.parse(row.mergedAt)));
+        const last = eligible.filter(row => Date.parse(row.mergedAt) === latest);
+        need(last.length === 1, 'latest project landing is ambiguous');
+        final = last[0].issue;
+      }
       if (held.includes(issue) || final === issue) {
         need(typeof final === 'string', 'final issue required');
         const target = implementation.find(row => row.issue === final);
         need(target && sha(target.head), 'final issue/head missing');
         need(state.tasks?.[final]?.head === target.head && state.tasks[final].project === task.project, 'final task state mismatch');
-        build = implementation.filter(row => !['canceled', 'duplicate'].includes(row.statusType))
-          .map(({ issue, head }) => ({ issue, head }));
+        build = eligible.map(({ issue, head }) => ({ issue, head }));
         need(build.every(row => sha(row.head)), 'project build head missing');
         final = target;
       } else final = null;
