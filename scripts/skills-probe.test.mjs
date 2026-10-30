@@ -86,8 +86,17 @@ test('missing window and corrupt input are harness gaps, never passed or reprodu
     assert.equal(probeClaude(write('corrupt-with-window.jsonl', input)).status, 'unverified');
   }
   const broken = control();
-  broken.events.find(row => row.line === 139).event.message.content[0].input.questions = [];
-  assert.equal(probeClaude(write('bad-window.json', broken)).status, 'unverified');
+  const question = broken.events.find(row => row.line === 139).event.message.content[0].input.questions[0];
+  for (const questions of [[], [null], [{}], ['question'], [{ ...question, question: ' ' }],
+    [{ ...question, header: null }], [{ ...question, multiSelect: 'false' }],
+    [{ ...question, options: null }], [{ ...question, options: [question.options[0]] }],
+    [{ ...question, options: [null, null] }],
+    [{ ...question, options: [{ label: 'Choice', description: 0 }, question.options[1]] }]]) {
+    broken.events.find(row => row.line === 139).event.message.content[0].input.questions = questions;
+    const file = write('bad-window.json', broken);
+    assert.equal(probeClaude(file).status, 'unverified');
+    assert.equal(cli(file).status, 2);
+  }
   assert.equal(probeClaude('/nonexistent/trace.jsonl').status, 'unverified');
 });
 

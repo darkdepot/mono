@@ -3,6 +3,14 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { readJsonLines } from './transports/journal.mjs';
 
+const nonempty = value => typeof value === 'string' && value.trim().length > 0;
+function validQuestion(question) {
+  return question && nonempty(question.question) && nonempty(question.header) &&
+    (question.multiSelect === undefined || typeof question.multiSelect === 'boolean') &&
+    Array.isArray(question.options) && question.options.length >= 2 &&
+    question.options.every(option => option && nonempty(option.label) && nonempty(option.description));
+}
+
 // The host probe's narrow Claude check: visible text since the last tool result.
 // Thinking content is supplementary evidence and never the detection rule.
 export function claudeWindows(rows, source) {
@@ -20,7 +28,8 @@ export function claudeWindows(rows, source) {
       if (block.type === 'text' && block.text?.trim()) text.push(line);
       if (block.type === 'thinking') thinking.push(line);
       if (block.type !== 'tool_use' || block.name !== 'AskUserQuestion') continue;
-      if (!block.id || !Array.isArray(block.input?.questions) || !block.input.questions.length)
+      if (!nonempty(block.id) || !Array.isArray(block.input?.questions) || !block.input.questions.length ||
+          !block.input.questions.every(validQuestion))
         throw new Error(`line ${line}: malformed AskUserQuestion`);
       if (seen.has(block.id)) continue;
       seen.add(block.id);
