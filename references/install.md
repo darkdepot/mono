@@ -190,6 +190,16 @@ sandbox.
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
 equal `VERSION`; only release tasks change them. Try unreleased code per README.
 
+### Release 0.41.0
+
+Включены ворота `mono:qa` перед вливанием и выкладкой для продуктов с рецептом
+`qa`; без рецепта прежний путь с пометкой. Surface revision 5 прежний: общая
+quiescence не требуется, текущие попытки продолжаются на сохранённом packRoot.
+Условия [Plugin Updates](#plugin-updates), включая before-update для
+заменяемого каталога Codex, сохраняются. После merge оркестратор ставит
+`v0.41.0` и устанавливает оба хоста; обе версии равны **0.41.0**, оба кэша
+совпадают с Git-деревом тега. Откат — установка 0.40.0.
+
 ### Release 0.40.0
 
 Добавлен скилл `mono:qa` и проверка `mono-qa certificate`; ворота перед
