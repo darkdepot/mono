@@ -4,8 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { probeClaude } from './skills-probe.mjs';
+import { probeClaude as readProbe } from './skills-probe.mjs';
 
+// These legacy probe fixtures deliberately check only current-turn text.
+// Complete execution and delivery are covered by the shared equality table.
+const probeClaude=file=>readProbe(file,{phase:'excerpt'});
 const samples = 'evals/scenarios/probe/samples';
 const fixture = (host, name) => `${samples}/${host}/${name}.json`;
 const read = (host, name) => JSON.parse(fs.readFileSync(fixture(host, name), 'utf8'));
@@ -21,7 +24,7 @@ function scratch(t) {
     return file;
   };
 }
-const cli = file => spawnSync(process.execPath, ['scripts/skills-probe.mjs', file], { encoding: 'utf8' });
+const cli = file => spawnSync(process.execPath, ['scripts/skills-probe.mjs', file, '--excerpt'], { encoding: 'utf8' });
 
 test('recorded v0.38.1 defect fails at the original window line; fixed control passes', () => {
   const bad = probeClaude(fixture('claude', 'trace-defect-v0.38.1-approval'));
@@ -200,7 +203,6 @@ test('missing window and corrupt input are harness gaps, never passed or reprodu
 test('damaged event envelopes and used fields invalidate both passing and failing traces', t => {
   const write = scratch(t);
   const invalid = [null, [], {}, { type: null }, { type: '' }, { type: ' ' }, { type: 3 }, { type: [] },
-    ...[null, [], 3, ''].map(subtype => ({ type: 'system', subtype })),
     { type: 'system', parent_tool_use_id: {} }, { type: 'system', parent_tool_use_id: false },
     { type: 'assistant' }, { type: 'assistant', message: [] },
     { type: 'assistant', message: { content: null } },
@@ -233,7 +235,8 @@ test('damaged event envelopes and used fields invalidate both passing and failin
   const events = [...control().events,
     { line: 200, event: { type: 'future_event' } },
     { line: 201, event: { type: 'user', message: { content: 'An ordinary user message' } } }];
-  assert.equal(probeClaude(write('valid-extra-events.json', { events })).status, 'passed');
+  assert.equal(probeClaude(write('unknown-extra-events.json', { events })).status, 'passed');
+  assert.equal(probeClaude(write('valid-extra-events.json', {events:events.filter(r=>r.event.type!=='future_event')})).status, 'passed');
 });
 
 const expectedAnswers = {
@@ -294,5 +297,29 @@ test('public samples contain no private paths, accounts, workspace identifiers o
       const text = fs.readFileSync(`${samples}/${host}/${file}`, 'utf8');
       assert.doesNotMatch(text, /\/Users\/|\/private\/|\/home\/|[\w.+-]+@[\w.-]+\.[a-z]{2,}|https?:\/\/linear\.app\/|\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b(?:req_|sk-|lin_api_)[A-Za-z0-9_-]+/iu, file);
     }
+  }
+});
+
+test('child user/result/init preserve parent text; toolResult does not cross a parent boundary', t => {
+  const write = scratch(t);
+  const summary = control().events.find(r => r.line === 138).event;
+  const window = control().events.find(r => r.line === 139).event;
+  for(const child of [{type:'result'}, {type:'system',subtype:'init'}, {type:'user',message:{content:'Child reply'}}]){
+    const events=[summary,{...child,parent_tool_use_id:'child'},window];
+    const r=probeClaude(write('child-boundary.jsonl',events.map(e=>JSON.stringify(e)).join('\n')));
+    assert.equal(r.status,'passed');assert.deepEqual(r.windows[0].textLines,[1]);
+  }
+  const user={type:'user',message:{content:[{type:'tool_result',tool_use_id:'tool',content:'ok'}]}};
+  for(const boundary of [{type:'result'}, {type:'system',subtype:'init'}]){
+    const events=[user,boundary,summary,window];
+    const r=probeClaude(write('tool-result-boundary.jsonl',events.map(e=>JSON.stringify(e)).join('\n')));
+    assert.equal(r.status,'passed');assert.equal(r.windows[0].toolResult,null);
+  }
+});
+test('format and variation characters alone are not a visible position',t=>{
+  const write=scratch(t);
+  for(const text of ['\u00AD','\u200E','\u200F','\u2061','\uFE0F']){
+    const sample=control();sample.events.find(r=>r.line===138).event.message.content[0].text=text;
+    assert.equal(probeClaude(write('format-only.json',sample)).status,'failed');
   }
 });

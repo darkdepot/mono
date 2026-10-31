@@ -1,0 +1,228 @@
+{
+  "source": "MONO-288-live2/claude-two-questions.trace.jsonl:160-162; empty receipt observed; product text and IDs depersonalized",
+  "call": {
+    "type": "assistant",
+    "message": {
+      "id": "two-question-message",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "two-question-window",
+          "name": "AskUserQuestion",
+          "input": {
+            "questions": [
+              {
+                "question": "Какое тестовое описание 1 выбрать? Советую Research: риск проверим.",
+                "header": "Цвет",
+                "options": [
+                  {
+                    "label": "Синий (Recommended)",
+                    "description": "спокойный"
+                  },
+                  {
+                    "label": "Зелёный",
+                    "description": "яркий"
+                  },
+                  {
+                    "label": "Ещё обсудить",
+                    "description": "решим позже"
+                  }
+                ],
+                "multiSelect": false
+              },
+              {
+                "question": "Какое тестовое описание 2 выбрать? Советую Research: риск проверим.",
+                "header": "Цвет",
+                "options": [
+                  {
+                    "label": "Синий (Recommended)",
+                    "description": "спокойный"
+                  },
+                  {
+                    "label": "Зелёный",
+                    "description": "яркий"
+                  },
+                  {
+                    "label": "Ещё обсудить",
+                    "description": "решим позже"
+                  }
+                ],
+                "multiSelect": false
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "parent_tool_use_id": null
+  },
+  "permission": {
+    "type": "control_request",
+    "request_id": "two-question-permission",
+    "request": {
+      "subtype": "can_use_tool",
+      "tool_name": "AskUserQuestion",
+      "display_name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Какое тестовое описание 1 выбрать? Советую Research: риск проверим.",
+            "header": "Цвет",
+            "options": [
+              {
+                "label": "Синий (Recommended)",
+                "description": "спокойный"
+              },
+              {
+                "label": "Зелёный",
+                "description": "яркий"
+              },
+              {
+                "label": "Ещё обсудить",
+                "description": "решим позже"
+              }
+            ],
+            "multiSelect": false
+          },
+          {
+            "question": "Какое тестовое описание 2 выбрать? Советую Research: риск проверим.",
+            "header": "Цвет",
+            "options": [
+              {
+                "label": "Синий (Recommended)",
+                "description": "спокойный"
+              },
+              {
+                "label": "Зелёный",
+                "description": "яркий"
+              },
+              {
+                "label": "Ещё обсудить",
+                "description": "решим позже"
+              }
+            ],
+            "multiSelect": false
+          }
+        ]
+      },
+      "tool_use_id": "two-question-window",
+      "requires_user_interaction": true
+    }
+  },
+  "result": {
+    "type": "user",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "content": "The user did not answer the questions.",
+          "tool_use_id": "two-question-window"
+        }
+      ]
+    },
+    "parent_tool_use_id": null,
+    "tool_use_result": {
+      "questions": [
+        {
+          "question": "Какое тестовое описание 1 выбрать? Советую Research: риск проверим.",
+          "header": "Цвет",
+          "options": [
+            {
+              "label": "Синий (Recommended)",
+              "description": "спокойный"
+            },
+            {
+              "label": "Зелёный",
+              "description": "яркий"
+            },
+            {
+              "label": "Ещё обсудить",
+              "description": "решим позже"
+            }
+          ],
+          "multiSelect": false
+        },
+        {
+          "question": "Какое тестовое описание 2 выбрать? Советую Research: риск проверим.",
+          "header": "Цвет",
+          "options": [
+            {
+              "label": "Синий (Recommended)",
+              "description": "спокойный"
+            },
+            {
+              "label": "Зелёный",
+              "description": "яркий"
+            },
+            {
+              "label": "Ещё обсудить",
+              "description": "решим позже"
+            }
+          ],
+          "multiSelect": false
+        }
+      ],
+      "answers": {
+        "Какое тестовое описание 1 выбрать? Советую Research: риск проверим.": "",
+        "Какое тестовое описание 2 выбрать? Советую Research: риск проверим.": ""
+      }
+    }
+  },
+  "reply": {
+    "type": "control_response",
+    "response": {
+      "subtype": "success",
+      "request_id": "two-question-permission",
+      "response": {
+        "behavior": "allow",
+        "updatedInput": {
+          "questions": [
+            {
+              "question": "Какое тестовое описание 1 выбрать? Советую Research: риск проверим.",
+              "header": "Цвет",
+              "options": [
+                {
+                  "label": "Синий (Recommended)",
+                  "description": "спокойный"
+                },
+                {
+                  "label": "Зелёный",
+                  "description": "яркий"
+                },
+                {
+                  "label": "Ещё обсудить",
+                  "description": "решим позже"
+                }
+              ],
+              "multiSelect": false
+            },
+            {
+              "question": "Какое тестовое описание 2 выбрать? Советую Research: риск проверим.",
+              "header": "Цвет",
+              "options": [
+                {
+                  "label": "Синий (Recommended)",
+                  "description": "спокойный"
+                },
+                {
+                  "label": "Зелёный",
+                  "description": "яркий"
+                },
+                {
+                  "label": "Ещё обсудить",
+                  "description": "решим позже"
+                }
+              ],
+              "multiSelect": false
+            }
+          ],
+          "answers": {
+            "Какое тестовое описание 1 выбрать? Советую Research: риск проверим.": "",
+            "Какое тестовое описание 2 выбрать? Советую Research: риск проверим.": ""
+          }
+        }
+      }
+    }
+  }
+}

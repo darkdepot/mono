@@ -1,0 +1,10 @@
+{
+  "host": "codex",
+  "source": "MONO-287 probe home rollout 2026-10-31T01:43:52:21, workspace output block1; extracted from four native output blocks, wrapper retained; workspace id/name/url depersonalized",
+  "output": [
+    {
+      "type": "input_text",
+      "text": "{\"tool\":\"get_workspace\",\"result\":{\"status\":\"fulfilled\",\"value\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"id\\\":\\\"workspace-test\\\",\\\"name\\\":\\\"Test Space\\\",\\\"url\\\":\\\"https://example.test/workspace\\\"}\"}]}}}"
+    }
+  ]
+}
