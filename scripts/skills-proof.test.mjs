@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
+import { auditRows } from './skills-audit.mjs';
 import { nativeProof } from './skills-proof.mjs';
 const read=(host,name)=>JSON.parse(fs.readFileSync(`evals/scenarios/probe/samples/${host}/${name}.json`));
 // Recorded payloads, synthetic linkage/envelopes and command contents. Every
@@ -54,7 +55,15 @@ test('all recorded real trace and sample forms preserve native success through t
  const wrapResult=block=>({type:'user',message:{content:[block]}});
  for(const file of files)await t.test(file,()=>{
   const sample=JSON.parse(fs.readFileSync(`${directory}/${file}`)),host=file.split('/')[0];let checked=0;
-  const check=(request,expected='confirmed')=>{assert.equal(nativeProof({host,...request}).status,expected,`${file}: ${request.kind}`);checked++;};
+  const check=(request,expected='confirmed')=>{
+   // Restore omitted native call metadata only for cut payload adapters.
+   const c=request.call&&structuredClone(request.call);
+   if(host==='codex'&&c?.name==='exec'&&c.input===undefined)c.input='text(await tools.mcp__monotest__get_workspace({}));';
+   if(host==='codex'&&c?.name==='request_user_input_async'&&c.arguments===undefined)c.arguments='{}';
+   const events=[c,request.result].filter(Boolean).map(value=>host==='codex'&&value.type!=='event_msg'?{type:'response_item',payload:value}:value);
+   const audit=auditRows(host,events.map((value,i)=>({value,line:i+1})));
+   assert.equal(audit.proof({...request,call:c}).status,expected,`${file}: ${request.kind}`);checked++;
+  };
   if(host==='claude'&&sample.events){
    const calls=new Map();
    for(const {line,event:e} of sample.events){

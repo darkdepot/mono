@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { auditRows } from './skills-audit.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
@@ -16,6 +17,7 @@ function validQuestion(question) {
 // The host probe's narrow Claude check: visible text in the current parent turn.
 // Thinking content is supplementary evidence and never the detection rule.
 export function claudeWindows(rows, source) {
+  const audit=auditRows('claude',rows);
   const windows = [], seen = new Set();
   let text = [], thinking = [], toolResult = null;
   for (const { value: event, line } of rows) {
@@ -56,19 +58,23 @@ export function claudeWindows(rows, source) {
       if (block.type !== 'tool_use' || block.name !== 'AskUserQuestion') continue;
       if (seen.has(block.id)) continue;
       seen.add(block.id);
+      const permission=rows.find(r=>r.line>line&&r.value.type==='control_request'&&r.value.request?.tool_name==='AskUserQuestion'&&
+        (r.value.request.tool_use_id===undefined||r.value.request.tool_use_id===block.id));
+      const proof=permission?audit.proof({kind:'window',call:event,result:permission.value,callId:block.id}):null;
       windows.push({
         evidence: `${source}:${line}`, line, callId: block.id, toolResult,
         textLines: [...new Set(text)], thinkingLines: [...new Set(thinking)],
         questions: block.input.questions,
-        status: text.length ? 'passed' : 'failed',
-        reason: text.length ? 'visible text before window' : 'no visible text before window; thinking is not owner text',
+        executionConfirmed:proof?.status==='confirmed',
+        status: proof?.status==='unverified'?'unverified':text.length ? 'passed' : 'failed',
+        reason: proof?.status==='unverified'?'successful native window proof missing':text.length ? 'visible text before window' : 'no visible text before window; thinking is not owner text',
       });
     }
   }
   return windows;
 }
 
-export function traceRows(filename) {
+export function traceRows(filename, host = 'claude', options) {
   const data = fs.readFileSync(filename, 'utf8');
   let sample;
   try { sample = JSON.parse(data); } catch { /* Stream JSONL is not a JSON document. */ }
@@ -83,14 +89,15 @@ export function traceRows(filename) {
     if (parsed.errors.length) throw new Error(parsed.errors.join('; '));
     rows = parsed.events;
   }
+  auditRows(host,rows,options);
   return { rows, excerpt: Boolean(sample?.events) };
 }
 
 export function probeClaude(filename) {
   try {
-    const { rows, excerpt } = traceRows(filename);
+    const { rows, excerpt } = traceRows(filename,'claude');
     const windows = claudeWindows(rows, filename);
-    const status = !windows.length ? 'unverified' : windows.some(w => w.status === 'failed') ? 'failed' : 'passed';
+    const status = !windows.length ? 'unverified' : windows.some(w => w.status === 'unverified') ? 'unverified' : windows.some(w => w.status === 'failed') ? 'failed' : 'passed';
     return { check: 'claude-text-before-window', status, windows,
       boundary: excerpt ? 'sanitized excerpt; original line numbers' : 'supplied stream-json trace only',
       ...(windows.length ? {} : { reason: 'no top-level AskUserQuestion reached; harness evidence required' }) };

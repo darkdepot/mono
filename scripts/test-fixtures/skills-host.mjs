@@ -28,7 +28,7 @@ if(mode==='crash'){process.exit(3);}
 if(mode==='timeout'){setInterval(()=>{},1000);}
 else if(args[0]==='exec'){
  const persona=args.includes('--ignore-user-config');
- if(persona){out({type:'item.completed',item:{type:mode==='persona-tool'?'command_execution':'agent_message',text:'Предпочитаю синий.'}});out({type:'turn.completed'});process.exit(0);}
+ if(persona){if(mode==='persona-unknown')out({type:'future_event'});out({...(mode==='persona-error'?{isError:true}:{}),type:'item.completed',item:{type:mode==='persona-tool'?'command_execution':'agent_message',text:'Предпочитаю синий.'}});out({type:'turn.completed'});process.exit(0);}
  const file=path.join(home,'sessions','rollout-synthetic-thread.jsonl');fs.mkdirSync(path.dirname(file),{recursive:true});
  const rows=fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').map(l=>JSON.parse(l)):[];
  const prompt=args.at(-1),fresh=[];
@@ -75,7 +75,8 @@ else if(args[0]==='exec'){
  fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');
  out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);
 }else if(args.includes('--tools')&&args[args.indexOf('--tools')+1]===''){
- out({type:'assistant',message:{content:[mode==='persona-tool'?{type:'tool_use',name:'Read'}:{type:'text',text:'Предпочитаю синий.'}]}});out({type:'result',subtype:'success'});process.exit(0);
+ if(mode==='persona-unknown')out({type:'future_event'});
+ out({...(mode==='persona-error'?{isError:true}:{}),type:'assistant',message:{content:[mode==='persona-tool'?{type:'tool_use',name:'Read'}:{type:'text',text:'Предпочитаю синий.'}]}});out({type:'result',subtype:'success'});process.exit(0);
 }else{
  let stage=false,free=false;
  const read=readline.createInterface({input:process.stdin});
@@ -99,6 +100,8 @@ else if(args[0]==='exec'){
     out({type:'assistant',message:{content:[{type:'tool_use',id:'command',name:'Bash',input:{command:'pwd'}}]}});
     out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'command',content:mode==='command-json'?'{"ok":true}':'/scratch'}]}},'command'));
    }
+   if(mode==='unknown-native-item')out({type:'future_event'});
+   if(mode==='unknown-native-block')out({type:'assistant',message:{content:[{type:'future_block'}]}});
    out(summary);
    if(mode==='missing'){out({type:'result',subtype:'success'});return;}
    out(window);

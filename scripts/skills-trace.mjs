@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { nativeProof } from './skills-proof.mjs';
+import { auditRows } from './skills-audit.mjs';
 import { claudeWindows, traceRows, visibleText } from './skills-probe.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -12,9 +12,11 @@ export const OWNER_DIALOG_SHA256 = 'd9e88bf7f17960e3dd1bec2cebd4589d45a256eae704
 export const visible = visibleText;
 const textOf = p => (p.content ?? []).filter(b => ['text', 'output_text'].includes(b.type)).map(b => b.text).join('\n');
 export function codexItems(rows) {
+  auditRows('codex',rows);
   return rows.filter(r => r.value?.type === 'response_item').map(r => ({ ...r, item: r.value.payload }));
 }
 export function codexWindows(rows, source) {
+  const audit=auditRows('codex',rows);
   const items = codexItems(rows), windows = [], seen = new Set();
   for (const row of items) {
     const p = row.item;
@@ -30,7 +32,7 @@ export function codexWindows(rows, source) {
     const turn = items.filter(r => r.line > row.line && (!end || r.line < end.line));
     const outputs = turn.filter(r => ['function_call_output','custom_tool_call_output'].includes(r.item.type) && r.item.call_id === p.call_id);
     const output = outputs.length === 1 ? outputs[0] : null;
-    const proof = nativeProof({host:'codex',kind:'window',call:row.value,result:output?.value});
+    const proof = audit.proof({kind:'window',call:row.value,result:output?.value});
     const args = proof.value;
     const executionConfirmed = proof.status === 'confirmed';
     const last = turn.at(-1);
@@ -44,14 +46,16 @@ export function codexWindows(rows, source) {
 }
 
 
-export function completedTrace(host, rows) {
+export function completedTrace(host, rows, options) {
+  const audit=auditRows(host,rows,options);
+  if(options?.stdout)return audit.proof({kind:'terminal',result:rows.at(-1)?.value}).status==='confirmed';
   if (host === 'claude') {
     const last = rows.filter(r => !r.value.parent_tool_use_id).at(-1)?.value;
-    return nativeProof({host,kind:'terminal',result:last}).status === 'confirmed';
+    return audit.proof({kind:'terminal',result:last}).status === 'confirmed';
   }
   const last = rows.filter(r => r.value.type === 'response_item' ||
     (r.value.type === 'event_msg' && ['task_complete','task_started','turn_aborted','error'].includes(r.value.payload?.type))).at(-1)?.value;
-  return nativeProof({host,kind:'terminal',result:last}).status === 'confirmed';
+  return audit.proof({kind:'terminal',result:last}).status === 'confirmed';
 }
 
 function cardIssues(host, questions, expected) {
@@ -84,7 +88,7 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
     if (rulesDigest !== OWNER_DIALOG_SHA256) throw new Error('owner-dialog changed: update checker and conversation rubric together');
     if (!['claude', 'codex'].includes(host) || !Array.isArray(expectedWindows) || !expectedWindows.length || expectedWindows.some(w =>
       !w?.id || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || !w.summary.length || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, decision, advice, reason and summary anchors');
-    const { rows } = traceRows(trace);
+    const { rows } = traceRows(trace,host);
     if (rows.some(r => !r.value || typeof r.value.type !== 'string')) throw new Error('invalid trace envelope');
     const found = host === 'claude' ? claudeWindows(rows, trace) : codexWindows(rows, trace);
     let expectedIndex = 0;

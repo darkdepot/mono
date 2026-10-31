@@ -64,6 +64,18 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
     let value;
     if (!['claude','codex'].includes(host)) absent();
     guarded(call); guarded(result);
+    if (kind === 'persona') {
+      if(host==='codex'){
+        if(result?.type!=='item.completed'||at(result,['item']).type!=='agent_message'||typeof at(result,['item','text'])!=='string') absent();
+        return {status:'confirmed',value:at(result,['item','text'])};
+      }
+      if(result?.type!=='assistant'||result.parent_tool_use_id) absent();
+      const blocks=at(result,['message','content']);
+      if(!Array.isArray(blocks)) absent();
+      const texts=blocks.map((block,i)=>at(blocks,[i])).filter(b=>b.type==='text').map(b=>at(b,['text']));
+      if(texts.some(t=>typeof t!=='string')||!texts.length) absent();
+      return {status:'confirmed',value:texts.join('\n')};
+    }
     if (kind === 'terminal') {
       if (host === 'claude') {
         if (result?.type !== 'result' || result.subtype !== 'success' || result.parent_tool_use_id) absent();

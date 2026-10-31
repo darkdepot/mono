@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { runScenario, runPersona } from './skills-run.mjs';
+import { runScenario, runPersona, runClaude, runCodex } from './skills-run.mjs';
 import { privateCodexHome, codexToolCalls, toolViolation, MissingEvidence } from './skills-boundary.mjs';
 import { nativeProof } from './skills-proof.mjs';
 // Synthetic native linkage around the recorded payload cuts.
@@ -202,5 +202,41 @@ test('Claude recorded native window and successful JSON stdout pass end to end',
 test('Codex error-marked terminal proof is unverified for either native flag',async t=>{
  for(const mode of ['terminal-isError','terminal-is_error']){
   const r=await runScenario(setup(t,'codex',mode));assert.equal(r.status,'unverified',JSON.stringify(r));assert.equal(r.violation,null);assert.match(r.evidenceMissing,/incomplete/);
+ }
+});
+
+// Same completed child traces enter every public behavioral reader. Unsupported
+// forms are synthetic perturbations; the known control stays beside them.
+test('online and offline entry points agree on the same native traces in both hosts',async t=>{
+ const {checkTrace,codexWindows,codexItems,completedTrace}=await import('./skills-trace.mjs');
+ const {traceRows,claudeWindows,probeClaude}=await import('./skills-probe.mjs');
+ const {auditRows}=await import('./skills-audit.mjs');
+ const observations=[];
+ const verdict=fn=>{try{const v=fn();return typeof v==='boolean'?(v?'passed':'unverified'):Array.isArray(v)?v.some(w=>w.status==='unverified')?'unverified':v.some(w=>w.status==='failed')?'failed':'passed':v.status??'passed';}catch{return 'unverified';}};
+ for(const host of ['claude','codex'])for(const mode of host==='codex'?['ok','unknown-native-item','unicode-exec']:['ok','unknown-native-item','unknown-native-block']){
+  const request=setup(t,host,mode),online=await runScenario(request),trace=online.trace;
+  const rows=(await import('./transports/journal.mjs')).readJsonLines(trace).events,expected=mode==='ok'?'passed':'unverified';
+  const directRequest=setup(t,host,mode);fs.mkdirSync(directRequest.outputDir);
+  const direct=await (host==='codex'?runCodex:runClaude)(directRequest);
+  assert.deepEqual((await import('./transports/journal.mjs')).readJsonLines(direct.trace).events.map(r=>r.value),rows.map(r=>r.value),'direct driver and wrapper must receive identical trace contents');
+  const paths={auditRows:verdict(()=>auditRows(host,rows)),runScenario:online.status,[host==='codex'?'runCodex':'runClaude']:direct.status,checkTrace:verdict(()=>checkTrace({host,trace,expectedWindows:request.scenario.expectedWindows})),traceRows:verdict(()=>traceRows(trace,host)),completedTrace:verdict(()=>completedTrace(host,rows))};
+  if(host==='codex'){paths.codexWindows=verdict(()=>codexWindows(rows,trace));paths.codexItems=verdict(()=>codexItems(rows));}
+  else{paths.claudeWindows=verdict(()=>claudeWindows(rows,trace));paths.probeClaude=verdict(()=>probeClaude(trace));}
+  observations.push({host,mode,paths,expected:Object.fromEntries(Object.keys(paths).map(k=>[k,expected]))});
+ }
+ for(const host of ['claude','codex'])for(const mode of ['ok','persona-unknown']){
+  const request=setup(t,host,mode);fs.mkdirSync(request.outputDir);
+  let status='passed';try{await runPersona(request,'Какой цвет предпочитаешь?',0);}catch{status='unverified';}
+  const trace=path.join(request.outputDir,'persona-0/trace.jsonl'),rows=(await import('./transports/journal.mjs')).readJsonLines(trace).events;
+  const options={stdout:host==='codex'},paths={auditRows:verdict(()=>auditRows(host,rows,options)),runPersona:status,traceRows:verdict(()=>traceRows(trace,host,options)),completedTrace:verdict(()=>completedTrace(host,rows,options))};
+  const expected=mode==='ok'?'passed':'unverified';observations.push({host,mode,paths,expected:Object.fromEntries(Object.keys(paths).map(k=>[k,expected]))});
+ }
+ assert.deepEqual(observations.map(r=>({...r,paths:r.expected})),observations);
+});
+
+test('persona model answers also use the shared native proof gate in both hosts',async t=>{
+ for(const host of ['claude','codex']){
+  const request=setup(t,host,'persona-error');fs.mkdirSync(request.outputDir);
+  await assert.rejects(()=>runPersona(request,'Какой цвет предпочитаешь?',0),/persona not verified/);
  }
 });

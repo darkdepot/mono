@@ -50,7 +50,7 @@ test('Codex async summary must be final, after window and last before turn compl
  const check=r=>checkTrace({host:'codex',trace:write(r),expectedWindows:[codexExpected],excerpt:true});
  assert.equal(check(rows).status,'passed');
  rows.at(-1).payload.phase='commentary';assert.equal(check(rows).status,'failed');
- rows.at(-1).payload.phase='final_answer';rows.push({type:'response_item',payload:{type:'function_call',name:'exec',arguments:'{}',call_id:'late'}});
+ rows.at(-1).payload.phase='final_answer';rows.push({type:'response_item',payload:{type:'function_call',name:'mcp__monotest__get_workspace',arguments:'{}',call_id:'late'}});
  const bad=check(rows);assert.equal(bad.status,'failed');assert.match(bad.windows[0].issues.join(' '),/last|послед/);
 });
 test('missing expected window and text replacement fail, not unverified',t=>{

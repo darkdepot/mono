@@ -233,7 +233,8 @@ test('damaged event envelopes and used fields invalidate both passing and failin
   const events = [...control().events,
     { line: 200, event: { type: 'future_event' } },
     { line: 201, event: { type: 'user', message: { content: 'An ordinary user message' } } }];
-  assert.equal(probeClaude(write('valid-extra-events.json', { events })).status, 'passed');
+  assert.equal(probeClaude(write('unknown-extra-events.json', { events })).status, 'unverified');
+  assert.equal(probeClaude(write('valid-extra-events.json', {events:events.filter(r=>r.event.type!=='future_event')})).status, 'passed');
 });
 
 const expectedAnswers = {
