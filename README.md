@@ -1641,6 +1641,9 @@ workspace name is not proof. Reply delivery also needs the observed host receipt
 all native proof consumers share one gate that checks linkage and every envelope
 layer. Its positive corpus test covers all recorded host trace/sample files,
 including the unchanged Claude call139/permission140, beside the negative table.
+Each host requires a fresh parent terminal after the last sent continuation,
+including persona replies. Fixtures with a fatal prefix stop at their rejected event;
+raw trace identity is still checked exactly.
 Each Codex continuation requires its own native completion; workspace confirmation
 cannot supply scenario windows.
 Finished trace checks require both native window permission and delivered answers;

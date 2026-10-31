@@ -94,11 +94,11 @@ export async function runClaude(request){
           if(!callId){deny(e,'window tool use missing from trace',c);return fail('unobserved window request',c);}
           if(audit.proof({kind:'window',call:calls.get(callId)?.event,result:e,callId}).status!=='confirmed')return missing('native window acceptance missing',c);
           const reply=windowReply('claude',input,policy,e.request_id);
-          receipts.set(callId,reply);c.send(reply);replies.push({index:replies.length,requestId:e.request_id,callId,policy:policy.mode,replySent:true,received:false});
+          receipts.set(callId,reply);waiting=false;c.send(reply);replies.push({index:replies.length,requestId:e.request_id,callId,policy:policy.mode,replySent:true,received:false});
         }else{
           const reason=toolViolation(name,input,request.scenario,confirmed)??(phase==='confirm'&&name!==request.workspaceProof.tool?'non-read tool during workspace confirmation':null);
           if(reason){deny(e,reason,c);return fail(reason,c);}
-          c.send({type:'control_response',response:{subtype:'success',request_id:e.request_id,response:{behavior:'allow',updatedInput:input}}});
+          waiting=false;c.send({type:'control_response',response:{subtype:'success',request_id:e.request_id,response:{behavior:'allow',updatedInput:input}}});
         }
       }
       if(e.type==='result'&&!e.parent_tool_use_id){
@@ -106,16 +106,17 @@ export async function runClaude(request){
         if([...calls.values()].some(call=>call.block.name==='Bash'))return missing('successful command result missing',c);
         if(phase==='confirm'){
           if(!confirmed)return missing('workspace not confirmed before stage',c);
-          phase='stage';lastMessage='';c.send(userMessage(request.scenario.prompt));
+          phase='stage';lastMessage='';waiting=false;c.send(userMessage(request.scenario.prompt));
         }else{waiting=true;c.idle();}
       }else if(waiting)c.idle();
     },
     onIdle:async c=>{
       const free=request.scenario.freeQuestions?.[freeIndex];
       if(free&&lastMessage.includes(free.contains)){
-        waiting=false;try{const answer=await runPersona(request,lastMessage,freeIndex++);c.send(userMessage(answer));}catch(error){if(error instanceof MissingEvidence)return missing(error.message,c);throw error;}
+        waiting=false;try{const answer=await runPersona(request,lastMessage,freeIndex++);waiting=false;c.send(userMessage(answer));}catch(error){if(error instanceof MissingEvidence)return missing(error.message,c);throw error;}
       }else c.end();
     }});
+  if(!waiting&&!violation&&!evidenceMissing&&processResult.code===0&&!processResult.failure)evidenceMissing='fresh Claude parent terminal missing after last sent continuation';
   return finishRun(request,{trace,sent,replies,confirmed,process:processResult,violation,evidenceMissing,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
 }
 

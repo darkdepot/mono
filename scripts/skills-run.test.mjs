@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { runScenario, runPersona, runClaude, runCodex } from './skills-run.mjs';
 import { privateCodexHome, codexToolCalls, toolViolation, MissingEvidence } from './skills-boundary.mjs';
 import { nativeProof } from './skills-proof.mjs';
@@ -277,15 +278,37 @@ test('persona model answers also use the shared native proof gate in both hosts'
 
 // Synthetic execution-phase regressions; d-004 applies because these drive the
 // public runScenario verdict, not a standalone checker on a hand-built trace.
-test('Codex each post-window persona continuation needs its own native completion',async t=>{
- for(const mode of ['free-after-window','free-after-window-empty']){
-  const request=setup(t,'codex',mode);request.scenario.freeQuestions=[{contains:'Какой цвет предпочитаешь?'}];
-  const r=await runScenario(request);assert.equal(r.status,mode==='free-after-window'?'passed':'unverified',JSON.stringify(r));
-  assert.equal(r.replies.length,1);assert.equal(r.replies[0].received,true);
- }
-});
 test('Codex confirmation window cannot stand in for the missing scenario window',async t=>{
  const request=setup(t,'codex','confirmation-window'),r=await runScenario(request);
  assert.equal(r.status,'failed',JSON.stringify(r));assert.equal(r.replies.length,0);
  assert.ok(!fs.readFileSync(r.sent,'utf8').includes('Run stage'));
+});
+
+// One execution lifecycle table for both hosts. Cuts and subprocesses are
+// synthetic; their positive native envelopes remain the recorded known forms.
+for(const host of ['claude','codex'])for(const control of [
+ {send:'stage',positive:'ok',negative:'stage-no-result'},
+ {send:'free window reply',positive:'ok',negative:'reply-no-result',policy:{mode:'correction',text:'Поправь описание.'}},
+ {send:'persona before window',positive:'free',negative:'free-no-result',persona:true},
+ {send:'persona after window',positive:'free-after-window',negative:'free-after-window-empty',persona:true},
+])test(`${host}: fresh parent completion after ${control.send}`,async t=>{
+ for(const [mode,expected] of [[control.positive,'passed'],[control.negative,'unverified']]){
+  const request=setup(t,host,mode);
+  if(control.policy)request.scenario.windows=[control.policy];
+  if(control.persona)request.scenario.freeQuestions=[{contains:'Какой цвет предпочитаешь?'}];
+  const r=await runScenario(request);assert.equal(r.status,expected,JSON.stringify(r));
+  if(control.send==='persona after window'){assert.equal(r.replies.length,1);assert.equal(r.replies[0].received,true);}
+ }
+});
+
+test('Claude rejected-prefix fixtures stop before emitting an ordinary window',t=>{
+ for(const mode of ['unknown-native-item','unknown-native-block']){
+  const request=setup(t,'claude',mode);
+  const input=[{type:'user'},{type:'user'}].map(JSON.stringify).join('\n')+'\n';
+  const child=spawnSync(request.binary.command,request.binary.args,{cwd:request.cwd,input,encoding:'utf8'});
+  assert.equal(child.status,0,child.stderr);
+  const events=child.stdout.trim().split('\n').map(JSON.parse);
+  assert.equal(events.length,4,'only workspace proof and the intentional rejected event');
+  assert.equal(events.filter(e=>e.type==='control_request').length,0,'no scheduled window after rejected prefix');
+ }
 });

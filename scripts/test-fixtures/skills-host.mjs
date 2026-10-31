@@ -32,6 +32,8 @@ else if(args[0]==='exec'){
  const file=path.join(home,'sessions','rollout-synthetic-thread.jsonl');fs.mkdirSync(path.dirname(file),{recursive:true});
  const rows=fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').map(l=>JSON.parse(l)):[];
  const prompt=args.at(-1),fresh=[];
+ if(mode==='stage-no-result'&&rows.length&&prompt.startsWith('Run stage')){out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
+ if(mode==='free-no-result'&&prompt==='Предпочитаю синий.'){out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
  const item=payload=>{
  let consumer=payload.call_id==='read'&&payload.type.endsWith('_output')?'workspace':payload.call_id==='command'&&payload.type.endsWith('_output')?'command':payload.call_id==='window-1'&&payload.type.endsWith('_output')?'window':payload.role==='user'?'answer':null;
  if(mutation?.[2]==='custom'&&consumer==='workspace')payload.type='custom_tool_call_output';
@@ -57,7 +59,7 @@ else if(args[0]==='exec'){
   }
   if(mode==='write-before-proof')item({type:'function_call',name:'mcp__monotest__save_project',call_id:'early',arguments:'{}'});
  }else if(mode==='confirmation-window'&&prompt.startsWith('Run stage')){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});
- }else if(mode==='free'&&rows.length<5){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Какой цвет предпочитаешь?'}]});
+ }else if(['free','free-no-result'].includes(mode)&&rows.length<5){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Какой цвет предпочитаешь?'}]});
  }else if(!prompt.startsWith('<send_user_message_question_reply>')&&!prompt.startsWith('Не буду')){
   if(mode==='unicode-exec')item({type:'custom_tool_call',name:'exec',call_id:'escaped',input:String.raw`await \u{74}ools.exec_command({"cmd":"uname -a"}); text(await tools.mcp__monotest__get_workspace({}));`});
   if(mode==='native-web-search')item({type:'web_search_call',id:'search'});
@@ -81,6 +83,7 @@ else if(args[0]==='exec'){
   item(async[2]);
   if(mode==='late-tool')item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'late',arguments:'{}'});
  }else{if(mode!=='unanswered')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':'Принято.'}]});}
+ if(mode==='reply-no-result'&&prompt.startsWith('<send_user_message_question_reply>')){fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
  fresh.push({type:'event_msg',payload:{type:mode==='cut'?'task_started':'task_complete'},...(['terminal-isError','terminal-is_error'].includes(mode)?{[mode.slice('terminal-'.length)]:true}:{})});
  fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');
  out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);
@@ -98,7 +101,14 @@ else if(args[0]==='exec'){
    if(mode!=='missing-proof-result')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:mode==='unlinked-proof'?'other-read':'read',content:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:proof),...(mode==='errored-proof'?{is_error:true}:{})}]}},'workspace'));
    out({type:'result',subtype:'success'});
   }else if(m.type==='user'){
-   if(mode==='free'&&!free){free=true;
+   const text=m.message?.content?.find(b=>b.type==='text')?.text;
+   if(mode==='stage-no-result'&&text==='Run stage')process.exit(0);
+   if(mode==='free-no-result'&&text==='Предпочитаю синий.')process.exit(0);
+   if(mode.startsWith('free-after-window')&&text==='Предпочитаю синий.'){
+    if(mode==='free-after-window-empty')process.exit(0);
+    out({type:'assistant',message:{content:[{type:'text',text:'Принято.'}]}});out({type:'result',subtype:'success'});return;
+   }
+   if(['free','free-no-result'].includes(mode)&&!free){free=true;
     out({type:'assistant',message:{content:[{type:'text',text:'Какой цвет предпочитаешь?'}]}});out({type:'result',subtype:'success'});return;
    }
    if(mode==='linear'){
@@ -110,8 +120,9 @@ else if(args[0]==='exec'){
     out({type:'assistant',message:{content:[{type:'tool_use',id:'command',name:'Bash',input:{command:'pwd'}}]}});
     out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'command',content:mode==='command-json'?'{"ok":true}':'/scratch'}]}},'command'));
    }
-   if(mode==='unknown-native-item')out({type:'future_event'});
-   if(mode==='unknown-native-block')out({type:'assistant',message:{content:[{type:'future_block'}]}});
+   // Fatal-prefix fixtures must not race the driver's stop with a later window.
+   if(mode==='unknown-native-item'){out({type:'future_event'});return;}
+   if(mode==='unknown-native-block'){out({type:'assistant',message:{content:[{type:'future_block'}]}});return;}
    out(summary);
    if(mode==='missing'){out({type:'result',subtype:'success'});return;}
    out(window);
@@ -134,7 +145,8 @@ else if(args[0]==='exec'){
    if(mode==='error-answer')receipt.is_error=true;
    if(mode==='wrong-answer'||mode==='wrong-refusal')receipt.content='Different or failed answer';
    if(mode!=='unanswered')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]},...(response.behavior==='allow'?{tool_use_result:response.updatedInput}:{})},'answer'));
-   out({type:'assistant',message:{content:[{type:'text',text:'Принято.'}]}});out({type:'result',subtype:'success'});
+   if(mode==='reply-no-result')process.exit(0);
+   out({type:'assistant',message:{content:[{type:'text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':'Принято.'}]}});out({type:'result',subtype:'success'});
   }
  });
  read.on('close',()=>process.exit(0));
