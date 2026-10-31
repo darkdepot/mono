@@ -16,7 +16,7 @@ function validQuestion(question) {
 
 // The host probe's narrow Claude check: visible text in the current parent turn.
 // Thinking content is supplementary evidence and never the detection rule.
-export function claudeWindows(rows, source) {
+export function claudeWindows(rows, source, options) {
   const audit=auditRows('claude',rows);
   const windows = [], seen = new Set();
   let text = [], thinking = [], toolResult = null;
@@ -58,16 +58,14 @@ export function claudeWindows(rows, source) {
       if (block.type !== 'tool_use' || block.name !== 'AskUserQuestion') continue;
       if (seen.has(block.id)) continue;
       seen.add(block.id);
-      const permission=rows.find(r=>r.line>line&&r.value.type==='control_request'&&r.value.request?.tool_name==='AskUserQuestion'&&
-        (r.value.request.tool_use_id===undefined||r.value.request.tool_use_id===block.id));
-      const proof=permission?audit.proof({kind:'window',call:event,result:permission.value,callId:block.id}):null;
+      const proof=audit.windowProof(event,line,block.id,options);
       windows.push({
         evidence: `${source}:${line}`, line, callId: block.id, toolResult,
         textLines: [...new Set(text)], thinkingLines: [...new Set(thinking)],
         questions: block.input.questions,
-        executionConfirmed:proof?.status==='confirmed',
-        status: proof?.status==='unverified'?'unverified':text.length ? 'passed' : 'failed',
-        reason: proof?.status==='unverified'?'successful native window proof missing':text.length ? 'visible text before window' : 'no visible text before window; thinking is not owner text',
+        executionConfirmed:proof.status==='confirmed',
+        status: proof.status==='unverified'?'unverified':text.length ? 'passed' : 'failed',
+        reason: proof.status==='unverified'?'successful native permission or delivered answer missing for this phase':text.length ? 'visible text before window' : 'no visible text before window; thinking is not owner text',
       });
     }
   }
@@ -93,13 +91,14 @@ export function traceRows(filename, host = 'claude', options) {
   return { rows, excerpt: Boolean(sample?.events) };
 }
 
-export function probeClaude(filename) {
+export function probeClaude(filename, options = {}) {
   try {
     const { rows, excerpt } = traceRows(filename,'claude');
-    const windows = claudeWindows(rows, filename);
+    const phase=options.phase??(excerpt?'excerpt':'complete');
+    const windows = claudeWindows(rows, filename, {phase});
     const status = !windows.length ? 'unverified' : windows.some(w => w.status === 'unverified') ? 'unverified' : windows.some(w => w.status === 'failed') ? 'failed' : 'passed';
-    return { check: 'claude-text-before-window', status, windows,
-      boundary: excerpt ? 'sanitized excerpt; original line numbers' : 'supplied stream-json trace only',
+    return { check: 'claude-text-before-window', phase, status, windows,
+      boundary: excerpt ? 'sanitized excerpt; original line numbers' : phase==='excerpt'?'explicit narrow excerpt probe':phase==='card'?'pre-answer card check':'supplied finished stream-json trace only',
       ...(windows.length ? {} : { reason: 'no top-level AskUserQuestion reached; harness evidence required' }) };
   } catch (error) {
     return { check: 'claude-text-before-window', status: 'unverified', windows: [], reason: error.message };
@@ -107,11 +106,11 @@ export function probeClaude(filename) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  if (process.argv.length !== 3 || ['--help', '-h'].includes(process.argv[2])) {
-    console.error('Usage: node scripts/skills-probe.mjs <claude-stream.jsonl|trace-excerpt.json>');
+  if (![3,4].includes(process.argv.length) || (process.argv.length===4&&process.argv[3]!=='--excerpt') || ['--help', '-h'].includes(process.argv[2])) {
+    console.error('Usage: node scripts/skills-probe.mjs <claude-stream.jsonl|trace-excerpt.json> [--excerpt]');
     process.exit(['--help', '-h'].includes(process.argv[2]) ? 0 : 2);
   }
-  const result = probeClaude(process.argv[2]);
+  const result = probeClaude(process.argv[2],process.argv[3]==='--excerpt'?{phase:'excerpt'}:{});
   console.log(JSON.stringify(result, null, 2));
   process.exit(result.status === 'passed' ? 0 : result.status === 'failed' ? 1 : 2);
 }

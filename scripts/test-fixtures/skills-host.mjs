@@ -105,7 +105,8 @@ else if(args[0]==='exec'){
    out(summary);
    if(mode==='missing'){out({type:'result',subtype:'success'});return;}
    out(window);
-   out(mode==='recorded-window'?sample.events.find(r=>r.line===140).event:perturb({type:'control_request',request_id:'request-window',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions}}},'window'));
+   if(mode==='missing-permission'){out({type:'result',subtype:'success'});return;}
+   out(mode==='recorded-window'?sample.events.find(r=>r.line===140).event:perturb({type:'control_request',request_id:'request-window',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions},...(mode==='unlinked-permission'?{tool_use_id:'other-window'}:{})},...(mode==='errored-permission'?{isError:true}:{})},'window'));
   }else if(m.type==='control_response'){
    if(m.response.request_id==='blocked'){
     if(m.response.response.behavior!=='deny')fs.writeFileSync(path.join(path.dirname(process.argv[1]),'forbidden-write'),'executed');
@@ -122,7 +123,7 @@ else if(args[0]==='exec'){
    }
    if(mode==='error-answer')receipt.is_error=true;
    if(mode==='wrong-answer'||mode==='wrong-refusal')receipt.content='Different or failed answer';
-   if(mode!=='unanswered')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]}},'answer'));
+   if(mode!=='unanswered')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]},...(response.behavior==='allow'?{tool_use_result:response.updatedInput}:{})},'answer'));
    out({type:'assistant',message:{content:[{type:'text',text:'Принято.'}]}});out({type:'result',subtype:'success'});
   }
  });

@@ -78,7 +78,9 @@ test('changing rule source requires matching checker update',t=>{
  assert.equal(checkTrace({host:'codex',trace:write(codexRows()),expectedWindows:[codexExpected],rulesRoot:root,excerpt:true}).status,'unverified');
 });
 test('usage metadata after Codex completion does not create a false incomplete trace',t=>{
- const write=scratch(t),rows=codexRows();rows.push({type:'event_msg',payload:{type:'task_complete'}},{type:'event_msg',payload:{type:'token_count',info:{}}});
+ const write=scratch(t),rows=codexRows();
+ const answer=JSON.parse(fs.readFileSync(`${base}/codex/recommended.json`)).answerAsUserMessage;
+ rows.push({type:'response_item',payload:{type:'message',role:'user',content:answer}},{type:'event_msg',payload:{type:'task_complete'}},{type:'event_msg',payload:{type:'token_count',info:{}}});
  assert.equal(checkTrace({host:'codex',trace:write(rows),expectedWindows:[codexExpected]}).status,'passed');
  rows.push({type:'event_msg',payload:{type:'task_started'}});assert.equal(checkTrace({host:'codex',trace:write(rows),expectedWindows:[codexExpected]}).status,'unverified');
 });

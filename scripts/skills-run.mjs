@@ -187,13 +187,13 @@ export async function runCodex(request){
     if(!confirmed)throw new MissingEvidence('workspace not confirmed before stage');
     let rows=await turn(request.scenario.prompt+'\nДля аудита передавай аргументы tools.exec_command полным JSON-объектом с двойными кавычками. Не используй вычисляемые команды или spread.');
     for(let n=0;n<(request.maxTurns??32);n++){
-      const windows=codexWindows(rows,rollout).filter(w=>!seen.has(w.callId));
+      const windows=codexWindows(rows,rollout,{phase:'card'}).filter(w=>!seen.has(w.callId));
       if(windows.length){
         const uncertain=windows.find(w=>!w.executionConfirmed);
         if(uncertain)throw new MissingEvidence(`${uncertain.evidence}: ${uncertain.reason}`);
         if(windows.length!==1)throw new Error('multiple unanswered windows in one turn');
         const window=windows[0],policy=request.scenario.windows[replies.length];
-        const checked=checkTrace({host:'codex',trace:rollout,expectedWindows:request.scenario.expectedWindows.slice(0,replies.length+1),rulesRoot:request.rulesRoot});
+        const checked=checkTrace({host:'codex',trace:rollout,expectedWindows:request.scenario.expectedWindows.slice(0,replies.length+1),rulesRoot:request.rulesRoot,phase:'card'});
         if(checked.status!=='passed')throw new Error('window/summary check failed before reply');
         const reply=windowReply('codex',{questions:window.questions},policy,window.callId);
         fs.appendFileSync(sent,JSON.stringify({thread,prompt:reply})+'\n');

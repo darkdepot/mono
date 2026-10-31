@@ -4,8 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { probeClaude } from './skills-probe.mjs';
+import { probeClaude as readProbe } from './skills-probe.mjs';
 
+// These legacy probe fixtures deliberately check only current-turn text.
+// Complete execution and delivery are covered by the shared equality table.
+const probeClaude=file=>readProbe(file,{phase:'excerpt'});
 const samples = 'evals/scenarios/probe/samples';
 const fixture = (host, name) => `${samples}/${host}/${name}.json`;
 const read = (host, name) => JSON.parse(fs.readFileSync(fixture(host, name), 'utf8'));
@@ -21,7 +24,7 @@ function scratch(t) {
     return file;
   };
 }
-const cli = file => spawnSync(process.execPath, ['scripts/skills-probe.mjs', file], { encoding: 'utf8' });
+const cli = file => spawnSync(process.execPath, ['scripts/skills-probe.mjs', file, '--excerpt'], { encoding: 'utf8' });
 
 test('recorded v0.38.1 defect fails at the original window line; fixed control passes', () => {
   const bad = probeClaude(fixture('claude', 'trace-defect-v0.38.1-approval'));

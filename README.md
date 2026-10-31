@@ -1641,6 +1641,8 @@ workspace name is not proof. Reply delivery also needs the observed host receipt
 all native proof consumers share one gate that checks linkage and every envelope
 layer. Its positive corpus test covers all recorded host trace/sample files,
 including the unchanged Claude call139/permission140, beside the negative table.
+Finished trace checks require both native window permission and delivered answers;
+pre-answer card checks and explicitly narrow excerpts name their phase.
 Every behavioral trace entry uses the same closed audit and proof gate; an
 online/offline table checks matching verdicts for identical host traces. Entry
 roles and partial-trace limits are listed in the skill QA reference. Missing, unknown or failed evidence is `unverified`; the captured Claude

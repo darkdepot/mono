@@ -234,6 +234,40 @@ test('online and offline entry points agree on the same native traces in both ho
  assert.deepEqual(observations.map(r=>({...r,paths:r.expected})),observations);
 });
 
+// Synthetic proof gaps, beside the identical recorded-payload passing control.
+// Compare finished traces only with finished readers, and card/excerpt with the
+// same explicit phase; raw loaders and terminal predicates certify neither.
+test('shared equality table distinguishes finished full traces, excerpt probes and pre-answer cards',async t=>{
+ const {checkTrace,codexWindows}=await import('./skills-trace.mjs');
+ const {traceRows,claudeWindows,probeClaude}=await import('./skills-probe.mjs');
+ for(const host of ['claude','codex'])for(const mode of host==='claude'?['ok','missing-permission','unlinked-permission','errored-permission','unanswered']:['ok','window-missing-result','window-unlinked-result','window-error','unanswered']){
+  const request=setup(t,host,mode),online=await runScenario(request),trace=online.trace;
+  const rows=traceRows(trace,host).rows;
+  const helper=host==='claude'?claudeWindows:codexWindows;
+  const status=windows=>windows.some(w=>w.status==='unverified')?'unverified':windows.some(w=>w.status==='failed')?'failed':'passed';
+  const expected=mode==='ok'?'passed':'unverified';
+  const directRequest=setup(t,host,mode);fs.mkdirSync(directRequest.outputDir);
+  const direct=await (host==='claude'?runClaude:runCodex)(directRequest);
+  assert.deepEqual(traceRows(direct.trace,host).rows.map(r=>r.value),rows.map(r=>r.value),'same full trace for direct driver and wrapper');
+  const paths={online:online.status,direct:direct.status,helper:status(helper(rows,trace)),check:checkTrace({host,trace,expectedWindows:request.scenario.expectedWindows}).status};
+  if(host==='claude')paths.probe=probeClaude(trace).status;
+  assert.deepEqual(paths,Object.fromEntries(Object.keys(paths).map(k=>[k,expected])),`${host}/${mode}: full`);
+  for(const phase of ['excerpt','card']){
+   const narrow=mode==='ok'||mode==='unanswered'||(phase==='excerpt'&&host==='claude'&&mode==='missing-permission')?'passed':'unverified';
+   const checked=checkTrace({host,trace,expectedWindows:request.scenario.expectedWindows,...(phase==='excerpt'?{excerpt:true}:{phase})});
+   assert.equal(checked.status,narrow,`${host}/${mode}: ${phase} checker`);
+   assert.equal(status(helper(rows,trace,{phase})),narrow,`${host}/${mode}: ${phase} helper`);
+   if(host==='claude')assert.equal(probeClaude(trace,{phase}).status,narrow,`${host}/${mode}: ${phase} probe`);
+   if(phase==='excerpt'){
+    const cut=path.join(request.cwd,'explicit-excerpt.json');
+    fs.writeFileSync(cut,JSON.stringify({events:rows.map(r=>({line:r.line,event:r.value}))}));
+    assert.equal(checkTrace({host,trace:cut,expectedWindows:request.scenario.expectedWindows,excerpt:true}).status,narrow,`${host}/${mode}: explicit excerpt input`);
+    if(host==='claude')assert.equal(probeClaude(cut).status,narrow,`${host}/${mode}: excerpt probe input`);
+   }
+  }
+ }
+});
+
 test('persona model answers also use the shared native proof gate in both hosts',async t=>{
  for(const host of ['claude','codex']){
   const request=setup(t,host,'persona-error');fs.mkdirSync(request.outputDir);

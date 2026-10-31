@@ -15,7 +15,7 @@ export function codexItems(rows) {
   auditRows('codex',rows);
   return rows.filter(r => r.value?.type === 'response_item').map(r => ({ ...r, item: r.value.payload }));
 }
-export function codexWindows(rows, source) {
+export function codexWindows(rows, source, options) {
   const audit=auditRows('codex',rows);
   const items = codexItems(rows), windows = [], seen = new Set();
   for (const row of items) {
@@ -30,17 +30,15 @@ export function codexWindows(rows, source) {
     const end = following.find(r => (r.value.type === 'response_item' && r.value.payload?.type === 'message' && r.value.payload.role === 'user') ||
       (r.value.type === 'event_msg' && ['task_complete', 'task_started', 'turn_aborted'].includes(r.value.payload?.type)));
     const turn = items.filter(r => r.line > row.line && (!end || r.line < end.line));
-    const outputs = turn.filter(r => ['function_call_output','custom_tool_call_output'].includes(r.item.type) && r.item.call_id === p.call_id);
-    const output = outputs.length === 1 ? outputs[0] : null;
-    const proof = audit.proof({kind:'window',call:row.value,result:output?.value});
+    const proof = audit.windowProof(row.value,row.line,p.call_id,options);
     const args = proof.value;
     const executionConfirmed = proof.status === 'confirmed';
     const last = turn.at(-1);
     const summary = last?.item.type === 'message' && last.item.role === 'assistant' && last.item.phase === 'final_answer' ? textOf(last.item) : '';
     windows.push({ line: row.line, evidence: `${source}:${row.line}`, callId: p.call_id, questions: args?.questions ?? [],
-      executionConfirmed, resultEvidence: output ? `${source}:${output.line}` : null,
+      executionConfirmed, resultEvidence: proof.resultLine ? `${source}:${proof.resultLine}` : null,
       summary, summaryLine: last?.line, status: !executionConfirmed ? 'unverified' : visible(summary) ? 'passed' : 'failed',
-      reason: !executionConfirmed ? 'linked native accepted:true window result missing or unknown' : visible(summary) ? 'async summary is the last message' : 'async summary must be final and last; no calls after it' });
+      reason: !executionConfirmed ? 'linked native accepted:true window or delivered answer missing for this phase' : visible(summary) ? 'async summary is the last message' : 'async summary must be final and last; no calls after it' });
   }
   return windows;
 }
@@ -80,7 +78,7 @@ function cardIssues(host, questions, expected) {
   return issues;
 }
 
-export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, excerpt = false }) {
+export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, excerpt = false, phase = excerpt ? 'excerpt' : 'complete' }) {
   const windows = [], checks = [];
   try {
     const ruleSource = path.join(rulesRoot, 'references/owner-dialog.md');
@@ -90,7 +88,7 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
       !w?.id || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || !w.summary.length || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, decision, advice, reason and summary anchors');
     const { rows } = traceRows(trace,host);
     if (rows.some(r => !r.value || typeof r.value.type !== 'string')) throw new Error('invalid trace envelope');
-    const found = host === 'claude' ? claudeWindows(rows, trace) : codexWindows(rows, trace);
+    const found = host === 'claude' ? claudeWindows(rows, trace, {phase}) : codexWindows(rows, trace, {phase});
     let expectedIndex = 0;
     for (const [i, w] of found.entries()) {
       const expected = expectedWindows[expectedIndex];
@@ -129,12 +127,12 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
     const uncertain = found.find(w => w.status === 'unverified');
     if (expectedIndex > expectedWindows.length || (!uncertain && expectedIndex !== expectedWindows.length)) checks.push({ id:'expected-windows',status:'failed',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:`expected ${expectedWindows.length} real windows, found ${expectedIndex}; text is not a window` });
     if (uncertain) checks.push({ id:'expected-windows',status:'unverified',evidence:`${trace}:${uncertain.line}`,reason:`expected ${expectedWindows.length} real windows, confirmed ${expectedIndex}; successful native execution is not confirmed for every call` });
-    if (!excerpt) {
+    if (phase !== 'excerpt') {
       const complete = completedTrace(host, rows);
       if (!complete) checks.push({ id:'complete-trace',status:'unverified',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:'successful terminal event missing; cut trace is not proof' });
     }
     const status = [...windows,...checks].some(c => c.status === 'failed') ? 'failed' : [...windows,...checks].some(c => c.status === 'unverified') ? 'unverified' : 'passed';
-    return { host, status, trace, windows, checks, rules: { source:ruleSource, sha256:rulesDigest }, boundary:'mechanical checks only; conversation rubric still requires tester judgment' };
+    return { host, status, phase, trace, windows, checks, rules: { source:ruleSource, sha256:rulesDigest }, boundary:'mechanical checks only; conversation rubric still requires tester judgment' };
   } catch (error) { return {host,status:'unverified',trace,windows:[],checks,reason:error.message}; }
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -88,9 +88,9 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
       const c = native(call), r = native(result);
       if (kind === 'answer') {
         // The driver binds the newly resumed user message to its exact sent prompt.
-        if (!callId || typeof prompt !== 'string' || c?.type !== 'function_call' || c.name !== 'request_user_input_async' || c.call_id !== callId || r?.type !== 'message' || r.role !== 'user') absent();
+        if (!callId || (prompt !== undefined && typeof prompt !== 'string') || c?.type !== 'function_call' || c.name !== 'request_user_input_async' || c.call_id !== callId || r?.type !== 'message' || r.role !== 'user') absent();
         const content = at(r, ['content']);
-        if (!Array.isArray(content) || content.length !== 1 || at(content,[0]).type !== 'input_text' || at(content,[0,'text']) !== prompt) absent();
+        if (!Array.isArray(content) || content.length !== 1 || at(content,[0]).type !== 'input_text' || typeof at(content,[0,'text']) !== 'string' || (prompt !== undefined && at(content,[0,'text']) !== prompt)) absent();
         return {status:'confirmed'};
       }
       const outputType = c?.type === 'function_call' ? 'function_call_output' : c?.type === 'custom_tool_call' ? 'custom_tool_call_output' : null;
@@ -123,7 +123,17 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
       const r = claudeBlock(result,'tool_result',id);
       if (kind === 'workspace' && c.name !== proof?.tool) absent();
       if (kind === 'answer') {
-        if (c.name !== 'AskUserQuestion' || at(r,['content']) !== claudeAnswer(reply?.response?.response)) absent();
+        if(c.name !== 'AskUserQuestion') absent();
+        let sent=reply?.response?.response;
+        if(!reply){
+          // Recorded full Claude receipts include the answered input. Reuse the
+          // same exact receipt check as online delivery; do not parse prose.
+          const updatedInput=at(result,['tool_use_result']);
+          at(updatedInput,['answers']);
+          if(!isDeepStrictEqual(at(updatedInput,['questions']),c.input?.questions)) absent();
+          sent={behavior:'allow',updatedInput};
+        }
+        if(at(r,['content']) !== claudeAnswer(sent)) absent();
         return {status:'confirmed'};
       }
       if (kind === 'command') {
