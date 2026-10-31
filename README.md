@@ -1645,8 +1645,9 @@ live host proof from the orchestrator; it is not a QA certificate.
 The Codex audit accepts a closed list of native item types; unknown kinds and
 escaped exec source are `unverified`. It supplies execution evidence for the
 tester, without acting as a security boundary against hostile skills. The strict
-workspace-read form applies only to the first read, and nested result errors
-cannot confirm it. A depersonalized native `input_text` probe cut guards decoding.
+workspace-read form applies only to the first read, and result errors on any
+ancestor of the proof path cannot confirm it. A depersonalized native `input_text`
+probe cut guards decoding and error propagation.
 Scratch validation copies include the scout-hook template. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
 Use focused checks while editing:

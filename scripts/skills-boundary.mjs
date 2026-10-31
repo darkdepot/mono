@@ -40,10 +40,10 @@ export function workspaceEvidence(result, proof) {
   let value = decodeResult(result);
   if (value?.is_error || value?.isError) return 'missing';
   for (const key of proof.path) {
-    if (value == null || !Object.hasOwn(Object(value), key)) return 'missing';
+    if (value?.is_error || value?.isError || value == null || !Object.hasOwn(Object(value), key)) return 'missing';
     value = value[key];
   }
-  if (value === undefined) return 'missing';
+  if (value?.is_error || value?.isError || value === undefined) return 'missing';
   return value === proof.equals ? 'confirmed' : 'mismatch';
 }
 export function workspaceMatches(result, proof) {

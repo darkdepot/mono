@@ -134,6 +134,25 @@ test('native input_text probe cut decodes successfully and every error unwrap re
  }
  for(const mode of ['native-input-text','nested-error-proof']){const r=await runScenario(setup(t,'codex',mode));assert.equal(r.status,mode==='native-input-text'?'passed':'unverified',JSON.stringify(r));}
 });
+test('native workspace proof rejects an error on every path ancestor and preserves its passing control',async t=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/workspace-input-text.json')));
+ const proof={path:['result','value','content',0,'text'],equals:JSON.stringify({id:'workspace-test',name:'Test Space',url:'https://example.test/workspace'})};
+ const value=JSON.parse(sample.output[0].text);
+ const wrappers=[v=>[{type:'input_text',text:JSON.stringify(v)}],v=>({structuredContent:v}),v=>({content:JSON.stringify(v)}),v=>({content:[{type:'text',text:JSON.stringify(v)}]})];
+ for(const wrap of wrappers){
+  assert.equal(workspaceEvidence(wrap(value),proof),'confirmed');
+  for(const path of [[],['result'],['result','value'],['result','value','content',0]])for(const flag of ['isError','is_error']){
+   const errored=structuredClone(value);let ancestor=errored;for(const key of path)ancestor=ancestor[key];ancestor[flag]=true;
+   assert.equal(workspaceEvidence(wrap(errored),proof),'missing',JSON.stringify({path,flag}));
+  }
+ }
+ const leaf={isError:true};assert.equal(workspaceEvidence({leaf},{path:['leaf'],equals:leaf}),'missing');
+ for(const mode of ['native-probe-proof','native-probe-error']){
+  const request=setup(t,'codex',mode);request.workspaceProof={...request.workspaceProof,...proof};
+  const r=await runScenario(request);assert.equal(r.status,mode==='native-probe-proof'?'passed':'unverified',JSON.stringify(r));
+  if(mode==='native-probe-error'){assert.equal(r.confirmed,false);assert.equal(r.replies.length,0);}
+ }
+});
 test('Claude failed or different answer receipts remain unverified next to the successful control',async t=>{
  for(const mode of ['ok','error-answer','wrong-answer']){
   const r=await runScenario(setup(t,'claude',mode));assert.equal(r.status,mode==='ok'?'passed':'unverified',JSON.stringify(r));assert.equal(r.replies[0].received,mode==='ok');
