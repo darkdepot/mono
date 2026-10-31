@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
-import { windowReply, claudeReplyDelivered } from './skills-owner.mjs';
+import { windowReply } from './skills-owner.mjs';
+import { nativeProof } from './skills-proof.mjs';
+function claudeReplyDelivered(block,reply){
+ const callId='window',call={type:'assistant',message:{content:[{type:'tool_use',id:callId,name:'AskUserQuestion'}]}},result={type:'user',message:{content:[{...block,tool_use_id:callId}]}};
+ return nativeProof({host:'claude',kind:'answer',call,result,callId,reply}).status==='confirmed';
+}
 const read = (host, name) => JSON.parse(fs.readFileSync(`evals/scenarios/probe/samples/${host}/${name}.json`));
 const policies = { recommended: {mode:'recommended'}, label:{mode:'label',label:'Зелёный'}, correction:{mode:'correction',text:'Синий, но светлее'}, empty:{mode:'empty'}, refuse:{mode:'refuse',text:'Не буду отвечать на этот вопрос.'}, discuss:{mode:'discuss'} };
 for (const host of ['claude','codex']) for (const [name, policy] of Object.entries(policies)) test(`${host} ${name} reply matches captured transport`, () => {
@@ -18,7 +23,7 @@ test('unknown label and missing deterministic answer are refused instead of gues
 
 for(const name of Object.keys(policies))test(`Claude ${name} delivery requires its captured successful receipt`,()=>{
  const sample=read('claude',name);
- assert.equal(claudeReplyDelivered(sample.toolResult,sample.response),true);
+ assert.equal(claudeReplyDelivered(sample.toolResult,sample.response),name!=='refuse');
  assert.equal(claudeReplyDelivered({...sample.toolResult,content:'unrelated answer'},sample.response),false);
  assert.equal(claudeReplyDelivered({...sample.toolResult,is_error:name==='refuse'?false:true},sample.response),false);
 });

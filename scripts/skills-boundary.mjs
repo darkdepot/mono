@@ -22,33 +22,7 @@ export function privateCodexHome(home, authFile, servers) {
   }
   fs.writeFileSync(path.join(home,'config.toml'),config);
 }
-export function decodeResult(value) {
-  if(typeof value==='string'){try{return decodeResult(JSON.parse(value));}catch{return value;}}
-  // Keep a failed envelope intact before unwrapping any of its payloads.
-  if(value?.isError || value?.is_error)return value;
-  if(typeof value?.content==='string')return decodeResult(value.content);
-  if(value?.structuredContent)return decodeResult(value.structuredContent);
-  if(Array.isArray(value?.content)&&value.content.length===1)return decodeResult(value.content);
-  if(Array.isArray(value)&&value.length===1&&['text','input_text'].includes(value[0]?.type))return decodeResult(value[0]);
-  if(['text','input_text'].includes(value?.type)&&typeof value.text==='string')return decodeResult(value.text);
-  return value;
-}
 export class MissingEvidence extends Error {}
-
-export function workspaceEvidence(result, proof) {
-  if (result?.is_error || result?.isError) return 'missing';
-  let value = decodeResult(result);
-  if (value?.is_error || value?.isError) return 'missing';
-  for (const key of proof.path) {
-    if (value?.is_error || value?.isError || value == null || !Object.hasOwn(Object(value), key)) return 'missing';
-    value = value[key];
-  }
-  if (value?.is_error || value?.isError || value === undefined) return 'missing';
-  return value === proof.equals ? 'confirmed' : 'mismatch';
-}
-export function workspaceMatches(result, proof) {
-  return workspaceEvidence(result, proof) === 'confirmed';
-}
 
 // The driver prescribes this closed form for the probe's tools/exec route.
 // Merely mentioning a tool in other JavaScript cannot establish a read.

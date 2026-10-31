@@ -4,7 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { runScenario, runPersona } from './skills-run.mjs';
-import { privateCodexHome, codexToolCalls, toolViolation, workspaceEvidence, MissingEvidence } from './skills-boundary.mjs';
+import { privateCodexHome, codexToolCalls, toolViolation, MissingEvidence } from './skills-boundary.mjs';
+import { nativeProof } from './skills-proof.mjs';
+// Synthetic native linkage around the recorded payload cuts.
+function workspaceEvidence(output,proof){
+ const call={type:'function_call',call_id:'read',name:'exec'},result={type:'function_call_output',call_id:'read',output};
+ const status=nativeProof({host:'codex',kind:'workspace',call,result,proof}).status;
+ return status==='unverified'?'missing':status;
+}
 const repo=process.cwd();
 function setup(t,host,mode='ok'){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'skills-run-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -48,7 +55,7 @@ test('Codex home refuses reuse and foreign servers; exec audit sees actual tool 
 
 for(const host of ['claude','codex'])test(`${host}: all six scenario policies and explicit free question use the child transport`,async t=>{
  for(const policy of [{mode:'recommended'},{mode:'label',label:'Утвердить, продолжу позже'},{mode:'correction',text:'Поправь описание.'},{mode:'empty'},{mode:'refuse',text:'Не буду отвечать на этот вопрос.'},{mode:'discuss'}]){
-  const request=setup(t,host);request.scenario.windows=[policy];const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies[0].policy,policy.mode);
+  const request=setup(t,host);request.scenario.windows=[policy];const r=await runScenario(request);assert.equal(r.status,host==='claude'&&policy.mode==='refuse'?'unverified':'passed',JSON.stringify(r));assert.equal(r.replies[0].policy,policy.mode);
  }
  const request=setup(t,host,'free');request.scenario.freeQuestions=[{contains:'Какой цвет предпочитаешь?'}];const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.ok(fs.existsSync(path.join(request.outputDir,'persona-0/trace.jsonl')));assert.ok(!fs.existsSync(path.join(request.outputDir,'persona-1')));
 });
@@ -163,4 +170,20 @@ test('Claude failed or different answer receipts remain unverified next to the s
   const r=await runScenario(setup(t,'claude',mode));assert.equal(r.status,mode==='ok'?'passed':'unverified',JSON.stringify(r));assert.equal(r.replies[0].received,mode==='ok');
  }
  const request=setup(t,'claude','wrong-refusal');request.scenario.windows=[{mode:'refuse',text:'Не буду отвечать на этот вопрос.'}];assert.equal((await runScenario(request)).status,'unverified');
+});
+
+// Synthetic mutations of native controls; no refusal/error shape is claimed observed.
+test('shared proof gate: every consumer rejects the same synthetic envelope errors',async t=>{
+ for(const host of ['claude','codex'])for(const consumer of ['workspace','command','answer','window'])for(const shape of host==='codex'&&consumer==='workspace'?['function','custom']:['function'])for(const flag of ['isError','is_error'])for(const layer of ['outer','native']){
+  const request=setup(t,host,`proof-${consumer}-${shape}-${flag}-${layer}`);
+  request.scenario.allowedTools.push('Bash','exec_command');request.scenario.allowedCommands=['pwd'];
+  const r=await runScenario(request);assert.equal(r.status,'unverified',JSON.stringify({host,consumer,shape,flag,layer,r}));
+ }
+});
+
+test('linked successful command controls remain green through the shared gate',async t=>{
+ for(const host of ['claude','codex'])for(const mode of host==='codex'?['command-ok','custom-command-ok']:['command-ok']){
+  const request=setup(t,host,mode);request.scenario.allowedTools.push('Bash','exec_command');request.scenario.allowedCommands=['pwd'];
+  const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));
+ }
 });

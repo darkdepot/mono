@@ -5,6 +5,18 @@ import readline from 'node:readline';
 const [mode,repo,...args]=process.argv.slice(2);
 const home=process.env.CODEX_HOME;
 fs.appendFileSync(path.join(process.cwd(),'invocations.jsonl'),JSON.stringify({args,home})+'\n');
+// proof-* modes are synthetic negative mutations, never observed host samples.
+const mutation=/^proof-(workspace|command|answer|window)-(function|custom)-(isError|is_error)-(outer|native|body)$/.exec(mode);
+function perturb(e,consumer){
+ if(!mutation||mutation[1]!==consumer)return e;
+ const [, , ,flag,layer]=mutation;
+ const native=e.type==='response_item'?e.payload:e.type==='user'?e.message.content[0]:e.type==='control_request'?e.request:e;
+ if(layer==='outer')e[flag]=true;
+ else if(layer==='native')native[flag]=true;
+ else if(typeof native.output==='string'){const body=JSON.parse(native.output);body[flag]=true;native.output=JSON.stringify(body);}
+ else if(typeof native.content==='string'){native.content=JSON.stringify({[flag]:true,content:native.content});}
+ return e;
+}
 const out=e=>process.stdout.write(JSON.stringify(e)+'\n');
 const sample=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/claude/trace-control-v0.41.0-approval.json')));
 const summary=sample.events.find(r=>r.line===138).event;
@@ -20,10 +32,14 @@ else if(args[0]==='exec'){
  const file=path.join(home,'sessions','rollout-synthetic-thread.jsonl');fs.mkdirSync(path.dirname(file),{recursive:true});
  const rows=fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').map(l=>JSON.parse(l)):[];
  const prompt=args.at(-1),fresh=[];
- const item=payload=>fresh.push({type:'response_item',payload});
+ const item=payload=>{
+ let consumer=payload.call_id==='read'&&payload.type.endsWith('_output')?'workspace':payload.call_id==='command'&&payload.type.endsWith('_output')?'command':payload.call_id==='window-1'&&payload.type.endsWith('_output')?'window':payload.role==='user'?'answer':null;
+ if(mutation?.[2]==='custom'&&consumer==='workspace')payload.type='custom_tool_call_output';
+ fresh.push(perturb({type:'response_item',payload},consumer));
+};
  if(!rows.length){
   const code=mode==='comment-proof'?'/* tools.mcp__monotest__get_workspace({}) */ text({"name":"Test Space"});':mode==='string-proof'?'text("tools.mcp__monotest__get_workspace({})"); text({"name":"Test Space"});':'const r = await tools.mcp__monotest__get_workspace({}); text(r);';
-  item(mode==='custom-proof'?{type:'custom_tool_call',name:'exec',call_id:'read',input:code}:{type:'function_call',name:'exec',call_id:'read',arguments:code,...(mode==='conflicting-proof-fields'?{input:'text({"name":"Test Space"});'}:{})});
+  item((mode==='custom-proof'||mutation?.[2]==='custom')?{type:'custom_tool_call',name:'exec',call_id:'read',input:code}:{type:'function_call',name:'exec',call_id:'read',arguments:code,...(mode==='conflicting-proof-fields'?{input:'text({"name":"Test Space"});'}:{})});
   if(mode!=='missing-proof-result')item({type:mode==='custom-proof'?'custom_tool_call_output':'function_call_output',call_id:mode==='unlinked-proof'?'other-read':'read',output:mode==='native-input-text'?[{type:'input_text',text:JSON.stringify(proof)}]:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:mode==='errored-proof'?{isError:true,name:'Test Space'}:mode==='nested-error-proof'?{content:JSON.stringify({isError:true,structuredContent:proof})}:proof)});
   if(['native-probe-proof','native-probe-error'].includes(mode)){
    const sample=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/workspace-input-text.json')));
@@ -36,6 +52,11 @@ else if(args[0]==='exec'){
   if(mode==='unicode-exec')item({type:'custom_tool_call',name:'exec',call_id:'escaped',input:String.raw`await \u{74}ools.exec_command({"cmd":"uname -a"}); text(await tools.mcp__monotest__get_workspace({}));`});
   if(mode==='native-web-search')item({type:'web_search_call',id:'search'});
   if(mode==='unknown-native-item')item({type:'future_item'});
+  if(mutation?.[1]==='command'||['command-ok','custom-command-ok'].includes(mode)){
+   const custom=mutation?.[2]==='custom'||mode==='custom-command-ok';
+   item({type:custom?'custom_tool_call':'function_call',name:'exec_command',call_id:'command',[custom?'input':'arguments']:'{"cmd":"pwd"}'});
+   item({type:custom?'custom_tool_call_output':'function_call_output',call_id:'command',output:'{"exit_code":0,"output":"/scratch"}'});
+  }
   if(mode==='later-read')item({type:'custom_tool_call',name:'exec',call_id:'later-read',input:'text(await tools.mcp__monotest__get_workspace({}));'});
   if(mode==='linear')item({type:'custom_tool_call',name:'exec',call_id:'bad',input:'await tools.mcp__linear__save_project({});'});
   const async=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/trace-control-v0.41.0-async-order.json'))).items;
@@ -63,7 +84,7 @@ else if(args[0]==='exec'){
   if(m.type==='user'&&!stage){
    stage=true;
    out({type:'assistant',message:{content:[{type:'tool_use',id:'read',name:'mcp__monotest__get_workspace',input:{}}]}});
-   if(mode!=='missing-proof-result')out({type:'user',message:{content:[{type:'tool_result',tool_use_id:mode==='unlinked-proof'?'other-read':'read',content:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:proof),...(mode==='errored-proof'?{is_error:true}:{})}]}});
+   if(mode!=='missing-proof-result')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:mode==='unlinked-proof'?'other-read':'read',content:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:proof),...(mode==='errored-proof'?{is_error:true}:{})}]}},'workspace'));
    out({type:'result',subtype:'success'});
   }else if(m.type==='user'){
    if(mode==='free'&&!free){free=true;
@@ -74,10 +95,14 @@ else if(args[0]==='exec'){
    }
    if(mode==='cut'){process.stdout.write('{"type":');process.exit(0);}
    if(mode==='child')out({type:'result',subtype:'error_during_execution',is_error:true,parent_tool_use_id:'child'});
+   if(mutation?.[1]==='command'||['command-ok','custom-command-ok'].includes(mode)){
+    out({type:'assistant',message:{content:[{type:'tool_use',id:'command',name:'Bash',input:{command:'pwd'}}]}});
+    out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'command',content:'/scratch'}]}},'command'));
+   }
    out(summary);
    if(mode==='missing'){out({type:'result',subtype:'success'});return;}
    out(window);
-   out({type:'control_request',request_id:'request-window',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions}}});
+   out(perturb({type:'control_request',request_id:'request-window',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions}}},'window'));
   }else if(m.type==='control_response'){
    if(m.response.request_id==='blocked'){
     if(m.response.response.behavior!=='deny')fs.writeFileSync(path.join(path.dirname(process.argv[1]),'forbidden-write'),'executed');
@@ -94,7 +119,7 @@ else if(args[0]==='exec'){
    }
    if(mode==='error-answer')receipt.is_error=true;
    if(mode==='wrong-answer'||mode==='wrong-refusal')receipt.content='Different or failed answer';
-   if(mode!=='unanswered')out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]}});
+   if(mode!=='unanswered')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]}},'answer'));
    out({type:'assistant',message:{content:[{type:'text',text:'Принято.'}]}});out({type:'result',subtype:'success'});
   }
  });

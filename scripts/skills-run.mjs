@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { nativeProof } from './skills-proof.mjs';
 import { hostProcess } from './skills-process.mjs';
-import { windowReply, personaPrompt, claudeReplyDelivered } from './skills-owner.mjs';
+import { windowReply, personaPrompt } from './skills-owner.mjs';
 import { checkTrace, codexItems, codexWindows, visible, completedTrace } from './skills-trace.mjs';
 import { traceRows } from './skills-probe.mjs';
-import { mcpConfig, privateCodexHome, toolViolation, workspaceEvidence, workspaceReadCall, workspaceReadCode, MissingEvidence, codexToolCalls, isWrite } from './skills-boundary.mjs';
+import { mcpConfig, privateCodexHome, toolViolation, workspaceReadCall, workspaceReadCode, MissingEvidence, codexToolCalls, isWrite } from './skills-boundary.mjs';
 
 const userMessage = text => ({type:'user',message:{role:'user',content:[{type:'text',text}]},parent_tool_use_id:null,session_id:''});
 const pause = ms => new Promise(resolve=>setTimeout(resolve,ms));
@@ -39,7 +40,7 @@ export async function runPersona(request,lastMessage,index){
     onEvent:e=>{if(request.host==='claude'){if((e.message?.content??[]).some?.(b=>b.type==='tool_use'))tool=true;if(e.type==='assistant')answer=ownerText(e)||answer;}
       else{if(e.type==='item.completed'&&e.item?.type==='agent_message')answer=e.item.text;if(e.type.startsWith('item.')&&e.item?.type&&!['agent_message','reasoning'].includes(e.item.type))tool=true;}}});
   const last=traceRows(trace).rows.at(-1)?.value;
-  const complete=request.host==='claude'?last?.type==='result'&&last.subtype==='success'&&!last.is_error:last?.type==='turn.completed';
+  const complete=nativeProof({host:request.host,kind:'terminal',result:last}).status==='confirmed';
   if(result.code!==0||result.failure||tool||!visible(answer)||!complete)throw new Error(`persona not verified without tools: ${result.failure??(tool?'tool call observed':'missing successful answer')}`);
   return answer;
 }
@@ -59,24 +60,23 @@ export async function runClaude(request){
       if(e.type==='assistant'){
         if(!e.parent_tool_use_id){waiting=false;lastMessage=ownerText(e)||lastMessage;}
         for(const b of e.message?.content??[])if(b.type==='tool_use'){
-          if(!e.parent_tool_use_id)calls.set(b.id,b.name);
+          if(!e.parent_tool_use_id)calls.set(b.id,{event:e,block:b});
           if(b.name==='AskUserQuestion'&&!e.parent_tool_use_id)pendingWindows.push(b.id);
           if(b.name!=='AskUserQuestion'){const reason=toolViolation(b.name,b.input,request.scenario,confirmed);if(reason)return fail(reason,c);}
         }
       }
       if(e.type==='user'&&!e.parent_tool_use_id&&Array.isArray(e.message?.content))for(const b of e.message.content){
         if(b.type==='tool_result'){
-          const reply=replies.find(r=>r.callId===b.tool_use_id);
-          if(reply){
-            if(!claudeReplyDelivered(b,receipts.get(reply.callId)))return missing('successful window reply delivery not established',c);
-            reply.received=true;
+          const call=calls.get(b.tool_use_id),reply=replies.find(r=>r.callId===b.tool_use_id);
+          const kind=reply?'answer':call?.block.name===request.workspaceProof.tool?'workspace':call?.block.name==='Bash'?'command':null;
+          if(kind){
+            const evidence=nativeProof({host:'claude',kind,call:call?.event,result:e,callId:b.tool_use_id,proof:request.workspaceProof,reply:receipts.get(b.tool_use_id)});
+            if(evidence.status==='unverified')return missing(`successful ${kind} result missing`,c);
+            if(evidence.status==='mismatch')return fail('monotest workspace read did not match proof',c);
+            if(kind==='workspace')confirmed=true;
+            if(reply)reply.received=true;
+            if(kind==='command')calls.delete(b.tool_use_id);
           }
-        }
-        if(b.type==='tool_result'&&calls.get(b.tool_use_id)===request.workspaceProof.tool){
-          const evidence=workspaceEvidence(b,request.workspaceProof);
-          if(evidence==='missing')return missing('successful workspace read result missing',c);
-          if(evidence==='mismatch')return fail('monotest workspace read did not match proof',c);
-          confirmed=true;
         }
       }
       if(e.type==='control_request'&&e.request?.subtype==='can_use_tool'){
@@ -88,6 +88,7 @@ export async function runClaude(request){
           if(!policy){deny(e,'scenario window policy missing',c);return fail('unexpected window',c);}
           const callId=pendingWindows.shift();
           if(!callId){deny(e,'window tool use missing from trace',c);return fail('unobserved window request',c);}
+          if(nativeProof({host:'claude',kind:'window',call:calls.get(callId)?.event,result:e,callId}).status!=='confirmed')return missing('native window acceptance missing',c);
           const reply=windowReply('claude',input,policy,e.request_id);
           receipts.set(callId,reply);c.send(reply);replies.push({index:replies.length,requestId:e.request_id,callId,policy:policy.mode,replySent:true,received:false});
         }else{
@@ -97,7 +98,8 @@ export async function runClaude(request){
         }
       }
       if(e.type==='result'&&!e.parent_tool_use_id){
-        if(e.is_error||e.subtype!=='success')return fail('Claude result failed',c);
+        if(nativeProof({host:'claude',kind:'terminal',result:e}).status!=='confirmed')return missing('successful Claude terminal result missing',c);
+        if([...calls.values()].some(call=>call.block.name==='Bash'))return missing('successful command result missing',c);
         if(phase==='confirm'){
           if(!confirmed)return missing('workspace not confirmed before stage',c);
           phase='stage';lastMessage='';c.send(userMessage(request.scenario.prompt));
@@ -131,7 +133,7 @@ export async function runCodex(request){
     if(result.status!==0||result.error)throw new Error('Codex local pack setup failed');
   }
   let thread=null,rollout=null,confirmed=false,violation=null,seenLines=0,freeIndex=0;
-  const replies=[],seen=new Set(),deadline=Date.now()+(request.timeoutMs??1_200_000),readCalls=new Map();
+  const replies=[],seen=new Set(),deadline=Date.now()+(request.timeoutMs??1_200_000),proofCalls=new Map();
   const stdout=path.join(request.outputDir,'stdout.jsonl'),sent=path.join(request.outputDir,'sent.jsonl');fs.writeFileSync(stdout,'');fs.writeFileSync(sent,'');
   let processResult;
   const turn=async(prompt,confirm=false,replyRecord=null)=>{
@@ -143,7 +145,7 @@ export async function runCodex(request){
     const {rows}=traceRows(rollout);
     const fresh=rows.filter(r=>r.line>seenLines);seenLines=rows.at(-1)?.line??0;
     if(replyRecord){
-      replyRecord.received=fresh.some(r=>r.value.type==='response_item'&&r.value.payload?.type==='message'&&r.value.payload.role==='user'&&(r.value.payload.content??[]).some(b=>b.type==='input_text'&&b.text===prompt));
+      replyRecord.received=fresh.some(r=>nativeProof({host:'codex',kind:'answer',call:replyRecord.nativeCall,result:r.value,callId:replyRecord.callId,prompt}).status==='confirmed');
       if(!replyRecord.received)throw new MissingEvidence('window reply not observed in resumed rollout');
     }
     for(const r of fresh){
@@ -155,18 +157,23 @@ export async function runCodex(request){
         if(reason){violation=`${rollout}:${r.line}: ${reason}`;throw new Error(violation);}
         if(confirm&&call.name===request.workspaceProof.tool){
           if(!workspaceReadCall(p,request.workspaceProof))throw new MissingEvidence(`${rollout}:${r.line}: exec does not establish an executed workspace read`);
-          if(readCalls.has(call.callId))throw new MissingEvidence('duplicate workspace read call id');
-          readCalls.set(call.callId,p.type==='custom_tool_call'?'custom_tool_call_output':'function_call_output');
+          if(proofCalls.has(call.callId))throw new MissingEvidence('duplicate workspace read call id');
+          proofCalls.set(call.callId,{kind:'workspace',call:e});
+        }else if(call.name==='exec_command'){
+          if(proofCalls.has(call.callId))throw new MissingEvidence('ambiguous command result');
+          proofCalls.set(call.callId,{kind:'command',call:e});
         }
       }
-      if(p&&readCalls.has(p.call_id)&&readCalls.get(p.call_id)===p.type){
-        readCalls.delete(p.call_id);
-        const evidence=workspaceEvidence(p.output,request.workspaceProof);
-        if(evidence==='missing')throw new MissingEvidence(`${rollout}:${r.line}: successful workspace read result missing`);
-        if(evidence==='mismatch')throw new Error('monotest workspace read did not match proof');
-        confirmed=true;
+      if(p&&proofCalls.has(p.call_id)&&['function_call_output','custom_tool_call_output'].includes(p.type)){
+        const pending=proofCalls.get(p.call_id);
+        const evidence=nativeProof({host:'codex',kind:pending.kind,call:pending.call,result:e,proof:request.workspaceProof});
+        if(evidence.status==='unverified')throw new MissingEvidence(`${rollout}:${r.line}: successful ${pending.kind} result missing`);
+        if(evidence.status==='mismatch')throw new Error('monotest workspace read did not match proof');
+        if(pending.kind==='workspace')confirmed=true;
+        proofCalls.delete(p.call_id);
       }
     }
+    if(proofCalls.size)throw new MissingEvidence('linked native result missing');
     if(!completedTrace('codex', rows))throw new Error('Codex rollout incomplete');
     return rows;
   };
@@ -185,7 +192,7 @@ export async function runCodex(request){
         if(checked.status!=='passed')throw new Error('window/summary check failed before reply');
         const reply=windowReply('codex',{questions:window.questions},policy,window.callId);
         fs.appendFileSync(sent,JSON.stringify({thread,prompt:reply})+'\n');
-        seen.add(window.callId);replies.push({index:replies.length,callId:window.callId,policy:policy.mode,replySent:true,received:false,...(['empty','refuse'].includes(policy.mode)?{note:'Codex CLI form observed; app empty/refusal form not observed'}:{})});
+        seen.add(window.callId);replies.push({index:replies.length,callId:window.callId,policy:policy.mode,replySent:true,received:false,nativeCall:rows.find(r=>r.value.payload?.call_id===window.callId)?.value,...(['empty','refuse'].includes(policy.mode)?{note:'Codex CLI form observed; app empty/refusal form not observed'}:{})});
         rows=await turn(reply,false,replies.at(-1));continue;
       }
       const last=codexItems(rows).filter(r=>r.item?.type==='message'&&r.item.role==='assistant').at(-1)?.item;

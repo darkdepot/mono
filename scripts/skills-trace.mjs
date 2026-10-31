@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { nativeProof } from './skills-proof.mjs';
 import { claudeWindows, traceRows, visibleText } from './skills-probe.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -29,13 +30,9 @@ export function codexWindows(rows, source) {
     const turn = items.filter(r => r.line > row.line && (!end || r.line < end.line));
     const outputs = turn.filter(r => ['function_call_output','custom_tool_call_output'].includes(r.item.type) && r.item.call_id === p.call_id);
     const output = outputs.length === 1 ? outputs[0] : null;
-    let args, accepted;
-    try { args = JSON.parse(p.arguments); } catch { args = null; }
-    try { accepted = typeof output?.item.output === 'string' ? JSON.parse(output.item.output) : null; } catch { accepted = null; }
-    // Only the recorded native success body establishes that a window appeared.
-    const executionConfirmed = p.type === 'function_call' && output?.item.type === 'function_call_output' &&
-      !output.item.isError && !output.item.is_error && accepted?.accepted === true && Object.keys(accepted).length === 1 &&
-      Array.isArray(args?.questions) && args.questions.length > 0;
+    const proof = nativeProof({host:'codex',kind:'window',call:row.value,result:output?.value});
+    const args = proof.value;
+    const executionConfirmed = proof.status === 'confirmed';
     const last = turn.at(-1);
     const summary = last?.item.type === 'message' && last.item.role === 'assistant' && last.item.phase === 'final_answer' ? textOf(last.item) : '';
     windows.push({ line: row.line, evidence: `${source}:${row.line}`, callId: p.call_id, questions: args?.questions ?? [],
@@ -50,11 +47,11 @@ export function codexWindows(rows, source) {
 export function completedTrace(host, rows) {
   if (host === 'claude') {
     const last = rows.filter(r => !r.value.parent_tool_use_id).at(-1)?.value;
-    return !last?.parent_tool_use_id && last?.type === 'result' && last.subtype === 'success' && last.is_error !== true;
+    return nativeProof({host,kind:'terminal',result:last}).status === 'confirmed';
   }
   const last = rows.filter(r => r.value.type === 'response_item' ||
     (r.value.type === 'event_msg' && ['task_complete','task_started','turn_aborted','error'].includes(r.value.payload?.type))).at(-1)?.value;
-  return last?.type === 'event_msg' && last.payload?.type === 'task_complete';
+  return nativeProof({host,kind:'terminal',result:last}).status === 'confirmed';
 }
 
 function cardIssues(host, questions, expected) {
