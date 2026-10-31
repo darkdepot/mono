@@ -187,3 +187,20 @@ test('linked successful command controls remain green through the shared gate',a
   const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));
  }
 });
+
+test('Codex missing final proof is unverified rather than a violation',async t=>{
+ const r=await runScenario(setup(t,'codex','cut'));
+ assert.equal(r.status,'unverified',JSON.stringify(r));assert.equal(r.violation,null);assert.match(r.evidenceMissing,/incomplete/);
+});
+
+test('Claude recorded native window and successful JSON stdout pass end to end',async t=>{
+ for(const mode of ['recorded-window','command-json']){
+  const request=setup(t,'claude',mode);request.scenario.allowedTools.push('Bash');request.scenario.allowedCommands=['pwd'];
+  const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies[0].received,true);
+ }
+});
+test('Codex error-marked terminal proof is unverified for either native flag',async t=>{
+ for(const mode of ['terminal-isError','terminal-is_error']){
+  const r=await runScenario(setup(t,'codex',mode));assert.equal(r.status,'unverified',JSON.stringify(r));assert.equal(r.violation,null);assert.match(r.evidenceMissing,/incomplete/);
+ }
+});

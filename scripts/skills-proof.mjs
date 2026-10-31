@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 // Native evidence is trusted only here. Callers retain the full host envelope.
 // Unknown forms stay unverified; this is no parser or hostile-source boundary.
 const absent = () => { throw new Error('missing native proof'); };
@@ -103,20 +105,20 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
       const c = claudeBlock(call,'tool_use',id);
       if (kind === 'window') {
         const r = at(result,['request']);
-        if ((r.tool_use_id !== undefined && r.tool_use_id !== id) || c.name !== 'AskUserQuestion' || result.type !== 'control_request' || !result.request_id || r.subtype !== 'can_use_tool' || r.tool_name !== c.name || JSON.stringify(r.input) !== JSON.stringify(c.input)) absent();
+        if ((r.tool_use_id !== undefined && r.tool_use_id !== id) || c.name !== 'AskUserQuestion' || result.type !== 'control_request' || !result.request_id || r.subtype !== 'can_use_tool' || r.tool_name !== c.name || !isDeepStrictEqual(r.input,c.input)) absent();
         return {status:'confirmed'};
       }
       const r = claudeBlock(result,'tool_result',id);
       if (kind === 'workspace' && c.name !== proof?.tool) absent();
-      value = unwrap(at(r,['content']));
       if (kind === 'answer') {
         if (c.name !== 'AskUserQuestion' || at(r,['content']) !== claudeAnswer(reply?.response?.response)) absent();
         return {status:'confirmed'};
       }
       if (kind === 'command') {
-        if (c.name !== 'Bash' || typeof at(r,['content']) !== 'string' || typeof value !== 'string') absent();
+        if (c.name !== 'Bash' || typeof at(r,['content']) !== 'string') absent();
         return {status:'confirmed'};
       }
+      value = unwrap(at(r,['content']));
     } else absent();
     if (kind !== 'workspace' || !Array.isArray(proof?.path)) absent();
     const leaf = at(value,proof.path);

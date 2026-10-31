@@ -174,7 +174,7 @@ export async function runCodex(request){
       }
     }
     if(proofCalls.size)throw new MissingEvidence('linked native result missing');
-    if(!completedTrace('codex', rows))throw new Error('Codex rollout incomplete');
+    if(!completedTrace('codex', rows))throw new MissingEvidence('Codex rollout incomplete');
     return rows;
   };
   try{

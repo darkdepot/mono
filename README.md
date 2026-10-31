@@ -1639,7 +1639,8 @@ Codex home and a read-only workspace-confirmation turn. Workspace proof must
 bind an executed read to its successful result; an exec comment or printed
 workspace name is not proof. Reply delivery also needs the observed host receipt;
 all native proof consumers share one gate that checks linkage and every envelope
-layer. Missing, unknown or failed evidence is `unverified`; the captured Claude
+layer. Its positive corpus test covers all recorded host trace/sample files,
+including the unchanged Claude call139/permission140, beside the negative table. Missing, unknown or failed evidence is `unverified`; the captured Claude
 refusal receipt is errored and remains unverified under this rule. Claude refuses foreign
 MCP tools before permission; Codex audits after the turn and cannot promise
 pre-execution refusal. A mechanical pass still needs the conversation rubric and

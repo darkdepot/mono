@@ -52,7 +52,7 @@ else if(args[0]==='exec'){
   if(mode==='unicode-exec')item({type:'custom_tool_call',name:'exec',call_id:'escaped',input:String.raw`await \u{74}ools.exec_command({"cmd":"uname -a"}); text(await tools.mcp__monotest__get_workspace({}));`});
   if(mode==='native-web-search')item({type:'web_search_call',id:'search'});
   if(mode==='unknown-native-item')item({type:'future_item'});
-  if(mutation?.[1]==='command'||['command-ok','custom-command-ok'].includes(mode)){
+  if(mutation?.[1]==='command'||['command-ok','custom-command-ok','command-json'].includes(mode)){
    const custom=mutation?.[2]==='custom'||mode==='custom-command-ok';
    item({type:custom?'custom_tool_call':'function_call',name:'exec_command',call_id:'command',[custom?'input':'arguments']:'{"cmd":"pwd"}'});
    item({type:custom?'custom_tool_call_output':'function_call_output',call_id:'command',output:'{"exit_code":0,"output":"/scratch"}'});
@@ -71,7 +71,7 @@ else if(args[0]==='exec'){
   item(async[2]);
   if(mode==='late-tool')item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'late',arguments:'{}'});
  }else{if(mode!=='unanswered')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});}
- fresh.push({type:'event_msg',payload:{type:mode==='cut'?'task_started':'task_complete'}});
+ fresh.push({type:'event_msg',payload:{type:mode==='cut'?'task_started':'task_complete'},...(['terminal-isError','terminal-is_error'].includes(mode)?{[mode.slice('terminal-'.length)]:true}:{})});
  fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');
  out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);
 }else if(args.includes('--tools')&&args[args.indexOf('--tools')+1]===''){
@@ -95,14 +95,14 @@ else if(args[0]==='exec'){
    }
    if(mode==='cut'){process.stdout.write('{"type":');process.exit(0);}
    if(mode==='child')out({type:'result',subtype:'error_during_execution',is_error:true,parent_tool_use_id:'child'});
-   if(mutation?.[1]==='command'||['command-ok','custom-command-ok'].includes(mode)){
+   if(mutation?.[1]==='command'||['command-ok','custom-command-ok','command-json'].includes(mode)){
     out({type:'assistant',message:{content:[{type:'tool_use',id:'command',name:'Bash',input:{command:'pwd'}}]}});
-    out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'command',content:'/scratch'}]}},'command'));
+    out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'command',content:mode==='command-json'?'{"ok":true}':'/scratch'}]}},'command'));
    }
    out(summary);
    if(mode==='missing'){out({type:'result',subtype:'success'});return;}
    out(window);
-   out(perturb({type:'control_request',request_id:'request-window',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions}}},'window'));
+   out(mode==='recorded-window'?sample.events.find(r=>r.line===140).event:perturb({type:'control_request',request_id:'request-window',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions}}},'window'));
   }else if(m.type==='control_response'){
    if(m.response.request_id==='blocked'){
     if(m.response.response.behavior!=='deny')fs.writeFileSync(path.join(path.dirname(process.argv[1]),'forbidden-write'),'executed');

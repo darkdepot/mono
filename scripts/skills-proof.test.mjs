@@ -43,3 +43,79 @@ test('every native proof consumer uses the same closed negative table beside its
   }
  }
 });
+
+// The gate's positive corpus: every repository probe file is classified here.
+// Cut payloads keep their recorded data. Missing call/envelope IDs are restored
+// as synthetic test metadata, never claimed as observed execution evidence.
+test('all recorded real trace and sample forms preserve native success through the gate',async t=>{
+ const directory='evals/scenarios/probe/samples',files=fs.readdirSync(directory,{recursive:true}).filter(f=>f.endsWith('.json')).sort();
+ assert.equal(files.length,18,'classify new corpus files explicitly');
+ const windowCall=(id,input)=>({type:'assistant',message:{content:[{type:'tool_use',id,name:'AskUserQuestion',input}]}});
+ const wrapResult=block=>({type:'user',message:{content:[block]}});
+ for(const file of files)await t.test(file,()=>{
+  const sample=JSON.parse(fs.readFileSync(`${directory}/${file}`)),host=file.split('/')[0];let checked=0;
+  const check=(request,expected='confirmed')=>{assert.equal(nativeProof({host,...request}).status,expected,`${file}: ${request.kind}`);checked++;};
+  if(host==='claude'&&sample.events){
+   const calls=new Map();
+   for(const {line,event:e} of sample.events){
+    for(const block of e.message?.content??[])if(block.type==='tool_use')calls.set(block.id,{event:e,block});
+    if(e.type==='control_request'&&e.request.tool_name==='AskUserQuestion'){
+     const id=e.request.tool_use_id??[...calls.keys()].at(-1);
+     check({kind:'window',call:calls.get(id)?.event,result:e,callId:id});
+    }
+    for(const block of e.message?.content??[])if(block.type==='tool_result'){
+     const id=block.tool_use_id,call=calls.get(id);
+     if(call?.block.name==='AskUserQuestion'){
+      // The cut records the answered input; reconstruct only its sent envelope.
+      assert.ok(e.tool_use_result?.answers,`line ${line}: captured answers required`);
+      check({kind:'answer',call:call.event,result:e,callId:id,reply:{response:{response:{behavior:'allow',updatedInput:e.tool_use_result}}}});
+     }else{
+      // line137 starts after the Bash call; its stdout receipt is retained.
+      const nativeCall=call?.event??{type:'assistant',message:{content:[{type:'tool_use',id,name:'Bash'}]}};
+      check({kind:'command',call:nativeCall,result:e,callId:id});
+     }
+    }
+    if(e.type==='result')check({kind:'terminal',result:e});
+   }
+   if(file.includes('trace-turn-boundary')){
+    // Explicitly synthetic graft, no permission result in this cut.
+    const call=sample.events.find(r=>r.line===294).event,id=call.message.content[0].id;
+    check({kind:'window',call,callId:id},'unverified');
+   }
+  }else if(host==='claude'&&sample.request){
+   const id=sample.toolResult.tool_use_id,input=sample.request.request.input;
+   const call=windowCall(id,input),request={...sample.request,request_id:'synthetic-cut-request'};
+   check({kind:'window',call,result:request,callId:id});
+   check({kind:'answer',call,result:wrapResult(sample.toolResult),callId:id,reply:sample.response},sample.policy==='refuse'?'unverified':'confirmed');
+  }else if(host==='codex'&&sample.call){
+   const id='<call-id>',call={type:'function_call',name:sample.call.name,arguments:JSON.stringify(sample.call.arguments),call_id:id};
+   check({kind:'window',call,result:{type:'function_call_output',call_id:id,output:sample.callOutput}});
+   check({kind:'answer',call,result:{type:'message',role:'user',content:sample.answerAsUserMessage},callId:id,prompt:sample.answerAsUserMessage[0].text});
+  }else if(host==='codex'&&sample.items){
+   const [c,r]=sample.items,id='synthetic-cut-call';
+   check({kind:'window',call:{...c,call_id:id},result:{...r,call_id:id}});
+  }else if(host==='codex'&&sample.output){
+   const id='synthetic-cut-read';
+   check({kind:'workspace',call:{type:'custom_tool_call',name:'exec',call_id:id},result:{type:'custom_tool_call_output',call_id:id,output:sample.output},proof:{path:['result','value','content',0,'text'],equals:JSON.stringify({id:'workspace-test',name:'Test Space',url:'https://example.test/workspace'})}});
+  }else if(host==='codex'&&sample.form){
+   const id='<call-id>';
+   check({kind:'answer',call:{type:'function_call',name:'request_user_input_async',call_id:id},result:{type:'message',role:'user',content:[{type:'input_text',text:sample.form}]},callId:id,prompt:sample.form});
+  }else assert.fail(`unclassified recorded corpus file: ${file}`);
+  assert.ok(checked>0,`${file}: no gate checks`);
+ });
+});
+test('successful native Bash stdout stays data, including JSON and error-looking JSON',()=>{
+ const request=control('claude','command');
+ for(const stdout of ['{"ok":true}','[1,2]','true','null','0','"text"','{"isError":true}','{"is_error":true}','']){
+  const r=structuredClone(request);r.result.message.content[0].content=stdout;
+  assert.equal(nativeProof(r).status,'confirmed',stdout);
+ }
+});
+test('Claude window input equality ignores object key order but preserves array order',()=>{
+ const request=control('claude','window');
+ const q=request.call.message.content[0].input.questions[0];
+ request.result.request.input={questions:[{multiSelect:q.multiSelect,options:q.options,header:q.header,question:q.question}]};
+ assert.equal(nativeProof(request).status,'confirmed');
+ request.result.request.input.questions[0].options=[...q.options].reverse();
+ assert.equal(nativeProof(request).status,'unverified');
+});
