@@ -157,6 +157,7 @@ export async function runCodex(request){
       replyRecord.received=fresh.some(r=>audit.proof({kind:'answer',call:replyRecord.nativeCall,result:r.value,callId:replyRecord.callId,prompt}).status==='confirmed');
       if(!replyRecord.received)throw new MissingEvidence('window reply not observed in resumed rollout');
     }
+    let retryError;
     for(const r of fresh){
       const e=r.value,p=e.payload;
       if(e.type!=='response_item')continue;
@@ -176,7 +177,11 @@ export async function runCodex(request){
       if(p&&proofCalls.has(p.call_id)&&['function_call_output','custom_tool_call_output'].includes(p.type)){
         const pending=proofCalls.get(p.call_id);
         const evidence=audit.proof({kind:pending.kind,call:pending.call,result:e,proof:request.workspaceProof});
-        if(evidence.status==='unverified'){const error=new MissingEvidence(`${rollout}:${r.line}: successful ${pending.kind} result missing`);error.retryWorkspace=confirm&&JSON.stringify(p.output).includes(`TypeError: tools.${request.workspaceProof.tool} is not a function`);throw error;}
+        if(evidence.status==='unverified'){
+          const error=new MissingEvidence(`${rollout}:${r.line}: successful ${pending.kind} result missing`);
+          if(!confirm||!JSON.stringify(p.output).includes(`TypeError: tools.${request.workspaceProof.tool} is not a function`))throw error;
+          error.retryWorkspace=true;retryError=error;proofCalls.delete(p.call_id);continue;
+        }
         if(evidence.status==='mismatch')throw new Error('monotest workspace read did not match proof');
         if(pending.kind==='workspace')confirmed=true;
         proofCalls.delete(p.call_id);
@@ -184,6 +189,7 @@ export async function runCodex(request){
     }
     if(proofCalls.size)throw new MissingEvidence('linked native result missing');
     if(!completedTrace('codex', fresh))throw new MissingEvidence('Codex current continuation incomplete');
+    if(retryError)throw retryError;
     return fresh;
   };
   try{

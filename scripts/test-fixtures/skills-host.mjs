@@ -74,6 +74,10 @@ else if(args[0]==='exec'){
    for(const p of control)item({...p,...(['function_call','function_call_output'].includes(p.type)?{call_id:'window-1'}:{})});
   }
   if(mode==='write-before-proof')item({type:'function_call',name:'mcp__monotest__save_project',call_id:'early',arguments:'{}'});
+  if(!rows.length&&['read-start-race-foreign','read-start-race-write','read-start-race-window'].includes(mode)){
+   item({type:'function_call',name:mode.endsWith('-foreign')?'mcp__linear__get_workspace':mode.endsWith('-write')?'mcp__monotest__save_project':'request_user_input_async',call_id:'after-error',arguments:'{}'});
+   item({type:'function_call_output',call_id:'after-error',output:'{"ok":true}'});
+  }
  }else if(mode==='confirmation-window'&&prompt.startsWith('Run stage')){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});
  }else if(['free','free-no-result'].includes(mode)&&rows.length<5){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Какой цвет предпочитаешь?'}]});
  }else if(!prompt.startsWith('<send_user_message_question_reply>')&&!prompt.startsWith('Не буду')){
@@ -105,7 +109,7 @@ else if(args[0]==='exec'){
  }else{if(mode!=='unanswered')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':'Принято.'}]});}
  if(mode==='reply-no-result'&&prompt.startsWith('<send_user_message_question_reply>')){fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
  if(mode==='informational')fresh.push({type:'world_state',payload:{}},{type:'event_msg',payload:{type:'item_completed'}},{type:'response_item',payload:{type:'web_search_call'}});
- fresh.push({type:'event_msg',payload:{type:mode==='cut'?'task_started':'task_complete'},...(['terminal-isError','terminal-is_error'].includes(mode)?{[mode.slice('terminal-'.length)]:true}:{})});
+ fresh.push({type:'event_msg',payload:{type:mode==='cut'||(!rows.length&&mode==='read-start-race-cut')?'task_started':'task_complete'},...(!rows.length&&mode==='read-start-race-terminal-error'?{isError:true}:{}),...(['terminal-isError','terminal-is_error'].includes(mode)?{[mode.slice('terminal-'.length)]:true}:{})});
  fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');
  out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});if(mode==='terminal-crash'&&prompt.startsWith('<send_user_message_question_reply>'))process.exit(3);if(mode.startsWith('stop-')&&prompt.startsWith('<send_user_message_question_reply>')){fs.appendFileSync(file,mode==='stop-cut-next-stage'?'{"type":':JSON.stringify({type:'event_msg',payload:{type:'task_started'}})+'\n');setInterval(()=>{},1000);}else process.exit(0);
 }else if(args.includes('--tools')&&args[args.indexOf('--tools')+1]===''){

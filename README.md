@@ -1631,6 +1631,7 @@ recorded window replies from both hosts and the Claude text-before-window defect
 Run it alone with `node --test scripts/skills-probe.test.mjs`. These local samples
 do not certify host isolation, Linear writes, Design or client screenshots.
 Host drivers and the trace checker are documented in [skill QA](references/qa-skills.md).
+The Codex startup read retry audits the entire failed turn and its completion before resuming.
 Run a scenario with `node scripts/skills-run.mjs <request.json>` or check a trace
 with `node scripts/skills-trace.mjs <request.json>`. Deterministic scenario policies
 answer windows; a separate tool-free persona answers explicit free questions.

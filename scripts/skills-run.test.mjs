@@ -348,6 +348,12 @@ for(const mode of ['native-status-proof','read-start-race','read-start-race-twic
  const calls=fs.readFileSync(path.join(request.cwd,'invocations.jsonl'),'utf8').trim().split('\n').map(JSON.parse).filter(e=>e.args[0]==='exec');
  assert.equal(calls.length,mode==='native-status-proof'?3:mode.endsWith('-twice')?2:4);
 });
+for(const [tail,status,reason] of [['foreign','failed',/outside test/],['write','failed',/before workspace confirmation/],['window','failed',/window during workspace confirmation/],['cut','unverified',/incomplete/],['terminal-error','unverified',/incomplete/]])test(`Codex startup retry audits first turn tail: ${tail}`,async t=>{
+ const request=setup(t,'codex',`read-start-race-${tail}`),r=await runScenario(request);
+ assert.equal(r.status,status,JSON.stringify(r));assert.match(r.reason,reason);assert.equal(r.confirmed,false);assert.equal(r.replies.length,0);
+ const calls=fs.readFileSync(path.join(request.cwd,'invocations.jsonl'),'utf8').trim().split('\n').map(JSON.parse).filter(e=>e.args[0]==='exec');
+ assert.equal(calls.length,1,'no retry or stage after unsafe/incomplete first turn');
+});
 test('d006 test home has disabled Linear transport and test server approval',t=>{
  const r=setup(t,'codex');privateCodexHome(path.join(r.cwd,'private'),r.authFile,r.mcpServers);const config=fs.readFileSync(path.join(r.cwd,'private/config.toml'),'utf8');
  assert.match(config,/url = "https:\/\/mcp.linear.app\/mcp"\nenabled = false/);assert.match(config,/default_tools_approval_mode = "approve"/);
