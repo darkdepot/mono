@@ -30,10 +30,34 @@ export function decodeResult(value) {
   if(Array.isArray(value)&&value.length===1&&value[0].type==='text')return decodeResult(value[0].text);
   return value;
 }
-export function workspaceMatches(result,proof){
-  if(result?.is_error || result?.isError)return false;
-  let v=decodeResult(result);if(v?.is_error||v?.isError)return false;for(const key of proof.path){v=v?.[key];}
-  return v===proof.equals;
+export class MissingEvidence extends Error {}
+
+export function workspaceEvidence(result, proof) {
+  if (result?.is_error || result?.isError) return 'missing';
+  let value = decodeResult(result);
+  if (value?.is_error || value?.isError) return 'missing';
+  for (const key of proof.path) {
+    if (value == null || !Object.hasOwn(Object(value), key)) return 'missing';
+    value = value[key];
+  }
+  if (value === undefined) return 'missing';
+  return value === proof.equals ? 'confirmed' : 'mismatch';
+}
+export function workspaceMatches(result, proof) {
+  return workspaceEvidence(result, proof) === 'confirmed';
+}
+
+// The driver prescribes this closed form for the probe's tools/exec route.
+// Merely mentioning a tool in other JavaScript cannot establish a read.
+export function workspaceReadCode(proof) {
+  return `const r = await tools.${proof.tool}(${JSON.stringify(proof.input ?? {})}); text(r);`;
+}
+export function workspaceReadCall(item, proof) {
+  if (item.name === proof.tool && item.type === 'function_call') {
+    parseInput(item);
+    return true;
+  }
+  return item.name === 'exec' && nativeCallSource(item).trim() === workspaceReadCode(proof);
 }
 export const isWrite = name => /^mcp__monotest__(save|create|update|delete|mark|merge|share|unshare|submit|resolve|retire|restore|prepare)/.test(name);
 export function toolViolation(name, input, scenario, confirmed) {
@@ -44,34 +68,54 @@ export function toolViolation(name, input, scenario, confirmed) {
   if(['Agent','Task'].includes(name)&&/^mono-mono-/.test(input?.subagent_type??''))return 'installed stage agent outside tested copy';
   if(name==='Bash' || name==='exec_command'){
     // Commands are authorized literally by the scenario, never by URL substrings.
-    const command=input?.command??input?.cmd;
+    const field = name === 'Bash' ? 'command' : 'cmd';
+    const alias = name === 'Bash' ? 'cmd' : 'command';
+    if (input && Object.hasOwn(input, alias)) return 'conflicting command field';
+    const command = input?.[field];
+    if (typeof command !== 'string') return 'missing native command field';
     if(!scenario.allowedCommands?.includes(command))return 'command not on scenario list';
   }
   return null;
 }
 
-// Codex has no pre-execution prompt. Audit only observed direct calls; reject
-// dynamic dispatch instead of claiming to understand arbitrary JavaScript.
+// Codex has no pre-execution prompt. This conservative name audit does not
+// establish execution; workspaceReadCall separately requires the probe form.
 export function codexToolCalls(item) {
   if(!['function_call','custom_tool_call'].includes(item?.type))return [];
+  if (typeof item.name !== 'string' || typeof item.call_id !== 'string' || !item.call_id.trim())
+    throw new MissingEvidence('tool name and native call id required');
   if(item.name!=='exec')return [{name:item.name,input:parseInput(item),callId:item.call_id}];
-  const code=item.input??item.arguments;
-  if(typeof code!=='string')throw new Error('missing exec source');
-  if(/\btools\b(?!\.\w+\s*\()|\b(?:globalThis|Reflect|Proxy|this)\b|\\u[0-9a-fA-F]{4}|\beval\s*\(|\bFunction\s*\(|\bimport\s*\(/.test(code))throw new Error('unsupported indirect exec tools');
+  const code=nativeCallSource(item);
+  if(typeof code!=='string')throw new MissingEvidence('missing exec source');
+  if(/\btools\b(?!\.\w+\s*\()|\b(?:globalThis|Reflect|Proxy|this)\b|\\u[0-9a-fA-F]{4}|\beval\s*\(|\bFunction\s*\(|\bimport\s*\(/.test(code))throw new MissingEvidence('unsupported indirect exec tools');
   const calls=[...code.matchAll(/\btools\.(\w+)\s*\(/g)];
-  if(!calls.length)throw new Error('exec without auditable direct tool calls');
+  if(!calls.length)throw new MissingEvidence('exec without auditable direct tool calls');
   return calls.map((match,i)=>{
     const name=match[1],segment=code.slice(match.index,calls[i+1]?.index??code.length);
     let input={};
     if(name==='exec_command'){
       const argument = segment.slice(segment.indexOf('(') + 1).trim();
       const literal = /^(\{[\s\S]*\})\s*\)/.exec(argument);
-      if (!literal) throw new Error('exec_command audit requires a complete JSON argument object');
-      input = JSON.parse(literal[1]);
+      if (!literal) throw new MissingEvidence('exec_command audit requires a complete JSON argument object');
+      try { input = JSON.parse(literal[1]); }
+      catch { throw new MissingEvidence('exec_command arguments are not a complete JSON object'); }
       if (!input || Array.isArray(input) || typeof input.cmd !== 'string')
-        throw new Error('exec_command audit requires a literal JSON command');
+        throw new MissingEvidence('exec_command audit requires a literal JSON command');
     }
     return {name,input,callId:item.call_id};
   });
 }
-function parseInput(item){const raw=item.arguments??item.input;return typeof raw==='string'?JSON.parse(raw):raw??{};}
+function nativeCallSource(item) {
+  const field = item.type === 'custom_tool_call' ? 'input' : 'arguments';
+  const alias = field === 'input' ? 'arguments' : 'input';
+  if (Object.hasOwn(item, alias) || typeof item[field] !== 'string')
+    throw new MissingEvidence('missing or conflicting native tool input field');
+  return item[field];
+}
+function parseInput(item) {
+  try { return JSON.parse(nativeCallSource(item)); }
+  catch (error) {
+    if (error instanceof MissingEvidence) throw error;
+    throw new MissingEvidence('native tool arguments are not JSON');
+  }
+}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
-import { windowReply } from './skills-owner.mjs';
+import { windowReply, claudeReplyDelivered } from './skills-owner.mjs';
 const read = (host, name) => JSON.parse(fs.readFileSync(`evals/scenarios/probe/samples/${host}/${name}.json`));
 const policies = { recommended: {mode:'recommended'}, label:{mode:'label',label:'Зелёный'}, correction:{mode:'correction',text:'Синий, но светлее'}, empty:{mode:'empty'}, refuse:{mode:'refuse',text:'Не буду отвечать на этот вопрос.'}, discuss:{mode:'discuss'} };
 for (const host of ['claude','codex']) for (const [name, policy] of Object.entries(policies)) test(`${host} ${name} reply matches captured transport`, () => {
@@ -14,4 +14,11 @@ for (const host of ['claude','codex']) for (const [name, policy] of Object.entri
 test('unknown label and missing deterministic answer are refused instead of guessed',()=>{
   const input=read('codex','label').call.arguments;
   for(const policy of [{mode:'label',label:'absent'},{mode:'correction'},{mode:'other'}]) assert.throws(()=>windowReply('codex',input,policy,'call'));
+});
+
+for(const name of Object.keys(policies))test(`Claude ${name} delivery requires its captured successful receipt`,()=>{
+ const sample=read('claude',name);
+ assert.equal(claudeReplyDelivered(sample.toolResult,sample.response),true);
+ assert.equal(claudeReplyDelivered({...sample.toolResult,content:'unrelated answer'},sample.response),false);
+ assert.equal(claudeReplyDelivered({...sample.toolResult,is_error:name==='refuse'?false:true},sample.response),false);
 });

@@ -31,3 +31,26 @@ export function personaPrompt(brief, lastMessage) {
   if (typeof brief !== 'string' || !brief.trim() || !lastMessage?.trim()) throw new Error('persona brief and stage message required');
   return `Ответь как владелец на последний свободный вопрос этапа. Не выбирай варианты окон и не утверждай документы. Используй только сведения брифа; неизвестное назови неизвестным. Ответь кратко обычным текстом.\n\nБриф:\n${brief}\n\nПоследнее сообщение этапа:\n${lastMessage}`;
 }
+
+// Receipt forms are from the six captured Claude replies. Unknown forms are
+// missing evidence, not successful delivery inferred from a matching tool id.
+export function claudeReplyDelivered(block, reply) {
+  const sent = reply?.response?.response;
+  if (block.type !== 'tool_result' || typeof block.content !== 'string') return false;
+  if (sent?.behavior === 'deny') {
+    return block.is_error === true && Boolean(sent.message?.trim()) && block.content === sent.message;
+  }
+  if (sent?.behavior !== 'allow' || (block.is_error !== undefined && block.is_error !== false)) return false;
+  const answers = Object.entries(sent.updatedInput?.answers ?? {});
+  if (answers.length !== 1) return false;
+  const [question, answer] = answers[0];
+  if (typeof answer !== 'string') return false;
+  if (answer === '') return block.content === 'The user did not answer the questions.';
+  const options = sent.updatedInput.questions.find(q => q.question === question)?.options;
+  if (!Array.isArray(options)) return false;
+  const pair = `"${question}"="${answer}"`;
+  const expected = options.some(o => o.label === answer)
+    ? `Your questions have been answered: ${pair}. You can now continue with these answers in mind.`
+    : `The user answered: ${pair}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`;
+  return block.content === expected;
+}

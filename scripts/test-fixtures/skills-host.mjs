@@ -22,8 +22,9 @@ else if(args[0]==='exec'){
  const prompt=args.at(-1),fresh=[];
  const item=payload=>fresh.push({type:'response_item',payload});
  if(!rows.length){
-  item({type:'function_call',name:'exec',call_id:'read',arguments: 'const r = await tools.mcp__monotest__get_workspace({}); text(r);'});
-  item({type:'function_call_output',call_id:'read',output:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:proof)});
+  const code=mode==='comment-proof'?'/* tools.mcp__monotest__get_workspace({}) */ text({"name":"Test Space"});':mode==='string-proof'?'text("tools.mcp__monotest__get_workspace({})"); text({"name":"Test Space"});':'const r = await tools.mcp__monotest__get_workspace({}); text(r);';
+  item(mode==='custom-proof'?{type:'custom_tool_call',name:'exec',call_id:'read',input:code}:{type:'function_call',name:'exec',call_id:'read',arguments:code,...(mode==='conflicting-proof-fields'?{input:'text({"name":"Test Space"});'}:{})});
+  if(mode!=='missing-proof-result')item({type:mode==='custom-proof'?'custom_tool_call_output':'function_call_output',call_id:mode==='unlinked-proof'?'other-read':'read',output:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:mode==='errored-proof'?{isError:true,name:'Test Space'}:proof)});
   if(mode==='write-before-proof')item({type:'function_call',name:'mcp__monotest__save_project',call_id:'early',arguments:'{}'});
  }else if(mode==='free'&&rows.length<5){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Какой цвет предпочитаешь?'}]});
  }else if(!prompt.startsWith('<send_user_message_question_reply>')&&!prompt.startsWith('Не буду')){
@@ -46,7 +47,7 @@ else if(args[0]==='exec'){
   if(m.type==='user'&&!stage){
    stage=true;
    out({type:'assistant',message:{content:[{type:'tool_use',id:'read',name:'mcp__monotest__get_workspace',input:{}}]}});
-   out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'read',content:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:proof)}]}});
+   if(mode!=='missing-proof-result')out({type:'user',message:{content:[{type:'tool_result',tool_use_id:mode==='unlinked-proof'?'other-read':'read',content:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:proof),...(mode==='errored-proof'?{is_error:true}:{})}]}});
    out({type:'result',subtype:'success'});
   }else if(m.type==='user'){
    if(mode==='free'&&!free){free=true;
@@ -66,7 +67,18 @@ else if(args[0]==='exec'){
     if(m.response.response.behavior!=='deny')fs.writeFileSync(path.join(path.dirname(process.argv[1]),'forbidden-write'),'executed');
     process.exit(0);
    }
-   if(mode!=='unanswered')out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',content:'answered'}]}});
+   const response=m.response.response;
+   let receipt;
+   if(response.behavior==='deny')receipt={content:response.message,is_error:true};
+   else{
+    const entries=Object.entries(response.updatedInput.answers),[q,a]=entries[0];
+    const pair=`"${q}"="${a}"`;
+    const known=response.updatedInput.questions[0].options.some(o=>o.label===a);
+    receipt={content:a===''?'The user did not answer the questions.':known?`Your questions have been answered: ${pair}. You can now continue with these answers in mind.`:`The user answered: ${pair}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`};
+   }
+   if(mode==='error-answer')receipt.is_error=true;
+   if(mode==='wrong-answer'||mode==='wrong-refusal')receipt.content='Different or failed answer';
+   if(mode!=='unanswered')out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]}});
    out({type:'assistant',message:{content:[{type:'text',text:'Принято.'}]}});out({type:'result',subtype:'success'});
   }
  });

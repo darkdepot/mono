@@ -1635,7 +1635,10 @@ One run: `node scripts/skills-run.mjs <request.json>`; offline trace check:
 `node scripts/skills-trace.mjs <request.json>`. Run the focused tests with
 `node --test scripts/skills-{owner,run,trace,probe}.test.mjs`. The driver uses
 scenario-owned replies, a separate persona for explicit free questions, a private
-Codex home and a read-only workspace-confirmation turn. Claude refuses foreign
+Codex home and a read-only workspace-confirmation turn. Workspace proof must
+bind an executed read to its successful result; an exec comment or printed
+workspace name is not proof. Reply delivery also needs the observed host receipt;
+missing or failed evidence is `unverified`. Claude refuses foreign
 MCP tools before permission; Codex audits after the turn and cannot promise
 pre-execution refusal. A mechanical pass still needs the conversation rubric and
 live host proof from the orchestrator; it is not a QA certificate.
