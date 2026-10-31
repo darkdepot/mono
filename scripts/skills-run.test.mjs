@@ -19,6 +19,29 @@ function setup(t,host,mode='ok'){
  const authFile=path.join(dir,'auth.json');fs.writeFileSync(authFile,'{}');
  return {host,cwd:dir,packRoot:repo,outputDir:path.join(dir,'out'),authFile,timeoutMs:2000,idleMs:10,binary:{command:process.execPath,args:[path.join(repo,'scripts/test-fixtures/skills-host.mjs'),mode,repo]},mcpServers:{monotest:{url:'https://example.test/mcp'}},workspaceProof:{tool:'mcp__monotest__get_workspace',path:['name'],equals:'Test Space'},scenario:{prompt:'Run stage',brief:'Владелец предпочитает синий.',allowedTools:['mcp__monotest__get_workspace','mcp__monotest__save_project'],windows:[{mode:'recommended'}],expectedWindows:[{id:'approval',decision:'описание',advice:'Research',reason:host==='codex'?'чтобы проверить':'риск',summary:['Что','Дальше:']}]}};
 }
+test('Codex completion on the final allowed iteration passes',async t=>{
+ const request=setup(t,'codex');request.maxTurns=1;
+ const complete=await runScenario(request);
+ assert.equal(complete.status,'passed',JSON.stringify(complete));
+ assert.equal(complete.replies[0].received,true);assert.equal(complete.check.status,'passed');
+});
+test('Codex unfinished scenario still fails on the final allowed iteration',async t=>{
+ const unfinished=setup(t,'codex','free');unfinished.maxTurns=1;
+ unfinished.scenario.freeQuestions=[{contains:'Какой цвет предпочитаешь?'}];
+ const cut=await runScenario(unfinished);
+ assert.equal(cut.status,'failed',JSON.stringify(cut));assert.equal(cut.reason,'scenario turn limit reached');
+ assert.equal(cut.replies.length,0);
+});
+test('Codex exited leader cannot extend the scenario timeout by holding pipes',async t=>{
+ const request=setup(t,'codex');request.timeoutMs=500;
+ const cli=path.join(request.cwd,'held-pipes.mjs');
+ fs.writeFileSync(cli,`import {spawn} from 'node:child_process';if(process.argv[2]==='plugin')process.exit(0);const child=spawn(process.execPath,['-e','setTimeout(()=>{},1500)'],{stdio:['ignore',process.stdout,process.stderr]});process.stdout.write(JSON.stringify({type:'test_child',pid:child.pid})+'\\n');process.exit(0);`);
+ request.binary={command:process.execPath,args:[cli]};
+ const realKill=process.kill.bind(process);t.mock.method(process,'kill',(pid,signal)=>signal==='SIGTERM'?true:realKill(pid,signal));
+ const started=performance.now(),r=await runScenario(request),elapsed=performance.now()-started;
+ assert.equal(r.status,'failed',JSON.stringify(r));assert.equal(r.reason,'Codex process failed: host timeout');
+ assert.ok(elapsed<1000,`500ms budget plus 500ms grace exceeded: ${elapsed}ms`);
+});
 for(const host of ['claude','codex']){
  test(`${host}: one call drives read proof, window, reply and successful trace`,async t=>{
   const request=setup(t,host);const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies.length,1);assert.equal(r.check.windows[0].status,'passed');assert.ok(fs.existsSync(r.trace));

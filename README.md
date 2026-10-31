@@ -1643,7 +1643,11 @@ delivery requires the exact linked receipt for its sent deny and preserves the s
 Multi-question Claude windows deliver every answer while retaining the one-question rule violation.
 Codex optionless windows accept text policies; option-dependent policies report a scenario mismatch.
 Exact recommended labels are accepted, and Codex completion must match the active turn ID.
-Cleanup skips signaling a process that has already exited.
+Cleanup still signals the process group after its leader exits. A fixed 500 ms
+grace bounds held pipes; timeout remains a failure, and normal exit retains its
+evidence verdict. ESRCH and macOS EPERM for an exited leader stay quiet.
+Codex accepts completion on the final allowed iteration before reporting the
+turn limit; an unfinished scenario still fails and the default remains 32.
 Host information remains open: unknown events and
 non-tool blocks are ignored, other native host items and dynamic exec access are
 notes. Exec audits tool names, without command lists or a JavaScript parser.
