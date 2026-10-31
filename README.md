@@ -1631,39 +1631,27 @@ recorded window replies from both hosts and the Claude text-before-window defect
 Run it alone with `node --test scripts/skills-probe.test.mjs`. These local samples
 do not certify host isolation, Linear writes, Design or client screenshots.
 Host drivers and the trace checker are documented in [skill QA](references/qa-skills.md).
-One run: `node scripts/skills-run.mjs <request.json>`; offline trace check:
-`node scripts/skills-trace.mjs <request.json>`. Run the focused tests with
-`node --test scripts/skills-{owner,run,trace,probe,proof}.test.mjs`. The driver uses
-scenario-owned replies, a separate persona for explicit free questions, a private
-Codex home and a read-only workspace-confirmation turn. Workspace proof must
-bind an executed read to its successful result; an exec comment or printed
-workspace name is not proof. Reply delivery also needs the observed host receipt;
-all native proof consumers share one gate that checks linkage and every envelope
-layer. Its positive corpus test covers all recorded host trace/sample files,
-including the unchanged Claude call139/permission140, beside the negative table.
-Each host requires a fresh parent terminal after the last sent continuation,
-including persona replies. Fixtures with a fatal prefix stop at their rejected event;
-raw trace identity is still checked exactly.
-Each Codex continuation requires its own native completion; workspace confirmation
-cannot supply scenario windows.
-Finished trace checks require both native window permission and delivered answers;
-pre-answer card checks and explicitly narrow excerpts name their phase.
-Every behavioral trace entry uses the same closed audit and proof gate; an
-online/offline table checks matching verdicts for identical host traces. Entry
-roles and partial-trace limits are listed in the skill QA reference. Missing, unknown or failed evidence is `unverified`; the captured Claude
-refusal receipt is errored and remains unverified under this rule. Claude refuses foreign
-MCP tools before permission; Codex audits after the turn and cannot promise
-pre-execution refusal. A mechanical pass still needs the conversation rubric and
-live host proof from the orchestrator; it is not a QA certificate.
-The Codex audit accepts a closed list of native item types; unknown kinds and
-escaped exec source are `unverified`. It supplies execution evidence for the
-tester, without acting as a security boundary against hostile skills. The strict
-workspace-read form applies only to the first read, and result errors on any
-ancestor of the proof path cannot confirm it. A depersonalized native `input_text`
-probe cut guards decoding and error propagation.
-Codex counts and answers a window only after its linked native result contains
-the recorded `{"accepted":true}` success body. Missing, rejected, errored or
-unknown results are `unverified`; synthetic negative fixtures are not host samples.
+Run a scenario with `node scripts/skills-run.mjs <request.json>` or check a trace
+with `node scripts/skills-trace.mjs <request.json>`. Deterministic scenario policies
+answer windows; a separate tool-free persona answers explicit free questions.
+The shared audit keeps MCP actions bounded to monotest/Paper and requires a real
+workspace read before writes. Host information remains open: unknown events and
+non-tool blocks are ignored, other native host items and dynamic exec access are
+notes. Exec audits tool names, without command lists or a JavaScript parser.
+Host tools default to `"*"`; all monotest tools are available after confirmation.
+The private Codex home retains a disabled Linear transport and approves test MCP
+servers. A startup read race retries once. Native proofs still require linked
+success, visible windows, delivered answers and fresh completion. The default
+stage budget is one hour. Scenarios stop after their last expected answered
+window and its terminal; raw evidence is retained with an `endLine` boundary.
+Full real host event shapes, multi-block native output and the startup race join
+the 18 recorded probe controls. Thinking-only Claude window198 stays red.
+Run `node --test scripts/skills-{owner,run,trace,probe,proof}.test.mjs`.
+Codex audits after a turn and cannot promise pre-execution refusal; isolation comes
+from the test home and servers, not from command strings. A mechanical pass still
+needs the conversation rubric and live orchestrator proof. Standalone synthetic
+checker parity remains MONO-294; scenario sets, record checks and QA gates are
+later package work.
 Scratch validation copies include the scout-hook template. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
 Use focused checks while editing:

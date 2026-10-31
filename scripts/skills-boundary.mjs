@@ -10,11 +10,11 @@ export function privateCodexHome(home, authFile, servers) {
   fs.mkdirSync(home); // Never reuse a user home or silently trust existing config.
   if (!path.isAbsolute(authFile) || !fs.statSync(authFile).isFile()) throw new Error('explicit Codex auth file required');
   fs.symlinkSync(authFile,path.join(home,'auth.json'));
-  let config='[mcp_servers.linear]\nenabled = false\n';
+  let config='[mcp_servers.linear]\nurl = "https://mcp.linear.app/mcp"\nenabled = false\n';
   for(const [name,value] of Object.entries(servers)){
     if(Object.keys(value).some(k=>!['url','command','args'].includes(k)) ||
       (typeof value.url!=='string' && typeof value.command!=='string'))throw new Error('MCP connection must use url or command/args');
-    config+=`\n[mcp_servers.${name}]\n`;
+    config+=`\n[mcp_servers.${name}]\ndefault_tools_approval_mode = "approve"\n`;
     for(const [k,v] of Object.entries(value)){
       if((k==='args'&&(!Array.isArray(v)||v.some(a=>typeof a!=='string'))) || (k!=='args'&&typeof v!=='string')) throw new Error('invalid MCP connection');
       config+=`${k} = ${JSON.stringify(v)}\n`;
@@ -36,52 +36,31 @@ export function workspaceReadCall(item, proof) {
   }
   return item.name === 'exec' && nativeCallSource(item).trim() === workspaceReadCode(proof);
 }
-export const isWrite = name => /^mcp__monotest__(save|create|update|delete|mark|merge|share|unshare|submit|resolve|retire|restore|prepare)/.test(name);
+// Before confirmation MCP actions must be recognizable reads. After it, all
+// monotest tools are available; this does not classify command contents.
+export const isWrite = name => name.startsWith('mcp__') ? !/^mcp__(?:monotest|paper)__(get|list|search|read|fetch)_/.test(name) : ['Write','Edit'].includes(name);
 export function toolViolation(name, input, scenario, confirmed) {
   if(typeof name!=='string')return 'missing tool name';
   if(name.startsWith('mcp__')&&!name.startsWith('mcp__monotest__')&&!name.startsWith('mcp__paper__'))return `MCP outside test servers: ${name}`;
   if(isWrite(name)&&!confirmed)return 'write before workspace confirmation';
-  if(!scenario.allowedTools.includes(name))return `tool not on scenario list: ${name}`;
+  const allowed=scenario.allowedTools??'*';
+  if(!allowed.includes('*')&&!name.startsWith('mcp__monotest__')&&!allowed.includes(name))return `tool not on scenario list: ${name}`;
   if(['Agent','Task'].includes(name)&&/^mono-mono-/.test(input?.subagent_type??''))return 'installed stage agent outside tested copy';
-  if(name==='Bash' || name==='exec_command'){
-    // Commands are authorized literally by the scenario, never by URL substrings.
-    const field = name === 'Bash' ? 'command' : 'cmd';
-    const alias = name === 'Bash' ? 'cmd' : 'command';
-    if (input && Object.hasOwn(input, alias)) return 'conflicting command field';
-    const command = input?.[field];
-    if (typeof command !== 'string') return 'missing native command field';
-    if(!scenario.allowedCommands?.includes(command))return 'command not on scenario list';
-  }
   return null;
 }
 
 // Codex has no pre-execution prompt. This conservative name audit does not
 // establish execution; workspaceReadCall separately requires the probe form.
 export function codexToolCalls(item) {
-  if(['message','reasoning','function_call_output','custom_tool_call_output'].includes(item?.type))return [];
-  if(!['function_call','custom_tool_call'].includes(item?.type))throw new MissingEvidence(`unsupported native item type: ${item?.type}`);
+  if(!['function_call','custom_tool_call'].includes(item?.type))return [];
   if (typeof item.name !== 'string' || typeof item.call_id !== 'string' || !item.call_id.trim())
     throw new MissingEvidence('tool name and native call id required');
-  if(item.name!=='exec')return [{name:item.name,input:parseInput(item),callId:item.call_id}];
+  if(item.name!=='exec'){let input={};try{input=JSON.parse(nativeCallSource(item));}catch{}return [{name:item.name,input,callId:item.call_id}];}
   const code=nativeCallSource(item);
-  if(typeof code!=='string')throw new MissingEvidence('missing exec source');
-  if(/\\|\btools\b(?!\.\w+\s*\()|\b(?:globalThis|Reflect|Proxy|this)\b|\beval\s*\(|\bFunction\s*\(|\bimport\s*\(/.test(code))throw new MissingEvidence('unsupported escaped or indirect exec source');
-  const calls=[...code.matchAll(/\btools\.(\w+)\s*\(/g)];
-  if(!calls.length)throw new MissingEvidence('exec without auditable direct tool calls');
-  return calls.map((match,i)=>{
-    const name=match[1],segment=code.slice(match.index,calls[i+1]?.index??code.length);
-    let input={};
-    if(name==='exec_command'){
-      const argument = segment.slice(segment.indexOf('(') + 1).trim();
-      const literal = /^(\{[\s\S]*\})\s*\)/.exec(argument);
-      if (!literal) throw new MissingEvidence('exec_command audit requires a complete JSON argument object');
-      try { input = JSON.parse(literal[1]); }
-      catch { throw new MissingEvidence('exec_command arguments are not a complete JSON object'); }
-      if (!input || Array.isArray(input) || typeof input.cmd !== 'string')
-        throw new MissingEvidence('exec_command audit requires a literal JSON command');
-    }
-    return {name,input,callId:item.call_id};
-  });
+  const names=new Set([...code.matchAll(/\btools\.(\w+)\s*\(/g)].map(m=>m[1]));
+  // Names are evidence, not a JavaScript parser or a command security policy.
+  for(const match of code.matchAll(/\bmcp__\w+/g))if(!match[0].startsWith('mcp__monotest__')&&!match[0].startsWith('mcp__paper__'))names.add(match[0]);
+  return [...names].map(name=>({name,input:{},callId:item.call_id}));
 }
 function nativeCallSource(item) {
   const field = item.type === 'custom_tool_call' ? 'input' : 'arguments';

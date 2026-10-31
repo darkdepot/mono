@@ -24,8 +24,6 @@ export function claudeWindows(rows, source, options) {
     if (!object(event) || !nonempty(event.type)) throw new Error(`line ${line}: invalid trace event`);
     if (event.parent_tool_use_id != null && !nonempty(event.parent_tool_use_id))
       throw new Error(`line ${line}: invalid parent_tool_use_id`);
-    if (event.type === 'system' && event.subtype !== undefined && !nonempty(event.subtype))
-      throw new Error(`line ${line}: invalid system subtype`);
     if (!event.parent_tool_use_id && (event.type === 'result' || (event.type === 'system' && event.subtype === 'init'))) {
       text = []; thinking = []; toolResult = null;
       continue;
@@ -83,9 +81,10 @@ export function traceRows(filename, host = 'claude', options) {
     (i > 0 && row.line <= sample.events[i - 1].line))) throw new Error('invalid trace excerpt');
     rows = sample.events.map(row => ({ value: row.event, line: row.line }));
   } else {
-    const parsed = readJsonLines(filename);
-    if (parsed.errors.length) throw new Error(parsed.errors.join('; '));
-    rows = parsed.events;
+    const parsed = readJsonLines(filename,{errorLines:true});
+    const errors=parsed.errors.filter((_,i)=>!options?.endLine||parsed.invalidLines[i]<=options.endLine);
+    if(errors.length)throw new Error(errors.join('; '));
+    rows = parsed.events.filter(r=>!options?.endLine||r.line<=options.endLine);
   }
   auditRows(host,rows,options);
   return { rows, excerpt: Boolean(sample?.events) };

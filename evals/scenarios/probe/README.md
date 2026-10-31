@@ -106,3 +106,14 @@ id, имя и адрес пространства обезличены. Срез
 Полный отчёт, ссылки на живые записи и решения по развилкам оркестратор
 публикует в комментарии проекта. Локальный зелёный тест не снимает пробелы
 и не заменяет сертификат текущей версии перед вливанием.
+
+## Live driver forms
+
+`live/` contains depersonalized native event ordering from orchestrator Idea runs,
+plus the two-block workspace output and unavailable-tool startup race. Tool arguments
+and text are neutral replacements; event ordering and proof linkage remain explicit.
+The Claude trace retains the real thinking-only window at line198 and result204,
+followed by informational task_summary205. Its fixture-only text correction is labelled.
+The Codex source ends during Research without a terminal: the positive replay fixture
+adds a declared synthetic task_complete of the recorded form, not observed live success.
+A fresh live run on the committed head is required before external collection.

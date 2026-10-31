@@ -104,7 +104,16 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
         if (!Array.isArray(args?.questions) || !args.questions.length || !value || value.accepted !== true || Object.keys(value).length !== 1) absent();
         return {status:'confirmed',value:args};
       }
-      value = unwrap(output);
+      if(kind==='workspace'&&Array.isArray(output)&&output.length>1){
+        guarded(output);
+        const parsed=[];
+        for(let i=0;i<output.length;i++){
+          const block=at(output,[i]);
+          if(!['text','input_text'].includes(block?.type)||typeof block.text!=='string')absent();
+          try{parsed.push(unwrap(JSON.parse(at(block,['text']))));}catch(error){if(!(error instanceof SyntaxError))throw error;}
+        }
+        if(parsed.length!==1)absent();value=parsed[0];
+      }else value = unwrap(output);
       if (kind === 'command') {
         if (!['exec_command','exec'].includes(c.name)) absent();
         if (value?.exit_code !== 0 || value.failure || value.signal) absent();

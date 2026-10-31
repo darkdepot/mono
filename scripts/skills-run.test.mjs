@@ -23,7 +23,7 @@ for(const host of ['claude','codex']){
  test(`${host}: one call drives read proof, window, reply and successful trace`,async t=>{
   const request=setup(t,host);const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies.length,1);assert.equal(r.check.windows[0].status,'passed');assert.ok(fs.existsSync(r.trace));
   const sent=fs.readFileSync(r.sent,'utf8');assert.match(sent,/Recommended/);
-  if(host==='claude')assert.match(sent,/updatedInput/);else{assert.match(sent,/send_user_message_question_reply/);assert.match(fs.readFileSync(path.join(request.outputDir,'codex-home/config.toml'),'utf8'),/\[mcp_servers.linear\]\nenabled = false/);}
+  if(host==='claude')assert.match(sent,/updatedInput/);else{assert.match(sent,/send_user_message_question_reply/);assert.match(fs.readFileSync(path.join(request.outputDir,'codex-home/config.toml'),'utf8'),/\[mcp_servers.linear\]\nurl = "https:\/\/mcp.linear.app\/mcp"\nenabled = false/);}
  });
  for(const mode of ['missing','linear','crash','timeout','cut','wrong-space'])test(`${host}: ${mode} cannot produce passed`,async t=>{
   const request=setup(t,host,mode);if(mode==='timeout')request.timeoutMs=100;
@@ -50,8 +50,8 @@ test('Codex late tools and read-only confirmation violation stop before sending 
 test('Codex home refuses reuse and foreign servers; exec audit sees actual tool names, not URL text',t=>{
  const request=setup(t,'codex');const home=path.join(request.cwd,'private');privateCodexHome(home,request.authFile,request.mcpServers);assert.throws(()=>privateCodexHome(home,request.authFile,request.mcpServers));assert.throws(()=>privateCodexHome(path.join(request.cwd,'bad'),request.authFile,{linear:{url:'https://example.test'}}));
  assert.equal(codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'x',input:'text(await tools.mcp__monotest__get_workspace({}));'})[0].name,'mcp__monotest__get_workspace');
- assert.throws(()=>codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'audit',input:'await tools[name]({})'}));
- assert.equal(toolViolation('Bash',{command:'cat fixture-with-linear.app'}, {allowedTools:['Bash'],allowedCommands:['cat fixture-with-linear.app']},true),null);
+ assert.deepEqual(codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'audit',input:'await tools[name]({})'}),[]);
+ assert.equal(toolViolation('Bash',{command:'cat fixture-with-linear.app'}, {allowedTools:['Bash']},true),null);
 });
 
 for(const host of ['claude','codex'])test(`${host}: all six scenario policies and explicit free question use the child transport`,async t=>{
@@ -76,23 +76,21 @@ test('actual child invocation retains isolation flags, plugin copy and no-tools 
   assert.match(p.args.at(-1),/Владелец предпочитает синий/);assert.match(p.args.at(-1),/Какой цвет предпочитаешь/);
  }
 });
-test('literal commands inside Codex exec are authorized exactly; dynamic or omitted commands fail closed',()=>{
- const call=codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'x',input:'text(await tools.exec_command({"cmd": "pwd", "max_output_tokens": 100}));'})[0];
- assert.equal(call.input.cmd,'pwd');assert.equal(toolViolation(call.name,call.input,{allowedTools:['exec_command'],allowedCommands:['pwd']},true),null);
- assert.match(toolViolation(call.name,call.input,{allowedTools:['exec_command'],allowedCommands:['ls']},true),/command/);
- for(const code of ['await tools.exec_command({cmd: command})','await tools.exec_command({...options,cmd: "pwd"})'])assert.throws(()=>codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'audit',input:code}));
+test('command contents are not a permission policy',()=>{
+ for(const code of ['text(await tools.exec_command({cmd: command}));','await tools.exec_command({...options,cmd: `pwd`})']){
+  const call=codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'x',input:code})[0];assert.equal(call.name,'exec_command');assert.equal(toolViolation(call.name,call.input,{},true),null);
+ }
 });
-test('Codex exec aliases cannot hide a foreign call beside a legitimate read',()=>{
- for(const code of ['const t=tools; await t.mcp__linear__save_project({}); text(await tools.mcp__monotest__get_workspace({}));','const t=globalThis["to"+"ols"]; text(await tools.mcp__monotest__get_workspace({}));'])assert.throws(()=>codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'audit',input:code}));
+test('exec foreign MCP names remain red while dynamic host lookup is a note',()=>{
+ const calls=codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'x',input:'const t=tools; await t.mcp__linear__save_project({}); text(ALL_TOOLS);'});
+ assert.ok(calls.some(c=>toolViolation(c.name,c.input,{},true)?.includes('outside test')));
+ assert.doesNotThrow(()=>codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'x',input:'const t=globalThis["to"+"ols"]; text(t);'}));
 });
 test('a monotest write without prior proof is denied even if listed in the scenario',()=>{
  assert.match(toolViolation('mcp__monotest__save_project',{}, {allowedTools:['mcp__monotest__save_project']},false),/before workspace confirmation/);
 });
-test('computed and overwritten Codex commands are not authorized as their first literal',()=>{
- for(const code of ['await tools.exec_command({cmd: "pwd" + "; uname -a"})','await tools.exec_command({cmd: "pwd", cmd: "uname -a"})']){
-  let rejected=false;try{const call=codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'audit',input:code})[0];rejected=Boolean(toolViolation(call.name,call.input,{allowedTools:['exec_command'],allowedCommands:['pwd']},true));}catch{rejected=true;}
-  assert.equal(rejected,true,code);
- }
+test('computed command strings remain host data',()=>{
+ for(const code of ['await tools.exec_command({cmd: "pwd" + "; uname -a"})','await tools.exec_command({cmd: "pwd", cmd: "uname -a"})'])assert.equal(codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'x',input:code})[0].name,'exec_command');
 });
 test('a Claude child result cannot fail the parent stage or start its waiting state',async t=>{
  const request=setup(t,'claude','child');const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));
@@ -101,11 +99,8 @@ for(const host of ['claude','codex'])test(`${host}: sending a reply without obse
  const r=await runScenario(setup(t,host,'unanswered'));assert.equal(r.status,'unverified',JSON.stringify(r));
 });
 
-test('native command fields cannot authorize an alias instead of the executed command',()=>{
- const scenario={allowedTools:['exec_command','Bash'],allowedCommands:['pwd']};
- assert.equal(toolViolation('exec_command',{cmd:'pwd'},scenario,true),null);
- assert.equal(toolViolation('Bash',{command:'pwd'},scenario,true),null);
- for(const [name,input] of [['exec_command',{cmd:'uname -a',command:'pwd'}],['exec_command',{command:'pwd'}],['Bash',{cmd:'pwd'}],['Bash',{command:'uname -a',cmd:'pwd'}]])assert.ok(toolViolation(name,input,scenario,true),JSON.stringify({name,input}));
+test('host command argument fields do not gate execution',()=>{
+ for(const name of ['exec_command','Bash'])for(const input of [{cmd:'pwd'},{command:'pwd'},{cmd:'any',command:'any'}])assert.equal(toolViolation(name,input,{},true),null);
 });
 for(const host of ['claude','codex'])test(`${host}: absent, unlinked or errored workspace evidence is unverified before stage`,async t=>{
  for(const mode of ['missing-proof-result','unlinked-proof','errored-proof']){
@@ -124,13 +119,9 @@ test('Codex comments and strings cannot pretend to execute the workspace read',a
 test('Codex custom exec read and its matching native output preserve the passing control',async t=>{
  const r=await runScenario(setup(t,'codex','custom-proof'));assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.confirmed,true);
 });
-test('Codex Unicode exec escapes and unknown native item kinds are unverified beside the passing control',async t=>{
- for(const mode of ['custom-proof','unicode-exec','native-web-search','unknown-native-item']){
-  const r=await runScenario(setup(t,'codex',mode));assert.equal(r.status,mode==='custom-proof'?'passed':'unverified',JSON.stringify(r));
- }
- for(const source of [String.raw`await \u{74}ools.exec_command({"cmd":"uname -a"}); await tools.exec_command({"cmd":"pwd"});`,String.raw`await tools.exec_command({"cmd":"p\u0077d"});`])assert.throws(()=>codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'escaped',input:source}),MissingEvidence);
- for(const type of ['web_search_call','computer_call','future_call','future_item'])assert.throws(()=>codexToolCalls({type}),MissingEvidence);
- for(const type of ['message','reasoning','function_call_output','custom_tool_call_output'])assert.deepEqual(codexToolCalls({type}),[]);
+test('Codex escaped exec and host item kinds are information beside the control',async t=>{
+ for(const mode of ['custom-proof','unicode-exec','native-web-search','unknown-native-item'])assert.equal((await runScenario(setup(t,'codex',mode))).status,'passed');
+ for(const type of ['web_search_call','computer_call','future_call','future_item'])assert.deepEqual(codexToolCalls({type}),[]);
 });
 test('Codex later allowed workspace reads do not repeat the closed first-read form',async t=>{
  const r=await runScenario(setup(t,'codex','later-read'));assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.confirmed,true);
@@ -175,16 +166,16 @@ test('Claude failed or different answer receipts remain unverified next to the s
 
 // Synthetic mutations of native controls; no refusal/error shape is claimed observed.
 test('shared proof gate: every consumer rejects the same synthetic envelope errors',async t=>{
- for(const host of ['claude','codex'])for(const consumer of ['workspace','command','answer','window'])for(const shape of host==='codex'&&consumer==='workspace'?['function','custom']:['function'])for(const flag of ['isError','is_error'])for(const layer of ['outer','native']){
+ for(const host of ['claude','codex'])for(const consumer of ['workspace','answer','window'])for(const shape of host==='codex'&&consumer==='workspace'?['function','custom']:['function'])for(const flag of ['isError','is_error'])for(const layer of ['outer','native']){
   const request=setup(t,host,`proof-${consumer}-${shape}-${flag}-${layer}`);
-  request.scenario.allowedTools.push('Bash','exec_command');request.scenario.allowedCommands=['pwd'];
+  request.scenario.allowedTools.push('Bash','exec_command');
   const r=await runScenario(request);assert.equal(r.status,'unverified',JSON.stringify({host,consumer,shape,flag,layer,r}));
  }
 });
 
 test('linked successful command controls remain green through the shared gate',async t=>{
  for(const host of ['claude','codex'])for(const mode of host==='codex'?['command-ok','custom-command-ok']:['command-ok']){
-  const request=setup(t,host,mode);request.scenario.allowedTools.push('Bash','exec_command');request.scenario.allowedCommands=['pwd'];
+  const request=setup(t,host,mode);request.scenario.allowedTools.push('Bash','exec_command');
   const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));
  }
 });
@@ -196,7 +187,7 @@ test('Codex missing final proof is unverified rather than a violation',async t=>
 
 test('Claude recorded native window and successful JSON stdout pass end to end',async t=>{
  for(const mode of ['recorded-window','command-json']){
-  const request=setup(t,'claude',mode);request.scenario.allowedTools.push('Bash');request.scenario.allowedCommands=['pwd'];
+  const request=setup(t,'claude',mode);request.scenario.allowedTools.push('Bash');
   const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies[0].received,true);
  }
 });
@@ -216,7 +207,7 @@ test('online and offline entry points agree on the same native traces in both ho
  const verdict=fn=>{try{const v=fn();return typeof v==='boolean'?(v?'passed':'unverified'):Array.isArray(v)?v.some(w=>w.status==='unverified')?'unverified':v.some(w=>w.status==='failed')?'failed':'passed':v.status??'passed';}catch{return 'unverified';}};
  for(const host of ['claude','codex'])for(const mode of host==='codex'?['ok','unknown-native-item','unicode-exec']:['ok','unknown-native-item','unknown-native-block']){
   const request=setup(t,host,mode),online=await runScenario(request),trace=online.trace;
-  const rows=(await import('./transports/journal.mjs')).readJsonLines(trace).events,expected=mode==='ok'?'passed':'unverified';
+  const rows=(await import('./transports/journal.mjs')).readJsonLines(trace).events,expected='passed';
   const directRequest=setup(t,host,mode);fs.mkdirSync(directRequest.outputDir);
   const direct=await (host==='codex'?runCodex:runClaude)(directRequest);
   assert.deepEqual((await import('./transports/journal.mjs')).readJsonLines(direct.trace).events.map(r=>r.value),rows.map(r=>r.value),'direct driver and wrapper must receive identical trace contents');
@@ -230,7 +221,7 @@ test('online and offline entry points agree on the same native traces in both ho
   let status='passed';try{await runPersona(request,'Какой цвет предпочитаешь?',0);}catch{status='unverified';}
   const trace=path.join(request.outputDir,'persona-0/trace.jsonl'),rows=(await import('./transports/journal.mjs')).readJsonLines(trace).events;
   const options={stdout:host==='codex'},paths={auditRows:verdict(()=>auditRows(host,rows,options)),runPersona:status,traceRows:verdict(()=>traceRows(trace,host,options)),completedTrace:verdict(()=>completedTrace(host,rows,options))};
-  const expected=mode==='ok'?'passed':'unverified';observations.push({host,mode,paths,expected:Object.fromEntries(Object.keys(paths).map(k=>[k,expected]))});
+  const expected='passed';observations.push({host,mode,paths,expected:Object.fromEntries(Object.keys(paths).map(k=>[k,expected]))});
  }
  assert.deepEqual(observations.map(r=>({...r,paths:r.expected})),observations);
 });
@@ -295,20 +286,56 @@ for(const host of ['claude','codex'])for(const control of [
  for(const [mode,expected] of [[control.positive,'passed'],[control.negative,'unverified']]){
   const request=setup(t,host,mode);
   if(control.policy)request.scenario.windows=[control.policy];
-  if(control.persona)request.scenario.freeQuestions=[{contains:'Какой цвет предпочитаешь?'}];
+  if(control.persona){request.scenario.freeQuestions=[{contains:'Какой цвет предпочитаешь?'}];request.scenario.stopAfterExpectedWindows=false;}
   const r=await runScenario(request);assert.equal(r.status,expected,JSON.stringify(r));
   if(control.send==='persona after window'){assert.equal(r.replies.length,1);assert.equal(r.replies[0].received,true);}
  }
 });
 
-test('Claude rejected-prefix fixtures stop before emitting an ordinary window',t=>{
+test('Claude informational prefixes keep their ordinary window',t=>{
  for(const mode of ['unknown-native-item','unknown-native-block']){
-  const request=setup(t,'claude',mode);
-  const input=[{type:'user'},{type:'user'}].map(JSON.stringify).join('\n')+'\n';
-  const child=spawnSync(request.binary.command,request.binary.args,{cwd:request.cwd,input,encoding:'utf8'});
-  assert.equal(child.status,0,child.stderr);
-  const events=child.stdout.trim().split('\n').map(JSON.parse);
-  assert.equal(events.length,4,'only workspace proof and the intentional rejected event');
-  assert.equal(events.filter(e=>e.type==='control_request').length,0,'no scheduled window after rejected prefix');
+  const request=setup(t,'claude',mode),input=[{type:'user'},{type:'user'}].map(JSON.stringify).join('\n')+'\n';
+  const child=spawnSync(request.binary.command,request.binary.args,{cwd:request.cwd,input,encoding:'utf8'});assert.equal(child.status,0,child.stderr);
+  const events=child.stdout.trim().split('\n').map(JSON.parse);assert.equal(events.filter(e=>e.type==='control_request').length,1);
  }
+});
+// d006: recorded information is open; actions/proofs remain bounded.
+for(const host of ['claude','codex'])test(`${host}: d006 information and default host tools do not reject a stage`,async t=>{
+ const request=setup(t,host,'informational');delete request.scenario.allowedTools;
+ const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));
+ if(host==='codex')assert.ok(r.notes.some(n=>n.includes('web_search_call')));
+});
+for(const host of ['claude','codex'])for(const mode of ['stop-next-stage','stop-cut-next-stage'])test(`${host}: d006 stop at last answered window terminal before following stage (${mode})`,async t=>{
+ const request=setup(t,host,mode);request.timeoutMs=1000;const r=await runScenario(request);
+ assert.equal(r.status,'passed',JSON.stringify(r));assert.ok(r.endLine);assert.equal(r.process.failure,null);
+});
+for(const mode of ['native-status-proof','read-start-race','read-start-race-twice'])test(`Codex d006 ${mode}`,async t=>{
+ const request=setup(t,'codex',mode);const r=await runScenario(request);assert.equal(r.status,mode.endsWith('-twice')?'unverified':'passed',JSON.stringify(r));
+ const calls=fs.readFileSync(path.join(request.cwd,'invocations.jsonl'),'utf8').trim().split('\n').map(JSON.parse).filter(e=>e.args[0]==='exec');
+ assert.equal(calls.length,mode==='native-status-proof'?3:mode.endsWith('-twice')?2:4);
+});
+test('d006 test home has disabled Linear transport and test server approval',t=>{
+ const r=setup(t,'codex');privateCodexHome(path.join(r.cwd,'private'),r.authFile,r.mcpServers);const config=fs.readFileSync(path.join(r.cwd,'private/config.toml'),'utf8');
+ assert.match(config,/url = "https:\/\/mcp.linear.app\/mcp"\nenabled = false/);assert.match(config,/default_tools_approval_mode = "approve"/);
+});
+test('d006 exec names only: literal spelling and commands are information, foreign MCP remains red',()=>{
+ for(const code of ['text(await tools.exec_command({cmd: "test\\n", ...options}));', 'text(ALL_TOOLS.filter(x=>x.name));', 'const name = `read`; text(await tools[name]({}));'])assert.doesNotThrow(()=>codexToolCalls({type:'custom_tool_call',call_id:'x',name:'exec',input:code}));
+ assert.equal(toolViolation('Bash',{command:'any command'}, {},true),null);assert.equal(toolViolation('mcp__monotest__new_tool',{}, {allowedTools:[]},true),null);
+ assert.match(toolViolation('mcp__linear__save_project',{}, {allowedTools:'*'},true),/outside test/);
+});
+for(const [host,mode,expected] of [['claude','claude','failed'],['claude','claude-fixed','passed'],['codex','codex','passed']])test(`${host}: d006 full real event shape through public runScenario (${mode})`,async t=>{
+ const request=setup(t,host);request.timeoutMs=5000;request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-live-host.mjs'),mode,repo];delete request.scenario.allowedTools;
+ request.scenario.windows=host==='claude'?[{mode:'recommended'},{mode:'discuss'}]:[{mode:'recommended'}];
+ request.scenario.expectedWindows=(host==='claude'?['first','thinking']:['first']).map(id=>({id,decision:'описание',advice:'Research',reason:'риск',summary:['Что:','Дальше:']}));
+ const r=await runScenario(request);assert.equal(r.status,expected,JSON.stringify(r));assert.ok(!r.check.checks.some(c=>c.status==='unverified'),JSON.stringify(r));
+ if(host==='claude'){const {checkTrace}=await import('./skills-trace.mjs');const full=checkTrace({host,trace:r.trace,expectedWindows:request.scenario.expectedWindows});assert.equal(full.status,expected);assert.ok(!full.checks.some(c=>c.status==='unverified'));}
+ if(mode==='claude'){assert.equal(r.check.windows[1].line,198);assert.equal(r.check.windows[1].status,'failed');assert.match(r.check.windows[1].reason,/thinking/);}
+});
+
+for(const host of ['claude','codex'])test(`${host}: d006 explicit stop never masks a real nonzero process exit`,async t=>{
+ const r=await runScenario(setup(t,host,'terminal-crash'));assert.notEqual(r.status,'passed',JSON.stringify(r));
+});
+
+test('d006 early MCP writes stay closed across both test servers',()=>{
+ for(const name of ['mcp__monotest__save_project','mcp__monotest__set_status','mcp__paper__write_html']){assert.match(toolViolation(name,{}, {},false),/before workspace confirmation/);assert.equal(toolViolation(name,{}, {},true),null);}
 });

@@ -33,7 +33,7 @@ export function codexWindows(rows, source, options) {
     const proof = audit.windowProof(row.value,row.line,p.call_id,options);
     const args = proof.value;
     const executionConfirmed = proof.status === 'confirmed';
-    const last = turn.at(-1);
+    const last = turn.filter(r=>['message','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(r.item.type)).at(-1);
     const summary = last?.item.type === 'message' && last.item.role === 'assistant' && last.item.phase === 'final_answer' ? textOf(last.item) : '';
     windows.push({ line: row.line, evidence: `${source}:${row.line}`, callId: p.call_id, questions: args?.questions ?? [],
       executionConfirmed, resultEvidence: proof.resultLine ? `${source}:${proof.resultLine}` : null,
@@ -48,10 +48,10 @@ export function completedTrace(host, rows, options) {
   const audit=auditRows(host,rows,options);
   if(options?.stdout)return audit.proof({kind:'terminal',result:rows.at(-1)?.value}).status==='confirmed';
   if (host === 'claude') {
-    const last = rows.filter(r => !r.value.parent_tool_use_id).at(-1)?.value;
+    const last = rows.filter(r => r.value.type==='result'&&!r.value.parent_tool_use_id).at(-1)?.value;
     return audit.proof({kind:'terminal',result:last}).status === 'confirmed';
   }
-  const last = rows.filter(r => r.value.type === 'response_item' ||
+  const last = rows.filter(r => (r.value.type === 'response_item'&&['message','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(r.value.payload?.type)) ||
     (r.value.type === 'event_msg' && ['task_complete','task_started','turn_aborted','error'].includes(r.value.payload?.type))).at(-1)?.value;
   return audit.proof({kind:'terminal',result:last}).status === 'confirmed';
 }
@@ -78,7 +78,7 @@ function cardIssues(host, questions, expected) {
   return issues;
 }
 
-export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, excerpt = false, phase = excerpt ? 'excerpt' : 'complete' }) {
+export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, excerpt = false, phase = excerpt ? 'excerpt' : 'complete', endLine }) {
   const windows = [], checks = [];
   try {
     const ruleSource = path.join(rulesRoot, 'references/owner-dialog.md');
@@ -86,7 +86,7 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
     if (rulesDigest !== OWNER_DIALOG_SHA256) throw new Error('owner-dialog changed: update checker and conversation rubric together');
     if (!['claude', 'codex'].includes(host) || !Array.isArray(expectedWindows) || !expectedWindows.length || expectedWindows.some(w =>
       !w?.id || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || !w.summary.length || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, decision, advice, reason and summary anchors');
-    const { rows } = traceRows(trace,host);
+    const { rows } = traceRows(trace,host,{endLine});
     if (rows.some(r => !r.value || typeof r.value.type !== 'string')) throw new Error('invalid trace envelope');
     const found = host === 'claude' ? claudeWindows(rows, trace, {phase}) : codexWindows(rows, trace, {phase});
     let expectedIndex = 0;

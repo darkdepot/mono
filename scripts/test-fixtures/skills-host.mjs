@@ -44,10 +44,12 @@ else if(args[0]==='exec'){
   if(mode==='free-after-window-empty'){out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
   item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});
   item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});
- }else if(!rows.length){
+ }else if(!rows.length || (mode.startsWith('read-start-race')&&prompt.startsWith('Только чтение'))){
   const code=mode==='comment-proof'?'/* tools.mcp__monotest__get_workspace({}) */ text({"name":"Test Space"});':mode==='string-proof'?'text("tools.mcp__monotest__get_workspace({})"); text({"name":"Test Space"});':'const r = await tools.mcp__monotest__get_workspace({}); text(r);';
   item((mode==='custom-proof'||mutation?.[2]==='custom')?{type:'custom_tool_call',name:'exec',call_id:'read',input:code}:{type:'function_call',name:'exec',call_id:'read',arguments:code,...(mode==='conflicting-proof-fields'?{input:'text({"name":"Test Space"});'}:{})});
   if(mode!=='missing-proof-result')item({type:mode==='custom-proof'?'custom_tool_call_output':'function_call_output',call_id:mode==='unlinked-proof'?'other-read':'read',output:mode==='native-input-text'?[{type:'input_text',text:JSON.stringify(proof)}]:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:mode==='errored-proof'?{isError:true,name:'Test Space'}:mode==='nested-error-proof'?{content:JSON.stringify({isError:true,structuredContent:proof})}:proof)});
+  if(mode==='native-status-proof')fresh.at(-1).payload.output=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/live/codex-workspace-status.json'))).output;
+  if(mode.startsWith('read-start-race')&&(!rows.length||mode.endsWith('-twice')))fresh.at(-1).payload.output=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/live/codex-start-race.json'))).output;
   if(['native-probe-proof','native-probe-error'].includes(mode)){
    const sample=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/workspace-input-text.json')));
    if(mode==='native-probe-error'){const v=JSON.parse(sample.output[0].text);v.result.value.isError=true;sample.output[0].text=JSON.stringify(v);}
@@ -84,9 +86,10 @@ else if(args[0]==='exec'){
   if(mode==='late-tool')item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'late',arguments:'{}'});
  }else{if(mode!=='unanswered')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':'Принято.'}]});}
  if(mode==='reply-no-result'&&prompt.startsWith('<send_user_message_question_reply>')){fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
+ if(mode==='informational')fresh.push({type:'world_state',payload:{}},{type:'event_msg',payload:{type:'item_completed'}},{type:'response_item',payload:{type:'web_search_call'}});
  fresh.push({type:'event_msg',payload:{type:mode==='cut'?'task_started':'task_complete'},...(['terminal-isError','terminal-is_error'].includes(mode)?{[mode.slice('terminal-'.length)]:true}:{})});
  fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');
- out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);
+ out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});if(mode==='terminal-crash'&&prompt.startsWith('<send_user_message_question_reply>'))process.exit(3);if(mode.startsWith('stop-')&&prompt.startsWith('<send_user_message_question_reply>')){fs.appendFileSync(file,mode==='stop-cut-next-stage'?'{"type":':JSON.stringify({type:'event_msg',payload:{type:'task_started'}})+'\n');setInterval(()=>{},1000);}else process.exit(0);
 }else if(args.includes('--tools')&&args[args.indexOf('--tools')+1]===''){
  if(mode==='persona-unknown')out({type:'future_event'});
  out({...(mode==='persona-error'?{isError:true}:{}),type:'assistant',message:{content:[mode==='persona-tool'?{type:'tool_use',name:'Read'}:{type:'text',text:'Предпочитаю синий.'}]}});out({type:'result',subtype:'success'});process.exit(0);
@@ -95,6 +98,7 @@ else if(args[0]==='exec'){
  const read=readline.createInterface({input:process.stdin});
  read.on('line',line=>{
   const m=JSON.parse(line);
+  if(mode==='informational')out({type:'rate_limit_event',rate_limit_info:{status:'allowed'}});
   if(m.type==='user'&&!stage){
    stage=true;
    out({type:'assistant',message:{content:[{type:'tool_use',id:'read',name:'mcp__monotest__get_workspace',input:{}}]}});
@@ -120,9 +124,10 @@ else if(args[0]==='exec'){
     out({type:'assistant',message:{content:[{type:'tool_use',id:'command',name:'Bash',input:{command:'pwd'}}]}});
     out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'command',content:mode==='command-json'?'{"ok":true}':'/scratch'}]}},'command'));
    }
-   // Fatal-prefix fixtures must not race the driver's stop with a later window.
-   if(mode==='unknown-native-item'){out({type:'future_event'});return;}
-   if(mode==='unknown-native-block'){out({type:'assistant',message:{content:[{type:'future_block'}]}});return;}
+   // Informational prefixes do not suppress the ordinary window.
+   if(mode==='unknown-native-item')out({type:'future_event'});
+   if(mode==='unknown-native-block')out({type:'assistant',message:{content:[{type:'future_block'}]}});
+   if(mode==='informational'){out({type:'system',subtype:'background_tasks_changed'});out({type:'assistant',message:{content:[{type:'future_information',data:'note'}]}});}
    out(summary);
    if(mode==='missing'){out({type:'result',subtype:'success'});return;}
    out(window);
@@ -147,6 +152,9 @@ else if(args[0]==='exec'){
    if(mode!=='unanswered')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]},...(response.behavior==='allow'?{tool_use_result:response.updatedInput}:{})},'answer'));
    if(mode==='reply-no-result')process.exit(0);
    out({type:'assistant',message:{content:[{type:'text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':'Принято.'}]}});out({type:'result',subtype:'success'});
+   if(mode==='terminal-crash')process.exit(3);
+   if(mode==='informational')out({type:'system',subtype:'task_summary'});
+   if(mode.startsWith('stop-')){if(mode==='stop-cut-next-stage')process.stdout.write('{"type":');else out({type:'system',subtype:'task_started'});setInterval(()=>{},1000);}
   }
  });
  read.on('close',()=>process.exit(0));
