@@ -21,9 +21,9 @@ test('unknown label and missing deterministic answer are refused instead of gues
   for(const policy of [{mode:'label',label:'absent'},{mode:'correction'},{mode:'other'}]) assert.throws(()=>windowReply('codex',input,policy,'call'));
 });
 
-for(const name of Object.keys(policies))test(`Claude ${name} delivery requires its captured successful receipt`,()=>{
+for(const name of Object.keys(policies))test(`Claude ${name} delivery requires its exact captured receipt`,()=>{
  const sample=read('claude',name);
- assert.equal(claudeReplyDelivered(sample.toolResult,sample.response),name!=='refuse');
+ assert.equal(claudeReplyDelivered(sample.toolResult,sample.response),true);
  assert.equal(claudeReplyDelivered({...sample.toolResult,content:'unrelated answer'},sample.response),false);
  assert.equal(claudeReplyDelivered({...sample.toolResult,is_error:name==='refuse'?false:true},sample.response),false);
 });

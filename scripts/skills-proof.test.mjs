@@ -95,7 +95,7 @@ test('all recorded real trace and sample forms preserve native success through t
    const id=sample.toolResult.tool_use_id,input=sample.request.request.input;
    const call=windowCall(id,input),request={...sample.request,request_id:'synthetic-cut-request'};
    check({kind:'window',call,result:request,callId:id});
-   check({kind:'answer',call,result:wrapResult(sample.toolResult),callId:id,reply:sample.response},sample.policy==='refuse'?'unverified':'confirmed');
+   check({kind:'answer',call,result:wrapResult(sample.toolResult),callId:id,reply:sample.response});
   }else if(host==='codex'&&sample.call){
    const id='<call-id>',call={type:'function_call',name:sample.call.name,arguments:JSON.stringify(sample.call.arguments),call_id:id};
    check({kind:'window',call,result:{type:'function_call_output',call_id:id,output:sample.callOutput}});
@@ -127,4 +127,14 @@ test('Claude window input equality ignores object key order but preserves array 
  assert.equal(nativeProof(request).status,'confirmed');
  request.result.request.input.questions[0].options=[...q.options].reverse();
  assert.equal(nativeProof(request).status,'unverified');
+});
+
+test('Claude denial receipt is delivered only for matching sent deny and native linkage',()=>{
+ const sample=read('claude','refuse'),id='deny',call={type:'assistant',message:{content:[{type:'tool_use',id,name:'AskUserQuestion'}]}},result={type:'user',message:{content:[{...sample.toolResult,tool_use_id:id}]}};
+ const request={host:'claude',kind:'answer',call,result,callId:id,reply:sample.response};
+ assert.equal(nativeProof(request).status,'confirmed');
+ for(const change of [r=>r.reply.response.response.message='different',r=>r.reply.response.response.behavior='allow',r=>r.result.message.content[0].is_error=false,r=>r.result.message.content[0].isError=true,r=>r.result.message.content[0].tool_use_id='unlinked',r=>r.result.is_error=true]){
+  const bad=structuredClone(request);change(bad);assert.equal(nativeProof(bad).status,'unverified');
+ }
+ assert.equal(nativeProof({...request,kind:'workspace',proof:{tool:'AskUserQuestion',path:[],equals:'x'}}).status,'unverified');
 });

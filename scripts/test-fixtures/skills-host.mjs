@@ -96,7 +96,7 @@ else if(args[0]==='exec'){
   if(mode==='later-read')item({type:'custom_tool_call',name:'exec',call_id:'later-read',input:'text(await tools.mcp__monotest__get_workspace({}));'});
   if(mode==='linear')item({type:'custom_tool_call',name:'exec',call_id:'bad',input:'await tools.mcp__linear__save_project({});'});
   const async=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/trace-control-v0.41.0-async-order.json'))).items;
-  if(mode!=='missing'){
+  if(mode!=='missing'&&mode!=='child-window-main-missing'){
    const call={...async[0],call_id:'window-1'};
    if(mode==='window-schema-rejected'){const input=JSON.parse(call.arguments);input.unexpected=true;call.arguments=JSON.stringify(input);}
    item(call);
@@ -108,6 +108,22 @@ else if(args[0]==='exec'){
   if(mode==='late-tool')item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'late',arguments:'{}'});
  }else{if(mode!=='unanswered')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':'Принято.'}]});}
  if(mode==='reply-no-result'&&prompt.startsWith('<send_user_message_question_reply>')){fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
+ if(mode.includes('child-')&&(!mode.startsWith('late-')||prompt.startsWith('<send_user_message_question_reply>'))){
+  const child=[{type:'session_meta',payload:{id:'child-x',parent_thread_id:'synthetic-thread'}}];
+  const add=payload=>child.push({type:'response_item',payload});
+  if(mode.includes('window')){
+   const control=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/trace-control-v0.41.0-async-order.json'))).items;
+   for(const p of control)add({...p,...(['function_call','function_call_output'].includes(p.type)?{call_id:'child-window'}:{})});
+   add({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});
+  }else if(mode.endsWith('-direct'))add({type:'function_call',name:'mcp__linear__save_issue',call_id:'child-call',arguments:'{}'});
+  else if(mode.endsWith('-exec'))add({type:'custom_tool_call',name:'exec',call_id:'child-call',input:'text(await tools.mcp__linear__save_issue({}));'});
+  else if(mode==='child-early-write')add({type:'function_call',name:'mcp__monotest__save_project',call_id:'child-call',arguments:'{}'});
+  else child.push({type:'event_msg',payload:{type:'item_completed',item:{type:'McpToolCall',server:mode==='child-allowed'?'monotest':'linear',tool:'get_workspace',status:'completed'}}});
+  if(mode==='child-allowed')child.push({type:'event_msg',payload:{type:'item_completed',item:{type:'McpToolCall',server:'paper',tool:'get_document',status:'completed'}}});
+  // No child terminal is required for the MCP boundary, nor used as parent evidence.
+  const childDir=mode.startsWith('grandchild-')?path.join(home,'sessions','nested'):path.dirname(file);fs.mkdirSync(childDir,{recursive:true});
+  fs.writeFileSync(path.join(childDir,'rollout-child-x.jsonl'),child.map(JSON.stringify).join('\n')+'\n');
+ }
  if(mode==='informational')fresh.push({type:'world_state',payload:{}},{type:'event_msg',payload:{type:'item_completed'}},{type:'response_item',payload:{type:'web_search_call'}});
  fresh.push({type:'event_msg',payload:{type:mode==='cut'||(!rows.length&&mode==='read-start-race-cut')?'task_started':'task_complete'},...(!rows.length&&mode==='read-start-race-terminal-error'?{isError:true}:{}),...(['terminal-isError','terminal-is_error'].includes(mode)?{[mode.slice('terminal-'.length)]:true}:{})});
  fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');
@@ -177,7 +193,7 @@ else if(args[0]==='exec'){
    if(mode==='wrong-answer'||mode==='wrong-refusal')receipt.content='Different or failed answer';
    if(mode!=='unanswered')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]},...(response.behavior==='allow'?{tool_use_result:response.updatedInput}:{})},'answer'));
    if(mode==='reply-no-result')process.exit(0);
-   out({type:'assistant',message:{content:[{type:'text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':'Принято.'}]}});out({type:'result',subtype:'success'});
+   out({type:'assistant',message:{content:[{type:'text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':response.behavior==='deny'?'Отказ принят. Ничего не утверждаю.':'Принято.'}]}});out({type:'result',subtype:'success'});
    if(mode.startsWith('parent-init-')){out({type:'system',subtype:'init'});if(mode==='parent-init-cut')process.exit(0);out({type:'result',subtype:'success'});}
    if(mode==='child-init')out({type:'system',subtype:'init',parent_tool_use_id:'child'});
    if(mode==='terminal-crash')process.exit(3);

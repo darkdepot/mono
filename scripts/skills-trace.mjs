@@ -78,7 +78,7 @@ function cardIssues(host, questions, expected) {
   return issues;
 }
 
-export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, excerpt = false, phase = excerpt ? 'excerpt' : 'complete', endLine }) {
+export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, excerpt = false, phase = excerpt ? 'excerpt' : 'complete', endLine, sent }) {
   const windows = [], checks = [];
   try {
     const ruleSource = path.join(rulesRoot, 'references/owner-dialog.md');
@@ -88,7 +88,8 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
       !w?.id || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || !w.summary.length || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, decision, advice, reason and summary anchors');
     const { rows } = traceRows(trace,host,{endLine});
     if (rows.some(r => !r.value || typeof r.value.type !== 'string')) throw new Error('invalid trace envelope');
-    const found = host === 'claude' ? claudeWindows(rows, trace, {phase}) : codexWindows(rows, trace, {phase});
+    const responses=host==='claude'&&sent?traceRows(sent,'claude').rows.map(r=>r.value):[];
+    const found = host === 'claude' ? claudeWindows(rows, trace, {phase,responses}) : codexWindows(rows, trace, {phase});
     let expectedIndex = 0;
     for (const [i, w] of found.entries()) {
       const expected = expectedWindows[expectedIndex];

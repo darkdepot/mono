@@ -56,7 +56,7 @@ test('Codex home refuses reuse and foreign servers; exec audit sees actual tool 
 
 for(const host of ['claude','codex'])test(`${host}: all six scenario policies and explicit free question use the child transport`,async t=>{
  for(const policy of [{mode:'recommended'},{mode:'label',label:'Утвердить, продолжу позже'},{mode:'correction',text:'Поправь описание.'},{mode:'empty'},{mode:'refuse',text:'Не буду отвечать на этот вопрос.'},{mode:'discuss'}]){
-  const request=setup(t,host);request.scenario.windows=[policy];const r=await runScenario(request);assert.equal(r.status,host==='claude'&&policy.mode==='refuse'?'unverified':'passed',JSON.stringify(r));assert.equal(r.replies[0].policy,policy.mode);
+  const request=setup(t,host);request.scenario.windows=[policy];const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies[0].policy,policy.mode);assert.equal(r.replies[0].received,true);if(host==='claude'&&policy.mode==='refuse'){assert.equal(r.replies[0].refused,true);assert.match(fs.readFileSync(r.trace,'utf8'),/Отказ принят/);};
  }
  const request=setup(t,host,'free');request.scenario.freeQuestions=[{contains:'Какой цвет предпочитаешь?'}];const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.ok(fs.existsSync(path.join(request.outputDir,'persona-0/trace.jsonl')));assert.ok(!fs.existsSync(path.join(request.outputDir,'persona-1')));
 });
@@ -378,4 +378,12 @@ for(const host of ['claude','codex'])test(`${host}: d006 explicit stop never mas
 
 test('d006 early MCP writes stay closed across both test servers',()=>{
  for(const name of ['mcp__monotest__save_project','mcp__monotest__set_status','mcp__paper__write_html']){assert.match(toolViolation(name,{}, {},false),/before workspace confirmation/);assert.equal(toolViolation(name,{}, {},true),null);}
+});
+
+for(const mode of ['child-foreign-direct','child-foreign-exec','child-foreign-native','grandchild-foreign-native','late-child-foreign-native','child-early-write'])test(`Codex all-rollout MCP boundary: ${mode}`,async t=>{
+ const r=await runScenario(setup(t,'codex',mode));assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/rollout-child.*jsonl:\d+: (MCP outside test servers|write before workspace confirmation)/);
+});
+for(const mode of ['child-allowed','child-window','child-window-main-missing'])test(`Codex parent evidence stays separate from ${mode}`,async t=>{
+ const request=setup(t,'codex',mode);request.mcpServers.paper={url:'https://paper.example.test/mcp'};request.scenario.allowedTools.push('mcp__paper__get_document');
+ const r=await runScenario(request);assert.equal(r.status,mode.endsWith('-missing')?'failed':'passed',JSON.stringify(r));assert.equal(r.replies.length,mode.endsWith('-missing')?0:1);assert.equal(r.auditedTraces.length,2);
 });

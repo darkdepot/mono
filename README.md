@@ -1636,14 +1636,17 @@ Run a scenario with `node scripts/skills-run.mjs <request.json>` or check a trac
 with `node scripts/skills-trace.mjs <request.json>`. Deterministic scenario policies
 answer windows; a separate tool-free persona answers explicit free questions.
 The shared audit keeps MCP actions bounded to monotest/Paper and requires a real
-workspace read before writes. Direct Codex MCP calls retain namespace and name.
+workspace read before writes. Direct Codex MCP calls retain namespace and name. MCP actions in every test-home
+rollout, including child threads and native McpToolCall records, share this boundary;
+windows, answers and completion remain tied to the main thread. Claude refusal
+delivery requires the exact linked receipt for its sent deny and preserves the stage reaction.
 Host information remains open: unknown events and
 non-tool blocks are ignored, other native host items and dynamic exec access are
 notes. Exec audits tool names, without command lists or a JavaScript parser.
 Host tools default to `"*"`; all monotest tools are available after confirmation.
 The private Codex home retains a disabled Linear transport and approves test MCP
 servers. A startup read race retries once. Native proofs still require linked
-success, visible windows, delivered answers and fresh completion. The default
+host evidence, visible windows, delivered answers and fresh completion. The default
 stage budget is one hour. Scenarios stop after their last expected answered
 window and its terminal; raw evidence is retained with an `endLine` boundary.
 A new parent Claude init requires a fresh result when the conversation stays

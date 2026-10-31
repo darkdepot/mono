@@ -36,16 +36,16 @@ function native(value) {
   guarded(value);
   return value?.type === 'response_item' ? at(value, ['payload']) : value;
 }
-function claudeBlock(event, type, id) {
+function claudeBlock(event, type, id, answer = false) {
   if (!['assistant','user'].includes(event?.type) || event.parent_tool_use_id) absent();
   const blocks = at(event, ['message','content']);
   if (!Array.isArray(blocks)) absent();
   const matches = blocks.filter(b => b.type === type && (type === 'tool_use' ? b.id : b.tool_use_id) === id);
   if (matches.length !== 1) absent();
-  return guarded(matches[0]);
+  return answer ? matches[0] : guarded(matches[0]);
 }
 function claudeAnswer(sent) {
-  // A captured deny has is_error:true; it cannot establish success.
+  // Allow receipts use the captured answer wording; deny is checked separately.
   if (sent?.behavior !== 'allow') absent();
   const answers = Object.entries(sent.updatedInput?.answers ?? {});
   if (answers.length !== 1) absent();
@@ -131,11 +131,16 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
         if ((r.tool_use_id !== undefined && r.tool_use_id !== id) || c.name !== 'AskUserQuestion' || result.type !== 'control_request' || !result.request_id || r.subtype !== 'can_use_tool' || r.tool_name !== c.name || !isDeepStrictEqual(r.input,c.input)) absent();
         return {status:'confirmed'};
       }
-      const r = claudeBlock(result,'tool_result',id);
+      const r = claudeBlock(result,'tool_result',id,kind === 'answer');
       if (kind === 'workspace' && c.name !== proof?.tool) absent();
       if (kind === 'answer') {
         if(c.name !== 'AskUserQuestion') absent();
         let sent=reply?.response?.response;
+        if(sent?.behavior==='deny'){
+          if(r.is_error!==true||r.isError||typeof sent.message!=='string'||r.content!==sent.message)absent();
+          return {status:'confirmed',refused:true};
+        }
+        guarded(r);
         if(!reply){
           // Recorded full Claude receipts include the answered input. Reuse the
           // same exact receipt check as online delivery; do not parse prose.

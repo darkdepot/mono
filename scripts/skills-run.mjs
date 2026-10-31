@@ -82,7 +82,7 @@ export async function runClaude(request){
             if(evidence.status==='unverified')return missing(`successful ${kind} result missing`,c);
             if(evidence.status==='mismatch')return fail('monotest workspace read did not match proof',c);
             if(kind==='workspace')confirmed=true;
-            if(reply)reply.received=true;
+            if(reply){reply.received=true;if(evidence.refused)reply.refused=true;}
           }
         }
       }
@@ -122,9 +122,12 @@ export async function runClaude(request){
   return finishRun(request,{trace,sent,replies,confirmed,process:processResult,violation,evidenceMissing,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
 }
 
-function rolloutFor(home,thread){
+function rolloutFiles(home){
   const walk=d=>fs.existsSync(d)?fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]):[];
-  const found=walk(path.join(home,'sessions')).filter(f=>path.basename(f).startsWith('rollout-')&&f.endsWith('.jsonl')&&f.includes(thread));
+  return walk(path.join(home,'sessions')).filter(f=>path.basename(f).startsWith('rollout-')&&f.endsWith('.jsonl'));
+}
+function rolloutFor(home,thread){
+  const found=rolloutFiles(home).filter(f=>f.includes(thread));
   if(found.length!==1)throw new Error('unique session rollout not found');return found[0];
 }
 async function quiet(file,idleMs,deadline){
@@ -140,7 +143,7 @@ export async function runCodex(request){
     if(result.status!==0||result.error)throw new Error('Codex local pack setup failed');
   }
   let thread=null,rollout=null,confirmed=false,violation=null,seenLines=0,freeIndex=0,endLine;
-  const replies=[],seen=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000),proofCalls=new Map();
+  const replies=[],seen=new Set(),auditedTraces=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000),proofCalls=new Map();
   const stdout=path.join(request.outputDir,'stdout.jsonl'),sent=path.join(request.outputDir,'sent.jsonl');fs.writeFileSync(stdout,'');fs.writeFileSync(sent,'');
   let processResult;
   const turn=async(prompt,confirm=false,replyRecord=null)=>{
@@ -153,6 +156,14 @@ export async function runCodex(request){
     const {rows}=traceRows(rollout,'codex',{endLine});
     const fresh=rows.filter(r=>r.line>seenLines);seenLines=rows.at(-1)?.line??0;
     const audit=auditRows('codex',fresh);
+    for(const file of rolloutFiles(home)){
+      const auditRowsForFile=file===rollout?fresh:traceRows(file,'codex').rows;
+      auditedTraces.add(file);
+      for(const call of auditRows('codex',auditRowsForFile).calls.filter(c=>c.name.startsWith('mcp__'))){
+        const reason=toolViolation(call.name,call.input,request.scenario,confirmed)??(confirm&&isWrite(call.name)?'write during workspace confirmation':null);
+        if(reason){violation=`${file}:${call.line}: ${reason}`;throw new Error(violation);}
+      }
+    }
     if(replyRecord){
       replyRecord.received=fresh.some(r=>audit.proof({kind:'answer',call:replyRecord.nativeCall,result:r.value,callId:replyRecord.callId,prompt}).status==='confirmed');
       if(!replyRecord.received)throw new MissingEvidence('window reply not observed in resumed rollout');
@@ -200,7 +211,7 @@ export async function runCodex(request){
     const scenarioStart=confirmationRows.at(-1)?.line??0;
     let rows=await turn(request.scenario.prompt);
     for(let n=0;n<(request.maxTurns??32);n++){
-      if(endLine)return finishRun(request,{trace:rollout,sent,replies,confirmed,process:processResult,violation,endLine,boundary:'Scenario ended at the terminal after its last expected answer.'});
+      if(endLine)return finishRun(request,{trace:rollout,sent,replies,confirmed,auditedTraces:[...auditedTraces],process:processResult,violation,endLine,boundary:'Scenario ended at the terminal after its last expected answer.'});
       const windows=codexWindows(rows.filter(r=>r.line>scenarioStart),rollout,{phase:'card'}).filter(w=>!seen.has(w.callId));
       if(windows.length){
         const uncertain=windows.find(w=>!w.executionConfirmed);
@@ -218,16 +229,16 @@ export async function runCodex(request){
       const lastMessage=(last?.content??[]).filter(b=>b.type==='output_text').map(b=>b.text).join('\n');
       const free=request.scenario.freeQuestions?.[freeIndex];
       if(free&&lastMessage.includes(free.contains)){rows=await turn(await runPersona(request,lastMessage,freeIndex++));continue;}
-      return finishRun(request,{trace:rollout,sent,replies,confirmed,process:processResult,violation,boundary:'Codex has no pre-execution refusal: private home, disabled linear/apps, first read-only turn and post-turn direct-call audit. A violation may already have executed; report failed.'});
+      return finishRun(request,{trace:rollout,sent,replies,confirmed,auditedTraces:[...auditedTraces],process:processResult,violation,boundary:'Codex has no pre-execution refusal: private home, disabled linear/apps, first read-only turn and post-turn direct-call audit. A violation may already have executed; report failed.'});
     }
     throw new Error('scenario turn limit reached');
   }catch(error){
-    return finishRun(request,{trace:rollout??stdout,sent,replies,confirmed,process:processResult,violation:error instanceof MissingEvidence?null:violation??error.message,evidenceMissing:error instanceof MissingEvidence?error.message:null,boundary:'Codex cannot refuse MCP calls before execution; rollout audit failed.'});
+    return finishRun(request,{trace:rollout??stdout,sent,replies,confirmed,auditedTraces:[...auditedTraces],process:processResult,violation:error instanceof MissingEvidence?null:violation??error.message,evidenceMissing:error instanceof MissingEvidence?error.message:null,boundary:'Codex cannot refuse MCP calls before execution; rollout audit failed.'});
   }
 }
 
 function finishRun(request,run){
-  const check=checkTrace({host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,rulesRoot:request.rulesRoot,endLine:run.endLine});
+  const check=checkTrace({host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,rulesRoot:request.rulesRoot,endLine:run.endLine,sent:run.sent});
   let notes=[];try{const {rows}=traceRows(run.trace,request.host,{endLine:run.endLine});notes=auditRows(request.host,rows).notes;}catch{}
   const failure=run.violation??(run.evidenceMissing?null:run.process?.failure??(run.process?.code!==0?'host process failed':null));
   const allReplied=run.replies.length===request.scenario.expectedWindows.length&&run.replies.every(r=>r.received);

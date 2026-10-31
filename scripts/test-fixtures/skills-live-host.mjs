@@ -12,6 +12,11 @@ if(host==='claude'){
  read.on('close',()=>process.exit(0));
 }else{
  if(args[0]==='plugin')process.exit(0);
+ // The depersonalizer replaced MCP server/tool values with "sample". Restore
+ // this fixture's test server and initial read identity; later tools stay masked.
+ for(const [i,e] of rows.entries())if(e.payload?.item?.type==='McpToolCall'&&e.payload.item.server==='sample'){
+  e.payload.item.server='monotest';if(i<sample.confirmationEnd)e.payload.item.tool='get_workspace';
+ }
  const file=path.join(process.env.CODEX_HOME,'sessions','rollout-synthetic-thread.jsonl');fs.mkdirSync(path.dirname(file),{recursive:true});
  const existing=fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').map(JSON.parse):[];
  let next=existing.length===0?rows.slice(0,sample.confirmationEnd):existing.length===sample.confirmationEnd?rows.slice(sample.confirmationEnd,sample.windowTurnEnd):rows.slice(sample.windowTurnEnd);
