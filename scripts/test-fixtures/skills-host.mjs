@@ -43,7 +43,13 @@ else if(args[0]==='exec'){
  if(mode.startsWith('free-after-window')&&prompt==='Предпочитаю синий.'){
   if(mode==='free-after-window-empty'){out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
   item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});
-  item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});
+  if(mode==='free-after-window-tools'){
+   item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'later-read',arguments:'{}'});
+   item({type:'function_call_output',call_id:'later-read',output:JSON.stringify(proof)});
+  }else{
+   const answered=rows.filter(r=>r.payload?.role==='user'&&r.payload.content?.some(b=>b.text===prompt)).length;
+   item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:mode==='free-after-window-fresh-question'&&!answered?'Какой цвет выбираешь теперь?':'Принято.'}]});
+  }
  }else if(!rows.length || (mode.startsWith('read-start-race')&&prompt.startsWith('Только чтение'))){
   const code=mode==='comment-proof'?'/* tools.mcp__monotest__get_workspace({}) */ text({"name":"Test Space"});':mode==='string-proof'?'text("tools.mcp__monotest__get_workspace({})"); text({"name":"Test Space"});':'const r = await tools.mcp__monotest__get_workspace({}); text(r);';
   item((mode==='custom-proof'||mutation?.[2]==='custom')?{type:'custom_tool_call',name:'exec',call_id:'read',input:code}:{type:'function_call',name:'exec',call_id:'read',arguments:code,...(mode==='conflicting-proof-fields'?{input:'text({"name":"Test Space"});'}:{})});
@@ -94,7 +100,7 @@ else if(args[0]==='exec'){
  if(mode==='persona-unknown')out({type:'future_event'});
  out({...(mode==='persona-error'?{isError:true}:{}),type:'assistant',message:{content:[mode==='persona-tool'?{type:'tool_use',name:'Read'}:{type:'text',text:'Предпочитаю синий.'}]}});out({type:'result',subtype:'success'});process.exit(0);
 }else{
- let stage=false,free=false;
+ let stage=false,free=false,freeAnswers=0;
  const read=readline.createInterface({input:process.stdin});
  read.on('line',line=>{
   const m=JSON.parse(line);
@@ -110,7 +116,11 @@ else if(args[0]==='exec'){
    if(mode==='free-no-result'&&text==='Предпочитаю синий.')process.exit(0);
    if(mode.startsWith('free-after-window')&&text==='Предпочитаю синий.'){
     if(mode==='free-after-window-empty')process.exit(0);
-    out({type:'assistant',message:{content:[{type:'text',text:'Принято.'}]}});out({type:'result',subtype:'success'});return;
+    if(mode==='free-after-window-tools'){
+     out({type:'assistant',message:{content:[{type:'tool_use',id:'later-read',name:'mcp__monotest__get_workspace',input:{}}]}});
+     out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'later-read',content:JSON.stringify(proof)}]}});
+    }else out({type:'assistant',message:{content:[{type:'text',text:mode==='free-after-window-fresh-question'&&!freeAnswers?'Какой цвет выбираешь теперь?':'Принято.'}]}});
+    freeAnswers++;out({type:'result',subtype:'success'});return;
    }
    if(['free','free-no-result'].includes(mode)&&!free){free=true;
     out({type:'assistant',message:{content:[{type:'text',text:'Какой цвет предпочитаешь?'}]}});out({type:'result',subtype:'success'});return;
@@ -152,6 +162,8 @@ else if(args[0]==='exec'){
    if(mode!=='unanswered')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]},...(response.behavior==='allow'?{tool_use_result:response.updatedInput}:{})},'answer'));
    if(mode==='reply-no-result')process.exit(0);
    out({type:'assistant',message:{content:[{type:'text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':'Принято.'}]}});out({type:'result',subtype:'success'});
+   if(mode.startsWith('parent-init-')){out({type:'system',subtype:'init'});if(mode==='parent-init-cut')process.exit(0);out({type:'result',subtype:'success'});}
+   if(mode==='child-init')out({type:'system',subtype:'init',parent_tool_use_id:'child'});
    if(mode==='terminal-crash')process.exit(3);
    if(mode==='informational')out({type:'system',subtype:'task_summary'});
    if(mode.startsWith('stop-')){if(mode==='stop-cut-next-stage')process.stdout.write('{"type":');else out({type:'system',subtype:'task_started'});setInterval(()=>{},1000);}

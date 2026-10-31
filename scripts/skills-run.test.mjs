@@ -292,6 +292,26 @@ for(const host of ['claude','codex'])for(const control of [
  }
 });
 
+// Synthetic continuation tails around the same host forms; only public driver
+// outcomes are asserted, preserving the d-004 standalone-checker boundary.
+test('Claude new parent init requires its own result, while child init and information retain completion',async t=>{
+ for(const [mode,expected] of [['parent-init-complete','passed'],['parent-init-cut','unverified'],['child-init','passed'],['informational','passed']]){
+  const request=setup(t,'claude',mode);request.scenario.stopAfterExpectedWindows=false;
+  const r=await runScenario(request);assert.equal(r.status,expected,JSON.stringify(r));assert.equal(r.replies.length,1);
+ }
+});
+for(const host of ['claude','codex'])test(`${host}: persona consumes its question and requires a fresh matching continuation`,async t=>{
+ for(const [mode,count] of [['free-after-window',1],['free-after-window-tools',1],['free-after-window-fresh-question',2]]){
+  const request=setup(t,host,mode);request.scenario.stopAfterExpectedWindows=false;
+  request.scenario.freeQuestions=[{contains:'Какой цвет предпочитаешь?'},{contains:'цвет'}];
+  const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));
+  assert.equal(fs.readdirSync(request.outputDir).filter(n=>/^persona-/.test(n)).length,count,`${host}/${mode}: unsolicited persona reply`);
+  const personas=fs.readFileSync(path.join(request.cwd,'invocations.jsonl'),'utf8').trim().split('\n').map(JSON.parse).filter(v=>v.args.at(-1)==='Предпочитаю синий.');
+  if(host==='codex')assert.equal(personas.length,count);
+  else{const sent=fs.readFileSync(r.sent,'utf8').trim().split('\n').map(JSON.parse);assert.equal(sent.filter(v=>v.type==='user'&&v.message.content.some(b=>b.text==='Предпочитаю синий.')).length,count);}
+ }
+});
+
 test('Claude informational prefixes keep their ordinary window',t=>{
  for(const mode of ['unknown-native-item','unknown-native-block']){
   const request=setup(t,'claude',mode),input=[{type:'user'},{type:'user'}].map(JSON.stringify).join('\n')+'\n';

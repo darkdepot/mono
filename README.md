@@ -1644,6 +1644,8 @@ servers. A startup read race retries once. Native proofs still require linked
 success, visible windows, delivered answers and fresh completion. The default
 stage budget is one hour. Scenarios stop after their last expected answered
 window and its terminal; raw evidence is retained with an `endLine` boundary.
+A new parent Claude init requires a fresh result when the conversation stays
+open. Persona answers consume their question; each continuation uses fresh text.
 Full real host event shapes, multi-block native output and the startup race join
 the 18 recorded probe controls. Thinking-only Claude window198 stays red.
 Run `node --test scripts/skills-{owner,run,trace,probe,proof}.test.mjs`.

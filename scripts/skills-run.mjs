@@ -56,6 +56,7 @@ export async function runClaude(request){
   const allowed=toolPolicy.includes('*')?null:toolPolicy.filter(n=>!n.startsWith('mcp__'));if(allowed&&!allowed.includes('AskUserQuestion'))allowed.push('AskUserQuestion');
   const args=['-p','--verbose','--input-format','stream-json','--output-format','stream-json','--permission-prompt-tool=stdio','--strict-mcp-config','--mcp-config',config,'--plugin-dir',request.packRoot,'--setting-sources','','--settings',JSON.stringify({enabledPlugins:{'mono@mono-marketplace':false}}),...(allowed?['--tools',allowed.join(',')]:[]),...modelArgs(request)];
   const calls=new Map(),receipts=new Map(),replies=[],seenRequests=new Set(),pendingWindows=[];let confirmed=false,phase='confirm',lastMessage='',freeIndex=0,waiting=false,violation=null,evidenceMissing=null,endLine;
+  const beginTurn=()=>{waiting=false;lastMessage='';};
   const deny=(e,message,c)=>c.send({type:'control_response',response:{subtype:'success',request_id:e.request_id,response:{behavior:'deny',message}}});
   const fail=(reason,c)=>{violation=reason;c.stop(reason);};
   const missing=(reason,c)=>{evidenceMissing=reason;c.stop(reason);};
@@ -63,6 +64,7 @@ export async function runClaude(request){
     input:userMessage(`Только чтение: вызови ${request.workspaceProof.tool}, покажи пространство. Ничего не записывай; затем остановись.`),
     onEvent:(e,c,line)=>{
       let audit;try{audit=auditRows('claude',[{value:e,line:0}]);}catch(error){return missing(error.message,c);}
+      if(e.type==='system'&&e.subtype==='init'&&!e.parent_tool_use_id)beginTurn();
       if(e.type==='assistant'){
         if(!e.parent_tool_use_id&&(e.message?.content??[]).some(b=>['text','thinking','tool_use'].includes(b.type))){waiting=false;lastMessage=ownerText(e)||lastMessage;}
         for(const b of e.message?.content??[])if(b.type==='tool_use'){
@@ -95,7 +97,7 @@ export async function runClaude(request){
           if(!callId){deny(e,'window tool use missing from trace',c);return fail('unobserved window request',c);}
           if(audit.proof({kind:'window',call:calls.get(callId)?.event,result:e,callId}).status!=='confirmed')return missing('native window acceptance missing',c);
           const reply=windowReply('claude',input,policy,e.request_id);
-          receipts.set(callId,reply);waiting=false;c.send(reply);replies.push({index:replies.length,requestId:e.request_id,callId,policy:policy.mode,replySent:true,received:false});
+          receipts.set(callId,reply);beginTurn();c.send(reply);replies.push({index:replies.length,requestId:e.request_id,callId,policy:policy.mode,replySent:true,received:false});
         }else{
           const reason=toolViolation(name,input,request.scenario,confirmed)??(phase==='confirm'&&isWrite(name)?'write during workspace confirmation':null);
           if(reason){deny(e,reason,c);return fail(reason,c);}
@@ -106,14 +108,14 @@ export async function runClaude(request){
         if(audit.proof({kind:'terminal',result:e}).status!=='confirmed')return missing('successful Claude terminal result missing',c);
         if(phase==='confirm'){
           if(!confirmed)return missing('workspace not confirmed before stage',c);
-          phase='stage';lastMessage='';waiting=false;c.send(userMessage(request.scenario.prompt));
+          phase='stage';beginTurn();c.send(userMessage(request.scenario.prompt));
         }else{waiting=true;if(request.scenario.stopAfterExpectedWindows!==false&&replies.length===request.scenario.expectedWindows.length&&replies.every(r=>r.received)){endLine=line;c.complete();}else c.idle();}
       }else if(waiting)c.idle();
     },
     onIdle:async c=>{
       const free=request.scenario.freeQuestions?.[freeIndex];
       if(free&&lastMessage.includes(free.contains)){
-        waiting=false;try{const answer=await runPersona(request,lastMessage,freeIndex++);waiting=false;c.send(userMessage(answer));}catch(error){if(error instanceof MissingEvidence)return missing(error.message,c);throw error;}
+        const question=lastMessage;beginTurn();try{const answer=await runPersona(request,question,freeIndex++);beginTurn();c.send(userMessage(answer));}catch(error){if(error instanceof MissingEvidence)return missing(error.message,c);throw error;}
       }else c.end();
     }});
   if(!waiting&&!violation&&!evidenceMissing&&processResult.code===0&&!processResult.failure)evidenceMissing='fresh Claude parent terminal missing after last sent continuation';
@@ -182,7 +184,7 @@ export async function runCodex(request){
     }
     if(proofCalls.size)throw new MissingEvidence('linked native result missing');
     if(!completedTrace('codex', fresh))throw new MissingEvidence('Codex current continuation incomplete');
-    return rows;
+    return fresh;
   };
   try{
     const confirmationPrompt=`Только чтение: вызови ${request.workspaceProof.tool} и покажи пространство. Через exec выполни дословно, без добавлений: ${workspaceReadCode(request.workspaceProof)} Не имитируй результат. Ничего не записывай, затем остановись.`;
