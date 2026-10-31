@@ -7,6 +7,7 @@ const home=process.env.CODEX_HOME;
 fs.appendFileSync(path.join(process.cwd(),'invocations.jsonl'),JSON.stringify({args,home})+'\n');
 // proof-* modes are synthetic negative mutations, never observed host samples.
 const mutation=/^proof-(workspace|command|answer|window)-(function|custom)-(isError|is_error)-(outer|native|body)$/.exec(mode);
+const namespaced=/^namespaced-(early|foreign|allowed|proof)$/.exec(mode);
 function perturb(e,consumer){
  if(!mutation||mutation[1]!==consumer)return e;
  const [, , ,flag,layer]=mutation;
@@ -51,8 +52,15 @@ else if(args[0]==='exec'){
    item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:mode==='free-after-window-fresh-question'&&!answered?'Какой цвет выбираешь теперь?':'Принято.'}]});
   }
  }else if(!rows.length || (mode.startsWith('read-start-race')&&prompt.startsWith('Только чтение'))){
+  // Synthetic calls use the MCP namespace shape in Codex rust-v0.159.2
+  // core/src/tools/router_tests.rs; they are not captured live run samples.
+  if(namespaced&&['early','foreign'].includes(namespaced[1])){
+   item({type:'function_call',namespace:namespaced[1]==='foreign'?'mcp__linear__':'mcp__monotest__',name:namespaced[1]==='foreign'?'get_workspace':'save_project',call_id:'namespaced',arguments:'{}'});
+   item({type:'function_call_output',call_id:'namespaced',output:JSON.stringify(proof)});
+  }
   const code=mode==='comment-proof'?'/* tools.mcp__monotest__get_workspace({}) */ text({"name":"Test Space"});':mode==='string-proof'?'text("tools.mcp__monotest__get_workspace({})"); text({"name":"Test Space"});':'const r = await tools.mcp__monotest__get_workspace({}); text(r);';
   item((mode==='custom-proof'||mutation?.[2]==='custom')?{type:'custom_tool_call',name:'exec',call_id:'read',input:code}:{type:'function_call',name:'exec',call_id:'read',arguments:code,...(mode==='conflicting-proof-fields'?{input:'text({"name":"Test Space"});'}:{})});
+  if(namespaced?.[1]==='proof')fresh.at(-1).payload={type:'function_call',namespace:'mcp__monotest__',name:'get_workspace',call_id:'read',arguments:'{}'};
   if(mode!=='missing-proof-result')item({type:mode==='custom-proof'?'custom_tool_call_output':'function_call_output',call_id:mode==='unlinked-proof'?'other-read':'read',output:mode==='native-input-text'?[{type:'input_text',text:JSON.stringify(proof)}]:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:mode==='errored-proof'?{isError:true,name:'Test Space'}:mode==='nested-error-proof'?{content:JSON.stringify({isError:true,structuredContent:proof})}:proof)});
   if(mode==='native-status-proof')fresh.at(-1).payload.output=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/live/codex-workspace-status.json'))).output;
   if(mode.startsWith('read-start-race')&&(!rows.length||mode.endsWith('-twice')))fresh.at(-1).payload.output=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/live/codex-start-race.json'))).output;
@@ -69,6 +77,10 @@ else if(args[0]==='exec'){
  }else if(mode==='confirmation-window'&&prompt.startsWith('Run stage')){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});
  }else if(['free','free-no-result'].includes(mode)&&rows.length<5){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Какой цвет предпочитаешь?'}]});
  }else if(!prompt.startsWith('<send_user_message_question_reply>')&&!prompt.startsWith('Не буду')){
+  if(namespaced?.[1]==='allowed'){
+   item({type:'function_call',namespace:'mcp__monotest__',name:'save_project',call_id:'namespaced',arguments:'{}'});
+   item({type:'function_call_output',call_id:'namespaced',output:'{"ok":true}'});
+  }
   if(mode==='unicode-exec')item({type:'custom_tool_call',name:'exec',call_id:'escaped',input:String.raw`await \u{74}ools.exec_command({"cmd":"uname -a"}); text(await tools.mcp__monotest__get_workspace({}));`});
   if(mode==='native-web-search')item({type:'web_search_call',id:'search'});
   if(mode==='unknown-native-item')item({type:'future_item'});

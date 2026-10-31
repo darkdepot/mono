@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { nativeToolName } from './skills-boundary.mjs';
 
 // Native evidence is trusted only here. Callers retain the full host envelope.
 // Unknown forms stay unverified; this is no parser or hostile-source boundary.
@@ -86,9 +87,10 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
     }
     if (host === 'codex') {
       const c = native(call), r = native(result);
+      const name=nativeToolName(c);
       if (kind === 'answer') {
         // The driver binds the newly resumed user message to its exact sent prompt.
-        if (!callId || (prompt !== undefined && typeof prompt !== 'string') || c?.type !== 'function_call' || c.name !== 'request_user_input_async' || c.call_id !== callId || r?.type !== 'message' || r.role !== 'user') absent();
+        if (!callId || (prompt !== undefined && typeof prompt !== 'string') || c?.type !== 'function_call' || name !== 'request_user_input_async' || c.call_id !== callId || r?.type !== 'message' || r.role !== 'user') absent();
         const content = at(r, ['content']);
         if (!Array.isArray(content) || content.length !== 1 || at(content,[0]).type !== 'input_text' || typeof at(content,[0,'text']) !== 'string' || (prompt !== undefined && at(content,[0,'text']) !== prompt)) absent();
         return {status:'confirmed'};
@@ -97,7 +99,7 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
       if (!outputType || typeof c.call_id !== 'string' || !c.call_id || r?.type !== outputType || r.call_id !== c.call_id) absent();
       const output = at(r, ['output']);
       if (kind === 'window') {
-        if (c.type !== 'function_call' || c.name !== 'request_user_input_async') absent();
+        if (c.type !== 'function_call' || name !== 'request_user_input_async') absent();
         if (typeof output !== 'string') absent();
         value = guarded(JSON.parse(output));
         const args = JSON.parse(at(c,['arguments']));
@@ -115,11 +117,11 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
         if(parsed.length!==1)absent();value=parsed[0];
       }else value = unwrap(output);
       if (kind === 'command') {
-        if (!['exec_command','exec'].includes(c.name)) absent();
+        if (!['exec_command','exec'].includes(name)) absent();
         if (value?.exit_code !== 0 || value.failure || value.signal) absent();
         return {status:'confirmed'};
       }
-      if (kind === 'workspace' && ![proof?.tool,'exec'].includes(c.name)) absent();
+      if (kind === 'workspace' && ![proof?.tool,'exec'].includes(name)) absent();
     } else if (host === 'claude') {
       const id = callId;
       if (typeof id !== 'string' || !id) absent();

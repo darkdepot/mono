@@ -29,12 +29,14 @@ export class MissingEvidence extends Error {}
 export function workspaceReadCode(proof) {
   return `const r = await tools.${proof.tool}(${JSON.stringify(proof.input ?? {})}); text(r);`;
 }
+export const nativeToolName=item=>typeof item?.namespace==='string'&&item.namespace.startsWith('mcp__')?item.namespace+item.name:item?.name;
 export function workspaceReadCall(item, proof) {
-  if (item.name === proof.tool && item.type === 'function_call') {
+  const name=nativeToolName(item);
+  if (name === proof.tool && item.type === 'function_call') {
     parseInput(item);
     return true;
   }
-  return item.name === 'exec' && nativeCallSource(item).trim() === workspaceReadCode(proof);
+  return name === 'exec' && nativeCallSource(item).trim() === workspaceReadCode(proof);
 }
 // Before confirmation MCP actions must be recognizable reads. After it, all
 // monotest tools are available; this does not classify command contents.
@@ -55,7 +57,8 @@ export function codexToolCalls(item) {
   if(!['function_call','custom_tool_call'].includes(item?.type))return [];
   if (typeof item.name !== 'string' || typeof item.call_id !== 'string' || !item.call_id.trim())
     throw new MissingEvidence('tool name and native call id required');
-  if(item.name!=='exec'){let input={};try{input=JSON.parse(nativeCallSource(item));}catch{}return [{name:item.name,input,callId:item.call_id}];}
+  const name=nativeToolName(item);
+  if(name!=='exec'){let input={};try{input=JSON.parse(nativeCallSource(item));}catch{}return [{name,input,callId:item.call_id}];}
   const code=nativeCallSource(item);
   const names=new Set([...code.matchAll(/\btools\.(\w+)\s*\(/g)].map(m=>m[1]));
   // Names are evidence, not a JavaScript parser or a command security policy.

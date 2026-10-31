@@ -312,6 +312,20 @@ for(const host of ['claude','codex'])test(`${host}: persona consumes its questio
  }
 });
 
+for(const [mode,expected] of [['namespaced-allowed','passed'],['namespaced-proof','passed'],['namespaced-early','failed'],['namespaced-foreign','failed']])test(`Codex direct MCP namespace preserves write/server boundary (${mode})`,async t=>{
+  const request=setup(t,'codex',mode);delete request.scenario.allowedTools;
+  const r=await runScenario(request);assert.equal(r.status,expected,JSON.stringify(r));
+  if(expected==='failed'){assert.equal(r.replies.length,0);const calls=fs.readFileSync(path.join(request.cwd,'invocations.jsonl'),'utf8').trim().split('\n').map(JSON.parse);assert.equal(calls.filter(c=>c.args[0]==='exec').length,1);}
+});
+test('Codex native MCP identity is namespace plus name, without changing host exec parsing',()=>{
+ for(const type of ['function_call','custom_tool_call']){
+  const field=type==='function_call'?'arguments':'input';
+  const call={type,namespace:'mcp__linear__',name:'exec',call_id:'identity',[field]:'{}'};
+  assert.equal(codexToolCalls(call)[0].name,'mcp__linear__exec');
+ }
+ assert.equal(codexToolCalls({type:'function_call',namespace:'functions',name:'exec',call_id:'host',arguments:'text(await tools.mcp__monotest__get_workspace({}));'})[0].name,'mcp__monotest__get_workspace');
+});
+
 test('Claude informational prefixes keep their ordinary window',t=>{
  for(const mode of ['unknown-native-item','unknown-native-block']){
   const request=setup(t,'claude',mode),input=[{type:'user'},{type:'user'}].map(JSON.stringify).join('\n')+'\n';
