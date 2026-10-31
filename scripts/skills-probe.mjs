@@ -57,7 +57,7 @@ export function claudeWindows(rows, source) {
       if (seen.has(block.id)) continue;
       seen.add(block.id);
       windows.push({
-        evidence: `${source}:${line}`, line, toolResult,
+        evidence: `${source}:${line}`, line, callId: block.id, toolResult,
         textLines: [...new Set(text)], thinkingLines: [...new Set(thinking)],
         questions: block.input.questions,
         status: text.length ? 'passed' : 'failed',

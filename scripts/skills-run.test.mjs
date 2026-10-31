@@ -64,7 +64,7 @@ test('actual child invocation retains isolation flags, plugin copy and no-tools 
  }
 });
 test('literal commands inside Codex exec are authorized exactly; dynamic or omitted commands fail closed',()=>{
- const call=codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'x',input:'text(await tools.exec_command({cmd: "pwd", max_output_tokens: 100}));'})[0];
+ const call=codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'x',input:'text(await tools.exec_command({"cmd": "pwd", "max_output_tokens": 100}));'})[0];
  assert.equal(call.input.cmd,'pwd');assert.equal(toolViolation(call.name,call.input,{allowedTools:['exec_command'],allowedCommands:['pwd']},true),null);
  assert.match(toolViolation(call.name,call.input,{allowedTools:['exec_command'],allowedCommands:['ls']},true),/command/);
  for(const code of ['await tools.exec_command({cmd: command})','await tools.exec_command({...options,cmd: "pwd"})'])assert.throws(()=>codexToolCalls({type:'custom_tool_call',name:'exec',input:code}));
@@ -74,4 +74,16 @@ test('Codex exec aliases cannot hide a foreign call beside a legitimate read',()
 });
 test('a monotest write without prior proof is denied even if listed in the scenario',()=>{
  assert.match(toolViolation('mcp__monotest__save_project',{}, {allowedTools:['mcp__monotest__save_project']},false),/before workspace confirmation/);
+});
+test('computed and overwritten Codex commands are not authorized as their first literal',()=>{
+ for(const code of ['await tools.exec_command({cmd: "pwd" + "; uname -a"})','await tools.exec_command({cmd: "pwd", cmd: "uname -a"})']){
+  let rejected=false;try{const call=codexToolCalls({type:'custom_tool_call',name:'exec',input:code})[0];rejected=Boolean(toolViolation(call.name,call.input,{allowedTools:['exec_command'],allowedCommands:['pwd']},true));}catch{rejected=true;}
+  assert.equal(rejected,true,code);
+ }
+});
+test('a Claude child result cannot fail the parent stage or start its waiting state',async t=>{
+ const request=setup(t,'claude','child');const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));
+});
+for(const host of ['claude','codex'])test(`${host}: sending a reply without observing delivery is not green`,async t=>{
+ const r=await runScenario(setup(t,host,'unanswered'));assert.notEqual(r.status,'passed',JSON.stringify(r));
 });

@@ -64,9 +64,12 @@ export function codexToolCalls(item) {
     const name=match[1],segment=code.slice(match.index,calls[i+1]?.index??code.length);
     let input={};
     if(name==='exec_command'){
-      const literal=/\bcmd\s*:\s*("(?:\\.|[^"\\])*")/.exec(segment);
-      if(!literal || segment.includes('...'))throw new Error('exec_command requires a literal JSON command for audit');
-      input={cmd:JSON.parse(literal[1])};
+      const argument = segment.slice(segment.indexOf('(') + 1).trim();
+      const literal = /^(\{[\s\S]*\})\s*\)/.exec(argument);
+      if (!literal) throw new Error('exec_command audit requires a complete JSON argument object');
+      input = JSON.parse(literal[1]);
+      if (!input || Array.isArray(input) || typeof input.cmd !== 'string')
+        throw new Error('exec_command audit requires a literal JSON command');
     }
     return {name,input,callId:item.call_id};
   });

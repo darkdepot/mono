@@ -32,7 +32,7 @@ else if(args[0]==='exec'){
   if(mode!=='missing')item({...async[0],call_id:'window-1'});
   item(async[1]);item(async[2]);
   if(mode==='late-tool')item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'late',arguments:'{}'});
- }else{item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});}
+ }else{if(mode!=='unanswered')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});}
  fresh.push({type:'event_msg',payload:{type:mode==='cut'?'task_started':'task_complete'}});
  fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');
  out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);
@@ -56,6 +56,7 @@ else if(args[0]==='exec'){
     out({type:'control_request',request_id:'blocked',request:{subtype:'can_use_tool',tool_name:'mcp__linear__save_project',input:{}}});return;
    }
    if(mode==='cut'){process.stdout.write('{"type":');process.exit(0);}
+   if(mode==='child')out({type:'result',subtype:'error_during_execution',is_error:true,parent_tool_use_id:'child'});
    out(summary);
    if(mode==='missing'){out({type:'result',subtype:'success'});return;}
    out(window);
@@ -65,7 +66,7 @@ else if(args[0]==='exec'){
     if(m.response.response.behavior!=='deny')fs.writeFileSync(path.join(path.dirname(process.argv[1]),'forbidden-write'),'executed');
     process.exit(0);
    }
-   out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',content:'answered'}]}});
+   if(mode!=='unanswered')out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',content:'answered'}]}});
    out({type:'assistant',message:{content:[{type:'text',text:'Принято.'}]}});out({type:'result',subtype:'success'});
   }
  });

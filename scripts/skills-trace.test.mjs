@@ -52,3 +52,21 @@ test('usage metadata after Codex completion does not create a false incomplete t
  assert.equal(checkTrace({host:'codex',trace:write(rows),expectedWindows:[codexExpected]}).status,'passed');
  rows.push({type:'event_msg',payload:{type:'task_started'}});assert.equal(checkTrace({host:'codex',trace:write(rows),expectedWindows:[codexExpected]}).status,'unverified');
 });
+test('Claude summary anchors cannot be borrowed from an earlier API message',t=>{
+ const write=scratch(t),sample=JSON.parse(fs.readFileSync(`${base}/claude/trace-control-v0.41.0-approval.json`));
+ const summary=sample.events.find(r=>r.line===138).event,window=sample.events.find(r=>r.line===139).event;
+ summary.message.id='earlier-message';window.message.content.unshift({type:'text',text:'Коротко.'});
+ assert.equal(checkTrace({host:'claude',trace:write([summary,window]),expectedWindows:[expected],excerpt:true}).status,'failed');
+});
+test('Claude service call inside the same content array cannot sit between summary and window',t=>{
+ const write=scratch(t),sample=JSON.parse(fs.readFileSync(`${base}/claude/trace-control-v0.41.0-approval.json`));
+ const summary=sample.events.find(r=>r.line===138).event,window=sample.events.find(r=>r.line===139).event;
+ const event={type:'assistant',message:{id:'combined',content:[...summary.message.content,{type:'tool_use',id:'read',name:'Read',input:{file_path:'fixture'}},...window.message.content]}};
+ assert.equal(checkTrace({host:'claude',trace:write([event]),expectedWindows:[expected],excerpt:true}).status,'failed');
+ event.message.content.splice(1,1);assert.equal(checkTrace({host:'claude',trace:write([event]),expectedWindows:[expected],excerpt:true}).status,'passed');
+});
+test('a late child result cannot replace the successful parent terminal event',t=>{
+ const write=scratch(t),sample=JSON.parse(fs.readFileSync(`${base}/claude/trace-control-v0.41.0-approval.json`));
+ const rows=sample.events.map(r=>r.event);rows.push({type:'result',subtype:'success'},{type:'result',subtype:'error_during_execution',is_error:true,parent_tool_use_id:'child'});
+ assert.equal(checkTrace({host:'claude',trace:write(rows),expectedWindows:[expected]}).status,'passed');
+});

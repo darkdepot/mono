@@ -41,8 +41,8 @@ export function codexWindows(rows, source) {
 
 export function completedTrace(host, rows) {
   if (host === 'claude') {
-    const last = rows.at(-1)?.value;
-    return last?.type === 'result' && last.subtype === 'success' && last.is_error !== true;
+    const last = rows.filter(r => !r.value.parent_tool_use_id).at(-1)?.value;
+    return !last?.parent_tool_use_id && last?.type === 'result' && last.subtype === 'success' && last.is_error !== true;
   }
   const last = rows.filter(r => r.value.type === 'response_item' ||
     (r.value.type === 'event_msg' && ['task_complete','task_started','turn_aborted','error'].includes(r.value.payload?.type))).at(-1)?.value;
@@ -87,12 +87,22 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
       const issues = w.status === 'failed' ? [w.reason] : [];
       let summary = w.summary ?? '';
       if (host === 'claude') {
-        const textRows = rows.filter(r => w.textLines.includes(r.line));
-        summary = textRows.map(r => textOf(r.value.message)).join('\n');
-        const lastText = textRows.at(-1), windowRow = rows.find(r => r.line === w.line);
-        if (lastText && lastText.line !== w.line && (!lastText.value.message.id || lastText.value.message.id !== windowRow.value.message.id)) issues.push('summary and window must be the same assistant message');
-        const between = rows.filter(r => r.line > (lastText?.line ?? 0) && r.line < w.line && !r.value.parent_tool_use_id);
-        if (between.some(r => r.value.type === 'result' || (r.value.message?.content ?? []).some?.(b => b.type === 'tool_use'))) issues.push('tool call or turn end between summary and window');
+        const windowRow = rows.find(r => r.line === w.line);
+        const messageId = windowRow.value.message.id;
+        const firstLine = w.textLines[0] ?? w.line;
+        const parts = [];
+        for (const r of rows.filter(r => r.line >= firstLine && r.line <= w.line)) {
+          if (r.value.parent_tool_use_id || r.value.type !== 'assistant') continue;
+          for (const block of r.value.message.content) {
+            if (block.type === 'tool_use') {
+              if (block.id === w.callId) break;
+              parts.length = 0; // Service work invalidates all earlier summary fragments.
+            }
+            if (block.type === 'text' &&
+                (r.line === w.line || (messageId && r.value.message.id === messageId))) parts.push(block.text);
+          }
+        }
+        summary = parts.join('\n');
       }
       if (!visible(summary)) issues.push('no visible owner summary');
       if (expected) {

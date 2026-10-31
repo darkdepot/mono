@@ -49,20 +49,22 @@ export async function runClaude(request){
   const config=path.join(request.outputDir,'mcp.json');fs.writeFileSync(config,JSON.stringify(mcpConfig(request.mcpServers)));
   const allowed=request.scenario.allowedTools.filter(n=>!n.startsWith('mcp__'));if(!allowed.includes('AskUserQuestion'))allowed.push('AskUserQuestion');
   const args=['-p','--verbose','--input-format','stream-json','--output-format','stream-json','--permission-prompt-tool=stdio','--strict-mcp-config','--mcp-config',config,'--plugin-dir',request.packRoot,'--setting-sources','','--settings',JSON.stringify({enabledPlugins:{'mono@mono-marketplace':false}}),'--tools',allowed.join(','),...modelArgs(request)];
-  const calls=new Map(),replies=[],seenRequests=new Set();let confirmed=false,phase='confirm',lastMessage='',freeIndex=0,waiting=false,violation=null;
+  const calls=new Map(),replies=[],seenRequests=new Set(),pendingWindows=[];let confirmed=false,phase='confirm',lastMessage='',freeIndex=0,waiting=false,violation=null;
   const deny=(e,message,c)=>c.send({type:'control_response',response:{subtype:'success',request_id:e.request_id,response:{behavior:'deny',message}}});
   const fail=(reason,c)=>{violation=reason;c.stop(reason);};
   const processResult=await hostProcess({binary:request.binary??{command:'claude'},args,cwd:request.cwd,env:childEnv(),trace,sent,stderr:path.join(request.outputDir,'stderr.log'),timeoutMs:request.timeoutMs??1_200_000,idleMs:request.idleMs??240_000,
     input:userMessage(`Только чтение: вызови ${request.workspaceProof.tool}, покажи пространство. Ничего не записывай; затем остановись.`),
     onEvent:(e,c)=>{
       if(e.type==='assistant'){
-        waiting=false;lastMessage=ownerText(e)||lastMessage;
+        if(!e.parent_tool_use_id){waiting=false;lastMessage=ownerText(e)||lastMessage;}
         for(const b of e.message?.content??[])if(b.type==='tool_use'){
           calls.set(b.id,b.name);
+          if(b.name==='AskUserQuestion'&&!e.parent_tool_use_id)pendingWindows.push(b.id);
           if(b.name!=='AskUserQuestion'){const reason=toolViolation(b.name,b.input,request.scenario,confirmed);if(reason)return fail(reason,c);}
         }
       }
-      if(e.type==='user'&&Array.isArray(e.message?.content))for(const b of e.message.content){
+      if(e.type==='user'&&!e.parent_tool_use_id&&Array.isArray(e.message?.content))for(const b of e.message.content){
+        if(b.type==='tool_result'){const reply=replies.find(r=>r.callId===b.tool_use_id);if(reply)reply.received=true;}
         if(b.type==='tool_result'&&calls.get(b.tool_use_id)===request.workspaceProof.tool){
           if(!workspaceMatches(b,request.workspaceProof))return fail('monotest workspace read did not match proof',c);confirmed=true;
         }
@@ -74,14 +76,16 @@ export async function runClaude(request){
           if(phase!=='stage'){deny(e,'workspace confirmation first',c);return fail('window before stage',c);}
           const policy=request.scenario.windows[replies.length];
           if(!policy){deny(e,'scenario window policy missing',c);return fail('unexpected window',c);}
-          c.send(windowReply('claude',input,policy,e.request_id));replies.push({index:replies.length,requestId:e.request_id,policy:policy.mode,replySent:true});
+          const callId=pendingWindows.shift();
+          if(!callId){deny(e,'window tool use missing from trace',c);return fail('unobserved window request',c);}
+          c.send(windowReply('claude',input,policy,e.request_id));replies.push({index:replies.length,requestId:e.request_id,callId,policy:policy.mode,replySent:true,received:false});
         }else{
           const reason=toolViolation(name,input,request.scenario,confirmed)??(phase==='confirm'&&name!==request.workspaceProof.tool?'non-read tool during workspace confirmation':null);
           if(reason){deny(e,reason,c);return fail(reason,c);}
           c.send({type:'control_response',response:{subtype:'success',request_id:e.request_id,response:{behavior:'allow',updatedInput:input}}});
         }
       }
-      if(e.type==='result'){
+      if(e.type==='result'&&!e.parent_tool_use_id){
         if(e.is_error||e.subtype!=='success')return fail('Claude result failed',c);
         if(phase==='confirm'){
           if(!confirmed)return fail('workspace not confirmed before stage',c);
@@ -119,7 +123,7 @@ export async function runCodex(request){
   const replies=[],seen=new Set(),deadline=Date.now()+(request.timeoutMs??1_200_000),readCalls=new Set();
   const stdout=path.join(request.outputDir,'stdout.jsonl'),sent=path.join(request.outputDir,'sent.jsonl');fs.writeFileSync(stdout,'');fs.writeFileSync(sent,'');
   let processResult;
-  const turn=async(prompt,confirm=false)=>{
+  const turn=async(prompt,confirm=false,replyRecord=null)=>{
     const args=thread?['exec','resume',...codexCommon(request),thread,prompt]:['exec',...codexCommon(request),'-s','read-only','-C',request.cwd,prompt];
     processResult=await hostProcess({binary,args,cwd:request.cwd,env,trace:stdout,sent,stderr:path.join(request.outputDir,'stderr.log'),timeoutMs:Math.max(1,deadline-Date.now()),onEvent:e=>{if(e.type==='thread.started'){if(thread&&thread!==e.thread_id)throw new Error('thread changed');thread=e.thread_id;}}});
     if(processResult.code!==0||processResult.failure)throw new Error(`Codex process failed: ${processResult.failure??processResult.code}`);
@@ -127,6 +131,10 @@ export async function runCodex(request){
     await quiet(rollout,request.idleMs??1000,deadline);
     const {rows}=traceRows(rollout);
     const fresh=rows.filter(r=>r.line>seenLines);seenLines=rows.at(-1)?.line??0;
+    if(replyRecord){
+      replyRecord.received=fresh.some(r=>r.value.type==='response_item'&&r.value.payload?.type==='message'&&r.value.payload.role==='user'&&(r.value.payload.content??[]).some(b=>b.type==='input_text'&&b.text===prompt));
+      if(!replyRecord.received)throw new Error('window reply not observed in resumed rollout');
+    }
     for(const r of fresh){
       const e=r.value,p=e.payload;
       if(e.type!=='response_item')continue;
@@ -146,7 +154,7 @@ export async function runCodex(request){
   try{
     await turn(`Только чтение: вызови ${request.workspaceProof.tool} и покажи пространство. Ничего не записывай, затем остановись.`,true);
     if(!confirmed)throw new Error('workspace not confirmed before stage');
-    let rows=await turn(request.scenario.prompt);
+    let rows=await turn(request.scenario.prompt+'\nДля аудита передавай аргументы tools.exec_command полным JSON-объектом с двойными кавычками. Не используй вычисляемые команды или spread.');
     for(let n=0;n<(request.maxTurns??32);n++){
       const windows=codexWindows(rows,rollout).filter(w=>!seen.has(w.callId));
       if(windows.length){
@@ -156,8 +164,8 @@ export async function runCodex(request){
         if(checked.status!=='passed')throw new Error('window/summary check failed before reply');
         const reply=windowReply('codex',{questions:window.questions},policy,window.callId);
         fs.appendFileSync(sent,JSON.stringify({thread,prompt:reply})+'\n');
-        seen.add(window.callId);replies.push({index:replies.length,callId:window.callId,policy:policy.mode,replySent:true,...(['empty','refuse'].includes(policy.mode)?{note:'Codex CLI form observed; app empty/refusal form not observed'}:{})});
-        rows=await turn(reply);continue;
+        seen.add(window.callId);replies.push({index:replies.length,callId:window.callId,policy:policy.mode,replySent:true,received:false,...(['empty','refuse'].includes(policy.mode)?{note:'Codex CLI form observed; app empty/refusal form not observed'}:{})});
+        rows=await turn(reply,false,replies.at(-1));continue;
       }
       const last=codexItems(rows).filter(r=>r.item?.type==='message'&&r.item.role==='assistant').at(-1)?.item;
       const lastMessage=(last?.content??[]).filter(b=>b.type==='output_text').map(b=>b.text).join('\n');
@@ -178,7 +186,7 @@ export async function runScenario(request){
     run=request.host==='claude'?await runClaude(request):await runCodex(request);
     const check=checkTrace({host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,rulesRoot:request.rulesRoot});
     const failure=run.violation??run.process?.failure??(run.process?.code!==0?'host process failed':null);
-    const allReplied=run.replies.length===request.scenario.expectedWindows.length;
+    const allReplied=run.replies.length===request.scenario.expectedWindows.length&&run.replies.every(r=>r.received);
     const status=failure?'failed':check.status!=='passed'?check.status:allReplied?'passed':'unverified';
     const result={host:request.host,status,...run,check,reason:failure??(!allReplied?'not every expected window was answered':null),conversation:{status:'unverified',rubric:'references/qa-skills.md#рубрика-разговора'}};
     fs.writeFileSync(path.join(request.outputDir,'result.json'),JSON.stringify(result,null,2)+'\n');return result;
