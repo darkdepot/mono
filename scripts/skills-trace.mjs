@@ -22,18 +22,26 @@ export function codexWindows(rows, source) {
     if (typeof p.call_id !== 'string' || !p.call_id) throw new Error(`line ${row.line}: missing call id`);
     if (seen.has(p.call_id)) continue;
     seen.add(p.call_id);
-    const args = JSON.parse(p.arguments ?? p.input);
-    if (!Array.isArray(args.questions) || !args.questions.length) throw new Error(`line ${row.line}: malformed async window`);
     // A user message or an actual task boundary ends the turn; tool output does not.
     const following = rows.filter(r => r.line > row.line);
     const end = following.find(r => (r.value.type === 'response_item' && r.value.payload?.type === 'message' && r.value.payload.role === 'user') ||
       (r.value.type === 'event_msg' && ['task_complete', 'task_started', 'turn_aborted'].includes(r.value.payload?.type)));
     const turn = items.filter(r => r.line > row.line && (!end || r.line < end.line));
+    const outputs = turn.filter(r => ['function_call_output','custom_tool_call_output'].includes(r.item.type) && r.item.call_id === p.call_id);
+    const output = outputs.length === 1 ? outputs[0] : null;
+    let args, accepted;
+    try { args = JSON.parse(p.arguments); } catch { args = null; }
+    try { accepted = typeof output?.item.output === 'string' ? JSON.parse(output.item.output) : null; } catch { accepted = null; }
+    // Only the recorded native success body establishes that a window appeared.
+    const executionConfirmed = p.type === 'function_call' && output?.item.type === 'function_call_output' &&
+      !output.item.isError && !output.item.is_error && accepted?.accepted === true && Object.keys(accepted).length === 1 &&
+      Array.isArray(args?.questions) && args.questions.length > 0;
     const last = turn.at(-1);
     const summary = last?.item.type === 'message' && last.item.role === 'assistant' && last.item.phase === 'final_answer' ? textOf(last.item) : '';
-    windows.push({ line: row.line, evidence: `${source}:${row.line}`, callId: p.call_id, questions: args.questions,
-      summary, summaryLine: last?.line, status: visible(summary) ? 'passed' : 'failed',
-      reason: visible(summary) ? 'async summary is the last message' : 'async summary must be final and last; no calls after it' });
+    windows.push({ line: row.line, evidence: `${source}:${row.line}`, callId: p.call_id, questions: args?.questions ?? [],
+      executionConfirmed, resultEvidence: output ? `${source}:${output.line}` : null,
+      summary, summaryLine: last?.line, status: !executionConfirmed ? 'unverified' : visible(summary) ? 'passed' : 'failed',
+      reason: !executionConfirmed ? 'linked native accepted:true window result missing or unknown' : visible(summary) ? 'async summary is the last message' : 'async summary must be final and last; no calls after it' });
   }
   return windows;
 }
@@ -84,6 +92,10 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
     const found = host === 'claude' ? claudeWindows(rows, trace) : codexWindows(rows, trace);
     for (const [i, w] of found.entries()) {
       const expected = expectedWindows[i];
+      if (w.status === 'unverified') {
+        windows.push({ ...w, id: expected?.id ?? `unexpected-${i}`, issues: [w.reason] });
+        continue;
+      }
       const issues = w.status === 'failed' ? [w.reason] : [];
       let summary = w.summary ?? '';
       if (host === 'claude') {
@@ -112,11 +124,12 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
       windows.push({ ...w, id: expected?.id ?? `unexpected-${i}`, issues, status: issues.length ? 'failed' : 'passed' });
     }
     if (found.length !== expectedWindows.length) checks.push({ id:'expected-windows',status:'failed',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:`expected ${expectedWindows.length} real windows, found ${found.length}; text is not a window` });
+    else if (host === 'codex' && found.some(w => !w.executionConfirmed)) checks.push({ id:'expected-windows',status:'unverified',evidence:`${trace}:${found.find(w => !w.executionConfirmed).line}`,reason:`expected ${expectedWindows.length} real windows; successful native execution is not confirmed for every call` });
     if (!excerpt) {
       const complete = completedTrace(host, rows);
       if (!complete) checks.push({ id:'complete-trace',status:'unverified',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:'successful terminal event missing; cut trace is not proof' });
     }
-    const status = [...windows,...checks].some(c => c.status === 'failed') ? 'failed' : checks.some(c => c.status === 'unverified') ? 'unverified' : 'passed';
+    const status = [...windows,...checks].some(c => c.status === 'failed') ? 'failed' : [...windows,...checks].some(c => c.status === 'unverified') ? 'unverified' : 'passed';
     return { host, status, trace, windows, checks, rules: { source:ruleSource, sha256:rulesDigest }, boundary:'mechanical checks only; conversation rubric still requires tester judgment' };
   } catch (error) { return {host,status:'unverified',trace,windows:[],checks,reason:error.message}; }
 }

@@ -31,6 +31,11 @@ for(const host of ['claude','codex']){
   }
  });
 }
+for(const mode of ['window-not-accepted','window-error','window-missing-result','window-unlinked-result','window-schema-rejected','window-unknown-result'])test(`Codex ${mode}: no answer without successful native window result`,async t=>{
+ const request=setup(t,'codex',mode),r=await runScenario(request);
+ assert.equal(r.status,'unverified',JSON.stringify(r));assert.equal(r.replies.length,0);assert.equal(r.check.windows[0].status,'unverified');
+ const calls=fs.readFileSync(path.join(request.cwd,'invocations.jsonl'),'utf8').trim().split('\n').map(JSON.parse).filter(r=>r.args[0]==='exec');assert.equal(calls.length,2,'confirmation and stage only, no resume answer');
+});
 test('Codex late tools and read-only confirmation violation stop before sending stage answers',async t=>{
  for(const mode of ['late-tool','write-before-proof']){const r=await runScenario(setup(t,'codex',mode));assert.equal(r.status,'failed');assert.equal(r.replies.length,0);}
 });

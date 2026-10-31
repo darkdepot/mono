@@ -39,8 +39,14 @@ else if(args[0]==='exec'){
   if(mode==='later-read')item({type:'custom_tool_call',name:'exec',call_id:'later-read',input:'text(await tools.mcp__monotest__get_workspace({}));'});
   if(mode==='linear')item({type:'custom_tool_call',name:'exec',call_id:'bad',input:'await tools.mcp__linear__save_project({});'});
   const async=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/trace-control-v0.41.0-async-order.json'))).items;
-  if(mode!=='missing')item({...async[0],call_id:'window-1'});
-  item(async[1]);item(async[2]);
+  if(mode!=='missing'){
+   const call={...async[0],call_id:'window-1'};
+   if(mode==='window-schema-rejected'){const input=JSON.parse(call.arguments);input.unexpected=true;call.arguments=JSON.stringify(input);}
+   item(call);
+  }
+  // Negative window receipts are synthetic perturbations, not observed refusals.
+  if(mode!=='window-missing-result')item({...async[1],call_id:mode==='window-unlinked-result'?'different-call':'window-1',output:mode==='window-not-accepted'?'{"accepted":false}':mode==='window-error'?'Synthetic window error':mode==='window-schema-rejected'?'Synthetic schema rejection':mode==='window-unknown-result'?'{}':async[1].output});
+  item(async[2]);
   if(mode==='late-tool')item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'late',arguments:'{}'});
  }else{if(mode!=='unanswered')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});}
  fresh.push({type:'event_msg',payload:{type:mode==='cut'?'task_started':'task_complete'}});
