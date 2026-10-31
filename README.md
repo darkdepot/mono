@@ -1640,6 +1640,10 @@ workspace read before writes. Direct Codex MCP calls retain namespace and name. 
 rollout, including child threads and native McpToolCall records, share this boundary;
 windows, answers and completion remain tied to the main thread. Claude refusal
 delivery requires the exact linked receipt for its sent deny and preserves the stage reaction.
+Multi-question Claude windows deliver every answer while retaining the one-question rule violation.
+Codex optionless windows accept text policies; option-dependent policies report a scenario mismatch.
+Exact recommended labels are accepted, and Codex completion must match the active turn ID.
+Cleanup skips signaling a process that has already exited.
 Host information remains open: unknown events and
 non-tool blocks are ignored, other native host items and dynamic exec access are
 notes. Exec audits tool names, without command lists or a JavaScript parser.

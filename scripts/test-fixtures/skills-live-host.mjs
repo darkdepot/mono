@@ -24,7 +24,9 @@ if(host==='claude'){
   const answer=next.find(e=>e.type==='response_item'&&e.payload?.type==='message'&&e.payload.role==='user');answer.payload.content=[{type:'input_text',text:args.at(-1)}];
   // Source was cut in the following stage. This is the fixture's successful boundary,
   // copied from its recorded native terminal form, never an observed live success.
-  next.push(structuredClone(rows[sample.windowTurnEnd-1]));
+  const terminal=structuredClone(rows[sample.windowTurnEnd-1]);
+  terminal.payload.turn_id=next.findLast(e=>e.payload?.type==='task_started')?.payload.turn_id;
+  next.push(terminal);
  }
  fs.writeFileSync(file,[...existing,...next].map(e=>JSON.stringify(e)).join('\n')+'\n');out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});
 }

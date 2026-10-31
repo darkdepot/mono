@@ -7,7 +7,7 @@ import { auditRows } from './skills-audit.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 import { hostProcess } from './skills-process.mjs';
 import { windowReply, personaPrompt } from './skills-owner.mjs';
-import { checkTrace, codexItems, codexWindows, visible, completedTrace } from './skills-trace.mjs';
+import { checkTrace, codexItems, codexWindows, visible, completedTrace, codexTerminals } from './skills-trace.mjs';
 import { traceRows } from './skills-probe.mjs';
 import { mcpConfig, privateCodexHome, toolViolation, workspaceReadCall, workspaceReadCode, MissingEvidence, isWrite } from './skills-boundary.mjs';
 
@@ -152,7 +152,7 @@ export async function runCodex(request){
     if(processResult.code!==0||processResult.failure)throw new Error(`Codex process failed: ${processResult.failure??processResult.code}`);
     if(!thread)throw new Error('Codex thread id missing');rollout=rolloutFor(home,thread);
     await quiet(rollout,processResult.completed?Math.min(request.idleMs??1000,100):request.idleMs??1000,deadline);
-    if(processResult.completed){const terminal=readJsonLines(rollout).events.find(r=>r.line>seenLines&&r.value.type==='event_msg'&&r.value.payload?.type==='task_complete');if(!terminal)throw new MissingEvidence('last answered continuation terminal missing');endLine=terminal.line;}
+    if(processResult.completed){const terminal=codexTerminals(readJsonLines(rollout).events.filter(r=>r.line>seenLines))[0];if(!terminal)throw new MissingEvidence('last answered continuation terminal missing');endLine=terminal.line;}
     const {rows}=traceRows(rollout,'codex',{endLine});
     const fresh=rows.filter(r=>r.line>seenLines);seenLines=rows.at(-1)?.line??0;
     const audit=auditRows('codex',fresh);
@@ -218,9 +218,9 @@ export async function runCodex(request){
         if(uncertain)throw new MissingEvidence(`${uncertain.evidence}: ${uncertain.reason}`);
         if(windows.length!==1)throw new Error('multiple unanswered windows in one turn');
         const window=windows[0],policy=request.scenario.windows[replies.length];
+        const reply=windowReply('codex',{questions:window.questions},policy,window.callId);
         const checked=checkTrace({host:'codex',trace:rollout,expectedWindows:request.scenario.expectedWindows.slice(0,replies.length+1),rulesRoot:request.rulesRoot,phase:'card'});
         if(checked.status!=='passed')throw new Error('window/summary check failed before reply');
-        const reply=windowReply('codex',{questions:window.questions},policy,window.callId);
         fs.appendFileSync(sent,JSON.stringify({thread,prompt:reply})+'\n');
         seen.add(window.callId);replies.push({index:replies.length,callId:window.callId,policy:policy.mode,replySent:true,received:false,nativeCall:rows.find(r=>r.value.payload?.call_id===window.callId)?.value,...(['empty','refuse'].includes(policy.mode)?{note:'Codex CLI form observed; app empty/refusal form not observed'}:{})});
         rows=await turn(reply,false,replies.at(-1));continue;

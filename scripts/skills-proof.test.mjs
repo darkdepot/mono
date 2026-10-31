@@ -138,3 +138,25 @@ test('Claude denial receipt is delivered only for matching sent deny and native 
  }
  assert.equal(nativeProof({...request,kind:'workspace',proof:{tool:'AskUserQuestion',path:[],equals:'x'}}).status,'unverified');
 });
+
+test('observed two-question empty receipt and synthetic answered combinations bind every answer',()=>{
+ const sample=JSON.parse(fs.readFileSync('evals/scenarios/probe/live/claude-two-questions.json'));
+ const check=(reply,result)=>nativeProof({host:'claude',kind:'answer',call:sample.call,callId:sample.call.message.content[0].id,reply,result}).status;
+ assert.equal(check(sample.reply,sample.result),'confirmed');
+ for(const custom of [false,true]){
+  const reply=structuredClone(sample.reply),result=structuredClone(sample.result),input=reply.response.response.updatedInput;
+  input.answers=Object.fromEntries(input.questions.map(q=>[q.question,custom?'Поправь тестовое описание.':q.options[0].label]));
+  const pairs=Object.entries(input.answers).map(([q,a])=>`"${q}"="${a}"`).join(', ');
+  result.message.content[0].content=custom?`The user answered: ${pairs}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`:`Your questions have been answered: ${pairs}. You can now continue with these answers in mind.`;
+  assert.equal(check(reply,result),'confirmed');
+  result.message.content[0].content=result.message.content[0].content.replace(pairs,pairs.split(', ')[0]);
+  assert.equal(check(reply,result),'unverified','partial receipt is not proof of every answer');
+ }
+ const partial=structuredClone(sample.reply);delete partial.response.response.updatedInput.answers[Object.keys(partial.response.response.updatedInput.answers)[1]];
+ assert.equal(check(partial,sample.result),'unverified');
+});
+test('observed Codex title-only window is natively confirmed without options',()=>{
+ const sample=JSON.parse(fs.readFileSync('evals/scenarios/probe/live/codex-free-question.json'));
+ const proof=nativeProof({host:'codex',kind:'window',call:sample.call,result:sample.result});
+ assert.equal(proof.status,'confirmed');assert.equal(proof.value.questions[0].options,undefined);
+});

@@ -387,3 +387,35 @@ for(const mode of ['child-allowed','child-window','child-window-main-missing'])t
  const request=setup(t,'codex',mode);request.mcpServers.paper={url:'https://paper.example.test/mcp'};request.scenario.allowedTools.push('mcp__paper__get_document');
  const r=await runScenario(request);assert.equal(r.status,mode.endsWith('-missing')?'failed':'passed',JSON.stringify(r));assert.equal(r.replies.length,mode.endsWith('-missing')?0:1);assert.equal(r.auditedTraces.length,2);
 });
+
+// continue19: observed multi-question/optionless payloads, synthetic stage tails.
+for(const host of ['claude','codex'])test(`${host}: exact recommended label works beside normalized label`,async t=>{
+ for(const label of ['Утвердить и начать Research','Утвердить и начать Research (Recommended)']){
+  const request=setup(t,host);request.scenario.windows=[{mode:'label',label}];
+  const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies[0].received,true);
+ }
+});
+for(const [mode,status] of [['turn-id-match','passed'],['turn-id-stale','unverified'],['turn-id-stale-before-current','passed']])test(`Codex completion binds active turn: ${mode}`,async t=>{
+ const request=setup(t,'codex',mode),r=await runScenario(request);assert.equal(r.status,status,JSON.stringify(r));
+ if(mode==='turn-id-stale-before-current'){
+  const row=fs.readFileSync(r.trace,'utf8').trim().split('\n').map(JSON.parse)[r.endLine-1];
+  const start=fs.readFileSync(r.trace,'utf8').trim().split('\n').map(JSON.parse).slice(0,r.endLine).findLast(e=>e.payload?.type==='task_started');
+  assert.equal(row.payload.turn_id,start.payload.turn_id);
+ }
+});
+test('Claude multi-question window delivers every policy, retaining the one-question conversation violation',async t=>{
+ for(const policy of [{mode:'recommended'},{mode:'label',label:'Зелёный'},{mode:'correction',text:'Синий, но светлее'},{mode:'empty'},{mode:'refuse',text:'Не буду отвечать на этот вопрос.'},{mode:'discuss'}]){
+  const request=setup(t,'claude','two-questions');request.scenario.windows=[policy];
+  const r=await runScenario(request);assert.equal(r.replies[0]?.received,true,JSON.stringify(r));assert.equal(r.status,'failed');assert.ok(r.check.windows[0].issues.includes('one question at a time'));
+  const sent=fs.readFileSync(r.sent,'utf8').trim().split('\n').map(JSON.parse).find(e=>e.type==='control_response').response.response;
+  if(policy.mode!=='refuse')assert.equal(Object.keys(sent.updatedInput.answers).length,2);
+ }
+});
+for(const policy of [{mode:'correction',text:'Предпочитаю синий.'},{mode:'empty'},{mode:'refuse',text:'Не буду отвечать.'}])test(`Codex optionless question accepts text policy: ${policy.mode}`,async t=>{
+ const request=setup(t,'codex','free-window');request.scenario.windows=[policy];const r=await runScenario(request);
+ assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies[0].received,true);assert.equal(r.check.windows[0].executionConfirmed,true);
+});
+for(const mode of ['recommended','label','discuss'])test(`Codex optionless question reports scenario mismatch: ${mode}`,async t=>{
+ const request=setup(t,'codex','free-window');request.scenario.windows=[{mode,label:'Зелёный'}];const r=await runScenario(request);
+ assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/scenario choice unavailable/);assert.equal(r.replies.length,0);
+});

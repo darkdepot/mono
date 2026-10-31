@@ -12,7 +12,7 @@ export function windowReply(host, input, policy, id) {
     const target = policy.mode === 'discuss' ? 'Ещё обсудить' : policy.label;
     const answer = policy.mode === 'recommended'
       ? labels.find(l => l.endsWith(' (Recommended)'))
-      : labels.find(l => l.replace(/ \(Recommended\)$/, '') === target);
+      : labels.find(l => l === target) ?? labels.find(l => l.replace(/ \(Recommended\)$/, '') === target);
     if (!answer) throw new Error(`scenario choice unavailable: ${policy.mode}`);
     return answer;
   };

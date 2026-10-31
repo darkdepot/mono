@@ -44,6 +44,16 @@ export function codexWindows(rows, source, options) {
 }
 
 
+// Existing native turn boundaries also bind the terminal used for early stop.
+export function codexTerminals(rows) {
+  let turnId;
+  return rows.filter(({value:e}) => {
+    if(e.type !== 'event_msg') return false;
+    if(e.payload?.type === 'task_started') turnId = e.payload.turn_id;
+    return e.payload?.type === 'task_complete' && e.payload.turn_id === turnId;
+  });
+}
+
 export function completedTrace(host, rows, options) {
   const audit=auditRows(host,rows,options);
   if(options?.stdout)return audit.proof({kind:'terminal',result:rows.at(-1)?.value}).status==='confirmed';
@@ -52,8 +62,8 @@ export function completedTrace(host, rows, options) {
     return audit.proof({kind:'terminal',result:last}).status === 'confirmed';
   }
   const last = rows.filter(r => (r.value.type === 'response_item'&&['message','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(r.value.payload?.type)) ||
-    (r.value.type === 'event_msg' && ['task_complete','task_started','turn_aborted','error'].includes(r.value.payload?.type))).at(-1)?.value;
-  return audit.proof({kind:'terminal',result:last}).status === 'confirmed';
+    (r.value.type === 'event_msg' && ['task_complete','task_started','turn_aborted','error'].includes(r.value.payload?.type))).at(-1);
+  return last?.line === codexTerminals(rows).at(-1)?.line && audit.proof({kind:'terminal',result:last?.value}).status === 'confirmed';
 }
 
 function cardIssues(host, questions, expected) {
@@ -62,6 +72,7 @@ function cardIssues(host, questions, expected) {
   for (const q of questions) {
     const title = host === 'claude' ? q.question : q.title;
     const options = q.options;
+    if (host === 'codex' && options == null && typeof title === 'string' && visible(title)) continue;
     if (typeof title !== 'string' || !Array.isArray(options) || options.length < 2 || options.length > 3) { issues.push('invalid question or option count'); continue; }
     const labels = options.map(o => typeof o === 'string' ? o : o?.label);
     if (labels.some(l => typeof l !== 'string' || !visible(l))) { issues.push('invalid option label'); continue; }

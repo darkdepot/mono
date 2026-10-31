@@ -1,0 +1,20 @@
+{
+  "source": "MONO-288-live2/codex-free-question.rollout.jsonl:58,61; title and IDs depersonalized",
+  "call": {
+    "type": "response_item",
+    "payload": {
+      "type": "function_call",
+      "name": "request_user_input_async",
+      "arguments": "{\"questions\": [{\"title\": \"Какой тестовый цвет предпочитаешь?\"}]}",
+      "call_id": "free-window"
+    }
+  },
+  "result": {
+    "type": "response_item",
+    "payload": {
+      "type": "function_call_output",
+      "call_id": "free-window",
+      "output": "{\"accepted\":true}"
+    }
+  }
+}

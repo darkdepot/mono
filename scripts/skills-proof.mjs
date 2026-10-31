@@ -47,17 +47,17 @@ function claudeBlock(event, type, id, answer = false) {
 function claudeAnswer(sent) {
   // Allow receipts use the captured answer wording; deny is checked separately.
   if (sent?.behavior !== 'allow') absent();
+  const questions = sent.updatedInput?.questions;
   const answers = Object.entries(sent.updatedInput?.answers ?? {});
-  if (answers.length !== 1) absent();
-  const [question, answer] = answers[0];
-  if (typeof answer !== 'string') absent();
-  if (answer === '') return 'The user did not answer the questions.';
-  const options = sent.updatedInput.questions.find(q => q.question === question)?.options;
-  if (!Array.isArray(options)) absent();
-  const pair = `"${question}"="${answer}"`;
-  return options.some(o => o.label === answer)
-    ? `Your questions have been answered: ${pair}. You can now continue with these answers in mind.`
-    : `The user answered: ${pair}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`;
+  if (!Array.isArray(questions) || !questions.length || answers.length !== questions.length ||
+      answers.some(([question,answer]) => typeof answer !== 'string' || !questions.some(q => q.question === question))) absent();
+  const filled = answers.filter(([,answer]) => answer !== '');
+  if (!filled.length) return 'The user did not answer the questions.';
+  const pairs = filled.map(([question,answer]) => `"${question}"="${answer}"`).join(', ');
+  const known = filled.every(([question,answer]) => questions.find(q => q.question === question)?.options?.some(o => o.label === answer));
+  return known
+    ? `Your questions have been answered: ${pairs}. You can now continue with these answers in mind.`
+    : `The user answered: ${pairs}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`;
 }
 
 export function nativeProof({host, kind, call, result, proof, reply, prompt, callId}) {

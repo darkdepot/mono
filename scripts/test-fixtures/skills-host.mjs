@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
+import { spawn } from 'node:child_process';
 const [mode,repo,...args]=process.argv.slice(2);
 const home=process.env.CODEX_HOME;
 fs.appendFileSync(path.join(process.cwd(),'invocations.jsonl'),JSON.stringify({args,home})+'\n');
@@ -22,8 +23,11 @@ const out=e=>process.stdout.write(JSON.stringify(e)+'\n');
 const sample=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/claude/trace-control-v0.41.0-approval.json')));
 const summary=sample.events.find(r=>r.line===138).event;
 const window=sample.events.find(r=>r.line===139).event;
+const multi=mode==='two-questions'?JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/live/claude-two-questions.json'))):null;
+if(multi){window.message.content[0]=multi.call.message.content[0];window.message.id=summary.message.id;}
 const questions=window.message.content[0].input.questions;
 const proof={name:'Test Space'};
+if(mode==='exited-group'){spawn(process.execPath,['-e','setTimeout(()=>{},250)'],{stdio:['ignore',process.stdout,process.stderr]});out({type:'ready'});process.exit(0);}
 if(args[0]==='plugin'){process.exit(0);}
 if(mode==='crash'){process.exit(3);}
 if(mode==='timeout'){setInterval(()=>{},1000);}
@@ -33,6 +37,8 @@ else if(args[0]==='exec'){
  const file=path.join(home,'sessions','rollout-synthetic-thread.jsonl');fs.mkdirSync(path.dirname(file),{recursive:true});
  const rows=fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').map(l=>JSON.parse(l)):[];
  const prompt=args.at(-1),fresh=[];
+ const turnId=`turn-${rows.length}`,previousTurn=rows.findLast(r=>r.payload?.type==='task_started')?.payload.turn_id;
+ if(mode.startsWith('turn-id-'))fresh.push({type:'event_msg',payload:{type:'task_started',turn_id:turnId}});
  if(mode==='stage-no-result'&&rows.length&&prompt.startsWith('Run stage')){out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
  if(mode==='free-no-result'&&prompt==='Предпочитаю синий.'){out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
  const item=payload=>{
@@ -97,7 +103,7 @@ else if(args[0]==='exec'){
   if(mode==='linear')item({type:'custom_tool_call',name:'exec',call_id:'bad',input:'await tools.mcp__linear__save_project({});'});
   const async=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/trace-control-v0.41.0-async-order.json'))).items;
   if(mode!=='missing'&&mode!=='child-window-main-missing'){
-   const call={...async[0],call_id:'window-1'};
+   const call=mode==='free-window'?{...JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/live/codex-free-question.json'))).call.payload,call_id:'window-1'}:{...async[0],call_id:'window-1'};
    if(mode==='window-schema-rejected'){const input=JSON.parse(call.arguments);input.unexpected=true;call.arguments=JSON.stringify(input);}
    item(call);
   }
@@ -125,7 +131,8 @@ else if(args[0]==='exec'){
   fs.writeFileSync(path.join(childDir,'rollout-child-x.jsonl'),child.map(JSON.stringify).join('\n')+'\n');
  }
  if(mode==='informational')fresh.push({type:'world_state',payload:{}},{type:'event_msg',payload:{type:'item_completed'}},{type:'response_item',payload:{type:'web_search_call'}});
- fresh.push({type:'event_msg',payload:{type:mode==='cut'||(!rows.length&&mode==='read-start-race-cut')?'task_started':'task_complete'},...(!rows.length&&mode==='read-start-race-terminal-error'?{isError:true}:{}),...(['terminal-isError','terminal-is_error'].includes(mode)?{[mode.slice('terminal-'.length)]:true}:{})});
+ if(mode==='turn-id-stale-before-current'&&prompt.startsWith('<send_user_message_question_reply>'))fresh.push({type:'event_msg',payload:{type:'task_complete',turn_id:previousTurn}});
+ fresh.push({type:'event_msg',payload:{...(mode.startsWith('turn-id-')?{turn_id:mode==='turn-id-stale'&&prompt.startsWith('<send_user_message_question_reply>')?previousTurn:turnId}:{}),type:mode==='cut'||(!rows.length&&mode==='read-start-race-cut')?'task_started':'task_complete'},...(!rows.length&&mode==='read-start-race-terminal-error'?{isError:true}:{}),...(['terminal-isError','terminal-is_error'].includes(mode)?{[mode.slice('terminal-'.length)]:true}:{})});
  fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');
  out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});if(mode==='terminal-crash'&&prompt.startsWith('<send_user_message_question_reply>'))process.exit(3);if(mode.startsWith('stop-')&&prompt.startsWith('<send_user_message_question_reply>')){fs.appendFileSync(file,mode==='stop-cut-next-stage'?'{"type":':JSON.stringify({type:'event_msg',payload:{type:'task_started'}})+'\n');setInterval(()=>{},1000);}else process.exit(0);
 }else if(args.includes('--tools')&&args[args.indexOf('--tools')+1]===''){
@@ -174,7 +181,7 @@ else if(args[0]==='exec'){
    if(mode==='missing'){out({type:'result',subtype:'success'});return;}
    out(window);
    if(mode==='missing-permission'){out({type:'result',subtype:'success'});return;}
-   out(mode==='recorded-window'?sample.events.find(r=>r.line===140).event:perturb({type:'control_request',request_id:'request-window',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions},...(mode==='unlinked-permission'?{tool_use_id:'other-window'}:{})},...(mode==='errored-permission'?{isError:true}:{})},'window'));
+   out(multi?multi.permission:mode==='recorded-window'?sample.events.find(r=>r.line===140).event:perturb({type:'control_request',request_id:'request-window',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions},...(mode==='unlinked-permission'?{tool_use_id:'other-window'}:{})},...(mode==='errored-permission'?{isError:true}:{})},'window'));
   }else if(m.type==='control_response'){
    if(m.response.request_id==='blocked'){
     if(m.response.response.behavior!=='deny')fs.writeFileSync(path.join(path.dirname(process.argv[1]),'forbidden-write'),'executed');
@@ -184,14 +191,14 @@ else if(args[0]==='exec'){
    let receipt;
    if(response.behavior==='deny')receipt={content:response.message,is_error:true};
    else{
-    const entries=Object.entries(response.updatedInput.answers),[q,a]=entries[0];
-    const pair=`"${q}"="${a}"`;
-    const known=response.updatedInput.questions[0].options.some(o=>o.label===a);
-    receipt={content:a===''?'The user did not answer the questions.':known?`Your questions have been answered: ${pair}. You can now continue with these answers in mind.`:`The user answered: ${pair}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`};
+    const entries=Object.entries(response.updatedInput.answers).filter(([,a])=>a!==''),pairs=entries.map(([q,a])=>`"${q}"="${a}"`).join(', ');
+    const pair=pairs;
+    const known=entries.every(([q,a])=>response.updatedInput.questions.find(item=>item.question===q).options.some(o=>o.label===a));
+    receipt={content:!entries.length?'The user did not answer the questions.':known?`Your questions have been answered: ${pair}. You can now continue with these answers in mind.`:`The user answered: ${pair}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`};
    }
    if(mode==='error-answer')receipt.is_error=true;
    if(mode==='wrong-answer'||mode==='wrong-refusal')receipt.content='Different or failed answer';
-   if(mode!=='unanswered')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]},...(response.behavior==='allow'?{tool_use_result:response.updatedInput}:{})},'answer'));
+   if(mode!=='unanswered')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:multi?multi.call.message.content[0].id:'<tool-use-id>',...receipt}]},...(response.behavior==='allow'?{tool_use_result:response.updatedInput}:{})},'answer'));
    if(mode==='reply-no-result')process.exit(0);
    out({type:'assistant',message:{content:[{type:'text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':response.behavior==='deny'?'Отказ принят. Ничего не утверждаю.':'Принято.'}]}});out({type:'result',subtype:'success'});
    if(mode.startsWith('parent-init-')){out({type:'system',subtype:'init'});if(mode==='parent-init-cut')process.exit(0);out({type:'result',subtype:'success'});}

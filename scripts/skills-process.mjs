@@ -6,11 +6,12 @@ export function hostProcess({ binary, args, cwd, env, trace, stderr, sent, timeo
   return new Promise(resolve => {
     let failure = null, buffer = '', closed = false, completed = false, lineNumber=0, idle, killTimer;
     const child = spawn(binary.command, [...(binary.args ?? []), ...args], {cwd,env,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
+    const exited = () => closed || child.exitCode !== null || child.signalCode !== null;
     const stop = reason => {
       if (failure) return;
       failure = reason;clearTimeout(idle);
-      try { if(process.platform!=='win32')process.kill(-child.pid,'SIGTERM');else child.kill('SIGTERM'); } catch (error) { if(error.code!=='ESRCH') failure += `; ${error.message}`; }
-      killTimer = setTimeout(()=>{try{if(process.platform!=='win32')process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL');}catch(error){if(error.code!=='ESRCH')failure += `; ${error.message}`;}},500);
+      try { if(!exited()){if(process.platform!=='win32')process.kill(-child.pid,'SIGTERM');else child.kill('SIGTERM');} } catch (error) { if(error.code!=='ESRCH') failure += `; ${error.message}`; }
+      killTimer = setTimeout(()=>{if(exited())return;try{if(process.platform!=='win32')process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL');}catch(error){if(error.code!=='ESRCH')failure += `; ${error.message}`;}},500);
     };
     const send = value => {
       if (closed || child.stdin.destroyed) throw new Error('host stdin closed before reply');
@@ -22,10 +23,10 @@ export function hostProcess({ binary, args, cwd, env, trace, stderr, sent, timeo
       completed=true;clearTimeout(timer);clearTimeout(idle);child.stdin.end();
       // Let an already completed CLI exit before terminating any following stage.
       killTimer=setTimeout(()=>{
-        if(closed)return;
+        if(exited())return;
         try{if(process.platform!=='win32')process.kill(-child.pid,'SIGTERM');else child.kill('SIGTERM');}
         catch(error){if(error.code!=='ESRCH')failure=error.message;}
-        killTimer=setTimeout(()=>{if(closed)return;try{if(process.platform!=='win32')process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL');}catch(error){if(error.code!=='ESRCH')failure=error.message;}},500);
+        killTimer=setTimeout(()=>{if(exited())return;try{if(process.platform!=='win32')process.kill(-child.pid,'SIGKILL');else child.kill('SIGKILL');}catch(error){if(error.code!=='ESRCH')failure=error.message;}},500);
       },25);
     }, end:()=>child.stdin.end(), idle:()=>{
       clearTimeout(idle);if(idleMs)idle=setTimeout(()=>Promise.resolve(onIdle?.(controls)).catch(e=>stop(e.message)),idleMs);
