@@ -296,3 +296,27 @@ test('public samples contain no private paths, accounts, workspace identifiers o
     }
   }
 });
+
+test('child user/result/init preserve parent text; toolResult does not cross a parent boundary', t => {
+  const write = scratch(t);
+  const summary = control().events.find(r => r.line === 138).event;
+  const window = control().events.find(r => r.line === 139).event;
+  for(const child of [{type:'result'}, {type:'system',subtype:'init'}, {type:'user',message:{content:'Child reply'}}]){
+    const events=[summary,{...child,parent_tool_use_id:'child'},window];
+    const r=probeClaude(write('child-boundary.jsonl',events.map(e=>JSON.stringify(e)).join('\n')));
+    assert.equal(r.status,'passed');assert.deepEqual(r.windows[0].textLines,[1]);
+  }
+  const user={type:'user',message:{content:[{type:'tool_result',tool_use_id:'tool',content:'ok'}]}};
+  for(const boundary of [{type:'result'}, {type:'system',subtype:'init'}]){
+    const events=[user,boundary,summary,window];
+    const r=probeClaude(write('tool-result-boundary.jsonl',events.map(e=>JSON.stringify(e)).join('\n')));
+    assert.equal(r.status,'passed');assert.equal(r.windows[0].toolResult,null);
+  }
+});
+test('format and variation characters alone are not a visible position',t=>{
+  const write=scratch(t);
+  for(const text of ['\u00AD','\u200E','\u200F','\u2061','\uFE0F']){
+    const sample=control();sample.events.find(r=>r.line===138).event.message.content[0].text=text;
+    assert.equal(probeClaude(write('format-only.json',sample)).status,'failed');
+  }
+});

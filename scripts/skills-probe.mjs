@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { readJsonLines } from './transports/journal.mjs';
 
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
+export const visibleText = text => typeof text === 'string' && text.replace(/[\s\p{Cf}\p{Variation_Selector}]/gu, '').length > 0;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 function validQuestion(question) {
   return question && nonempty(question.question) && nonempty(question.header) &&
@@ -50,7 +51,7 @@ export function claudeWindows(rows, source) {
           (!Array.isArray(block.input?.questions) || !block.input.questions.length || !block.input.questions.every(validQuestion)))
         throw new Error(`line ${line}: malformed AskUserQuestion`);
       if (event.parent_tool_use_id) continue;
-      if (block.type === 'text' && /[^\s\u200B\u200C\u200D\u2060\uFEFF]/u.test(block.text)) text.push(line);
+      if (block.type === 'text' && visibleText(block.text)) text.push(line);
       if (block.type === 'thinking') thinking.push(line);
       if (block.type !== 'tool_use' || block.name !== 'AskUserQuestion') continue;
       if (seen.has(block.id)) continue;
@@ -67,26 +68,31 @@ export function claudeWindows(rows, source) {
   return windows;
 }
 
+export function traceRows(filename) {
+  const data = fs.readFileSync(filename, 'utf8');
+  let sample;
+  try { sample = JSON.parse(data); } catch { /* Stream JSONL is not a JSON document. */ }
+  let rows;
+  if (sample?.events) {
+    if (!Array.isArray(sample.events) || sample.events.some((row, i) =>
+    !object(row) || !Number.isInteger(row.line) || row.line < 1 ||
+    (i > 0 && row.line <= sample.events[i - 1].line))) throw new Error('invalid trace excerpt');
+    rows = sample.events.map(row => ({ value: row.event, line: row.line }));
+  } else {
+    const parsed = readJsonLines(filename);
+    if (parsed.errors.length) throw new Error(parsed.errors.join('; '));
+    rows = parsed.events;
+  }
+  return { rows, excerpt: Boolean(sample?.events) };
+}
+
 export function probeClaude(filename) {
   try {
-    const data = fs.readFileSync(filename, 'utf8');
-    let sample;
-    try { sample = JSON.parse(data); } catch { /* Stream JSONL is not a JSON document. */ }
-    let rows;
-    if (sample?.events) {
-      if (!Array.isArray(sample.events) || sample.events.some((row, i) =>
-        !object(row) || !Number.isInteger(row.line) || row.line < 1 ||
-        (i > 0 && row.line <= sample.events[i - 1].line))) throw new Error('invalid trace excerpt');
-      rows = sample.events.map(row => ({ value: row.event, line: row.line }));
-    } else {
-      const parsed = readJsonLines(filename);
-      if (parsed.errors.length) throw new Error(parsed.errors.join('; '));
-      rows = parsed.events;
-    }
+    const { rows, excerpt } = traceRows(filename);
     const windows = claudeWindows(rows, filename);
     const status = !windows.length ? 'unverified' : windows.some(w => w.status === 'failed') ? 'failed' : 'passed';
     return { check: 'claude-text-before-window', status, windows,
-      boundary: sample?.events ? 'sanitized excerpt; original line numbers' : 'supplied stream-json trace only',
+      boundary: excerpt ? 'sanitized excerpt; original line numbers' : 'supplied stream-json trace only',
       ...(windows.length ? {} : { reason: 'no top-level AskUserQuestion reached; harness evidence required' }) };
   } catch (error) {
     return { check: 'claude-text-before-window', status: 'unverified', windows: [], reason: error.message };

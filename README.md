@@ -1630,6 +1630,15 @@ It also runs the [skills host probe regression](evals/scenarios/probe/README.md)
 recorded window replies from both hosts and the Claude text-before-window defect/control.
 Run it alone with `node --test scripts/skills-probe.test.mjs`. These local samples
 do not certify host isolation, Linear writes, Design or client screenshots.
+Host drivers and the trace checker are documented in [skill QA](references/qa-skills.md).
+One run: `node scripts/skills-run.mjs <request.json>`; offline trace check:
+`node scripts/skills-trace.mjs <request.json>`. Run the focused tests with
+`node --test scripts/skills-{owner,run,trace,probe}.test.mjs`. The driver uses
+scenario-owned replies, a separate persona for explicit free questions, a private
+Codex home and a read-only workspace-confirmation turn. Claude refuses foreign
+MCP tools before permission; Codex audits after the turn and cannot promise
+pre-execution refusal. A mechanical pass still needs the conversation rubric and
+live host proof from the orchestrator; it is not a QA certificate.
 Scratch validation copies include the scout-hook template. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
 Use focused checks while editing:
