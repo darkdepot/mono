@@ -1626,6 +1626,10 @@ node scripts/verify.mjs
 ```
 
 The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures.
+It also runs the [skills host probe regression](evals/scenarios/probe/README.md):
+recorded window replies from both hosts and the Claude text-before-window defect/control.
+Run it alone with `node --test scripts/skills-probe.test.mjs`. These local samples
+do not certify host isolation, Linear writes, Design or client screenshots.
 Scratch validation copies include the scout-hook template. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
 Use focused checks while editing:

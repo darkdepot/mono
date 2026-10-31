@@ -1,0 +1,33 @@
+{
+ "host": "codex 0.159.2",
+ "policy": "refuse",
+ "call": {
+  "name": "request_user_input_async",
+  "arguments": {
+   "questions": [
+    {
+     "title": "Какой цвет берём?",
+     "options": [
+      "Синий (Recommended)",
+      "Зелёный",
+      "Ещё обсудить"
+     ]
+    }
+   ]
+  }
+ },
+ "callOutput": "{\"accepted\":true}",
+ "answerAsUserMessage": [
+  {
+   "type": "input_text",
+   "text": "Не буду отвечать на этот вопрос."
+  }
+ ],
+ "modelNext": [
+  {
+   "type": "output_text",
+   "text": "Не буду отвечать на этот вопрос.\nПонял как: ответа на вопрос о цвете нет."
+  }
+ ],
+ "note": "A plain message instead of an answer; the app has no separate refusal form in the samples."
+}

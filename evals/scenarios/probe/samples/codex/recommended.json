@@ -1,0 +1,33 @@
+{
+ "host": "codex 0.159.2",
+ "policy": "recommended",
+ "call": {
+  "name": "request_user_input_async",
+  "arguments": {
+   "questions": [
+    {
+     "title": "Какой цвет берём?",
+     "options": [
+      "Синий (Recommended)",
+      "Зелёный",
+      "Ещё обсудить"
+     ]
+    }
+   ]
+  }
+ },
+ "callOutput": "{\"accepted\":true}",
+ "answerAsUserMessage": [
+  {
+   "type": "input_text",
+   "text": "<send_user_message_question_reply>\n[{\"questionItemId\":\"[\\\"request_user_input_async\\\",\\\"<call-id>\\\",0]\",\"question\":\"Какой цвет берём?\",\"answer\":\"Синий (Recommended)\"}]\n</send_user_message_question_reply>\n"
+  }
+ ],
+ "modelNext": [
+  {
+   "type": "output_text",
+   "text": "Синий (Recommended)\nПонял как: выбран синий цвет."
+  }
+ ],
+ "note": null
+}

@@ -1,0 +1,76 @@
+{
+ "host": "claude-code 2.1.311",
+ "policy": "discuss",
+ "request": {
+  "type": "control_request",
+  "request": {
+   "subtype": "can_use_tool",
+   "tool_name": "AskUserQuestion",
+   "input": {
+    "questions": [
+     {
+      "question": "Какой цвет берём?",
+      "header": "Цвет",
+      "options": [
+       {
+        "label": "Синий (Recommended)",
+        "description": "спокойный"
+       },
+       {
+        "label": "Зелёный",
+        "description": "яркий"
+       },
+       {
+        "label": "Ещё обсудить",
+        "description": "решим позже"
+       }
+      ],
+      "multiSelect": false
+     }
+    ]
+   }
+  }
+ },
+ "response": {
+  "type": "control_response",
+  "response": {
+   "subtype": "success",
+   "request_id": "<uuid>",
+   "response": {
+    "behavior": "allow",
+    "updatedInput": {
+     "questions": [
+      {
+       "question": "Какой цвет берём?",
+       "header": "Цвет",
+       "options": [
+        {
+         "label": "Синий (Recommended)",
+         "description": "спокойный"
+        },
+        {
+         "label": "Зелёный",
+         "description": "яркий"
+        },
+        {
+         "label": "Ещё обсудить",
+         "description": "решим позже"
+        }
+       ],
+       "multiSelect": false
+      }
+     ],
+     "answers": {
+      "Какой цвет берём?": "Ещё обсудить"
+     }
+    }
+   }
+  }
+ },
+ "toolResult": {
+  "type": "tool_result",
+  "content": "Your questions have been answered: \"Какой цвет берём?\"=\"Ещё обсудить\". You can now continue with these answers in mind.",
+  "tool_use_id": "<tool-use-id>"
+ },
+ "modelNext": "Your questions have been answered: \"Какой цвет берём?\"=\"Ещё обсудить\". You can now continue with these answers in mind.\n\nПонял как: ты выбрал «Ещё обсудить», цвет пока не берём, решим позже."
+}
