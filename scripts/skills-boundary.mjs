@@ -24,10 +24,13 @@ export function privateCodexHome(home, authFile, servers) {
 }
 export function decodeResult(value) {
   if(typeof value==='string'){try{return decodeResult(JSON.parse(value));}catch{return value;}}
+  // Keep a failed envelope intact before unwrapping any of its payloads.
+  if(value?.isError || value?.is_error)return value;
   if(typeof value?.content==='string')return decodeResult(value.content);
-  if(value?.structuredContent)return value.structuredContent;
-  if(Array.isArray(value?.content)&&value.content.length===1&&value.content[0].type==='text')return decodeResult(value.content[0].text);
-  if(Array.isArray(value)&&value.length===1&&value[0].type==='text')return decodeResult(value[0].text);
+  if(value?.structuredContent)return decodeResult(value.structuredContent);
+  if(Array.isArray(value?.content)&&value.content.length===1)return decodeResult(value.content);
+  if(Array.isArray(value)&&value.length===1&&['text','input_text'].includes(value[0]?.type))return decodeResult(value[0]);
+  if(['text','input_text'].includes(value?.type)&&typeof value.text==='string')return decodeResult(value.text);
   return value;
 }
 export class MissingEvidence extends Error {}
@@ -81,13 +84,14 @@ export function toolViolation(name, input, scenario, confirmed) {
 // Codex has no pre-execution prompt. This conservative name audit does not
 // establish execution; workspaceReadCall separately requires the probe form.
 export function codexToolCalls(item) {
-  if(!['function_call','custom_tool_call'].includes(item?.type))return [];
+  if(['message','reasoning','function_call_output','custom_tool_call_output'].includes(item?.type))return [];
+  if(!['function_call','custom_tool_call'].includes(item?.type))throw new MissingEvidence(`unsupported native item type: ${item?.type}`);
   if (typeof item.name !== 'string' || typeof item.call_id !== 'string' || !item.call_id.trim())
     throw new MissingEvidence('tool name and native call id required');
   if(item.name!=='exec')return [{name:item.name,input:parseInput(item),callId:item.call_id}];
   const code=nativeCallSource(item);
   if(typeof code!=='string')throw new MissingEvidence('missing exec source');
-  if(/\btools\b(?!\.\w+\s*\()|\b(?:globalThis|Reflect|Proxy|this)\b|\\u[0-9a-fA-F]{4}|\beval\s*\(|\bFunction\s*\(|\bimport\s*\(/.test(code))throw new MissingEvidence('unsupported indirect exec tools');
+  if(/\\|\btools\b(?!\.\w+\s*\()|\b(?:globalThis|Reflect|Proxy|this)\b|\beval\s*\(|\bFunction\s*\(|\bimport\s*\(/.test(code))throw new MissingEvidence('unsupported escaped or indirect exec source');
   const calls=[...code.matchAll(/\btools\.(\w+)\s*\(/g)];
   if(!calls.length)throw new MissingEvidence('exec without auditable direct tool calls');
   return calls.map((match,i)=>{

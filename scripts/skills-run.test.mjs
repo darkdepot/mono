@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { runScenario, runPersona } from './skills-run.mjs';
-import { privateCodexHome, codexToolCalls, toolViolation } from './skills-boundary.mjs';
+import { privateCodexHome, codexToolCalls, toolViolation, workspaceEvidence, MissingEvidence } from './skills-boundary.mjs';
 const repo=process.cwd();
 function setup(t,host,mode='ok'){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'skills-run-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -110,6 +110,29 @@ test('Codex comments and strings cannot pretend to execute the workspace read',a
 });
 test('Codex custom exec read and its matching native output preserve the passing control',async t=>{
  const r=await runScenario(setup(t,'codex','custom-proof'));assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.confirmed,true);
+});
+test('Codex Unicode exec escapes and unknown native item kinds are unverified beside the passing control',async t=>{
+ for(const mode of ['custom-proof','unicode-exec','native-web-search','unknown-native-item']){
+  const r=await runScenario(setup(t,'codex',mode));assert.equal(r.status,mode==='custom-proof'?'passed':'unverified',JSON.stringify(r));
+ }
+ for(const source of [String.raw`await \u{74}ools.exec_command({"cmd":"uname -a"}); await tools.exec_command({"cmd":"pwd"});`,String.raw`await tools.exec_command({"cmd":"p\u0077d"});`])assert.throws(()=>codexToolCalls({type:'custom_tool_call',name:'exec',call_id:'escaped',input:source}),MissingEvidence);
+ for(const type of ['web_search_call','computer_call','future_call','future_item'])assert.throws(()=>codexToolCalls({type}),MissingEvidence);
+ for(const type of ['message','reasoning','function_call_output','custom_tool_call_output'])assert.deepEqual(codexToolCalls({type}),[]);
+});
+test('Codex later allowed workspace reads do not repeat the closed first-read form',async t=>{
+ const r=await runScenario(setup(t,'codex','later-read'));assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.confirmed,true);
+});
+test('native input_text probe cut decodes successfully and every error unwrap remains missing',async t=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/workspace-input-text.json')));
+ const expected=JSON.stringify({id:'workspace-test',name:'Test Space',url:'https://example.test/workspace'});
+ assert.equal(workspaceEvidence(sample.output,{path:['result','value','content',0,'text'],equals:expected}),'confirmed');
+ const proof={path:['name'],equals:'Test Space'},value={name:'Test Space'};
+ assert.equal(workspaceEvidence([{type:'input_text',text:JSON.stringify(value)}],proof),'confirmed');
+ for(const wrap of [v=>({structuredContent:v}),v=>({content:JSON.stringify(v)}),v=>({content:[{type:'text',text:JSON.stringify(v)}]}),v=>[{type:'input_text',text:JSON.stringify(v)}]]){
+  assert.equal(workspaceEvidence(wrap(value),proof),'confirmed');
+  for(const error of [{isError:true,structuredContent:value},{isError:true,content:[{type:'text',text:JSON.stringify(value)}]},{is_error:true,content:JSON.stringify(value)}])assert.equal(workspaceEvidence(JSON.stringify(wrap(error)),proof),'missing');
+ }
+ for(const mode of ['native-input-text','nested-error-proof']){const r=await runScenario(setup(t,'codex',mode));assert.equal(r.status,mode==='native-input-text'?'passed':'unverified',JSON.stringify(r));}
 });
 test('Claude failed or different answer receipts remain unverified next to the successful control',async t=>{
  for(const mode of ['ok','error-answer','wrong-answer']){

@@ -153,7 +153,7 @@ export async function runCodex(request){
         if(call.name==='request_user_input_async')continue;
         const reason=toolViolation(call.name,call.input,request.scenario,confirmed)??(confirm&&call.name!==request.workspaceProof.tool?'non-read tool during workspace confirmation':null);
         if(reason){violation=`${rollout}:${r.line}: ${reason}`;throw new Error(violation);}
-        if(call.name===request.workspaceProof.tool){
+        if(confirm&&call.name===request.workspaceProof.tool){
           if(!workspaceReadCall(p,request.workspaceProof))throw new MissingEvidence(`${rollout}:${r.line}: exec does not establish an executed workspace read`);
           if(readCalls.has(call.callId))throw new MissingEvidence('duplicate workspace read call id');
           readCalls.set(call.callId,p.type==='custom_tool_call'?'custom_tool_call_output':'function_call_output');
