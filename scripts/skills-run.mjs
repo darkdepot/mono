@@ -157,7 +157,10 @@ export async function runCodex(request){
       const e=r.value,p=e.payload;
       if(e.type!=='response_item')continue;
       for(const call of audit.calls.filter(call=>call.line===r.line)){
-        if(call.name==='request_user_input_async')continue;
+        if(call.name==='request_user_input_async'){
+          if(confirm){violation=`${rollout}:${r.line}: window during workspace confirmation`;throw new Error(violation);}
+          continue;
+        }
         const reason=toolViolation(call.name,call.input,request.scenario,confirmed)??(confirm&&call.name!==request.workspaceProof.tool?'non-read tool during workspace confirmation':null);
         if(reason){violation=`${rollout}:${r.line}: ${reason}`;throw new Error(violation);}
         if(confirm&&call.name===request.workspaceProof.tool){
@@ -179,15 +182,16 @@ export async function runCodex(request){
       }
     }
     if(proofCalls.size)throw new MissingEvidence('linked native result missing');
-    if(!completedTrace('codex', rows))throw new MissingEvidence('Codex rollout incomplete');
+    if(!completedTrace('codex', fresh))throw new MissingEvidence('Codex current continuation incomplete');
     return rows;
   };
   try{
-    await turn(`Только чтение: вызови ${request.workspaceProof.tool} и покажи пространство. Через exec выполни дословно, без добавлений: ${workspaceReadCode(request.workspaceProof)} Не имитируй результат. Ничего не записывай, затем остановись.`,true);
+    const confirmationRows=await turn(`Только чтение: вызови ${request.workspaceProof.tool} и покажи пространство. Через exec выполни дословно, без добавлений: ${workspaceReadCode(request.workspaceProof)} Не имитируй результат. Ничего не записывай, затем остановись.`,true);
     if(!confirmed)throw new MissingEvidence('workspace not confirmed before stage');
+    const scenarioStart=confirmationRows.at(-1)?.line??0;
     let rows=await turn(request.scenario.prompt+'\nДля аудита передавай аргументы tools.exec_command полным JSON-объектом с двойными кавычками. Не используй вычисляемые команды или spread.');
     for(let n=0;n<(request.maxTurns??32);n++){
-      const windows=codexWindows(rows,rollout,{phase:'card'}).filter(w=>!seen.has(w.callId));
+      const windows=codexWindows(rows.filter(r=>r.line>scenarioStart),rollout,{phase:'card'}).filter(w=>!seen.has(w.callId));
       if(windows.length){
         const uncertain=windows.find(w=>!w.executionConfirmed);
         if(uncertain)throw new MissingEvidence(`${uncertain.evidence}: ${uncertain.reason}`);

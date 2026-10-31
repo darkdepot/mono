@@ -274,3 +274,18 @@ test('persona model answers also use the shared native proof gate in both hosts'
   await assert.rejects(()=>runPersona(request,'Какой цвет предпочитаешь?',0),/persona not verified/);
  }
 });
+
+// Synthetic execution-phase regressions; d-004 applies because these drive the
+// public runScenario verdict, not a standalone checker on a hand-built trace.
+test('Codex each post-window persona continuation needs its own native completion',async t=>{
+ for(const mode of ['free-after-window','free-after-window-empty']){
+  const request=setup(t,'codex',mode);request.scenario.freeQuestions=[{contains:'Какой цвет предпочитаешь?'}];
+  const r=await runScenario(request);assert.equal(r.status,mode==='free-after-window'?'passed':'unverified',JSON.stringify(r));
+  assert.equal(r.replies.length,1);assert.equal(r.replies[0].received,true);
+ }
+});
+test('Codex confirmation window cannot stand in for the missing scenario window',async t=>{
+ const request=setup(t,'codex','confirmation-window'),r=await runScenario(request);
+ assert.equal(r.status,'failed',JSON.stringify(r));assert.equal(r.replies.length,0);
+ assert.ok(!fs.readFileSync(r.sent,'utf8').includes('Run stage'));
+});
