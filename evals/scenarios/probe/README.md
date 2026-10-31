@@ -18,8 +18,8 @@ node scripts/skills-probe.mjs evals/scenarios/probe/samples/claude/trace-control
 `result` или `system` с `subtype: "init"` сбрасывает накопленный текст.
 Между ходами `user` может отсутствовать; остальные события `system` границей
 хода не считаются. Видимый текст содержит
-хотя бы один символ, отличный от пробелов и невидимых U+200B, U+200C, U+200D,
-U+2060, U+FEFF. Дочерние события проверяются на повреждения до пропуска,
+хотя бы один символ, отличный от пробелов, форматных символов Unicode (`Cf`)
+и variation selectors. Дочерние события проверяются на повреждения до пропуска,
 но их текст и окна не учитываются. Содержимое размышлений на вердикт не влияет, в том числе
 когда оно скрыто. Принимает исходный Claude stream-json (JSONL) или сохранённый
 образец `{events: [{line, event}]}`. Ничего не запускает и никуда не пишет.
@@ -64,6 +64,16 @@ rollout, ответ новым сообщением через `exec resume`.
 Отказ в CLI — обычное сообщение; отдельная форма отказа приложения неизвестна.
 Оговорки сохранены в `note`. `trace-control-v0.41.0-async-order.json` показывает
 окно перед итогом в последнем сообщении хода, без нового проверяющего Codex.
+Его `function_call_output` сохраняет наблюдённое тело `{"accepted":true}`.
+В срезе нет идентификаторов вызова: тестовые обёртки добавляют синтетический
+совпадающий `call_id` для проверки связи вызова с результатом. Отрицательные
+ответы в регрессиях намеренно изменены и не являются наблюдёнными отказами хоста.
+
+`codex/workspace-input-text.json` — срез результата из тестового дома пробы,
+rollout 31.10.2026 01:43:52, строка 21: один блок `input_text` с успешным чтением
+пространства из четырёх блоков нативного результата `exec`. Обёртка пробы сохранена,
+id, имя и адрес пространства обезличены. Срез проверяет декодирование блока;
+он не доказывает, что весь многочастный результат поддержан драйвером.
 
 Обезличивание: аккаунты, идентификаторы пространств, вызовов, сообщений,
 запросов, подписи и личные пути заменены плейсхолдерами. Номера строк, версии,
@@ -89,9 +99,21 @@ rollout, ответ новым сообщением через `exec resume`.
   не доказывает безопасность одновременного обновления из двух домов.
 - Idea заняла 163 с в Claude и 152–157 с в Codex; новых задач в пробе 0.
   Проверка одной правки целиком не замерена; оценку расхода нельзя выдать за замер.
-- В тестовом Linear нет статусов проектов пака: Research остановился.
-  Драйверы, настройка статусов, проверка записей и ворота в этот PR не входят.
+- В момент пробы в тестовом Linear не было статусов проектов пака: Research
+  остановился. Перед MONO-288 оркестратор сообщил, что статусы уже заведены;
+  эта справка не является новым живым чтением. Проверка записей и ворота отдельно.
 
 Полный отчёт, ссылки на живые записи и решения по развилкам оркестратор
 публикует в комментарии проекта. Локальный зелёный тест не снимает пробелы
 и не заменяет сертификат текущей версии перед вливанием.
+
+## Live driver forms
+
+`live/` contains depersonalized native event ordering from orchestrator Idea runs,
+plus the two-block workspace output and unavailable-tool startup race. Tool arguments
+and text are neutral replacements; event ordering and proof linkage remain explicit.
+The Claude trace retains the real thinking-only window at line198 and result204,
+followed by informational task_summary205. Its fixture-only text correction is labelled.
+The Codex source ends during Research without a terminal: the positive replay fixture
+adds a declared synthetic task_complete of the recorded form, not observed live success.
+A fresh live run on the committed head is required before external collection.

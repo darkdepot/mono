@@ -1,0 +1,13 @@
+{
+  "origin": "Recorded two-block output shape; workspace payload depersonalized",
+  "output": [
+    {
+      "type": "input_text",
+      "text": "Script completed\nWall time 0.4 seconds\nOutput:\n"
+    },
+    {
+      "type": "input_text",
+      "text": "{\"content\": [{\"type\": \"text\", \"text\": \"{\\\"name\\\": \\\"Test Space\\\"}\"}]}"
+    }
+  ]
+}

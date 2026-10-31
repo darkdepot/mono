@@ -1,0 +1,13 @@
+{
+  "origin": "Depersonalized native startup output; no reconstructed success",
+  "output": [
+    {
+      "type": "input_text",
+      "text": "Script failed\nWall time 0.0 seconds\nOutput:\n"
+    },
+    {
+      "type": "input_text",
+      "text": "Script error:\nTypeError: tools.mcp__monotest__get_workspace is not a function\n"
+    }
+  ]
+}

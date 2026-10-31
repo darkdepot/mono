@@ -1,0 +1,189 @@
+// Test subprocess. Transport shapes are from MONO-287; run content is synthetic.
+import fs from 'node:fs';
+import path from 'node:path';
+import readline from 'node:readline';
+const [mode,repo,...args]=process.argv.slice(2);
+const home=process.env.CODEX_HOME;
+fs.appendFileSync(path.join(process.cwd(),'invocations.jsonl'),JSON.stringify({args,home})+'\n');
+// proof-* modes are synthetic negative mutations, never observed host samples.
+const mutation=/^proof-(workspace|command|answer|window)-(function|custom)-(isError|is_error)-(outer|native|body)$/.exec(mode);
+const namespaced=/^namespaced-(early|foreign|allowed|proof)$/.exec(mode);
+function perturb(e,consumer){
+ if(!mutation||mutation[1]!==consumer)return e;
+ const [, , ,flag,layer]=mutation;
+ const native=e.type==='response_item'?e.payload:e.type==='user'?e.message.content[0]:e.type==='control_request'?e.request:e;
+ if(layer==='outer')e[flag]=true;
+ else if(layer==='native')native[flag]=true;
+ else if(typeof native.output==='string'){const body=JSON.parse(native.output);body[flag]=true;native.output=JSON.stringify(body);}
+ else if(typeof native.content==='string'){native.content=JSON.stringify({[flag]:true,content:native.content});}
+ return e;
+}
+const out=e=>process.stdout.write(JSON.stringify(e)+'\n');
+const sample=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/claude/trace-control-v0.41.0-approval.json')));
+const summary=sample.events.find(r=>r.line===138).event;
+const window=sample.events.find(r=>r.line===139).event;
+const questions=window.message.content[0].input.questions;
+const proof={name:'Test Space'};
+if(args[0]==='plugin'){process.exit(0);}
+if(mode==='crash'){process.exit(3);}
+if(mode==='timeout'){setInterval(()=>{},1000);}
+else if(args[0]==='exec'){
+ const persona=args.includes('--ignore-user-config');
+ if(persona){if(mode==='persona-unknown')out({type:'future_event'});out({...(mode==='persona-error'?{isError:true}:{}),type:'item.completed',item:{type:mode==='persona-tool'?'command_execution':'agent_message',text:'Предпочитаю синий.'}});out({type:'turn.completed'});process.exit(0);}
+ const file=path.join(home,'sessions','rollout-synthetic-thread.jsonl');fs.mkdirSync(path.dirname(file),{recursive:true});
+ const rows=fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').map(l=>JSON.parse(l)):[];
+ const prompt=args.at(-1),fresh=[];
+ if(mode==='stage-no-result'&&rows.length&&prompt.startsWith('Run stage')){out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
+ if(mode==='free-no-result'&&prompt==='Предпочитаю синий.'){out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
+ const item=payload=>{
+ let consumer=payload.call_id==='read'&&payload.type.endsWith('_output')?'workspace':payload.call_id==='command'&&payload.type.endsWith('_output')?'command':payload.call_id==='window-1'&&payload.type.endsWith('_output')?'window':payload.role==='user'?'answer':null;
+ if(mutation?.[2]==='custom'&&consumer==='workspace')payload.type='custom_tool_call_output';
+ fresh.push(perturb({type:'response_item',payload},consumer));
+};
+ // Synthetic phase/continuation perturbations around the same known native forms.
+ if(mode.startsWith('free-after-window')&&prompt==='Предпочитаю синий.'){
+  if(mode==='free-after-window-empty'){out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
+  item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});
+  if(mode==='free-after-window-tools'){
+   item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'later-read',arguments:'{}'});
+   item({type:'function_call_output',call_id:'later-read',output:JSON.stringify(proof)});
+  }else{
+   const answered=rows.filter(r=>r.payload?.role==='user'&&r.payload.content?.some(b=>b.text===prompt)).length;
+   item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:mode==='free-after-window-fresh-question'&&!answered?'Какой цвет выбираешь теперь?':'Принято.'}]});
+  }
+ }else if(!rows.length || (mode.startsWith('read-start-race')&&prompt.startsWith('Только чтение'))){
+  // Synthetic calls use the MCP namespace shape in Codex rust-v0.159.2
+  // core/src/tools/router_tests.rs; they are not captured live run samples.
+  if(namespaced&&['early','foreign'].includes(namespaced[1])){
+   item({type:'function_call',namespace:namespaced[1]==='foreign'?'mcp__linear__':'mcp__monotest__',name:namespaced[1]==='foreign'?'get_workspace':'save_project',call_id:'namespaced',arguments:'{}'});
+   item({type:'function_call_output',call_id:'namespaced',output:JSON.stringify(proof)});
+  }
+  const code=mode==='comment-proof'?'/* tools.mcp__monotest__get_workspace({}) */ text({"name":"Test Space"});':mode==='string-proof'?'text("tools.mcp__monotest__get_workspace({})"); text({"name":"Test Space"});':'const r = await tools.mcp__monotest__get_workspace({}); text(r);';
+  item((mode==='custom-proof'||mutation?.[2]==='custom')?{type:'custom_tool_call',name:'exec',call_id:'read',input:code}:{type:'function_call',name:'exec',call_id:'read',arguments:code,...(mode==='conflicting-proof-fields'?{input:'text({"name":"Test Space"});'}:{})});
+  if(namespaced?.[1]==='proof')fresh.at(-1).payload={type:'function_call',namespace:'mcp__monotest__',name:'get_workspace',call_id:'read',arguments:'{}'};
+  if(mode!=='missing-proof-result')item({type:mode==='custom-proof'?'custom_tool_call_output':'function_call_output',call_id:mode==='unlinked-proof'?'other-read':'read',output:mode==='native-input-text'?[{type:'input_text',text:JSON.stringify(proof)}]:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:mode==='errored-proof'?{isError:true,name:'Test Space'}:mode==='nested-error-proof'?{content:JSON.stringify({isError:true,structuredContent:proof})}:proof)});
+  if(mode==='native-status-proof')fresh.at(-1).payload.output=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/live/codex-workspace-status.json'))).output;
+  if(mode.startsWith('read-start-race')&&(!rows.length||mode.endsWith('-twice')))fresh.at(-1).payload.output=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/live/codex-start-race.json'))).output;
+  if(['native-probe-proof','native-probe-error'].includes(mode)){
+   const sample=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/workspace-input-text.json')));
+   if(mode==='native-probe-error'){const v=JSON.parse(sample.output[0].text);v.result.value.isError=true;sample.output[0].text=JSON.stringify(v);}
+   fresh.at(-1).payload.output=sample.output;
+  }
+  if(mode==='confirmation-window'){
+   const control=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/trace-control-v0.41.0-async-order.json'))).items;
+   for(const p of control)item({...p,...(['function_call','function_call_output'].includes(p.type)?{call_id:'window-1'}:{})});
+  }
+  if(mode==='write-before-proof')item({type:'function_call',name:'mcp__monotest__save_project',call_id:'early',arguments:'{}'});
+  if(!rows.length&&['read-start-race-foreign','read-start-race-write','read-start-race-window'].includes(mode)){
+   item({type:'function_call',name:mode.endsWith('-foreign')?'mcp__linear__get_workspace':mode.endsWith('-write')?'mcp__monotest__save_project':'request_user_input_async',call_id:'after-error',arguments:'{}'});
+   item({type:'function_call_output',call_id:'after-error',output:'{"ok":true}'});
+  }
+ }else if(mode==='confirmation-window'&&prompt.startsWith('Run stage')){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});
+ }else if(['free','free-no-result'].includes(mode)&&rows.length<5){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Какой цвет предпочитаешь?'}]});
+ }else if(!prompt.startsWith('<send_user_message_question_reply>')&&!prompt.startsWith('Не буду')){
+  if(namespaced?.[1]==='allowed'){
+   item({type:'function_call',namespace:'mcp__monotest__',name:'save_project',call_id:'namespaced',arguments:'{}'});
+   item({type:'function_call_output',call_id:'namespaced',output:'{"ok":true}'});
+  }
+  if(mode==='unicode-exec')item({type:'custom_tool_call',name:'exec',call_id:'escaped',input:String.raw`await \u{74}ools.exec_command({"cmd":"uname -a"}); text(await tools.mcp__monotest__get_workspace({}));`});
+  if(mode==='native-web-search')item({type:'web_search_call',id:'search'});
+  if(mode==='unknown-native-item')item({type:'future_item'});
+  if(mutation?.[1]==='command'||['command-ok','custom-command-ok','command-json'].includes(mode)){
+   const custom=mutation?.[2]==='custom'||mode==='custom-command-ok';
+   item({type:custom?'custom_tool_call':'function_call',name:'exec_command',call_id:'command',[custom?'input':'arguments']:'{"cmd":"pwd"}'});
+   item({type:custom?'custom_tool_call_output':'function_call_output',call_id:'command',output:'{"exit_code":0,"output":"/scratch"}'});
+  }
+  if(mode==='later-read')item({type:'custom_tool_call',name:'exec',call_id:'later-read',input:'text(await tools.mcp__monotest__get_workspace({}));'});
+  if(mode==='linear')item({type:'custom_tool_call',name:'exec',call_id:'bad',input:'await tools.mcp__linear__save_project({});'});
+  const async=JSON.parse(fs.readFileSync(path.join(repo,'evals/scenarios/probe/samples/codex/trace-control-v0.41.0-async-order.json'))).items;
+  if(mode!=='missing'){
+   const call={...async[0],call_id:'window-1'};
+   if(mode==='window-schema-rejected'){const input=JSON.parse(call.arguments);input.unexpected=true;call.arguments=JSON.stringify(input);}
+   item(call);
+  }
+  // Negative window receipts are synthetic perturbations, not observed refusals.
+  if(mode!=='window-missing-result')item({...async[1],call_id:mode==='window-unlinked-result'?'different-call':'window-1',output:['window-not-accepted','window-unknown-retry'].includes(mode)?'{"accepted":false}':mode==='window-error'?'Synthetic window error':mode==='window-schema-rejected'?'Synthetic schema rejection':mode==='window-unknown-result'?'{}':async[1].output});
+  if(mode==='window-unknown-retry'){item({...async[0],call_id:'retry-window'});item({...async[1],call_id:'retry-window'});}
+  item(async[2]);
+  if(mode==='late-tool')item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'late',arguments:'{}'});
+ }else{if(mode!=='unanswered')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':'Принято.'}]});}
+ if(mode==='reply-no-result'&&prompt.startsWith('<send_user_message_question_reply>')){fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});process.exit(0);}
+ if(mode==='informational')fresh.push({type:'world_state',payload:{}},{type:'event_msg',payload:{type:'item_completed'}},{type:'response_item',payload:{type:'web_search_call'}});
+ fresh.push({type:'event_msg',payload:{type:mode==='cut'||(!rows.length&&mode==='read-start-race-cut')?'task_started':'task_complete'},...(!rows.length&&mode==='read-start-race-terminal-error'?{isError:true}:{}),...(['terminal-isError','terminal-is_error'].includes(mode)?{[mode.slice('terminal-'.length)]:true}:{})});
+ fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');
+ out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});if(mode==='terminal-crash'&&prompt.startsWith('<send_user_message_question_reply>'))process.exit(3);if(mode.startsWith('stop-')&&prompt.startsWith('<send_user_message_question_reply>')){fs.appendFileSync(file,mode==='stop-cut-next-stage'?'{"type":':JSON.stringify({type:'event_msg',payload:{type:'task_started'}})+'\n');setInterval(()=>{},1000);}else process.exit(0);
+}else if(args.includes('--tools')&&args[args.indexOf('--tools')+1]===''){
+ if(mode==='persona-unknown')out({type:'future_event'});
+ out({...(mode==='persona-error'?{isError:true}:{}),type:'assistant',message:{content:[mode==='persona-tool'?{type:'tool_use',name:'Read'}:{type:'text',text:'Предпочитаю синий.'}]}});out({type:'result',subtype:'success'});process.exit(0);
+}else{
+ let stage=false,free=false,freeAnswers=0;
+ const read=readline.createInterface({input:process.stdin});
+ read.on('line',line=>{
+  const m=JSON.parse(line);
+  if(mode==='informational')out({type:'rate_limit_event',rate_limit_info:{status:'allowed'}});
+  if(m.type==='user'&&!stage){
+   stage=true;
+   out({type:'assistant',message:{content:[{type:'tool_use',id:'read',name:'mcp__monotest__get_workspace',input:{}}]}});
+   if(mode!=='missing-proof-result')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:mode==='unlinked-proof'?'other-read':'read',content:JSON.stringify(mode==='wrong-space'?{name:'Other Space'}:proof),...(mode==='errored-proof'?{is_error:true}:{})}]}},'workspace'));
+   out({type:'result',subtype:'success'});
+  }else if(m.type==='user'){
+   const text=m.message?.content?.find(b=>b.type==='text')?.text;
+   if(mode==='stage-no-result'&&text==='Run stage')process.exit(0);
+   if(mode==='free-no-result'&&text==='Предпочитаю синий.')process.exit(0);
+   if(mode.startsWith('free-after-window')&&text==='Предпочитаю синий.'){
+    if(mode==='free-after-window-empty')process.exit(0);
+    if(mode==='free-after-window-tools'){
+     out({type:'assistant',message:{content:[{type:'tool_use',id:'later-read',name:'mcp__monotest__get_workspace',input:{}}]}});
+     out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'later-read',content:JSON.stringify(proof)}]}});
+    }else out({type:'assistant',message:{content:[{type:'text',text:mode==='free-after-window-fresh-question'&&!freeAnswers?'Какой цвет выбираешь теперь?':'Принято.'}]}});
+    freeAnswers++;out({type:'result',subtype:'success'});return;
+   }
+   if(['free','free-no-result'].includes(mode)&&!free){free=true;
+    out({type:'assistant',message:{content:[{type:'text',text:'Какой цвет предпочитаешь?'}]}});out({type:'result',subtype:'success'});return;
+   }
+   if(mode==='linear'){
+    out({type:'control_request',request_id:'blocked',request:{subtype:'can_use_tool',tool_name:'mcp__linear__save_project',input:{}}});return;
+   }
+   if(mode==='cut'){process.stdout.write('{"type":');process.exit(0);}
+   if(mode==='child')out({type:'result',subtype:'error_during_execution',is_error:true,parent_tool_use_id:'child'});
+   if(mutation?.[1]==='command'||['command-ok','custom-command-ok','command-json'].includes(mode)){
+    out({type:'assistant',message:{content:[{type:'tool_use',id:'command',name:'Bash',input:{command:'pwd'}}]}});
+    out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'command',content:mode==='command-json'?'{"ok":true}':'/scratch'}]}},'command'));
+   }
+   // Informational prefixes do not suppress the ordinary window.
+   if(mode==='unknown-native-item')out({type:'future_event'});
+   if(mode==='unknown-native-block')out({type:'assistant',message:{content:[{type:'future_block'}]}});
+   if(mode==='informational'){out({type:'system',subtype:'background_tasks_changed'});out({type:'assistant',message:{content:[{type:'future_information',data:'note'}]}});}
+   out(summary);
+   if(mode==='missing'){out({type:'result',subtype:'success'});return;}
+   out(window);
+   if(mode==='missing-permission'){out({type:'result',subtype:'success'});return;}
+   out(mode==='recorded-window'?sample.events.find(r=>r.line===140).event:perturb({type:'control_request',request_id:'request-window',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions},...(mode==='unlinked-permission'?{tool_use_id:'other-window'}:{})},...(mode==='errored-permission'?{isError:true}:{})},'window'));
+  }else if(m.type==='control_response'){
+   if(m.response.request_id==='blocked'){
+    if(m.response.response.behavior!=='deny')fs.writeFileSync(path.join(path.dirname(process.argv[1]),'forbidden-write'),'executed');
+    process.exit(0);
+   }
+   const response=m.response.response;
+   let receipt;
+   if(response.behavior==='deny')receipt={content:response.message,is_error:true};
+   else{
+    const entries=Object.entries(response.updatedInput.answers),[q,a]=entries[0];
+    const pair=`"${q}"="${a}"`;
+    const known=response.updatedInput.questions[0].options.some(o=>o.label===a);
+    receipt={content:a===''?'The user did not answer the questions.':known?`Your questions have been answered: ${pair}. You can now continue with these answers in mind.`:`The user answered: ${pair}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`};
+   }
+   if(mode==='error-answer')receipt.is_error=true;
+   if(mode==='wrong-answer'||mode==='wrong-refusal')receipt.content='Different or failed answer';
+   if(mode!=='unanswered')out(perturb({type:'user',message:{content:[{type:'tool_result',tool_use_id:'<tool-use-id>',...receipt}]},...(response.behavior==='allow'?{tool_use_result:response.updatedInput}:{})},'answer'));
+   if(mode==='reply-no-result')process.exit(0);
+   out({type:'assistant',message:{content:[{type:'text',text:mode.startsWith('free-after-window')?'Какой цвет предпочитаешь?':'Принято.'}]}});out({type:'result',subtype:'success'});
+   if(mode.startsWith('parent-init-')){out({type:'system',subtype:'init'});if(mode==='parent-init-cut')process.exit(0);out({type:'result',subtype:'success'});}
+   if(mode==='child-init')out({type:'system',subtype:'init',parent_tool_use_id:'child'});
+   if(mode==='terminal-crash')process.exit(3);
+   if(mode==='informational')out({type:'system',subtype:'task_summary'});
+   if(mode.startsWith('stop-')){if(mode==='stop-cut-next-stage')process.stdout.write('{"type":');else out({type:'system',subtype:'task_started'});setInterval(()=>{},1000);}
+  }
+ });
+ read.on('close',()=>process.exit(0));
+}

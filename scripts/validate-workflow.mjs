@@ -5649,6 +5649,7 @@ function validateModelPolicyFixtures() {
 }
 
 const STRING_PINS = [
+  ["skills/qa/SKILL.md", "references/qa-skills.md"],
   ["skills/orchestrate/SKILL.md", "mono:qa"],
   ["skills/deploy/SKILL.md", "scripts/orchestrator/qa.mjs"],
   ["references/orchestration.md", "qa/state.json"],
@@ -6021,6 +6022,9 @@ const STRING_PINS = [
   ["references/lifecycle.md", "design="],
 ];
 const REQUIRED_HEADINGS = [
+  ["references/qa-skills.md", "Драйверы"],
+  ["references/qa-skills.md", "Правила окна"],
+  ["references/qa-skills.md", "Рубрика разговора"],
   ["references/orchestration.md", "Independent QA before merge"],
   ["references/orchestration.md", "Current host inputs"],
   ["references/orchestration.md", "Final project pass"],
@@ -6281,6 +6285,7 @@ const REQUIRED_HEADINGS = [
   ["templates/ship-status-ux.md","Verdict copy"],
 ];
 const MACHINE_TOKENS = new Set([
+  "references/qa-skills.md",
   // QA routing, certificate fields and modes; behavior is tested in QA fixtures.
   "qa", "mono:qa", "mono-qa certificate", "given-version", "expectedItems", "taskCriteria",
   "scripts/orchestrator/qa.mjs", "qa/state.json", "heldIssues", "finalIssue",
