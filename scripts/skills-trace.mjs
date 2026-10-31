@@ -90,12 +90,14 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
     const { rows } = traceRows(trace);
     if (rows.some(r => !r.value || typeof r.value.type !== 'string')) throw new Error('invalid trace envelope');
     const found = host === 'claude' ? claudeWindows(rows, trace) : codexWindows(rows, trace);
+    let expectedIndex = 0;
     for (const [i, w] of found.entries()) {
-      const expected = expectedWindows[i];
+      const expected = expectedWindows[expectedIndex];
       if (w.status === 'unverified') {
         windows.push({ ...w, id: expected?.id ?? `unexpected-${i}`, issues: [w.reason] });
         continue;
       }
+      expectedIndex++;
       const issues = w.status === 'failed' ? [w.reason] : [];
       let summary = w.summary ?? '';
       if (host === 'claude') {
@@ -123,8 +125,9 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
       } else issues.push('unexpected window without scenario policy');
       windows.push({ ...w, id: expected?.id ?? `unexpected-${i}`, issues, status: issues.length ? 'failed' : 'passed' });
     }
-    if (found.length !== expectedWindows.length) checks.push({ id:'expected-windows',status:'failed',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:`expected ${expectedWindows.length} real windows, found ${found.length}; text is not a window` });
-    else if (host === 'codex' && found.some(w => !w.executionConfirmed)) checks.push({ id:'expected-windows',status:'unverified',evidence:`${trace}:${found.find(w => !w.executionConfirmed).line}`,reason:`expected ${expectedWindows.length} real windows; successful native execution is not confirmed for every call` });
+    const uncertain = found.find(w => w.status === 'unverified');
+    if (expectedIndex > expectedWindows.length || (!uncertain && expectedIndex !== expectedWindows.length)) checks.push({ id:'expected-windows',status:'failed',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:`expected ${expectedWindows.length} real windows, found ${expectedIndex}; text is not a window` });
+    if (uncertain) checks.push({ id:'expected-windows',status:'unverified',evidence:`${trace}:${uncertain.line}`,reason:`expected ${expectedWindows.length} real windows, confirmed ${expectedIndex}; successful native execution is not confirmed for every call` });
     if (!excerpt) {
       const complete = completedTrace(host, rows);
       if (!complete) checks.push({ id:'complete-trace',status:'unverified',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:'successful terminal event missing; cut trace is not proof' });

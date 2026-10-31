@@ -31,6 +31,14 @@ for(const [name,mutate] of [
  const r=checkTrace({host:'codex',trace:scratch(t)(rows),expectedWindows:[codexExpected],excerpt:true});
  assert.equal(r.status,'unverified',JSON.stringify(r));assert.equal(r.windows[0].status,'unverified');assert.equal(r.windows[0].executionConfirmed,false);
 });
+test('unconfirmed Codex attempts do not count as real windows or consume the scenario slot',t=>{
+ for(const accepted of [false,true]){
+  const rows=codexRows(),retry=structuredClone(rows.slice(0,2));
+  rows[1].payload.output='{"accepted":false}';retry.forEach(r=>r.payload.call_id='retry-window');retry[1].payload.output=JSON.stringify({accepted});rows.splice(2,0,...retry);
+  const r=checkTrace({host:'codex',trace:scratch(t)(rows),expectedWindows:[codexExpected],excerpt:true});
+  assert.equal(r.status,'unverified',JSON.stringify(r));assert.equal(r.windows.filter(w=>w.executionConfirmed).length,accepted?1:0);
+ }
+});
 test('known thinking-only defect fails at 228 and current Claude control is green',()=>{
   for(const [name,status] of [['trace-defect-v0.38.1-approval','failed'],['trace-control-v0.41.0-approval','passed']]){
     const r=checkTrace({host:'claude',trace:`${base}/claude/${name}.json`,expectedWindows:[expected],excerpt:true});

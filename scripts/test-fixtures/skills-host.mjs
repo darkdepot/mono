@@ -45,7 +45,8 @@ else if(args[0]==='exec'){
    item(call);
   }
   // Negative window receipts are synthetic perturbations, not observed refusals.
-  if(mode!=='window-missing-result')item({...async[1],call_id:mode==='window-unlinked-result'?'different-call':'window-1',output:mode==='window-not-accepted'?'{"accepted":false}':mode==='window-error'?'Synthetic window error':mode==='window-schema-rejected'?'Synthetic schema rejection':mode==='window-unknown-result'?'{}':async[1].output});
+  if(mode!=='window-missing-result')item({...async[1],call_id:mode==='window-unlinked-result'?'different-call':'window-1',output:['window-not-accepted','window-unknown-retry'].includes(mode)?'{"accepted":false}':mode==='window-error'?'Synthetic window error':mode==='window-schema-rejected'?'Synthetic schema rejection':mode==='window-unknown-result'?'{}':async[1].output});
+  if(mode==='window-unknown-retry'){item({...async[0],call_id:'retry-window'});item({...async[1],call_id:'retry-window'});}
   item(async[2]);
   if(mode==='late-tool')item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'late',arguments:'{}'});
  }else{if(mode!=='unanswered')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});}

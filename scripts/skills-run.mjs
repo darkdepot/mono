@@ -177,9 +177,10 @@ export async function runCodex(request){
     for(let n=0;n<(request.maxTurns??32);n++){
       const windows=codexWindows(rows,rollout).filter(w=>!seen.has(w.callId));
       if(windows.length){
+        const uncertain=windows.find(w=>!w.executionConfirmed);
+        if(uncertain)throw new MissingEvidence(`${uncertain.evidence}: ${uncertain.reason}`);
         if(windows.length!==1)throw new Error('multiple unanswered windows in one turn');
         const window=windows[0],policy=request.scenario.windows[replies.length];
-        if(!window.executionConfirmed)throw new MissingEvidence(`${window.evidence}: ${window.reason}`);
         const checked=checkTrace({host:'codex',trace:rollout,expectedWindows:request.scenario.expectedWindows.slice(0,replies.length+1),rulesRoot:request.rulesRoot});
         if(checked.status!=='passed')throw new Error('window/summary check failed before reply');
         const reply=windowReply('codex',{questions:window.questions},policy,window.callId);
