@@ -42,8 +42,12 @@ test('Mono catalog has exactly six stage contracts, all host windows and no stor
   }
   for(const scenario of catalog.scenarios.values()){
     assert(scenario.brief.includes('Mono'));assert(scenario.expectedRecords.length);
+    assert(scenario.brief.includes('cli/runs.mjs') && scenario.brief.includes('source'),'brief describes the existing neutral test product');
     if(scenario.stage==='idea')assert.equal(scenario.seed,null);
-    for(const host of ['claude','codex'])assert.equal(scenario.hosts[host].windows.length,scenario.hosts[host].expectedWindows.length);
+    for(const host of ['claude','codex']){
+      assert.equal(scenario.hosts[host].windows.length,scenario.hosts[host].expectedWindows.length);
+      assert(scenario.hosts[host].expectedWindows.every(w=>['approval','transition'].includes(w.role)),'only target roles are expected');
+    }
   }
   for(const [file,bytes] of catalog.files){
     if(!file.endsWith('.json'))continue;
@@ -57,6 +61,26 @@ test('Mono catalog has exactly six stage contracts, all host windows and no stor
       }
     }
   }
+});
+
+test('seed route is isolated from the following stage before any real stage runs',async t=>{
+  const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
+  const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());let checked=0;
+  await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-route',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,
+    mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')},async request=>{
+      assert(!request.scenario.prompt.includes('Маршрут этого касания: next='),'following stage is not this touch route');
+      assert(request.scenario.brief.includes('cli/runs.mjs'));assert(request.scenario.brief.includes('source'));
+      if(request.seed){
+        assert(!request.seed.prompt.includes('followingStage'),'seed does not see the outgoing stage');
+        if(request.seed.expectedStage){
+          checked++;assert(request.seed.prompt.includes(`next=${request.seed.expectedStage} by=owner`),'seed record preserved verbatim');
+          assert.equal(request.seed.expectedStage,request.context.entryStage);
+          assert(request.seed.dumpDir.startsWith(request.cwd+path.sep));
+        }
+      }
+      write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));return {status:'passed'};
+    });
+  assert(checked>0);
 });
 
 test('catalog window anchors accept live wording in both hosts without requiring topic prose',t=>{
@@ -77,9 +101,9 @@ test('catalog window anchors accept live wording in both hosts without requiring
   for(const scenario of catalog.scenarios.values())for(const host of ['claude','codex'])for(const expected of scenario.hosts[host].expectedWindows){
     if(expected.id.endsWith('-followup'))continue; // native optionless question, not an approval card
     for(const title of titles[scenario.stage]){
-      const labels=['Продолжить (Recommended)','Ещё обсудить'];
+      const labels=[expected.role==='approval'?'Утвердить, продолжу позже (Recommended)':'Начать следующий этап (Recommended)','Ещё обсудить'];
       const consequences=['Запишем выбор / рамку уже не меняем','Уточним рамку / переход ждёт'];
-      const summary=expected.summary.join('\n');
+      const summary=expected.summary.length?expected.summary.join('\n'):'Полный видимый итог текущего решения.';
       const rows=host==='claude'
         ? [{type:'assistant',message:{id:'wording',content:[{type:'text',text:summary},{type:'tool_use',id:'window',name:'AskUserQuestion',input:{questions:[{header:'Решение',question:title,options:labels.map((label,i)=>({label,description:consequences[i]}))}]}}]}}]
         : [{type:'response_item',payload:{type:'function_call',call_id:'window',name:'request_user_input_async',arguments:JSON.stringify({questions:[{title:title+'\n'+labels.map((label,i)=>`${label}: ${consequences[i]}`).join('\n'),options:labels}]})}},
@@ -147,7 +171,7 @@ test('suite persists expectations before calls and shares one read-back project 
     assert.deepEqual(json(path.join(outputDir,'expected-items.json')),selection.expectedItems);
     assert.equal(request.idleMs,20000);assert.equal(request.timeoutMs,1800000);assert(request.maxTurns>request.scenario.windows.length);
     assert.equal(request.workspaceProof.equals,'Mono Test');assert(request.scenario.prompt.includes('не исполнитель-воркер'));
-    const next=request.scenario.prompt.match(/Маршрут этого касания: next=([a-z-]+)/)[1];
+    const next=request.context.followingStage;
     const names={research:'Research',discovery:'Discovery',design:'Design','tech-evaluation':'Tech Evaluation',handoff:'Handoff'};
     if(names[next])for(const window of request.scenario.expectedWindows.filter(w=>!w.id.endsWith('-followup')))assert.equal(window.reason,names[next],'anchor follows the actual chain route');
     const relative=path.relative(cwd,request.context.projectFile);

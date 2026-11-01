@@ -41,6 +41,7 @@ export function loadCatalog(indexFile) {
       if (scenario.seed !== null) {
         const seed = JSON.parse(read(catalogFile(root, scenario.seed)));
         if (seed.schemaVersion !== 1 || !text(seed.ideaDraft) || !Array.isArray(seed.steps) || !seed.steps.length || !seed.steps.every(text) || !Array.isArray(seed.documents)) fail(`invalid seed ${key}`);
+        if(seed.prdApprovalTemplate&&(seed.entryStage!==stage.id||!seed.prdApprovalTemplate.includes(`next=${seed.entryStage} by=owner`)))fail(`seed route does not enter ${key}`);
       }
       if (!read(catalogFile(root, path.posix.join(path.posix.dirname(relative), 'rubric.md'))).trim()) fail(`missing rubric ${key}`);
       if (scenario.next !== null && !stages.has(scenario.next)) fail(`unknown next ${key}`);
@@ -48,7 +49,7 @@ export function loadCatalog(indexFile) {
         const flow = scenario.hosts?.[host];
         if (!flow || !Array.isArray(flow.windows) || !flow.windows.length || flow.windows.length !== flow.expectedWindows?.length ||
             !unique(flow.expectedWindows.map(w => w.id)) || flow.expectedWindows.some(w => !text(w.id) ||
-              ['decision','advice','reason'].some(k => !text(w[k])) || !Array.isArray(w.summary) || !w.summary.length || !w.summary.every(text)) ||
+              !['approval','transition'].includes(w.role) || ['decision','advice','reason'].some(k => !text(w[k])) || !Array.isArray(w.summary) || !w.summary.every(text)) ||
             flow.windows.some(w => !['recommended','label','correction','empty','refuse','discuss'].includes(w.mode) ||
               (['correction','refuse'].includes(w.mode) && !text(w.text)) || (w.mode === 'label' && !text(w.label))) ||
             !Array.isArray(flow.freeQuestions) || flow.freeQuestions.some(q => !text(q.contains))) fail(`invalid ${host} windows ${key}`);

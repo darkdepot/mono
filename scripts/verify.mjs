@@ -45,7 +45,7 @@ function whitespaceCheckArgs() {
 
 const whitespaceArgs = whitespaceCheckArgs();
 const steps = [
-  { label: "node --test skills probe samples", cmd: "node", cmdArgs: ["--test", "scripts/skills-probe.test.mjs", "scripts/skills-owner.test.mjs", "scripts/skills-run.test.mjs", "scripts/skills-trace.test.mjs", "scripts/skills-proof.test.mjs", "scripts/skills-process.test.mjs", "scripts/skills-catalog.test.mjs"] },
+  { label: "node --test skills probe samples", cmd: "node", cmdArgs: ["--test", "scripts/skills-probe.test.mjs", "scripts/skills-owner.test.mjs", "scripts/skills-run.test.mjs", "scripts/skills-trace.test.mjs", "scripts/skills-proof.test.mjs", "scripts/skills-process.test.mjs", "scripts/skills-catalog.test.mjs", "scripts/skills-window-roles.test.mjs"] },
   { label: "node --test QA fixtures", cmd: "node", cmdArgs: ["--test", "scripts/qa-certificate.test.mjs", "scripts/qa-evals.test.mjs", "scripts/qa-gate.test.mjs"] },
   { label: `git ${whitespaceArgs.join(" ")}`, cmd: "git", cmdArgs: whitespaceArgs },
   { label: "node --check scripts/project-config.mjs", cmd: "node", cmdArgs: ["--check", "scripts/project-config.mjs"] },
