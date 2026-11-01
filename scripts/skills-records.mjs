@@ -159,7 +159,9 @@ function approvalCheck(request,write,data,dump){
  const candidates=data.audit.calls.filter(c=>['AskUserQuestion','request_user_input_async'].includes(c.name)&&c.line<write.line);
  const window=binding?candidates.find(c=>c.callId===binding.windowCallId):candidates.filter(c=>windowRole(c.input?.questions)==='approval').at(-1);
  if(!window)missing('approval window missing');
- const responses=request.sent?traceRows(request.sent,'claude').rows.map(r=>r.value):[];
+ // Codex sent.jsonl is the driver's {thread,prompt} journal, not a native
+ // event stream. Its delivered answer is proved from the resumed rollout.
+ const responses=request.host==='claude'&&request.sent?traceRows(request.sent,'claude').rows.map(r=>r.value):[];
  const accepted=data.audit.windowProof(window.event,window.line,window.callId,{responses});
  if(accepted.status!=='confirmed')missing('native approval reply missing');
  const after=data.rows.filter(r=>r.line>window.line);

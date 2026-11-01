@@ -1,0 +1,32 @@
+{
+  "host": "codex",
+  "trace": "trace.json",
+  "endLine": 211,
+  "sent": "sent.jsonl",
+  "seedExpected": false,
+  "dumpDir": "dump",
+  "dumpTrace": "dump-trace.json",
+  "additionalTraces": [],
+  "project": {
+    "id": "f0881657-14e5-4b19-bf0e-e4f4c225a128",
+    "name": "monotest-m290c-b-codex-idea-correction",
+    "url": "https://linear.app/monotest/project/monotest-m290c-b-codex-idea-correction-1c2a435fa7f8"
+  },
+  "projectName": "monotest-m290c-b-codex-idea-correction",
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-idea",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    }
+  ],
+  "nextStage": "research",
+  "nextSkill": "mono:research",
+  "nextAgent": "mono-mono-research",
+  "configFile": "../config.json"
+}

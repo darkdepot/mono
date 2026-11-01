@@ -1,0 +1,31 @@
+{
+  "host": "codex",
+  "trace": "trace.json",
+  "sent": "sent.jsonl",
+  "seedExpected": true,
+  "seedEndLine": 83,
+  "seedProjectId": "5e76c40a-8db7-4fc2-aa1d-b2e2dbaca90d",
+  "dumpDir": "dump",
+  "dumpTrace": "dump-trace.json",
+  "additionalTraces": [],
+  "project": {
+    "id": "5e76c40a-8db7-4fc2-aa1d-b2e2dbaca90d",
+    "name": "monotest-m290c-b-codex-research-discuss",
+    "url": "https://linear.app/monotest/project/monotest-m290c-b-codex-research-discuss-2c195bf79df0"
+  },
+  "projectName": "monotest-m290c-b-codex-research-discuss",
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "forbidden": "start-next-stage"
+    }
+  ],
+  "nextStage": "discovery",
+  "nextSkill": "mono:discovery",
+  "nextAgent": "mono-mono-discovery",
+  "configFile": "../config.json"
+}

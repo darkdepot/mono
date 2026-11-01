@@ -605,3 +605,30 @@ test('failed seeded stage still verifies its existing seed project rather than I
  await runSuiteWithRecords(suiteRequest(f,selection),async r=>({status:'failed',reason:'later window',seedRoute:{project:runProject(r)},seedEndLine:82}),async({project})=>{observed=project;return {status:'unverified',reason:'incomplete fresh dump'};});
  assert.equal(observed.id,'00000000-0000-4000-8000-000000000001');
 });
+
+for(const mode of ['binding-only','bad-write','missing-page'])test(`live3 actual Discovery records control the suite's next Design invocation: ${mode}`,async t=>{
+ const {verifyRecords}=await import('./skills-records.mjs');
+ const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
+ const selection=f.select(),unit=selection.units.find(u=>u.id==='design-approve');selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
+ const live=path.join(f.dir,'receipts');fs.cpSync(path.join(root,'scripts/test-fixtures/skills-records-live3'),live,{recursive:true});
+ const base=path.join(live,'discovery-approve'),recordRequest=json(path.join(base,'request.json'));
+ for(const key of ['trace','dumpTrace','dumpDir','configFile','sent'])recordRequest[key]=path.resolve(base,recordRequest[key]);recordRequest.packRoot=root;
+ if(mode==='bad-write'){
+  const trace=json(recordRequest.trace),item=trace.events.map(r=>r.event.payload?.item).find(i=>i?.tool==='save_document');assert(item);item.arguments.content+='\nsubstantive tampering';write(recordRequest.trace,JSON.stringify(trace));
+ }
+ if(mode==='missing-page')fs.unlinkSync(path.join(recordRequest.dumpDir,'comments-1.json'));
+ const calls=[];let checked;
+ const result=await runSuiteWithRecords(suiteRequest(f,selection,{runId:'m290c-a',paper:{fileId:'offline-boundary',command:'never-spawn',args:[]},designMemoryFile:path.join(f.dir,'memory.md')}),async r=>{
+  calls.push(r.context.entryStage);
+  if(r.context.entryStage==='design')return {status:'unverified',reason:'Offline boundary: real Design evidence does not exist yet'};
+  assert.equal(r.context.projectName,recordRequest.project.name);write(r.context.projectFile,JSON.stringify(recordRequest.project));
+  const check=checkTrace({host:'codex',trace:recordRequest.trace,endLine:recordRequest.endLine,expectedWindows:r.scenario.expectedWindows});assert.equal(check.status,'passed',JSON.stringify(check));
+  return {status:'passed',seedRoute:{project:recordRequest.project},seedEndLine:recordRequest.seedEndLine,trace:recordRequest.trace,sent:recordRequest.sent};
+ },async({scenario})=>{
+  if(scenario.stage==='design')return {status:'unverified',reason:'No Design records supplied'};
+  checked=verifyRecords(recordRequest);return checked;
+ });
+ assert.deepEqual(calls,mode==='binding-only'?['discovery','design']:['discovery']);
+ if(mode==='binding-only'){assert.equal(checked.bindingOnly,true);assert.equal(checked.gateResults[0].result.next,'design');assert.equal(result.results[0].status,'unverified');}
+ else{assert.notEqual(checked.bindingOnly,true);assert.equal(checked.status,mode==='bad-write'?'failed':'unverified');}
+});

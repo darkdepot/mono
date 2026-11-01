@@ -340,3 +340,30 @@ test('a missing binding cannot excuse an approval after a real empty answer',t=>
  editLiveTrace(f,rows=>{const receipt=rows.find(r=>r.payload?.role==='user'),content=receipt.payload.content[0];const answers=JSON.parse(content.text.split('\n').slice(1,-2).join('\n'));answers[0].answer='';content.text='<send_user_message_question_reply>\n'+JSON.stringify(answers)+'\n</send_user_message_question_reply>\n';});
  const result=f.check();assert.equal(result.status,'failed');assert.match(result.reason,/empty\/refuse/);assert.notEqual(result.bindingOnly,true);
 });
+
+function live3Fixture(t,name){
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-live3-records-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ fs.cpSync(path.resolve('scripts/test-fixtures/skills-records-live3'),dir,{recursive:true});
+ const base=path.join(dir,name),request=JSON.parse(fs.readFileSync(path.join(base,'request.json')));
+ for(const key of ['trace','dumpTrace','dumpDir','configFile','sent'])request[key]=path.resolve(base,request[key]);
+ request.additionalTraces=request.additionalTraces.map(r=>({...r,trace:path.join(base,r.trace)}));request.packRoot=process.cwd();
+ return {base,request,check:()=>verifyRecords(request)};
+}
+for(const name of ['discovery-approve','idea-correction'])test(`live3 ${name}: actual Codex sent journal and scripted native dump reach binding-only with passing gates`,t=>{
+ const f=live3Fixture(t,name),result=f.check();assert.equal(result.status,'unverified',result.reason);assert.equal(result.bindingOnly,true,result.reason);
+ assert(result.gateResults.length>0);assert(result.gateResults.every(g=>g.exitCode===0&&g.result.ok));
+ // A Codex journal is not proof of delivery: removing the actual native answer
+ // must still refuse the approval, even when sent.jsonl remains present.
+ const data=JSON.parse(fs.readFileSync(f.request.trace));const reply=data.events.filter(r=>r.event.payload?.role==='user'&&r.event.payload.content?.some(c=>c.text?.includes('Утвердить, продолжу позже'))).at(-1);
+ assert(reply);reply.event.payload.content=[{type:'input_text',text:'No native structured answer'}];fs.writeFileSync(f.request.trace,JSON.stringify(data));
+ const bad=f.check();assert.notEqual(bad.bindingOnly,true);assert.notEqual(bad.status,'passed');
+});
+test('live3 Research: records pass but a second target transition remains unanswered',async t=>{
+ const {checkTrace,codexWindows}=await import('./skills-trace.mjs'),{traceRows}=await import('./skills-probe.mjs'),{windowPolicy,windowRole}=await import('./skills-owner.mjs');
+ const f=live3Fixture(t,'research-discuss');assert.equal(f.check().status,'passed',f.check().reason);
+ const scenario=JSON.parse(fs.readFileSync(path.join(f.base,'windows.json'))),windows=codexWindows(traceRows(f.request.trace,'codex').rows,f.request.trace);
+ assert.deepEqual(windows.map(w=>windowRole(w.questions)),['transition',null,'transition']);
+ assert.equal(windows[1].executionConfirmed,true,'free window was answered natively');assert.equal(windows[2].executionConfirmed,false);
+ assert.throws(()=>windowPolicy({...scenario,windows:[{mode:'discuss'}]},windows[2].questions,scenario.replies),/unexpected target/);
+ const checked=checkTrace({host:'codex',trace:f.request.trace,expectedWindows:scenario.expectedWindows});assert.notEqual(checked.status,'passed');
+});
