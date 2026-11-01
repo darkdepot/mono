@@ -84,7 +84,7 @@ export async function runClaude(request){
   const toolPolicy=request.scenario.allowedTools??'*';
   const allowed=toolPolicy.includes('*')?null:toolPolicy.filter(n=>!n.startsWith('mcp__'));if(allowed&&!allowed.includes('AskUserQuestion'))allowed.push('AskUserQuestion');
   const args=[...(request.writableRoots?.length?['--add-dir',...request.writableRoots]:[]),'-p','--verbose','--input-format','stream-json','--output-format','stream-json','--permission-prompt-tool=stdio','--strict-mcp-config','--mcp-config',config,'--plugin-dir',request.packRoot,'--setting-sources','','--settings',JSON.stringify({enabledPlugins:{'mono@mono-marketplace':false}}),...(allowed?['--tools',allowed.join(',')]:[]),...modelArgs(request)];
-  const calls=new Map(),receipts=new Map(),replies=[],freeReplies=[],seenRequests=new Set(),pendingWindows=[];let confirmed=false,phase='confirm',lastMessage='',freeIndex=0,waiting=false,violation=null,evidenceMissing=null,endLine,seedRoute;
+  const calls=new Map(),receipts=new Map(),replies=[],freeReplies=[],seenRequests=new Set(),pendingWindows=[];let confirmed=false,phase='confirm',seedEndLine,lastMessage='',freeIndex=0,waiting=false,violation=null,evidenceMissing=null,endLine,seedRoute;
   const personaTasks=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000);let lastFreeQuestion;
   const persona=question=>{
     const task=runPersona({...request,timeoutMs:Math.max(1,deadline-Date.now())},question,freeIndex++);
@@ -150,7 +150,7 @@ export async function runClaude(request){
           phase=request.seed?'seed':'stage';beginTurn();c.send(userMessage(request.seed?.prompt??request.scenario.prompt));
         }else if(phase==='seed'){
           try{seedRoute=checkSeedRoute(request);}catch(error){return error instanceof MissingEvidence?missing(error.message,c):fail(error.message,c);}
-          phase='stage';beginTurn();c.send(userMessage(request.scenario.prompt));
+          seedEndLine=line;phase='stage';beginTurn();c.send(userMessage(request.scenario.prompt));
         }else{waiting=true;if(request.scenario.stopAfterExpectedWindows!==false&&targetsAnswered(request,replies)&&replies.every(r=>r.received)&&!pendingWindows.length&&!(roleWindows(request.scenario.expectedWindows)&&lastMessage.includes('?'))){endLine=line;c.complete();}else c.idle();}
       }else if(waiting)c.idle();
     },
@@ -164,7 +164,7 @@ export async function runClaude(request){
     }});
   await Promise.allSettled([...personaTasks]);
   if(!waiting&&!violation&&!evidenceMissing&&processResult.code===0&&!processResult.failure)evidenceMissing='fresh Claude parent terminal missing after last sent continuation';
-  return finishRun(request,{trace,sent,replies,freeReplies,confirmed,seedRoute,process:processResult,violation,evidenceMissing,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
+  return finishRun(request,{trace,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,process:processResult,violation,evidenceMissing,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
 }
 
 function rolloutFiles(home){
@@ -187,7 +187,7 @@ export async function runCodex(request){
     fs.appendFileSync(path.join(request.outputDir,'setup.log'),(result.stdout??'')+(result.stderr??''));
     if(result.status!==0||result.error)throw new Error('Codex local pack setup failed');
   }
-  let thread=null,rollout=null,confirmed=false,violation=null,seenLines=0,freeIndex=0,endLine,seedRoute,cardCheck,lastFreeQuestion;
+  let thread=null,rollout=null,confirmed=false,violation=null,seenLines=0,freeIndex=0,endLine,seedRoute,seedEndLine,cardCheck,lastFreeQuestion;
   const replies=[],freeReplies=[],seen=new Set(),auditedTraces=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000),proofCalls=new Map();
   const stdout=path.join(request.outputDir,'stdout.jsonl'),sent=path.join(request.outputDir,'sent.jsonl');fs.writeFileSync(stdout,'');fs.writeFileSync(sent,'');
   let processResult;
@@ -262,7 +262,7 @@ export async function runCodex(request){
     if(request.seed){
       const seeded=await turn(request.seed.prompt);
       if(codexWindows(seeded,rollout,{phase:'card'}).length)throw new Error('window during seed preparation');
-      seedRoute=checkSeedRoute(request);scenarioStart=seeded.at(-1)?.line??scenarioStart;
+      seedRoute=checkSeedRoute(request);scenarioStart=seeded.at(-1)?.line??scenarioStart;seedEndLine=codexTerminals(seeded).at(-1)?.line;
     }
     let rows=await turn(request.scenario.prompt);
     if(request.readOnlyDump)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,auditedTraces:[...auditedTraces],process:processResult,violation});
@@ -289,12 +289,12 @@ export async function runCodex(request){
         if(roleWindows(request.scenario.expectedWindows)&&lastFreeQuestion===lastMessage)throw new Error('repeated free question without progress');
         lastFreeQuestion=lastMessage;const answer=await runPersona(request,lastMessage,freeIndex++);rows=await turn(answer);freeReplies.push({question:lastMessage,answer,policy:'persona'});continue;
       }
-      return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,auditedTraces:[...auditedTraces],process:processResult,violation,boundary:'Codex has no pre-execution refusal: private home, disabled linear/apps, first read-only turn and post-turn direct-call audit. A violation may already have executed; report failed.'});
+      return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,auditedTraces:[...auditedTraces],process:processResult,violation,boundary:'Codex has no pre-execution refusal: private home, disabled linear/apps, first read-only turn and post-turn direct-call audit. A violation may already have executed; report failed.'});
     }
-    if(endLine)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,auditedTraces:[...auditedTraces],process:processResult,violation,endLine,boundary:'Scenario ended at the terminal after its last expected answer.'});
+    if(endLine)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,auditedTraces:[...auditedTraces],process:processResult,violation,endLine,boundary:'Scenario ended at the terminal after its last expected answer.'});
     throw new Error('scenario turn limit reached');
   }catch(error){
-    return finishRun(request,{trace:rollout??stdout,sent,replies,freeReplies,confirmed,seedRoute,cardCheck,auditedTraces:[...auditedTraces],process:processResult,violation:error instanceof MissingEvidence?null:violation??error.message,evidenceMissing:error instanceof MissingEvidence?error.message:null,boundary:'Codex cannot refuse MCP calls before execution; rollout audit failed.'});
+    return finishRun(request,{trace:rollout??stdout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,cardCheck,auditedTraces:[...auditedTraces],process:processResult,violation:error instanceof MissingEvidence?null:violation??error.message,evidenceMissing:error instanceof MissingEvidence?error.message:null,boundary:'Codex cannot refuse MCP calls before execution; rollout audit failed.'});
   }
 }
 

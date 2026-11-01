@@ -1,0 +1,3 @@
+{"type": "event_msg", "payload": {"type": "task_complete"}}
+{"type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "McpToolCall", "id": "exec-587a1f14-5c31-4ea5-82b3-7e3caeaa91a4", "server": "monotest", "tool": "list_projects", "arguments": {"query": "monotest-m290-a-codex-idea-empty", "includeArchived": true}, "readOnlyHint": true, "status": "completed", "result": {"content": [{"type": "text", "text": "{\"projects\": [], \"hasNextPage\": false}"}]}}}}
+{"type": "event_msg", "payload": {"type": "task_complete"}}

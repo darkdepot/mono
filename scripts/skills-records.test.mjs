@@ -174,3 +174,107 @@ test('a denied foreign call cannot manufacture a manual-removal URL from unrelat
  f.events.push({type:'assistant',message:{content:[{type:'text',text:'Reference https://linear.app/example/issue/KEEP-1'}]}});
  const result=f.check();assert.equal(result.status,'failed');assert.equal(result.stop,true);assert.deepEqual(result.manualRemoval,[]);
 });
+
+test('seed replay is reconciled but cannot impersonate scenario approval or satisfy its expected writes',t=>{
+ const f=fixture(t),original=[...f.events],seed={id:'seed-comment',body:'mono-idea: approved\nmono-test: seeded',createdAt:date,updatedAt:date,url:'https://linear.app/monotest/project/test#comment-seed'};
+ const call=(id,name,input)=>({type:'assistant',message:{content:[{type:'tool_use',id,name,input}]}}),result=(id,value)=>({type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}});
+ f.events.splice(0,f.events.length,call('seed-project','mcp__monotest__save_project',{name:f.project.name,description:f.project.description}),result('seed-project',f.project),
+  call('seed-comment','mcp__monotest__save_comment',{projectId,body:seed.body}),result('seed-comment',seed),{type:'result',subtype:'success'},...original);
+ f.page('comments','comments',[f.record,seed]);f.request.seedExpected=true;f.request.seedEndLine=5;f.request.seedProjectId=projectId;
+ assert.equal(f.check().status,'passed');
+ // There is no active scenario write; a seed record is not a replacement for it.
+ f.events.splice(5);f.page('comments','comments',[seed]);assert.equal(f.check().status,'failed');
+});
+test('seed bypass requires a native successful boundary and the same project; production writes still stop',t=>{
+ const f=fixture(t);f.request.seedExpected=true;f.request.seedEndLine=2;f.request.seedProjectId=projectId;
+ assert.equal(f.check().status,'unverified');
+ f.events[2].message.content[0].name='mcp__linear__create_comment';const result=f.check();assert.equal(result.status,'failed');assert.equal(result.stop,true);
+});
+test('superseded document versions validate each write result and compare the latest fields with the final read',t=>{
+ const f=fixture(t),doc={id:'doc',projectId,title:'Draft',content:'corrected version'};
+ const call=(id,input)=>({type:'assistant',message:{content:[{type:'tool_use',id,name:'mcp__monotest__save_document',input}]}}),result=(id,value)=>({type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}});
+ f.events.push(call('draft',{title:'Draft',content:'first version'}),result('draft',{...doc,content:'first version'}),call('correct',{id:'doc',content:'corrected version'}),result('correct',{id:'doc',content:'corrected version'}));
+ f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',doc);
+ assert.equal(f.check().status,'passed');
+ // An incorrect first write is not laundered by a later successful correction.
+ f.events[5].message.content[0].content=JSON.stringify({...doc,content:'wrong first write'});assert.equal(f.check().status,'failed');
+});
+
+test('issue labels compare as sets and state input is bound to canonical status',t=>{
+ const f=fixture(t),issue={id:'issue',projectId,title:'Task',description:'Body',status:{id:'state-id',name:'Todo'},labels:[{id:'a',name:'A'},{id:'b',name:'B'}],url:'https://linear.app/monotest/issue/MON-1/task'};
+ f.events.push({type:'assistant',message:{content:[{type:'tool_use',id:'issue-write',name:'mcp__monotest__save_issue',input:{title:'Task',description:'Body',state:'Todo',labels:['B','A']}}]}},
+  {type:'user',message:{content:[{type:'tool_result',tool_use_id:'issue-write',content:JSON.stringify(issue)}]}});
+ f.page('issues','issues',[{id:'issue'}]);f.save('issues/issue/issue.json',issue);f.page('issues/issue/comments','comments',[]);
+ assert.equal(f.check().status,'passed');
+ issue.status={id:'wrong',name:'Doing'};f.events.at(-1).message.content[0].content=JSON.stringify(issue);f.save('issues/issue/issue.json',issue);
+ assert.equal(f.check().status,'failed');
+});
+
+function liveFixture(t,name){
+ const source=path.resolve('scripts/test-fixtures/skills-records-live',name),dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-live-records-'));
+ t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));fs.cpSync(source,dir,{recursive:true});
+ const request=JSON.parse(fs.readFileSync(path.join(dir,'request.json')));
+ for(const key of ['trace','dumpTrace','dumpDir','configFile'])request[key]=path.join(dir,request[key]);request.packRoot=process.cwd();
+ const edit=(file,mutate)=>{const p=path.join(dir,file),v=JSON.parse(fs.readFileSync(p));mutate(v);fs.writeFileSync(p,JSON.stringify(v));};
+ return {dir,request,edit,check:()=>verifyRecords(request)};
+}
+for(const name of ['idea-approve','idea-empty','discovery-approve'])test(`trimmed real Codex/monotest evidence: ${name}`,t=>{
+ const f=liveFixture(t,name),before=fs.readFileSync(path.join(f.dir,name==='idea-empty'?'dump/projects-1.json':'dump/comments-1.json'),'utf8');
+ const r=f.check();assert.equal(r.status,'passed',r.reason);assert.equal(r.monotestTasks,name==='discovery-approve'?2:0);
+ if(name!=='idea-empty')assert.equal(r.gateResults[0].result.ok,true);
+ assert.equal(fs.readFileSync(path.join(f.dir,name==='idea-empty'?'dump/projects-1.json':'dump/comments-1.json'),'utf8'),before,'gate must not overwrite raw evidence');
+ if(name!=='idea-empty'){
+  delete f.request.approvalBindings;assert.match(f.check().reason,/shown-version binding missing/);
+ }
+});
+function editLiveTrace(f,mutate){
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);mutate(rows);
+ fs.writeFileSync(f.request.trace,rows.map(e=>JSON.stringify(e)).join('\n')+'\n');
+}
+for(const name of ['idea-approve','discovery-approve'])test(`tampered real ${name} write is failed, not a missing-result escape`,t=>{
+ const f=liveFixture(t,name);editLiveTrace(f,rows=>{
+  const item=rows.map(e=>e.payload?.item).find(i=>i?.tool===(name==='idea-approve'?'save_project':'save_document')&&(name==='idea-approve'||i.arguments.title.startsWith('PRD:')));
+  item.arguments[name==='idea-approve'?'description':'content']+='\nTampered substantive text';
+ });
+ const result=f.check();assert.equal(result.status,'failed',result.reason);assert.match(result.reason,/mismatch/);
+});
+for(const field of ['arguments','result','status'])test(`real native completed MCP requires ${field}`,t=>{
+ const f=liveFixture(t,'idea-approve');editLiveTrace(f,rows=>{delete rows.find(e=>e.payload?.item?.tool==='save_project').payload.item[field];});
+ assert.equal(f.check().status,'unverified');
+});
+test('native MCP duplicate ids are not another successfully linked action',t=>{
+ const f=liveFixture(t,'idea-approve');editLiveTrace(f,rows=>{
+  const items=rows.filter(e=>e.payload?.item?.type==='McpToolCall');items[1].payload.item.id=items[0].payload.item.id;
+ });assert.equal(f.check().status,'unverified');
+});
+test('real empty Idea envelope must contain a full last list_projects page',t=>{
+ const f=liveFixture(t,'idea-empty');f.edit('dump/projects-1.json',v=>{const p=JSON.parse(v.content[0].text);p.hasNextPage=true;v.content[0].text=JSON.stringify(p);});
+ assert.match(f.check().reason,/unfinished projects page/);
+});
+test('a Discovery predecessor cannot be certified as closed Design through route alone',t=>{
+ const f=liveFixture(t,'discovery-approve');f.request.gates.push({command:'design'});
+ const result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/mono-design approval write absent/);
+ assert.equal(result.gateResults[0].result.records.design,null);
+ // Even an alleged design record must pass the dedicated design gate.
+ editLiveTrace(f,rows=>{
+  const item=rows.map(e=>e.payload?.item).find(i=>i?.tool==='save_comment'&&i.arguments.body.includes('mono-prd: approved'));
+  item.arguments.body=item.arguments.body.replace('mono-prd: approved','mono-design: approved');
+  const value=JSON.parse(item.result.content[0].text);value.body=item.arguments.body;item.result.content[0].text=JSON.stringify(value);
+ });
+ assert.notEqual(f.check().status,'passed');
+});
+test('linked owner-visible PRD cannot approve an updated version with unchanged text',t=>{
+ const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0];
+ editLiveTrace(f,rows=>{const item=rows[binding.shownReadLine-1].payload.item,value=JSON.parse(item.result.content[0].text);value.updatedAt='2026-11-01T20:57:21.000Z';item.result.content[0].text=JSON.stringify(value);});
+ const result=f.check();assert.equal(result.status,'failed');assert.match(result.reason,/version changed/);
+});
+test('a mono-design write requires the dedicated passing design gate',t=>{
+ const f=liveFixture(t,'discovery-approve');
+ // Change the marker coherently in a scratch copy, retaining native provenance
+ // and matching reads. This is deliberately not a valid Design approval.
+ const visit=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())visit(file);else if(/\.jsonl?$/.test(name))fs.writeFileSync(file,fs.readFileSync(file,'utf8').replaceAll('mono-prd: approved','mono-design: approved prd=425e1596-b9a6-4be2-ae02-3d2cd7701f63'));}};
+ visit(f.dir);f.request.expectedRecords=[{type:'mono-design: approved',count:1}];
+ const noGate=f.check();assert.equal(noGate.status,'unverified');assert.match(noGate.reason,/idea-gate design proof required/);
+ f.request.gates=[{command:'design'}];
+ const invalid=f.check();assert.equal(invalid.status,'failed',invalid.reason);assert.equal(invalid.gateResults[0].command,'design');assert.equal(invalid.gateResults[0].result.ok,false);
+});

@@ -17,7 +17,7 @@ function at(value, keys) {
   if (value === undefined) absent();
   return guarded(value);
 }
-function unwrap(value) {
+export function unwrap(value) {
   guarded(value);
   if (typeof value === 'string') {
     try { return unwrap(JSON.parse(value)); } catch (error) {
@@ -85,6 +85,13 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
         if (at(result, ['payload']).type !== 'task_complete') absent();
       } else if (result?.type !== 'turn.completed') absent();
       return {status:'confirmed'};
+    }
+    if (host === 'codex' && kind === 'record' && call?.type === 'event_msg') {
+      const item=at(call,['payload','item']);
+      if(call.payload.type!=='item_completed'||item.type!=='McpToolCall'||item.status!=='completed'||typeof item.id!=='string'||item.id!==callId||typeof item.server!=='string'||typeof item.tool!=='string'||!item.arguments||typeof item.arguments!=='object'||Array.isArray(item.arguments)||result!==call)absent();
+      value=unwrap(at(item,['result']));
+      if(!value||typeof value!=='object')absent();
+      return {status:'confirmed',value};
     }
     if (host === 'codex') {
       const c = native(call), r = native(result);

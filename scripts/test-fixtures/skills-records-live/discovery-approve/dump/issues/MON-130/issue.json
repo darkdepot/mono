@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"id\": \"MON-130\", \"uuid\": \"3a1f9d68-fcb8-4d29-9c9c-80b3eba420de\", \"title\": \"Research\", \"description\": \"Исследование не требуется: правка колонки существующей таблицы.\\n\\nДокумент: [https://linear.app/monotest/document/issledovanie-monotest-m290-b-codex-design-approve-22546c4867eb](<https://linear.app/monotest/document/issledovanie-monotest-m290-b-codex-design-approve-22546c4867eb>)\\n\\nЖурнал: посев по рецепту владельца; документ прочитан через get_document и найден через list_documents проекта. Этапы не запускались.\", \"url\": \"https://linear.app/monotest/issue/MON-130/research\", \"createdAt\": \"2026-11-01T20:54:28.672Z\", \"updatedAt\": \"2026-11-01T20:54:28.672Z\", \"status\": \"Done\", \"labels\": [\"Этап\"], \"documents\": [], \"stateHistory\": [{\"state\": {\"id\": \"7e22b566-eb83-48c5-818d-3b1465e7d355\", \"name\": \"Done\", \"type\": \"completed\"}}], \"project\": \"monotest-m290-b-codex-design-approve\", \"projectId\": \"b3ad9521-1873-4017-8ddd-58486e1748d3\"}"
+    }
+  ]
+}

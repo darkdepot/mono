@@ -84,6 +84,10 @@ else if(args[0]==='exec'){
    item({type:'function_call',name:mode.endsWith('-foreign')?'mcp__linear__get_workspace':mode.endsWith('-write')?'mcp__monotest__save_project':'request_user_input_async',call_id:'after-error',arguments:'{}'});
    item({type:'function_call_output',call_id:'after-error',output:'{"ok":true}'});
   }
+ }else if(mode==='seed-boundary'&&prompt.startsWith('Seed ')){
+  const seed=JSON.parse(prompt.slice(5));fs.writeFileSync(seed.file,JSON.stringify(seed.project));
+  item({type:'function_call',name:'mcp__monotest__save_project',call_id:'seed-write',arguments:JSON.stringify({name:seed.project.name})});
+  item({type:'function_call_output',call_id:'seed-write',output:JSON.stringify(seed.project)});
  }else if(mode==='confirmation-window'&&prompt.startsWith('Run stage')){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]});
  }else if(['free','free-no-result'].includes(mode)&&rows.length<5){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Какой цвет предпочитаешь?'}]});
  }else if(!prompt.startsWith('<send_user_message_question_reply>')&&!prompt.startsWith('Не буду')){
@@ -133,6 +137,7 @@ else if(args[0]==='exec'){
  if(mode==='informational')fresh.push({type:'world_state',payload:{}},{type:'event_msg',payload:{type:'item_completed'}},{type:'response_item',payload:{type:'web_search_call'}});
  if(mode==='turn-id-stale-before-current'&&prompt.startsWith('<send_user_message_question_reply>'))fresh.push({type:'event_msg',payload:{type:'task_complete',turn_id:previousTurn}});
  fresh.push({type:'event_msg',payload:{...(mode.startsWith('turn-id-')?{turn_id:mode==='turn-id-stale'&&prompt.startsWith('<send_user_message_question_reply>')?previousTurn:turnId}:{}),type:mode==='cut'||(!rows.length&&mode==='read-start-race-cut')?'task_started':'task_complete'},...(!rows.length&&mode==='read-start-race-terminal-error'?{isError:true}:{}),...(['terminal-isError','terminal-is_error'].includes(mode)?{[mode.slice('terminal-'.length)]:true}:{})});
+ if(mode==='seed-boundary')fresh.push({type:'event_msg',payload:{type:'token_count'}});
  fs.writeFileSync(file,[...rows,...fresh].map(e=>JSON.stringify(e)).join('\n')+'\n');
  out({type:'thread.started',thread_id:'synthetic-thread'});out({type:'turn.completed'});if(mode==='terminal-crash'&&prompt.startsWith('<send_user_message_question_reply>'))process.exit(3);if(mode.startsWith('stop-')&&prompt.startsWith('<send_user_message_question_reply>')){fs.appendFileSync(file,mode==='stop-cut-next-stage'?'{"type":':JSON.stringify({type:'event_msg',payload:{type:'task_started'}})+'\n');setInterval(()=>{},1000);}else process.exit(0);
 }else if(args.includes('--tools')&&args[args.indexOf('--tools')+1]===''){
@@ -151,6 +156,11 @@ else if(args[0]==='exec'){
    out({type:'result',subtype:'success'});
   }else if(m.type==='user'){
    const text=m.message?.content?.find(b=>b.type==='text')?.text;
+   if(mode==='seed-boundary'&&text.startsWith('Seed ')){
+    const seed=JSON.parse(text.slice(5));fs.writeFileSync(seed.file,JSON.stringify(seed.project));
+    out({type:'assistant',message:{content:[{type:'tool_use',id:'seed-write',name:'mcp__monotest__save_project',input:{name:seed.project.name}}]}});
+    out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'seed-write',content:JSON.stringify(seed.project)}]}});out({type:'result',subtype:'success'});return;
+   }
    if(mode==='stage-no-result'&&text==='Run stage')process.exit(0);
    if(mode==='free-no-result'&&text==='Предпочитаю синий.')process.exit(0);
    if(mode.startsWith('free-after-window')&&text==='Предпочитаю синий.'){

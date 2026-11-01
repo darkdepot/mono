@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { isDeepStrictEqual } from 'node:util';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -9,10 +10,11 @@ import { traceRows } from './skills-probe.mjs';
 import { completedTrace } from './skills-trace.mjs';
 import { auditRows } from './skills-audit.mjs';
 import { isWrite, MissingEvidence } from './skills-boundary.mjs';
-import { nativeProof } from './skills-proof.mjs';
+import { nativeProof, unwrap } from './skills-proof.mjs';
 import { runScenario } from './skills-run.mjs';
 
 const read=file=>JSON.parse(fs.readFileSync(file,'utf8'));
+const rawRead=file=>{try{return unwrap(read(file));}catch{missing(`error MCP dump: ${file}`);}};
 const text=value=>typeof value==='string'&&value.trim().length>0;
 const ownUrl=url=>typeof url==='string'&&url.startsWith('https://linear.app/monotest/');
 const idOf=row=>row?.uuid??row?.id;
@@ -26,6 +28,43 @@ function date(value){
  return Date.parse(value);
 }
 
+const identityValues=value=>typeof value==='string'?[value]:[value?.id,value?.name].filter(text);
+// Linear's observed Markdown rendering: blank line after headings, self URL
+// links and a final newline. Preserve fenced content and all substantive bytes.
+function markdown(value){
+ if(typeof value!=='string')return value;
+ let fence=null,heading=false;const result=[];
+ for(const line of value.split('\n')){
+  const marker=line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/),literal=Boolean(fence||marker);
+  if(marker){
+   if(!fence)fence=marker[1];
+   else if(marker[1][0]===fence[0]&&marker[1].length>=fence.length&&!marker[2].trim())fence=null;
+  }
+  if(!literal&&heading&&line===''){heading=false;continue;}
+  // Inline code is opaque too; unrecognized formatting stays unequal.
+  result.push(literal||line.includes('`')?line:line.replace(/\[(https?:\/\/[^\]\s]+)\]\(<\1>\)/g,'$1'));
+  heading=!literal&&/^#{1,6} /.test(line);
+ }
+ if(!fence&&result.at(-1)==='')result.pop();
+ return result.join('\n');
+}
+const elided=value=>typeof value==='string'&&/… \(truncated, use `get_(?:document|issue)` for full description\)$/.test(value);
+function compareField(field,wanted,actual,id){
+ let same;
+ if(field==='status'||field==='labels'){
+  const desired=field==='labels'?wanted:[wanted],observed=field==='labels'?actual:[actual];
+  if(!Array.isArray(desired)||!Array.isArray(observed))missing(`unreadable ${id}.${field}`);
+  const matched=new Set();let unresolved=false;
+  same=desired.every(value=>{
+   const identities=identityValues(value),index=observed.findIndex(row=>identityValues(row).some(v=>identities.includes(v)));
+   if(index<0){if(identities.some(v=>/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(v))&&observed.some(row=>typeof row==='string'))unresolved=true;return false;}
+   matched.add(index);return true;
+  })&&matched.size===observed.length;
+  if(!same&&unresolved)missing(`id/name resolution unavailable for ${id}.${field}`);
+ }else same=isDeepStrictEqual(wanted,actual)||(['description','content','body'].includes(field)&&markdown(wanted)===markdown(actual));
+ if(!same)throw new Error(`read-back/write result mismatch for ${id}.${field}`);
+}
+
 // Same cursor/ordering contract as idea-gate readDump, extended to documents/issues.
 function pages(root,prefix,key,files){
  const directory=path.dirname(prefix),stem=path.basename(prefix);
@@ -34,7 +73,7 @@ function pages(root,prefix,key,files){
  if(!count||names.length!==count*2)missing(`incomplete ${prefix} pages`);
  const records=[],ids=new Set();let cursor,updated=Infinity;
  for(let n=1;n<=count;n++){
-  const requestFile=`${prefix}-${n}.request.json`,file=`${prefix}-${n}.json`,request=read(path.join(root,requestFile)),page=read(path.join(root,file));
+  const requestFile=`${prefix}-${n}.request.json`,file=`${prefix}-${n}.json`,request=read(path.join(root,requestFile)),page=rawRead(path.join(root,file));
   if(!request||Array.isArray(request)||typeof request!=='object'||(n===1?Object.keys(request).length!==0:Object.keys(request).length!==1||request.cursor!==cursor))missing(`broken ${prefix} cursor request`);
   if(!Array.isArray(page?.[key])||typeof page.hasNextPage!=='boolean'||page.hasNextPage!==(n<count)||
     (page.hasNextPage?(!page[key].length||(key==='comments'?page.cursor!==page[key].at(-1)?.id:!text(page.cursor))):Object.hasOwn(page,'cursor')))missing(`unfinished ${prefix} page`);
@@ -58,25 +97,29 @@ export function readRecordDump(root,project,projectName){
   if(projects.some(p=>p.name===projectName))throw new Error('forbidden project:create: run project exists after refusal');
   return {project:null,comments:[],documents:[],issues:[],all:[],files};
  }
- const raw=read(path.join(root,'project.json')),files=[{file:'project.json',value:raw,kind:'get_project',id:project.id??project.uuid}];
+ const raw=rawRead(path.join(root,'project.json')),files=[{file:'project.json',value:raw,kind:'get_project',id:project.id??project.uuid}];
  if(!text(raw?.uuid)||raw.uuid!==(project.id??project.uuid)||raw.name!==project.name||!ownUrl(raw.url)||typeof raw.description!=='string')missing('project read-back identity incomplete');
  const comments=pages(root,'comments','comments',files),documents=[],issues=[];
  const refs=pages(root,'documents','documents',files);
  for(const ref of refs){
   const id=idOf(ref);if(!/^[A-Za-z0-9-]+$/.test(id))missing('invalid document id');
-  const file=`documents/${id}.json`,doc=read(path.join(root,file));
+  const file=`documents/${id}.json`,doc=rawRead(path.join(root,file));
   if(idOf(doc)!==id||typeof doc.content!=='string'||!text(doc.title))missing('document body incomplete');
   if((doc.projectId??doc.project?.id)!==raw.uuid)missing('document project incomplete');
   documents.push(doc);files.push({file,value:doc,kind:'get_document',id});
  }
  for(const ref of pages(root,'issues','issues',files)){
   const id=idOf(ref);if(!/^[A-Za-z0-9-]+$/.test(id))missing('invalid issue id');
-  const file=`issues/${id}/issue.json`,issue=read(path.join(root,file));
+  const alias=ref.id;
+  const directory=fs.existsSync(path.join(root,`issues/${id}`))?id:alias;
+  if(!/^[A-Za-z0-9-]+$/.test(directory))missing('invalid issue directory');
+  const file=`issues/${directory}/issue.json`,issue=rawRead(path.join(root,file));
   if(idOf(issue)!==id||!text(issue.title)||typeof issue.description!=='string'||!issue.status||
     !text(typeof issue.status==='string'?issue.status:issue.status.name)||!Array.isArray(issue.labels)||issue.labels.some(label=>!text(typeof label==='string'?label:label?.name)))missing('issue status/labels/body incomplete');
   if((issue.projectId??issue.project?.id)!==raw.uuid)missing('issue project incomplete');
-  issues.push(issue);files.push({file,value:issue,kind:'get_issue',id});
-  comments.push(...pages(root,`issues/${id}/comments`,'comments',files));
+  issues.push(issue);files.push({file,value:issue,kind:'get_issue',id,alias});
+  const start=files.length;comments.push(...pages(root,`issues/${directory}/comments`,'comments',files));
+  for(const file of files.slice(start)){file.scopeId=id;file.scopeAlias=alias;}
  }
  const all=[raw,...comments,...documents,...issues];
  for(const row of all)if(row.url!==undefined&&!ownUrl(row.url))throw new Error(`record outside monotest: ${row.url}`);
@@ -93,6 +136,11 @@ function callInput(host,call){
  try{return JSON.parse(source.trim().slice(prefix.length,-suffix.length));}catch{missing(`non-JSON exec payload at line ${call.line}`);}
 }
 function resultFor(host,call,rows,bindInput=true){
+ if(host==='codex'&&call.event.type==='event_msg'){
+  const proof=nativeProof({host,kind:'record',call:call.event,result:call.event,callId:call.callId});
+  if(proof.status!=='confirmed')missing(`successful native MCP result missing at line ${call.line}`);
+  return {...call,value:proof.value,resultLine:call.line};
+ }
  const outputs=rows.filter(r=>r.line>call.line&&(host==='claude'
   ? r.value.type==='user'&&Array.isArray(r.value.message?.content)&&r.value.message.content.some(b=>b.type==='tool_result'&&b.tool_use_id===call.callId)
   : r.value.type==='response_item'&&['function_call_output','custom_tool_call_output'].includes(r.value.payload?.type)&&r.value.payload.call_id===call.callId));
@@ -104,7 +152,16 @@ function resultFor(host,call,rows,bindInput=true){
 function nativeRecords(host,trace,endLine){
  const {rows}=traceRows(trace,host,{endLine}),audit=auditRows(host,rows);
  const calls=audit.calls.filter(c=>c.name.startsWith('mcp__'));
- return {rows,audit,calls:calls.filter(call=>call.event.type!=='event_msg'||!calls.some(other=>other!==call&&other.callId&&other.callId===call.event.payload?.item?.id&&other.name===call.name))};
+ // An exec name mention is not another action when native metadata supplies
+ // its arguments/result inside that exact outer call/output interval.
+ const actual=calls.filter(call=>call.event.type==='event_msg');
+ if(actual.some((c,i)=>!text(c.callId)||actual.slice(0,i).some(prior=>prior.callId===c.callId)))missing('duplicate/missing native MCP item id');
+ const bound=calls.filter(call=>{
+  if(call.event.payload?.name!=='exec')return true;
+  const output=rows.find(r=>r.line>call.line&&r.value.type==='response_item'&&['custom_tool_call_output','function_call_output'].includes(r.value.payload?.type)&&r.value.payload.call_id===call.callId);
+  return !output||!actual.some(c=>c.name===call.name&&c.line>call.line&&c.line<output.line);
+ });
+ return {rows,audit:{...audit,calls:audit.calls.filter(c=>!calls.includes(c)||bound.includes(c))},calls:bound};
 }
 function productionWrites(traces){
  const manualRemoval=new Set(),evidence=[];
@@ -156,13 +213,25 @@ function approvalCheck(request,write,data,dump){
  const shown=data.rows.find(r=>r.line===binding.shownLine),current=data.rows.find(r=>r.line===binding.currentLine);
  const shownText=request.host==='claude'?shown?.value.message?.content?.filter(b=>b.type==='text').map(b=>b.text).join('\n')
   :shown?.value.payload?.role==='assistant'?shown.value.payload.content?.filter(b=>b.type==='output_text').map(b=>b.text).join('\n'):null;
- if(!text(binding.text)||!shownText?.includes(binding.text)||binding.shownLine>=window.line)missing('shown version not found in owner-visible trace');
+ if(!text(binding.text)||!shownText||binding.shownLine>=reply.line||(request.host==='claude'&&binding.shownLine>=window.line))missing('shown version not found in owner-visible trace');
+ if(request.host==='codex'){
+  const terminal=data.rows.find(r=>r.line>window.line&&r.line<reply.line&&data.audit.proof({kind:'terminal',result:r.value}).status==='confirmed');
+  if(!terminal||binding.shownLine<=window.line||binding.shownLine>=terminal.line)missing('shown version outside approved Codex window turn');
+ }
+ let shownVersion;
+ if(!shownText.includes(binding.text)){
+  const before=data.audit.calls.find(c=>c.line===binding.shownReadLine&&!isWrite(c.name));
+  if(!binding.documentId||!before||before.line>=window.line)missing('shown version not found in owner-visible trace');
+  const read=resultFor(request.host,before,data.rows);
+  if(read.resultLine>=window.line||idOf(read.value)!==binding.documentId||!text(read.value.url)||!shownText.includes(read.value.url)||bodyOf(read.value)!==binding.text)missing('shown document link/version not bound to native read');
+  shownVersion=read.value;
+ }
  if(binding.currentLine===write.line&&/mono-(?:idea|tech):\s*approved/.test(writeBody(write))){
   if(!writeBody(write).includes(binding.text))throw new Error('outgoing approved version differs from shown content');
   return; // idea-gate below independently checks the snapshot against persisted current data.
  }
  if(createProject){
-  if((write.input.description??write.value.description)!==binding.text)throw new Error('created project differs from shown version');
+  if(markdown(write.input.description??write.value.description)!==markdown(binding.text))throw new Error('created project differs from shown version');
   return;
  }
  const currentCall=data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
@@ -170,7 +239,8 @@ function approvalCheck(request,write,data,dump){
  const value=resultFor(request.host,currentCall,data.rows).value;
  const fresh=binding.currentRecordId?(value.comments??value.documents??value.issues??[]).find(row=>idOf(row)===binding.currentRecordId):value;
  if(!fresh)missing('current version record absent from native read');
- if(!(writeBody(write)).includes(binding.text) && !(text(binding.documentId) && (writeBody(write)).includes(`document=${binding.documentId}`) && (writeBody(write)).includes(`updatedAt=${fresh.updatedAt}`)))throw new Error('written approval does not bind the shown content/version');
+ if(!(writeBody(write)).includes(binding.text) && !(text(binding.documentId) && ((writeBody(write)).includes(`document=${binding.documentId}`) && (writeBody(write)).includes(`updatedAt=${fresh.updatedAt}`) || (writeBody(write)).includes(`prd=${binding.documentId}`) && (writeBody(write)).includes(`prd-updatedAt=${fresh.updatedAt}`))))throw new Error('written approval does not bind the shown content/version');
+ if(shownVersion&&shownVersion.updatedAt!==fresh.updatedAt)throw new Error('version changed after shown approval');
  if(bodyOf(fresh)!==binding.text)throw new Error('version changed after shown approval');
  if(binding.documentId&&idOf(fresh)!==binding.documentId)throw new Error('approved document changed');
  const persisted=dump.all.find(row=>idOf(row)===idOf(fresh));
@@ -203,10 +273,10 @@ export function verifyRecords(request){
    const reads=fresh.calls.filter(c=>!isWrite(c.name)).map(c=>resultFor(request.host,c,fresh.rows));
    for(const file of dump.files){
     const scoped=c=>{
-     if(file.id)return Object.values(c.input).includes(file.id);
-     const scope=file.kind==='list_projects'?request.projectName:file.scope==='.'?(request.project.id??request.project.uuid):path.basename(file.scope);
+     if(file.id)return Object.values(c.input).some(value=>value===file.id||value===file.alias);
+     const scope=file.kind==='list_projects'?request.projectName:file.scope==='.'?(request.project.id??request.project.uuid):(file.scopeId??path.basename(file.scope));
      const value=file.kind==='list_projects'?c.input.query:file.scope==='.'?(c.input.projectId??c.input.project):(c.input.issueId??c.input.issue);
-     return value===scope&&file.request.cursor===c.input.cursor&&Object.keys(c.input).every(key=>['projectId','project','issueId','issue','query','cursor','limit','includeArchived','orderBy'].includes(key))&&
+     return (value===scope||(file.scopeAlias!==undefined&&value===file.scopeAlias))&&file.request.cursor===c.input.cursor&&Object.keys(c.input).every(key=>['projectId','project','issueId','issue','query','cursor','limit','includeArchived','orderBy'].includes(key))&&
        (c.input.limit===undefined||(Number.isInteger(c.input.limit)&&c.input.limit>0));
     };
     const match=reads.find(c=>c.name===`mcp__monotest__${file.kind}`&&(!['list_issues','list_projects'].includes(file.kind)||c.input.includeArchived===true)&&isDeepStrictEqual(c.value,file.value)&&
@@ -214,56 +284,122 @@ export function verifyRecords(request){
     if(!match)missing(`fresh native read does not bind ${file.file}`);
    }
   }
-  for(const write of writes){
-   const value=write.value,id=idOf(value),input=write.input;
-   if(!text(id))missing('write result lacks record id');
-   const observed=dump.all.find(row=>idOf(row)===id);if(!observed)throw new Error(`written record missing from fresh dump: ${id}`);
-   for(const field of ['body','content','description','title','name','status','labels']){
-    if(Object.hasOwn(input,field)&&!isDeepStrictEqual(input[field],observed[field]))throw new Error(`read-back mismatch for ${id}.${field}`);
-    if(Object.hasOwn(value,field)&&!isDeepStrictEqual(value[field],observed[field]))throw new Error(`write result/read-back mismatch for ${id}.${field}`);
+  let seedEndLine=0;
+  if(request.seedExpected||request.seedEndLine!==undefined){
+   const boundary=data.rows.find(r=>r.line===request.seedEndLine);
+   if(!Number.isInteger(request.seedEndLine)||!boundary||data.audit.proof({kind:'terminal',result:boundary.value}).status!=='confirmed')missing('native successful seed boundary missing');
+   if(!request.seedProjectId)missing('validated seed project missing');
+   if(request.seedProjectId!==(request.project?.id??request.project?.uuid))throw new Error('seed belongs to another project');
+   if(writes.some(w=>w.data===data&&w.line<=request.seedEndLine&&w.resultLine>request.seedEndLine))missing('write crosses seed boundary');
+   seedEndLine=request.seedEndLine;
+  }
+  const activeWrites=writes.filter(w=>w.data!==data||w.line>seedEndLine),seedIds=new Set(writes.filter(w=>w.data===data&&w.line<=seedEndLine).map(w=>idOf(w.value)));
+  // Resolve UUID/name aliases only from native reads on the same team.
+  const resolveInput=(write,field,value)=>{
+   if(!['status','labels'].includes(field))return value;
+   const tool=field==='status'?'list_issue_statuses':'list_issue_labels',aliases=[];
+   for(const call of write.data.calls.filter(c=>c.name===`mcp__monotest__${tool}`&&c.line<write.line)){
+    if(!write.input.team||call.input.team!==write.input.team)continue;
+    const read=resultFor(request.host,call,write.data.rows);
+    if(read.resultLine>=write.line)continue;
+    const rows=Array.isArray(read.value)?read.value:read.value.labels;
+    if(Array.isArray(rows))aliases.push(...rows);
    }
-
+   // Updates without a team can use this record's native state history.
+   for(const call of write.data.calls.filter(c=>field==='status'&&c.name==='mcp__monotest__get_issue')){
+    const read=resultFor(request.host,call,write.data.rows);
+    if(idOf(read.value)===idOf(write.value))aliases.push(...(read.value.stateHistory??[]).map(row=>row.state));
+   }
+   const resolve=v=>typeof v==='string'?aliases.find(row=>row.id===v)??v:v;
+   return field==='labels'&&Array.isArray(value)?value.map(resolve):resolve(value);
+  };
+  const fields=['body','content','description','title','name','status','labels'];
+  const groups=new Map();
+  for(const write of writes){
+   const id=idOf(write.value);if(!text(id))missing('write result lacks record id');
+   if(!groups.has(id))groups.set(id,[]);groups.get(id).push(write);
+  }
+  for(const [id,versions] of groups){
+   if(new Set(versions.map(w=>w.data)).size>1)missing('write ordering across traces is not established');
+   const finalFields={};
+   for(const [index,write] of versions.entries()){
+    const value=write.value,input={...write.input},next=versions[index+1];
+    if(Object.hasOwn(input,'state')){if(Object.hasOwn(input,'status'))compareField('status',input.state,input.status,id);input.status=input.state;}
+    for(const field of fields){
+     if(Object.hasOwn(input,field)){
+      input[field]=resolveInput(write,field,input[field]);
+      let confirmation=value;
+      if((!Object.hasOwn(confirmation,field)||elided(confirmation[field]))&&next){
+       confirmation=null;
+       for(const read of write.data.calls.filter(c=>!isWrite(c.name)&&c.line>write.resultLine&&c.line<next.line)){
+        try{
+         const observed=resultFor(request.host,read,write.data.rows);
+         if(observed.resultLine>=next.line)continue;
+         const candidate=idOf(observed.value)===id?observed.value:(observed.value.comments??observed.value.documents??observed.value.issues??[]).find(row=>idOf(row)===id);
+         if(candidate&&Object.hasOwn(candidate,field)&&!elided(candidate[field])){confirmation=candidate;break;}
+        }catch{}
+       }
+       if(!confirmation)missing(`intermediate ${id}.${field} has no linked value or read before the next write`);
+      }
+      if(confirmation&&Object.hasOwn(confirmation,field)&&!elided(confirmation[field]))compareField(field,input[field],confirmation[field],id);
+      finalFields[field]=input[field];
+     }
+     if(Object.hasOwn(value,field)&&!elided(value[field]))finalFields[field]=value[field];
+    }
+   }
+   const observed=dump.all.find(row=>idOf(row)===id);if(!observed)throw new Error(`written record missing from fresh dump: ${id}`);
+   for(const [field,value]of Object.entries(finalFields))compareField(field,value,observed[field],id);
   }
   for(const rule of request.expectedRecords){
    if(rule.forbidden==='project:create'){
-    if(writes.some(w=>w.name.endsWith('__save_project')&&!w.input.id||w.name.endsWith('__create_project')))throw new Error('forbidden project:create');
+    if(activeWrites.some(w=>w.name.endsWith('__save_project')&&!w.input.id||w.name.endsWith('__create_project')))throw new Error('forbidden project:create');
    }else if(rule.forbidden==='start-next-stage'){
     if(data.audit.calls.some(c=>(c.name==='Skill'&&request.nextSkill&&c.input?.skill===request.nextSkill)||(['Agent','Task'].includes(c.name)&&request.nextAgent&&c.input?.subagent_type===request.nextAgent)))throw new Error('forbidden start-next-stage');
    }else if(rule.forbidden){
-    if(writes.some(w=>(writeBody(w)).includes(rule.forbidden)))throw new Error(`forbidden record: ${rule.forbidden}`);
+    if(activeWrites.some(w=>writeBody(w).includes(rule.forbidden))||dump.all.some(row=>(bodyOf(row)??'').includes(rule.forbidden)))throw new Error(`forbidden record: ${rule.forbidden}`);
    }else if(rule.type==='project'){
     if(!dump.project)missing('project required');
    }else{
-    const found=dump.all.filter(row=>(bodyOf(row)??'').includes(rule.type));
+    const found=dump.all.filter(row=>(bodyOf(row)??'').includes(rule.type)&&(!seedIds.has(idOf(row))||activeWrites.some(w=>idOf(w.value)===idOf(row))));
     if(found.length!==(rule.count??1))throw new Error(`expected ${rule.type}: ${rule.count??1}, observed ${found.length}`);
-    if(!writes.some(w=>idOf(w.value)===idOf(found[0])))missing(`expected ${rule.type} write absent from trace`);
+    if(!activeWrites.some(w=>idOf(w.value)===idOf(found[0])))missing(`expected ${rule.type} write absent from trace`);
    }
   }
-  for(const write of writes)approvalCheck(request,write,write.data,dump);
-  for(const write of writes){
+  for(const write of activeWrites)approvalCheck(request,write,write.data,dump);
+  for(const write of activeWrites){
    const body=writeBody(write);
-   const command=body.includes('mono-idea: approved')?'verify':body.includes('mono-tech: approved')?'tech':/mono-(?:prd|design): approved|mono-package: start/.test(body)?'route':null;
+   const command=body.includes('mono-idea: approved')?'verify':body.includes('mono-tech: approved')?'tech':body.includes('mono-design: approved')?'design':/mono-prd: approved|mono-package: start/.test(body)?'route':null;
    if(command&&!request.gates?.some(g=>g.command===command&&(command!=='verify'||g.recordId===idOf(write.value))))missing(`idea-gate ${command} proof required`);
   }
+  const gateRoot=fs.mkdtempSync(path.join(os.tmpdir(),'mono-record-gates-'));
+  try{
+  for(const file of dump.files){const target=path.join(gateRoot,file.file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,JSON.stringify(file.value));if(file.request)fs.writeFileSync(target.replace(/\.json$/,'.request.json'),JSON.stringify(file.request));}
   for(const gate of request.gates??[]){
-   if(!['route','tech','verify'].includes(gate.command))missing('unknown idea-gate command');
+   if(!['route','design','tech','verify'].includes(gate.command))missing('unknown idea-gate command');
+   if(gate.command==='design'){
+    const approval=activeWrites.find(w=>writeBody(w).includes('mono-design: approved'));
+    if(!approval)missing('mono-design approval write absent from trace');
+    const id=writeBody(approval).match(/(?:^|\s)prd=([^\s]+)/)?.[1],doc=dump.documents.find(d=>idOf(d)===id);
+    if(!doc)missing('design PRD document absent');fs.writeFileSync(path.join(gateRoot,'prd.json'),JSON.stringify(doc));
+   }
    if(gate.command==='tech'){
-    const approval=writes.find(w=>(writeBody(w)).includes('mono-tech: approved'));
+    const approval=activeWrites.find(w=>(writeBody(w)).includes('mono-tech: approved'));
     for(const [token,file] of [['prd','prd.json'],['spec','tech-spec.json']]){
      const id=(bodyOf(approval?.value)??'').match(new RegExp(`(?:^|\\s)${token}=([^\\s]+)`))?.[1];
      const doc=dump.documents.find(d=>idOf(d)===id);if(!doc)missing(`tech ${token} document absent`);
-     fs.writeFileSync(path.join(request.dumpDir,file),JSON.stringify(doc));
+     fs.writeFileSync(path.join(gateRoot,file),JSON.stringify(doc));
     }
    }
-   const args=[path.join(request.packRoot,'scripts/idea-gate.mjs'),gate.command,'--dump',request.dumpDir,'--config',request.configFile];
+   const args=[path.join(request.packRoot,'scripts/idea-gate.mjs'),gate.command,'--dump',gateRoot,'--config',request.configFile];
    if(gate.command==='verify'){
     const record=dump.comments.find(row=>row.id===gate.recordId);if(!record)missing('idea approval record missing');
-    const expect=path.join(request.dumpDir,'expected-idea.md');if(fs.existsSync(expect)){if(fs.readFileSync(expect,'utf8')!==record.body)missing('saved idea expectation changed');}else fs.writeFileSync(expect,record.body,{flag:'wx'});
+    const expect=path.join(gateRoot,'expected-idea.md');if(fs.existsSync(expect)){if(fs.readFileSync(expect,'utf8')!==record.body)missing('saved idea expectation changed');}else fs.writeFileSync(expect,record.body,{flag:'wx'});
     args.push('--project',dump.project.uuid,'--expect',expect);
    }else args.push('--mode','fresh');
    const run=spawnSync(process.execPath,args,{encoding:'utf8'});let result;try{result=JSON.parse(run.stdout.trim().split('\n').at(-1));}catch{missing('idea-gate result unreadable');}
    gateResults.push({command:gate.command,exitCode:run.status,result});if(run.status!==0||!result.ok)throw new Error(`idea-gate ${gate.command}: ${result.code}`);
   }
+  }finally{fs.rmSync(gateRoot,{recursive:true,force:true});}
   return {status:'passed',stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
  }catch(error){return {status:error instanceof MissingEvidence||error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code)?'unverified':'failed',stop:false,manualRemoval:[],reason:error.message,gateResults,evidence:[request.trace,request.dumpDir]};}
 }
@@ -294,7 +430,7 @@ export async function verifyScenarioRecords({run,runRequest,scenario,project,out
  }
  if(dump.status!=='passed')return {...dump,status:dump.status==='failed'?'failed':'unverified',durationMs:Date.now()-start};
  const bindings=bindingsFile&&fs.existsSync(bindingsFile)?read(bindingsFile):{};
- const result=verifyRecords({host:runRequest.host,trace:run.trace,endLine:run.endLine,sent:run.sent,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,
+ const result=verifyRecords({host:runRequest.host,trace:run.trace,endLine:run.endLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,
   approvalBindings:bindings.approvalBindings,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:scenario.next,nextSkill:scenario.next?`${runRequest.context.skillPrefix}:${scenario.next}`:null,nextAgent:scenario.next?`${runRequest.context.skillPrefix}-${runRequest.context.skillPrefix}-${scenario.next}`:null,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')});
  return {...result,durationMs:Date.now()-start};
 }
