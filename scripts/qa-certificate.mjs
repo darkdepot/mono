@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { validateShipCertificate } from './ship-certificate.mjs';
 import { readQaRecipeFile } from './qa-recipe.mjs';
 
+const SOURCES = ['task', 'requirement', 'acceptance', 'design', 'heuristic', 'scenario'];
 export const QA_MARKER = 'mono-qa certificate';
 const text = value => typeof value === 'string' && value.trim().length > 0;
 const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
@@ -54,6 +55,11 @@ export function validateQaCertificate(report, expected) {
   if (cert.mode === 'ship') validateShipCertificate({ issue: expected.issue, head: expected.head, certificate: expected.shipCertificate });
   if (cert.scope === 'project') need(buildIdentity(cert.build) === buildIdentity(expected.build), 'project build changed');
   need(['behavior', 'no-behavior'].includes(cert.kind) && cert.kind === expected.kind, 'kind mismatch');
+  need(Array.isArray(expected.expectedItems) && expected.expectedItems.every(item => object(item) && text(item.id)
+    && text(item.expectation) && SOURCES.includes(item.source))
+    && new Set(expected.expectedItems.map(item => item.id)).size === expected.expectedItems.length, 'unique expectation list required');
+  const expectations = new Map(expected.expectedItems.map(item => [item.id, item]));
+  need(!(cert.kind === 'no-behavior' && expected.expectedItems.some(item => item.source === 'scenario')), 'scenario cannot use no-behavior');
   if (cert.kind === 'no-behavior') {
     need(cert.scope === 'task' && text(cert.reason), 'no-behavior requires task and reason');
     need(cert.items === undefined, 'no-behavior cannot replace item results');
@@ -61,14 +67,16 @@ export function validateQaCertificate(report, expected) {
   }
   need(Array.isArray(cert.items) && cert.items.length > 0, 'items must be nonempty');
   need(text(expected.evidenceRoot), 'evidenceRoot required');
-  need(Array.isArray(expected.expectedItems) && expected.expectedItems.length > 0
-    && expected.expectedItems.every(text) && new Set(expected.expectedItems).size === expected.expectedItems.length, 'unique expectation list required');
-  need(Array.isArray(expected.taskCriteria) && expected.taskCriteria.every(id => expected.expectedItems.includes(id)), 'taskCriteria must be bound to expectations');
+  need(expected.expectedItems.length > 0, 'unique expectation list required');
+  need(Array.isArray(expected.taskCriteria) && expected.taskCriteria.every(id => expectations.has(id)), 'taskCriteria must be bound to expectations');
   const ids = new Set();
   for (const item of cert.items) {
     need(object(item) && text(item.id) && !ids.has(item.id) && text(item.expectation), 'unique item id and expectation required');
     ids.add(item.id);
-    need(['task', 'requirement', 'acceptance', 'design', 'heuristic'].includes(item.source), 'item source required');
+    need(SOURCES.includes(item.source), 'item source required');
+    const bound = expectations.get(item.id);
+    need(bound && bound.source === item.source && bound.expectation === item.expectation, 'expectation text or source changed/mismatch');
+    need(item.source !== 'scenario' || item.outcome !== 'excluded', 'scenario cannot be excluded');
     need(['passed', 'failed', 'unverified', 'excluded'].includes(item.outcome), 'item outcome required');
     need(Array.isArray(item.evidence), 'item evidence required');
     for (const file of item.evidence) evidenceFile(file, expected.evidenceRoot);
@@ -81,7 +89,7 @@ export function validateQaCertificate(report, expected) {
     if (cert.verdict === 'passed') need(['passed', 'excluded'].includes(item.outcome), 'green verdict has failed or unverified item');
   }
   need(Array.isArray(expected.expectedItems) && expected.expectedItems.length > 0
-    && expected.expectedItems.length === ids.size && expected.expectedItems.every(id => ids.has(id)), 'expectation list missing or incomplete');
+    && expected.expectedItems.length === ids.size && expected.expectedItems.every(item => ids.has(item.id)), 'expectation list missing or incomplete');
   return { ...cert, gateEligible };
 }
 

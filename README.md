@@ -1617,7 +1617,7 @@ Linear, ограничения пробы, требования к хосту и
 тестировщик [mono:qa](skills/qa/SKILL.md) использует его на хосте.
 Проверка сертификата: `node scripts/qa-certificate.mjs <report.json> <expected.json>`;
 [отдельный шаблон](templates/qa-output.md) описывает task/project, короткий и
-given-version сертификаты. Ворота включаются отдельной работой после пилота.
+given-version сертификаты. Ожидания связывают id, точный текст и источник; scenario нельзя исключить или заменить no-behavior.
 
 Run before completing a change:
 
@@ -1641,7 +1641,11 @@ use the recommended answer; free questions use the persona. Fresh seed routes ar
 checked before the stage starts. Select a committed
 `base...head` with `node scripts/skills-select.mjs <request.json>`, then pass that
 saved selection and the explicit index path to `node scripts/skills-suite.mjs
-<request.json>`. The expected items are frozen before the first host call;
+<request.json>`. The optional `qa.skills` recipe connects any product's own index/hosts/perChange.
+Use configFile/expectedFile/taskExpectedFile in selection to save scenario × host
+expectations in task-expected.json. Per-change selection can be disabled while
+release/acceptance still select the full catalog. Mono's own config is activated
+only after the intermediate pack is installed. The expected items are frozen before the first host call;
 removed scenarios are refused. Main paths use short chains in one fresh monotest
 project, other neighbors use their own seeds. Design requires a request-supplied
 Paper file id and the neutral pre-execution guard. These data files are not part
@@ -1727,3 +1731,12 @@ node --test scripts/route-gate.test.mjs scripts/design-gate.test.mjs scripts/tec
 ```
 
 Runtime tests use scratch plugin folders; the real sandbox-boundary test runs outside a worker sandbox and reports an explicit skip when nested sandboxing prevents it. Installation, live production QA, deploy and owner acceptance are separate evidence boundaries, never implied by a local green check.
+
+
+Skill record checks: `node --test scripts/skills-records.test.mjs scripts/qa-certificate.test.mjs scripts/qa-gate.test.mjs`.
+A separate monotest-only read process dumps the fixed project/documents/issues/comments
+checklist after each stage. Native write results are reconciled with complete fresh
+cursor chains; working Linear writes stop the suite with manual-removal links.
+The suite reports scenario/host, duration and unique monotest task count. Missing
+native evidence stays unverified. The unchanged landing gate requires passed;
+MONO-279's exact expectation/source binding is included. See [record proof inputs](references/qa-skills.md#свежий-дамп-и-сверка-записей).

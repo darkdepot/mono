@@ -326,3 +326,39 @@ MP4 проверяли через AVFoundation.
 | Локальная Release-сборка | `xcodebuild ... -configuration Release` | 467 с |
 | Новый симулятор | `simctl create` + `boot` | около 30 с |
 | Загрузка в Linear | prepare → PUT → create | около 1 с на PUT |
+
+
+## Продукт из скиллов: qa.skills
+
+Дополнительное поле рецепта, остальные поля qa сохраняются:
+
+```json
+{"skills":{"indexFile":"evals/scenarios/index.json","hosts":["claude","codex"],"perChange":false}}
+```
+
+Путь индекса относительно корня продукта (либо абсолютный); хосты непустые и без
+повторов, perChange — boolean. Чужие поля отвергаются. Другой продукт указывает
+свой индекс, имена и префикс скиллов берутся оттуда. При perChange:false правка
+не выбирает сценарии; `purpose: release` и `purpose: acceptance` выбирают все.
+При true выбранные сценарии входят в ожидания задачи до первого хоста.
+В этой версии конфиг самого Mono не меняется: поле добавляет задача полного
+выпуска после установки промежуточной версии; включение true требует решения
+владельца о тарифе monotest с замеренным расходом.
+
+Вызов выбора `node scripts/skills-select.mjs <request.json>`:
+
+```json
+{
+  "configFile":"/product/.agents/mono-workflow.config.json",
+  "worktree":"/product", "base":"origin/main", "head":"HEAD",
+  "purpose":"change", "expectedFile":"/host/task-inputs.json",
+  "taskExpectedFile":"/host/task-expected.json", "output":"/host/selection.json"
+}
+```
+
+Оба выходных файла создаются эксклюзивно. Вход expectedFile — независимые поля
+сертификата и исходные `{id, source, expectation}`; выбранные сценарии дописываются
+в таком же формате. Сертификат их не выбирает и не меняет текст или источник.
+Suite читает сохранённый selection; свежий дамп и сверка описаны в
+[проверке скиллов](qa-skills.md). unverified, failed и неполный список не дают
+passed через существующие ворота; сам алгоритм ворот не менялся.

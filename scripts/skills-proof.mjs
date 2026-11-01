@@ -25,6 +25,7 @@ function unwrap(value) {
       throw error;
     }
   }
+  if (value && typeof value==='object' && (typeof value.id==='string'||typeof value.uuid==='string')) return value;
   if (typeof value?.content === 'string') return unwrap(at(value, ['content']));
   if (value?.structuredContent) return unwrap(at(value, ['structuredContent']));
   if (Array.isArray(value?.content) && value.content.length === 1) return unwrap(at(value, ['content']));
@@ -106,7 +107,7 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
         if (!Array.isArray(args?.questions) || !args.questions.length || !value || value.accepted !== true || Object.keys(value).length !== 1) absent();
         return {status:'confirmed',value:args};
       }
-      if(kind==='workspace'&&Array.isArray(output)&&output.length>1){
+      if(['workspace','record'].includes(kind)&&Array.isArray(output)&&output.length>1){
         guarded(output);
         const parsed=[];
         for(let i=0;i<output.length;i++){
@@ -158,6 +159,10 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
       }
       value = unwrap(at(r,['content']));
     } else absent();
+    if (kind === 'record') {
+      if (!value || typeof value !== 'object') absent();
+      return {status:'confirmed',value};
+    }
     if (kind !== 'workspace' || !Array.isArray(proof?.path)) absent();
     const leaf = at(value,proof.path);
     return {status:leaf === proof.equals ? 'confirmed':'mismatch'};

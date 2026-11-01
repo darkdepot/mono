@@ -6,7 +6,7 @@ const text = value => typeof value === 'string' && value.trim().length > 0;
 export function validateQaConfig(qa, config = {}) {
   const need = (ok, message) => { if (!ok) throw new Error(`qa: ${message}`); };
   need(object(qa), 'must be an object');
-  need(Object.keys(qa).every(key => ['mode', 'install', 'start', 'ready', 'data', 'forbiddenActions'].includes(key)), 'unknown field');
+  need(Object.keys(qa).every(key => ['mode', 'install', 'start', 'ready', 'data', 'forbiddenActions', 'skills'].includes(key)), 'unknown field');
   need(['web', 'terminal', 'mobile'].includes(qa.mode), 'mode must be web, terminal or mobile');
   need(Array.isArray(qa.install) && qa.install.every(text), 'install must be an array of commands (empty when no installation is needed)');
   need(text(qa.start), 'start is required');
@@ -17,6 +17,14 @@ export function validateQaConfig(qa, config = {}) {
     && ['read-only', 'synthetic', 'qaAuth', 'local-fixtures'].includes(qa.data.source) && text(qa.data.description), 'data requires source and description');
   if (qa.data.source === 'qaAuth') need(['cookie-import', 'test-account', 'owner-session'].includes(config.qaAuth), 'data source qaAuth requires qaAuth policy');
   need(Array.isArray(qa.forbiddenActions) && qa.forbiddenActions.length > 0 && qa.forbiddenActions.every(text), 'forbiddenActions must list external action restrictions');
+  if (Object.hasOwn(qa, 'skills')) {
+    const skills = qa.skills;
+    need(object(skills) && Object.keys(skills).every(key => ['indexFile', 'hosts', 'perChange'].includes(key)), 'skills has unknown fields or is not an object');
+    need(text(skills.indexFile) && skills.indexFile.endsWith('.json') && !/[\r\n]/.test(skills.indexFile), 'skills.indexFile must name a JSON index');
+    need(Array.isArray(skills.hosts) && skills.hosts.length > 0 && skills.hosts.every(host => ['claude', 'codex'].includes(host))
+      && new Set(skills.hosts).size === skills.hosts.length, 'skills.hosts must be unique supported hosts');
+    need(typeof skills.perChange === 'boolean', 'skills.perChange must be boolean');
+  }
   return qa;
 }
 

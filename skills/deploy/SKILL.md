@@ -62,7 +62,10 @@ Workflow:
    Host inputs are `<root>/qa/state.json` (`tasks` maps Issue to current head and
    project/null; `projects` carries all Issues with source head, statusType and
    label names, GitHub mergedAt/null and heldIssues in dependency order). Before QA save independent
-   `task-expected.json`; after publication/read-back save `task-report.json` in
+   `task-expected.json` with `{id, source, expectation}` entries. When `qa.skills`
+   is configured, run `scripts/skills-select.mjs` from that config before QA to append
+   scenario × host expectations; selected scenarios cannot use no-behavior/excluded.
+   After publication/read-back save `task-report.json` in
    `<root>/qa/<KEY>/<head>/`. The final Issue/head also holds project-expected.json
    and project-report.json. Use the certificate validator's expected input shape.
    Refresh all paginated Project Issues and GitHub heads; never derive expected

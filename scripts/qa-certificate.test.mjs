@@ -17,7 +17,7 @@ function fixture(t) {
     recipeSource: 'registry', gateEligible: true, kind: 'behavior',
     items: [{ id: 'C1', source: 'task', expectation: 'Reject invalid input', outcome: 'passed', evidence: [proof] }] };
   const expected = { scope: 'task', issue: 'EXAMPLE-1', head, base, kind: 'behavior', mode: 'ship', recipeSource: 'registry',
-    evidenceRoot: root, expectedItems: ['C1'], taskCriteria: ['C1'], recipeFile,
+    evidenceRoot: root, expectedItems: [{ id: 'C1', source: 'task', expectation: 'Reject invalid input' }], taskCriteria: ['C1'], recipeFile,
     shipCertificate: `mono-ship green certificate\nShip: green\nIssue(s): EXAMPLE-1\nHead SHA: ${head}\nPR: #1` };
   const check = (c = cert, e = expected) => validateQaCertificate({ certificate: QA_MARKER + '\n' + JSON.stringify(c) }, e);
   return { cert, expected, check, root, proof };
@@ -44,8 +44,8 @@ test('rejects missing fields, foreign identity, duplicate/empty and incomplete i
   }
   assert.throws(() => check({ ...cert, items: [] }), /nonempty/);
   assert.throws(() => check({ ...cert, items: [cert.items[0], cert.items[0]] }), /unique/);
-  assert.throws(() => check(cert, { ...expected, expectedItems: ['C1', 'C2'] }), /incomplete/);
-  assert.throws(() => check(cert, { ...expected, expectedItems: ['C1', 'C1'] }), /unique expectation/);
+  assert.throws(() => check(cert, { ...expected, expectedItems: [expected.expectedItems[0], {...expected.expectedItems[0], id:'C2'}] }), /incomplete/);
+  assert.throws(() => check(cert, { ...expected, expectedItems: [expected.expectedItems[0], expected.expectedItems[0]] }), /unique expectation/);
   assert.throws(() => check(cert, { ...expected, taskCriteria: undefined }), /taskCriteria/);
   assert.throws(() => check(cert, { ...expected, shipCertificate: undefined }), /ship certificate/);
 });
@@ -77,6 +77,7 @@ test('excluded needs reason and successor and cannot exclude task acceptance und
   const { cert, expected, check } = fixture(t);
   Object.assign(cert.items[0], { source: 'heuristic', outcome: 'excluded', reason: 'Also unstable on unchanged main',
     successor: 'https://linear.app/example/issue/EXAMPLE-2/flaky' });
+  expected.expectedItems[0].source='heuristic';
   assert.throws(() => check(), /cannot be excluded/);
   expected.taskCriteria = []; assert.equal(check().verdict, 'passed');
   const noProof = structuredClone(cert); noProof.items[0].evidence = [];
@@ -84,7 +85,7 @@ test('excluded needs reason and successor and cannot exclude task acceptance und
   for (const key of ['reason', 'successor']) {
     const bad = structuredClone(cert); delete bad.items[0][key]; assert.throws(() => check(bad), /reason and successor/);
   }
-  cert.items[0].source = 'task'; assert.throws(() => check(), /cannot be excluded/);
+  cert.items[0].source = expected.expectedItems[0].source = 'task'; assert.throws(() => check(), /cannot be excluded/);
 });
 
 test('short no-behavior certificate accepts reason and cannot bypass expected behavior or project coverage', t => {
@@ -126,7 +127,28 @@ test('CLI validates the same certificate and fails on foreign head', t => {
 
 
 test('certificate expectations may mention the certificate marker without becoming a second header', t => {
-  const { cert, check } = fixture(t);
-  cert.items[0].expectation = 'Emits a mono-qa certificate for the tested task';
+  const { cert, expected, check } = fixture(t);
+  cert.items[0].expectation = expected.expectedItems[0].expectation = 'Emits a mono-qa certificate for the tested task';
   assert.equal(check().verdict, 'passed');
+});
+
+test('MONO-279 binds expectation text and source independently of certificate', t => {
+  const { cert, expected, check } = fixture(t);
+  expected.expectedItems = [{ id: 'C1', source: 'task', expectation: 'Reject invalid input' }];
+  assert.equal(check().verdict, 'passed');
+  for (const [field,value] of [['expectation','Silently accept invalid input'],['source','heuristic']]) {
+    const bad=structuredClone(cert);bad.items[0][field]=value;
+    assert.throws(()=>check(bad),/expectation.*(changed|mismatch)/);
+  }
+});
+
+test('scenario items cannot be excluded or bypassed with no-behavior', t => {
+  const { cert, expected, check, proof } = fixture(t);
+  expected.expectedItems=[{id:'C1',source:'scenario',expectation:'Idea / approve / codex'}];expected.taskCriteria=[];
+  Object.assign(cert.items[0],expected.expectedItems[0]);
+  assert.equal(check().verdict,'passed');
+  Object.assign(cert.items[0],{outcome:'excluded',evidence:[proof],reason:'unstable',successor:'https://linear.app/example/issue/EXAMPLE-2'});
+  assert.throws(()=>check(),/scenario.*excluded/);
+  cert.kind=expected.kind='no-behavior';cert.reason='Only skill text';delete cert.items;
+  assert.throws(()=>check(),/scenario.*no-behavior/);
 });

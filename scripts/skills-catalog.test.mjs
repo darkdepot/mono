@@ -8,9 +8,11 @@ import readline from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadCatalog } from './skills-catalog.mjs';
 import { selectScenarios, saveSelection } from './skills-select.mjs';
-import { runSuite, scenarioPrompt } from './skills-suite.mjs';
+import { runSuite as runSuiteWithRecords, scenarioPrompt } from './skills-suite.mjs';
 import { checkTrace } from './skills-trace.mjs';
 
+// These fixtures isolate catalog/driver behavior; record verification has its own native fixtures.
+const runSuite=(request,execute)=>runSuiteWithRecords(request,execute,async()=>({status:'passed',monotestTasks:0}));
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const source=path.join(root,'evals/scenarios');
 const neighbors={idea:['research'],research:['idea','discovery'],discovery:['research','design','tech-evaluation','handoff'],
@@ -520,4 +522,67 @@ for(const outcome of ['passed','throw'])test(`continue6 suite reports guard expo
  });
  assert(calls>0);assert.equal(result.status,outcome==='passed'?'passed':'failed');
  assert.deepEqual(result.exportLeftovers,[leftover]);assert.deepEqual(json(path.join(request.outputDir,'suite-result.json')).exportLeftovers,[leftover]);
+});
+
+test('qa.skills config connects another product and binds task expectations before its pass',async t=>{
+ const {selectQaScenarios}=await import('./skills-select.mjs');
+ const {validateQaConfig}=await import('./qa-recipe.mjs');
+ const f=fixture(t),indexFile=path.join(f.catalogDir,'index.json');
+ const index=json(indexFile);index.productName='Example Skills';index.skillPrefix='example';write(indexFile,JSON.stringify(index));
+ write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
+ const config={qa:{mode:'terminal',install:[],start:'node --version',ready:{command:'pwd',identity:'copy'},data:{source:'synthetic',description:'test'},forbiddenActions:['production'],skills:{indexFile:'custom-catalog/index.json',hosts:['codex'],perChange:true}}};
+ validateQaConfig(config.qa);
+ for(const skills of [{...config.qa.skills,perChange:'false'},{...config.qa.skills,hosts:[]},{...config.qa.skills,hosts:['codex','codex']},{...config.qa.skills,indexFile:''},{...config.qa.skills,unknown:true}])assert.throws(()=>validateQaConfig({...config.qa,skills}),/skills/);
+ const args={config,worktree:f.dir,base:f.base,head:f.git('rev-parse','HEAD'),expected:{kind:'behavior',expectedItems:[{id:'C1',source:'task',expectation:'Column visible'}],taskCriteria:['C1']}};
+ const taskExpectedFile=path.join(f.dir,'task-expected.json'),output=path.join(f.dir,'selected.json');
+ const selection=selectQaScenarios({...args,taskExpectedFile,output});
+ assert(selection.expectedItems.length);assert(selection.expectedItems.every(i=>i.source==='scenario'&&i.expectation.includes('codex')));
+ const expected=json(taskExpectedFile);assert.deepEqual(expected.expectedItems,[args.expected.expectedItems[0],...selection.expectedItems]);assert.equal(expected.head,selection.head);assert.equal(expected.base,selection.base);
+ assert.throws(()=>selectQaScenarios({...args,taskExpectedFile,output}),/EEXIST/);
+ config.qa.skills.perChange=false;
+ assert.equal(selectQaScenarios(args).expectedItems.length,0);
+ assert(selectQaScenarios({...args,purpose:'release'}).expectedItems.length);
+ assert(selectQaScenarios({...args,purpose:'acceptance'}).expectedItems.length);
+ delete config.qa.skills;assert.equal(selectQaScenarios(args).expectedItems.length,0);
+});
+
+test('another product config flows from selected scenarios through suite and unchanged certificate gate',async t=>{
+ const {selectQaScenarios}=await import('./skills-select.mjs');
+ const {qaDeliveryState}=await import('./qa-gate.mjs');
+ const {checkTrace}=await import('./skills-trace.mjs');
+ const f=fixture(t),qaRoot=path.join(f.dir,'host-qa'),indexFile=path.join(f.catalogDir,'index.json');
+ const index=json(indexFile);index.productName='Example Skills';index.skillPrefix='example';write(indexFile,JSON.stringify(index));const base=f.commit();
+ write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');const head=f.commit();
+ const config={projectName:'Example Skills',qa:{mode:'terminal',install:[],start:'node --version',ready:{command:'pwd',identity:'copy'},data:{source:'synthetic',description:'scratch'},forbiddenActions:['production'],skills:{indexFile:'custom-catalog/index.json',hosts:['codex'],perChange:true}}};
+ const args={config,worktree:f.dir,base,head,expected:{kind:'behavior',expectedItems:[],taskCriteria:[]}};
+ const selection=selectQaScenarios({...args,taskExpectedFile:path.join(f.dir,'task-expected.json')});
+ const request=suiteRequest(f,selection);let checked=0;
+ const result=await runSuiteWithRecords(request,async r=>{
+  const project=runProject(r);write(r.context.projectFile,JSON.stringify(project));return passedStage(r);
+ },async()=>{checked++;return {status:'passed',monotestTasks:2,taskIds:['task-1','task-2']};});
+ assert.equal(result.status,'passed');assert.equal(checked,selection.expectedItems.length);assert.equal(result.monotestTasks,2);assert(result.durationMs>=0);
+ assert(result.results.every(r=>r.host==='codex'&&r.durationMs>=0&&r.monotestTasks===2));
+ const issue='EXAMPLE-1',dir=path.join(qaRoot,'qa',issue,head),proof=path.join(dir,'suite-result.json');
+ write(proof,JSON.stringify(result));
+ const shipCertificate=`mono-ship green certificate\nShip: green\nIssue(s): ${issue}\nHead SHA: ${head}\nPR: #1`;
+ const expected={...json(path.join(f.dir,'task-expected.json')),scope:'task',issue,mode:'ship',recipeSource:'config',evidenceRoot:dir,shipCertificate};
+ const cert={scope:'task',issue,head,base:selection.base,kind:'behavior',mode:'ship',recipeSource:'config',gateEligible:true,verdict:'passed',items:expected.expectedItems.map(item=>({...item,outcome:'passed',evidence:[proof]}))};
+ const flush=()=>{write(path.join(dir,'task-expected.json'),JSON.stringify(expected));write(path.join(dir,'task-report.json'),JSON.stringify({certificate:'mono-qa certificate\n'+JSON.stringify(cert)}));};
+ write(path.join(qaRoot,'qa/state.json'),JSON.stringify({tasks:{[issue]:{head,project:null}},projects:{}}));flush();
+ const input={root:qaRoot,config,issue,head,shipCertificate};assert.equal(qaDeliveryState(input).state,'passed');
+ // Real trace checker: no native response and no live fallback keeps the scenario unverified.
+ const native=path.join(f.dir,'incomplete.jsonl');write(native,JSON.stringify({type:'response_item',payload:{type:'function_call',name:'request_user_input_async',call_id:'w',arguments:JSON.stringify({questions:[{title:'Совет',options:['Утвердить (Recommended)','Ещё обсудить']}]})}})+'\n');
+ const scenario=loadCatalog(indexFile).scenarios.get('idea/approve');
+ const check=checkTrace({host:'codex',trace:native,expectedWindows:scenario.hosts.codex.expectedWindows});assert.equal(check.status,'unverified');
+ cert.items[0].outcome=check.status;cert.items[0].reason='No background answer or live screenshot';cert.verdict=check.status;flush();
+ assert.equal(qaDeliveryState(input).state,'failed');
+ cert.kind=expected.kind='no-behavior';delete cert.items;cert.reason='Skill prose';flush();assert.match(qaDeliveryState(input).reason,/scenario.*no-behavior/);
+ config.qa.skills.perChange=false;
+ assert.deepEqual(selectQaScenarios(args).expectedItems,[]);
+});
+
+test('suite stops every remaining host/unit on working Linear write, reports the unfinished scenarios',async t=>{
+ const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();const selection=f.select();let calls=0;
+ const result=await runSuiteWithRecords(suiteRequest(f,selection),async r=>{calls++;write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);},async()=>({status:'failed',stop:true,manualRemoval:['https://linear.app/example/issue/EX-1'],monotestTasks:0}));
+ assert.equal(calls,1);assert.equal(result.status,'failed');assert(result.items.slice(1).every(item=>item.status==='unverified'));assert(result.results[0].result.records.manualRemoval.length);
 });

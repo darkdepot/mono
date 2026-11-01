@@ -34,12 +34,17 @@ export function checkSeedRoute(request){
   if(run.status!==0||!route?.ok||route.next!==seed.expectedStage||route.projectId!==project.id)throw new Error(`seed route mismatch: expected ${seed.expectedStage}, observed ${route?.next??'invalid dump'}`);
   return result;
 }
+function requestToolViolation(request,name,input,confirmed) {
+  return toolViolation(name,input,request.scenario,confirmed) ?? (request.readOnlyDump && name.startsWith('mcp__') &&
+    (!name.startsWith('mcp__monotest__') || isWrite(name)) ? 'record dump permits monotest reads only' : null);
+}
 function validate(request){
   if(!['claude','codex'].includes(request.host)||!path.isAbsolute(request.outputDir??'')||!path.isAbsolute(request.cwd??'')||!path.isAbsolute(request.packRoot??''))throw new Error('host and absolute outputDir/cwd/packRoot required');
-  if(!request.scenario?.prompt?.trim()||!request.scenario.expectedWindows?.length||(request.scenario.allowedTools!==undefined&&request.scenario.allowedTools!=='*'&&!Array.isArray(request.scenario.allowedTools))||!request.scenario.windows?.length)throw new Error('scenario prompt, expectedWindows, allowedTools and policies required');
+  if(!request.scenario?.prompt?.trim()||(!request.readOnlyDump&&!request.scenario.expectedWindows?.length)||(request.scenario.allowedTools!==undefined&&request.scenario.allowedTools!=='*'&&!Array.isArray(request.scenario.allowedTools))||(!request.readOnlyDump&&!request.scenario.windows?.length))throw new Error('scenario prompt, expectedWindows, allowedTools and policies required');
   const proof=request.workspaceProof;
   if(!/^mcp__monotest__\w+$/.test(proof?.tool??'')||!Array.isArray(proof.path)||proof.equals==null||isWrite(proof.tool))throw new Error('explicit monotest read proof required');
   mcpConfig(request.mcpServers);
+  if(request.readOnlyDump && (Object.keys(request.mcpServers).some(k=>k!=='monotest') || request.scenario.expectedWindows.length || request.scenario.windows.length))throw new Error('read-only dump requires only monotest and no windows');
   if(request.writableRoots!==undefined&&(!Array.isArray(request.writableRoots)||request.writableRoots.some(dir=>!path.isAbsolute(dir))))throw new Error('absolute writableRoots required');
   for(const key of ['timeoutMs','idleMs'])if(request[key]!==undefined&&(!Number.isFinite(request[key])||request[key]<=0))throw new Error(`invalid ${key}`);
   if(roleWindows(request.scenario.expectedWindows)&&request.scenario.expectedWindows.some(w=>!['approval','transition'].includes(w.role)))throw new Error('every expected target needs its role');
@@ -99,7 +104,7 @@ export async function runClaude(request){
         for(const b of e.message?.content??[])if(b.type==='tool_use'){
           if(!e.parent_tool_use_id)calls.set(b.id,{event:e,block:b});
           if(b.name==='AskUserQuestion'&&!e.parent_tool_use_id)pendingWindows.push(b.id);
-          if(b.name!=='AskUserQuestion'){const reason=toolViolation(b.name,b.input,request.scenario,confirmed)??(phase==='confirm'&&isWrite(b.name)?'write during workspace confirmation':null);if(reason)return fail(reason,c);}
+          if(b.name!=='AskUserQuestion'){const reason=requestToolViolation(request,b.name,b.input,confirmed)??(phase==='confirm'&&isWrite(b.name)?'write during workspace confirmation':null);if(reason)return fail(reason,c);}
         }
       }
       if(e.type==='user'&&!e.parent_tool_use_id&&Array.isArray(e.message?.content))for(const b of e.message.content){
@@ -133,7 +138,7 @@ export async function runClaude(request){
             persona(question).then(answer).catch(error=>missing(error.message,c));
           }else answer();
         }else{
-          const reason=toolViolation(name,input,request.scenario,confirmed)??(phase==='confirm'&&isWrite(name)?'write during workspace confirmation':null);
+          const reason=requestToolViolation(request,name,input,confirmed)??(phase==='confirm'&&isWrite(name)?'write during workspace confirmation':null);
           if(reason){deny(e,reason,c);return fail(reason,c);}
           waiting=false;c.send({type:'control_response',response:{subtype:'success',request_id:e.request_id,response:{behavior:'allow',updatedInput:input}}});
         }
@@ -200,7 +205,7 @@ export async function runCodex(request){
       const auditRowsForFile=file===rollout?fresh:traceRows(file,'codex').rows;
       auditedTraces.add(file);
       for(const call of auditRows('codex',auditRowsForFile).calls.filter(c=>c.name.startsWith('mcp__'))){
-        const reason=toolViolation(call.name,call.input,request.scenario,confirmed)??(confirm&&isWrite(call.name)?'write during workspace confirmation':null);
+        const reason=requestToolViolation(request,call.name,call.input,confirmed)??(confirm&&isWrite(call.name)?'write during workspace confirmation':null);
         if(reason){violation=`${file}:${call.line}: ${reason}`;throw new Error(violation);}
       }
     }
@@ -217,7 +222,7 @@ export async function runCodex(request){
           if(confirm){violation=`${rollout}:${r.line}: window during workspace confirmation`;throw new Error(violation);}
           continue;
         }
-        const reason=toolViolation(call.name,call.input,request.scenario,confirmed)??(confirm&&isWrite(call.name)?'write during workspace confirmation':null);
+        const reason=requestToolViolation(request,call.name,call.input,confirmed)??(confirm&&isWrite(call.name)?'write during workspace confirmation':null);
         if(reason){violation=`${rollout}:${r.line}: ${reason}`;throw new Error(violation);}
         if(confirm&&call.name===request.workspaceProof.tool){
           if(!workspaceReadCall(p,request.workspaceProof))throw new MissingEvidence(`${rollout}:${r.line}: exec does not establish an executed workspace read`);
@@ -260,6 +265,7 @@ export async function runCodex(request){
       seedRoute=checkSeedRoute(request);scenarioStart=seeded.at(-1)?.line??scenarioStart;
     }
     let rows=await turn(request.scenario.prompt);
+    if(request.readOnlyDump)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,auditedTraces:[...auditedTraces],process:processResult,violation});
     for(let n=0;n<(request.maxTurns??(roleWindows(request.scenario.expectedWindows)?128:32));n++){
       if(endLine)break;
       const windows=codexWindows(rows.filter(r=>r.line>scenarioStart),rollout,{phase:'card'}).filter(w=>!seen.has(w.callId));
@@ -293,6 +299,19 @@ export async function runCodex(request){
 }
 
 function finishRun(request,run){
+  if(request.readOnlyDump){
+    let reason=run.violation??run.evidenceMissing??run.process?.failure;
+    let complete=false;
+    try{
+      const {rows}=traceRows(run.trace,request.host);
+      complete=completedTrace(request.host,rows);
+      for(const call of auditRows(request.host,rows).calls){
+        if(call.name.startsWith('mcp__')&&(!call.name.startsWith('mcp__monotest__')||isWrite(call.name)))reason='record dump permits monotest reads only';
+      }
+    }catch(error){reason=error.message;}
+    const status=run.violation?'failed':reason||!run.confirmed||!complete||run.process?.code!==0?'unverified':'passed';
+    return {host:request.host,...run,status,reason:reason??(!complete?'incomplete dump trace':null)};
+  }
   const check=checkTrace({host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,rulesRoot:request.rulesRoot,endLine:run.endLine,sent:run.sent});
   let notes=[];try{const {rows}=traceRows(run.trace,request.host,{endLine:run.endLine});notes=auditRows(request.host,rows).notes;}catch{}
   const failure=run.violation??(run.evidenceMissing?null:run.process?.failure??(run.process?.code!==0?'host process failed':null));

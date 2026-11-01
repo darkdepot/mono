@@ -21,7 +21,7 @@ function fixture(t) {
     const dir = path.join(root, 'qa', key, sha); fs.mkdirSync(dir, { recursive: true });
     const evidence = path.join(dir, 'session.cast'); fs.writeFileSync(evidence, 'scratch recording');
     const expected = { scope, issue: key, project: 'project', head: sha, base, kind: 'behavior', mode: 'ship',
-      recipeSource: 'config', evidenceRoot: path.join(root, 'qa'), expectedItems: ['C1'], taskCriteria: ['C1'], build,
+      recipeSource: 'config', evidenceRoot: path.join(root, 'qa'), expectedItems: [{ id: 'C1', source: 'task', expectation: 'Observable behavior' }], taskCriteria: ['C1'], build,
       shipCertificate: ship(key, sha) };
     const cert = { ...expected, gateEligible: true, verdict: 'passed',
       items: [{ id: 'C1', source: 'task', expectation: 'Observable behavior', outcome: 'passed', evidence: [evidence] }] };
@@ -246,4 +246,18 @@ test('all-merged held chain refuses ambiguous latest merge', t => {
   const result = qaDeliveryState(f.input);
   assert.equal(result.state, 'failed');
   assert.match(result.reason, /latest project landing is ambiguous/);
+});
+
+test('scenario × host failures, missing items and unavailable windows hold the unchanged landing gate',t=>{
+ const f=fixture(t);f.saveState();const saved=f.save();
+ const scenario={id:'idea-approve:idea/approve:codex',source:'scenario',expectation:'Idea / approve / codex'};
+ saved.expected.expectedItems.push(scenario);saved.cert.items.push({...scenario,outcome:'passed',evidence:[path.join(saved.dir,'session.cast')]});saved.flush();
+ assert.equal(qaDeliveryState(f.input).state,'passed');
+ for(const outcome of ['failed','unverified']){
+  Object.assign(saved.cert.items[1],{outcome,reason:'No native answer and no live screenshot'});saved.cert.verdict=outcome;saved.flush();
+  assert.equal(qaDeliveryState(f.input).state,'failed');assert.throws(()=>requireQaPassed(f.input),new RegExp(outcome));
+ }
+ saved.cert.items.pop();saved.cert.verdict='passed';saved.flush();assert.match(qaDeliveryState(f.input).reason,/incomplete/);
+ saved.cert.kind=saved.expected.kind='no-behavior';delete saved.cert.items;saved.cert.reason='Skill prose only';saved.flush();
+ assert.match(qaDeliveryState(f.input).reason,/scenario.*no-behavior/);
 });
