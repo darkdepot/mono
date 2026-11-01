@@ -93,7 +93,9 @@ export async function runSuite(request, execute = runScenario) {
         result=await execute(runRequest);
         if (result.status === 'passed' && (nextKey || project || seed || fs.existsSync(projectFile))) {
           const observed=projectManifest(projectFile,projectName);
-          if (project && JSON.stringify(observed) !== JSON.stringify(project)) throw new Error('chain changed its run project');
+          const expectedProject=project??(seed?result.seedRoute?.project:null);
+          if (seed&&!expectedProject) throw new Error('validated seed project missing');
+          if (expectedProject&&['id','name','url'].some(field=>observed[field]!==expectedProject[field])) throw new Error('chain changed its run project');
           fs.copyFileSync(projectFile,outputDir+'-project.json',fs.constants.COPYFILE_EXCL);
           project=observed;
         }

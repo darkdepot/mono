@@ -17,6 +17,8 @@ const neighbors={idea:['research'],research:['idea','discovery'],discovery:['res
   design:['discovery','tech-evaluation','handoff'],'tech-evaluation':['discovery','design','handoff'],handoff:['discovery','design','tech-evaluation']};
 const write=(file,text)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,text);};
 const json=file=>JSON.parse(fs.readFileSync(file,'utf8'));
+const runProject=request=>request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'};
+const passedStage=request=>({status:'passed',...(request.seed?{seedRoute:{project:runProject(request)}}:{})});
 function fixture(t) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-catalog-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const catalogDir=path.join(dir,'custom-catalog');fs.cpSync(source,catalogDir,{recursive:true});
@@ -78,7 +80,7 @@ test('seed route is isolated from the following stage before any real stage runs
           assert(request.seed.dumpDir.startsWith(request.cwd+path.sep));
         }
       }
-      write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));return {status:'passed'};
+      write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));return passedStage(request);
     });
   assert(checked>0);
 });
@@ -186,7 +188,7 @@ test('suite persists expectations before calls and shares one read-back project 
       const guard=json(request.mcpServers.paper.args[1]);assert.equal(guard.fileId,'test-file');
       assert(request.scenario.prompt.includes('test-file'));assert(request.scenario.prompt.includes('как на проде'));
     }
-    calls.push(request);return {status:'passed'};
+    calls.push(request);return passedStage(request);
   });
   assert.equal(result.status,'passed');assert.equal(calls.length,selection.expectedItems.length);
   for(const call of calls)assert.deepEqual(json(call.outputDir+'-project.json'),json(call.context.projectFile),'copy the model-written manifest into results');
@@ -194,6 +196,31 @@ test('suite persists expectations before calls and shares one read-back project 
     const chain=calls.filter(c=>c.host===host&&c.context.projectName.endsWith('discovery-approve'));
     assert.equal(chain.length,3);assert.equal(chain[0].context.project,null);assert.equal(chain[1].context.project.id,chain[2].context.project.id);
   }
+});
+
+for(const field of ['id','name','url','missing-proof'])test(`the first seeded stage rejects a changed ${field} before its chain continues`,async t=>{
+  const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
+  const selection=f.select();selection.units=selection.units.filter(u=>u.id==='tech-evaluation-approve');selection.expectedItems=selection.expectedItems.filter(i=>i.unit==='tech-evaluation-approve');
+  const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);let calls=0;
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'identity-'+field,outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+    calls++;const project=runProject(request),observed={...project};
+    if(request.seed&&field!=='missing-proof')observed[field]={id:'00000000-0000-4000-8000-000000000002',name:'another-project',url:'https://linear.app/monotest/project/another'}[field];
+    write(request.context.projectFile,JSON.stringify(observed));return field==='missing-proof'?{status:'passed'}:passedStage(request);
+  });
+  assert.equal(result.status,'failed',field);assert.equal(calls,2,'only first stage in each host runs');
+  assert(result.results.every(r=>r.status==='failed'));
+  assert(result.items.filter(i=>i.scenario!=='discovery/approve').every(i=>i.status==='unverified'));
+});
+
+test('seed and every chain stage accept identical identity fields in any JSON key order',async t=>{
+  const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
+  const selection=f.select();selection.units=selection.units.filter(u=>u.id==='tech-evaluation-approve');selection.expectedItems=selection.expectedItems.filter(i=>i.unit==='tech-evaluation-approve');
+  const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);let calls=0;
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'key-order',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+    calls++;const p=runProject(request),observed=request.seed?{url:p.url,name:p.name,id:p.id}:{name:p.name,id:p.id,url:p.url};
+    write(request.context.projectFile,JSON.stringify(observed));return passedStage(request);
+  });
+  assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(calls,6);
 });
 
 test('a stage that omits its manifest cannot reuse the previous stage read-back',async t=>{
@@ -204,7 +231,7 @@ test('a stage that omits its manifest cannot reuse the previous stage read-back'
   const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'missing-manifest',outputDir,cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
     calls++;
     if(calls!==2)write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));
-    return {status:'passed'};
+    return passedStage(request);
   });
   assert.equal(result.status,'failed');
   const failed=result.results.find(r=>r.status==='failed');assert.equal(failed.scenario,'research/approve');assert.match(failed.result.reason,/ENOENT/);
@@ -256,7 +283,7 @@ test('a replaced project manifest cannot send the next stage to another project'
   const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
   const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'project',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
-    write(request.context.projectFile,JSON.stringify({id:'00000000-0000-4000-8000-000000000001',name:'foreign-project',url:'https://linear.app/monotest/project/foreign'}));return {status:'passed'};
+    write(request.context.projectFile,JSON.stringify({id:'00000000-0000-4000-8000-000000000001',name:'foreign-project',url:'https://linear.app/monotest/project/foreign'}));return passedStage(request);
   });
   assert.equal(result.status,'failed');assert(result.results.every(r=>r.result.reason.includes('invalid run project read-back manifest')));
   assert(result.items.filter(i=>i.unit==='idea-approve'&&i.scenario==='research/approve').every(i=>i.status==='unverified'),'never enter next stage on a foreign project');
@@ -273,7 +300,7 @@ test('bad manifests and host errors fail only their chain and always persist the
       const project=request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'};
       const bad=request.host==='claude'&&request.context.projectName.endsWith('idea-approve')&&(mode!=='replaced-id'||request.context.project);
       if(bad&&mode==='host-error')throw new Error('fixture host crashed');
-      write(request.context.projectFile,bad&&mode==='malformed'?'{':JSON.stringify(bad?{...project,id}:project));return {status:'passed'};
+      write(request.context.projectFile,bad&&mode==='malformed'?'{':JSON.stringify(bad?{...project,id}:project));return passedStage(request);
     });
     assert.equal(result.status,'failed',mode);assert.deepEqual(json(path.join(outputDir,'suite-result.json')),result);
     const failed=result.results.filter(r=>r.status==='failed');assert.equal(failed.length,1,mode);
@@ -288,7 +315,7 @@ test('stage and seed prompts request get_project.uuid and seed only its availabl
   const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());const calls=[];
   const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-data',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')},async request=>{
-    calls.push(request);write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));return {status:'passed'};
+    calls.push(request);write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));return passedStage(request);
   });
   assert.equal(result.status,'passed');
   await t.test('manifest UUID',()=>{

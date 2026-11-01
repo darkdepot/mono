@@ -1650,6 +1650,9 @@ invalid or required missing manifests fail that stage, leave later chain stages 
 and preserve the suite result while other units continue. Seed prompts request
 only their recipe's data. An unanswered standalone Idea needs no project manifest;
 an absent seed pointer means `unverified: seed not completed`, before the stage starts.
+Every stage's manifest is compared field by field (`id`, `name`, `url`) with
+the existing project, including the first stage with its validated seed pointer;
+JSON key order does not affect identity.
 Transition anchors check advice; option labels identify
 their role. Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs`.
 The shared audit keeps MCP actions bounded to monotest/Paper and requires a real
