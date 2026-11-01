@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { verifyRecords, dumpPrompt, collectRecordDump } from './skills-records.mjs';
+import { verifyRecords, dumpPrompt, collectRecordDump, verifyScenarioRecords } from './skills-records.mjs';
 
 const projectId='00000000-0000-4000-8000-000000000001',date='2026-10-31T00:00:00Z';
 function fixture(t){
@@ -274,7 +274,68 @@ test('a mono-design write requires the dedicated passing design gate',t=>{
  // and matching reads. This is deliberately not a valid Design approval.
  const visit=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())visit(file);else if(/\.jsonl?$/.test(name))fs.writeFileSync(file,fs.readFileSync(file,'utf8').replaceAll('mono-prd: approved','mono-design: approved prd=425e1596-b9a6-4be2-ae02-3d2cd7701f63'));}};
  visit(f.dir);f.request.expectedRecords=[{type:'mono-design: approved',count:1}];
- const noGate=f.check();assert.equal(noGate.status,'unverified');assert.match(noGate.reason,/idea-gate design proof required/);
+ const noGate=f.check();assert.equal(noGate.status,'failed');assert.equal(noGate.gateResults[0].command,'route');assert.equal(noGate.gateResults[0].result.ok,false);
  f.request.gates=[{command:'design'}];
  const invalid=f.check();assert.equal(invalid.status,'failed',invalid.reason);assert.equal(invalid.gateResults[0].command,'design');assert.equal(invalid.gateResults[0].result.ok,false);
+});
+
+for(const host of ['claude','codex'])for(const mode of ['complete','shell','foreign'])test(`${host}: fixed dump saves native raw results without model filesystem work (${mode})`,async t=>{
+ const f=fixture(t),authFile=path.join(f.dir,'auth.json');fs.writeFileSync(authFile,'{}');
+ const collected=await collectRecordDump({host,cwd:f.dir,packRoot:process.cwd(),outputDir:path.join(f.dir,'fixed'),authFile,timeoutMs:10000,idleMs:10,
+  binary:{command:process.execPath,args:[path.resolve('scripts/test-fixtures/skills-fixed-dump-host.mjs'),mode]},
+  project:{id:projectId,name:'fixed-run'},projectName:'fixed-run',mcpServers:{monotest:{url:'https://example.test/mcp'}}});
+ assert.equal(collected.status,mode==='complete'?'passed':'failed',JSON.stringify(collected));
+ if(mode==='shell')assert.match(collected.reason,/host commands/);
+ if(mode==='foreign'){
+  assert.match(collected.reason,/outside test servers/);
+  const trace=path.join(f.dir,'empty-stage.jsonl');fs.writeFileSync(trace,JSON.stringify(host==='codex'?{type:'event_msg',payload:{type:'task_complete'}}:{type:'result',subtype:'success'})+'\n');
+  const violation=await verifyScenarioRecords({run:{trace},runRequest:{host,context:{projectName:'fixed-run'},mcpServers:{monotest:{url:'x'}}},scenario:{expectedRecords:[]},outputDir:path.join(f.dir,'unused')},async()=>collected);
+  assert.equal(violation.stop,true);assert.deepEqual(violation.manualRemoval,['https://linear.app/working/issue/x']);
+ }
+ if(mode==='complete'){
+  assert.equal(collected.dumpComplete,true);assert.equal(collected.dumpFiles.length,8);
+  const p=JSON.parse(fs.readFileSync(path.join(collected.dumpDir,'project.json')));assert.equal(p.content[0].type,'text');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(collected.dumpDir,'comments-2.request.json'))),{cursor:'c1'});
+  const trace=path.join(f.dir,'empty-stage.jsonl');fs.writeFileSync(trace,JSON.stringify(host==='codex'?{type:'event_msg',payload:{type:'task_complete'}}:{type:'result',subtype:'success'})+'\n');
+  const result=verifyRecords({host,trace,dumpDir:collected.dumpDir,dumpTrace:collected.trace,project:{id:projectId,name:'fixed-run'},expectedRecords:[{type:'project'}]});assert.equal(result.status,'passed',result.reason);
+ }
+});
+test('binding-only metadata cannot hide a later failed gate',t=>{
+ const f=liveFixture(t,'idea-approve');delete f.request.approvalBindings;
+ const clean=f.check();assert.equal(clean.status,'unverified');assert.equal(clean.bindingOnly,true);assert.equal(clean.gateResults[0].result.ok,true);
+ f.request.gates.push({command:'design'});const failed=f.check();assert.notEqual(failed.status,'passed');assert.notEqual(failed.bindingOnly,true);
+});
+function live2Fixture(t,name){
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-live2-records-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));fs.cpSync(path.resolve('scripts/test-fixtures/skills-records-live2',name),dir,{recursive:true});
+ const request=JSON.parse(fs.readFileSync(path.join(dir,'request.json')));for(const k of ['trace','dumpTrace','dumpDir','configFile'])request[k]=path.join(dir,request[k]);request.packRoot=process.cwd();return {dir,request,check:()=>verifyRecords(request)};
+}
+for(const name of ['idea-correction','discovery-approve'])test(`live2 ${name}: native write, stored normalisation and real gate agree`,t=>{
+ const f=live2Fixture(t,name);assert.equal(f.check().status,'passed',f.check().reason);delete f.request.approvalBindings;const pending=f.check();assert.equal(pending.status,'unverified');assert.equal(pending.bindingOnly,true);assert(pending.gateResults.every(g=>g.result.ok));
+ editLiveTrace(f,rows=>{const item=rows.map(e=>e.payload?.item).find(i=>i?.tool==='save_project');item.arguments.description+='\nwrong substantive text';});assert.equal(f.check().status,'failed');
+});
+test('live2 failed Research has an existing seed; missing full dump is not forbidden project creation',t=>{
+ const f=live2Fixture(t,'research-discuss'),result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/incomplete dump: missing project.json/);assert.notEqual(result.bindingOnly,true);
+});
+test('live2 Research second window retains its transition role and remains unverified without answer',async t=>{
+ const {checkTrace}=await import('./skills-trace.mjs'),f=live2Fixture(t,'research-discuss'),r=JSON.parse(fs.readFileSync(path.join(f.dir,'trace-check.json')));r.trace=f.request.trace;
+ const full=checkTrace(r);assert.equal(full.status,'unverified');const second=full.windows[1];assert.equal(second.questions.length,1);assert.equal(second.role,'transition');assert.equal(second.executionConfirmed,false);
+ const stopped=checkTrace({...r,endLine:r.intendedEndLine});assert.equal(stopped.status,'passed');
+});
+for(const [sent,stored,status] of [
+ ['- one\n- two','* one\n* two','passed'],
+ ['- `literal`','* `literal`','passed'],
+ ['```text\n- one\n```','```text\n* one\n```','failed'],
+ ['    - literal','    * literal','failed'],
+ ['- one\n- two','* one\n* changed','failed'],
+ ['[Name](https://example.test/a)','[Name](<https://example.test/a>)','passed'],
+ ['[Name](https://example.test/a)','[Other](<https://example.test/a>)','failed']
+])test(`stored Markdown preserves content: ${JSON.stringify(sent)} -> ${status}`,t=>{
+ const f=fixture(t);f.events[2].message.content[0].input.body=sent;f.record.body=stored;f.events[3].message.content[0].content=JSON.stringify(f.record);f.page('comments','comments',[f.record]);f.request.expectedRecords=[];
+ assert.equal(f.check().status,status);
+ f.request.expectedRecords=[{type:stored,count:1}];f.page('comments','comments',[f.record,{...f.record,id:'duplicate'}]);assert.equal(f.check().status,'failed');
+});
+test('a missing binding cannot excuse an approval after a real empty answer',t=>{
+ const f=liveFixture(t,'idea-approve');delete f.request.approvalBindings;
+ editLiveTrace(f,rows=>{const receipt=rows.find(r=>r.payload?.role==='user'),content=receipt.payload.content[0];const answers=JSON.parse(content.text.split('\n').slice(1,-2).join('\n'));answers[0].answer='';content.text='<send_user_message_question_reply>\n'+JSON.stringify(answers)+'\n</send_user_message_question_reply>\n';});
+ const result=f.check();assert.equal(result.status,'failed');assert.match(result.reason,/empty\/refuse/);assert.notEqual(result.bindingOnly,true);
 });

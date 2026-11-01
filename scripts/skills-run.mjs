@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { auditRows } from './skills-audit.mjs';
+import { RecordDump } from './skills-dump.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 import { hostProcess } from './skills-process.mjs';
 import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount } from './skills-owner.mjs';
@@ -34,8 +35,9 @@ export function checkSeedRoute(request){
   if(run.status!==0||!route?.ok||route.next!==seed.expectedStage||route.projectId!==project.id)throw new Error(`seed route mismatch: expected ${seed.expectedStage}, observed ${route?.next??'invalid dump'}`);
   return result;
 }
+const answeredStop=(request,replies)=>targetsAnswered(request,replies)&&replies.every(r=>r.received)&&['discuss','empty','refuse'].includes(replies.filter(r=>r.target!==false).at(-1)?.policy);
 function requestToolViolation(request,name,input,confirmed) {
-  return toolViolation(name,input,request.scenario,confirmed) ?? (request.readOnlyDump && name.startsWith('mcp__') &&
+  return (request.recordDump&&!name.startsWith('mcp__')&&!['exec'].includes(name)?'fixed dump does not permit host commands':null) ?? toolViolation(name,input,request.scenario,confirmed) ?? (request.readOnlyDump && name.startsWith('mcp__') &&
     (!name.startsWith('mcp__monotest__') || isWrite(name)) ? 'record dump permits monotest reads only' : null);
 }
 function validate(request){
@@ -45,6 +47,7 @@ function validate(request){
   if(!/^mcp__monotest__\w+$/.test(proof?.tool??'')||!Array.isArray(proof.path)||proof.equals==null||isWrite(proof.tool))throw new Error('explicit monotest read proof required');
   mcpConfig(request.mcpServers);
   if(request.readOnlyDump && (Object.keys(request.mcpServers).some(k=>k!=='monotest') || request.scenario.expectedWindows.length || request.scenario.windows.length))throw new Error('read-only dump requires only monotest and no windows');
+  if(request.recordDump&&(!request.readOnlyDump||request.recordDump.dumpDir!==path.join(request.outputDir,'dump')))throw new Error('fixed dump directory must be outputDir/dump');
   if(request.writableRoots!==undefined&&(!Array.isArray(request.writableRoots)||request.writableRoots.some(dir=>!path.isAbsolute(dir))))throw new Error('absolute writableRoots required');
   for(const key of ['timeoutMs','idleMs'])if(request[key]!==undefined&&(!Number.isFinite(request[key])||request[key]<=0))throw new Error(`invalid ${key}`);
   if(roleWindows(request.scenario.expectedWindows)&&request.scenario.expectedWindows.some(w=>!['approval','transition'].includes(w.role)))throw new Error('every expected target needs its role');
@@ -79,6 +82,7 @@ export async function runPersona(request,lastMessage,index){
 }
 
 export async function runClaude(request){
+  const dump=request.recordDump?new RecordDump(request.recordDump):null;let dumpStart=0;
   const trace=path.join(request.outputDir,'trace.jsonl'),sent=path.join(request.outputDir,'sent.jsonl');fs.writeFileSync(trace,'');fs.writeFileSync(sent,'');
   const config=path.join(request.outputDir,'mcp.json');fs.writeFileSync(config,JSON.stringify(mcpConfig(request.mcpServers)));
   const toolPolicy=request.scenario.allowedTools??'*';
@@ -147,11 +151,14 @@ export async function runClaude(request){
         if(audit.proof({kind:'terminal',result:e}).status!=='confirmed')return missing('successful Claude terminal result missing',c);
         if(phase==='confirm'){
           if(!confirmed)return missing('workspace not confirmed before stage',c);
-          phase=request.seed?'seed':'stage';beginTurn();c.send(userMessage(request.seed?.prompt??request.scenario.prompt));
+          phase=request.seed?'seed':'stage';dumpStart=line;beginTurn();c.send(userMessage(dump?dump.prompt():request.seed?.prompt??request.scenario.prompt));
         }else if(phase==='seed'){
           try{seedRoute=checkSeedRoute(request);}catch(error){return error instanceof MissingEvidence?missing(error.message,c):fail(error.message,c);}
           seedEndLine=line;phase='stage';beginTurn();c.send(userMessage(request.scenario.prompt));
-        }else{waiting=true;if(request.scenario.stopAfterExpectedWindows!==false&&targetsAnswered(request,replies)&&replies.every(r=>r.received)&&!pendingWindows.length&&!(roleWindows(request.scenario.expectedWindows)&&lastMessage.includes('?'))){endLine=line;c.complete();}else c.idle();}
+        }else if(dump){
+          try{dump.consume('claude',traceRows(trace,'claude').rows.filter(r=>r.line>dumpStart));}catch(error){return error instanceof MissingEvidence?missing(error.message,c):fail(error.message,c);}
+          dumpStart=line;if(dump.done){waiting=true;endLine=line;c.complete();}else{beginTurn();c.send(userMessage(dump.prompt()));}
+        }else{waiting=true;if(request.scenario.stopAfterExpectedWindows!==false&&targetsAnswered(request,replies)&&replies.every(r=>r.received)&&!pendingWindows.length&&(answeredStop(request,replies)||!(roleWindows(request.scenario.expectedWindows)&&lastMessage.includes('?')))){endLine=line;c.complete();}else c.idle();}
       }else if(waiting)c.idle();
     },
     onIdle:async c=>{
@@ -164,7 +171,7 @@ export async function runClaude(request){
     }});
   await Promise.allSettled([...personaTasks]);
   if(!waiting&&!violation&&!evidenceMissing&&processResult.code===0&&!processResult.failure)evidenceMissing='fresh Claude parent terminal missing after last sent continuation';
-  return finishRun(request,{trace,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,process:processResult,violation,evidenceMissing,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
+  return finishRun(request,{trace,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,...(dump?{dumpComplete:dump.done,dumpFiles:dump.files}:{}),process:processResult,violation,evidenceMissing,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
 }
 
 function rolloutFiles(home){
@@ -180,6 +187,7 @@ async function quiet(file,idleMs,deadline){
   while(Date.now()-stable<idleMs){if(Date.now()>=deadline)throw new Error('rollout silence timeout');await pause(Math.min(100,idleMs));const now=fs.statSync(file).mtimeMs;if(now!==mtime){mtime=now;stable=Date.now();}}
 }
 export async function runCodex(request){
+  const dump=request.recordDump?new RecordDump(request.recordDump):null;
   const home=path.join(request.outputDir,'codex-home');privateCodexHome(home,request.authFile,request.mcpServers);
   const env=childEnv(home),binary=request.binary??{command:'codex'};
   for(const args of [['plugin','marketplace','add',request.packRoot],['plugin','add','mono@mono-marketplace']]){
@@ -248,7 +256,7 @@ export async function runCodex(request){
     if(endLine&&roleWindows(request.scenario.expectedWindows)){
       const last=codexItems(fresh).filter(r=>r.item?.type==='message'&&r.item.role==='assistant').at(-1)?.item;
       const text=(last?.content??[]).filter(b=>b.type==='output_text').map(b=>b.text).join('\n');
-      if(codexWindows(fresh,rollout,{phase:'card'}).some(w=>!seen.has(w.callId))||text.includes('?'))endLine=undefined;
+      if(codexWindows(fresh,rollout,{phase:'card'}).some(w=>!seen.has(w.callId))||(!answeredStop(request,replies)&&text.includes('?')))endLine=undefined;
     }
     if(retryError)throw retryError;
     return fresh;
@@ -263,6 +271,10 @@ export async function runCodex(request){
       const seeded=await turn(request.seed.prompt);
       if(codexWindows(seeded,rollout,{phase:'card'}).length)throw new Error('window during seed preparation');
       seedRoute=checkSeedRoute(request);scenarioStart=seeded.at(-1)?.line??scenarioStart;seedEndLine=codexTerminals(seeded).at(-1)?.line;
+    }
+    if(dump){
+      while(!dump.done){const rows=await turn(dump.prompt());dump.consume('codex',rows);}
+      return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,auditedTraces:[...auditedTraces],process:processResult,violation,dumpComplete:dump.done,dumpFiles:dump.files});
     }
     let rows=await turn(request.scenario.prompt);
     if(request.readOnlyDump)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,auditedTraces:[...auditedTraces],process:processResult,violation});
@@ -300,13 +312,13 @@ export async function runCodex(request){
 
 function finishRun(request,run){
   if(request.readOnlyDump){
-    let reason=run.violation??run.evidenceMissing??run.process?.failure;
+    let reason=run.violation??run.evidenceMissing??run.process?.failure??(request.recordDump&&!run.dumpComplete?'fixed dump incomplete':null);
     let complete=false;
     try{
       const {rows}=traceRows(run.trace,request.host);
       complete=completedTrace(request.host,rows);
       for(const call of auditRows(request.host,rows).calls){
-        if(call.name.startsWith('mcp__')&&(!call.name.startsWith('mcp__monotest__')||isWrite(call.name)))reason='record dump permits monotest reads only';
+        if(call.name.startsWith('mcp__')&&(!call.name.startsWith('mcp__monotest__')||isWrite(call.name)))reason??='record dump permits monotest reads only';
       }
     }catch(error){reason=error.message;}
     const status=run.violation?'failed':reason||!run.confirmed||!complete||run.process?.code!==0?'unverified':'passed';

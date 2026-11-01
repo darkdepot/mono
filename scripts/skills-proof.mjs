@@ -63,7 +63,7 @@ function claudeAnswer(sent) {
 
 export function nativeProof({host, kind, call, result, proof, reply, prompt, callId}) {
   try {
-    let value;
+    let value,raw;
     if (!['claude','codex'].includes(host)) absent();
     guarded(call); guarded(result);
     if (kind === 'persona') {
@@ -91,7 +91,7 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
       if(call.payload.type!=='item_completed'||item.type!=='McpToolCall'||item.status!=='completed'||typeof item.id!=='string'||item.id!==callId||typeof item.server!=='string'||typeof item.tool!=='string'||!item.arguments||typeof item.arguments!=='object'||Array.isArray(item.arguments)||result!==call)absent();
       value=unwrap(at(item,['result']));
       if(!value||typeof value!=='object')absent();
-      return {status:'confirmed',value};
+      return {status:'confirmed',value,raw:item.result};
     }
     if (host === 'codex') {
       const c = native(call), r = native(result);
@@ -120,10 +120,10 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
         for(let i=0;i<output.length;i++){
           const block=at(output,[i]);
           if(!['text','input_text'].includes(block?.type)||typeof block.text!=='string')absent();
-          try{parsed.push(unwrap(JSON.parse(at(block,['text']))));}catch(error){if(!(error instanceof SyntaxError))throw error;}
+          try{const raw=JSON.parse(at(block,['text']));parsed.push({raw,value:unwrap(raw)});}catch(error){if(!(error instanceof SyntaxError))throw error;}
         }
-        if(parsed.length!==1)absent();value=parsed[0];
-      }else value = unwrap(output);
+        if(parsed.length!==1)absent();({value,raw}=parsed[0]);
+      }else{value = unwrap(output);if(kind==='record')raw=typeof output==='string'?JSON.parse(output):output;}
       if (kind === 'command') {
         if (!['exec_command','exec'].includes(name)) absent();
         if (value?.exit_code !== 0 || value.failure || value.signal) absent();
@@ -164,11 +164,11 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
         if (c.name !== 'Bash' || typeof at(r,['content']) !== 'string') absent();
         return {status:'confirmed'};
       }
-      value = unwrap(at(r,['content']));
+      const content=at(r,['content']);value = unwrap(content);if(kind==='record')raw=typeof content==='string'?JSON.parse(content):content;
     } else absent();
     if (kind === 'record') {
       if (!value || typeof value !== 'object') absent();
-      return {status:'confirmed',value};
+      return {status:'confirmed',value,raw};
     }
     if (kind !== 'workspace' || !Array.isArray(proof?.path)) absent();
     const leaf = at(value,proof.path);

@@ -451,3 +451,8 @@ for(const host of ['claude','codex'])test(`${host}: seed boundary is the actual 
  assert.equal(nativeProof({host,kind:'terminal',result:terminal?.value}).status,'confirmed');
  assert(result.seedEndLine<result.check.windows[0].line);
 });
+for(const host of ['claude','codex'])for(const policy of ['discuss','empty','refuse'])test(`${host}: final ${policy} reply stops before an unsolicited persona continuation`,async t=>{
+ const request=setup(t,host,'free-after-window');request.scenario.windows=[{mode:policy,text:'Не буду отвечать.'}];
+ request.scenario.stopAfterExpectedWindows=true;request.scenario.freeQuestions=[{contains:'?'}];
+ const result=await runScenario(request);assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.replies.length,1);assert.equal(result.freeReplies.length,0);assert.equal(fs.readdirSync(request.outputDir).filter(p=>p.startsWith('persona-')).length,0);
+});

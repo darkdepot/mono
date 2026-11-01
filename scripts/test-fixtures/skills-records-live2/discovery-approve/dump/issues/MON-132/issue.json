@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"id\": \"MON-132\", \"uuid\": \"77b19c8a-7633-4b6f-ba61-99567a87ca14\", \"title\": \"Research: monotest-m290b-a-codex-design-approve\", \"description\": \"Посев входа. Исследование не требуется: правка колонки существующей таблицы тестовых прогонов.\\n\\nДокумент: [https://linear.app/monotest/document/issledovanie-monotest-m290b-a-codex-design-approve-dc438537867b](<https://linear.app/monotest/document/issledovanie-monotest-m290b-a-codex-design-approve-dc438537867b>)\", \"url\": \"https://linear.app/monotest/issue/MON-132/research-monotest-m290b-a-codex-design-approve\", \"createdAt\": \"2026-11-01T21:50:22.591Z\", \"updatedAt\": \"2026-11-01T21:50:25.180Z\", \"status\": \"Done\", \"labels\": [\"Этап\"], \"documents\": [], \"stateHistory\": [{\"state\": {\"id\": \"1d26668d-f53c-4b7a-870d-1d41d1ec6878\", \"name\": \"Todo\", \"type\": \"unstarted\"}}, {\"state\": {\"id\": \"7e22b566-eb83-48c5-818d-3b1465e7d355\", \"name\": \"Done\", \"type\": \"completed\"}}], \"project\": \"monotest-m290b-a-codex-design-approve\", \"projectId\": \"33ed5ab8-d5d7-4f25-a473-488fdb12a98f\"}"
+    }
+  ]
+}

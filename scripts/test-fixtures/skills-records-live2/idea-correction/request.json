@@ -1,0 +1,52 @@
+{
+  "host": "codex",
+  "trace": "trace.jsonl",
+  "dumpDir": "dump",
+  "dumpTrace": "dump-trace.jsonl",
+  "project": {
+    "id": "5a513d81-0cb7-4201-8b60-a737c6bcd156",
+    "name": "monotest-m290b-b-codex-idea-correction",
+    "url": "https://linear.app/monotest/project/monotest-m290b-b-codex-idea-correction-e867d2943a31"
+  },
+  "projectName": "monotest-m290b-b-codex-idea-correction",
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-idea",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    }
+  ],
+  "nextSkill": "mono:research",
+  "nextAgent": "mono-mono-research",
+  "packRoot": ".",
+  "configFile": "config.json",
+  "additionalTraces": [],
+  "endLine": 17,
+  "approvalBindings": [
+    {
+      "recordId": "5a513d81-0cb7-4201-8b60-a737c6bcd156",
+      "windowCallId": "call_8d360c5e1f814497bcf474917073b99f",
+      "shownLine": 8,
+      "currentLine": 12,
+      "text": "## Что\nДобавить в существующую внутреннюю таблицу тестовых прогонов колонку «Источник» сразу после имени прогона.\n\n## Зачем\nСейчас: источник в строке не виден, хотя хранится в данных. Его нужно читать сразу при просмотре таблицы.\n\n## Образ результата\nКолонка «Источник» показывает значение source. Если source равен null, ключ отсутствует или значение является пустой строкой, показывается один прочерк «—». Имя прогона остаётся отдельно. Не берём фильтр и сортировку: для этой правки они не нужны."
+    },
+    {
+      "recordId": "3e64d34b-3d89-47a2-b460-3ef77f00ecf4",
+      "windowCallId": "call_8d360c5e1f814497bcf474917073b99f",
+      "shownLine": 8,
+      "currentLine": 13,
+      "text": "## Что\nДобавить в существующую внутреннюю таблицу тестовых прогонов колонку «Источник» сразу после имени прогона.\n\n## Зачем\nСейчас: источник в строке не виден, хотя хранится в данных. Его нужно читать сразу при просмотре таблицы.\n\n## Образ результата\nКолонка «Источник» показывает значение source. Если source равен null, ключ отсутствует или значение является пустой строкой, показывается один прочерк «—». Имя прогона остаётся отдельно. Не берём фильтр и сортировку: для этой правки они не нужны.\n\n## Неизвестные\nКак сохранить читаемость таблицы при разной длине источника? От этого зависит отображение строк."
+    }
+  ],
+  "gates": [
+    {
+      "command": "verify",
+      "recordId": "3e64d34b-3d89-47a2-b460-3ef77f00ecf4"
+    }
+  ]
+}

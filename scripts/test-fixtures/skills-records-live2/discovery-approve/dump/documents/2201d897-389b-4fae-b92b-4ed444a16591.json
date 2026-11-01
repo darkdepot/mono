@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"id\": \"2201d897-389b-4fae-b92b-4ed444a16591\", \"title\": \"Исследование: monotest-m290b-a-codex-design-approve\", \"content\": \"Исследование не требуется: правка колонки существующей таблицы тестовых прогонов приложения записи, внешние факты не меняют решение.\\n\\n```mono-research\\n{\\\"project\\\":\\\"33ed5ab8-d5d7-4f25-a473-488fdb12a98f\\\",\\\"outcome\\\":\\\"not-required\\\",\\\"reason\\\":\\\"правка колонки таблицы тестовых прогонов\\\",\\\"interface\\\":true}\\n```\", \"url\": \"https://linear.app/monotest/document/issledovanie-monotest-m290b-a-codex-design-approve-dc438537867b\", \"createdAt\": \"2026-11-01T21:50:11.834Z\", \"updatedAt\": \"2026-11-01T21:50:11.834Z\", \"project\": {\"id\": \"33ed5ab8-d5d7-4f25-a473-488fdb12a98f\", \"name\": \"monotest-m290b-a-codex-design-approve\"}}"
+    }
+  ]
+}

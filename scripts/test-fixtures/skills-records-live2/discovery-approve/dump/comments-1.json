@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"comments\": [{\"id\": \"2fbc3b4c-15e6-45d2-b0fa-52fd3746398b\", \"body\": \"```text\\nmono-prd: approved project=33ed5ab8-d5d7-4f25-a473-488fdb12a98f document=aa382389-8b37-40bd-be53-ff9d64bb4640 updatedAt=2026-11-01T21:52:44.136Z design=needed next=design by=owner\\n```\\nДизайн нужен: добавляется видимая колонка существующей таблицы, Research interface=true; размер мелочь, проверка на готовом макете с посеянными эталонами.\\nВладелец: нажал «Утвердить, продолжу позже».\\nDesign не начат.\", \"createdAt\": \"2026-11-01T21:53:58.810Z\", \"updatedAt\": \"2026-11-01T21:53:58.795Z\"}, {\"id\": \"a7563999-f19a-466a-9514-c58720002075\", \"body\": \"```text\\nmono-idea: approved project=33ed5ab8-d5d7-4f25-a473-488fdb12a98f sha256=24c57aaa415d9e16e7afa02a34991f7b33a7ed692791031b76f554856003b6bc\\n```\\n\\n```mono-idea-snapshot\\n## Что\\nДобавить колонку «Источник» из поля source в существующую таблицу тестовых прогонов приложения записи: cli/runs.mjs читает cli/runs.json, проверки в cli/runs.test.mjs. Проект monotest-m290b-a-codex-design-approve.\\n\\n## Зачем\\nИсточник прогона сейчас не виден в строке таблицы.\\n\\n## Образ результата\\nПосле имени прогона виден источник; пустой source, null и отсутствующий ключ дают прочерк. Фильтр и сортировку не берём.\\n\\n## Неизвестные\\nНет.\\n\\n\\n```\\n\\n## Заметки для Research и Handoff\", \"createdAt\": \"2026-11-01T21:50:09.126Z\", \"updatedAt\": \"2026-11-01T21:50:09.102Z\"}], \"hasNextPage\": false}"
+    }
+  ]
+}

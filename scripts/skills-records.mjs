@@ -10,17 +10,20 @@ import { traceRows } from './skills-probe.mjs';
 import { completedTrace } from './skills-trace.mjs';
 import { auditRows } from './skills-audit.mjs';
 import { isWrite, MissingEvidence } from './skills-boundary.mjs';
-import { nativeProof, unwrap } from './skills-proof.mjs';
+import { unwrap } from './skills-proof.mjs';
 import { runScenario } from './skills-run.mjs';
+import { nativeRecords, resultFor } from './skills-record-data.mjs';
+import { windowRole } from './skills-owner.mjs';
 
 const read=file=>JSON.parse(fs.readFileSync(file,'utf8'));
-const rawRead=file=>{try{return unwrap(read(file));}catch{missing(`error MCP dump: ${file}`);}};
+const rawRead=file=>{try{return unwrap(read(file));}catch(error){missing(error.code==='ENOENT'?`incomplete dump: missing ${path.basename(file)}`:`error MCP dump: ${file}`);}};
 const text=value=>typeof value==='string'&&value.trim().length>0;
 const ownUrl=url=>typeof url==='string'&&url.startsWith('https://linear.app/monotest/');
 const idOf=row=>row?.uuid??row?.id;
 const bodyOf=row=>row?.body??row?.content??row?.description;
 const writeBody=write=>bodyOf(write.input)??bodyOf(write.value)??'';
 const missing=reason=>{throw new MissingEvidence(reason);};
+const bindingMissing=reason=>{const error=new MissingEvidence(reason);error.bindingOnly=true;throw error;};
 function date(value){
  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value))return NaN;
  const day=value.slice(0,10),stamp=Date.parse(day);
@@ -42,13 +45,14 @@ function markdown(value){
   }
   if(!literal&&heading&&line===''){heading=false;continue;}
   // Inline code is opaque too; unrecognized formatting stays unequal.
-  result.push(literal||line.includes('`')?line:line.replace(/\[(https?:\/\/[^\]\s]+)\]\(<\1>\)/g,'$1'));
+  const list=literal?line:line.replace(/^([ ]{0,3})- /,'$1* ');
+  result.push(literal||line.includes('`')?list:list.replace(/\[([^\]\n]+)\]\(<(https?:\/\/[^>\s]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1'));
   heading=!literal&&/^#{1,6} /.test(line);
  }
  if(!fence&&result.at(-1)==='')result.pop();
  return result.join('\n');
 }
-const elided=value=>typeof value==='string'&&/… \(truncated, use `get_(?:document|issue)` for full description\)$/.test(value);
+const elided=value=>typeof value==='string'&&/… \(truncated, use `get_(?:document|issue|project)` for full description\)$/.test(value);
 function compareField(field,wanted,actual,id){
  let same;
  if(field==='status'||field==='labels'){
@@ -98,13 +102,13 @@ export function readRecordDump(root,project,projectName){
   return {project:null,comments:[],documents:[],issues:[],all:[],files};
  }
  const raw=rawRead(path.join(root,'project.json')),files=[{file:'project.json',value:raw,kind:'get_project',id:project.id??project.uuid}];
- if(!text(raw?.uuid)||raw.uuid!==(project.id??project.uuid)||raw.name!==project.name||!ownUrl(raw.url)||typeof raw.description!=='string')missing('project read-back identity incomplete');
+ if(!text(raw?.uuid)||raw.uuid!==(project.id??project.uuid)||raw.name!==project.name||!ownUrl(raw.url)||(typeof raw.description!=='string'||elided(raw.description)))missing('project read-back identity incomplete');
  const comments=pages(root,'comments','comments',files),documents=[],issues=[];
  const refs=pages(root,'documents','documents',files);
  for(const ref of refs){
   const id=idOf(ref);if(!/^[A-Za-z0-9-]+$/.test(id))missing('invalid document id');
   const file=`documents/${id}.json`,doc=rawRead(path.join(root,file));
-  if(idOf(doc)!==id||typeof doc.content!=='string'||!text(doc.title))missing('document body incomplete');
+  if(idOf(doc)!==id||typeof doc.content!=='string'||elided(doc.content)||!text(doc.title))missing('document body incomplete');
   if((doc.projectId??doc.project?.id)!==raw.uuid)missing('document project incomplete');
   documents.push(doc);files.push({file,value:doc,kind:'get_document',id});
  }
@@ -114,7 +118,7 @@ export function readRecordDump(root,project,projectName){
   const directory=fs.existsSync(path.join(root,`issues/${id}`))?id:alias;
   if(!/^[A-Za-z0-9-]+$/.test(directory))missing('invalid issue directory');
   const file=`issues/${directory}/issue.json`,issue=rawRead(path.join(root,file));
-  if(idOf(issue)!==id||!text(issue.title)||typeof issue.description!=='string'||!issue.status||
+  if(idOf(issue)!==id||!text(issue.title)||typeof issue.description!=='string'||elided(issue.description)||!issue.status||
     !text(typeof issue.status==='string'?issue.status:issue.status.name)||!Array.isArray(issue.labels)||issue.labels.some(label=>!text(typeof label==='string'?label:label?.name)))missing('issue status/labels/body incomplete');
   if((issue.projectId??issue.project?.id)!==raw.uuid)missing('issue project incomplete');
   issues.push(issue);files.push({file,value:issue,kind:'get_issue',id,alias});
@@ -126,43 +130,6 @@ export function readRecordDump(root,project,projectName){
  return {project:raw,comments,documents,issues,all,files};
 }
 
-// Only native direct input or the driver's literal JSON exec route binds payloads.
-// Arbitrary JavaScript is deliberately not parsed; an unknown route is unverified.
-function callInput(host,call){
- if(host!=='codex'||call.event.payload?.name!=='exec')return call.input;
- const p=call.event.payload,source=p.type==='custom_tool_call'?p.input:p.arguments;
- const prefix=`const r = await tools.${call.name}(`,suffix='); text(r);';
- if(typeof source!=='string'||!source.trim().startsWith(prefix)||!source.trim().endsWith(suffix))missing(`unbound exec payload at line ${call.line}`);
- try{return JSON.parse(source.trim().slice(prefix.length,-suffix.length));}catch{missing(`non-JSON exec payload at line ${call.line}`);}
-}
-function resultFor(host,call,rows,bindInput=true){
- if(host==='codex'&&call.event.type==='event_msg'){
-  const proof=nativeProof({host,kind:'record',call:call.event,result:call.event,callId:call.callId});
-  if(proof.status!=='confirmed')missing(`successful native MCP result missing at line ${call.line}`);
-  return {...call,value:proof.value,resultLine:call.line};
- }
- const outputs=rows.filter(r=>r.line>call.line&&(host==='claude'
-  ? r.value.type==='user'&&Array.isArray(r.value.message?.content)&&r.value.message.content.some(b=>b.type==='tool_result'&&b.tool_use_id===call.callId)
-  : r.value.type==='response_item'&&['function_call_output','custom_tool_call_output'].includes(r.value.payload?.type)&&r.value.payload.call_id===call.callId));
- if(outputs.length!==1)missing(`unique linked result missing at line ${call.line}`);
- const result=outputs[0],proof=nativeProof({host,kind:'record',call:call.event,result:result.value,callId:call.callId});
- if(proof.status!=='confirmed')missing(`successful record result missing at line ${result.line}`);
- return {...call,input:bindInput?callInput(host,call):call.input,value:proof.value,resultLine:result.line};
-}
-function nativeRecords(host,trace,endLine){
- const {rows}=traceRows(trace,host,{endLine}),audit=auditRows(host,rows);
- const calls=audit.calls.filter(c=>c.name.startsWith('mcp__'));
- // An exec name mention is not another action when native metadata supplies
- // its arguments/result inside that exact outer call/output interval.
- const actual=calls.filter(call=>call.event.type==='event_msg');
- if(actual.some((c,i)=>!text(c.callId)||actual.slice(0,i).some(prior=>prior.callId===c.callId)))missing('duplicate/missing native MCP item id');
- const bound=calls.filter(call=>{
-  if(call.event.payload?.name!=='exec')return true;
-  const output=rows.find(r=>r.line>call.line&&r.value.type==='response_item'&&['custom_tool_call_output','function_call_output'].includes(r.value.payload?.type)&&r.value.payload.call_id===call.callId);
-  return !output||!actual.some(c=>c.name===call.name&&c.line>call.line&&c.line<output.line);
- });
- return {rows,audit:{...audit,calls:audit.calls.filter(c=>!calls.includes(c)||bound.includes(c))},calls:bound};
-}
 function productionWrites(traces){
  const manualRemoval=new Set(),evidence=[];
  for(const {host,trace,endLine} of traces){
@@ -189,8 +156,8 @@ function approvalCheck(request,write,data,dump){
  const createProject=write.name.endsWith('__create_project')||(write.name.endsWith('__save_project')&&!write.input.id);
  if(!createProject&&!/mono-[\w-]+:\s*(?:approved|start)\b/.test(writeBody(write)))return;
  const binding=request.approvalBindings?.find(b=>b.recordId===idOf(write.value));
- if(!binding)missing(`shown-version binding missing for ${idOf(write.value)}`);
- const window=data.audit.calls.find(c=>c.callId===binding.windowCallId&&['AskUserQuestion','request_user_input_async'].includes(c.name));
+ const candidates=data.audit.calls.filter(c=>['AskUserQuestion','request_user_input_async'].includes(c.name)&&c.line<write.line);
+ const window=binding?candidates.find(c=>c.callId===binding.windowCallId):candidates.filter(c=>windowRole(c.input?.questions)==='approval').at(-1);
  if(!window)missing('approval window missing');
  const responses=request.sent?traceRows(request.sent,'claude').rows.map(r=>r.value):[];
  const accepted=data.audit.windowProof(window.event,window.line,window.callId,{responses});
@@ -210,6 +177,7 @@ function approvalCheck(request,write,data,dump){
  }
  if(!answers.length||answers.some(answer=>!/^Утвердить(?:[ ,]|$)/.test(answer)))throw new Error('approval write after empty/refuse/discuss/non-approval reply');
  if(write.line<=reply.line)throw new Error('approval write before window answer');
+ if(!binding)bindingMissing(`shown-version binding missing for ${idOf(write.value)}`);
  const shown=data.rows.find(r=>r.line===binding.shownLine),current=data.rows.find(r=>r.line===binding.currentLine);
  const shownText=request.host==='claude'?shown?.value.message?.content?.filter(b=>b.type==='text').map(b=>b.text).join('\n')
   :shown?.value.payload?.role==='assistant'?shown.value.payload.content?.filter(b=>b.type==='output_text').map(b=>b.text).join('\n'):null;
@@ -365,16 +333,18 @@ export function verifyRecords(request){
     if(!activeWrites.some(w=>idOf(w.value)===idOf(found[0])))missing(`expected ${rule.type} write absent from trace`);
    }
   }
-  for(const write of activeWrites)approvalCheck(request,write,write.data,dump);
+  const bindingGaps=[];
+  for(const write of activeWrites)try{approvalCheck(request,write,write.data,dump);}catch(error){if(!error.bindingOnly)throw error;bindingGaps.push(error.message);}
+  const gates=[...(request.gates??[])];
   for(const write of activeWrites){
    const body=writeBody(write);
    const command=body.includes('mono-idea: approved')?'verify':body.includes('mono-tech: approved')?'tech':body.includes('mono-design: approved')?'design':/mono-prd: approved|mono-package: start/.test(body)?'route':null;
-   if(command&&!request.gates?.some(g=>g.command===command&&(command!=='verify'||g.recordId===idOf(write.value))))missing(`idea-gate ${command} proof required`);
+   if(command&&!gates.some(g=>g.command===command&&(command!=='verify'||g.recordId===idOf(write.value))))gates.push({command,...(command==='verify'?{recordId:idOf(write.value)}:{})});
   }
   const gateRoot=fs.mkdtempSync(path.join(os.tmpdir(),'mono-record-gates-'));
   try{
   for(const file of dump.files){const target=path.join(gateRoot,file.file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,JSON.stringify(file.value));if(file.request)fs.writeFileSync(target.replace(/\.json$/,'.request.json'),JSON.stringify(file.request));}
-  for(const gate of request.gates??[]){
+  for(const gate of gates){
    if(!['route','design','tech','verify'].includes(gate.command))missing('unknown idea-gate command');
    if(gate.command==='design'){
     const approval=activeWrites.find(w=>writeBody(w).includes('mono-design: approved'));
@@ -400,22 +370,17 @@ export function verifyRecords(request){
    gateResults.push({command:gate.command,exitCode:run.status,result});if(run.status!==0||!result.ok)throw new Error(`idea-gate ${gate.command}: ${result.code}`);
   }
   }finally{fs.rmSync(gateRoot,{recursive:true,force:true});}
-  return {status:'passed',stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
- }catch(error){return {status:error instanceof MissingEvidence||error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code)?'unverified':'failed',stop:false,manualRemoval:[],reason:error.message,gateResults,evidence:[request.trace,request.dumpDir]};}
+  return {status:bindingGaps.length?'unverified':'passed',...(bindingGaps.length?{bindingOnly:true,reason:bindingGaps.join('; ')}:{}),stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
+ }catch(error){return {status:error instanceof MissingEvidence||error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code)?'unverified':'failed',stop:false,manualRemoval:[],reason:error.message,...(error.bindingOnly?{bindingOnly:true}:{}),gateResults,evidence:[request.trace,request.dumpDir]};}
 }
 
 export function dumpPrompt({project,projectName,dumpDir}){
- if(!project)return `Только monotest, без этапов и внешних записей. Проверь отсутствие проекта с точным именем ${JSON.stringify(projectName)}: все страницы list_projects с query этим именем, включая архив. Сохрани сырые ответы в ${dumpDir}/projects-N.json и projects-N.request.json ({} первой, затем {cursor} предыдущего ответа) до hasNextPage:false без cursor. Не придумывай поля. Локальные файлы разрешены. Codex: один MCP на exec, точная форма const r = await tools.<имя>(<JSON>); text(r);. Заверши после полного списка.`;
- return `Только свежее чтение monotest, без вызова этапов и без любых внешних записей. Пространство Mono Test подтвердит драйвер. Проект ${JSON.stringify(project)}. Список фиксирован скриптом, не выбирай что читать:\n`+
- `1. get_project (includeResources: true), сырой ответ project.json.\n2. Все list_comments проекта: comments-N.json и comments-N.request.json ({} первой, затем {cursor} предыдущего ответа).\n`+
- `3. Все страницы list_documents проекта: documents-N.json и documents-N.request.json; каждый get_document в documents/<id>.json.\n`+
- `4. Все страницы list_issues проекта, включая архив: issues-N.json и issues-N.request.json; каждый get_issue со status и labels в issues/<id>/issue.json; все list_comments задачи в issues/<id>/comments-N.json и comments-N.request.json.\n`+
- `Во всех списках дойди до hasNextPage:false без cursor. Не переписывай ответы, не сочиняй отсутствующие поля и полноту; неизвестная форма останется unverified. Сохраняй именно сырой JSON ответа в ${dumpDir}; только локальные файлы. Для Codex каждый MCP через точную форму const r = await tools.<имя>(<JSON>); text(r); — один вызов на exec, аргументы буквальным JSON. Заверши после всего перечня.`;
+ return `Фиксированный дамп monotest в ${dumpDir}. Скрипт задаёт каждый вызов и сам сохраняет сырой результат: ${project?'project; comments-N.json; documents/<id>.json; issues/<id>/issue.json со status и labels; все comments задач':'полный list_projects с точным именем '+JSON.stringify(projectName)}. Для страниц comments-N.request.json: {} первой, затем cursor. Не выбирай чтения и не записывай файлы: драйвер пришлёт точный запрос каждого хода.`;
 }
 export async function collectRecordDump(request,execute=runScenario){
  if(!request.mcpServers?.monotest||Object.keys(request.mcpServers).some(k=>k!=='monotest'))throw new Error('record dump uses only monotest');
  const dumpDir=path.join(request.outputDir,'dump');
- const result=await execute({...request,seed:undefined,writableRoots:[request.outputDir],readOnlyDump:true,workspaceProof:{tool:'mcp__monotest__get_workspace',input:{},path:['name'],equals:'Mono Test'},
+ const result=await execute({...request,seed:undefined,writableRoots:[request.outputDir],readOnlyDump:true,recordDump:{dumpDir,project:request.project,projectName:request.projectName},workspaceProof:{tool:'mcp__monotest__get_workspace',input:{},path:['name'],equals:'Mono Test'},
   scenario:{prompt:dumpPrompt({project:request.project,projectName:request.projectName,dumpDir}),brief:'Fixed read-only monotest dump',windows:[],expectedWindows:[]}});
  return {...result,dumpDir};
 }

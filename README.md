@@ -1735,7 +1735,10 @@ Runtime tests use scratch plugin folders; the real sandbox-boundary test runs ou
 
 Skill record checks: `node --test scripts/skills-records.test.mjs scripts/qa-certificate.test.mjs scripts/qa-gate.test.mjs`.
 A separate monotest-only read process dumps the fixed project/documents/issues/comments
-checklist after each stage. Native write results are reconciled with complete fresh
+checklist after each stage. The script schedules every read and saves native raw
+responses; the model never writes dump files. A binding-only gap keeps the item
+unverified while its chain continues through Design and Handoff; other gaps or
+failures stop that chain. Native write results are reconciled with complete fresh
 cursor chains; working Linear writes stop the suite with manual-removal links.
 The suite reports scenario/host, duration and unique monotest task count. Missing
 native evidence stays unverified. The unchanged landing gate requires passed;

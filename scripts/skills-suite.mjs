@@ -88,7 +88,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
     let project=null;
     for (const [position,key] of unit.scenarios.entries()) {
       const outputDir=path.join(request.outputDir,`${unit.id}-${host}-${position}`);
-      let result,paperLog,runRequest,scenario,observedProject;const stageStart=Date.now();
+      let result,paperLog,runRequest,scenario,observedProject,bindingPending=false;const stageStart=Date.now();
       try {
         manifestDir ??= fs.mkdtempSync(path.join(request.cwd,`.mono-skills-${request.runId}-`));
         scenario=catalog.scenarios.get(key);
@@ -154,14 +154,16 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
       }
       if(result && runRequest && scenario){
         try{
-          const records=await verify({run:result,runRequest,scenario,project:observedProject??project,outputDir:outputDir+'-records',bindingsFile:request.recordBindings?.[`${unit.id}:${key}:${host}`]});
+          const stagePassed=result.status==='passed';
+          const records=await verify({run:result,runRequest,scenario,project:observedProject??project??result.seedRoute?.project,outputDir:outputDir+'-records',bindingsFile:request.recordBindings?.[`${unit.id}:${key}:${host}`]});
+          bindingPending=stagePassed&&records.status==='unverified'&&records.bindingOnly===true&&Boolean(project);
           if(!records.stop)checkPack(request.packRoot,selection.head);
           result={...result,records,status:result.status==='failed'||records.status==='failed'?'failed':result.status!=='passed'||records.status!=='passed'?'unverified':'passed'};
         }catch(error){result={...result,status:result.status==='failed'?'failed':'unverified',records:{status:'unverified',reason:error.message}};}
       }
       const item={durationMs:Date.now()-stageStart,monotestTasks:result.records?.monotestTasks??null,unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
       if(result.records?.stop)break runs;
-      if (result.status !== 'passed') break; // later chain members remain explicitly unverified
+      if (result.status !== 'passed'&&!bindingPending) break; // later chain members remain explicitly unverified
     }
   }
   const items=selection.expectedItems.map(expected=>{
