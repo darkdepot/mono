@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "steps": [
+    "Сначала get_workspace: имя Mono Test. Несовпадение или недоступное чтение: жёсткий стоп без первой записи.",
+    "save_project: одно новое имя из задания, команда Mono Test по свежему чтению list_teams. Не переносить id команды из образца. Никаких записей в другое пространство.",
+    "Описание проекта по ideaDraft; node <packRoot>/scripts/idea-gate.mjs record --draft <shown-draft> --config <config> --out <scratch> --project <fresh-project-id>. Публиковать созданный comment.md через save_comment. Прочитать get_project и все страницы list_comments, сохранить сырые ответы и запросы cursor; выполнить verify и check.",
+    "save_document исследования; get_document и list_documents проекта обратно. Создать/закрыть задачу Research с меткой Этап и журналом, используя текущие статусы monotest; записать результат проверки research.",
+    "save_document PRD; get_document обратно, взять только свежие id и updatedAt; записать комментарий mono-prd из prdApprovalTemplate. После save_comment прочитать все страницы комментариев и PRD заново; проверить route и check discovery свежими сырыми ответами.",
+    "Задача Discovery с меткой Этап: Done и журнал решений со ссылками на созданные Research/PRD. Задачи других проектов не переиспользовать. Обратное чтение Done и комментария."
+  ],
+  "ideaDraft": "## Что\nКолонка «Источник» в таблице прогонов Mono CLI.\n\n## Зачем\nВладелец открывает каждую карточку ради источника.\n\n## Образ результата\nИсточник виден сразу; без значения прочерк.\n\n## Неизвестные\nНет.\n",
+  "documents": [
+    {
+      "type": "research",
+      "title": "Исследование: <projectName>",
+      "content": "Исследование не требуется: правка одной колонки табличного вывода CLI Mono, внешние факты не меняют решение.\n\n```mono-research\n{\"project\":\"<fresh-project-id>\",\"outcome\":\"not-required\",\"reason\":\"правка одной колонки табличного вывода CLI\",\"interface\":false}\n```"
+    },
+    {
+      "type": "prd",
+      "title": "PRD: <projectName>",
+      "content": "## Кратко\nРазмер: мелочь\nКолонка «Источник» в таблице прогонов Mono CLI.\n\n## Акторы\nA1. Владелец Mono проверяет результаты прогонов.\n\n## Проблема\nИсточник приходится открывать в карточке.\n\n## Целевой процесс\nИсточник читается в таблице сразу.\n\n## Требования\nR1. Источник виден между сценарием и хостом.\nR2. Нет источника: прочерк.\n\n## Примеры приемки\nAE1. Покрывает R1, R2. У трёх прогонов источник виден, у четвёртого прочерк.\n\n## Что не входит в MVP\nФильтр и сортировка.\n\n## Связи\nИсследование и задача Discovery этого проекта.\n"
+    }
+  ],
+  "prdApprovalTemplate": "```text\nmono-prd: approved project=<fresh-project-id> document=<read-back-prd-id> updatedAt=<read-back-updatedAt> design=not-needed next=handoff by=owner\n```\nСинтетический посев входа тестового сценария, не утверждение живого владельца."
+}

@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "id": "correction",
+  "stage": "tech-evaluation",
+  "kind": "correction",
+  "seed": "seeds/prd-tech.json",
+  "next": "handoff",
+  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста.",
+  "brief": "Я владелец Mono. Новая отдельная идея текущего прогона: в табличном выводе CLI прогонов показать колонку «Источник». Сейчас её читают в отдельной команде, станет видно в сводке сразу. Для отсутствующего значения прочерк. Графического интерфейса нет; фильтр и сортировка не нужны. Нужна техническая сверка формата ввода и вывода с существующими командами Mono.",
+  "hosts": {
+    "claude": {
+      "windows": [
+        {
+          "mode": "correction",
+          "text": "В проверенном явно назови случай отсутствия источника и прочерк. Не меняй требования PRD и решение. Покажи новую полную страницу на утверждение."
+        },
+        {
+          "mode": "label",
+          "label": "Утвердить, продолжу позже"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "tech-evaluation-approval",
+          "decision": "Handoff",
+          "advice": "Handoff",
+          "reason": "Handoff",
+          "summary": [
+            "Дальше"
+          ]
+        },
+        {
+          "id": "tech-evaluation-reapproval",
+          "decision": "Handoff",
+          "advice": "Handoff",
+          "reason": "Handoff",
+          "summary": [
+            "Дальше"
+          ]
+        }
+      ],
+      "freeQuestions": []
+    },
+    "codex": {
+      "windows": [
+        {
+          "mode": "correction",
+          "text": "В проверенном явно назови случай отсутствия источника и прочерк. Не меняй требования PRD и решение. Покажи новую полную страницу на утверждение."
+        },
+        {
+          "mode": "label",
+          "label": "Утвердить, продолжу позже"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "tech-evaluation-approval",
+          "decision": "Handoff",
+          "advice": "Handoff",
+          "reason": "Handoff",
+          "summary": [
+            "Дальше"
+          ]
+        },
+        {
+          "id": "tech-evaluation-reapproval",
+          "decision": "Handoff",
+          "advice": "Handoff",
+          "reason": "Handoff",
+          "summary": [
+            "Дальше"
+          ]
+        }
+      ],
+      "freeQuestions": [
+        {
+          "contains": "?"
+        }
+      ]
+    }
+  },
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-tech",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    }
+  ]
+}

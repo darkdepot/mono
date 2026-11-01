@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "approve",
+  "stage": "handoff",
+  "kind": "main",
+  "seed": "seeds/prd-handoff.json",
+  "next": null,
+  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста. Передача оркестратору разрешена только после настоящего окна; код не писать.",
+  "brief": "Я владелец Mono. Новая отдельная идея текущего прогона: в табличном выводе CLI прогонов показать колонку «Источник». Сейчас её читают в отдельной команде, станет видно в сводке сразу. Для отсутствующего значения прочерк. Графического интерфейса нет; фильтр и сортировка не нужны. Нужна техническая сверка формата ввода и вывода с существующими командами Mono.",
+  "hosts": {
+    "claude": {
+      "windows": [
+        {
+          "mode": "label",
+          "label": "Передать оркестратору"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "handoff-approval",
+          "decision": "работ",
+          "advice": "работ",
+          "reason": "работ",
+          "summary": [
+            "Дальше"
+          ]
+        }
+      ],
+      "freeQuestions": []
+    },
+    "codex": {
+      "windows": [
+        {
+          "mode": "label",
+          "label": "Передать оркестратору"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "handoff-approval",
+          "decision": "работ",
+          "advice": "работ",
+          "reason": "работ",
+          "summary": [
+            "Дальше"
+          ]
+        }
+      ],
+      "freeQuestions": [
+        {
+          "contains": "?"
+        }
+      ]
+    }
+  },
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-package: start",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    }
+  ]
+}

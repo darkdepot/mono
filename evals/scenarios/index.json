@@ -1,0 +1,219 @@
+{
+  "schemaVersion": 1,
+  "sharedFiles": [
+    "references/owner-dialog.md",
+    "scripts/russian-stages.mjs",
+    "scripts/idea-gate.mjs",
+    "templates/project.md",
+    "templates/prd.md",
+    "templates/tech-spec.md",
+    "templates/issue.md",
+    "templates/stage-task.md",
+    "templates/stage-agent.md",
+    "templates/stage-helper-hook.mjs"
+  ],
+  "stages": [
+    {
+      "id": "idea",
+      "minimum": 3,
+      "files": [
+        "skills/idea/",
+        "references/owner-dialog.md",
+        "scripts/russian-stages.mjs",
+        "scripts/idea-gate.mjs",
+        "templates/project.md",
+        "templates/prd.md",
+        "templates/tech-spec.md",
+        "templates/issue.md",
+        "templates/stage-task.md",
+        "templates/stage-agent.md",
+        "templates/stage-helper-hook.mjs"
+      ],
+      "neighbors": [
+        "research"
+      ],
+      "main": "approve",
+      "chain": [
+        "idea",
+        "research"
+      ],
+      "scenarios": [
+        "idea/approve/scenario.json",
+        "idea/correction/scenario.json",
+        "idea/empty/scenario.json"
+      ]
+    },
+    {
+      "id": "research",
+      "minimum": 2,
+      "files": [
+        "skills/research/",
+        "references/owner-dialog.md",
+        "scripts/russian-stages.mjs",
+        "scripts/idea-gate.mjs",
+        "templates/project.md",
+        "templates/prd.md",
+        "templates/tech-spec.md",
+        "templates/issue.md",
+        "templates/stage-task.md",
+        "templates/stage-agent.md",
+        "templates/stage-helper-hook.mjs"
+      ],
+      "neighbors": [
+        "idea",
+        "discovery"
+      ],
+      "main": "approve",
+      "chain": [
+        "idea",
+        "research",
+        "discovery"
+      ],
+      "scenarios": [
+        "research/approve/scenario.json",
+        "research/discuss/scenario.json"
+      ]
+    },
+    {
+      "id": "discovery",
+      "minimum": 3,
+      "files": [
+        "skills/discovery/",
+        "references/owner-dialog.md",
+        "scripts/russian-stages.mjs",
+        "scripts/idea-gate.mjs",
+        "templates/project.md",
+        "templates/prd.md",
+        "templates/tech-spec.md",
+        "templates/issue.md",
+        "templates/stage-task.md",
+        "templates/stage-agent.md",
+        "templates/stage-helper-hook.mjs"
+      ],
+      "neighbors": [
+        "research",
+        "design",
+        "tech-evaluation",
+        "handoff"
+      ],
+      "main": "approve",
+      "chain": [
+        "research",
+        "discovery",
+        "design"
+      ],
+      "scenarios": [
+        "discovery/approve/scenario.json",
+        "discovery/correction/scenario.json",
+        "discovery/empty/scenario.json"
+      ]
+    },
+    {
+      "id": "design",
+      "minimum": 3,
+      "files": [
+        "skills/design/",
+        "references/owner-dialog.md",
+        "scripts/russian-stages.mjs",
+        "scripts/idea-gate.mjs",
+        "templates/project.md",
+        "templates/prd.md",
+        "templates/tech-spec.md",
+        "templates/issue.md",
+        "templates/stage-task.md",
+        "templates/stage-agent.md",
+        "templates/stage-helper-hook.mjs"
+      ],
+      "neighbors": [
+        "discovery",
+        "tech-evaluation",
+        "handoff"
+      ],
+      "main": "approve",
+      "chain": [
+        "discovery",
+        "design",
+        "handoff"
+      ],
+      "scenarios": [
+        "design/approve/scenario.json",
+        "design/correction/scenario.json",
+        "design/empty/scenario.json"
+      ]
+    },
+    {
+      "id": "tech-evaluation",
+      "minimum": 3,
+      "files": [
+        "skills/tech-evaluation/",
+        "references/owner-dialog.md",
+        "scripts/russian-stages.mjs",
+        "scripts/idea-gate.mjs",
+        "templates/project.md",
+        "templates/prd.md",
+        "templates/tech-spec.md",
+        "templates/issue.md",
+        "templates/stage-task.md",
+        "templates/stage-agent.md",
+        "templates/stage-helper-hook.mjs"
+      ],
+      "neighbors": [
+        "discovery",
+        "design",
+        "handoff"
+      ],
+      "main": "approve",
+      "chain": [
+        "discovery",
+        "tech-evaluation",
+        "handoff"
+      ],
+      "scenarios": [
+        "tech-evaluation/approve/scenario.json",
+        "tech-evaluation/correction/scenario.json",
+        "tech-evaluation/empty/scenario.json"
+      ],
+      "chainSeed": "seeds/research-cli.json"
+    },
+    {
+      "id": "handoff",
+      "minimum": 3,
+      "files": [
+        "skills/handoff/",
+        "references/owner-dialog.md",
+        "scripts/russian-stages.mjs",
+        "scripts/idea-gate.mjs",
+        "templates/project.md",
+        "templates/prd.md",
+        "templates/tech-spec.md",
+        "templates/issue.md",
+        "templates/stage-task.md",
+        "templates/stage-agent.md",
+        "templates/stage-helper-hook.mjs"
+      ],
+      "neighbors": [
+        "discovery",
+        "design",
+        "tech-evaluation"
+      ],
+      "main": "approve",
+      "chain": [
+        "tech-evaluation",
+        "handoff"
+      ],
+      "scenarios": [
+        "handoff/approve/scenario.json",
+        "handoff/correction/scenario.json",
+        "handoff/empty/scenario.json"
+      ]
+    }
+  ],
+  "productName": "Mono",
+  "skillPrefix": "mono",
+  "paperGuard": "paper-guard.mjs",
+  "routeHints": {
+    "design": "PRD: design=needed, размер «мелочь»: правка на месте готового экрана с посеянными эталонами.",
+    "tech-evaluation": "PRD: design=not-needed, размер «обычное»: меняется вывод CLI, графический интерфейс не затронут.",
+    "handoff": "Сверь свежий next=handoff предшественника; обязательные записи не пропускай."
+  }
+}

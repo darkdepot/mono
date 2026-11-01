@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "id": "approve",
+  "stage": "idea",
+  "kind": "main",
+  "seed": null,
+  "next": "research",
+  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста.",
+  "brief": "Я владелец Mono. Новая отдельная идея: в таблице тестовых прогонов Mono показать колонку «Источник» между именем сценария и хостом. Сейчас источник читают в карточке прогона, после правки он виден сразу. Для прогона без источника нужен прочерк. Фильтра и сортировки не нужно. Это правка на месте готового экрана, эталоны уже в памяти тестового продукта. Не связывай с похожими проектами: это самостоятельная идея текущего прогона.",
+  "hosts": {
+    "claude": {
+      "windows": [
+        {
+          "mode": "label",
+          "label": "Утвердить, продолжу позже"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "idea-approval",
+          "decision": "описание",
+          "advice": "Research",
+          "reason": "провер",
+          "summary": [
+            "Что",
+            "Зачем",
+            "Дальше"
+          ]
+        }
+      ],
+      "freeQuestions": []
+    },
+    "codex": {
+      "windows": [
+        {
+          "mode": "label",
+          "label": "Утвердить, продолжу позже"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "idea-approval",
+          "decision": "описание",
+          "advice": "Research",
+          "reason": "провер",
+          "summary": [
+            "Что",
+            "Зачем",
+            "Дальше"
+          ]
+        }
+      ],
+      "freeQuestions": [
+        {
+          "contains": "?"
+        }
+      ]
+    }
+  },
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-idea",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    }
+  ]
+}

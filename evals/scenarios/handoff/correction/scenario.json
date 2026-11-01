@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "id": "correction",
+  "stage": "handoff",
+  "kind": "correction",
+  "seed": "seeds/prd-handoff.json",
+  "next": null,
+  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста. Передача оркестратору разрешена только после настоящего окна; код не писать.",
+  "brief": "Я владелец Mono. Новая отдельная идея текущего прогона: в табличном выводе CLI прогонов показать колонку «Источник». Сейчас её читают в отдельной команде, станет видно в сводке сразу. Для отсутствующего значения прочерк. Графического интерфейса нет; фильтр и сортировка не нужны. Нужна техническая сверка формата ввода и вывода с существующими командами Mono.",
+  "hosts": {
+    "claude": {
+      "windows": [
+        {
+          "mode": "correction",
+          "text": "В задаче укажи проверку табличного вывода CLI с отсутствующим источником; требования PRD и решение не меняй. Покажи исправленный пакет перед стартом."
+        },
+        {
+          "mode": "label",
+          "label": "Передать оркестратору"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "handoff-approval",
+          "decision": "работ",
+          "advice": "работ",
+          "reason": "работ",
+          "summary": [
+            "Дальше"
+          ]
+        },
+        {
+          "id": "handoff-reapproval",
+          "decision": "работ",
+          "advice": "работ",
+          "reason": "работ",
+          "summary": [
+            "Дальше"
+          ]
+        }
+      ],
+      "freeQuestions": []
+    },
+    "codex": {
+      "windows": [
+        {
+          "mode": "correction",
+          "text": "В задаче укажи проверку табличного вывода CLI с отсутствующим источником; требования PRD и решение не меняй. Покажи исправленный пакет перед стартом."
+        },
+        {
+          "mode": "label",
+          "label": "Передать оркестратору"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "handoff-approval",
+          "decision": "работ",
+          "advice": "работ",
+          "reason": "работ",
+          "summary": [
+            "Дальше"
+          ]
+        },
+        {
+          "id": "handoff-reapproval",
+          "decision": "работ",
+          "advice": "работ",
+          "reason": "работ",
+          "summary": [
+            "Дальше"
+          ]
+        }
+      ],
+      "freeQuestions": [
+        {
+          "contains": "?"
+        }
+      ]
+    }
+  },
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-package: start",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    }
+  ]
+}

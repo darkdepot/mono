@@ -1635,6 +1635,15 @@ The Codex startup read retry audits the entire failed turn and its completion be
 Run a scenario with `node scripts/skills-run.mjs <request.json>` or check a trace
 with `node scripts/skills-trace.mjs <request.json>`. Deterministic scenario policies
 answer windows; a separate tool-free persona answers explicit free questions.
+The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 17
+scenarios, with per-host window lists and probe-derived seeds. Select a committed
+`base...head` with `node scripts/skills-select.mjs <request.json>`, then pass that
+saved selection and the explicit index path to `node scripts/skills-suite.mjs
+<request.json>`. The expected items are frozen before the first host call;
+removed scenarios are refused. Main paths use short chains in one fresh monotest
+project, other neighbors use their own seeds. Design requires a request-supplied
+Paper file id and the neutral pre-execution guard. These data files are not part
+of normal required reading. Focused checks: `node --test scripts/skills-catalog.test.mjs`.
 The shared audit keeps MCP actions bounded to monotest/Paper and requires a real
 workspace read before writes. Direct Codex MCP calls retain namespace and name. MCP actions in every test-home
 rollout, including child threads and native McpToolCall records, share this boundary;

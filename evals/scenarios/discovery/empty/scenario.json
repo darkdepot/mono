@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "id": "empty",
+  "stage": "discovery",
+  "kind": "empty",
+  "seed": "seeds/research.json",
+  "next": "design",
+  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста.",
+  "brief": "Я владелец Mono. Новая отдельная идея: в таблице тестовых прогонов Mono показать колонку «Источник» между именем сценария и хостом. Сейчас источник читают в карточке прогона, после правки он виден сразу. Для прогона без источника нужен прочерк. Фильтра и сортировки не нужно. Это правка на месте готового экрана, эталоны уже в памяти тестового продукта. Не связывай с похожими проектами: это самостоятельная идея текущего прогона.",
+  "hosts": {
+    "claude": {
+      "windows": [
+        {
+          "mode": "empty"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "discovery-approval",
+          "decision": "Источник",
+          "advice": "Источник",
+          "reason": "таблиц",
+          "summary": [
+            "Дальше"
+          ]
+        }
+      ],
+      "freeQuestions": []
+    },
+    "codex": {
+      "windows": [
+        {
+          "mode": "empty"
+        },
+        {
+          "mode": "refuse",
+          "text": "Я не ответил и ничего не утверждал. На этом остановимся, больше вопросов не задавай."
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "discovery-approval",
+          "decision": "Источник",
+          "advice": "Источник",
+          "reason": "таблиц",
+          "summary": [
+            "Дальше"
+          ]
+        },
+        {
+          "id": "discovery-followup",
+          "decision": "утверж",
+          "advice": "утверж",
+          "reason": "утверж",
+          "summary": [
+            "утверж"
+          ]
+        }
+      ],
+      "freeQuestions": [
+        {
+          "contains": "?"
+        }
+      ]
+    }
+  },
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "forbidden": "mono-prd: approved"
+    }
+  ]
+}

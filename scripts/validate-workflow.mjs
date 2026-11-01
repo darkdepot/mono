@@ -10,6 +10,7 @@ import { resolveRole, roleDefaults, requiredPairings } from "./runtime.mjs";
 import { checkPlugin, resolveSkillPath } from "./validate-plugin.mjs";
 import { measureReadBudget, readingPaths, READ_BUDGET_MAX_BYTES, DELIVERY_SKILLS } from "./read-budget.mjs";
 import { RUSSIAN_STAGES, isRussianStage } from "./russian-stages.mjs";
+import { loadCatalog } from './skills-catalog.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const validationStateRoot = fs.mkdtempSync(
@@ -19,6 +20,8 @@ process.on("exit", () => {
   fs.rmSync(validationStateRoot, { recursive: true, force: true });
 });
 const failures = [];
+try { loadCatalog(path.join(root, 'evals/scenarios/index.json')); }
+catch (error) { failures.push(error.message); }
 const EXPECTED_SKILLS = [
   "check",
   "deploy",
