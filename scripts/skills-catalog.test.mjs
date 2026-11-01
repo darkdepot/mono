@@ -460,23 +460,46 @@ test('continue5 Design preparation failures keep completed items and continue ot
  assert(calls.some(r=>r.context.entryStage==='tech-evaluation'),'other independent units still run');
 });
 
-for(const mode of ['inside','inside-text','inside-lines','inside-uri','outside','symlink','mixed'])test(`continue5 Paper export ${mode} through fake MCP`,async t=>{
+for(const mode of ['inside','inside-text','inside-lines','inside-uri','outside','symlink','mixed','delete-EPERM','delete-EACCES','delete-EIO','copy-EACCES','copy-size','copy-digest'])test(`continue5 Paper export ${mode} through fake MCP`,async t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-export-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const exportDir=path.join(dir,'Downloads'),exportRunDir=path.join(dir,'run');fs.mkdirSync(exportDir);fs.mkdirSync(exportRunDir);
  const good=path.join(exportDir,'art #board.png'),foreign=path.join(dir,'foreign.png'),sentinel=path.join(exportDir,'untouched.png');
  write(good,'PNG');write(foreign,'FOREIGN');write(sentinel,'KEEP');
  const link=path.join(exportDir,'link.png');fs.symlinkSync(foreign,link);
- const files=mode.startsWith('inside')?[mode==='inside-uri'?pathToFileURL(good).href:good]:mode==='outside'?[foreign]:mode==='symlink'?[link]:[good,foreign];
+ const files=mode.startsWith('inside')||mode.startsWith('delete-')||mode.startsWith('copy-')?[mode==='inside-uri'?pathToFileURL(good).href:good]:mode==='outside'?[foreign]:mode==='symlink'?[link]:[good,foreign];
  const fake=path.join(dir,'fake.mjs');write(fake,`import readline from 'node:readline';readline.createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);const result=m.method==='tools/list'?{tools:[{name:'export',inputSchema:{properties:{fileId:{type:'string'}}}}]}:{structuredContent:{files:${JSON.stringify(files)}},content:[{type:'text',text:${JSON.stringify(mode==='inside-text'?'Exported: `'+good+'`':mode==='inside-lines'?good+'\n'+good:JSON.stringify({files}))}}]};console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));});`);
  const config=path.join(dir,'guard.json');write(config,JSON.stringify({fileId:'test',command:process.execPath,args:[fake],log:path.join(dir,'guard.log'),exportDir,exportRunDir}));
- const child=spawn(process.execPath,[path.join(source,'paper-guard.mjs'),config],{stdio:['pipe','pipe','pipe']});t.after(()=>child.kill('SIGTERM'));
+ const preload=path.join(dir,'faults.mjs');
+ write(preload,`import fs from 'node:fs';const unlink=fs.unlinkSync,copy=fs.copyFileSync;const source=fs.realpathSync(${JSON.stringify(good)}),mode=${JSON.stringify(mode)};
+ fs.unlinkSync=function(file){if(file===source&&mode.startsWith('delete-'))throw Object.assign(new Error('simulated '+mode),{code:mode.slice(7)});return unlink.apply(this,arguments);};
+ fs.copyFileSync=function(file,destination){if(file===source&&mode==='copy-EACCES')throw Object.assign(new Error('simulated copy EACCES'),{code:'EACCES'});const result=copy.apply(this,arguments);if(file===source&&mode==='copy-size')fs.appendFileSync(destination,'extra');if(file===source&&mode==='copy-digest')fs.writeFileSync(destination,'BAD');return result;};`);
+ const child=spawn(process.execPath,['--import',preload,path.join(source,'paper-guard.mjs'),config],{stdio:['pipe','pipe','pipe']});t.after(()=>child.kill('SIGTERM'));
  const closed=new Promise(resolve=>child.on('close',resolve));const lines=readline.createInterface({input:child.stdout})[Symbol.asyncIterator]();
  child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})+'\n');await lines.next();
  child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'export',arguments:{fileId:'test'}}})+'\n');
  const line=await lines.next();assert(!line.done,'guard must return an export result or explicit error');const result=JSON.parse(line.value).result;
- if(mode.startsWith('inside')){
-  assert(!result.isError);const moved=result.structuredContent.files[0],file=mode==='inside-uri'?fileURLToPath(moved):moved;assert(file.startsWith(exportRunDir+path.sep));assert.equal(fs.readFileSync(file,'utf8'),'PNG');assert(!fs.existsSync(good));if(mode==='inside-text')assert.equal(result.content[0].text,'Exported: `'+moved+'`');else if(mode==='inside-lines')assert.equal(result.content[0].text,moved+'\n'+moved);else assert.equal(JSON.parse(result.content[0].text).files[0],moved);
- }else{assert(result.isError,'unexpected export path must be refused');assert(fs.existsSync(good),'validate the whole result before any move');assert.deepEqual(fs.readdirSync(exportRunDir),[]);}
+ if(mode.startsWith('inside')||['delete-EPERM','delete-EACCES'].includes(mode)){
+  assert(!result.isError,JSON.stringify(result));const moved=result.structuredContent.files[0],file=mode==='inside-uri'?fileURLToPath(moved):moved;assert(file.startsWith(exportRunDir+path.sep));assert.equal(fs.readFileSync(file,'utf8'),'PNG');assert.equal(fs.existsSync(good),mode.startsWith('delete-'));if(mode==='inside-text')assert.equal(result.content[0].text,'Exported: `'+moved+'`');else if(mode==='inside-lines')assert.equal(result.content[0].text,moved+'\n'+moved);else assert.equal(JSON.parse(result.content[0].text).files[0],moved);
+ }else if(mode.startsWith('delete-')||mode.startsWith('copy-')){assert(result.isError,'other copy/delete failures must be errors');assert(fs.existsSync(good),'failed verification must preserve the original');}
+ else{assert(result.isError,'unexpected export path must be refused');assert(fs.existsSync(good),'validate the whole result before any move');assert.deepEqual(fs.readdirSync(exportRunDir),[]);}
  assert.equal(fs.readFileSync(foreign,'utf8'),'FOREIGN');assert.equal(fs.readFileSync(sentinel,'utf8'),'KEEP');
  child.stdin.end();await closed;
+ const leftovers=fs.readFileSync(path.join(dir,'guard.log'),'utf8').trim().split('\n').map(JSON.parse).filter(event=>event.kind==='export-leftover');
+ assert.deepEqual(leftovers,['delete-EPERM','delete-EACCES'].includes(mode)?[{kind:'export-leftover',path:fs.realpathSync(good),reason:mode.slice(7)}]:[]);
+});
+
+for(const outcome of ['passed','throw'])test(`continue6 suite reports guard export leftovers after Design ${outcome}`,async t=>{
+ const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed');f.commit();
+ const leftover=path.join(f.dir,'Downloads/retained.png');let calls=0;
+ const request=suiteRequest(f,f.select(),{paper:{fileId:'fixture',command:'paper',args:[]},designMemoryFile:path.join(f.dir,'design/memory.md')});
+ const result=await runSuite(request,async run=>{
+  if(run.context.entryStage==='design'){
+   calls++;const guard=json(run.mcpServers.paper.args[1]);
+   write(guard.log,[{kind:'forwarded',tool:'export'},{kind:'export-leftover',path:leftover,reason:'EPERM'},{kind:'export-leftover',path:leftover,reason:'EACCES'}].map(JSON.stringify).join('\n')+'\n');
+   if(outcome==='throw')throw Error('host stopped after export');
+  }
+  write(run.context.projectFile,JSON.stringify(runProject(run)));return passedStage(run);
+ });
+ assert(calls>0);assert.equal(result.status,outcome==='passed'?'passed':'failed');
+ assert.deepEqual(result.exportLeftovers,[leftover]);assert.deepEqual(json(path.join(request.outputDir,'suite-result.json')).exportLeftovers,[leftover]);
 });

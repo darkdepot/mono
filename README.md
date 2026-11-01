@@ -1665,9 +1665,12 @@ Codex answers trailing plain-text questions through the persona before finishing
 Design alone grants the test product memory directory, its `approved/` archive,
 and a fresh export run directory;
 its approval reason anchor is advice, without requiring the next stage name.
-Paper exports to the owner's Downloads without a path parameter. The guard moves
-only files named by that result into the run directory and rewrites their paths;
-foreign paths and symlinks are refused. Design archives the returned files normally.
+Paper exports to the owner's Downloads without a path parameter. The guard copies
+only files named by that result into the run directory, verifies size and SHA-256,
+then rewrites their paths; foreign paths and symlinks are refused. If deleting an
+original fails with EPERM/EACCES, its path is logged and listed in suite-result's
+`exportLeftovers` for the orchestrator; other failures remain errors.
+Design archives the returned files normally.
 Unit preparation failures persist completed items, fail that unit and leave its
 later chain unverified while independent units continue. Empty selection is
 `not-required` (CLI exit 0), never a pass. Scout definitions select their launching
