@@ -86,7 +86,7 @@
       "freshReadRequired": true
     },
     {
-      "type": "mono-prd",
+      "type": "mono-prd: approved",
       "version": "fresh-read-after-shown-version",
       "count": 1
     }

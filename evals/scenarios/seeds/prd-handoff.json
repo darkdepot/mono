@@ -5,7 +5,7 @@
     "save_project: одно новое имя из задания, команда Mono Test по свежему чтению list_teams. Не переносить id команды из образца. Никаких записей в другое пространство.",
     "Описание проекта по ideaDraft; node <packRoot>/scripts/idea-gate.mjs record --draft <shown-draft> --config <config> --out <scratch> --project <fresh-project-id>. Публиковать созданный comment.md через save_comment. Прочитать get_project и все страницы list_comments, сохранить сырые ответы и запросы cursor; выполнить verify и check.",
     "save_document исследования; get_document и list_documents проекта обратно. Создать/закрыть задачу Research с меткой Этап и журналом, используя текущие статусы monotest; записать результат проверки research.",
-    "save_document PRD; get_document обратно, взять только свежие id и updatedAt; записать комментарий mono-prd из prdApprovalTemplate. После save_comment прочитать все страницы комментариев и PRD заново; проверить route и check discovery свежими сырыми ответами.",
+    "save_document PRD; get_document обратно, взять только свежие id и updatedAt; записать комментарий утверждения из prdApprovalTemplate. После save_comment прочитать все страницы комментариев и PRD заново; проверить route и check discovery свежими сырыми ответами.",
     "Задача Discovery с меткой Этап: Done и журнал решений со ссылками на созданные Research/PRD. Задачи других проектов не переиспользовать. Обратное чтение Done и комментария."
   ],
   "ideaDraft": "## Что\nКолонка «Источник» в таблице прогонов Mono CLI.\n\n## Зачем\nВладелец открывает каждую карточку ради источника.\n\n## Образ результата\nИсточник виден сразу; без значения прочерк.\n\n## Неизвестные\nНет.\n",

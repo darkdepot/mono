@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const forbidden = new Set(['create_file','create_folder','archive_resources','unarchive_resources','move_resources','rename_resource']);
 export function scopedTool(tool) {
-  return !forbidden.has(tool.name) && Object.hasOwn(tool.inputSchema?.properties ?? {}, 'fileId');
+  return tool.name === 'get_guide' || (!forbidden.has(tool.name) && Object.hasOwn(tool.inputSchema?.properties ?? {}, 'fileId'));
 }
 export function paperCallAllowed(fileId, tools, name, args) {
   return typeof fileId === 'string' && fileId.trim() && tools.has(name) && !forbidden.has(name) && args?.fileId === fileId;
@@ -27,6 +27,11 @@ export function relayPaper(request) {
         log({kind:'blocked',tool:name,fileId:args?.fileId ?? null}); blocked(msg.id,'known scoped tool and exact request fileId required'); return;
       }
       log({kind:'forwarded',tool:name,fileId:args.fileId});
+      if (name === 'get_guide') {
+        // Documentation has no file access; the extra id belongs to this relay.
+        const guide={...args};delete guide.fileId;
+        msg={...msg,params:{...msg.params,arguments:guide}};
+      }
     } else if (!['initialize','ping','tools/list','notifications/initialized','notifications/cancelled'].includes(msg.method)) {
       if (msg.id !== undefined) blocked(msg.id,'method outside test tool surface'); return;
     }
@@ -38,7 +43,7 @@ export function relayPaper(request) {
       if (!Array.isArray(msg.result.tools)) throw new Error('invalid Paper tools/list');
       msg.result.tools = msg.result.tools.filter(scopedTool).map(tool => {
         tools.set(tool.name,tool);
-        return {...tool,inputSchema:{...tool.inputSchema,required:[...new Set([...(tool.inputSchema.required ?? []),'fileId'])]}};
+        return {...tool,inputSchema:{...tool.inputSchema,properties:{...tool.inputSchema.properties,fileId:tool.inputSchema.properties?.fileId ?? {type:'string'}},required:[...new Set([...(tool.inputSchema.required ?? []),'fileId'])]}};
       });
     }
     pending.delete(msg.id); send(msg);

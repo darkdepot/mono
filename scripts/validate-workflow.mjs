@@ -20,8 +20,6 @@ process.on("exit", () => {
   fs.rmSync(validationStateRoot, { recursive: true, force: true });
 });
 const failures = [];
-try { loadCatalog(path.join(root, 'evals/scenarios/index.json')); }
-catch (error) { failures.push(error.message); }
 const EXPECTED_SKILLS = [
   "check",
   "deploy",
@@ -7306,6 +7304,10 @@ if (process.argv.includes("--document-skeleton-only") || process.argv.includes("
   if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
   console.log("Document skeleton validation passed."); process.exit(0);
 }
+
+// Partial modes above intentionally do not load the scenario corpus.
+try { loadCatalog(path.join(root, 'evals/scenarios/index.json')); }
+catch (error) { failures.push(error.message); }
 
 validateSkills();
 validateReadFirstTierContract();

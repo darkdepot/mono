@@ -159,8 +159,8 @@ test('Paper guard rejects missing/foreign file ids and forbidden actions before 
   const log=path.join(dir,'forwarded.jsonl'), fake=path.join(dir,'fake.mjs');
   write(fake,`import fs from 'node:fs';import readline from 'node:readline';
     const rl=readline.createInterface({input:process.stdin});rl.on('line',line=>{const m=JSON.parse(line);let result={};
-    if(m.method==='tools/list')result={tools:[{name:'get_basic_info',inputSchema:{properties:{fileId:{type:'string'}},required:[]}},{name:'archive_resources',inputSchema:{properties:{fileId:{type:'string'}}}},{name:'list_resources',inputSchema:{properties:{}}}]};
-    if(m.method==='tools/call'){fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(m)+'\\n');result={content:[{type:'text',text:'ok'}]};}
+    if(m.method==='tools/list')result={tools:[{name:'get_basic_info',inputSchema:{properties:{fileId:{type:'string'}},required:[]}},{name:'archive_resources',inputSchema:{properties:{fileId:{type:'string'}}}},{name:'list_resources',inputSchema:{properties:{}}},{name:'get_guide',inputSchema:{properties:{topic:{type:'string'}},required:['topic'],additionalProperties:false}}]};
+    if(m.method==='tools/call'){fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(m)+'\\n');result={content:[{type:'text',text:'ok'}]};if(m.params.name==='get_guide'&&Object.hasOwn(m.params.arguments,'fileId'))result.isError=true;}
     if(m.id!==undefined)console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));});`);
   const request=path.join(dir,'request.json');write(request,JSON.stringify({fileId:'test-file',command:process.execPath,args:[fake],log:path.join(dir,'guard.log')}));
   const child=spawn(process.execPath,[path.join(source,'paper-guard.mjs'),request],{stdio:['pipe','pipe','pipe']});
@@ -172,11 +172,13 @@ test('Paper guard rejects missing/foreign file ids and forbidden actions before 
     const next=await lines.next();assert(!next.done);const value=JSON.parse(next.value);assert.equal(value.id,callId);return value;
   };
   await call('initialize',{});const listed=await call('tools/list',{});
-  assert.deepEqual(listed.result.tools.map(t=>t.name),['get_basic_info']);assert(listed.result.tools[0].inputSchema.required.includes('fileId'));
+  assert.deepEqual(listed.result.tools.map(t=>t.name),['get_basic_info','get_guide']);assert(listed.result.tools.every(t=>t.inputSchema.required.includes('fileId')));assert(listed.result.tools[1].inputSchema.properties.fileId);
   for(const args of [{},{fileId:'foreign-file'}])assert((await call('tools/call',{name:'get_basic_info',arguments:args})).result.isError);
   assert((await call('tools/call',{name:'archive_resources',arguments:{fileId:'test-file'}})).result.isError);
   assert((await call('resources/read',{uri:'foreign'})).result.isError);
   assert(!(await call('tools/call',{name:'get_basic_info',arguments:{fileId:'test-file'}})).result.isError);
+  assert((await call('tools/call',{name:'get_guide',arguments:{topic:'paper-mcp-instructions'}})).result.isError);
+  assert(!(await call('tools/call',{name:'get_guide',arguments:{fileId:'test-file',topic:'paper-mcp-instructions'}})).result.isError);
   child.stdin.end();await new Promise((resolve,reject)=>{child.on('close',code=>code===0?resolve():reject(new Error(`guard exit ${code}`)));child.on('error',reject);});
-  const forwarded=fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);assert.equal(forwarded.length,1);assert.equal(forwarded[0].params.arguments.fileId,'test-file');
+  const forwarded=fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);assert.equal(forwarded.length,2);assert.equal(forwarded[0].params.arguments.fileId,'test-file');assert.deepEqual(forwarded[1].params.arguments,{topic:'paper-mcp-instructions'});
 });
