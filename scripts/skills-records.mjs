@@ -38,7 +38,7 @@ function markdown(value){
  if(typeof value!=='string')return value;
  let fence=null,heading=false;const result=[];
  for(const line of value.split('\n')){
-  const marker=line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/),literal=Boolean(fence||marker);
+  const marker=line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/),literal=Boolean(fence||marker||/^(?: {4}|\t)/.test(line));
   if(marker){
    if(!fence)fence=marker[1];
    else if(marker[1][0]===fence[0]&&marker[1].length>=fence.length&&!marker[2].trim())fence=null;

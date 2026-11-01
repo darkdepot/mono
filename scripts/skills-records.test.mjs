@@ -326,6 +326,7 @@ for(const [sent,stored,status] of [
  ['- `literal`','* `literal`','passed'],
  ['```text\n- one\n```','```text\n* one\n```','failed'],
  ['    - literal','    * literal','failed'],
+ ['    [Name](https://example.test/a)','    [Name](<https://example.test/a>)','failed'],
  ['- one\n- two','* one\n* changed','failed'],
  ['[Name](https://example.test/a)','[Name](<https://example.test/a>)','passed'],
  ['[Name](https://example.test/a)','[Other](<https://example.test/a>)','failed']
