@@ -5,21 +5,23 @@ const cleanupGraceMs=500;
 // Both adapters use this pipe boundary: raw stdout is durable before dispatch.
 export function hostProcess({ binary, args, cwd, env, trace, stderr, sent, timeoutMs, input, onEvent, onIdle, idleMs = 0 }) {
   return new Promise(resolve => {
-    let failure = null, buffer = '', closed = false, completed = false, lineNumber=0, idle, killTimer, exitTimer, completionTimer;
+    let failure = null, buffer = '', closed = false, leaderExited = false, exitedCode, exitedSignal, completed = false, lineNumber=0, idle, killTimer, exitTimer, completionTimer;
+    const cleanupErrors=[];
     const child = spawn(binary.command, [...(binary.args ?? []), ...args], {cwd,env,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
     const signalGroup = signal => {
       if(closed || !child.pid)return;
       try { if(process.platform!=='win32')process.kill(-child.pid,signal);else child.kill(signal); }
       catch(error){
-        if(error.code==='ESRCH' || (process.platform==='darwin' && error.code==='EPERM' && (child.exitCode!==null || child.signalCode!==null)))return;
-        failure = failure ? `${failure}; ${error.message}` : error.message;
+        if(error.code==='ESRCH' || (error.code==='EPERM' && (leaderExited || closed || child.exitCode!==null || child.signalCode!==null)))return;
+        cleanupErrors.push(error.message);
       }
     };
     const settle = (code=child.exitCode,signal=child.signalCode) => {
       if(closed)return;
       closed=true;clearTimeout(timer);clearTimeout(idle);clearTimeout(killTimer);clearTimeout(exitTimer);clearTimeout(completionTimer);
+      code ??= exitedCode ?? null;signal ??= exitedSignal ?? null;
       if(!completed&&buffer.trim())failure = failure ?? 'cut JSONL event (missing newline)';
-      resolve({code:completed&&!failure&&(code===0||signal==='SIGTERM'||signal==='SIGKILL')?0:code,signal,failure,...(completed?{completed:true}:{})});
+      resolve({code:completed&&!failure&&(code===0||signal==='SIGTERM'||signal==='SIGKILL')?0:code,signal,failure,...(cleanupErrors.length?{cleanupErrors}:{}),...(completed?{completed:true}:{})});
     };
     const forceClose = () => {
       signalGroup('SIGKILL');
@@ -63,7 +65,8 @@ export function hostProcess({ binary, args, cwd, env, trace, stderr, sent, timeo
       }
     });
     child.stderr.on('data',chunk=>{if(!closed)fs.appendFileSync(stderr,chunk);});
-    child.on('exit',()=>{
+    child.on('exit',(code,signal)=>{
+      leaderExited=true;exitedCode=code;exitedSignal=signal;
       if(closed)return;
       clearTimeout(completionTimer);
       signalGroup('SIGTERM');

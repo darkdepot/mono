@@ -69,3 +69,16 @@ test('Codex native and plain free questions need no positional freeQuestions hin
  const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));
  assert.equal(r.replies.filter(w=>w.policy==='persona').length,1);assert.equal(r.freeReplies.length,1);
 });
+test('Codex answers a trailing plain-text question after its final target',async t=>{
+ const r=await runScenario(setup(t,'codex','roles-plain-tail'));
+ assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.freeReplies.length,1);assert.equal(r.freeReplies[0].question,'Откуда брать источник?');
+});
+for(const host of ['claude','codex'])test(`${host}: Design write grants reach the stage process only`,async t=>{
+ const request=setup(t,host,'roles');request.writableRoots=[path.join(request.cwd,'memory'),path.join(request.cwd,'memory/approved')];
+ const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));
+ const invocationFiles=[path.join(request.cwd,'role-invocations.jsonl'),...fs.readdirSync(request.outputDir).filter(name=>name.startsWith('persona-')).map(name=>path.join(request.outputDir,name,'role-invocations.jsonl'))];
+ const invocations=invocationFiles.flatMap(file=>fs.readFileSync(file,'utf8').trim().split('\n').map(JSON.parse));
+ const stage=invocations.find(args=>host==='claude'?args.includes('--input-format'):args[0]==='exec'&&args.includes('resume'));
+ const persona=invocations.find(args=>args.includes('--ignore-user-config')||(args.includes('--tools')&&args[args.indexOf('--tools')+1]===''));
+ for(const dir of request.writableRoots){assert(stage.some(arg=>arg.includes(dir)));assert(!persona.some(arg=>arg.includes(dir)));}
+});

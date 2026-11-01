@@ -13,7 +13,7 @@ if(persona){
  process.exit(0);
 }
 const choices=mode==='roles-many'?12:1;
-const sequence=[...Array.from({length:choices},()=> 'choice'),...(mode==='roles-mixed-free'?['free','free']:['free']),'approval',...(['roles-correction','roles-extra-target'].includes(mode)?['choice','approval']:[]),...(mode==='roles-tail'?['free']:[])];
+const sequence=[...Array.from({length:choices},()=> 'choice'),...(mode==='roles-mixed-free'?['free','free']:['free']),'approval',...(['roles-correction','roles-extra-target'].includes(mode)?['choice','approval']:[]),...(['roles-tail','roles-plain-tail'].includes(mode)?['free']:[])];
 if(['roles-missing','roles-replaced'].includes(mode))sequence.splice(sequence.indexOf('approval'),1);
 const card=step=>{
  const role=sequence[step],target=role==='approval';
@@ -43,7 +43,7 @@ if(args[0]==='exec'){
   const step=answered+(prompt.startsWith('Run roles')?0:1);
   if(step<sequence.length){
    const c=card(step),title=c.role==='free'?'Откуда брать источник?':c.gist+'\n'+c.labels.map((label,i)=>label+': '+c.consequences[i]).join('\n');
-   if(!(mode==='roles-mixed-free'&&step===2)){
+   if(!(mode==='roles-mixed-free'&&step===2)&&!(mode==='roles-plain-tail'&&step>sequence.indexOf('approval'))){
     item({type:'function_call',name:'request_user_input_async',call_id:'role-'+step,arguments:JSON.stringify({questions:[{title,...(c.role==='free'?{}:{options:c.labels})}]})});
     item({type:'function_call_output',call_id:'role-'+step,output:mode==='roles-unconfirmed'&&c.target?'{"accepted":false}':'{"accepted":true}'});
    }

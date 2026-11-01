@@ -19,6 +19,10 @@ const write=(file,text)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.w
 const json=file=>JSON.parse(fs.readFileSync(file,'utf8'));
 const runProject=request=>request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'};
 const passedStage=request=>({status:'passed',...(request.seed?{seedRoute:{project:runProject(request)}}:{})});
+function suiteRequest(f,selection,extra={}) {
+ const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);
+ return {selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'revision',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}},...extra};
+}
 function fixture(t) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-catalog-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const catalogDir=path.join(dir,'custom-catalog');fs.cpSync(source,catalogDir,{recursive:true});
@@ -65,10 +69,52 @@ test('Mono catalog has exactly six stage contracts, all host windows and no stor
   }
 });
 
+for(const mode of ['another-head','dirty-execution','unversioned'])test(`suite rejects ${mode} pack before a host`,async t=>{
+ const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();const selection=f.select();
+ let packRoot=f.dir;
+ if(mode==='another-head')packRoot=root;
+ if(mode==='dirty-execution')write(path.join(f.dir,'skills/idea/SKILL.md'),'uncommitted execution\n');
+ if(mode==='unversioned'){packRoot=path.join(f.dir,'scratch');fs.mkdirSync(packRoot);}
+ let calls=0;await assert.rejects(()=>runSuite(suiteRequest(f,selection,{packRoot}),async()=>{calls++;return {status:'unverified'};}),/pack (revision|execution|checkout)/);
+ assert.equal(calls,0);
+});
+
+for(const [file,stage] of [['references/contracts/project.md','idea'],['references/contracts/prd.md','discovery'],['references/contracts/issue.md','handoff'],['references/contracts/tech-spec.md','tech-evaluation'],['references/model-policy.md','research'],['references/repair-machine.md','handoff']])test(`consumed ${file} selects ${stage}`,t=>{
+ const f=fixture(t);write(path.join(f.dir,file),'changed contract\n');f.commit();assert(f.select().affected.includes(stage));
+});
+
+for(const file of ['references/unmapped.md','templates/qa-output.md','skills/qa/SKILL.md'])test(`unmapped ${file} is uncovered, never a zero-item pass`,async t=>{
+ const f=fixture(t);write(path.join(f.dir,file),'changed\n');f.commit();const selection=f.select();
+ assert.equal(selection.status,'uncovered');assert.deepEqual(selection.uncovered,[file]);
+ const result=await runSuite(suiteRequest(f,selection),()=>{throw new Error('uncovered must not start a host');});
+ assert.equal(result.status,'unverified');assert.equal(result.reason,'uncovered selection');assert.deepEqual(result.uncovered,[file]);
+ assert.equal(json(path.join(f.dir,'run/suite-result.json')).status,'unverified');
+});
+
+test('Design alone receives its memory and archive write roots; export collection belongs to orchestrator',async t=>{
+ const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
+ const memory=path.join(f.dir,'design-product/memory.md'),archive=path.join(path.dirname(memory),'approved');let design=0,other=0;
+ const result=await runSuite(suiteRequest(f,f.select(),{paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:memory}),async request=>{
+  if(request.context.entryStage==='design'){
+   design++;assert.deepEqual(request.writableRoots,[path.dirname(memory),archive]);assert(request.scenario.prompt.includes('Downloads'));assert(request.scenario.prompt.includes('собирает оркестратор'));assert(!request.scenario.prompt.includes('перенеси только эти файлы'));
+   assert(request.scenario.expectedWindows.every(w=>w.reason==='Совет'));
+  }else{other++;assert(!request.writableRoots?.length);}
+  write(request.context.projectFile,JSON.stringify(runProject(request)));return passedStage(request);
+ });
+ assert.equal(result.status,'passed',JSON.stringify(result));assert(design&&other);
+});
+test('pack revision is checked again after a host and before later stages',async t=>{
+ const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();let calls=0;
+ const result=await runSuite(suiteRequest(f,f.select()),async request=>{
+  calls++;write(request.context.projectFile,JSON.stringify(runProject(request)));f.git('commit','--allow-empty','-qm','another revision');return passedStage(request);
+ });
+ assert.equal(calls,1);assert.equal(result.status,'failed');assert(result.results.every(r=>r.result.reason.includes('pack revision')));
+});
+
 test('seed route is isolated from the following stage before any real stage runs',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());let checked=0;
-  await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-route',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,
+  await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-route',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,
     mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')},async request=>{
       assert(!request.scenario.prompt.includes('Маршрут этого касания: next='),'following stage is not this touch route');
       assert(request.scenario.brief.includes('cli/runs.mjs'));assert(request.scenario.brief.includes('source'));
@@ -96,7 +142,7 @@ test('catalog window anchors accept live wording in both hosts without requiring
     ],
     research:['Начинаем Discovery для колонки источника? Советую перейти: нужно выбрать проверку результата.', 'Продолжаем разбор колонки? Советую перейти: рамка уже ясна.'],
     discovery:['Утверждаем колонку без настройки? Советую начать Design: нужно показать её в списке.'],
-    design:['Утверждаем макет колонки? Советую утвердить и передать в Handoff: рамка уже согласована.'],
+    design:['Утверждаем макет колонки? Советую утвердить и передать в Handoff: рамка уже согласована.','Утверждаем колонку? Советую утвердить: источник читается сразу.'],
     'tech-evaluation':['Утверждаем страницу решения? Советую начать Handoff: способ проверен.'],
     handoff:['Начинаем пакет? Советую передать оркестратору: зависимости проверены.', 'Добавляем «Источник» после имени прогона, с прочерком для пустых значений? Советую начать работу: одна задача готова и проверена.']
   };
@@ -168,7 +214,7 @@ test('suite persists expectations before calls and shares one read-back project 
   write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
   const selection=f.select(), selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);
   const outputDir=path.join(f.dir,'run'), cwd=path.join(f.dir,'workspace'), calls=[];fs.mkdirSync(cwd);
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'fixture',outputDir,cwd,packRoot:root,
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'fixture',outputDir,cwd,packRoot:f.dir,
     mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'test-file',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'test-memory.md')},async request=>{
     assert.deepEqual(json(path.join(outputDir,'expected-items.json')),selection.expectedItems);
     assert.equal(request.idleMs,20000);assert.equal(request.timeoutMs,1800000);assert(request.maxTurns>request.scenario.windows.length);
@@ -177,6 +223,7 @@ test('suite persists expectations before calls and shares one read-back project 
     const names={research:'Research',discovery:'Discovery',design:'Design','tech-evaluation':'Tech Evaluation',handoff:'Handoff'};
     for(const window of request.scenario.expectedWindows){
       if(window.role==='transition')for(const field of ['decision','advice','reason'])assert.equal(window[field],'Совет','transition role comes from labels, not title wording');
+      else if(request.context.entryStage==='design')assert.equal(window.reason,'Совет','Design does not require a following stage name');
       else if(names[next])assert.equal(window.reason,names[next],'approval anchor follows the actual chain route');
     }
     const relative=path.relative(cwd,request.context.projectFile);
@@ -202,7 +249,7 @@ for(const field of ['id','name','url','missing-proof'])test(`the first seeded st
   const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
   const selection=f.select();selection.units=selection.units.filter(u=>u.id==='tech-evaluation-approve');selection.expectedItems=selection.expectedItems.filter(i=>i.unit==='tech-evaluation-approve');
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);let calls=0;
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'identity-'+field,outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'identity-'+field,outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
     calls++;const project=runProject(request),observed={...project};
     if(request.seed&&field!=='missing-proof')observed[field]={id:'00000000-0000-4000-8000-000000000002',name:'another-project',url:'https://linear.app/monotest/project/another'}[field];
     write(request.context.projectFile,JSON.stringify(observed));return field==='missing-proof'?{status:'passed'}:passedStage(request);
@@ -216,7 +263,7 @@ test('seed and every chain stage accept identical identity fields in any JSON ke
   const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
   const selection=f.select();selection.units=selection.units.filter(u=>u.id==='tech-evaluation-approve');selection.expectedItems=selection.expectedItems.filter(i=>i.unit==='tech-evaluation-approve');
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);let calls=0;
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'key-order',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'key-order',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
     calls++;const p=runProject(request),observed=request.seed?{url:p.url,name:p.name,id:p.id}:{name:p.name,id:p.id,url:p.url};
     write(request.context.projectFile,JSON.stringify(observed));return passedStage(request);
   });
@@ -228,7 +275,7 @@ test('a stage that omits its manifest cannot reuse the previous stage read-back'
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
   let calls=0;
   const outputDir=path.join(f.dir,'run');
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'missing-manifest',outputDir,cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'missing-manifest',outputDir,cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
     calls++;
     if(calls!==2)write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));
     return passedStage(request);
@@ -242,14 +289,14 @@ test('a stage that omits its manifest cannot reuse the previous stage read-back'
 test('a failed chain stage leaves all later expected items unverified, not dropped',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'failed',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async()=>({status:'failed'}));
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'failed',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async()=>({status:'failed'}));
   assert.equal(result.status,'failed');assert(result.items.some(i=>i.scenario==='research/approve'&&i.status==='unverified'));
 });
 
 test('standalone unseeded Idea may pass without creating a project, while its chain still needs a manifest',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'no-project',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'no-project',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
     assert(!request.seed,'Idea starts without seed');return {status:'passed',replies:[{policy:'empty',received:true}]};
   });
   for(const host of ['claude','codex']){
@@ -263,7 +310,7 @@ test('an incomplete seed stays unverified and leaves its remaining chain unverif
   const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
   const selection=f.select();selection.units=selection.units.filter(u=>u.id==='tech-evaluation-approve');selection.expectedItems=selection.expectedItems.filter(i=>i.unit==='tech-evaluation-approve');
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-incomplete',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>request.seed?{status:'unverified',reason:'seed not completed'}:{status:'passed'});
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-incomplete',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>request.seed?{status:'unverified',reason:'seed not completed'}:{status:'passed'});
   assert.equal(result.status,'unverified');
   assert(result.results.some(r=>r.result.reason==='seed not completed'));
   assert(result.items.every(i=>i.status==='unverified'),'no incomplete chain item becomes green or a violation');
@@ -272,7 +319,7 @@ test('an incomplete seed stays unverified and leaves its remaining chain unverif
 test('suite rejects changed catalog and missing Paper id before the first host',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/discovery/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
-  const request={selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'reject',outputDir:path.join(f.dir,'run'),cwd:f.dir};
+  const request={selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'reject',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir};
   await assert.rejects(()=>runSuite(request,()=>{throw new Error('must not run');}),/fileId/);
   await assert.rejects(()=>runSuite({...request,workspaceProof:{tool:'mcp__monotest__get_workspace',path:['name'],equals:'Wrong Space'}},()=>{throw new Error('must not run');}),/workspace proof/);
   fs.appendFileSync(path.join(f.catalogDir,'design/approve/rubric.md'),'changed\n');
@@ -282,7 +329,7 @@ test('suite rejects changed catalog and missing Paper id before the first host',
 test('a replaced project manifest cannot send the next stage to another project',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'project',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'project',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
     write(request.context.projectFile,JSON.stringify({id:'00000000-0000-4000-8000-000000000001',name:'foreign-project',url:'https://linear.app/monotest/project/foreign'}));return passedStage(request);
   });
   assert.equal(result.status,'failed');assert(result.results.every(r=>r.result.reason.includes('invalid run project read-back manifest')));
@@ -295,7 +342,7 @@ test('bad manifests and host errors fail only their chain and always persist the
   const failures=[['short-id','P-MON-40'],['malformed',null],['replaced-id','00000000-0000-4000-8000-000000000002'],['host-error',null]];
   for(const [mode,id] of failures){
     const outputDir=path.join(f.dir,mode),calls=[];
-    const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:mode,outputDir,cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+    const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:mode,outputDir,cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
       calls.push(request);
       const project=request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'};
       const bad=request.host==='claude'&&request.context.projectName.endsWith('idea-approve')&&(mode!=='replaced-id'||request.context.project);
@@ -314,7 +361,7 @@ test('bad manifests and host errors fail only their chain and always persist the
 test('stage and seed prompts request get_project.uuid and seed only its available recipe',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());const calls=[];
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-data',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')},async request=>{
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-data',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')},async request=>{
     calls.push(request);write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));return passedStage(request);
   });
   assert.equal(result.status,'passed');

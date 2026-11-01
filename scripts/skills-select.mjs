@@ -34,6 +34,7 @@ export function selectScenarios({indexFile, worktree, base, head = 'HEAD', hosts
     f === path.relative(worktree,s.file).split(path.sep).join('/') || f === path.relative(worktree,path.join(path.dirname(s.file),'rubric.md')).split(path.sep).join('/'))));
   const affected = catalog.index.stages.filter(s => all || changed.some(f => s.files.some(rule => matches(f,rule)) ||
     s.scenarios.some(relative => matches(f,path.relative(worktree,path.join(catalog.root,path.dirname(relative))).split(path.sep).join('/')+'/')))).map(s => s.id);
+  const uncovered=affected.length?[]:changed.filter(file=>['skills/','references/','templates/'].some(prefix=>file.startsWith(prefix)));
   const wanted = new Map();
   for (const id of affected) {
     const stage = catalog.stages.get(id);
@@ -54,7 +55,7 @@ export function selectScenarios({indexFile, worktree, base, head = 'HEAD', hosts
   const expectedItems = units.flatMap(unit => hosts.flatMap(host => unit.scenarios.map(key => ({
     id:`${unit.id}:${key}:${host}`,source:'scenario',unit:unit.id,scenario:key,host
   }))));
-  return {schemaVersion:1,indexFile:catalog.indexFile,catalogDigest:catalog.digest,base,head,changed,affected,
+  return {schemaVersion:1,status:uncovered.length?'uncovered':units.length?'selected':'not-required',uncovered,indexFile:catalog.indexFile,catalogDigest:catalog.digest,base,head,changed,affected,
     selected:[...wanted].map(([scenario,reason])=>({scenario,reason})),hosts,units,expectedItems};
 }
 
@@ -67,5 +68,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const request = JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
     const selection = selectScenarios(request); saveSelection(request.output,selection);
     console.log(JSON.stringify(selection,null,2));
+    if(selection.status==='uncovered')process.exitCode=2;
   } catch (error) { console.error(error.message); process.exitCode=1; }
 }

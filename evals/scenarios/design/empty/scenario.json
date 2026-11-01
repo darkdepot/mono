@@ -19,7 +19,7 @@
           "id": "design-approval",
           "decision": "Утвержд",
           "advice": "Совет",
-          "reason": "Handoff",
+          "reason": "Совет",
           "summary": [],
           "role": "approval"
         }
@@ -41,7 +41,7 @@
           "id": "design-approval",
           "decision": "Утвержд",
           "advice": "Совет",
-          "reason": "Handoff",
+          "reason": "Совет",
           "summary": [],
           "role": "approval"
         }

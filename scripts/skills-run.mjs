@@ -16,7 +16,7 @@ const pause = ms => new Promise(resolve=>setTimeout(resolve,ms));
 const ownerText = event => (event.message?.content??[]).filter?.(b=>b.type==='text').map(b=>b.text).join('\n')??'';
 function childEnv(home){const env={...process.env};delete env.ANTHROPIC_API_KEY;delete env.ANTHROPIC_AUTH_TOKEN;delete env.OPENAI_API_KEY;if(home)env.CODEX_HOME=home;return env;}
 function modelArgs(request){return request.model?['--model',request.model]:[];}
-function codexCommon(request){return ['--json','--disable','apps','--disable','remote_plugin','--skip-git-repo-check','-c','approval_policy="never"','-c','sandbox_mode="workspace-write"','-c','sandbox_workspace_write.network_access=true',...modelArgs(request)];}
+function codexCommon(request){return ['--json','--disable','apps','--disable','remote_plugin','--skip-git-repo-check','-c','approval_policy="never"','-c','sandbox_mode="workspace-write"','-c','sandbox_workspace_write.network_access=true',...(request.writableRoots?.length?['-c',`sandbox_workspace_write.writable_roots=${JSON.stringify(request.writableRoots)}`]:[]),...modelArgs(request)];}
 const targetsAnswered=(request,replies)=>targetReplyCount(replies)===request.scenario.expectedWindows.length;
 export function checkSeedRoute(request){
   const seed=request.seed;let raw;
@@ -40,6 +40,7 @@ function validate(request){
   const proof=request.workspaceProof;
   if(!/^mcp__monotest__\w+$/.test(proof?.tool??'')||!Array.isArray(proof.path)||proof.equals==null||isWrite(proof.tool))throw new Error('explicit monotest read proof required');
   mcpConfig(request.mcpServers);
+  if(request.writableRoots!==undefined&&(!Array.isArray(request.writableRoots)||request.writableRoots.some(dir=>!path.isAbsolute(dir))))throw new Error('absolute writableRoots required');
   for(const key of ['timeoutMs','idleMs'])if(request[key]!==undefined&&(!Number.isFinite(request[key])||request[key]<=0))throw new Error(`invalid ${key}`);
   if(roleWindows(request.scenario.expectedWindows)&&request.scenario.expectedWindows.some(w=>!['approval','transition'].includes(w.role)))throw new Error('every expected target needs its role');
   if(request.seed){
@@ -58,7 +59,7 @@ export async function runPersona(request,lastMessage,index){
   if(request.host==='claude')args=['-p','--verbose','--output-format','stream-json','--tools','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--disable-slash-commands',...modelArgs(request),prompt];
   else{
     const home=path.join(dir,'home');fs.mkdirSync(home);fs.symlinkSync(request.authFile,path.join(home,'auth.json'));fs.writeFileSync(path.join(home,'config.toml'),'[mcp_servers.linear]\nurl = "https://mcp.linear.app/mcp"\nenabled = false\n');env=childEnv(home);
-    args=['exec',...codexCommon(request),'--ignore-user-config','--disable','plugins','--disable','shell_tool','--disable','multi_agent','--disable','code_mode_host','--disable','browser_use','--disable','computer_use','--disable','image_generation','--disable','view_image','--disable','sleep_tool','-c','web_search="disabled"','-s','read-only',prompt];
+    args=['exec',...codexCommon({...request,writableRoots:[]}),'--ignore-user-config','--disable','plugins','--disable','shell_tool','--disable','multi_agent','--disable','code_mode_host','--disable','browser_use','--disable','computer_use','--disable','image_generation','--disable','view_image','--disable','sleep_tool','-c','web_search="disabled"','-s','read-only',prompt];
   }
   const result=await hostProcess({binary:request.binary??{command:request.host==='claude'?'claude':'codex'},args,cwd:dir,env,trace,sent,stderr:path.join(dir,'stderr.log'),timeoutMs:request.timeoutMs??3_600_000,
     onEvent:()=>{}});
@@ -77,7 +78,7 @@ export async function runClaude(request){
   const config=path.join(request.outputDir,'mcp.json');fs.writeFileSync(config,JSON.stringify(mcpConfig(request.mcpServers)));
   const toolPolicy=request.scenario.allowedTools??'*';
   const allowed=toolPolicy.includes('*')?null:toolPolicy.filter(n=>!n.startsWith('mcp__'));if(allowed&&!allowed.includes('AskUserQuestion'))allowed.push('AskUserQuestion');
-  const args=['-p','--verbose','--input-format','stream-json','--output-format','stream-json','--permission-prompt-tool=stdio','--strict-mcp-config','--mcp-config',config,'--plugin-dir',request.packRoot,'--setting-sources','','--settings',JSON.stringify({enabledPlugins:{'mono@mono-marketplace':false}}),...(allowed?['--tools',allowed.join(',')]:[]),...modelArgs(request)];
+  const args=[...(request.writableRoots?.length?['--add-dir',...request.writableRoots]:[]),'-p','--verbose','--input-format','stream-json','--output-format','stream-json','--permission-prompt-tool=stdio','--strict-mcp-config','--mcp-config',config,'--plugin-dir',request.packRoot,'--setting-sources','','--settings',JSON.stringify({enabledPlugins:{'mono@mono-marketplace':false}}),...(allowed?['--tools',allowed.join(',')]:[]),...modelArgs(request)];
   const calls=new Map(),receipts=new Map(),replies=[],freeReplies=[],seenRequests=new Set(),pendingWindows=[];let confirmed=false,phase='confirm',lastMessage='',freeIndex=0,waiting=false,violation=null,evidenceMissing=null,endLine,seedRoute;
   const personaTasks=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000);let lastFreeQuestion;
   const persona=question=>{
@@ -239,7 +240,11 @@ export async function runCodex(request){
     }
     if(proofCalls.size)throw new MissingEvidence('linked native result missing');
     if(!completedTrace('codex', fresh))throw new MissingEvidence('Codex current continuation incomplete');
-    if(endLine&&roleWindows(request.scenario.expectedWindows)&&codexWindows(fresh,rollout,{phase:'card'}).some(w=>!seen.has(w.callId)))endLine=undefined;
+    if(endLine&&roleWindows(request.scenario.expectedWindows)){
+      const last=codexItems(fresh).filter(r=>r.item?.type==='message'&&r.item.role==='assistant').at(-1)?.item;
+      const text=(last?.content??[]).filter(b=>b.type==='output_text').map(b=>b.text).join('\n');
+      if(codexWindows(fresh,rollout,{phase:'card'}).some(w=>!seen.has(w.callId))||text.includes('?'))endLine=undefined;
+    }
     if(retryError)throw retryError;
     return fresh;
   };

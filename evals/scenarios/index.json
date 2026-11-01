@@ -28,7 +28,10 @@
         "templates/issue.md",
         "templates/stage-task.md",
         "templates/stage-agent.md",
-        "templates/stage-helper-hook.mjs"
+        "templates/stage-helper-hook.mjs",
+        "references/contracts/project.md",
+        "skills/research/references/plan.md",
+        "skills/research/references/find-on-web.md"
       ],
       "neighbors": [
         "research"
@@ -59,7 +62,10 @@
         "templates/issue.md",
         "templates/stage-task.md",
         "templates/stage-agent.md",
-        "templates/stage-helper-hook.mjs"
+        "templates/stage-helper-hook.mjs",
+        "references/contracts/project.md",
+        "references/lifecycle.md",
+        "references/model-policy.md"
       ],
       "neighbors": [
         "idea",
@@ -91,7 +97,10 @@
         "templates/issue.md",
         "templates/stage-task.md",
         "templates/stage-agent.md",
-        "templates/stage-helper-hook.mjs"
+        "templates/stage-helper-hook.mjs",
+        "references/contracts/prd.md",
+        "references/lifecycle.md",
+        "references/model-policy.md"
       ],
       "neighbors": [
         "research",
@@ -126,7 +135,9 @@
         "templates/issue.md",
         "templates/stage-task.md",
         "templates/stage-agent.md",
-        "templates/stage-helper-hook.mjs"
+        "templates/stage-helper-hook.mjs",
+        "references/contracts/prd.md",
+        "references/lifecycle.md"
       ],
       "neighbors": [
         "discovery",
@@ -160,7 +171,11 @@
         "templates/issue.md",
         "templates/stage-task.md",
         "templates/stage-agent.md",
-        "templates/stage-helper-hook.mjs"
+        "templates/stage-helper-hook.mjs",
+        "references/contracts/tech-spec.md",
+        "references/lifecycle.md",
+        "references/model-policy.md",
+        "references/repair-machine.md"
       ],
       "neighbors": [
         "discovery",
@@ -195,7 +210,16 @@
         "templates/issue.md",
         "templates/stage-task.md",
         "templates/stage-agent.md",
-        "templates/stage-helper-hook.mjs"
+        "templates/stage-helper-hook.mjs",
+        "references/contracts/project.md",
+        "references/contracts/prd.md",
+        "references/contracts/issue.md",
+        "references/contracts/tech-spec.md",
+        "references/lifecycle.md",
+        "references/model-policy.md",
+        "references/repair-machine.md",
+        "references/artifact-intake.md",
+        "references/landing.md"
       ],
       "neighbors": [
         "discovery",

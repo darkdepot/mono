@@ -1653,6 +1653,17 @@ an absent seed pointer means `unverified: seed not completed`, before the stage 
 Every stage's manifest is compared field by field (`id`, `name`, `url`) with
 the existing project, including the first stage with its validated seed pointer;
 JSON key order does not affect identity.
+The suite requires a Git checkout at `packRoot` on `selection.head`, with no
+tracked changes or untracked execution files. It checks again before and after
+each stage; unversioned scratch copies have no silent override. Stage file rules
+include consumed contracts and references. If no stage maps a change under
+`skills/`, `references/` or `templates/`, selection is explicitly `uncovered`
+(CLI exit 2), and the suite returns `unverified` rather than a zero-item pass.
+Codex answers trailing plain-text questions through the persona before finishing.
+Design alone grants the test product memory directory and its `approved/` archive;
+its approval reason anchor is advice, without requiring the next stage name.
+Paper exports to the owner's Downloads without a path parameter; the orchestrator
+collects those exports. The scenario does not ask the model to work around that path.
 Transition anchors check advice; option labels identify
 their role. Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs`.
 The shared audit keeps MCP actions bounded to monotest/Paper and requires a real
@@ -1666,6 +1677,8 @@ Exact recommended labels are accepted, and Codex completion must match the activ
 Cleanup still signals the process group after its leader exits. A fixed 500 ms
 grace bounds held pipes; timeout remains a failure, and normal exit retains its
 evidence verdict. ESRCH and macOS EPERM for an exited leader stay quiet.
+The exit event is sufficient even before exit fields update. Other signal errors
+are kept in `cleanupErrors` without changing the original verdict or timeout.
 Codex accepts completion on the final allowed iteration before reporting the
 turn limit; an unfinished scenario still fails and the default remains 32.
 Host information remains open: unknown events and
