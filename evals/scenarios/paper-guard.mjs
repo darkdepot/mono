@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Probe-derived stdio relay. The caller supplies the test file; no active-file fallback.
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const forbidden = new Set(['create_file','create_folder','archive_resources','unarchive_resources','move_resources','rename_resource']);
 export function scopedTool(tool) {
@@ -10,6 +12,50 @@ export function scopedTool(tool) {
 }
 export function paperCallAllowed(fileId, tools, name, args) {
   return typeof fileId === 'string' && fileId.trim() && tools.has(name) && !forbidden.has(name) && args?.fileId === fileId;
+}
+
+function moveExports(result, request) {
+  const exportDir=fs.realpathSync(request.exportDir ?? path.join(os.homedir(),'Downloads'));
+  if (!path.isAbsolute(request.exportRunDir ?? '')) throw new Error('exportRunDir required');
+  const runDir=fs.realpathSync(request.exportRunDir);
+  if (!fs.statSync(runDir).isDirectory() || runDir===exportDir || runDir.startsWith(exportDir+path.sep) || exportDir.startsWith(runDir+path.sep)) throw new Error('separate export run directory required');
+  const sources=new Map(), destinations=new Map();
+  const source=value=>{
+    const file=value.startsWith('file://')?fileURLToPath(value):value;
+    const real=fs.realpathSync(file);
+    if (!real.startsWith(exportDir+path.sep) || !fs.lstatSync(file).isFile()) throw new Error('unexpected export path outside regular owner exports');
+    sources.set(value,real);return value;
+  };
+  // Paper may repeat a path in structuredContent and JSON text. Validate the
+  // complete response before moving anything, then rewrite both representations.
+  const walk=(value, replace, key='')=>{
+    if (Array.isArray(value)) return value.map(v=>walk(v,replace,key));
+    if (value && typeof value==='object') return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,walk(v,replace,k)]));
+    if (typeof value!=='string') return value;
+    if (key==='text') {
+      let parsed;try { parsed=JSON.parse(value); } catch {}
+      if (parsed!==undefined) return JSON.stringify(walk(parsed,replace));
+      return value.replace(/(?:file:\/\/)?\/[^\n`"<>]+/g,replace);
+    }
+    if (path.isAbsolute(value) || value.startsWith('file://')) return replace(value);
+    if (['path','filePath','file_path','localPath','uri','files'].includes(key)) throw new Error('unexpected non-absolute export path');
+    return value;
+  };
+  walk(result,source);
+  if (!sources.size) throw new Error('Paper export did not name local files');
+  const callDir=fs.mkdtempSync(path.join(request.exportRunDir,'export-'));
+  const moved=new Map();
+  for (const [value,file] of sources) {
+    let destination=moved.get(file);
+    if (!destination) {
+      destination=path.join(callDir,path.relative(exportDir,file));
+      fs.mkdirSync(path.dirname(destination),{recursive:true});
+      fs.copyFileSync(file,destination,fs.constants.COPYFILE_EXCL);fs.unlinkSync(file);
+      moved.set(file,destination);
+    }
+    destinations.set(value,value.startsWith('file://')?pathToFileURL(destination).href:destination);
+  }
+  return walk(result,value=>destinations.get(value));
 }
 
 export function relayPaper(request) {
@@ -35,16 +81,21 @@ export function relayPaper(request) {
     } else if (!['initialize','ping','tools/list','notifications/initialized','notifications/cancelled'].includes(msg.method)) {
       if (msg.id !== undefined) blocked(msg.id,'method outside test tool surface'); return;
     }
-    if (msg.id !== undefined) pending.set(msg.id,msg.method);
+    if (msg.id !== undefined) pending.set(msg.id,{method:msg.method,tool:msg.params?.name});
     child.stdin.write(JSON.stringify(msg)+'\n');
   };
   const paper = msg => {
-    if (pending.get(msg.id) === 'tools/list' && msg.result) {
+    const call=pending.get(msg.id);
+    if (call?.method === 'tools/list' && msg.result) {
       if (!Array.isArray(msg.result.tools)) throw new Error('invalid Paper tools/list');
       msg.result.tools = msg.result.tools.filter(scopedTool).map(tool => {
         tools.set(tool.name,tool);
         return {...tool,inputSchema:{...tool.inputSchema,properties:{...tool.inputSchema.properties,fileId:tool.inputSchema.properties?.fileId ?? {type:'string'}},required:[...new Set([...(tool.inputSchema.required ?? []),'fileId'])]}};
       });
+    }
+    if (call?.tool==='export' && msg.result && !msg.result.isError) {
+      try { msg={...msg,result:moveExports(msg.result,request)}; }
+      catch(error) { pending.delete(msg.id);log({kind:'blocked-export',reason:error.message});blocked(msg.id,error.message);return; }
     }
     pending.delete(msg.id); send(msg);
   };

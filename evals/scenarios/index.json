@@ -31,7 +31,10 @@
         "templates/stage-helper-hook.mjs",
         "references/contracts/project.md",
         "skills/research/references/plan.md",
-        "skills/research/references/find-on-web.md"
+        "skills/research/references/find-on-web.md",
+        "agents/linear-scout.md",
+        "agents/code-scout.md",
+        "agents/web-scout.md"
       ],
       "neighbors": [
         "research"
@@ -65,7 +68,10 @@
         "templates/stage-helper-hook.mjs",
         "references/contracts/project.md",
         "references/lifecycle.md",
-        "references/model-policy.md"
+        "references/model-policy.md",
+        "agents/linear-scout.md",
+        "agents/code-scout.md",
+        "agents/web-scout.md"
       ],
       "neighbors": [
         "idea",
@@ -100,7 +106,10 @@
         "templates/stage-helper-hook.mjs",
         "references/contracts/prd.md",
         "references/lifecycle.md",
-        "references/model-policy.md"
+        "references/model-policy.md",
+        "agents/linear-scout.md",
+        "agents/code-scout.md",
+        "agents/web-scout.md"
       ],
       "neighbors": [
         "research",
@@ -175,7 +184,10 @@
         "references/contracts/tech-spec.md",
         "references/lifecycle.md",
         "references/model-policy.md",
-        "references/repair-machine.md"
+        "references/repair-machine.md",
+        "agents/linear-scout.md",
+        "agents/code-scout.md",
+        "agents/web-scout.md"
       ],
       "neighbors": [
         "discovery",
@@ -219,7 +231,8 @@
         "references/model-policy.md",
         "references/repair-machine.md",
         "references/artifact-intake.md",
-        "references/landing.md"
+        "references/landing.md",
+        "agents/code-scout.md"
       ],
       "neighbors": [
         "discovery",

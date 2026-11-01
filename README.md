@@ -1662,10 +1662,16 @@ include consumed contracts and references. If no stage maps a change under
 `skills/`, `references/` or `templates/`, selection is explicitly `uncovered`
 (CLI exit 2), and the suite returns `unverified` rather than a zero-item pass.
 Codex answers trailing plain-text questions through the persona before finishing.
-Design alone grants the test product memory directory and its `approved/` archive;
+Design alone grants the test product memory directory, its `approved/` archive,
+and a fresh export run directory;
 its approval reason anchor is advice, without requiring the next stage name.
-Paper exports to the owner's Downloads without a path parameter; the orchestrator
-collects those exports. The scenario does not ask the model to work around that path.
+Paper exports to the owner's Downloads without a path parameter. The guard moves
+only files named by that result into the run directory and rewrites their paths;
+foreign paths and symlinks are refused. Design archives the returned files normally.
+Unit preparation failures persist completed items, fail that unit and leave its
+later chain unverified while independent units continue. Empty selection is
+`not-required` (CLI exit 0), never a pass. Scout definitions select their launching
+stages; missing project manifest paths are refused before prompt generation.
 Transition anchors check advice; option labels identify
 their role. Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs`.
 The shared audit keeps MCP actions bounded to monotest/Paper and requires a real

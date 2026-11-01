@@ -5,10 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import readline from 'node:readline';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadCatalog } from './skills-catalog.mjs';
 import { selectScenarios, saveSelection } from './skills-select.mjs';
-import { runSuite } from './skills-suite.mjs';
+import { runSuite, scenarioPrompt } from './skills-suite.mjs';
 import { checkTrace } from './skills-trace.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -91,12 +91,12 @@ for(const file of ['references/unmapped.md','templates/qa-output.md','skills/qa/
  assert.equal(json(path.join(f.dir,'run/suite-result.json')).status,'unverified');
 });
 
-test('Design alone receives its memory and archive write roots; export collection belongs to orchestrator',async t=>{
+test('continue5 Design receives memory, archive and an existing export run directory',async t=>{
  const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
  const memory=path.join(f.dir,'design-product/memory.md'),archive=path.join(path.dirname(memory),'approved');let design=0,other=0;
  const result=await runSuite(suiteRequest(f,f.select(),{paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:memory}),async request=>{
   if(request.context.entryStage==='design'){
-   design++;assert.deepEqual(request.writableRoots,[path.dirname(memory),archive]);assert(request.scenario.prompt.includes('Downloads'));assert(request.scenario.prompt.includes('собирает оркестратор'));assert(!request.scenario.prompt.includes('перенеси только эти файлы'));
+   design++;const guard=json(request.mcpServers.paper.args[1]);assert.deepEqual(request.writableRoots,[path.dirname(memory),archive,guard.exportRunDir]);assert(fs.statSync(guard.exportRunDir).isDirectory());assert(!request.scenario.prompt.includes('собирает оркестратор'));assert(!request.scenario.prompt.includes('не переноси'));assert(request.scenario.prompt.includes('обычный шаг архивации'));
    assert(request.scenario.expectedWindows.every(w=>w.reason==='Совет'));
   }else{other++;assert(!request.writableRoots?.length);}
   write(request.context.projectFile,JSON.stringify(runProject(request)));return passedStage(request);
@@ -336,7 +336,8 @@ test('suite rejects changed catalog and missing Paper id before the first host',
   const f=fixture(t);write(path.join(f.dir,'skills/discovery/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
   const request={selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'reject',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir};
-  await assert.rejects(()=>runSuite(request,()=>{throw new Error('must not run');}),/fileId/);
+  const missing=await runSuite(request,async r=>{assert.notEqual(r.context.entryStage,'design');write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);});
+  assert.equal(missing.status,'failed');assert(missing.results.some(r=>/fileId/.test(r.result.reason??'')));assert.deepEqual(json(path.join(request.outputDir,'suite-result.json')),missing);
   await assert.rejects(()=>runSuite({...request,workspaceProof:{tool:'mcp__monotest__get_workspace',path:['name'],equals:'Wrong Space'}},()=>{throw new Error('must not run');}),/workspace proof/);
   fs.appendFileSync(path.join(f.catalogDir,'design/approve/rubric.md'),'changed\n');
   await assert.rejects(()=>runSuite(request),/catalog changed/);
@@ -383,6 +384,7 @@ test('stage and seed prompts request get_project.uuid and seed only its availabl
   assert.equal(result.status,'passed');
   await t.test('manifest UUID',()=>{
     for(const call of calls){
+      assert(!/\bundefined\b/.test(call.scenario.prompt));if(call.seed)assert(!/\bundefined\b/.test(call.seed.prompt));
       assert.match(call.scenario.prompt,/get_project\.uuid/,'manifest id comes from the UUID field');
       if(call.seed)assert.match(call.seed.prompt,/get_project\.uuid/,'seed manifest uses the UUID too');
     }
@@ -421,4 +423,60 @@ test('Paper guard rejects missing/foreign file ids and forbidden actions before 
   assert(!(await call('tools/call',{name:'get_guide',arguments:{fileId:'test-file',topic:'paper-mcp-instructions'}})).result.isError);
   child.stdin.end();await new Promise((resolve,reject)=>{child.on('close',code=>code===0?resolve():reject(new Error(`guard exit ${code}`)));child.on('error',reject);});
   const forwarded=fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);assert.equal(forwarded.length,2);assert.equal(forwarded[0].params.arguments.fileId,'test-file');assert.deepEqual(forwarded[1].params.arguments,{topic:'paper-mcp-instructions'});
+});
+
+
+test('continue5 missing manifest paths never become an instruction to write undefined',()=>{
+ const common={scenario:{stage:'idea',brief:'Mono',prompt:'Начни.'},projectName:'monotest-fixture',packRoot:root,productName:'Mono',skillPrefix:'mono'};
+ assert.throws(()=>scenarioPrompt(common),/projectFile/);
+ assert.throws(()=>scenarioPrompt({...common,projectFile:'/tmp/project.json',seed:{steps:['seed']}}),/seedProjectFile/);
+});
+
+test('continue5 zero selection is not-required in saved suite and CLI, with exit zero',async t=>{
+ const f=fixture(t);write(path.join(f.dir,'unrelated.txt'),'outside stages');f.commit();
+ const selection=f.select();assert.equal(selection.status,'not-required');assert.equal(selection.expectedItems.length,0);
+ const request=suiteRequest(f,selection);let calls=0;
+ const result=await runSuite(request,()=>{calls++;throw Error('no host');});
+ assert.equal(calls,0);assert.equal(result.status,'not-required');assert.deepEqual(json(path.join(request.outputDir,'suite-result.json')),result);
+ const requestFile=path.join(f.dir,'cli-request.json');write(requestFile,JSON.stringify({...request,outputDir:path.join(f.dir,'cli-output')}));
+ const stdout=execFileSync(process.execPath,[path.join(root,'scripts/skills-suite.mjs'),requestFile],{encoding:'utf8'});
+ assert.equal(JSON.parse(stdout).status,'not-required');
+});
+
+for(const [file,stages] of [['agents/linear-scout.md',['idea','research','discovery','tech-evaluation']],['agents/code-scout.md',['idea','research','discovery','tech-evaluation','handoff']],['agents/web-scout.md',['idea','research','discovery','tech-evaluation']]])test(`continue5 ${file} selects its launching stages`,t=>{
+ const f=fixture(t);write(path.join(f.dir,file),'changed scout');f.commit();
+ assert.deepEqual(f.select().affected,stages);
+});
+
+test('continue5 Design preparation failures keep completed items and continue other units',async t=>{
+ const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed');f.commit();
+ const blocker=path.join(f.dir,'memory-blocker');write(blocker,'not a directory');
+ const request=suiteRequest(f,f.select(),{paper:{fileId:'fixture',command:'paper',args:[]},designMemoryFile:path.join(blocker,'memory.md')});
+ const calls=[];const result=await runSuite(request,async r=>{calls.push(r);write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);});
+ assert.equal(result.status,'failed');assert.deepEqual(json(path.join(request.outputDir,'suite-result.json')),result);
+ assert(result.items.some(i=>i.scenario==='discovery/approve'&&i.status==='passed'));
+ assert(result.items.some(i=>i.scenario==='design/approve'&&i.status==='failed'));
+ assert(result.items.some(i=>i.unit==='design-approve'&&i.scenario==='handoff/approve'&&i.status==='unverified'));
+ assert(calls.some(r=>r.context.entryStage==='tech-evaluation'),'other independent units still run');
+});
+
+for(const mode of ['inside','inside-text','inside-lines','inside-uri','outside','symlink','mixed'])test(`continue5 Paper export ${mode} through fake MCP`,async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-export-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const exportDir=path.join(dir,'Downloads'),exportRunDir=path.join(dir,'run');fs.mkdirSync(exportDir);fs.mkdirSync(exportRunDir);
+ const good=path.join(exportDir,'art #board.png'),foreign=path.join(dir,'foreign.png'),sentinel=path.join(exportDir,'untouched.png');
+ write(good,'PNG');write(foreign,'FOREIGN');write(sentinel,'KEEP');
+ const link=path.join(exportDir,'link.png');fs.symlinkSync(foreign,link);
+ const files=mode.startsWith('inside')?[mode==='inside-uri'?pathToFileURL(good).href:good]:mode==='outside'?[foreign]:mode==='symlink'?[link]:[good,foreign];
+ const fake=path.join(dir,'fake.mjs');write(fake,`import readline from 'node:readline';readline.createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);const result=m.method==='tools/list'?{tools:[{name:'export',inputSchema:{properties:{fileId:{type:'string'}}}}]}:{structuredContent:{files:${JSON.stringify(files)}},content:[{type:'text',text:${JSON.stringify(mode==='inside-text'?'Exported: `'+good+'`':mode==='inside-lines'?good+'\n'+good:JSON.stringify({files}))}}]};console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));});`);
+ const config=path.join(dir,'guard.json');write(config,JSON.stringify({fileId:'test',command:process.execPath,args:[fake],log:path.join(dir,'guard.log'),exportDir,exportRunDir}));
+ const child=spawn(process.execPath,[path.join(source,'paper-guard.mjs'),config],{stdio:['pipe','pipe','pipe']});t.after(()=>child.kill('SIGTERM'));
+ const closed=new Promise(resolve=>child.on('close',resolve));const lines=readline.createInterface({input:child.stdout})[Symbol.asyncIterator]();
+ child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})+'\n');await lines.next();
+ child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'export',arguments:{fileId:'test'}}})+'\n');
+ const line=await lines.next();assert(!line.done,'guard must return an export result or explicit error');const result=JSON.parse(line.value).result;
+ if(mode.startsWith('inside')){
+  assert(!result.isError);const moved=result.structuredContent.files[0],file=mode==='inside-uri'?fileURLToPath(moved):moved;assert(file.startsWith(exportRunDir+path.sep));assert.equal(fs.readFileSync(file,'utf8'),'PNG');assert(!fs.existsSync(good));if(mode==='inside-text')assert.equal(result.content[0].text,'Exported: `'+moved+'`');else if(mode==='inside-lines')assert.equal(result.content[0].text,moved+'\n'+moved);else assert.equal(JSON.parse(result.content[0].text).files[0],moved);
+ }else{assert(result.isError,'unexpected export path must be refused');assert(fs.existsSync(good),'validate the whole result before any move');assert.deepEqual(fs.readdirSync(exportRunDir),[]);}
+ assert.equal(fs.readFileSync(foreign,'utf8'),'FOREIGN');assert.equal(fs.readFileSync(sentinel,'utf8'),'KEEP');
+ child.stdin.end();await closed;
 });
