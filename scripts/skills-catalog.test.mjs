@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import readline from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadCatalog } from './skills-catalog.mjs';
@@ -91,13 +91,31 @@ for(const file of ['references/unmapped.md','templates/qa-output.md','skills/qa/
  assert.equal(json(path.join(f.dir,'run/suite-result.json')).status,'unverified');
 });
 
-test('continue5 Design receives memory, archive and an existing export run directory',async t=>{
+test('Design memory seed passes real design gate with repository prefix and archived PNG',async t=>{
  const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
- const memory=path.join(f.dir,'design-product/memory.md'),archive=path.join(path.dirname(memory),'approved');let design=0,other=0;
+ const home=path.join(f.dir,'design-product'),memory=path.join(home,'demo-product/memory.md'),archive=path.join(path.dirname(memory),'approved');let design=0,other=0;
+ const checker=fs.mkdtempSync(path.join(os.tmpdir(),'mono-suite-design-check-'));t.after(()=>fs.rmSync(checker,{recursive:true,force:true}));
+ const dump=path.join(checker,'dump'),script=path.join(checker,'idea-gate.mjs');
+ fs.cpSync(path.join(root,'scripts/fixtures/design-gate/valid'),dump,{recursive:true});
+ write(script,fs.readFileSync(path.join(root,'scripts/idea-gate.mjs'),'utf8').replace("const DESIGN_HOME = path.join(os.homedir(), '.mono-agent-workflow', 'design');",`const DESIGN_HOME = ${JSON.stringify(home)};`));
+ fs.copyFileSync(path.join(root,'scripts/runtime.mjs'),path.join(checker,'runtime.mjs'));
+ // approvalMain resolves the repository from the config's parent .agents directory.
+ const repoConfig=path.join(f.dir,'.agents/mono-workflow.config.json');write(repoConfig,JSON.stringify({projectName:'Demo Product'}));
+ const checkMemory=(firstLine,expected)=>{
+  write(memory,firstLine+'\n');
+  const checked=spawnSync(process.execPath,[script,'design','--mode','fresh','--dump',dump,'--config',repoConfig],{encoding:'utf8'});
+  assert.equal(JSON.parse(checked.stdout.trim().split('\n')[1]).code,expected,checked.stdout+checked.stderr);
+  assert.equal(checked.status,expected==='pass'?0:1,checked.stdout+checked.stderr);
+ };
  const result=await runSuite(suiteRequest(f,f.select(),{paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:memory}),async request=>{
   if(request.context.entryStage==='design'){
    design++;const guard=json(request.mcpServers.paper.args[1]);assert.deepEqual(request.writableRoots,[path.dirname(memory),archive,guard.exportRunDir]);assert(fs.statSync(guard.exportRunDir).isDirectory());assert(!request.scenario.prompt.includes('собирает оркестратор'));assert(!request.scenario.prompt.includes('не переноси'));assert(request.scenario.prompt.includes('обычный шаг архивации'));
    assert(request.scenario.expectedWindows.every(w=>w.reason==='Совет'));
+   fs.cpSync(path.join(dump,'approved'),path.join(archive,'11111111-1111-1111-1111-111111111111'),{recursive:true});
+   checkMemory(request.cwd,'stale-images');
+   const seeded=JSON.parse(request.scenario.prompt.match(/Посей память: (.+?)\. Не меняй owner-taste/)[1]);
+   checkMemory(seeded.firstLine,'pass');
+   checkMemory(json(path.join(f.catalogDir,'seeds/prd-design.json')).designMemory.firstLine.replace('<absolute-test-product-cwd>',request.cwd),'pass');
   }else{other++;assert(!request.writableRoots?.length);}
   write(request.context.projectFile,JSON.stringify(runProject(request)));return passedStage(request);
  });

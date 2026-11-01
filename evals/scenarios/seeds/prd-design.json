@@ -23,7 +23,7 @@
   ],
   "prdApprovalTemplate": "```text\nmono-prd: approved project=<fresh-project-id> document=<read-back-prd-id> updatedAt=<read-back-updatedAt> design=needed next=design by=owner\n```\nСинтетический посев входа тестового сценария, не утверждение живого владельца.",
   "designMemory": {
-    "firstLine": "<absolute-test-product-cwd>",
+    "firstLine": "Репозиторий: <absolute-test-product-cwd>",
     "body": "# Память тестового продукта\nЭкран «как на проде»: тестовый Paper fileId из параметра запроса, страница «Как на проде». Использовать только его. Таблица тестовых прогонов приложения записи соответствует cli/runs.mjs и данным cli/runs.json. Колонка «Источник» из source обычным текстом, отсутствие — прочерк. Это уже согласованные синтетические опоры стенда; новых правил вкуса нет.",
     "instructions": "Записать только в designMemoryFile параметра запроса для отдельного тестового продукта; перед ним проверить productName из конфига. Не трогать owner-taste.md и память других продуктов."
   },

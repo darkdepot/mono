@@ -113,7 +113,7 @@ export async function runSuite(request, execute = runScenario) {
         if (!target) throw new Error('selected unit target missing');
         const brief=target.brief+` Идентификатор тестового проекта этой правки: ${projectName}. Название колонки всегда «Источник», имя прогона в него не добавляй.`;
         const prompt=scenarioPrompt({scenario:{...scenario,brief},seed,seedProjectFile,projectName,projectFile,project,next,packRoot:request.packRoot,paper:scenario.stage==='design'?request.paper:null,designMemoryFile:request.designMemoryFile,
-          designMemory:designMemory ? {...designMemory,firstLine:request.cwd,fileId:request.paper.fileId} : null,
+          designMemory:designMemory ? {...designMemory,firstLine:`Репозиторий: ${request.cwd}`,fileId:request.paper.fileId} : null,
           productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:catalog.index.routeHints?.[next]});
         const runRequest={host,cwd:request.cwd,packRoot:request.packRoot,outputDir,authFile:request.authFile,
           ...(scenario.stage==='design'?{writableRoots:[path.dirname(request.designMemoryFile),path.join(path.dirname(request.designMemoryFile),'approved'),exportRunDir]}:{}),
