@@ -18,9 +18,9 @@
       "expectedWindows": [
         {
           "id": "design-approval",
-          "decision": "Источник",
-          "advice": "Источник",
-          "reason": "таблиц",
+          "decision": "Утвержд",
+          "advice": "Совет",
+          "reason": "Handoff",
           "summary": [
             "Источник"
           ]
@@ -38,9 +38,9 @@
       "expectedWindows": [
         {
           "id": "design-approval",
-          "decision": "Источник",
-          "advice": "Источник",
-          "reason": "таблиц",
+          "decision": "Утвержд",
+          "advice": "Совет",
+          "reason": "Handoff",
           "summary": [
             "Источник"
           ]

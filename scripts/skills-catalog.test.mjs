@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { loadCatalog } from './skills-catalog.mjs';
 import { selectScenarios, saveSelection } from './skills-select.mjs';
 import { runSuite } from './skills-suite.mjs';
+import { checkTrace } from './skills-trace.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const source=path.join(root,'evals/scenarios');
@@ -54,6 +55,39 @@ test('Mono catalog has exactly six stage contracts, all host windows and no stor
         assert(block,'research seed must carry its machine block');
         const record=JSON.parse(block);assert.equal(record.outcome,'not-required');assert.equal(typeof record.interface,'boolean');
       }
+    }
+  }
+});
+
+test('catalog window anchors accept live wording in both hosts without requiring topic prose',t=>{
+  const catalog=loadCatalog(path.join(source,'index.json'));
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-window-wording-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const titles={
+    idea:[
+      'Утверждаем самостоятельную идею с колонкой источника? Советую перейти в Research: нужно проверить потребность.',
+      'Утверждаем колонку источника? Советую утвердить и начать Research: описание полное, а открыт только вопрос спроса.',
+      'Утверждаем учёт расходников по мастерам без остатков и закупок? Советую утвердить и начать Research: нужно выяснить потребность.'
+    ],
+    research:['Начинаем Discovery для колонки источника? Советую перейти: нужно выбрать проверку результата.'],
+    discovery:['Утверждаем колонку без настройки? Советую начать Design: нужно показать её в списке.'],
+    design:['Утверждаем макет колонки? Советую утвердить и передать в Handoff: рамка уже согласована.'],
+    'tech-evaluation':['Утверждаем страницу решения? Советую начать Handoff: способ проверен.'],
+    handoff:['Начинаем пакет? Советую передать оркестратору: зависимости проверены.']
+  };
+  for(const scenario of catalog.scenarios.values())for(const host of ['claude','codex'])for(const expected of scenario.hosts[host].expectedWindows){
+    if(expected.id.endsWith('-followup'))continue; // native optionless question, not an approval card
+    for(const title of titles[scenario.stage]){
+      const labels=['Продолжить (Recommended)','Ещё обсудить'];
+      const consequences=['Запишем выбор / рамку уже не меняем','Уточним рамку / переход ждёт'];
+      const summary=expected.summary.join('\n');
+      const rows=host==='claude'
+        ? [{type:'assistant',message:{id:'wording',content:[{type:'text',text:summary},{type:'tool_use',id:'window',name:'AskUserQuestion',input:{questions:[{header:'Решение',question:title,options:labels.map((label,i)=>({label,description:consequences[i]}))}]}}]}}]
+        : [{type:'response_item',payload:{type:'function_call',call_id:'window',name:'request_user_input_async',arguments:JSON.stringify({questions:[{title:title+'\n'+labels.map((label,i)=>`${label}: ${consequences[i]}`).join('\n'),options:labels}]})}},
+          {type:'response_item',payload:{type:'function_call_output',call_id:'window',output:'{"accepted":true}'}},
+          {type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:summary}]}}];
+      const trace=path.join(dir,'trace.jsonl');fs.writeFileSync(trace,rows.map(r=>JSON.stringify(r)).join('\n')+'\n');
+      const result=checkTrace({host,trace,expectedWindows:[expected],excerpt:true});
+      assert.equal(result.status,'passed',`${scenario.stage}/${scenario.id}/${host}/${expected.id}: ${JSON.stringify(result)}`);
     }
   }
 });
@@ -104,16 +138,23 @@ test('CLI writes an exclusive expected list and accepts an alternate catalog loc
 });
 
 test('suite persists expectations before calls and shares one read-back project through a short chain in both hosts',async t=>{
-  const f=fixture(t);write(path.join(f.dir,'skills/discovery/SKILL.md'),'changed\n');f.commit();
+  const f=fixture(t);write(path.join(f.dir,'skills/discovery/SKILL.md'),'changed\n');
+  write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
   const selection=f.select(), selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);
-  const outputDir=path.join(f.dir,'run'), calls=[];
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'fixture',outputDir,cwd:f.dir,packRoot:root,
+  const outputDir=path.join(f.dir,'run'), cwd=path.join(f.dir,'workspace'), calls=[];fs.mkdirSync(cwd);
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'fixture',outputDir,cwd,packRoot:root,
     mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'test-file',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'test-memory.md')},async request=>{
     assert.deepEqual(json(path.join(outputDir,'expected-items.json')),selection.expectedItems);
     assert.equal(request.idleMs,20000);assert.equal(request.timeoutMs,1800000);assert(request.maxTurns>request.scenario.windows.length);
     assert.equal(request.workspaceProof.equals,'Mono Test');assert(request.scenario.prompt.includes('не исполнитель-воркер'));
+    const next=request.scenario.prompt.match(/Маршрут этого касания: next=([a-z-]+)/)[1];
+    const names={research:'Research',discovery:'Discovery',design:'Design','tech-evaluation':'Tech Evaluation',handoff:'Handoff'};
+    if(names[next])for(const window of request.scenario.expectedWindows.filter(w=>!w.id.endsWith('-followup')))assert.equal(window.reason,names[next],'anchor follows the actual chain route');
+    const relative=path.relative(cwd,request.context.projectFile);
+    assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative),'model manifest must be writable under cwd, independent of outputDir');
+    assert(!fs.existsSync(request.context.projectFile),'each stage must write its own manifest');
     if(request.context.project)assert.equal(request.context.project.name,request.context.projectName);
-    else write(request.context.projectFile,JSON.stringify({id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));
+    write(request.context.projectFile,JSON.stringify(request.context.project ?? {id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));
     if(request.mcpServers.paper){
       const guard=json(request.mcpServers.paper.args[1]);assert.equal(guard.fileId,'test-file');
       assert(request.scenario.prompt.includes('test-file'));assert(request.scenario.prompt.includes('как на проде'));
@@ -121,10 +162,23 @@ test('suite persists expectations before calls and shares one read-back project 
     calls.push(request);return {status:'passed'};
   });
   assert.equal(result.status,'passed');assert.equal(calls.length,selection.expectedItems.length);
+  for(const call of calls)assert.deepEqual(json(call.outputDir+'-project.json'),json(call.context.projectFile),'copy the model-written manifest into results');
   for(const host of ['claude','codex']){
     const chain=calls.filter(c=>c.host===host&&c.context.projectName.endsWith('discovery-approve'));
     assert.equal(chain.length,3);assert.equal(chain[0].context.project,null);assert.equal(chain[1].context.project.id,chain[2].context.project.id);
   }
+});
+
+test('a stage that omits its manifest cannot reuse the previous stage read-back',async t=>{
+  const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
+  const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
+  let calls=0;
+  await assert.rejects(()=>runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'missing-manifest',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+    calls++;
+    if(calls===1)write(request.context.projectFile,JSON.stringify({id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));
+    return {status:'passed'};
+  }),/ENOENT/);
+  assert.equal(calls,2,'stop before another stage or host can run');
 });
 
 test('a failed chain stage leaves all later expected items unverified, not dropped',async t=>{

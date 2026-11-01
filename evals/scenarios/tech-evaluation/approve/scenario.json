@@ -18,8 +18,8 @@
       "expectedWindows": [
         {
           "id": "tech-evaluation-approval",
-          "decision": "Handoff",
-          "advice": "Handoff",
+          "decision": "Утвержд",
+          "advice": "Совет",
           "reason": "Handoff",
           "summary": [
             "Дальше"
@@ -38,8 +38,8 @@
       "expectedWindows": [
         {
           "id": "tech-evaluation-approval",
-          "decision": "Handoff",
-          "advice": "Handoff",
+          "decision": "Утвержд",
+          "advice": "Совет",
           "reason": "Handoff",
           "summary": [
             "Дальше"

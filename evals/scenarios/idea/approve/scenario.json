@@ -18,9 +18,9 @@
       "expectedWindows": [
         {
           "id": "idea-approval",
-          "decision": "описание",
-          "advice": "Research",
-          "reason": "провер",
+          "decision": "Утвержд",
+          "advice": "Совет",
+          "reason": "Research",
           "summary": [
             "Что",
             "Зачем",
@@ -40,9 +40,9 @@
       "expectedWindows": [
         {
           "id": "idea-approval",
-          "decision": "описание",
-          "advice": "Research",
-          "reason": "провер",
+          "decision": "Утвержд",
+          "advice": "Совет",
+          "reason": "Research",
           "summary": [
             "Что",
             "Зачем",

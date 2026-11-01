@@ -18,8 +18,8 @@
       "expectedWindows": [
         {
           "id": "research-approval",
-          "decision": "Discovery",
-          "advice": "Discovery",
+          "decision": "Начин",
+          "advice": "Совет",
           "reason": "Discovery",
           "summary": [
             "Дальше"
@@ -38,8 +38,8 @@
       "expectedWindows": [
         {
           "id": "research-approval",
-          "decision": "Discovery",
-          "advice": "Discovery",
+          "decision": "Начин",
+          "advice": "Совет",
           "reason": "Discovery",
           "summary": [
             "Дальше"

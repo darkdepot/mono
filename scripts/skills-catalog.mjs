@@ -26,7 +26,7 @@ export function loadCatalog(indexFile) {
   read(catalogFile(root,index.paperGuard));
   for (const stage of index.stages) {
     if (stage.chainSeed) JSON.parse(read(catalogFile(root,stage.chainSeed)));
-    if (!/^[a-z][a-z-]*$/.test(stage.id) || !Array.isArray(stage.files) || !stage.files.every(text) || !unique(stage.files) ||
+    if (!/^[a-z][a-z-]*$/.test(stage.id) || !text(stage.name) || !Array.isArray(stage.files) || !stage.files.every(text) || !unique(stage.files) ||
         !index.sharedFiles.every(f => stage.files.includes(f)) || !Array.isArray(stage.neighbors) || !unique(stage.neighbors) ||
         stage.neighbors.some(id => id === stage.id || !stages.has(id)) || !Array.isArray(stage.scenarios) ||
         !Number.isInteger(stage.minimum) || stage.minimum < 1 || stage.scenarios.length < stage.minimum || !unique(stage.scenarios)) fail(`invalid stage ${stage.id}`);
