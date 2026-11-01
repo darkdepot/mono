@@ -1645,7 +1645,11 @@ saved selection and the explicit index path to `node scripts/skills-suite.mjs
 removed scenarios are refused. Main paths use short chains in one fresh monotest
 project, other neighbors use their own seeds. Design requires a request-supplied
 Paper file id and the neutral pre-execution guard. These data files are not part
-of normal required reading. Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs`.
+of normal required reading. Project manifests use `get_project.uuid` as `id`;
+invalid or missing manifests fail that stage, leave later chain stages unverified,
+and preserve the suite result while other units continue. Seed prompts request
+only their recipe's data. Transition anchors check advice; option labels identify
+their role. Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs`.
 The shared audit keeps MCP actions bounded to monotest/Paper and requires a real
 workspace read before writes. Direct Codex MCP calls retain namespace and name. MCP actions in every test-home
 rollout, including child threads and native McpToolCall records, share this boundary;

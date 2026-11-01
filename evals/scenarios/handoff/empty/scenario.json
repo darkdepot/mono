@@ -17,7 +17,7 @@
       "expectedWindows": [
         {
           "id": "handoff-approval",
-          "decision": "Начин",
+          "decision": "Совет",
           "advice": "Совет",
           "reason": "Совет",
           "summary": [],
@@ -39,7 +39,7 @@
       "expectedWindows": [
         {
           "id": "handoff-approval",
-          "decision": "Начин",
+          "decision": "Совет",
           "advice": "Совет",
           "reason": "Совет",
           "summary": [],

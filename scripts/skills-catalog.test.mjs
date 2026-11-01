@@ -92,11 +92,11 @@ test('catalog window anchors accept live wording in both hosts without requiring
       'Утверждаем колонку источника? Советую утвердить и начать Research: описание полное, а открыт только вопрос спроса.',
       'Утверждаем учёт расходников по мастерам без остатков и закупок? Советую утвердить и начать Research: нужно выяснить потребность.'
     ],
-    research:['Начинаем Discovery для колонки источника? Советую перейти: нужно выбрать проверку результата.'],
+    research:['Начинаем Discovery для колонки источника? Советую перейти: нужно выбрать проверку результата.', 'Продолжаем разбор колонки? Советую перейти: рамка уже ясна.'],
     discovery:['Утверждаем колонку без настройки? Советую начать Design: нужно показать её в списке.'],
     design:['Утверждаем макет колонки? Советую утвердить и передать в Handoff: рамка уже согласована.'],
     'tech-evaluation':['Утверждаем страницу решения? Советую начать Handoff: способ проверен.'],
-    handoff:['Начинаем пакет? Советую передать оркестратору: зависимости проверены.']
+    handoff:['Начинаем пакет? Советую передать оркестратору: зависимости проверены.', 'Добавляем «Источник» после имени прогона, с прочерком для пустых значений? Советую начать работу: одна задача готова и проверена.']
   };
   for(const scenario of catalog.scenarios.values())for(const host of ['claude','codex'])for(const expected of scenario.hosts[host].expectedWindows){
     if(expected.id.endsWith('-followup'))continue; // native optionless question, not an approval card
@@ -173,7 +173,10 @@ test('suite persists expectations before calls and shares one read-back project 
     assert.equal(request.workspaceProof.equals,'Mono Test');assert(request.scenario.prompt.includes('не исполнитель-воркер'));
     const next=request.context.followingStage;
     const names={research:'Research',discovery:'Discovery',design:'Design','tech-evaluation':'Tech Evaluation',handoff:'Handoff'};
-    if(names[next])for(const window of request.scenario.expectedWindows.filter(w=>!w.id.endsWith('-followup')))assert.equal(window.reason,names[next],'anchor follows the actual chain route');
+    for(const window of request.scenario.expectedWindows){
+      if(window.role==='transition')for(const field of ['decision','advice','reason'])assert.equal(window[field],'Совет','transition role comes from labels, not title wording');
+      else if(names[next])assert.equal(window.reason,names[next],'approval anchor follows the actual chain route');
+    }
     const relative=path.relative(cwd,request.context.projectFile);
     assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative),'model manifest must be writable under cwd, independent of outputDir');
     assert(!fs.existsSync(request.context.projectFile),'each stage must write its own manifest');
@@ -197,12 +200,16 @@ test('a stage that omits its manifest cannot reuse the previous stage read-back'
   const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
   let calls=0;
-  await assert.rejects(()=>runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'missing-manifest',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+  const outputDir=path.join(f.dir,'run');
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'missing-manifest',outputDir,cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
     calls++;
-    if(calls===1)write(request.context.projectFile,JSON.stringify({id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));
+    if(calls!==2)write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));
     return {status:'passed'};
-  }),/ENOENT/);
-  assert.equal(calls,2,'stop before another stage or host can run');
+  });
+  assert.equal(result.status,'failed');
+  const failed=result.results.find(r=>r.status==='failed');assert.equal(failed.scenario,'research/approve');assert.match(failed.result.reason,/ENOENT/);
+  assert.equal(calls,f.select().expectedItems.length,'other hosts and units continue');
+  assert.deepEqual(json(path.join(outputDir,'suite-result.json')),result);
 });
 
 test('a failed chain stage leaves all later expected items unverified, not dropped',async t=>{
@@ -225,11 +232,53 @@ test('suite rejects changed catalog and missing Paper id before the first host',
 test('a replaced project manifest cannot send the next stage to another project',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
-  let called=0;
-  await assert.rejects(()=>runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'project',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
-    called++;write(request.context.projectFile,JSON.stringify({id:'00000000-0000-4000-8000-000000000001',name:'foreign-project',url:'https://linear.app/monotest/project/foreign'}));return {status:'passed'};
-  }),/project read-back manifest/);
-  assert.equal(called,1);
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'project',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+    write(request.context.projectFile,JSON.stringify({id:'00000000-0000-4000-8000-000000000001',name:'foreign-project',url:'https://linear.app/monotest/project/foreign'}));return {status:'passed'};
+  });
+  assert.equal(result.status,'failed');assert(result.results.every(r=>r.result.reason.includes('invalid run project read-back manifest')));
+  assert(result.items.filter(i=>i.unit==='idea-approve'&&i.scenario==='research/approve').every(i=>i.status==='unverified'),'never enter next stage on a foreign project');
+});
+
+test('bad manifests and host errors fail only their chain and always persist the suite result',async t=>{
+  const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
+  const selection=f.select(),selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);
+  const failures=[['short-id','P-MON-40'],['malformed',null],['replaced-id','00000000-0000-4000-8000-000000000002'],['host-error',null]];
+  for(const [mode,id] of failures){
+    const outputDir=path.join(f.dir,mode),calls=[];
+    const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:mode,outputDir,cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+      calls.push(request);
+      const project=request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'};
+      const bad=request.host==='claude'&&request.context.projectName.endsWith('idea-approve')&&(mode!=='replaced-id'||request.context.project);
+      if(bad&&mode==='host-error')throw new Error('fixture host crashed');
+      write(request.context.projectFile,bad&&mode==='malformed'?'{':JSON.stringify(bad?{...project,id}:project));return {status:'passed'};
+    });
+    assert.equal(result.status,'failed',mode);assert.deepEqual(json(path.join(outputDir,'suite-result.json')),result);
+    const failed=result.results.filter(r=>r.status==='failed');assert.equal(failed.length,1,mode);
+    assert.match(failed[0].result.reason,mode==='short-id'?/invalid run project read-back manifest/:mode==='replaced-id'?/chain changed its run project/:mode==='host-error'?/fixture host crashed/:/JSON|property/,mode);
+    if(mode!=='replaced-id')assert(result.items.some(i=>i.unit==='idea-approve'&&i.host==='claude'&&i.scenario==='research/approve'&&i.status==='unverified'),mode);
+    assert(result.items.filter(i=>i.host==='codex'||i.unit!=='idea-approve').every(i=>i.status==='passed'),mode);
+    assert.equal(calls.length,selection.expectedItems.length-(mode==='replaced-id'?0:1),mode);
+  }
+});
+
+test('stage and seed prompts request get_project.uuid and seed only its available recipe',async t=>{
+  const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
+  const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());const calls=[];
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-data',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')},async request=>{
+    calls.push(request);write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));return {status:'passed'};
+  });
+  assert.equal(result.status,'passed');
+  await t.test('manifest UUID',()=>{
+    for(const call of calls){
+      assert.match(call.scenario.prompt,/get_project\.uuid/,'manifest id comes from the UUID field');
+      if(call.seed)assert.match(call.seed.prompt,/get_project\.uuid/,'seed manifest uses the UUID too');
+    }
+  });
+  await t.test('seed without PRD',()=>{
+    for(const call of calls)if(call.seed&&!call.seed.expectedStage)assert(!/prdApprovalTemplate|PRD|prd\.json/.test(call.seed.prompt),'a seed without PRD does not request one');
+  });
+  assert(calls.some(c=>c.context.projectName.endsWith('tech-evaluation-approve')&&c.context.entryStage==='discovery'&&c.seed&&!c.seed.expectedStage),'exercise research-only seed before Discovery in Tech Evaluation chain');
+  assert(calls.some(c=>c.seed?.expectedStage&&c.seed.prompt.includes('prdApprovalTemplate')),'PRD seeds retain verbatim route instructions');
 });
 
 test('Paper guard rejects missing/foreign file ids and forbidden actions before MCP forwarding',async t=>{

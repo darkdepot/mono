@@ -18,9 +18,9 @@
       "expectedWindows": [
         {
           "id": "research-approval",
-          "decision": "Начин",
+          "decision": "Совет",
           "advice": "Совет",
-          "reason": "Discovery",
+          "reason": "Совет",
           "summary": [],
           "role": "transition"
         }
@@ -41,9 +41,9 @@
       "expectedWindows": [
         {
           "id": "research-approval",
-          "decision": "Начин",
+          "decision": "Совет",
           "advice": "Совет",
-          "reason": "Discovery",
+          "reason": "Совет",
           "summary": [],
           "role": "transition"
         }

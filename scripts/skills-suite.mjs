@@ -19,7 +19,7 @@ export function scenarioPrompt({scenario,seed,seedProjectFile,projectName,projec
     ? `Проект уже существует: ${JSON.stringify(project)}. Перед записью прочитай его через monotest; id, имя и пространство обязаны совпасть. Используй только этот проект, новый не создавай.`
     : seed ? `Посев уже выполнен отдельным ходом. Прочитай указатель ${seedProjectFile}, затем свежий get_project этого проекта monotest. Используй только его; новый проект не создавай. Не переписывай маршрут посева из-за поля followingStage.`
       : `Idea не имеет посева. Новую идею и проект назови ${projectName}; проект создаёт сам этап только после утверждения. Похожие чужие проекты не используй.`;
-  const navigation=`В этом этапе после создания или свежего обратного чтения проекта сохрани JSON {id,name,url} ровно в ${projectFile}; id из get_project, имя ${projectName}. Файл находится внутри cwd и должен быть записан этим этапом. Это указатель для соседнего этапа, не доказательство проверки записей. Версии документов и комментариев всегда бери из свежего чтения, не из рецепта. Все команды пака из ${packRoot}.`;
+  const navigation=`В этом этапе после создания или свежего обратного чтения проекта сохрани JSON {id,name,url} ровно в ${projectFile}; id — поле get_project.uuid (полный UUID, не короткий identifier вроде P-MON-40), имя ${projectName}. Файл находится внутри cwd и должен быть записан этим этапом. Это указатель для соседнего этапа, не доказательство проверки записей. Версии документов и комментариев всегда бери из свежего чтения, не из рецепта. Все команды пака из ${packRoot}.`;
   const design=paper ? `Paper только через предоставленный guard; во всех вызовах fileId=${paper.fileId}. Используй существующую страницу «Как на проде» только как образец; новую версию делай на странице тестовой задачи. Продукт и конфиг уже в cwd; память тестового продукта в ${designMemoryFile}. Посей память: ${JSON.stringify(designMemory)}. Не меняй owner-taste или память другого продукта. PNG экспортируются по filePath ответа: перенеси только эти файлы в новую временную папку прогона, затем утверждённые по правилам этапа. Не используй активный файл владельца.` : '';
   return [owner,entry,navigation,design,`Бриф владельца: ${scenario.brief}`,
     `Этап под проверкой: ${scenario.stage}. Следующий этап после завершения (followingStage): ${next ?? 'none'}. Это выход текущего этапа, не маршрут его посева. ${routeHint ?? ''}`,
@@ -32,8 +32,8 @@ function seedPrompt({seed,projectName,projectFile,dumpDir,packRoot,brief}){
   return [`Только посев входа в monotest, без окон и вызова этапов. Создай один свежий проект ${projectName}. Не используй похожие проекты. Все записи только monotest после подтверждения пространства чтением.`,
     `Бриф изменения существующего тестового продукта: ${brief}`,
     `Рецепт посева:\n${JSON.stringify(seed,null,2)}`,
-    'prdApprovalTemplate публикуй дословно, заменяя только placeholders свежими id/версиями из обратного чтения. Его next — вход этапа под проверкой; менять его нельзя.',
-    `После посева прочитай проект и сохрани {id,name,url} в ${projectFile}; name=${projectName}.`,
+    ...(seed.prdApprovalTemplate?['prdApprovalTemplate публикуй дословно, заменяя только placeholders свежими id/версиями из обратного чтения. Его next — вход этапа под проверкой; менять его нельзя.']:[]),
+    `После посева прочитай проект и сохрани {id,name,url} в ${projectFile}; id — поле get_project.uuid (полный UUID, не короткий identifier вроде P-MON-40), name=${projectName}.`,
     ...(seed.entryStage?[`Сохрани свежие сырые ответы get_project и всех страниц list_comments в ${dumpDir}: project.json, comments-N.json и comments-N.request.json (первая {}, следующие {cursor}). Также get_document PRD в prd.json. Ответы и курсоры не сочиняй. Драйвер сам выполнит node ${packRoot}/scripts/idea-gate.mjs route --mode fresh --dump ${dumpDir}. Ожидаемый вход: ${seed.entryStage}.`]:[]),
     'Закончи ход после обратного чтения. Этап ещё не начинай: драйвер сначала проверяет посев.'
   ].join('\n\n');
@@ -67,7 +67,7 @@ export async function runSuite(request, execute = runScenario) {
       const seedPath=position===0 && unit.seed ? unit.seed : scenario.seed;
       const seed=!project && seedPath ? JSON.parse(JSON.stringify(json(catalogFile(catalog.root,seedPath))).replaceAll('<projectName>',projectName)) : null;
       const nextKey=unit.scenarios[position+1], next=nextKey ? catalog.scenarios.get(nextKey)?.stage : scenario.next;
-      const expectedWindows=flow.expectedWindows.map(window=>next && !window.id.endsWith('-followup')
+      const expectedWindows=flow.expectedWindows.map(window=>next && window.role==='approval'
         ? {...window,reason:catalog.stages.get(next).name} : window);
       const servers={...request.mcpServers};
       if (scenario.stage === 'design') {
@@ -88,15 +88,20 @@ export async function runSuite(request, execute = runScenario) {
         ...(seed?{seed:{prompt:seedPrompt({seed,projectName,projectFile:seedProjectFile,dumpDir,packRoot:request.packRoot,brief}),projectName,projectFile:seedProjectFile,dumpDir,expectedStage:seed.entryStage??null,configFile:path.join(request.cwd,'.agents/mono-workflow.config.json')}}:{}),
         context:{projectName,projectFile,project,entryStage:scenario.stage,followingStage:next},scenario:{prompt,brief,allowedTools:['*'],stopAfterExpectedWindows:true,...flow,expectedWindows}};
       fs.writeFileSync(outputDir+'-request.json',JSON.stringify(runRequest,null,2)+'\n',{flag:'wx'});
-      const result=await execute(runRequest);
+      let result;
+      try {
+        result=await execute(runRequest);
+        if (result.status === 'passed') {
+          const observed=projectManifest(projectFile,projectName);
+          if (project && JSON.stringify(observed) !== JSON.stringify(project)) throw new Error('chain changed its run project');
+          fs.copyFileSync(projectFile,outputDir+'-project.json',fs.constants.COPYFILE_EXCL);
+          project=observed;
+        }
+      } catch(error) {
+        result={...result,status:'failed',reason:error.message};
+      }
       const item={unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
       if (result.status !== 'passed') break; // later chain members remain explicitly unverified
-      if (nextKey || project || seed) {
-        const observed=projectManifest(projectFile,projectName);
-        if (project && JSON.stringify(observed) !== JSON.stringify(project)) throw new Error('chain changed its run project');
-        fs.copyFileSync(projectFile,outputDir+'-project.json',fs.constants.COPYFILE_EXCL);
-        project=observed;
-      }
     }
   }
   const items=selection.expectedItems.map(expected=>{
