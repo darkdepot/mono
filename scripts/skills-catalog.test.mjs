@@ -219,6 +219,29 @@ test('a failed chain stage leaves all later expected items unverified, not dropp
   assert.equal(result.status,'failed');assert(result.items.some(i=>i.scenario==='research/approve'&&i.status==='unverified'));
 });
 
+test('standalone unseeded Idea may pass without creating a project, while its chain still needs a manifest',async t=>{
+  const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
+  const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'no-project',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
+    assert(!request.seed,'Idea starts without seed');return {status:'passed',replies:[{policy:'empty',received:true}]};
+  });
+  for(const host of ['claude','codex']){
+    assert.equal(result.items.find(i=>i.unit==='idea-empty'&&i.host===host).status,'passed','empty Idea correctly creates no project');
+    assert.equal(result.items.find(i=>i.unit==='idea-approve'&&i.scenario==='idea/approve'&&i.host===host).status,'failed','chain must stop without a project pointer');
+    assert.equal(result.items.find(i=>i.unit==='idea-approve'&&i.scenario==='research/approve'&&i.host===host).status,'unverified');
+  }
+});
+
+test('an incomplete seed stays unverified and leaves its remaining chain unverified',async t=>{
+  const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
+  const selection=f.select();selection.units=selection.units.filter(u=>u.id==='tech-evaluation-approve');selection.expectedItems=selection.expectedItems.filter(i=>i.unit==='tech-evaluation-approve');
+  const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-incomplete',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:root,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>request.seed?{status:'unverified',reason:'seed not completed'}:{status:'passed'});
+  assert.equal(result.status,'unverified');
+  assert(result.results.some(r=>r.result.reason==='seed not completed'));
+  assert(result.items.every(i=>i.status==='unverified'),'no incomplete chain item becomes green or a violation');
+});
+
 test('suite rejects changed catalog and missing Paper id before the first host',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/discovery/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());

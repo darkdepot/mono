@@ -23,6 +23,7 @@ const card=step=>{
  return {role,target,labels,gist,summary:target?(mode==='roles-plain-summary'?'Полный итог этого окна без четырёх разделов.':'Что: колонка. Зачем: источник виден. Дальше: Research.'):'Выбрали форму источника.',consequences:['Источник виден / таблица шире','Отложим выбор / источник скрыт']};
 };
 function seed(prompt){
+ if(mode==='seed-incomplete')return; // successful turn, honest stop without a first write
  const input=JSON.parse(prompt.slice('Seed route '.length));fs.mkdirSync(input.dumpDir);
  const id='00000000-0000-4000-8000-000000000001',stamp='2026-11-01T00:00:00.000Z';
  fs.writeFileSync(input.projectFile,JSON.stringify({id,name:input.projectName,url:'https://linear.app/monotest/project/fixture'}));

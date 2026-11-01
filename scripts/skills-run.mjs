@@ -19,7 +19,12 @@ function modelArgs(request){return request.model?['--model',request.model]:[];}
 function codexCommon(request){return ['--json','--disable','apps','--disable','remote_plugin','--skip-git-repo-check','-c','approval_policy="never"','-c','sandbox_mode="workspace-write"','-c','sandbox_workspace_write.network_access=true',...modelArgs(request)];}
 const targetsAnswered=(request,replies)=>targetReplyCount(replies)===request.scenario.expectedWindows.length;
 export function checkSeedRoute(request){
-  const seed=request.seed,project=JSON.parse(fs.readFileSync(seed.projectFile,'utf8'));
+  const seed=request.seed;let raw;
+  try{raw=fs.readFileSync(seed.projectFile,'utf8');}catch(error){
+    if(error.code==='ENOENT')throw new MissingEvidence('seed not completed');
+    throw error;
+  }
+  const project=JSON.parse(raw);
   if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(project.id??'')||project.name!==seed.projectName||!project.url?.startsWith('https://linear.app/monotest/'))throw new Error('seed project read-back mismatch');
   if(!seed.expectedStage)return {project};
   const run=spawnSync(process.execPath,[path.join(request.packRoot,'scripts/idea-gate.mjs'),'route','--mode','fresh','--dump',seed.dumpDir,'--config',seed.configFile],{cwd:request.cwd,encoding:'utf8',timeout:30_000});
@@ -138,7 +143,8 @@ export async function runClaude(request){
           if(!confirmed)return missing('workspace not confirmed before stage',c);
           phase=request.seed?'seed':'stage';beginTurn();c.send(userMessage(request.seed?.prompt??request.scenario.prompt));
         }else if(phase==='seed'){
-          seedRoute=checkSeedRoute(request);phase='stage';beginTurn();c.send(userMessage(request.scenario.prompt));
+          try{seedRoute=checkSeedRoute(request);}catch(error){return error instanceof MissingEvidence?missing(error.message,c):fail(error.message,c);}
+          phase='stage';beginTurn();c.send(userMessage(request.scenario.prompt));
         }else{waiting=true;if(request.scenario.stopAfterExpectedWindows!==false&&targetsAnswered(request,replies)&&replies.every(r=>r.received)&&!pendingWindows.length&&!(roleWindows(request.scenario.expectedWindows)&&lastMessage.includes('?'))){endLine=line;c.complete();}else c.idle();}
       }else if(waiting)c.idle();
     },

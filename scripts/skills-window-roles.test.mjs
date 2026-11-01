@@ -52,6 +52,14 @@ for(const host of ['claude','codex']){
   request.seed={prompt:'Seed route '+JSON.stringify({dumpDir,projectFile,projectName}),dumpDir,projectFile,projectName,expectedStage:'tech-evaluation',configFile};
   const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.seedRoute.route.next,'tech-evaluation');
  });
+ test(`${host}: a seed that stopped before creating its pointer is unverified, never a violation`,async t=>{
+  const request=setup(t,host,'seed-incomplete'),projectFile=path.join(request.cwd,'seed-project.json'),projectName='monotest-route';
+  request.seed={prompt:'Seed route '+JSON.stringify({projectFile,projectName}),projectFile,projectName};
+  const r=await runScenario(request);assert.equal(r.status,'unverified',JSON.stringify(r));assert.equal(r.reason,'seed not completed');assert(!r.violation);
+  assert(!fs.existsSync(projectFile));assert.equal(r.replies.length,0);
+  if(host==='codex')assert(!fs.readFileSync(path.join(request.cwd,'role-invocations.jsonl'),'utf8').includes('Run roles'));
+  else assert(!fs.readFileSync(r.sent,'utf8').includes('Run roles'));
+ });
 }
 test('Claude two generic questions still fails the one-question rule',async t=>{
  const r=await runScenario(setup(t,'claude','roles-twoquestions'));assert.equal(r.status,'failed');assert(r.check.windows.some(w=>w.issues.includes('one question at a time')));

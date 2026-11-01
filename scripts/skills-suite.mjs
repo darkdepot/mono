@@ -91,7 +91,7 @@ export async function runSuite(request, execute = runScenario) {
       let result;
       try {
         result=await execute(runRequest);
-        if (result.status === 'passed') {
+        if (result.status === 'passed' && (nextKey || project || seed || fs.existsSync(projectFile))) {
           const observed=projectManifest(projectFile,projectName);
           if (project && JSON.stringify(observed) !== JSON.stringify(project)) throw new Error('chain changed its run project');
           fs.copyFileSync(projectFile,outputDir+'-project.json',fs.constants.COPYFILE_EXCL);
