@@ -293,7 +293,7 @@ test('a failed chain stage leaves all later expected items unverified, not dropp
   assert.equal(result.status,'failed');assert(result.items.some(i=>i.scenario==='research/approve'&&i.status==='unverified'));
 });
 
-test('standalone unseeded Idea may pass without creating a project, while its chain still needs a manifest',async t=>{
+test('empty Idea needs no project, approved correction and the Idea chain require a manifest',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
   const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'no-project',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{
@@ -301,9 +301,25 @@ test('standalone unseeded Idea may pass without creating a project, while its ch
   });
   for(const host of ['claude','codex']){
     assert.equal(result.items.find(i=>i.unit==='idea-empty'&&i.host===host).status,'passed','empty Idea correctly creates no project');
+    assert.equal(result.items.find(i=>i.unit==='idea-correction'&&i.host===host).status,'failed','approved standalone correction requires its expected project');
     assert.equal(result.items.find(i=>i.unit==='idea-approve'&&i.scenario==='idea/approve'&&i.host===host).status,'failed','chain must stop without a project pointer');
     assert.equal(result.items.find(i=>i.unit==='idea-approve'&&i.scenario==='research/approve'&&i.host===host).status,'unverified');
   }
+});
+
+for(const kind of ['approve','correction'])for(const manifest of [false,true])test(`standalone Idea ${kind} requires its expected project: manifest ${manifest}`,async t=>{
+  const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();
+  const selection=f.select();selection.units=selection.units.filter(u=>u.id===`idea-${kind}`);
+  for(const unit of selection.units)unit.scenarios=[`idea/${kind}`];
+  selection.expectedItems=selection.expectedItems.filter(i=>i.unit===`idea-${kind}`&&i.scenario===`idea/${kind}`);
+  const result=await runSuite(suiteRequest(f,selection),async request=>{
+    assert(!request.seed);assert(!request.context.project);
+    if(manifest)write(request.context.projectFile,JSON.stringify(runProject(request)));
+    return passedStage(request);
+  });
+  assert.equal(result.items.length,2);
+  for(const item of result.items)assert.equal(item.status,manifest?'passed':'failed',`${item.host}: expected project requires a read-back manifest`);
+  if(!manifest)assert(result.results.every(r=>/ENOENT/.test(r.result.reason)));
 });
 
 test('an incomplete seed stays unverified and leaves its remaining chain unverified',async t=>{

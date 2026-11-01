@@ -113,7 +113,7 @@ export async function runSuite(request, execute = runScenario) {
         checkPack(request.packRoot,selection.head);
         result=await execute(runRequest);
         checkPack(request.packRoot,selection.head);
-        if (result.status === 'passed' && (nextKey || project || seed || fs.existsSync(projectFile))) {
+        if (result.status === 'passed' && (scenario.expectedRecords.some(record=>record.type==='project') || nextKey || project || seed || fs.existsSync(projectFile))) {
           const observed=projectManifest(projectFile,projectName);
           const expectedProject=project??(seed?result.seedRoute?.project:null);
           if (seed&&!expectedProject) throw new Error('validated seed project missing');

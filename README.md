@@ -1648,7 +1648,9 @@ Paper file id and the neutral pre-execution guard. These data files are not part
 of normal required reading. Project manifests use `get_project.uuid` as `id`;
 invalid or required missing manifests fail that stage, leave later chain stages unverified,
 and preserve the suite result while other units continue. Seed prompts request
-only their recipe's data. An unanswered standalone Idea needs no project manifest;
+only their recipe's data. A manifest is required by an expected `project` record,
+a seed or a chain member; standalone Idea approval and correction require it.
+An unanswered standalone Idea forbids project creation and needs no manifest;
 an absent seed pointer means `unverified: seed not completed`, before the stage starts.
 Every stage's manifest is compared field by field (`id`, `name`, `url`) with
 the existing project, including the first stage with its validated seed pointer;
