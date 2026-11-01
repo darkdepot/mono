@@ -1635,6 +1635,48 @@ The Codex startup read retry audits the entire failed turn and its completion be
 Run a scenario with `node scripts/skills-run.mjs <request.json>` or check a trace
 with `node scripts/skills-trace.mjs <request.json>`. Deterministic scenario policies
 answer windows; a separate tool-free persona answers explicit free questions.
+The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 17
+scenarios, with per-host target window roles and probe-derived seeds. Other choices
+use the recommended answer; free questions use the persona. Fresh seed routes are
+checked before the stage starts. Select a committed
+`base...head` with `node scripts/skills-select.mjs <request.json>`, then pass that
+saved selection and the explicit index path to `node scripts/skills-suite.mjs
+<request.json>`. The expected items are frozen before the first host call;
+removed scenarios are refused. Main paths use short chains in one fresh monotest
+project, other neighbors use their own seeds. Design requires a request-supplied
+Paper file id and the neutral pre-execution guard. These data files are not part
+of normal required reading. Project manifests use `get_project.uuid` as `id`;
+invalid or required missing manifests fail that stage, leave later chain stages unverified,
+and preserve the suite result while other units continue. Seed prompts request
+only their recipe's data. A manifest is required by an expected `project` record,
+a seed or a chain member; standalone Idea approval and correction require it.
+An unanswered standalone Idea forbids project creation and needs no manifest;
+an absent seed pointer means `unverified: seed not completed`, before the stage starts.
+Every stage's manifest is compared field by field (`id`, `name`, `url`) with
+the existing project, including the first stage with its validated seed pointer;
+JSON key order does not affect identity.
+The suite requires a Git checkout at `packRoot` on `selection.head`, with no
+tracked changes or untracked execution files. It checks again before and after
+each stage; unversioned scratch copies have no silent override. Stage file rules
+include consumed contracts and references. If no stage maps a change under
+`skills/`, `references/` or `templates/`, selection is explicitly `uncovered`
+(CLI exit 2), and the suite returns `unverified` rather than a zero-item pass.
+Codex answers trailing plain-text questions through the persona before finishing.
+Design alone grants the test product memory directory, its `approved/` archive,
+and a fresh export run directory;
+its approval reason anchor is advice, without requiring the next stage name.
+Paper exports to the owner's Downloads without a path parameter. The guard copies
+only files named by that result into the run directory, verifies size and SHA-256,
+then rewrites their paths; foreign paths and symlinks are refused. If deleting an
+original fails with EPERM/EACCES, its path is logged and listed in suite-result's
+`exportLeftovers` for the orchestrator; other failures remain errors.
+Design archives the returned files normally.
+Unit preparation failures persist completed items, fail that unit and leave its
+later chain unverified while independent units continue. Empty selection is
+`not-required` (CLI exit 0), never a pass. Scout definitions select their launching
+stages; missing project manifest paths are refused before prompt generation.
+Transition anchors check advice; option labels identify
+their role. Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs`.
 The shared audit keeps MCP actions bounded to monotest/Paper and requires a real
 workspace read before writes. Direct Codex MCP calls retain namespace and name. MCP actions in every test-home
 rollout, including child threads and native McpToolCall records, share this boundary;
@@ -1646,6 +1688,8 @@ Exact recommended labels are accepted, and Codex completion must match the activ
 Cleanup still signals the process group after its leader exits. A fixed 500 ms
 grace bounds held pipes; timeout remains a failure, and normal exit retains its
 evidence verdict. ESRCH and macOS EPERM for an exited leader stay quiet.
+The exit event is sufficient even before exit fields update. Other signal errors
+are kept in `cleanupErrors` without changing the original verdict or timeout.
 Codex accepts completion on the final allowed iteration before reporting the
 turn limit; an unfinished scenario still fails and the default remains 32.
 Host information remains open: unknown events and

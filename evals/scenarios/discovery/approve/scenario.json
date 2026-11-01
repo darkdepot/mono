@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "approve",
+  "stage": "discovery",
+  "kind": "main",
+  "seed": "seeds/research.json",
+  "next": "design",
+  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста.",
+  "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+  "hosts": {
+    "claude": {
+      "windows": [
+        {
+          "mode": "label",
+          "label": "Утвердить, продолжу позже"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "discovery-approval",
+          "decision": "Утвержд",
+          "advice": "Совет",
+          "reason": "Design",
+          "summary": [],
+          "role": "approval"
+        }
+      ],
+      "freeQuestions": [
+        {
+          "contains": "?"
+        }
+      ]
+    },
+    "codex": {
+      "windows": [
+        {
+          "mode": "label",
+          "label": "Утвердить, продолжу позже"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "discovery-approval",
+          "decision": "Утвержд",
+          "advice": "Совет",
+          "reason": "Design",
+          "summary": [],
+          "role": "approval"
+        }
+      ],
+      "freeQuestions": [
+        {
+          "contains": "?"
+        }
+      ]
+    }
+  },
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-prd: approved",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    }
+  ]
+}

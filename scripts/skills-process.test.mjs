@@ -1,6 +1,22 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import { test } from 'node:test';import { hostProcess } from './skills-process.mjs';
+import childProcess from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
+test('an exit event makes EPERM quiet even before exit fields reflect it',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'skills-exit-event-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const spawn=childProcess.spawn;
+ t.mock.method(childProcess,'spawn',(...args)=>{const child=spawn(...args);child.prependListener('exit',()=>{child.exitCode=null;child.signalCode=null;});return child;});syncBuiltinESMExports();t.after(()=>{t.mock.restoreAll();syncBuiltinESMExports();});
+ t.mock.method(process,'kill',()=>{throw Object.assign(new Error('kill EPERM'),{code:'EPERM'});});
+ const result=await hostProcess({binary:{command:process.execPath,args:['-e','console.log("{}");']},args:[],cwd:dir,env:process.env,trace:path.join(dir,'trace'),sent:path.join(dir,'sent'),stderr:path.join(dir,'stderr'),timeoutMs:1000,onEvent:()=>{}});
+ assert.equal(result.code,0);assert.equal(result.failure,null);
+});
+test('cleanup signal errors cannot replace the original verdict',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'skills-cleanup-verdict-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const realKill=process.kill.bind(process);let pid;t.after(()=>{if(pid)try{realKill(pid,'SIGKILL');}catch(e){if(e.code!=='ESRCH')throw e;}});
+ t.mock.method(process,'kill',()=>{throw Object.assign(new Error('kill EIO'),{code:'EIO'});});
+ const result=await hostProcess({binary:{command:process.execPath,args:['-e','console.log(JSON.stringify({pid:process.pid}));setTimeout(()=>{},1500);']},args:[],cwd:dir,env:process.env,trace:path.join(dir,'trace'),sent:path.join(dir,'sent'),stderr:path.join(dir,'stderr'),timeoutMs:2000,onEvent:(e,c)=>{pid=e.pid;c.stop('original verdict');}});
+ assert.equal(result.failure,'original verdict');assert(result.cleanupErrors?.some(e=>e.includes('EIO')));
+});
 test('cleanup after parent exit still signals the group and keeps exited-group errors quiet',async t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'skills-exit-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  let kills=0;const code=process.platform==='darwin'?'EPERM':'ESRCH';t.mock.method(process,'kill',()=>{kills++;throw Object.assign(new Error(`kill ${code}`),{code});});
@@ -28,7 +44,7 @@ test('live leader EPERM remains a failure while forced settlement bounds open pi
  t.mock.method(process,'kill',()=>{throw Object.assign(new Error('kill EPERM'),{code:'EPERM'});});
  const started=performance.now();
  const result=await hostProcess({binary:{command:process.execPath,args:['-e',`console.log(JSON.stringify({pid:process.pid}));setTimeout(()=>{},1500);`]},args:[],cwd:dir,env:process.env,trace:path.join(dir,'trace'),sent:path.join(dir,'sent'),stderr:path.join(dir,'stderr'),timeoutMs:100,onEvent:e=>{pid=e.pid;}});
- assert.match(result.failure,/^host timeout; .*EPERM/);assert.ok(performance.now()-started<1000,'timeout plus fixed grace must settle despite denied signals');
+ assert.equal(result.failure,'host timeout');assert(result.cleanupErrors.some(e=>e.includes('EPERM')));assert.ok(performance.now()-started<1000,'timeout plus fixed grace must settle despite denied signals');
 });
 test('completion does not disarm the timeout while denied cleanup leaves a live leader',async t=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'skills-complete-budget-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -37,7 +53,7 @@ test('completion does not disarm the timeout while denied cleanup leaves a live 
  t.mock.method(process,'kill',()=>{throw Object.assign(new Error('kill EPERM'),{code:'EPERM'});});
  const started=performance.now();
  const result=await hostProcess({binary:{command:process.execPath,args:['-e',`console.log(JSON.stringify({pid:process.pid}));setTimeout(()=>{},1500);`]},args:[],cwd:dir,env:process.env,trace:path.join(dir,'trace'),sent:path.join(dir,'sent'),stderr:path.join(dir,'stderr'),timeoutMs:100,onEvent:(e,c)=>{pid=e.pid;c.complete();}});
- assert.equal(result.completed,true);assert.match(result.failure,/^host timeout; .*EPERM/);
+ assert.equal(result.completed,true);assert.equal(result.failure,'host timeout');assert(result.cleanupErrors.some(e=>e.includes('EPERM')));
  assert.ok(performance.now()-started<1000,'budget100ms plus grace500ms must bound completion cleanup even after an earlier signal error');
 });
 test('forced pipe closure preserves completed evidence when the leader ignores SIGTERM',async t=>{

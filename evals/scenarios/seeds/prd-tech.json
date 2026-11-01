@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "steps": [
+    "Сначала get_workspace: имя Mono Test. Несовпадение или недоступное чтение: жёсткий стоп без первой записи.",
+    "save_project: одно новое имя из задания, команда Mono Test по свежему чтению list_teams. Не переносить id команды из образца. Никаких записей в другое пространство.",
+    "Описание проекта по ideaDraft; node <packRoot>/scripts/idea-gate.mjs record --draft <shown-draft> --config <config> --out <scratch> --project <fresh-project-id>. Публиковать созданный comment.md через save_comment. Прочитать get_project и все страницы list_comments, сохранить сырые ответы и запросы cursor; выполнить verify и check.",
+    "save_document исследования; get_document и list_documents проекта обратно. Создать/закрыть задачу Research с меткой Этап и журналом, используя текущие статусы monotest; записать результат проверки research.",
+    "save_document PRD; get_document обратно, взять только свежие id и updatedAt; записать комментарий утверждения из prdApprovalTemplate. После save_comment прочитать все страницы комментариев и PRD заново; проверить route и check discovery свежими сырыми ответами.",
+    "Задача Discovery с меткой Этап: Done и журнал решений со ссылками на созданные Research/PRD. Задачи других проектов не переиспользовать. Обратное чтение Done и комментария."
+  ],
+  "ideaDraft": "## Что\nДобавить колонку «Источник» из поля source в существующую таблицу тестовых прогонов приложения записи: cli/runs.mjs читает cli/runs.json, проверки в cli/runs.test.mjs. Проект <projectName>.\n\n## Зачем\nИсточник прогона сейчас не виден в строке таблицы.\n\n## Образ результата\nПосле имени прогона виден источник; пустой source, null и отсутствующий ключ дают прочерк. Фильтр и сортировку не берём.\n\n## Неизвестные\nНет.\n",
+  "documents": [
+    {
+      "type": "research",
+      "title": "Исследование: <projectName>",
+      "content": "Исследование не требуется: правка колонки существующего вывода cli/runs.mjs, внешние факты не меняют решение.\n\n```mono-research\n{\"project\":\"<fresh-project-id>\",\"outcome\":\"not-required\",\"reason\":\"правка одной колонки табличного вывода CLI\",\"interface\":false}\n```"
+    },
+    {
+      "type": "prd",
+      "title": "PRD: <projectName>",
+      "content": "## Кратко\nРазмер: обычное\nКолонка «Источник» из source в существующей таблице тестовых прогонов приложения записи (cli/runs.mjs, cli/runs.json, cli/runs.test.mjs).\n\n## Акторы\nA1. Владелец тестового продукта проверяет результаты прогонов приложения записи.\n\n## Проблема\nПоле source не выводится в строке таблицы.\n\n## Целевой процесс\nИсточник читается в таблице сразу.\n\n## Требования\nR1. Источник из source виден после имени прогона.\nR2. Пустой source, null или отсутствующий ключ: прочерк.\n\n## Примеры приемки\nAE1. Покрывает R1, R2. У трёх прогонов источник виден, у четвёртого прочерк.\n\n## Что не входит в MVP\nФильтр и сортировка.\n\n## Связи\nИсследование и задача Discovery этого проекта.\n"
+    }
+  ],
+  "prdApprovalTemplate": "```text\nmono-prd: approved project=<fresh-project-id> document=<read-back-prd-id> updatedAt=<read-back-updatedAt> design=not-needed next=tech-evaluation by=owner\n```\nСинтетический посев входа тестового сценария, не утверждение живого владельца.",
+  "entryStage": "tech-evaluation"
+}

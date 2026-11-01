@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "id": "correction",
+  "stage": "handoff",
+  "kind": "correction",
+  "seed": "seeds/prd-handoff.json",
+  "next": null,
+  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста. Передача оркестратору разрешена только после настоящего окна; код не писать.",
+  "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+  "hosts": {
+    "claude": {
+      "windows": [
+        {
+          "mode": "correction",
+          "text": "В задаче укажи проверку табличного вывода CLI с отсутствующим источником; требования PRD и решение не меняй. Покажи исправленный пакет перед стартом."
+        },
+        {
+          "mode": "label",
+          "label": "Передать оркестратору"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "handoff-approval",
+          "decision": "Совет",
+          "advice": "Совет",
+          "reason": "Совет",
+          "summary": [],
+          "role": "transition"
+        },
+        {
+          "id": "handoff-reapproval",
+          "decision": "Совет",
+          "advice": "Совет",
+          "reason": "Совет",
+          "summary": [],
+          "role": "transition"
+        }
+      ],
+      "freeQuestions": [
+        {
+          "contains": "?"
+        }
+      ]
+    },
+    "codex": {
+      "windows": [
+        {
+          "mode": "correction",
+          "text": "В задаче укажи проверку табличного вывода CLI с отсутствующим источником; требования PRD и решение не меняй. Покажи исправленный пакет перед стартом."
+        },
+        {
+          "mode": "label",
+          "label": "Передать оркестратору"
+        }
+      ],
+      "expectedWindows": [
+        {
+          "id": "handoff-approval",
+          "decision": "Совет",
+          "advice": "Совет",
+          "reason": "Совет",
+          "summary": [],
+          "role": "transition"
+        },
+        {
+          "id": "handoff-reapproval",
+          "decision": "Совет",
+          "advice": "Совет",
+          "reason": "Совет",
+          "summary": [],
+          "role": "transition"
+        }
+      ],
+      "freeQuestions": [
+        {
+          "contains": "?"
+        }
+      ]
+    }
+  },
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-package: start",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    }
+  ]
+}

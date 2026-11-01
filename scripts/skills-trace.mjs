@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { auditRows } from './skills-audit.mjs';
 import { claudeWindows, traceRows, visibleText } from './skills-probe.mjs';
+import { roleWindows, windowRole } from './skills-owner.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Full rule source, including host order. A rule edit requires checker/rubric review.
@@ -78,7 +79,9 @@ function cardIssues(host, questions, expected) {
     if (labels.some(l => typeof l !== 'string' || !visible(l))) { issues.push('invalid option label'); continue; }
     if (!labels[0].endsWith(' (Recommended)') || labels.slice(1).some(l => l.endsWith(' (Recommended)'))) issues.push('recommended option must be first and unique');
     const gist = title.split('\n')[0];
-    for (const key of ['decision', 'advice', 'reason']) if (!gist.includes(expected[key])) issues.push(`question lacks scenario ${key}`);
+    if(expected){
+      for (const key of ['decision', 'advice', 'reason']) if (!gist.includes(expected[key])) issues.push(`question lacks scenario ${key}`);
+    }else if(!gist.includes('Совет'))issues.push('question lacks advice');
     if ((gist.match(/[.!?]+(?:\s|$)/g)??[]).length > 2) issues.push('question gist exceeds two sentences');
     if (/https?:\/\/|\[[^\]]+\]\(|[`*#]/.test(gist)) issues.push('question gist has links or markup');
     const consequences = host === 'claude' ? options.map(o => o.description)
@@ -95,20 +98,23 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
     const ruleSource = path.join(rulesRoot, 'references/owner-dialog.md');
     const rulesDigest = crypto.createHash('sha256').update(fs.readFileSync(ruleSource)).digest('hex');
     if (rulesDigest !== OWNER_DIALOG_SHA256) throw new Error('owner-dialog changed: update checker and conversation rubric together');
+    const roles=roleWindows(expectedWindows);
     if (!['claude', 'codex'].includes(host) || !Array.isArray(expectedWindows) || !expectedWindows.length || expectedWindows.some(w =>
-      !w?.id || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || !w.summary.length || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, decision, advice, reason and summary anchors');
+      !w?.id || (roles&&!['approval','transition'].includes(w.role)) || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || (!roles&&!w.summary.length) || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, role, decision, advice, reason and summary anchors');
     const { rows } = traceRows(trace,host,{endLine});
     if (rows.some(r => !r.value || typeof r.value.type !== 'string')) throw new Error('invalid trace envelope');
     const responses=host==='claude'&&sent?traceRows(sent,'claude').rows.map(r=>r.value):[];
     const found = host === 'claude' ? claudeWindows(rows, trace, {phase,responses}) : codexWindows(rows, trace, {phase});
     let expectedIndex = 0;
     for (const [i, w] of found.entries()) {
-      const expected = expectedWindows[expectedIndex];
+      const role=roles?windowRole(w.questions):null,target=!roles||role!==null;
+      const expected = target?expectedWindows[expectedIndex]:null;
+      const identity={target,role:role??(roles?'generic':'target'),id:expected?.id??`generic-${i}`};
       if (w.status === 'unverified') {
-        windows.push({ ...w, id: expected?.id ?? `unexpected-${i}`, issues: [w.reason] });
+        windows.push({ ...w,...identity,issues: [w.reason] });
         continue;
       }
-      expectedIndex++;
+      if(target)expectedIndex++;
       const issues = w.status === 'failed' ? [w.reason] : [];
       let summary = w.summary ?? '';
       if (host === 'claude') {
@@ -131,13 +137,15 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
       }
       if (!visible(summary)) issues.push('no visible owner summary');
       if (expected) {
+        if(roles&&expected.role!==role)issues.push('unexpected target role');
         issues.push(...cardIssues(host, w.questions, expected));
-        if (!expected.summary.every(s => summary.includes(s))) issues.push('summary lacks scenario content');
-      } else issues.push('unexpected window without scenario policy');
-      windows.push({ ...w, id: expected?.id ?? `unexpected-${i}`, issues, status: issues.length ? 'failed' : 'passed' });
+        if (visible(summary)&&!expected.summary.every(s => summary.includes(s))) issues.push('summary lacks scenario content');
+      } else if(roles&&!target)issues.push(...cardIssues(host,w.questions,null));
+      else issues.push('unexpected window without scenario policy');
+      windows.push({ ...w,...identity,issues,status: issues.length ? 'failed' : 'passed' });
     }
     const uncertain = found.find(w => w.status === 'unverified');
-    if (expectedIndex > expectedWindows.length || (!uncertain && expectedIndex !== expectedWindows.length)) checks.push({ id:'expected-windows',status:'failed',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:`expected ${expectedWindows.length} real windows, found ${expectedIndex}; text is not a window` });
+    if (expectedIndex > expectedWindows.length || (!uncertain && expectedIndex !== expectedWindows.length&&!(roles&&phase==='card'))) checks.push({ id:'expected-windows',status:'failed',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:`expected ${expectedWindows.length} real target windows, found ${expectedIndex}; text is not a window` });
     if (uncertain) checks.push({ id:'expected-windows',status:'unverified',evidence:`${trace}:${uncertain.line}`,reason:`expected ${expectedWindows.length} real windows, confirmed ${expectedIndex}; successful native execution is not confirmed for every call` });
     if (phase !== 'excerpt') {
       const complete = completedTrace(host, rows);
