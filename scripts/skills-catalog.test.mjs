@@ -586,7 +586,7 @@ test('suite stops every remaining host/unit on working Linear write, reports the
  const result=await runSuiteWithRecords(suiteRequest(f,selection),async r=>{calls++;write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);},async()=>({status:'failed',stop:true,manualRemoval:['https://linear.app/example/issue/EX-1'],monotestTasks:0}));
  assert.equal(calls,1);assert.equal(result.status,'failed');assert(result.items.slice(1).every(item=>item.status==='unverified'));assert(result.results[0].result.records.manualRemoval.length);
 });
-for(const condition of ['binding-only','binding-everywhere','failed','other-unverified','failed-stage'])test(`design chain runs Design and Handoff only past binding-only uncertainty: ${condition}`,async t=>{
+for(const condition of ['binding-only','binding-everywhere','failed','other-unverified','dump-capacity','failed-stage'])test(`design chain runs Design and Handoff only past binding-only uncertainty: ${condition}`,async t=>{
  const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
  const selection=f.select(),unit=selection.units.find(u=>u.id==='design-approve');assert(unit.scenarios.includes('design/approve'));assert(unit.scenarios.includes('handoff/approve'));
  selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
@@ -594,7 +594,7 @@ for(const condition of ['binding-only','binding-everywhere','failed','other-unve
  const result=await runSuiteWithRecords(request,async r=>{
   calls.push(r.context.entryStage);write(r.context.projectFile,JSON.stringify(runProject(r)));
   return condition==='failed-stage'?{...passedStage(r),status:'failed',reason:'real stage failed'}:passedStage(r);
- },async({scenario})=>(scenario.stage==='discovery'||condition==='binding-everywhere'&&scenario.stage==='design')?condition==='failed'?{status:'failed',reason:'mismatch'}:condition==='other-unverified'?{status:'unverified',reason:'missing page'}:{status:'unverified',bindingOnly:true,reason:'shown-version binding missing',gateResults:[{result:{ok:true}}]}:{status:'passed',monotestTasks:0});
+ },async({scenario})=>(scenario.stage==='discovery'||condition==='binding-everywhere'&&scenario.stage==='design')?condition==='failed'?{status:'failed',reason:'mismatch'}:condition==='other-unverified'?{status:'unverified',reason:'missing page'}:condition==='dump-capacity'?{status:'unverified',hostFailure:true,reason:'Selected model is at capacity',attempts:[{status:'unverified'},{status:'unverified'}]}:{status:'unverified',bindingOnly:true,reason:'shown-version binding missing',gateResults:[{result:{ok:true}}]}:{status:'passed',monotestTasks:0});
  assert.deepEqual(calls,condition.startsWith('binding-')?['discovery','design','handoff']:['discovery']);
  assert.equal(result.status,['failed','failed-stage'].includes(condition)?'failed':'unverified');
  assert.equal(result.items[0].status,condition==='failed-stage'?'failed':result.results[0].status);

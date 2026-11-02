@@ -46,7 +46,7 @@ function markdown(value){
    if(!fence)fence=marker[1];
    else if(marker[1][0]===fence[0]&&marker[1].length>=fence.length&&!marker[2].trim())fence=null;
   }
-  if(!literal&&heading&&line===''){heading=false;continue;}
+  if(!literal&&heading&&line==='')continue;
   if(!literal&&/^(?:#{1,6} | {0,3}[-*] )/.test(line)){
    // Optional separation before a heading/list is renderer formatting.
    while(result.at(-1)==='')result.pop();
@@ -63,7 +63,7 @@ function markdown(value){
    else if(inline===tick[0].length)inline=null;
   }
  }
- if(!fence&&result.at(-1)==='')result.pop();
+ while(!fence&&inline===null&&result.at(-1)==='')result.pop();
  return result.join('\n');
 }
 const elided=value=>typeof value==='string'&&/… \(truncated, use `get_(?:document|issue|project)` for full description\)$/.test(value);
@@ -146,7 +146,7 @@ export function readRecordDump(root,project,projectName){
 }
 
 function runViolations(traces,request={}){
- const manualRemoval=new Set(),evidence=[],transitions=[];
+ const manualRemoval=new Set(),evidence=[],transitions=[],dumpWrites=[];
  for(const {host,trace,endLine} of traces){
   let data;
   try{data=nativeRecords(host,trace);}catch{
@@ -157,6 +157,7 @@ function runViolations(traces,request={}){
   if(request.expectedRecords?.some(rule=>rule.forbidden==='start-next-stage'))for(const call of data.audit.calls)
    if((call.name==='Skill'&&request.nextSkill&&call.input?.skill===request.nextSkill)||(['Agent','Task'].includes(call.name)&&request.nextAgent&&call.input?.subagent_type===request.nextAgent))transitions.push(`${trace}:${call.line}: forbidden start-next-stage`);
   for(const call of data.calls){
+   if(request.readOnlyDump&&isWrite(call.name))dumpWrites.push(`${trace}:${call.line}: record dump permits monotest reads only`);
    if(!isWrite(call.name)||call.name.startsWith('mcp__paper__'))continue;
    let record;try{record=resultFor(host,call,data.rows,false);}catch{}
    const links=[record?.value?.url,...['comment','issue','project','document'].map(key=>record?.value?.[key]?.url)].filter(url=>typeof url==='string'&&url.startsWith('https://linear.app/'));
@@ -166,7 +167,7 @@ function runViolations(traces,request={}){
    }
   }
  }
- return evidence.length?{status:'failed',stop:true,manualRemoval:[...manualRemoval],evidence,reason:'MCP write outside monotest: stopped; manual removal only for linked successful record URLs; no deletion attempted'}:transitions.length?{status:'failed',stop:false,manualRemoval:[],evidence:transitions,reason:'forbidden start-next-stage'}:null;
+ return evidence.length?{status:'failed',stop:true,manualRemoval:[...manualRemoval],evidence,reason:'MCP write outside monotest: stopped; manual removal only for linked successful record URLs; no deletion attempted'}:transitions.length?{status:'failed',stop:false,manualRemoval:[],evidence:transitions,reason:'forbidden start-next-stage'}:dumpWrites.length?{status:'failed',stop:false,manualRemoval:[],evidence:dumpWrites,reason:'record dump permits monotest reads only'}:null;
 }
 
 // Cross-session order comes from native invocation/result timestamps. Claude's
@@ -490,20 +491,27 @@ export function dumpPrompt({project,projectName,dumpDir}){
 }
 export async function collectRecordDump(request,execute=runScenario){
  if(!request.mcpServers?.monotest||Object.keys(request.mcpServers).some(k=>k!=='monotest'))throw new Error('record dump uses only monotest');
- const dumpDir=path.join(request.outputDir,'dump');
- const result=await execute({...request,seed:undefined,writableRoots:[request.outputDir],readOnlyDump:true,recordDump:{dumpDir,project:request.project,projectName:request.projectName},workspaceProof:{tool:'mcp__monotest__get_workspace',input:{},path:['name'],equals:'Mono Test'},
-  scenario:{prompt:dumpPrompt({project:request.project,projectName:request.projectName,dumpDir}),brief:'Fixed read-only monotest dump',windows:[],expectedWindows:[]}});
- return {...result,dumpDir};
+ const attempts=[];
+ for(let attempt=0;attempt<2;attempt++){
+  const outputDir=attempt?request.outputDir+'-retry-1':request.outputDir,dumpDir=path.join(outputDir,'dump');
+  const result=await execute({...request,outputDir,seed:undefined,writableRoots:[outputDir],readOnlyDump:true,recordDump:{dumpDir,project:request.project,projectName:request.projectName},workspaceProof:{tool:'mcp__monotest__get_workspace',input:{},path:['name'],equals:'Mono Test'},
+   scenario:{prompt:dumpPrompt({project:request.project,projectName:request.projectName,dumpDir}),brief:'Fixed read-only monotest dump',windows:[],expectedWindows:[]}});
+  attempts.push({...result,outputDir,dumpDir});
+  const violation=runViolations([result.trace,...(result.auditedTraces??[]).filter(trace=>trace!==result.trace)].filter(Boolean).map(trace=>({host:request.host,trace})),{...request.recordRules,readOnlyDump:true});
+  if(violation)return {...result,...violation,dumpDir,attempts};
+  if(result.status!=='unverified'||!result.hostFailure||attempt===1)return {...result,dumpDir,attempts};
+ }
+
 }
 export async function verifyScenarioRecords({run,runRequest,scenario,project,outputDir,bindingsFile},collect=collectRecordDump){
  const start=Date.now();
  const traces=(run.auditedTraces??[]).filter(trace=>trace!==run.trace).map(trace=>({host:runRequest.host,trace}));
  const rules={expectedRecords:scenario.expectedRecords,nextSkill:scenario.next?`${runRequest.context.skillPrefix}:${scenario.next}`:null,nextAgent:scenario.next?`${runRequest.context.skillPrefix}-${runRequest.context.skillPrefix}-${scenario.next}`:null};
  const violation=runViolations([{host:runRequest.host,trace:run.trace,endLine:run.endLine},...traces],rules);if(violation)return {...violation,durationMs:Date.now()-start};
- const dump=await collect({...runRequest,project,projectName:runRequest.context.projectName,outputDir,mcpServers:{monotest:runRequest.mcpServers.monotest}});
- if(dump.trace){
-  const violation=runViolations([{host:runRequest.host,trace:dump.trace},...(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace}))],rules);
-  if(violation)return {...violation,durationMs:Date.now()-start};
+ const dump=await collect({...runRequest,project,projectName:runRequest.context.projectName,outputDir,recordRules:rules,mcpServers:{monotest:runRequest.mcpServers.monotest}});
+ for(const attempt of dump.attempts??[dump])if(attempt.trace){
+  const violation=runViolations([{host:runRequest.host,trace:attempt.trace},...(attempt.auditedTraces??[]).filter(trace=>trace!==attempt.trace).map(trace=>({host:runRequest.host,trace}))],{...rules,readOnlyDump:true});
+  if(violation)return {...violation,attempts:dump.attempts,durationMs:Date.now()-start};
  }
  if(dump.status!=='passed')return {...dump,status:dump.status==='failed'?'failed':'unverified',durationMs:Date.now()-start};
  const bindings=bindingsFile&&fs.existsSync(bindingsFile)?read(bindingsFile):{};

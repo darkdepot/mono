@@ -5,6 +5,9 @@ import readline from 'node:readline';
 const [mode,...args]=process.argv.slice(2),emit=value=>process.stdout.write(JSON.stringify(value)+'\n');
 const name=mode==='write'?'mcp__monotest__save_project':'mcp__monotest__list_documents';
 if(args[0]==='plugin')process.exit(0);
+if(args[0]==='exec'&&mode==='capacity'){
+ const sample=JSON.parse(fs.readFileSync(new URL('./skills-records-live5.json',import.meta.url)));sample.capacity.stdout.forEach(emit);process.exit(sample.capacity.exitCode);
+}
 if(args[0]==='exec'){
  const home=process.env.CODEX_HOME,dir=path.join(home,'sessions');fs.mkdirSync(dir,{recursive:true});
  const file=path.join(dir,'rollout-dump-thread.jsonl'),first=!fs.existsSync(file),id=first?'workspace':'dump',turn=first?'confirm':'read';

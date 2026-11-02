@@ -193,16 +193,21 @@ export async function runCodex(request){
   for(const args of [['plugin','marketplace','add',request.packRoot],['plugin','add','mono@mono-marketplace']]){
     const result=spawnSync(binary.command,[...(binary.args??[]),...args],{cwd:request.cwd,env,encoding:'utf8',timeout:request.timeoutMs??3_600_000,maxBuffer:16*1024*1024});
     fs.appendFileSync(path.join(request.outputDir,'setup.log'),(result.stdout??'')+(result.stderr??''));
-    if(result.status!==0||result.error)throw new Error('Codex local pack setup failed');
+    if(result.status!==0||result.error){if(request.readOnlyDump)throw Object.assign(new MissingEvidence('Codex local pack setup failed'),{hostFailure:true});throw new Error('Codex local pack setup failed');}
   }
   let thread=null,rollout=null,confirmed=false,violation=null,seenLines=0,freeIndex=0,endLine,seedRoute,seedEndLine,cardCheck,lastFreeQuestion;
   const replies=[],freeReplies=[],seen=new Set(),auditedTraces=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000),proofCalls=new Map();
   const stdout=path.join(request.outputDir,'stdout.jsonl'),sent=path.join(request.outputDir,'sent.jsonl');fs.writeFileSync(stdout,'');fs.writeFileSync(sent,'');
   let processResult;
   const turn=async(prompt,confirm=false,replyRecord=null)=>{
+    let hostError;
     const args=thread?['exec','resume',...codexCommon(request),thread,prompt]:['exec',...codexCommon(request),'-s','read-only','-C',request.cwd,prompt];
-    processResult=await hostProcess({binary,args,cwd:request.cwd,env,trace:stdout,sent,stderr:path.join(request.outputDir,'stderr.log'),timeoutMs:Math.max(1,deadline-Date.now()),onEvent:(e,c)=>{if(e.type==='thread.started'){if(thread&&thread!==e.thread_id)throw new Error('thread changed');thread=e.thread_id;}if(replyRecord&&request.scenario.stopAfterExpectedWindows!==false&&targetsAnswered(request,replies)&&e.type==='turn.completed')c.complete();}});
-    if(processResult.code!==0||processResult.failure)throw new Error(`Codex process failed: ${processResult.failure??processResult.code}`);
+    processResult=await hostProcess({binary,args,cwd:request.cwd,env,trace:stdout,sent,stderr:path.join(request.outputDir,'stderr.log'),timeoutMs:Math.max(1,deadline-Date.now()),onEvent:(e,c)=>{if(e.type==='error'&&typeof e.message==='string')hostError=e.message;if(e.type==='thread.started'){if(thread&&thread!==e.thread_id)throw new Error('thread changed');thread=e.thread_id;}if(replyRecord&&request.scenario.stopAfterExpectedWindows!==false&&targetsAnswered(request,replies)&&e.type==='turn.completed')c.complete();}});
+    if(processResult.code!==0||processResult.failure){
+      const reason=`Codex process failed: ${hostError??processResult.failure??processResult.code}`;
+      if(request.readOnlyDump)throw Object.assign(new MissingEvidence(reason),{hostFailure:true});
+      throw new Error(reason);
+    }
     if(!thread)throw new Error('Codex thread id missing');rollout=rolloutFor(home,thread);
     await quiet(rollout,processResult.completed?Math.min(request.idleMs??1000,100):request.idleMs??1000,deadline);
     if(processResult.completed){const terminal=codexTerminals(readJsonLines(rollout).events.filter(r=>r.line>seenLines))[0];if(!terminal)throw new MissingEvidence('last answered continuation terminal missing');endLine=terminal.line;}
@@ -306,7 +311,11 @@ export async function runCodex(request){
     if(endLine)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,auditedTraces:[...auditedTraces],process:processResult,violation,endLine,boundary:'Scenario ended at the terminal after its last expected answer.'});
     throw new Error('scenario turn limit reached');
   }catch(error){
-    return finishRun(request,{trace:rollout??stdout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,cardCheck,auditedTraces:[...auditedTraces],process:processResult,violation:error instanceof MissingEvidence?null:violation??error.message,evidenceMissing:error instanceof MissingEvidence?error.message:null,boundary:'Codex cannot refuse MCP calls before execution; rollout audit failed.'});
+    if(request.readOnlyDump){
+      for(const file of rolloutFiles(home))auditedTraces.add(file);
+      if(!rollout&&thread)try{rollout=rolloutFor(home,thread);}catch{}
+    }
+    return finishRun(request,{hostFailure:Boolean(error.hostFailure),trace:rollout??stdout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,cardCheck,auditedTraces:[...auditedTraces],process:processResult,violation:error instanceof MissingEvidence?null:violation??error.message,evidenceMissing:error instanceof MissingEvidence?error.message:null,boundary:'Codex cannot refuse MCP calls before execution; rollout audit failed.'});
   }
 }
 
@@ -322,7 +331,7 @@ function finishRun(request,run){
       }
     }catch(error){reason=error.message;}
     const status=run.violation?'failed':reason||!run.confirmed||!complete||run.process?.code!==0?'unverified':'passed';
-    return {host:request.host,...run,status,reason:reason??(!complete?'incomplete dump trace':null)};
+    return {host:request.host,...run,status,hostFailure:Boolean(!run.violation&&(run.hostFailure||run.process&&(run.process.failure||run.process.code!==0))),reason:reason??(!complete?'incomplete dump trace':null)};
   }
   const check=checkTrace({host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,rulesRoot:request.rulesRoot,endLine:run.endLine,sent:run.sent});
   let notes=[];try{const {rows}=traceRows(run.trace,request.host,{endLine:run.endLine});notes=auditRows(request.host,rows).notes;}catch{}
@@ -339,7 +348,7 @@ export async function runScenario(request){
     run=request.host==='claude'?await runClaude(request):await runCodex(request);
     fs.writeFileSync(path.join(request.outputDir,'result.json'),JSON.stringify(run,null,2)+'\n');return run;
   }catch(error){
-    const result={host:request.host,status:'unverified',reason:error.message,...(run?{run}:{})};
+    const result={host:request.host,status:'unverified',reason:error.message,...(error.hostFailure?{hostFailure:true}:{}),...(run?{run}:{})};
     if(created&&!fs.existsSync(path.join(request.outputDir,'result.json')))fs.writeFileSync(path.join(request.outputDir,'result.json'),JSON.stringify(result,null,2)+'\n');return result;
   }
 }

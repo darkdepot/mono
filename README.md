@@ -1754,6 +1754,10 @@ search filters cannot prove an exhaustive project dump. Approval binds the last
 owner-visible text of the decision turn. Native MCP completions need a linked
 literal invocation to prove a fresh read preceded the approval write; an excerpt
 without that invocation remains unverified.
+Dump host/capacity failures remain unverified and get one isolated retry. Both
+attempts are retained and audited; observed write violations stay failed. A
+non-binding unverified dump stops its chain as before. Linear heading gaps and
+trailing empty lines normalize without changing text, paragraph or code checks.
 Codex approvals use delivered native rollout answers; its `{thread,prompt}` sent
 journal is not a Claude event stream. Live3 regression excerpts include that journal
 and the scripted dump's own rollout, matching the suite's record-check inputs.

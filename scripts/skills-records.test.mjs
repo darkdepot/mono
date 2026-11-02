@@ -158,7 +158,7 @@ test('fixed dump includes documents, issues with status/labels and all issue com
 });
 test('dump collector uses only monotest and a fixed checklist, never a model chosen list',async t=>{
  const f=fixture(t),outputDir=path.join(f.dir,'collector');let seen;
- const r=await collectRecordDump({host:'claude',project:f.project,cwd:f.dir,packRoot:process.cwd(),outputDir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{seen=request;return {status:'passed',trace:'collector-trace'};});
+ const r=await collectRecordDump({host:'claude',project:f.project,cwd:f.dir,packRoot:process.cwd(),outputDir,mcpServers:{monotest:{url:'https://example.test/mcp'}}},async request=>{seen=request;return {status:'passed',trace:f.request.dumpTrace};});
  assert.equal(r.status,'passed');assert.equal(seen.readOnlyDump,true);assert.deepEqual(Object.keys(seen.mcpServers),['monotest']);
  const prompt=dumpPrompt({project:f.project,dumpDir:f.dumpDir});for(const part of ['comments-N.request.json','documents','issues','status','labels','cursor'])assert(prompt.includes(part));
  await assert.rejects(()=>collectRecordDump({...seen,mcpServers:{monotest:{url:'x'},linear:{url:'y'}}}),/only monotest/);
@@ -390,7 +390,7 @@ for(const host of ['claude','codex'])for(const mode of ['complete','shell','fore
  assert.equal(collected.status,mode==='complete'?'passed':'failed',JSON.stringify(collected));
  if(mode==='shell')assert.match(collected.reason,/host commands/);
  if(mode==='foreign'){
-  assert.match(collected.reason,/outside test servers/);
+  assert.match(collected.reason,/outside monotest/);
   const trace=path.join(f.dir,'empty-stage.jsonl');fs.writeFileSync(trace,JSON.stringify(host==='codex'?{type:'event_msg',payload:{type:'task_complete'}}:{type:'result',subtype:'success'})+'\n');
   const violation=await verifyScenarioRecords({run:{trace},runRequest:{host,context:{projectName:'fixed-run'},mcpServers:{monotest:{url:'x'}}},scenario:{expectedRecords:[]},outputDir:path.join(f.dir,'unused')},async()=>collected);
   assert.equal(violation.stop,true);assert.deepEqual(violation.manualRemoval,['https://linear.app/working/issue/x']);
@@ -631,4 +631,35 @@ test('amend3 independently complete document pages cannot change base arguments'
  next.push({type:'assistant',message:{content:[{type:'tool_use',id:'doc',name:'mcp__monotest__get_document',input:{id:'doc1'}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'doc',content:JSON.stringify(doc)}]}});
  raw.splice(i+2,0,...next);fs.writeFileSync(f.request.dumpTrace,timed(raw,'2026-11-02T04:01:00Z').map(r=>JSON.stringify(r)).join('\n')+'\n');
  const result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/page arguments changed/);
+});
+
+const live5=()=>JSON.parse(fs.readFileSync(path.resolve('scripts/test-fixtures/skills-records-live5.json')));
+test('live5 heading gaps and trailing blank lines are renderer-only, actual description text is not',t=>{
+ const f=fixture(t),sample=live5().description;f.request.expectedRecords=[];f.page('comments','comments',[]);
+ f.project.description=sample.stored;f.save('project.json',f.project);
+ f.events.splice(0,f.events.length,{type:'assistant',message:{content:[{type:'tool_use',id:'description',name:'mcp__monotest__save_project',input:{id:projectId,description:sample.written}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'description',content:JSON.stringify(f.project)}]}});
+ assert.equal(f.check().status,'passed',JSON.stringify(f.check()));
+ f.project.description=sample.stored.replace('Источник','Другой текст');f.save('project.json',f.project);f.events[1].message.content[0].content=JSON.stringify(f.project);
+ assert.equal(f.check().status,'failed');
+});
+test('live5 real Codex capacity stdout is an unverified dump host failure and retries once',async t=>{
+ const f=fixture(t),authFile=path.join(f.dir,'auth.json');fs.writeFileSync(authFile,'{}');
+ const collected=await collectRecordDump({host:'codex',cwd:f.dir,packRoot:process.cwd(),outputDir:path.join(f.dir,'capacity'),authFile,timeoutMs:10000,idleMs:10,binary:{command:process.execPath,args:[path.resolve('scripts/test-fixtures/skills-dump-host.mjs'),'capacity']},project:f.project,mcpServers:{monotest:{url:'https://example.test/mcp'}}});
+ assert.equal(collected.status,'unverified',JSON.stringify(collected));assert.equal(collected.hostFailure,true);assert.equal(collected.attempts.length,2);
+ for(const attempt of collected.attempts){assert.equal(attempt.process.code,1);assert(fs.readFileSync(attempt.trace,'utf8').includes('Selected model is at capacity'));}
+});
+for(const final of ['passed','unverified'])test(`dump retries host failure once and retains both attempts: ${final}`,async t=>{
+ const f=fixture(t);let calls=0;const seen=[];
+ const result=await collectRecordDump({host:'claude',outputDir:path.join(f.dir,'retry'),project:f.project,mcpServers:{monotest:{url:'test'}}},async request=>{seen.push(request.outputDir);calls++;return calls===1||final==='unverified'?{status:'unverified',hostFailure:true,reason:'host unavailable'}:{status:'passed'};});
+ assert.equal(calls,2);assert.equal(result.status,final);assert.notEqual(seen[0],seen[1]);assert.equal(result.attempts.length,2);
+});
+test('a real dump violation is failed and is never retried as host failure',async t=>{
+ const f=fixture(t);let calls=0;
+ const result=await collectRecordDump({host:'claude',outputDir:path.join(f.dir,'no-retry'),project:f.project,mcpServers:{monotest:{url:'test'}}},async()=>{calls++;return {status:'failed',reason:'record dump permits monotest reads only'};});
+ assert.equal(calls,1);assert.equal(result.status,'failed');
+});
+test('retry cannot hide a write observed in a failed dump attempt',async t=>{
+ const f=fixture(t);f.check();let calls=0;
+ const result=await collectRecordDump({host:'claude',outputDir:path.join(f.dir,'bad-attempt'),project:f.project,mcpServers:{monotest:{url:'test'}}},async()=>{calls++;return {status:'unverified',hostFailure:true,trace:f.request.trace,reason:'host process failed'};});
+ assert.equal(calls,1);assert.equal(result.status,'failed');assert.match(result.reason,/monotest reads only/);assert.equal(result.attempts.length,1);
 });
