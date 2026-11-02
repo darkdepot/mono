@@ -1715,7 +1715,7 @@ from the test home and servers, not from command strings. A mechanical pass stil
 needs the conversation rubric and live orchestrator proof. Standalone synthetic
 checker parity remains MONO-294; scenario sets, record checks and QA gates are
 later package work.
-Scratch validation copies include the scout-hook template. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
+Scratch validation copies include the scout-hook template. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. Process-cleanup tests advance controlled driver clocks only after real child output or leader exit: startup load consumes no test budget, while the timeout and 500 ms cleanup bound remain asserted against live leaders and held pipes. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
 Use focused checks while editing:
 
