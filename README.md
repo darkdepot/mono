@@ -1746,3 +1746,7 @@ MONO-279's exact expectation/source binding is included. See [record proof input
 Codex approvals use delivered native rollout answers; its `{thread,prompt}` sent
 journal is not a Claude event stream. Live3 regression excerpts include that journal
 and the scripted dump's own rollout, matching the suite's record-check inputs.
+Stored Markdown comparison accepts Linear's link wrappers, list markers and
+spacing at heading/list boundaries while retaining paragraph breaks and code.
+Package starts require Handoff's native start/delegate button; other approvals
+still require an approval answer.

@@ -367,3 +367,29 @@ test('live3 Research: records pass but a second target transition remains unansw
  assert.throws(()=>windowPolicy({...scenario,windows:[{mode:'discuss'}]},windows[2].questions,scenario.replies),/unexpected target/);
  const checked=checkTrace({host:'codex',trace:f.request.trace,expectedWindows:scenario.expectedWindows});assert.notEqual(checked.status,'passed');
 });
+
+const live4=()=>JSON.parse(fs.readFileSync(path.resolve('scripts/test-fixtures/skills-records-live4/handoff.json')));
+test('live4 Handoff: exact stored links, list markers and block spacing preserve text',t=>{
+ const f=fixture(t),excerpt=live4().markdown;f.events[2].message.content[0].input.body=excerpt.input;f.record.body=excerpt.stored;f.events[3].message.content[0].content=JSON.stringify(f.record);f.page('comments','comments',[f.record]);f.request.expectedRecords=[];
+ assert.equal(f.check().status,'passed');
+ f.record.body=f.record.body.replace('колонка с точным заголовком','колонка с изменённым заголовком');f.events[3].message.content[0].content=JSON.stringify(f.record);f.page('comments','comments',[f.record]);assert.equal(f.check().status,'failed');
+});
+for(const [input,stored] of [
+ ['one\n\ntwo','one\ntwo'],['```\na\n\nb\n```','```\na\nb\n```'],
+ ['    # heading\n\n    code','    # heading\n    code'],['* list\n\nparagraph','* list\nparagraph'],
+ ['https://example.test/a','[https://example.test/a](<https://example.test/b>)'],
+ ['[Label](https://example.test/a)','[Other](<https://example.test/a>)'],
+ ['`https://example.test/a`','`[https://example.test/a](<https://example.test/a>)`']
+])test(`stored formatting never erases a content boundary: ${JSON.stringify(input)}`,t=>{
+ const f=fixture(t);f.events[2].message.content[0].input.body=input;f.record.body=stored;f.events[3].message.content[0].content=JSON.stringify(f.record);f.page('comments','comments',[f.record]);f.request.expectedRecords=[];assert.equal(f.check().status,'failed');
+});
+for(const answer of ['Передать оркестратору','Начать работу (Recommended)','Ещё обсудить','Начать Discovery','Утвердить',''])test(`live4 Handoff start checks its own native transition button: ${JSON.stringify(answer)}`,t=>{
+ const f=fixture(t),sample=live4().authorization;f.request.host='codex';f.request.expectedRecords=[];
+ const event=sample.events.find(r=>r.event.payload?.role==='user'&&r.event.payload.content?.some(c=>c.text?.startsWith('<send_user_message_question_reply>')));
+ const content=event.event.payload.content[0],parts=content.text.split('\n'),answers=JSON.parse(parts[1]);answers[0].answer=answer;parts[1]=JSON.stringify(answers);content.text=parts.join('\n');
+ const trace=path.join(f.dir,'native-start.json');fs.writeFileSync(trace,JSON.stringify({events:sample.events}));f.request.trace=trace;
+ Object.assign(f.record,sample.record);f.page('comments','comments',[f.record]);f.request.packRoot=process.cwd();f.request.configFile=path.resolve('.agents/mono-workflow.config.json');
+ const result=f.check();
+ if(['Передать оркестратору','Начать работу (Recommended)'].includes(answer))assert.equal(result.gateResults[0]?.command,'route',result.reason);
+ else{assert.equal(result.status,'failed',result.reason);assert.match(result.reason,/empty\/refuse\/discuss\/non-approval/);assert.equal(result.gateResults.length,0);}
+});

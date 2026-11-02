@@ -32,8 +32,8 @@ function date(value){
 }
 
 const identityValues=value=>typeof value==='string'?[value]:[value?.id,value?.name].filter(text);
-// Linear's observed Markdown rendering: blank line after headings, self URL
-// links and a final newline. Preserve fenced content and all substantive bytes.
+// Linear's observed block spacing, link wrappers and list markers. Preserve
+// paragraph boundaries, code and all substantive bytes.
 function markdown(value){
  if(typeof value!=='string')return value;
  let fence=null,heading=false;const result=[];
@@ -44,6 +44,13 @@ function markdown(value){
    else if(marker[1][0]===fence[0]&&marker[1].length>=fence.length&&!marker[2].trim())fence=null;
   }
   if(!literal&&heading&&line===''){heading=false;continue;}
+  if(!literal&&/^(?:#{1,6} | {0,3}[-*] )/.test(line)){
+   // Optional separation before a heading/list is renderer formatting.
+   while(result.at(-1)==='')result.pop();
+  }else if(!literal&&line!==''&&result.at(-1)===''&&result.at(-2)===''&&/^ {0,3}[-*] /.test(result.findLast(v=>v!=='')??'')){
+   // Keep the paragraph break after a list; only extra empty lines collapse.
+   while(result.at(-1)===''&&result.at(-2)==='')result.pop();
+  }
   // Inline code is opaque too; unrecognized formatting stays unequal.
   const list=literal?line:line.replace(/^([ ]{0,3})- /,'$1* ');
   result.push(literal||line.includes('`')?list:list.replace(/\[([^\]\n]+)\]\(<(https?:\/\/[^>\s]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1'));
@@ -155,9 +162,10 @@ function productionWrites(traces){
 function approvalCheck(request,write,data,dump){
  const createProject=write.name.endsWith('__create_project')||(write.name.endsWith('__save_project')&&!write.input.id);
  if(!createProject&&!/mono-[\w-]+:\s*(?:approved|start)\b/.test(writeBody(write)))return;
+ const packageStart=/mono-package:\s*start\b/.test(writeBody(write));
  const binding=request.approvalBindings?.find(b=>b.recordId===idOf(write.value));
  const candidates=data.audit.calls.filter(c=>['AskUserQuestion','request_user_input_async'].includes(c.name)&&c.line<write.line);
- const window=binding?candidates.find(c=>c.callId===binding.windowCallId):candidates.filter(c=>windowRole(c.input?.questions)==='approval').at(-1);
+ const window=binding?candidates.find(c=>c.callId===binding.windowCallId):candidates.filter(c=>windowRole(c.input?.questions)===(packageStart?'transition':'approval')).at(-1);
  if(!window)missing('approval window missing');
  // Codex sent.jsonl is the driver's {thread,prompt} journal, not a native
  // event stream. Its delivered answer is proved from the resumed rollout.
@@ -177,7 +185,8 @@ function approvalCheck(request,write,data,dump){
   const content=reply.value.payload.content?.[0]?.text??'';
   try{answers=JSON.parse(content.replace(/^<send_user_message_question_reply>\n/,'').replace(/\n<\/send_user_message_question_reply>\n?$/,'')).map(a=>a.answer);}catch{answers=[];}
  }
- if(!answers.length||answers.some(answer=>!/^Утвердить(?:[ ,]|$)/.test(answer)))throw new Error('approval write after empty/refuse/discuss/non-approval reply');
+ const authorizes=answer=>packageStart?/^(?:Начать работу|Передать оркестратору)(?: \(Recommended\))?$/.test(answer):/^Утвердить(?:[ ,]|$)/.test(answer);
+ if(!answers.length||answers.some(answer=>!authorizes(answer)))throw new Error('approval write after empty/refuse/discuss/non-approval reply');
  if(write.line<=reply.line)throw new Error('approval write before window answer');
  if(!binding)bindingMissing(`shown-version binding missing for ${idOf(write.value)}`);
  const shown=data.rows.find(r=>r.line===binding.shownLine),current=data.rows.find(r=>r.line===binding.currentLine);
