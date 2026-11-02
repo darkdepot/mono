@@ -4,7 +4,7 @@ From MONO-290 live3 on 2c6d05d: discovery/approve (directory originally named
 design-approve), idea/correction and research/discuss. No Design run was recorded.
 
 These excerpts retain original line numbers, native MCP arguments/results,
-windows, delivered user answers, summaries and turn terminals. Host metadata,
+windows, delivered user answers, summaries and turn terminals. Machine paths and actor identities are neutralized. Host metadata,
 unrelated shell reads and scout sessions are omitted. Public test-project bodies
 and stored dumps are retained. The sent journal keeps its real `{thread,prompt}`
 shape; it is not native answer evidence. Full original-session replay, including
