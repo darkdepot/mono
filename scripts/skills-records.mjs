@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,7 @@ import { unwrap } from './skills-proof.mjs';
 import { runScenario } from './skills-run.mjs';
 import { nativeRecords, resultFor } from './skills-record-data.mjs';
 import { windowRole } from './skills-owner.mjs';
+import { latestApproval, approvalBlocks } from './idea-gate.mjs';
 
 const read=file=>JSON.parse(fs.readFileSync(file,'utf8'));
 const rawRead=file=>{try{return unwrap(read(file));}catch(error){missing(error.code==='ENOENT'?`incomplete dump: missing ${path.basename(file)}`:`error MCP dump: ${file}`);}};
@@ -36,9 +38,10 @@ const identityValues=value=>typeof value==='string'?[value]:[value?.id,value?.na
 // paragraph boundaries, code and all substantive bytes.
 function markdown(value){
  if(typeof value!=='string')return value;
- let fence=null,heading=false;const result=[];
+ let fence=null,inline=null,heading=false;const result=[];
  for(const line of value.split('\n')){
-  const marker=line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/),literal=Boolean(fence||marker||/^(?: {4}|\t)/.test(line));
+  const marker=inline===null?line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/):null;
+  const block=Boolean(fence||marker||(inline===null&&/^(?: {4}|\t)/.test(line))),literal=block||inline!==null;
   if(marker){
    if(!fence)fence=marker[1];
    else if(marker[1][0]===fence[0]&&marker[1].length>=fence.length&&!marker[2].trim())fence=null;
@@ -55,6 +58,10 @@ function markdown(value){
   const list=literal?line:line.replace(/^([ ]{0,3})- /,'$1* ');
   result.push(literal||line.includes('`')?list:list.replace(/\[([^\]\n]+)\]\(<(https?:\/\/[^>\s]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1'));
   heading=!literal&&/^#{1,6} /.test(line);
+  if(!block)for(const tick of line.matchAll(/`+/g)){
+   if(inline===null)inline=tick[0].length;
+   else if(inline===tick[0].length)inline=null;
+  }
  }
  if(!fence&&result.at(-1)==='')result.pop();
  return result.join('\n');
@@ -82,12 +89,13 @@ function pages(root,prefix,key,files){
  const names=fs.readdirSync(path.join(root,directory)).filter(name=>name.startsWith(stem+'-')&&name.endsWith('.json'));
  const count=names.filter(name=>new RegExp(`^${stem}-[1-9]\\d*\\.json$`).test(name)).length;
  if(!count||names.length!==count*2)missing(`incomplete ${prefix} pages`);
- const records=[],ids=new Set();let cursor,updated=Infinity;
+ const records=[],ids=new Set(),cursors=new Set();let cursor,updated=Infinity;
  for(let n=1;n<=count;n++){
   const requestFile=`${prefix}-${n}.request.json`,file=`${prefix}-${n}.json`,request=read(path.join(root,requestFile)),page=rawRead(path.join(root,file));
   if(!request||Array.isArray(request)||typeof request!=='object'||(n===1?Object.keys(request).length!==0:Object.keys(request).length!==1||request.cursor!==cursor))missing(`broken ${prefix} cursor request`);
   if(!Array.isArray(page?.[key])||typeof page.hasNextPage!=='boolean'||page.hasNextPage!==(n<count)||
     (page.hasNextPage?(!page[key].length||(key==='comments'?page.cursor!==page[key].at(-1)?.id:!text(page.cursor))):Object.hasOwn(page,'cursor')))missing(`unfinished ${prefix} page`);
+  if(page.hasNextPage){if(cursors.has(page.cursor))missing(`repeated ${prefix} cursor`);cursors.add(page.cursor);}
   cursor=page.cursor;files.push({file,value:page,request,kind:`list_${key}`,scope:directory});
   for(const record of page[key]){
    const id=key==='comments'?record.id:idOf(record);if(!text(id)||ids.has(id))missing(`duplicate/missing ${prefix} id`);ids.add(id);
@@ -159,14 +167,34 @@ function productionWrites(traces){
  return evidence.length?{status:'failed',stop:true,manualRemoval:[...manualRemoval],evidence,reason:'MCP write outside monotest: stopped; manual removal only for linked successful record URLs; no deletion attempted'}:null;
 }
 
+const sha256=value=>createHash('sha256').update(value).digest('hex');
+function versionApproval(write){
+ const body=writeBody(write),schemas=[
+  ['mono-prd: approved',['project','document','updatedAt','by'],['next','design']],
+  ['mono-design: approved',['project','prd','prd-updatedAt','paper','images','next','by'],[]],
+  ['mono-tech: approved',['project','prd','prd-updatedAt','spec','spec-sha256','page-sha256','by'],['design']],
+  ['mono-package: start',['project','record','sha256','issues','by'],['research']]
+ ];
+ const records=schemas.flatMap(([kind,required,optional])=>{
+  const record=latestApproval([{...write.value,body}],kind,required,optional);return record?[{kind,...record}]:[];
+ });
+ if(records.length!==1)throw new Error('written approval does not bind the shown content/version');
+ return records[0];
+}
+function bindsSnapshot(body,info,text){
+ const snapshots=approvalBlocks(body).filter(block=>block.info===info);
+ return snapshots.length===1&&snapshots[0].content.replace(/[\r\n]+$/,'')===text.replace(/[\r\n]+$/,'');
+}
 function approvalCheck(request,write,data,dump){
  const createProject=write.name.endsWith('__create_project')||(write.name.endsWith('__save_project')&&!write.input.id);
  if(!createProject&&!/mono-[\w-]+:\s*(?:approved|start)\b/.test(writeBody(write)))return;
  const packageStart=/mono-package:\s*start\b/.test(writeBody(write));
  const binding=request.approvalBindings?.find(b=>b.recordId===idOf(write.value));
  const candidates=data.audit.calls.filter(c=>['AskUserQuestion','request_user_input_async'].includes(c.name)&&c.line<write.line);
- const window=binding?candidates.find(c=>c.callId===binding.windowCallId):candidates.filter(c=>windowRole(c.input?.questions)===(packageStart?'transition':'approval')).at(-1);
+ const decisions=candidates.filter(c=>windowRole(c.input?.questions)===(packageStart?'transition':'approval'));
+ const window=binding?candidates.find(c=>c.callId===binding.windowCallId):decisions.at(-1);
  if(!window)missing('approval window missing');
+ if(window!==decisions.at(-1))throw new Error('approval binding does not name the latest decision window');
  // Codex sent.jsonl is the driver's {thread,prompt} journal, not a native
  // event stream. Its delivered answer is proved from the resumed rollout.
  const responses=request.host==='claude'&&request.sent?traceRows(request.sent,'claude').rows.map(r=>r.value):[];
@@ -198,15 +226,17 @@ function approvalCheck(request,write,data,dump){
   if(!terminal||binding.shownLine<=window.line||binding.shownLine>=terminal.line)missing('shown version outside approved Codex window turn');
  }
  let shownVersion;
- if(!shownText.includes(binding.text)){
+ if(!shownText.includes(binding.text)||binding.shownReadLine!==undefined){
   const before=data.audit.calls.find(c=>c.line===binding.shownReadLine&&!isWrite(c.name));
-  if(!binding.documentId||!before||before.line>=window.line)missing('shown version not found in owner-visible trace');
+  if(!before||before.line>=window.line)missing('shown version not found in owner-visible trace');
   const read=resultFor(request.host,before,data.rows);
-  if(read.resultLine>=window.line||idOf(read.value)!==binding.documentId||!text(read.value.url)||!shownText.includes(read.value.url)||bodyOf(read.value)!==binding.text)missing('shown document link/version not bound to native read');
+  if(read.resultLine>=window.line||read.resultLine>=binding.shownLine||(binding.documentId&&idOf(read.value)!==binding.documentId)||!text(idOf(read.value))||
+   (!shownText.includes(binding.text)&&(!text(read.value.url)||!shownText.includes(read.value.url)))||bodyOf(read.value)!==binding.text)missing('shown document link/version not bound to native read');
   shownVersion=read.value;
  }
  if(binding.currentLine===write.line&&/mono-(?:idea|tech):\s*approved/.test(writeBody(write))){
-  if(!writeBody(write).includes(binding.text))throw new Error('outgoing approved version differs from shown content');
+  const info=writeBody(write).includes('mono-idea: approved')?'mono-idea-snapshot':'mono-tech-page';
+  if(!bindsSnapshot(writeBody(write),info,binding.text))throw new Error('outgoing approved version differs from shown content');
   return; // idea-gate below independently checks the snapshot against persisted current data.
  }
  if(createProject){
@@ -218,8 +248,21 @@ function approvalCheck(request,write,data,dump){
  const value=resultFor(request.host,currentCall,data.rows).value;
  const fresh=binding.currentRecordId?(value.comments??value.documents??value.issues??[]).find(row=>idOf(row)===binding.currentRecordId):value;
  if(!fresh)missing('current version record absent from native read');
- if(!(writeBody(write)).includes(binding.text) && !(text(binding.documentId) && ((writeBody(write)).includes(`document=${binding.documentId}`) && (writeBody(write)).includes(`updatedAt=${fresh.updatedAt}`) || (writeBody(write)).includes(`prd=${binding.documentId}`) && (writeBody(write)).includes(`prd-updatedAt=${fresh.updatedAt}`))))throw new Error('written approval does not bind the shown content/version');
+ const versioned=/mono-(?:prd|design|tech):\s*approved/.test(writeBody(write));
+ const documentId=binding.documentId??(versioned?idOf(fresh):null);
+ if(versioned&&!shownVersion)missing('shown document version read required');
+ if(text(documentId)){
+  const {kind,fields}=versionApproval(write);
+  const bound=kind==='mono-prd: approved'?fields.document===documentId&&fields.updatedAt===fresh.updatedAt
+   :['mono-design: approved','mono-tech: approved'].includes(kind)&&fields.prd===documentId&&fields['prd-updatedAt']===fresh.updatedAt
+    ||kind==='mono-tech: approved'&&fields.spec===documentId&&fields['spec-sha256']===sha256(binding.text);
+  if(!bound)throw new Error('written approval does not bind the shown content/version');
+ }else if(packageStart){
+  const {fields}=versionApproval(write);
+  if(!text(idOf(fresh))||fields.record!==idOf(fresh)||fields.sha256!==sha256(binding.text))throw new Error('written approval does not bind the shown content/version');
+ }else if(!writeBody(write).includes(binding.text))throw new Error('written approval does not bind the shown content/version');
  if(shownVersion&&shownVersion.updatedAt!==fresh.updatedAt)throw new Error('version changed after shown approval');
+ if(shownVersion&&idOf(shownVersion)!==idOf(fresh))throw new Error('approved document changed');
  if(bodyOf(fresh)!==binding.text)throw new Error('version changed after shown approval');
  if(binding.documentId&&idOf(fresh)!==binding.documentId)throw new Error('approved document changed');
  const persisted=dump.all.find(row=>idOf(row)===idOf(fresh));

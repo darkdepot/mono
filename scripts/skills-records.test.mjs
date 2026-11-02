@@ -274,6 +274,9 @@ test('a mono-design write requires the dedicated passing design gate',t=>{
  // and matching reads. This is deliberately not a valid Design approval.
  const visit=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())visit(file);else if(/\.jsonl?$/.test(name))fs.writeFileSync(file,fs.readFileSync(file,'utf8').replaceAll('mono-prd: approved','mono-design: approved prd=425e1596-b9a6-4be2-ae02-3d2cd7701f63'));}};
  visit(f.dir);f.request.expectedRecords=[{type:'mono-design: approved',count:1}];
+ // Exercise the mandatory gate independently of the now-earlier rejection of
+ // an invalid document/version binding on this deliberately malformed record.
+ delete f.request.approvalBindings;
  const noGate=f.check();assert.equal(noGate.status,'failed');assert.equal(noGate.gateResults[0].command,'route');assert.equal(noGate.gateResults[0].result.ok,false);
  f.request.gates=[{command:'design'}];
  const invalid=f.check();assert.equal(invalid.status,'failed',invalid.reason);assert.equal(invalid.gateResults[0].command,'design');assert.equal(invalid.gateResults[0].result.ok,false);
@@ -392,4 +395,69 @@ for(const answer of ['Передать оркестратору','Начать �
  const result=f.check();
  if(['Передать оркестратору','Начать работу (Recommended)'].includes(answer))assert.equal(result.gateResults[0]?.command,'route',result.reason);
  else{assert.equal(result.status,'failed',result.reason);assert.match(result.reason,/empty\/refuse\/discuss\/non-approval/);assert.equal(result.gateResults.length,0);}
+});
+
+for(const prose of ['tokens','shown-text','inline-shown'])test(`review2: approval binding ignores spoofed ${prose} outside its record`,t=>{
+ const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0],other='11111111-1111-4111-8111-111111111111',approvedId=binding.documentId;assert.equal(f.check().status,'passed');
+ const text=json=>{
+  if(typeof json==='string'){
+   try{const value=JSON.parse(json);if(typeof value==='object'&&value!==null)return JSON.stringify(text(value));}catch{}
+   if(json.includes('mono-prd: approved '))return json.replace(`document=${approvedId} `,`document=${other} `)+'\n'+(prose==='tokens'?`document=${binding.documentId} updatedAt=2026-11-01T20:57:20.590Z`:binding.text);
+   return json;
+  }
+  if(Array.isArray(json))return json.map(text);
+  if(json&&typeof json==='object')return Object.fromEntries(Object.entries(json).map(([k,v])=>[k,text(v)]));return json;
+ };
+ const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(/\.jsonl?$/.test(name)){
+  const source=fs.readFileSync(file,'utf8');let changed;try{changed=JSON.stringify(text(JSON.parse(source)));}catch{changed=source.trim().split('\n').map(s=>JSON.stringify(text(JSON.parse(s)))).join('\n')+'\n';}fs.writeFileSync(file,changed);
+ }}};walk(f.dir);
+ if(prose==='inline-shown'){delete binding.documentId;editLiveTrace(f,rows=>{rows[binding.shownLine-1].payload.content[0].text+='\n'+binding.text;});}
+ const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/shown content\/version/);
+});
+test('review2: multiline inline code is literal during stored Markdown comparison',t=>{
+ const f=fixture(t);f.events[2].message.content[0].input.body='`alpha\n- beta\nomega`';f.record.body='`alpha\n* beta\nomega`';f.events[3].message.content[0].content=JSON.stringify(f.record);f.page('comments','comments',[f.record]);f.request.expectedRecords=[];assert.equal(f.check().status,'failed');
+});
+for(const kind of ['projects','documents','issues'])test(`review2: repeated ${kind} response cursor cannot prove a complete dump`,t=>{
+ const f=fixture(t);f.events.splice(0);f.request.expectedRecords=[];
+ if(kind==='projects'){f.request.project=null;f.request.projectName='absent-run';}
+ for(let n=1;n<=3;n++){
+  f.save(`${kind}-${n}.request.json`,n===1?{}:{cursor:'cycle'});f.save(`${kind}-${n}.json`,{[kind]:[{id:`row${n}`,name:`other${n}`}],hasNextPage:n<3,...(n<3?{cursor:'cycle'}:{})});
+  if(kind==='documents')f.save(`documents/row${n}.json`,{id:`row${n}`,projectId,title:`Doc${n}`,content:'Body'});
+  if(kind==='issues'){f.save(`issues/row${n}/issue.json`,{id:`row${n}`,projectId,title:`Task${n}`,description:'Body',status:'Todo',labels:[]});f.page(`issues/row${n}/comments`,'comments',[]);}
+ }
+ const result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/cursor/);
+});
+test('review2: an Idea snapshot cannot borrow shown text from prose outside its fence',async t=>{
+ const {ideaFingerprint}=await import('./idea-gate.mjs'),{unwrap}=await import('./skills-proof.mjs'),f=liveFixture(t,'idea-approve');
+ const binding=f.request.approvalBindings.find(b=>b.recordId!==f.request.project.id),page=unwrap(JSON.parse(fs.readFileSync(path.join(f.request.dumpDir,'comments-1.json')))),record=page.comments.find(c=>c.id===binding.recordId);
+ const before=record.body,changed=binding.text+'\nUnapproved unknown.',after=before.replace(binding.text,changed).replace(/sha256=[a-f0-9]{64}/,'sha256='+ideaFingerprint(changed))+'\n'+binding.text;
+ const rewrite=v=>{
+  if(typeof v==='string'){try{const parsed=JSON.parse(v);if(parsed&&typeof parsed==='object')return JSON.stringify(rewrite(parsed));}catch{}return v.replace(before,after).replace(JSON.stringify(before),JSON.stringify(after));}
+  if(Array.isArray(v))return v.map(rewrite);if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).map(([k,x])=>[k,rewrite(x)]));return v;
+ };
+ const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(/\.jsonl?$/.test(name)){
+  const s=fs.readFileSync(file,'utf8');let data;try{data=JSON.stringify(rewrite(JSON.parse(s)));}catch{data=s.trim().split('\n').map(x=>JSON.stringify(rewrite(JSON.parse(x)))).join('\n')+'\n';}fs.writeFileSync(file,data);
+ }}};walk(f.dir);
+ const rejected=f.check();assert.equal(rejected.status,'failed',rejected.reason);assert.match(rejected.reason,/outgoing approved version/);
+ delete f.request.approvalBindings;const unbound=f.check();assert.equal(unbound.bindingOnly,true,unbound.reason);assert.equal(unbound.gateResults[0].result.ok,true,'tampering is a valid but unapproved snapshot, not just a broken digest');
+});
+for(const mode of ['free-window','older-window'])test(`review2: manual bindings cannot override the native decision source (${mode})`,t=>{
+ const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0];
+ editLiveTrace(f,rows=>{
+  const window=rows.find(r=>r.payload?.call_id===binding.windowCallId&&r.payload?.name==='request_user_input_async');assert(window);
+  if(mode==='free-window'){
+   const input=JSON.parse(window.payload.arguments);delete input.questions[0].options;window.payload.arguments=JSON.stringify(input);
+  }else{
+   const index=rows.findIndex(r=>r.payload?.item?.tool==='save_comment'&&JSON.stringify(r.payload.item.result).includes(binding.recordId));assert(index>=binding.currentLine);
+   const later=structuredClone(window);later.payload.call_id='later-approval';
+   rows.splice(index,0,later,{type:'response_item',payload:{type:'function_call_output',call_id:'later-approval',output:'{"accepted":true}'}});f.request.endLine+=2;
+  }
+ });
+ const result=f.check();assert.equal(result.status,'failed',result.reason);assert.match(result.reason,/latest decision window/);
+});
+test('review2: full inline document text still needs its native shown-version read',t=>{
+ const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0];
+ editLiveTrace(f,rows=>{rows[binding.shownLine-1].payload.content[0].text+='\n'+binding.text;});delete binding.documentId;
+ assert.equal(f.check().status,'passed','a native before-read also binds a full inline summary');
+ delete binding.shownReadLine;const result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/shown document version read required/);
 });

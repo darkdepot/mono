@@ -1750,3 +1750,6 @@ Stored Markdown comparison accepts Linear's link wrappers, list markers and
 spacing at heading/list boundaries while retaining paragraph breaks and code.
 Package starts require Handoff's native start/delegate button; other approvals
 still require an approval answer.
+Version bindings use the gate's existing record parser and a native read before
+display. Surrounding prose, a different decision window or a repeated cursor
+cannot make an approval or incomplete dump pass.
