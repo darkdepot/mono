@@ -32,7 +32,7 @@ export function codexWindows(rows, source, options) {
       (r.value.type === 'event_msg' && ['task_complete', 'task_started', 'turn_aborted'].includes(r.value.payload?.type)));
     const turn = items.filter(r => r.line > row.line && (!end || r.line < end.line));
     const proof = audit.windowProof(row.value,row.line,p.call_id,options);
-    const args = proof.value;
+    let args;try{args=JSON.parse(p.arguments);}catch{args=null;}
     const executionConfirmed = proof.status === 'confirmed';
     const last = turn.filter(r=>['message','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(r.item.type)).at(-1);
     const summary = last?.item.type === 'message' && last.item.role === 'assistant' && last.item.phase === 'final_answer' ? textOf(last.item) : '';

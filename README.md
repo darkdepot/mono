@@ -1617,7 +1617,7 @@ Linear, ограничения пробы, требования к хосту и
 тестировщик [mono:qa](skills/qa/SKILL.md) использует его на хосте.
 Проверка сертификата: `node scripts/qa-certificate.mjs <report.json> <expected.json>`;
 [отдельный шаблон](templates/qa-output.md) описывает task/project, короткий и
-given-version сертификаты. Ворота включаются отдельной работой после пилота.
+given-version сертификаты. Ожидания связывают id, точный текст и источник; scenario нельзя исключить или заменить no-behavior.
 
 Run before completing a change:
 
@@ -1641,7 +1641,11 @@ use the recommended answer; free questions use the persona. Fresh seed routes ar
 checked before the stage starts. Select a committed
 `base...head` with `node scripts/skills-select.mjs <request.json>`, then pass that
 saved selection and the explicit index path to `node scripts/skills-suite.mjs
-<request.json>`. The expected items are frozen before the first host call;
+<request.json>`. The optional `qa.skills` recipe connects any product's own index/hosts/perChange.
+Use configFile/expectedFile/taskExpectedFile in selection to save scenario × host
+expectations in task-expected.json. Per-change selection can be disabled while
+release/acceptance still select the full catalog. Mono's own config is activated
+only after the intermediate pack is installed. The expected items are frozen before the first host call;
 removed scenarios are refused. Main paths use short chains in one fresh monotest
 project, other neighbors use their own seeds. Design requires a request-supplied
 Paper file id and the neutral pre-execution guard. These data files are not part
@@ -1654,7 +1658,10 @@ An unanswered standalone Idea forbids project creation and needs no manifest;
 an absent seed pointer means `unverified: seed not completed`, before the stage starts.
 Every stage's manifest is compared field by field (`id`, `name`, `url`) with
 the existing project, including the first stage with its validated seed pointer;
-JSON key order does not affect identity.
+JSON key order does not affect identity. If an unverified stage omits its own
+manifest, its validated seed project still routes the next stage and fresh record
+reads; it does not trigger another seed or promote the stage to passed. A passed
+stage still requires its own manifest.
 The suite requires a Git checkout at `packRoot` on `selection.head`, with no
 tracked changes or untracked execution files. It checks again before and after
 each stage; unversioned scratch copies have no silent override. Stage file rules
@@ -1711,7 +1718,7 @@ from the test home and servers, not from command strings. A mechanical pass stil
 needs the conversation rubric and live orchestrator proof. Standalone synthetic
 checker parity remains MONO-294; scenario sets, record checks and QA gates are
 later package work.
-Scratch validation copies include the scout-hook template. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
+Scratch validation copies include the scout-hook template. Runtime fixture files run sequentially to isolate their deadline assertions from concurrent process startup. Process-cleanup tests advance controlled driver clocks only after real child output or leader exit: startup load consumes no test budget, while the timeout and 500 ms cleanup bound remain asserted against live leaders and held pipes. CI runs it on PRs and pushes to main. Required README sections and all 34 rule links are checked structurally; a renamed target section fails with the rule number. Tests also remove required README sections and exercise model-policy detection on README. Passing link checks establishes addressability, not semantic truth.
 
 Use focused checks while editing:
 
@@ -1727,3 +1734,50 @@ node --test scripts/route-gate.test.mjs scripts/design-gate.test.mjs scripts/tec
 ```
 
 Runtime tests use scratch plugin folders; the real sandbox-boundary test runs outside a worker sandbox and reports an explicit skip when nested sandboxing prevents it. Installation, live production QA, deploy and owner acceptance are separate evidence boundaries, never implied by a local green check.
+
+
+Skill record checks: `node --test scripts/skills-records.test.mjs scripts/qa-certificate.test.mjs scripts/qa-gate.test.mjs`.
+A separate monotest-only read process dumps the fixed project/documents/issues/comments
+checklist after each stage. The script schedules every read and saves native raw
+responses; the model never writes dump files. Successful seed writes need the
+expected project/route; strict payload/history checks apply to scenario writes.
+Project status matches the identity supplied by the write (id or name).
+Any unverified item retains its status while the chain gathers later evidence;
+only a real failed stops that chain. Native write results use complete fresh
+cursor chains; working MCP calls stop the suite. Manual-removal links require a
+successful mutation; reads and errored or missing results never suggest deletion.
+Record counts use the stage gates’ block scanner and record locations: project
+comments for approvals/start, document fences for Research. Prose mentions and
+task logs never count as records; real duplicates still fail. Short input types match
+the canonical approval/start marker names exactly; suffixed names do not match.
+Native CommandExecution metadata identifies quoted shell command data inside exec;
+MCP names in that data are not record calls. Actual unbound monotest calls stay
+unverified, and native McpToolCall records are always retained.
+The suite reports scenario/host, duration and unique monotest task count. Missing
+native evidence stays unverified. The unchanged landing gate requires passed;
+MONO-279's exact expectation/source binding is included. See [record proof inputs](references/qa-skills.md#свежий-дамп-и-сверка-записей).
+
+Record checks apply to every supplied native trace, including scouts and dump
+children. Each dump read must provably start after all scenario writes; missing
+or overlapping order stays unverified. Native times and Claude's hash-bound
+driver process interval support offline replay; request times and file mtimes do
+not. Public live excerpts retain their original native clock evidence.
+Page reads use fixed per-tool arguments, preserved across the cursor chain;
+search filters cannot prove an exhaustive project dump. Approval binds the last
+owner-visible text of the decision turn. Native MCP completions need a linked
+literal invocation to prove a fresh read preceded the approval write; an excerpt
+without that invocation remains unverified.
+Dump host/capacity failures remain unverified and get one isolated retry. Both
+attempts are retained and audited; observed write violations stay failed. A
+non-binding unverified dump continues its chain without becoming passed. Linear heading gaps and
+trailing empty lines normalize without changing text, paragraph or code checks.
+Codex approvals use delivered native rollout answers; its `{thread,prompt}` sent
+journal is not a Claude event stream. Live3 regression excerpts include that journal
+and the scripted dump's own rollout, matching the suite's record-check inputs.
+Stored Markdown comparison accepts Linear's link wrappers, list markers and
+spacing at heading/list boundaries while retaining paragraph breaks and code.
+Package starts require Handoff's native start/delegate button; other approvals
+still require an approval answer.
+Version bindings use the gate's existing record parser and a native read before
+display. Surrounding prose, a different decision window or a repeated cursor
+cannot make an approval or incomplete dump pass.

@@ -442,3 +442,17 @@ for(const mode of ['recommended','label','discuss'])test(`Codex optionless quest
  const request=setup(t,'codex','free-window');request.scenario.windows=[{mode,label:'Зелёный'}];const r=await runScenario(request);
  assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/scenario choice unavailable/);assert.equal(r.replies.length,0);
 });
+
+for(const host of ['claude','codex'])test(`${host}: seed boundary is the actual successful native terminal, including trailing telemetry`,async t=>{
+ const request=setup(t,host,'seed-boundary'),project={id:'00000000-0000-4000-8000-000000000001',name:'monotest-seed',url:'https://linear.app/monotest/project/seed'},file=path.join(request.cwd,'seed-project.json');
+ request.seed={prompt:'Seed '+JSON.stringify({file,project}),projectFile:file,projectName:project.name};
+ const result=await runScenario(request);assert.equal(result.status,'passed',JSON.stringify(result));assert.deepEqual(result.seedRoute.project,project);
+ const {traceRows}=await import('./skills-probe.mjs');const rows=traceRows(result.trace,host).rows,terminal=rows.find(r=>r.line===result.seedEndLine);
+ assert.equal(nativeProof({host,kind:'terminal',result:terminal?.value}).status,'confirmed');
+ assert(result.seedEndLine<result.check.windows[0].line);
+});
+for(const host of ['claude','codex'])for(const policy of ['discuss','empty','refuse'])test(`${host}: final ${policy} reply stops before an unsolicited persona continuation`,async t=>{
+ const request=setup(t,host,'free-after-window');request.scenario.windows=[{mode:policy,text:'Не буду отвечать.'}];
+ request.scenario.stopAfterExpectedWindows=true;request.scenario.freeQuestions=[{contains:'?'}];
+ const result=await runScenario(request);assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.replies.length,1);assert.equal(result.freeReplies.length,0);assert.equal(fs.readdirSync(request.outputDir).filter(p=>p.startsWith('persona-')).length,0);
+});

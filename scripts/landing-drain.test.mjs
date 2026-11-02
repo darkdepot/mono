@@ -498,7 +498,7 @@ function qaFixture(t) {
   fs.mkdirSync(dir, { recursive: true });
   const evidence = path.join(dir, 'session.cast'); fs.writeFileSync(evidence, 'recorded scratch session');
   const expected = { issue: f.issue, head: f.head, base: f.mergeSha, scope: 'task', mode: 'ship',
-    recipeSource: 'config', kind: 'behavior', evidenceRoot: qaRoot, expectedItems: ['C1'], taskCriteria: ['C1'] };
+    recipeSource: 'config', kind: 'behavior', evidenceRoot: qaRoot, expectedItems: [{ id: 'C1', source: 'task', expectation: 'Reject missing certificate' }], taskCriteria: ['C1'] };
   const certificate = { ...expected, gateEligible: true, verdict: 'passed',
     items: [{ id: 'C1', source: 'task', expectation: 'Reject missing certificate', outcome: 'passed', evidence: [evidence] }] };
   const current = { tasks: { [f.issue]: { head: f.head, project: null } }, projects: {} };
@@ -571,8 +571,8 @@ test('QA final project certificate blocks landing and wave on missing or changed
   const build = project.issues.filter(row => !row.labels.includes('Этап')).map(({ issue, head }) => ({ issue, head }));
   const cert = { ...f.certificate, scope: 'project', project: 'example-project', build };
   const exp = { ...f.expected, scope: 'project', project: 'example-project', build,
-    expectedItems: ['R1', 'AE1'], taskCriteria: [] };
-  cert.items = exp.expectedItems.map(id => ({ ...f.certificate.items[0], id, source: 'requirement' }));
+    expectedItems: ['R1', 'AE1'].map(id => ({id,source:'requirement',expectation:'Reject missing certificate'})), taskCriteria: [] };
+  cert.items = exp.expectedItems.map(item => ({ ...f.certificate.items[0], ...item }));
   f.save('project', cert, exp);
   atomicJson(f.pending, []);
   assert.equal(f.prepare().status, 0);

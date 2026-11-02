@@ -17,7 +17,7 @@ function at(value, keys) {
   if (value === undefined) absent();
   return guarded(value);
 }
-function unwrap(value) {
+export function unwrap(value) {
   guarded(value);
   if (typeof value === 'string') {
     try { return unwrap(JSON.parse(value)); } catch (error) {
@@ -25,6 +25,7 @@ function unwrap(value) {
       throw error;
     }
   }
+  if (value && typeof value==='object' && (typeof value.id==='string'||typeof value.uuid==='string')) return value;
   if (typeof value?.content === 'string') return unwrap(at(value, ['content']));
   if (value?.structuredContent) return unwrap(at(value, ['structuredContent']));
   if (Array.isArray(value?.content) && value.content.length === 1) return unwrap(at(value, ['content']));
@@ -62,7 +63,7 @@ function claudeAnswer(sent) {
 
 export function nativeProof({host, kind, call, result, proof, reply, prompt, callId}) {
   try {
-    let value;
+    let value,raw;
     if (!['claude','codex'].includes(host)) absent();
     guarded(call); guarded(result);
     if (kind === 'persona') {
@@ -85,6 +86,13 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
       } else if (result?.type !== 'turn.completed') absent();
       return {status:'confirmed'};
     }
+    if (host === 'codex' && kind === 'record' && call?.type === 'event_msg') {
+      const item=at(call,['payload','item']);
+      if(call.payload.type!=='item_completed'||item.type!=='McpToolCall'||item.status!=='completed'||typeof item.id!=='string'||item.id!==callId||typeof item.server!=='string'||typeof item.tool!=='string'||!item.arguments||typeof item.arguments!=='object'||Array.isArray(item.arguments)||result!==call)absent();
+      value=unwrap(at(item,['result']));
+      if(!value||typeof value!=='object')absent();
+      return {status:'confirmed',value,raw:item.result};
+    }
     if (host === 'codex') {
       const c = native(call), r = native(result);
       const name=nativeToolName(c);
@@ -106,16 +114,16 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
         if (!Array.isArray(args?.questions) || !args.questions.length || !value || value.accepted !== true || Object.keys(value).length !== 1) absent();
         return {status:'confirmed',value:args};
       }
-      if(kind==='workspace'&&Array.isArray(output)&&output.length>1){
+      if(['workspace','record'].includes(kind)&&Array.isArray(output)&&output.length>1){
         guarded(output);
         const parsed=[];
         for(let i=0;i<output.length;i++){
           const block=at(output,[i]);
           if(!['text','input_text'].includes(block?.type)||typeof block.text!=='string')absent();
-          try{parsed.push(unwrap(JSON.parse(at(block,['text']))));}catch(error){if(!(error instanceof SyntaxError))throw error;}
+          try{const raw=JSON.parse(at(block,['text']));parsed.push({raw,value:unwrap(raw)});}catch(error){if(!(error instanceof SyntaxError))throw error;}
         }
-        if(parsed.length!==1)absent();value=parsed[0];
-      }else value = unwrap(output);
+        if(parsed.length!==1)absent();({value,raw}=parsed[0]);
+      }else{value = unwrap(output);if(kind==='record')raw=typeof output==='string'?JSON.parse(output):output;}
       if (kind === 'command') {
         if (!['exec_command','exec'].includes(name)) absent();
         if (value?.exit_code !== 0 || value.failure || value.signal) absent();
@@ -156,8 +164,12 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
         if (c.name !== 'Bash' || typeof at(r,['content']) !== 'string') absent();
         return {status:'confirmed'};
       }
-      value = unwrap(at(r,['content']));
+      const content=at(r,['content']);value = unwrap(content);if(kind==='record')raw=typeof content==='string'?JSON.parse(content):content;
     } else absent();
+    if (kind === 'record') {
+      if (!value || typeof value !== 'object') absent();
+      return {status:'confirmed',value,raw};
+    }
     if (kind !== 'workspace' || !Array.isArray(proof?.path)) absent();
     const leaf = at(value,proof.path);
     return {status:leaf === proof.equals ? 'confirmed':'mismatch'};

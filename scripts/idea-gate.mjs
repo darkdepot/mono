@@ -143,6 +143,7 @@ function blocks(markdown, allowUnclosed = false) {
   }
   return result;
 }
+export { blocks as approvalBlocks };
 
 function ordinary(text) {
   const sourceLines = text.split('\n');
@@ -486,7 +487,7 @@ function verifyDump(options, config) {
     headings, since: config.ideaGate?.since ?? IDEA_GATE_DEFAULT_SINCE });
 }
 
-function latestApproval(comments, marker, required, optional = []) {
+export function latestApproval(comments, marker, required, optional = []) {
   const prefix = marker.slice(0, marker.indexOf(':') + 1);
   const candidates = comments.map(comment => {
     const fenced = blocks(comment.body, true);

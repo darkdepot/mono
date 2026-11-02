@@ -1,0 +1,10 @@
+{
+  "source": "MONO-290 amend 1, Codex/monotest live runs on 3d302da, 2026-11-02",
+  "excerpts": [
+    "run-a/idea-approve-codex-0",
+    "run-a/idea-empty-codex-0",
+    "run-b/design-approve-codex-0 (actually discovery/approve; Design never started)"
+  ],
+  "trimming": "Only record/window/terminal evidence retained. Author/profile, unrelated metadata and local paths removed. Test project/document/comment ids and neutral scenario content retained. One exec wrapper reduced to literal invocation of its observed native arguments. No verdict or native result invented.",
+  "clock": "Original native timestamps and the dump session start envelope restored from the same full rollouts. Final terminal times come from their native terminals. No clock values inferred from files or manufactured."
+}

@@ -1,0 +1,32 @@
+{
+  "expectedWindows": [
+    {
+      "id": "research-approval",
+      "decision": "Совет",
+      "advice": "Совет",
+      "reason": "Совет",
+      "summary": [],
+      "role": "transition"
+    }
+  ],
+  "replies": [
+    {
+      "index": 0,
+      "callId": "call_a9b74680b8dc4f19ace55e7086afd896",
+      "target": true,
+      "role": "transition",
+      "policy": "discuss",
+      "replySent": true,
+      "received": true
+    },
+    {
+      "index": 1,
+      "callId": "call_7fd4ff639ab643f3bb14f1fd6680a476",
+      "target": false,
+      "role": "free",
+      "policy": "persona",
+      "replySent": true,
+      "received": true
+    }
+  ]
+}

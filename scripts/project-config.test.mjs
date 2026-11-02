@@ -298,7 +298,9 @@ test('qa recipe CLI validates modes, assigned port, copy identity, data and acti
     const qa = { mode: 'terminal', install: [], start: 'node scripts/verify.mjs',
       ready: { command: 'pwd && git rev-parse HEAD', identity: 'Detached copy and expected full SHA' },
       data: { source: 'local-fixtures', description: 'Local fixtures only' }, forbiddenActions: ['No external writes'] };
-    const cases = [[undefined, true], [qa, true], [{ ...qa, mode: 'web', start: 'serve --port=$QA_PORT' }, true],
+    const cases = [[undefined, true], [qa, true],
+      [{...qa,skills:{indexFile:'evals/scenarios/index.json',hosts:['claude','codex'],perChange:false}},true],
+      [{...qa,skills:{indexFile:'evals/scenarios/index.json',hosts:['codex'],perChange:'false'}},false], [{ ...qa, mode: 'web', start: 'serve --port=$QA_PORT' }, true],
       [{ ...qa, mode: 'mobile', start: 'build API_PORT=$QA_PORT' }, true],
       [{ ...qa, mode: 'web', start: 'serve --port=${QA_PORT}' }, true],
       [{ ...qa, mode: 'mobile', start: 'build API_PORT=${QA_PORT}' }, true],

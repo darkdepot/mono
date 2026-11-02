@@ -1164,6 +1164,12 @@ including shipped work, excluding label `Этап`; it is independent of the QA 
 
 Before QA, save `<root>/qa/<KEY>/<head>/task-expected.json` using the inputs of
 `scripts/qa-certificate.mjs` (base, kind, evidenceRoot, expectedItems, taskCriteria).
+`expectedItems` is an array of `{id, source, expectation}`; freeze exact text/source,
+not IDs alone. With `qa.skills`, run `skills-select.mjs` with `configFile`, worktree,
+base/head, `expectedFile` (independent task inputs), `taskExpectedFile` and `output`
+before the pass. It appends scenario × host entries to the new task-expected.json.
+`purpose: change` respects perChange; release/acceptance select the complete catalog.
+Never call a selected scenario no-behavior or excluded; failed/unverified holds merge.
 After publication/read-back save `task-report.json` with the certificate string.
 For final QA use `project-expected.json` and `project-report.json` at the final
 Issue/head. Save expectations independently before the pass, never extract IDs,

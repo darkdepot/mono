@@ -1,0 +1,29 @@
+{
+  "description": {
+    "written": "## Что\nДобавить колонку «Источник» из поля source в существующую таблицу тестовых прогонов приложения записи: cli/runs.mjs читает cli/runs.json, проверки в cli/runs.test.mjs. Проект monotest-live5.\n\n## Зачем\nИсточник прогона сейчас не виден в строке таблицы.\n\n## Образ результата\nПосле имени прогона виден источник; пустой source, null и отсутствующий ключ дают прочерк. Фильтр и сортировку не берём.\n\n",
+    "stored": "## Что\n\nДобавить колонку «Источник» из поля source в существующую таблицу тестовых прогонов приложения записи: cli/runs.mjs читает cli/runs.json, проверки в cli/runs.test.mjs. Проект monotest-live5.\n\n## Зачем\n\nИсточник прогона сейчас не виден в строке таблицы.\n\n## Образ результата\n\nПосле имени прогона виден источник; пустой source, null и отсутствующий ключ дают прочерк. Фильтр и сортировку не берём."
+  },
+  "capacity": {
+    "stdout": [
+      {
+        "type": "thread.started",
+        "thread_id": "capacity-thread"
+      },
+      {
+        "type": "turn.started"
+      },
+      {
+        "type": "error",
+        "message": "Selected model is at capacity. Please try a different model."
+      },
+      {
+        "type": "turn.failed",
+        "error": {
+          "message": "Selected model is at capacity. Please try a different model."
+        }
+      }
+    ],
+    "exitCode": 1
+  },
+  "provenance": "Trimmed native live5 save_project input/result and dump stdout; neutral run name/thread id; no invented event order."
+}

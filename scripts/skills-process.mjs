@@ -1,10 +1,13 @@
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 const cleanupGraceMs=500;
 
 // Both adapters use this pipe boundary: raw stdout is durable before dispatch.
 export function hostProcess({ binary, args, cwd, env, trace, stderr, sent, timeoutMs, input, onEvent, onIdle, idleMs = 0 }) {
   return new Promise(resolve => {
+    const startedAt=new Date().toISOString();
     let failure = null, buffer = '', closed = false, leaderExited = false, exitedCode, exitedSignal, completed = false, lineNumber=0, idle, killTimer, exitTimer, completionTimer;
     const cleanupErrors=[];
     const child = spawn(binary.command, [...(binary.args ?? []), ...args], {cwd,env,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
@@ -21,7 +24,10 @@ export function hostProcess({ binary, args, cwd, env, trace, stderr, sent, timeo
       closed=true;clearTimeout(timer);clearTimeout(idle);clearTimeout(killTimer);clearTimeout(exitTimer);clearTimeout(completionTimer);
       code ??= exitedCode ?? null;signal ??= exitedSignal ?? null;
       if(!completed&&buffer.trim())failure = failure ?? 'cut JSONL event (missing newline)';
-      resolve({code:completed&&!failure&&(code===0||signal==='SIGTERM'||signal==='SIGKILL')?0:code,signal,failure,...(cleanupErrors.length?{cleanupErrors}:{}),...(completed?{completed:true}:{})});
+      // Persisted in the driver's existing result.json. Raw stdout stays native;
+      // this interval binds timestamp-less Claude streams to actual processes.
+      const traceTiming=fs.existsSync(trace)?{file:path.basename(trace),sha256:createHash('sha256').update(fs.readFileSync(trace)).digest('hex'),startedAt,finishedAt:new Date().toISOString()}:undefined;
+      resolve({code:completed&&!failure&&(code===0||signal==='SIGTERM'||signal==='SIGKILL')?0:code,signal,failure,traceTiming,...(cleanupErrors.length?{cleanupErrors}:{}),...(completed?{completed:true}:{})});
     };
     const forceClose = () => {
       signalGroup('SIGKILL');

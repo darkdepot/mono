@@ -1,0 +1,15 @@
+{
+  "host": "codex",
+  "trace": "trace.jsonl",
+  "expectedWindows": [
+    {
+      "id": "research-approval",
+      "decision": "Совет",
+      "advice": "Совет",
+      "reason": "Совет",
+      "summary": [],
+      "role": "transition"
+    }
+  ],
+  "intendedEndLine": 30
+}

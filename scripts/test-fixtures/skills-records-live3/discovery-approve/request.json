@@ -1,0 +1,34 @@
+{
+  "host": "codex",
+  "trace": "trace.json",
+  "endLine": 361,
+  "sent": "sent.jsonl",
+  "seedExpected": true,
+  "seedEndLine": 126,
+  "seedProjectId": "29cca0e3-ab59-4d83-a7cd-999068791fe6",
+  "dumpDir": "dump",
+  "dumpTrace": "dump-trace.json",
+  "additionalTraces": [],
+  "project": {
+    "id": "29cca0e3-ab59-4d83-a7cd-999068791fe6",
+    "name": "monotest-m290c-a-codex-design-approve",
+    "url": "https://linear.app/monotest/project/monotest-m290c-a-codex-design-approve-7099bd58ac68"
+  },
+  "projectName": "monotest-m290c-a-codex-design-approve",
+  "expectedRecords": [
+    {
+      "type": "project",
+      "scope": "current-run",
+      "freshReadRequired": true
+    },
+    {
+      "type": "mono-prd: approved",
+      "version": "fresh-read-after-shown-version",
+      "count": 1
+    }
+  ],
+  "nextStage": "design",
+  "nextSkill": "mono:design",
+  "nextAgent": "mono-mono-design",
+  "configFile": "../config.json"
+}

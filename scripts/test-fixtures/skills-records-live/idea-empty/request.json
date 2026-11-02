@@ -1,0 +1,19 @@
+{
+  "host": "codex",
+  "trace": "trace.jsonl",
+  "endLine": 5,
+  "dumpDir": "dump",
+  "dumpTrace": "dump-trace.jsonl",
+  "project": null,
+  "projectName": "monotest-m290-a-codex-idea-empty",
+  "expectedRecords": [
+    {
+      "forbidden": "project:create"
+    },
+    {
+      "forbidden": "mono-idea: approved"
+    }
+  ],
+  "packRoot": ".",
+  "configFile": "config.json"
+}

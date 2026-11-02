@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"projects\": [{\"id\": \"P-MON-74\", \"uuid\": \"1e53dd87-0e2c-49d8-bc79-8e0789bdcb85\", \"name\": \"monotest-m290b-b-codex-research-discuss\", \"description\": \"## Что\\n\\nДобавить колонку «Источник» из поля source в существующую таблицу тестовых прогонов приложения записи: cli/runs.mjs читает cli/runs.json, проверки в cli/runs.test.mjs. Проект monotest-m290b-b-codex-research-discuss.\\n\\n## Зачем\\n\\nИсточник прогона сейчас не виден в строке таблицы.\\n\\n## Образ результата\\n\\nПосле имени прогона виден источник; пустой source, null и отсутствующий ключ дают прочерк. Фильтр и сортировку не берём.\", \"url\": \"https://linear.app/monotest/project/monotest-m290b-b-codex-research-discuss-1538ad462bf5\", \"createdAt\": \"2026-11-01T21:55:49.284Z\", \"updatedAt\": \"2026-11-01T21:57:07.887Z\", \"labels\": [], \"status\": {\"id\": \"7d96d289-5b98-43db-bb9b-f5f425370944\", \"name\": \"Discovery\", \"type\": \"planned\"}}], \"hasNextPage\": false}"
+    }
+  ]
+}

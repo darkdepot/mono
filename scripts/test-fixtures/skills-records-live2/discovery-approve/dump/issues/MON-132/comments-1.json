@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"comments\": [{\"id\": \"f84cd2f8-516c-4541-965c-20e00d2f268d\", \"body\": \"Журнал посева: документ исследования создан и прочитан обратно; привязка к свежему проекту подтверждена list_documents. outcome=not-required: правка колонки таблицы тестовых прогонов. Этапы не запускались.\\n\\nhttps://linear.app/monotest/document/issledovanie-monotest-m290b-a-codex-design-approve-dc438537867b\", \"createdAt\": \"2026-11-01T21:50:23.932Z\", \"updatedAt\": \"2026-11-01T21:50:23.910Z\"}], \"hasNextPage\": false}"
+    }
+  ]
+}

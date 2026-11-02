@@ -5,6 +5,8 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { loadCatalog, catalogFile } from './skills-catalog.mjs';
+import { scenarioExpectation } from './skills-select.mjs';
+import { verifyScenarioRecords } from './skills-records.mjs';
 import { runScenario } from './skills-run.mjs';
 
 const json = file => JSON.parse(fs.readFileSync(file,'utf8'));
@@ -21,9 +23,8 @@ function checkPack(packRoot,head) {
   if(revision!==head)throw new Error('pack revision differs from selection.head');
   if(changed)throw new Error('pack execution files changed since selection.head');
 }
-function projectManifest(file, name) {
-  const data=json(file);
-  if (!uuid(data.id) || data.name !== name || typeof data.url !== 'string' || !data.url.startsWith('https://linear.app/monotest/')) throw new Error('invalid run project read-back manifest');
+function projectIdentity(data, name) {
+  if (!uuid(data?.id) || data.name !== name || typeof data.url !== 'string' || !data.url.startsWith('https://linear.app/monotest/')) throw new Error('invalid run project read-back manifest');
   return data;
 }
 
@@ -41,6 +42,7 @@ export function scenarioPrompt({scenario,seed,seedProjectFile,projectName,projec
   return [owner,entry,navigation,design,`Бриф владельца: ${scenario.brief}`,
     `Этап под проверкой: ${scenario.stage}. Следующий этап после завершения (followingStage): ${next ?? 'none'}. Это выход текущего этапа, не маршрут его посева. ${routeHint ?? ''}`,
     `Начни ${skillPrefix}:${scenario.stage}. ${scenario.prompt}`,
+    'Для проверяемых записей Codex каждый monotest MCP вызывай отдельным exec строго в форме const r = await tools.<имя>(<JSON>); text(r); с буквальным JSON аргументов. Не объединяй MCP-вызовы в один exec. Это сохраняет связь запроса, ответа и свежего чтения.',
     'Проверяем только этот этап до результата целевого окна. Промежуточные выборы и свободные вопросы отвечаются драйвером. Следующий этап запускает драйвер отдельным вызовом в этом же проекте; передай результат и закончи ход. Не начинай реализацию, доставку или установку. Не подменяй окно текстом и не считай свободный ответ утверждением.'
   ].filter(Boolean).join('\n\n');
 }
@@ -56,7 +58,8 @@ function seedPrompt({seed,projectName,projectFile,dumpDir,packRoot,brief}){
   ].join('\n\n');
 }
 
-export async function runSuite(request, execute = runScenario) {
+export async function runSuite(request, execute = runScenario, verify = verifyScenarioRecords) {
+  const startedAt=new Date().toISOString(),suiteStart=Date.now();
   const selection=json(request.selectionFile), catalog=loadCatalog(request.indexFile);
   if (selection.indexFile !== catalog.indexFile || selection.catalogDigest !== catalog.digest) throw new Error('selection catalog changed');
   checkPack(request.packRoot,selection.head);
@@ -65,7 +68,7 @@ export async function runSuite(request, execute = runScenario) {
   const proof=request.workspaceProof ?? {tool:'mcp__monotest__get_workspace',input:{},path:['name'],equals:'Mono Test'};
   if (proof.equals !== 'Mono Test' || JSON.stringify(proof.path) !== '["name"]' || proof.tool !== 'mcp__monotest__get_workspace') throw new Error('suite requires the pinned Mono Test workspace proof');
   if (request.mcpServers?.paper) throw new Error('Paper must be configured through the file guard');
-  const expected=selection.units.flatMap(unit=>selection.hosts.flatMap(host=>unit.scenarios.map(key=>({id:`${unit.id}:${key}:${host}`,source:'scenario',unit:unit.id,scenario:key,host}))));
+  const expected=selection.units.flatMap(unit=>selection.hosts.flatMap(host=>unit.scenarios.map(key=>scenarioExpectation(unit.id,key,host))));
   if (JSON.stringify(expected) !== JSON.stringify(selection.expectedItems)) throw new Error('saved expected items do not match selected units');
   fs.mkdirSync(request.outputDir); // never overwrite an earlier run
   fs.writeFileSync(path.join(request.outputDir,'expected-items.json'),JSON.stringify(selection.expectedItems,null,2)+'\n',{flag:'wx'});
@@ -79,15 +82,15 @@ export async function runSuite(request, execute = runScenario) {
   }
   let manifestDir;
   const results=[],exportLeftovers=new Set();
-  for (const unit of selection.units) for (const host of selection.hosts) {
+  runs: for (const unit of selection.units) for (const host of selection.hosts) {
     const projectName=`monotest-${request.runId}-${host}-${unit.id}`;
     let project=null;
     for (const [position,key] of unit.scenarios.entries()) {
       const outputDir=path.join(request.outputDir,`${unit.id}-${host}-${position}`);
-      let result,paperLog;
+      let result,paperLog,runRequest,scenario,observedProject,seedProject;const stageStart=Date.now();
       try {
         manifestDir ??= fs.mkdtempSync(path.join(request.cwd,`.mono-skills-${request.runId}-`));
-        const scenario=catalog.scenarios.get(key);
+        scenario=catalog.scenarios.get(key);
         if (!scenario) throw new Error(`selected scenario removed: ${key}`);
         const flow=scenario.hosts[host];
         const projectFile=path.join(manifestDir,`${unit.id}-${host}-${position}-project.json`);
@@ -115,23 +118,26 @@ export async function runSuite(request, execute = runScenario) {
         const prompt=scenarioPrompt({scenario:{...scenario,brief},seed,seedProjectFile,projectName,projectFile,project,next,packRoot:request.packRoot,paper:scenario.stage==='design'?request.paper:null,designMemoryFile:request.designMemoryFile,
           designMemory:designMemory ? {...designMemory,firstLine:`Репозиторий: ${request.cwd}`,fileId:request.paper.fileId} : null,
           productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:catalog.index.routeHints?.[next]});
-        const runRequest={host,cwd:request.cwd,packRoot:request.packRoot,outputDir,authFile:request.authFile,
+        runRequest={host,cwd:request.cwd,packRoot:request.packRoot,outputDir,authFile:request.authFile,
           ...(scenario.stage==='design'?{writableRoots:[path.dirname(request.designMemoryFile),path.join(path.dirname(request.designMemoryFile),'approved'),exportRunDir]}:{}),
           timeoutMs:request.timeoutMs ?? 1_800_000,idleMs:20_000,maxTurns:request.maxTurns??128,mcpServers:servers,
           workspaceProof:proof,
           ...(seed?{seed:{prompt:seedPrompt({seed,projectName,projectFile:seedProjectFile,dumpDir,packRoot:request.packRoot,brief}),projectName,projectFile:seedProjectFile,dumpDir,expectedStage:seed.entryStage??null,configFile:path.join(request.cwd,'.agents/mono-workflow.config.json')}}:{}),
-          context:{projectName,projectFile,project,entryStage:scenario.stage,followingStage:next},scenario:{prompt,brief,allowedTools:['*'],stopAfterExpectedWindows:true,...flow,expectedWindows}};
+          context:{skillPrefix:catalog.index.skillPrefix,projectName,projectFile,project,entryStage:scenario.stage,followingStage:next},scenario:{prompt,brief,allowedTools:['*'],stopAfterExpectedWindows:true,...flow,expectedWindows}};
         fs.writeFileSync(outputDir+'-request.json',JSON.stringify(runRequest,null,2)+'\n',{flag:'wx'});
         checkPack(request.packRoot,selection.head);
         result=await execute(runRequest);
         checkPack(request.packRoot,selection.head);
-        if (result.status === 'passed' && (scenario.expectedRecords.some(record=>record.type==='project') || nextKey || project || seed || fs.existsSync(projectFile))) {
-          const observed=projectManifest(projectFile,projectName);
-          const expectedProject=project??(seed?result.seedRoute?.project:null);
+        if (seed && result.seedRoute?.project) seedProject=projectIdentity(result.seedRoute.project,projectName);
+        if (result.status !== 'failed' && (result.status==='passed'||fs.existsSync(projectFile)) && (scenario.expectedRecords.some(record=>record.type==='project') || nextKey || project || seed || fs.existsSync(projectFile))) {
+          const observed=projectIdentity(json(projectFile),projectName);
+          const expectedProject=project??seedProject;
           if (seed&&!expectedProject) throw new Error('validated seed project missing');
           if (expectedProject&&['id','name','url'].some(field=>observed[field]!==expectedProject[field])) throw new Error('chain changed its run project');
           fs.copyFileSync(projectFile,outputDir+'-project.json',fs.constants.COPYFILE_EXCL);
-          project=observed;
+          project=observed;observedProject=observed;
+        } else if (result.status==='unverified' && seedProject) {
+          project=seedProject;
         }
       } catch(error) {
         result={...result,status:'failed',reason:error.message};
@@ -148,16 +154,25 @@ export async function runSuite(request, execute = runScenario) {
           if (error.code!=='ENOENT') result={...result,status:'failed',reason:`Paper guard log: ${error.message}`};
         }
       }
-      const item={unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
-      if (result.status !== 'passed') break; // later chain members remain explicitly unverified
+      if(result && runRequest && scenario){
+        try{
+          const records=await verify({run:result,runRequest,scenario,project:observedProject??project??seedProject,outputDir:outputDir+'-records',bindingsFile:request.recordBindings?.[`${unit.id}:${key}:${host}`]});
+          if(!records.stop)checkPack(request.packRoot,selection.head);
+          result={...result,records,status:result.status==='failed'||records.status==='failed'?'failed':result.status!=='passed'||records.status!=='passed'?'unverified':'passed'};
+        }catch(error){result={...result,status:result.status==='failed'?'failed':'unverified',records:{status:'unverified',reason:error.message}};}
+      }
+      const item={durationMs:Date.now()-stageStart,monotestTasks:result.records?.monotestTasks??null,unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
+      if(result.records?.stop)break runs;
+      if (result.status === 'failed') break;
     }
   }
   const items=selection.expectedItems.map(expected=>{
     const actual=results.find(r=>r.unit===expected.unit && r.scenario===expected.scenario && r.host===expected.host);
-    return {...expected,status:actual?.status ?? 'unverified',evidence:actual?.outputDir ?? 'previous chain stage did not pass'};
+    return {...expected,status:actual?.status ?? 'unverified',evidence:actual?.outputDir ?? 'previous chain stage failed'};
   });
   const status=items.some(i=>i.status==='failed')?'failed':items.some(i=>i.status!=='passed')?'unverified':'passed';
-  const result={status,items,results,exportLeftovers:[...exportLeftovers],boundary:'mechanical driver results; conversation rubric and fresh record verification are separate, not a QA certificate'};
+  const taskCounts=results.map(r=>r.monotestTasks),taskIds=new Set(results.flatMap(r=>r.result.records?.taskIds??[]));
+  const result={status,startedAt,finishedAt:new Date().toISOString(),durationMs:Date.now()-suiteStart,monotestTasks:taskCounts.some(c=>c===null)?null:taskIds.size,items,results,exportLeftovers:[...exportLeftovers],boundary:'mechanical driver results; fresh records verified separately for every host; conversation rubric remains required before a QA certificate'};
   fs.writeFileSync(path.join(request.outputDir,'suite-result.json'),JSON.stringify(result,null,2)+'\n',{flag:'wx'});
   return result;
 }

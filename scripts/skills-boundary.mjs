@@ -60,7 +60,7 @@ export function codexToolCalls(item) {
   const name=nativeToolName(item);
   if(name!=='exec'){let input={};try{input=JSON.parse(nativeCallSource(item));}catch{}return [{name,input,callId:item.call_id}];}
   const code=nativeCallSource(item);
-  const names=new Set([...code.matchAll(/\btools\.(\w+)\s*\(/g)].map(m=>m[1]));
+  const names=new Set([...code.matchAll(/\btools\.(\w+)\s*\(/g)].map(m=>m[1]).filter(name=>!['mcp__monotest__','mcp__paper__'].includes(name)));
   // Names are evidence, not a JavaScript parser or a command security policy.
   for(const match of code.matchAll(/\bmcp__\w+/g))if(!match[0].startsWith('mcp__monotest__')&&!match[0].startsWith('mcp__paper__'))names.add(match[0]);
   return [...names].map(name=>({name,input:{},callId:item.call_id}));
