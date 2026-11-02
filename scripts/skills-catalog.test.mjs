@@ -599,6 +599,32 @@ for(const condition of ['binding-only','binding-everywhere','failed','other-unve
  assert.equal(result.status,['failed','failed-stage'].includes(condition)?'failed':'unverified');
  assert.equal(result.items[0].status,condition==='failed-stage'?'failed':result.results[0].status);
 });
+for(const mode of ['unverified','passed','invalid-id','invalid-name','invalid-url'])test(`seed identity survives an unverified stage without its manifest: ${mode}`,async t=>{
+ const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
+ const selection=f.select(),unit=selection.units.find(u=>u.id==='design-approve');selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
+ const calls=[],reads=[];let seedProject;
+ const result=await runSuiteWithRecords(suiteRequest(f,selection,{paper:{fileId:'fixture',command:'never-spawn',args:[]},designMemoryFile:path.join(f.dir,'memory.md')}),async r=>{
+  calls.push(r);
+  if(calls.length===1){
+   seedProject=runProject(r);
+   if(mode.startsWith('invalid-'))seedProject[mode.slice(8)]={id:'short-id',name:'another-project',url:'https://linear.app/working/project/other'}[mode.slice(8)];
+   return {status:mode==='passed'?'passed':'unverified',reason:'stage has no own manifest',seedRoute:{project:seedProject}};
+  }
+  write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);
+ },async({project})=>{reads.push(project);return {status:'passed',monotestTasks:0};});
+ if(mode==='unverified'){
+  assert.deepEqual(calls.map(r=>r.context.entryStage),['discovery','design','handoff']);
+  assert(calls[0].seed);assert(calls.slice(1).every(r=>!r.seed),'never seed a second project');
+  for(const r of calls.slice(1)){assert.deepEqual(r.context.project,seedProject);assert(r.scenario.prompt.includes(JSON.stringify(seedProject)));}
+  assert.deepEqual(reads,[seedProject,seedProject,seedProject],'every fresh record read targets project A');
+  assert.equal(result.status,'unverified');assert.equal(result.items[0].status,'unverified');
+ }else{
+  assert.equal(calls.length,1);assert.equal(result.status,'failed');assert(result.items.slice(1).every(i=>i.status==='unverified'));
+  if(mode==='passed')assert.match(result.results[0].result.reason,/ENOENT/);
+  else{assert.match(result.results[0].result.reason,/invalid run project read-back manifest/);assert(reads.every(p=>p===undefined),'invalid seed is never a record-read target');}
+ }
+});
+
 test('failed seeded stage still verifies its existing seed project rather than Idea absence',async t=>{
  const f=fixture(t);write(path.join(f.dir,'skills/research/SKILL.md'),'changed\n');f.commit();
  const selection=f.select(),unit=selection.units.find(u=>u.id==='research-discuss');selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');let observed;

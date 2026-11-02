@@ -1658,7 +1658,10 @@ An unanswered standalone Idea forbids project creation and needs no manifest;
 an absent seed pointer means `unverified: seed not completed`, before the stage starts.
 Every stage's manifest is compared field by field (`id`, `name`, `url`) with
 the existing project, including the first stage with its validated seed pointer;
-JSON key order does not affect identity.
+JSON key order does not affect identity. If an unverified stage omits its own
+manifest, its validated seed project still routes the next stage and fresh record
+reads; it does not trigger another seed or promote the stage to passed. A passed
+stage still requires its own manifest.
 The suite requires a Git checkout at `packRoot` on `selection.head`, with no
 tracked changes or untracked execution files. It checks again before and after
 each stage; unversioned scratch copies have no silent override. Stage file rules

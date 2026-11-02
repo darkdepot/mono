@@ -23,9 +23,8 @@ function checkPack(packRoot,head) {
   if(revision!==head)throw new Error('pack revision differs from selection.head');
   if(changed)throw new Error('pack execution files changed since selection.head');
 }
-function projectManifest(file, name) {
-  const data=json(file);
-  if (!uuid(data.id) || data.name !== name || typeof data.url !== 'string' || !data.url.startsWith('https://linear.app/monotest/')) throw new Error('invalid run project read-back manifest');
+function projectIdentity(data, name) {
+  if (!uuid(data?.id) || data.name !== name || typeof data.url !== 'string' || !data.url.startsWith('https://linear.app/monotest/')) throw new Error('invalid run project read-back manifest');
   return data;
 }
 
@@ -88,7 +87,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
     let project=null;
     for (const [position,key] of unit.scenarios.entries()) {
       const outputDir=path.join(request.outputDir,`${unit.id}-${host}-${position}`);
-      let result,paperLog,runRequest,scenario,observedProject;const stageStart=Date.now();
+      let result,paperLog,runRequest,scenario,observedProject,seedProject;const stageStart=Date.now();
       try {
         manifestDir ??= fs.mkdtempSync(path.join(request.cwd,`.mono-skills-${request.runId}-`));
         scenario=catalog.scenarios.get(key);
@@ -129,13 +128,16 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         checkPack(request.packRoot,selection.head);
         result=await execute(runRequest);
         checkPack(request.packRoot,selection.head);
+        if (seed && result.seedRoute?.project) seedProject=projectIdentity(result.seedRoute.project,projectName);
         if (result.status !== 'failed' && (result.status==='passed'||fs.existsSync(projectFile)) && (scenario.expectedRecords.some(record=>record.type==='project') || nextKey || project || seed || fs.existsSync(projectFile))) {
-          const observed=projectManifest(projectFile,projectName);
-          const expectedProject=project??(seed?result.seedRoute?.project:null);
+          const observed=projectIdentity(json(projectFile),projectName);
+          const expectedProject=project??seedProject;
           if (seed&&!expectedProject) throw new Error('validated seed project missing');
           if (expectedProject&&['id','name','url'].some(field=>observed[field]!==expectedProject[field])) throw new Error('chain changed its run project');
           fs.copyFileSync(projectFile,outputDir+'-project.json',fs.constants.COPYFILE_EXCL);
           project=observed;observedProject=observed;
+        } else if (result.status==='unverified' && seedProject) {
+          project=seedProject;
         }
       } catch(error) {
         result={...result,status:'failed',reason:error.message};
@@ -154,7 +156,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
       }
       if(result && runRequest && scenario){
         try{
-          const records=await verify({run:result,runRequest,scenario,project:observedProject??project??result.seedRoute?.project,outputDir:outputDir+'-records',bindingsFile:request.recordBindings?.[`${unit.id}:${key}:${host}`]});
+          const records=await verify({run:result,runRequest,scenario,project:observedProject??project??seedProject,outputDir:outputDir+'-records',bindingsFile:request.recordBindings?.[`${unit.id}:${key}:${host}`]});
           if(!records.stop)checkPack(request.packRoot,selection.head);
           result={...result,records,status:result.status==='failed'||records.status==='failed'?'failed':result.status!=='passed'||records.status!=='passed'?'unverified':'passed'};
         }catch(error){result={...result,status:result.status==='failed'?'failed':'unverified',records:{status:'unverified',reason:error.message}};}
