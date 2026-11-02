@@ -354,11 +354,26 @@ export function verifyRecords(request){
    return data;
   };
   const scenarios=scenarioTraces.map(source=>load(source,false)),dumps=dumpTraces.map(source=>load(source,true)),data=scenarios[0],writes=[];
-  for(const source of scenarios)for(const call of source.calls.filter(c=>isWrite(c.name)&&!c.name.startsWith('mcp__paper__')))writes.push({...resultFor(source.host,call,source.rows),data:source});
+  let seedEndLine=0;
+  if(request.seedExpected||request.seedEndLine!==undefined){
+   const boundary=data.rows.find(r=>r.line===request.seedEndLine);
+   if(!Number.isInteger(request.seedEndLine)||!boundary||data.audit.proof({kind:'terminal',result:boundary.value}).status!=='confirmed')missing('native successful seed boundary missing');
+   if(!request.seedProjectId)missing('validated seed project missing');
+   if(request.seedProjectId!==(request.project?.id??request.project?.uuid))throw new Error('seed belongs to another project');
+   seedEndLine=request.seedEndLine;
+  }
+  for(const source of scenarios)for(const call of source.calls.filter(c=>isWrite(c.name)&&!c.name.startsWith('mcp__paper__'))){
+   const seed=source===data&&call.line<=seedEndLine,write={...resultFor(source.host,call,source.rows,!seed),data:source,seed};
+   if(seed&&write.resultLine>seedEndLine)missing('write crosses seed boundary');
+   writes.push(write);
+  }
   const dump=readRecordDump(request.dumpDir,request.project,request.projectName);
   if(!request.dumpTrace)missing('fresh native dump trace required');
   if(request.dumpTrace){
-   const reads=dumps.flatMap(fresh=>fresh.calls.filter(c=>!isWrite(c.name)).map(c=>({...resultFor(fresh.host,c,fresh.rows),data:fresh})));
+   const reads=dumps.flatMap(fresh=>fresh.calls.filter(c=>!isWrite(c.name)).flatMap(c=>{
+    try{return [{...resultFor(fresh.host,c,fresh.rows),data:fresh}];}
+    catch(error){if(error instanceof MissingEvidence)return [];throw error;}
+   }));
    const boundaries=writes.length?writes.map(w=>({data:w.data,line:w.resultLine})):scenarios.map(source=>({data:source,line:source.terminal.line}));
    const pageArguments=new Map();
    for(const file of dump.files){
@@ -385,19 +400,11 @@ export function verifyRecords(request){
     }
    }
   }
-  let seedEndLine=0;
-  if(request.seedExpected||request.seedEndLine!==undefined){
-   const boundary=data.rows.find(r=>r.line===request.seedEndLine);
-   if(!Number.isInteger(request.seedEndLine)||!boundary||data.audit.proof({kind:'terminal',result:boundary.value}).status!=='confirmed')missing('native successful seed boundary missing');
-   if(!request.seedProjectId)missing('validated seed project missing');
-   if(request.seedProjectId!==(request.project?.id??request.project?.uuid))throw new Error('seed belongs to another project');
-   if(writes.some(w=>w.data===data&&w.line<=request.seedEndLine&&w.resultLine>request.seedEndLine))missing('write crosses seed boundary');
-   seedEndLine=request.seedEndLine;
-  }
-  const activeWrites=writes.filter(w=>w.data!==data||w.line>seedEndLine),seedIds=new Set(writes.filter(w=>w.data===data&&w.line<=seedEndLine).map(w=>idOf(w.value)));
+  const activeWrites=writes.filter(w=>!w.seed),seedIds=new Set(writes.filter(w=>w.seed).map(w=>idOf(w.value)));
   // Resolve UUID/name aliases only from native reads on the same team.
   const resolveInput=(write,field,value)=>{
    if(!['status','labels'].includes(field))return value;
+   if(field==='status'&&/__(?:save|create)_project$/.test(write.name))return value;
    const tool=field==='status'?'list_issue_statuses':'list_issue_labels',aliases=[];
    for(const call of write.data.calls.filter(c=>c.name===`mcp__monotest__${tool}`&&c.line<write.line)){
     if(!write.input.team||call.input.team!==write.input.team)continue;
@@ -416,7 +423,7 @@ export function verifyRecords(request){
   };
   const fields=['body','content','description','title','name','status','labels'];
   const groups=new Map();
-  for(const write of writes){
+  for(const write of activeWrites){
    const id=idOf(write.value);if(!text(id))missing('write result lacks record id');
    if(!groups.has(id))groups.set(id,[]);groups.get(id).push(write);
   }
@@ -445,7 +452,7 @@ export function verifyRecords(request){
       if(confirmation&&Object.hasOwn(confirmation,field)&&!elided(confirmation[field]))compareField(field,input[field],confirmation[field],id);
       finalFields[field]=input[field];
      }
-     if(Object.hasOwn(value,field)&&!elided(value[field]))finalFields[field]=value[field];
+     if(Object.hasOwn(value,field)&&!elided(value[field])&&!(field==='status'&&Object.hasOwn(input,field)))finalFields[field]=value[field];
     }
    }
    const observed=dump.all.find(row=>idOf(row)===id);if(!observed)throw new Error(`written record missing from fresh dump: ${id}`);

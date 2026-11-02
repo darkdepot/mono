@@ -586,16 +586,16 @@ test('suite stops every remaining host/unit on working Linear write, reports the
  const result=await runSuiteWithRecords(suiteRequest(f,selection),async r=>{calls++;write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);},async()=>({status:'failed',stop:true,manualRemoval:['https://linear.app/example/issue/EX-1'],monotestTasks:0}));
  assert.equal(calls,1);assert.equal(result.status,'failed');assert(result.items.slice(1).every(item=>item.status==='unverified'));assert(result.results[0].result.records.manualRemoval.length);
 });
-for(const condition of ['binding-only','binding-everywhere','failed','other-unverified','dump-capacity','failed-stage'])test(`design chain runs Design and Handoff only past binding-only uncertainty: ${condition}`,async t=>{
+for(const condition of ['binding-only','binding-everywhere','failed','other-unverified','dump-capacity','failed-stage','unverified-stage'])test(`design chain continues every unverified and stops real failure: ${condition}`,async t=>{
  const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
  const selection=f.select(),unit=selection.units.find(u=>u.id==='design-approve');assert(unit.scenarios.includes('design/approve'));assert(unit.scenarios.includes('handoff/approve'));
  selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
  const request=suiteRequest(f,selection,{paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')}),calls=[];
  const result=await runSuiteWithRecords(request,async r=>{
   calls.push(r.context.entryStage);write(r.context.projectFile,JSON.stringify(runProject(r)));
-  return condition==='failed-stage'?{...passedStage(r),status:'failed',reason:'real stage failed'}:passedStage(r);
+  return condition==='failed-stage'?{...passedStage(r),status:'failed',reason:'real stage failed'}:condition==='unverified-stage'?{...passedStage(r),status:'unverified',reason:'host proof unavailable'}:passedStage(r);
  },async({scenario})=>(scenario.stage==='discovery'||condition==='binding-everywhere'&&scenario.stage==='design')?condition==='failed'?{status:'failed',reason:'mismatch'}:condition==='other-unverified'?{status:'unverified',reason:'missing page'}:condition==='dump-capacity'?{status:'unverified',hostFailure:true,reason:'Selected model is at capacity',attempts:[{status:'unverified'},{status:'unverified'}]}:{status:'unverified',bindingOnly:true,reason:'shown-version binding missing',gateResults:[{result:{ok:true}}]}:{status:'passed',monotestTasks:0});
- assert.deepEqual(calls,condition.startsWith('binding-')?['discovery','design','handoff']:['discovery']);
+ assert.deepEqual(calls,['failed','failed-stage'].includes(condition)?['discovery']:['discovery','design','handoff']);
  assert.equal(result.status,['failed','failed-stage'].includes(condition)?'failed':'unverified');
  assert.equal(result.items[0].status,condition==='failed-stage'?'failed':result.results[0].status);
 });
@@ -614,7 +614,7 @@ for(const mode of ['binding-only','bad-write','missing-page'])test(`live3 actual
  const base=path.join(live,'discovery-approve'),recordRequest=json(path.join(base,'request.json'));
  for(const key of ['trace','dumpTrace','dumpDir','configFile','sent'])recordRequest[key]=path.resolve(base,recordRequest[key]);recordRequest.packRoot=root;
  if(mode==='bad-write'){
-  const trace=json(recordRequest.trace),item=trace.events.map(r=>r.event.payload?.item).find(i=>i?.tool==='save_document');assert(item);item.arguments.content+='\nsubstantive tampering';write(recordRequest.trace,JSON.stringify(trace));
+  const trace=json(recordRequest.trace),item=trace.events.filter(r=>r.line>recordRequest.seedEndLine).map(r=>r.event.payload?.item).find(i=>i?.tool==='save_document');assert(item);item.arguments.content+='\nsubstantive tampering';write(recordRequest.trace,JSON.stringify(trace));
  }
  if(mode==='missing-page')fs.unlinkSync(path.join(recordRequest.dumpDir,'comments-1.json'));
  const calls=[];let checked;
@@ -628,7 +628,7 @@ for(const mode of ['binding-only','bad-write','missing-page'])test(`live3 actual
   if(scenario.stage==='design')return {status:'unverified',reason:'No Design records supplied'};
   checked=verifyRecords(recordRequest);return checked;
  });
- assert.deepEqual(calls,mode==='binding-only'?['discovery','design']:['discovery']);
+ assert.deepEqual(calls,mode==='bad-write'?['discovery']:['discovery','design','handoff']);
  if(mode==='binding-only'){assert.equal(checked.bindingOnly,true);assert.equal(checked.gateResults[0].result.next,'design');assert.equal(result.results[0].status,'unverified');}
  else{assert.notEqual(checked.bindingOnly,true);assert.equal(checked.status,mode==='bad-write'?'failed':'unverified');}
 });

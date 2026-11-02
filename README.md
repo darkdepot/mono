@@ -1736,9 +1736,11 @@ Runtime tests use scratch plugin folders; the real sandbox-boundary test runs ou
 Skill record checks: `node --test scripts/skills-records.test.mjs scripts/qa-certificate.test.mjs scripts/qa-gate.test.mjs`.
 A separate monotest-only read process dumps the fixed project/documents/issues/comments
 checklist after each stage. The script schedules every read and saves native raw
-responses; the model never writes dump files. A binding-only gap keeps the item
-unverified while its chain continues through Design and Handoff; other gaps or
-failures stop that chain. Native write results are reconciled with complete fresh
+responses; the model never writes dump files. Successful seed writes need the
+expected project/route; strict payload/history checks apply to scenario writes.
+Project status matches the identity supplied by the write (id or name).
+Any unverified item retains its status while the chain gathers later evidence;
+only a real failed stops that chain. Native write results use complete fresh
 cursor chains; working Linear writes stop the suite with manual-removal links.
 Record counts use the stage gates’ block scanner and record locations: project
 comments for approvals/start, document fences for Research. Prose mentions and
@@ -1759,7 +1761,7 @@ literal invocation to prove a fresh read preceded the approval write; an excerpt
 without that invocation remains unverified.
 Dump host/capacity failures remain unverified and get one isolated retry. Both
 attempts are retained and audited; observed write violations stay failed. A
-non-binding unverified dump stops its chain as before. Linear heading gaps and
+non-binding unverified dump continues its chain without becoming passed. Linear heading gaps and
 trailing empty lines normalize without changing text, paragraph or code checks.
 Codex approvals use delivered native rollout answers; its `{thread,prompt}` sent
 journal is not a Claude event stream. Live3 regression excerpts include that journal

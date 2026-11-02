@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { verifyRecords, dumpPrompt, collectRecordDump, verifyScenarioRecords } from './skills-records.mjs';
+import { nativeRecords } from './skills-record-data.mjs';
 
 const projectId='00000000-0000-4000-8000-000000000001',date='2026-10-31T00:00:00Z';
 // These constructed sessions have their own deterministic clock. Native live
@@ -50,6 +51,45 @@ test('records compare successful native write bodies to a fresh complete monotes
 });
 
 const live6=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-records-live6.json',import.meta.url)));
+const live7=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-records-live7.json',import.meta.url)));
+for(const identity of ['id','name'])test(`live7 project status uses the written ${identity} identity`,t=>{
+ const f=fixture(t),status=live7.projectStatus;f.project.status=status;f.save('project.json',f.project);
+ f.events.push({type:'assistant',message:{content:[{type:'tool_use',id:'status',name:'mcp__monotest__save_project',input:{id:projectId,state:status[identity]}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'status',content:JSON.stringify(f.project)}]}});
+ assert.equal(f.check().status,'passed');
+ f.project.status={...status,[identity==='id'?'name':'id']:'other'};f.save('project.json',f.project);assert.equal(f.check().status,'passed');
+ f.project.status={...status,[identity]:'other'};f.save('project.json',f.project);assert.equal(f.check().status,'failed');
+});
+for(const host of ['claude','codex'])test(`live7 ${host}: seed forms need success/state, scenario writes remain strict`,t=>{
+ const f=fixture(t),issue={id:'seed-task',projectId,title:'Research',description:'Seed',...live7.seedState.result};
+ f.page('issues','issues',[{id:issue.id}]);f.save('issues/seed-task/issue.json',issue);f.page('issues/seed-task/comments','comments',[]);
+ const input={id:issue.id,...live7.seedState.input};
+ if(host==='claude')f.events.unshift({type:'assistant',message:{content:[{type:'tool_use',id:'seed',name:'mcp__monotest__save_issue',input}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'seed',content:JSON.stringify(issue)}]}},{type:'result',subtype:'success'});
+ else{
+  f.request.host='codex';
+  f.events.splice(0,f.events.length,{type:'response_item',payload:{type:'custom_tool_call',name:'exec',call_id:'seed',input:`text(await tools.mcp__monotest__save_issue(${JSON.stringify(input)}));`}},{type:'response_item',payload:{type:'custom_tool_call_output',call_id:'seed',output:JSON.stringify(issue)}},{type:'event_msg',payload:{type:'task_complete'}},{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__create_comment',call_id:'write',arguments:JSON.stringify({projectId,body:f.record.body})}},{type:'response_item',payload:{type:'function_call_output',call_id:'write',output:JSON.stringify(f.record)}});
+ }
+ Object.assign(f.request,{seedExpected:true,seedEndLine:3,seedProjectId:projectId});
+ assert.equal(f.check().status,'passed');
+ f.page('comments','comments',[{...f.record,body:'actual scenario mismatch'}]);assert.equal(f.check().status,'failed');
+});
+test('live7 dump ignores a failed incidental read, never substitutes a shell item for fresh MCP proof',t=>{
+ const f=fixture(t);f.request.host='codex';f.events.splice(0,f.events.length);f.request.expectedRecords=[{type:'project'}];f.check();
+ const original=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse),dump=path.join(f.dir,'retried-dump.jsonl');f.request.dumpTrace=dump;
+ const save=rows=>fs.writeFileSync(dump,timed(rows,'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');
+ save([...live7.failedRead,live7.shellItem,...original]);assert.equal(f.check().status,'passed');
+ save([...live7.failedRead,live7.shellItem,...original.filter(r=>!((r.payload?.name==='mcp__monotest__get_project')||r.payload?.call_id===original.find(x=>x.payload?.name==='mcp__monotest__get_project').payload.call_id))]);
+ assert.equal(f.check().status,'unverified');
+});
+test('live7 CommandExecution is host information, not a native MCP record',t=>{
+ const f=fixture(t),trace=path.join(f.dir,'shell.jsonl');fs.writeFileSync(trace,JSON.stringify(live7.shellItem)+'\n');
+ assert.deepEqual(nativeRecords('codex',trace).calls,[]);
+});
+test('live7 unavailable fixed dump read retries once and remains unverified without fresh files',async t=>{
+ const f=fixture(t),authFile=path.join(f.dir,'auth.json');fs.writeFileSync(authFile,'{}');
+ const result=await collectRecordDump({host:'codex',cwd:f.dir,packRoot:process.cwd(),outputDir:path.join(f.dir,'read-unavailable'),authFile,timeoutMs:10000,idleMs:10,binary:{command:process.execPath,args:[path.resolve('scripts/test-fixtures/skills-fixed-dump-host.mjs'),'read-unavailable']},project:{id:projectId,name:'fixed-run'},mcpServers:{monotest:{url:'test'}}});
+ assert.equal(result.status,'unverified');assert.equal(result.hostFailure,true);assert.equal(result.attempts.length,2);assert(result.attempts.every(a=>a.hostFailure));
+ assert.equal(fs.existsSync(path.join(result.dumpDir,'project.json')),false);
+});
 for(const kind of ['mono-design','mono-research'])test(`live6 ${kind}: task prose is not a second record; a real duplicate fails`,t=>{
  const f=fixture(t),sample=live6[kind];f.request.expectedRecords=[{type:kind,count:1}];
  const record=kind==='mono-research'?{id:'doc',projectId,title:'Research',content:sample.record}:{...f.record,body:sample.record};
@@ -462,7 +502,7 @@ function live2Fixture(t,name){
 }
 for(const name of ['idea-correction','discovery-approve'])test(`live2 ${name}: native write, stored normalisation and real gate agree`,t=>{
  const f=live2Fixture(t,name);if(name==='discovery-approve')assertInvocationGap(f.check());else assert.equal(f.check().status,'passed',f.check().reason);delete f.request.approvalBindings;const pending=f.check();assert.equal(pending.status,'unverified');assert.equal(pending.bindingOnly,true);assert(pending.gateResults.every(g=>g.result.ok));
- editLiveTrace(f,rows=>{const item=rows.map(e=>e.payload?.item).find(i=>i?.tool==='save_project');item.arguments.description+='\nwrong substantive text';});assert.equal(f.check().status,'failed');
+ editLiveTrace(f,rows=>{const item=rows.slice(f.request.seedEndLine??0).map(e=>e.payload?.item).find(i=>i?.tool===(name==='discovery-approve'?'save_document':'save_project'));item.arguments[name==='discovery-approve'?'content':'description']+='\nwrong substantive text';});assert.equal(f.check().status,'failed');
 });
 test('live2 failed Research has an existing seed; missing full dump is not forbidden project creation',t=>{
  const f=live2Fixture(t,'research-discuss'),result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/incomplete dump: missing project.json/);assert.notEqual(result.bindingOnly,true);

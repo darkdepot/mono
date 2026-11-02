@@ -88,7 +88,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
     let project=null;
     for (const [position,key] of unit.scenarios.entries()) {
       const outputDir=path.join(request.outputDir,`${unit.id}-${host}-${position}`);
-      let result,paperLog,runRequest,scenario,observedProject,bindingPending=false;const stageStart=Date.now();
+      let result,paperLog,runRequest,scenario,observedProject;const stageStart=Date.now();
       try {
         manifestDir ??= fs.mkdtempSync(path.join(request.cwd,`.mono-skills-${request.runId}-`));
         scenario=catalog.scenarios.get(key);
@@ -129,7 +129,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         checkPack(request.packRoot,selection.head);
         result=await execute(runRequest);
         checkPack(request.packRoot,selection.head);
-        if (result.status === 'passed' && (scenario.expectedRecords.some(record=>record.type==='project') || nextKey || project || seed || fs.existsSync(projectFile))) {
+        if (result.status !== 'failed' && (result.status==='passed'||fs.existsSync(projectFile)) && (scenario.expectedRecords.some(record=>record.type==='project') || nextKey || project || seed || fs.existsSync(projectFile))) {
           const observed=projectManifest(projectFile,projectName);
           const expectedProject=project??(seed?result.seedRoute?.project:null);
           if (seed&&!expectedProject) throw new Error('validated seed project missing');
@@ -154,21 +154,19 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
       }
       if(result && runRequest && scenario){
         try{
-          const stagePassed=result.status==='passed';
           const records=await verify({run:result,runRequest,scenario,project:observedProject??project??result.seedRoute?.project,outputDir:outputDir+'-records',bindingsFile:request.recordBindings?.[`${unit.id}:${key}:${host}`]});
-          bindingPending=stagePassed&&records.status==='unverified'&&records.bindingOnly===true&&Boolean(project);
           if(!records.stop)checkPack(request.packRoot,selection.head);
           result={...result,records,status:result.status==='failed'||records.status==='failed'?'failed':result.status!=='passed'||records.status!=='passed'?'unverified':'passed'};
         }catch(error){result={...result,status:result.status==='failed'?'failed':'unverified',records:{status:'unverified',reason:error.message}};}
       }
       const item={durationMs:Date.now()-stageStart,monotestTasks:result.records?.monotestTasks??null,unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
       if(result.records?.stop)break runs;
-      if (result.status !== 'passed'&&!bindingPending) break; // later chain members remain explicitly unverified
+      if (result.status === 'failed') break;
     }
   }
   const items=selection.expectedItems.map(expected=>{
     const actual=results.find(r=>r.unit===expected.unit && r.scenario===expected.scenario && r.host===expected.host);
-    return {...expected,status:actual?.status ?? 'unverified',evidence:actual?.outputDir ?? 'previous chain stage did not pass'};
+    return {...expected,status:actual?.status ?? 'unverified',evidence:actual?.outputDir ?? 'previous chain stage failed'};
   });
   const status=items.some(i=>i.status==='failed')?'failed':items.some(i=>i.status!=='passed')?'unverified':'passed';
   const taskCounts=results.map(r=>r.monotestTasks),taskIds=new Set(results.flatMap(r=>r.result.records?.taskIds??[]));

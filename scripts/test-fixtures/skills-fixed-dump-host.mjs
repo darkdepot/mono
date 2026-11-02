@@ -24,10 +24,14 @@ function plan(prompt,first){
 if(args[0]==='exec'){
  const dir=path.join(process.env.CODEX_HOME,'sessions');fs.mkdirSync(dir,{recursive:true});const file=path.join(dir,'rollout-fixed-dump.jsonl'),first=!fs.existsSync(file),job=plan(args.at(-1),first),call='call-'+(first?0:fs.readFileSync(file,'utf8').split('\n').length),server=!first&&mode==='foreign'?'linear':'monotest';
  const raw={content:[{type:'text',text:JSON.stringify(result(job.tool,job.input))}]},tool=`mcp__${server}__${job.tool}`;
- const rows=[{type:'response_item',payload:{type:'custom_tool_call',name:'exec',call_id:call,input:`const r = await tools.${tool}(${JSON.stringify(job.input)}); text(r);`}},
+ let rows=[{type:'response_item',payload:{type:'custom_tool_call',name:'exec',call_id:call,input:`const r = await tools.${tool}(${JSON.stringify(job.input)}); text(r);`}},
   {type:'event_msg',payload:{type:'item_completed',item:{id:'native-'+call,type:'McpToolCall',server,tool:job.tool,arguments:job.input,status:'completed',result:raw}}},
   {type:'response_item',payload:{type:'custom_tool_call_output',call_id:call,output:[{type:'text',text:'Script completed'},{type:'text',text:JSON.stringify(raw)}]}},
-  ...(!first&&mode==='shell'?[{type:'response_item',payload:{type:'function_call',name:'exec_command',call_id:call+'-shell',arguments:'{"cmd":"rg x session"}'}}]:[]),{type:'event_msg',payload:{type:'task_complete'}}];
+ ...(!first&&mode==='shell'?[{type:'response_item',payload:{type:'function_call',name:'exec_command',call_id:call+'-shell',arguments:'{"cmd":"rg x session"}'}}]:[]),{type:'event_msg',payload:{type:'task_complete'}}];
+ if(!first&&mode==='read-unavailable'){
+  const sample=JSON.parse(fs.readFileSync(new URL('./skills-records-live7.json',import.meta.url)));
+  rows=[rows[0],{...sample.failedRead[1],payload:{...sample.failedRead[1].payload,call_id:call}},rows.at(-1)];
+ }
  if(first)rows.unshift({type:'session_meta'});
  fs.appendFileSync(file,rows.map(e=>JSON.stringify({...e,timestamp:new Date().toISOString()})).join('\n')+'\n');emit({type:'thread.started',thread_id:'fixed-dump'});emit({type:'turn.completed'});
 }else{

@@ -1,0 +1,107 @@
+{
+  "projectStatus": {
+    "id": "00000000-0000-4000-8000-000000000008",
+    "name": "Idea",
+    "type": "backlog"
+  },
+  "seedState": {
+    "input": {
+      "state": "00000000-0000-4000-8000-000000000007"
+    },
+    "result": {
+      "status": "Done",
+      "labels": [
+        "Этап"
+      ]
+    }
+  },
+  "shellItem": {
+    "timestamp": "2026-11-02T08:50:27.680Z",
+    "ordinal": 35,
+    "type": "event_msg",
+    "payload": {
+      "type": "item_completed",
+      "thread_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-000000000002",
+      "item": {
+        "type": "CommandExecution",
+        "id": "exec-00000000-0000-4000-8000-000000000006",
+        "process_id": "40114",
+        "command": [
+          "/bin/zsh",
+          "-lc",
+          "cat /scratch/test"
+        ],
+        "cwd": "file:///scratch/test",
+        "parsed_cmd": [
+          {
+            "type": "read",
+            "cmd": "cat /scratch/test",
+            "name": "SKILL.md",
+            "path": "/scratch/test"
+          }
+        ],
+        "source": "unified_exec_startup",
+        "status": "failed",
+        "stdout": "cat: /scratch/test No such file or directory\n",
+        "stderr": "",
+        "aggregated_output": "cat: /scratch/test No such file or directory\n",
+        "exit_code": 1,
+        "duration": {
+          "secs": 0,
+          "nanos": 3250
+        },
+        "formatted_output": "cat: /scratch/test No such file or directory\n"
+      },
+      "started_at_ms": 1793609427680,
+      "completed_at_ms": 1793609427680
+    }
+  },
+  "failedRead": [
+    {
+      "timestamp": "2026-11-02T08:57:10.860Z",
+      "ordinal": 33,
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "ctc_0908929ca17527c4016ae850665a648191b88c224d9a88d804",
+        "status": "completed",
+        "call_id": "call_b153c28f79574bd8b779376b926f6677",
+        "name": "exec",
+        "input": "const r = await tools.mcp__monotest__get_project({\"query\":\"00000000-0000-4000-8000-000000000005\",\"includeResources\":true}); text(r);\n",
+        "internal_chat_message_metadata_passthrough": {
+          "turn_id": "00000000-0000-4000-8000-000000000003",
+          "create_time": 1793609830.3566685
+        }
+      }
+    },
+    {
+      "timestamp": "2026-11-02T08:57:10.937Z",
+      "ordinal": 35,
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "id": "ctco_00000000-0000-4000-8000-000000000004",
+        "call_id": "call_b153c28f79574bd8b779376b926f6677",
+        "output": [
+          {
+            "type": "input_text",
+            "text": "Script failed\nWall time 0.0 seconds\nOutput:\n"
+          },
+          {
+            "type": "input_text",
+            "text": "Script error:\nTypeError: tools.mcp__monotest__get_project is not a function\n    at exec_main.mjs:1:23"
+          }
+        ],
+        "internal_chat_message_metadata_passthrough": {
+          "turn_id": "00000000-0000-4000-8000-000000000003",
+          "create_time": 1793609830.937717
+        }
+      },
+      "metadata": {
+        "client_authored": false,
+        "fallback_token_limit_override": 12000
+      }
+    }
+  ]
+}

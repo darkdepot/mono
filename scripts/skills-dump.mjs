@@ -25,7 +25,9 @@ export class RecordDump {
   const job=this.queue[0],data=nativeData(host,rows);
   if(data.calls.some(c=>isWrite(c.name)||!c.name.startsWith('mcp__monotest__')))throw new Error('record dump permits monotest reads only');
   if(data.calls.length!==1)missing('dump needs exactly one native MCP read for its fixed request');
-  const record=resultFor(host,data.calls[0],rows);
+  let record;
+  try{record=resultFor(host,data.calls[0],rows);}
+  catch(error){if(error instanceof MissingEvidence)error.hostFailure=true;throw error;}
   if(record.name!==`mcp__monotest__${job.tool}`||!isDeepStrictEqual(record.input,job.input))throw new Error('dump read differs from fixed request');
   const value=record.value;
   if(job.key){

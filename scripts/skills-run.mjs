@@ -88,7 +88,7 @@ export async function runClaude(request){
   const toolPolicy=request.scenario.allowedTools??'*';
   const allowed=toolPolicy.includes('*')?null:toolPolicy.filter(n=>!n.startsWith('mcp__'));if(allowed&&!allowed.includes('AskUserQuestion'))allowed.push('AskUserQuestion');
   const args=[...(request.writableRoots?.length?['--add-dir',...request.writableRoots]:[]),'-p','--verbose','--input-format','stream-json','--output-format','stream-json','--permission-prompt-tool=stdio','--strict-mcp-config','--mcp-config',config,'--plugin-dir',request.packRoot,'--setting-sources','','--settings',JSON.stringify({enabledPlugins:{'mono@mono-marketplace':false}}),...(allowed?['--tools',allowed.join(',')]:[]),...modelArgs(request)];
-  const calls=new Map(),receipts=new Map(),replies=[],freeReplies=[],seenRequests=new Set(),pendingWindows=[];let confirmed=false,phase='confirm',seedEndLine,lastMessage='',freeIndex=0,waiting=false,violation=null,evidenceMissing=null,endLine,seedRoute;
+  const calls=new Map(),receipts=new Map(),replies=[],freeReplies=[],seenRequests=new Set(),pendingWindows=[];let confirmed=false,phase='confirm',seedEndLine,lastMessage='',freeIndex=0,waiting=false,violation=null,evidenceMissing=null,endLine,seedRoute,hostFailure=false;
   const personaTasks=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000);let lastFreeQuestion;
   const persona=question=>{
     const task=runPersona({...request,timeoutMs:Math.max(1,deadline-Date.now())},question,freeIndex++);
@@ -156,7 +156,7 @@ export async function runClaude(request){
           try{seedRoute=checkSeedRoute(request);}catch(error){return error instanceof MissingEvidence?missing(error.message,c):fail(error.message,c);}
           seedEndLine=line;phase='stage';beginTurn();c.send(userMessage(request.scenario.prompt));
         }else if(dump){
-          try{dump.consume('claude',traceRows(trace,'claude').rows.filter(r=>r.line>dumpStart));}catch(error){return error instanceof MissingEvidence?missing(error.message,c):fail(error.message,c);}
+          try{dump.consume('claude',traceRows(trace,'claude').rows.filter(r=>r.line>dumpStart));}catch(error){hostFailure=Boolean(error.hostFailure);return error instanceof MissingEvidence?missing(error.message,c):fail(error.message,c);}
           dumpStart=line;if(dump.done){waiting=true;endLine=line;c.complete();}else{beginTurn();c.send(userMessage(dump.prompt()));}
         }else{waiting=true;if(request.scenario.stopAfterExpectedWindows!==false&&targetsAnswered(request,replies)&&replies.every(r=>r.received)&&!pendingWindows.length&&(answeredStop(request,replies)||!(roleWindows(request.scenario.expectedWindows)&&lastMessage.includes('?')))){endLine=line;c.complete();}else c.idle();}
       }else if(waiting)c.idle();
@@ -171,7 +171,7 @@ export async function runClaude(request){
     }});
   await Promise.allSettled([...personaTasks]);
   if(!waiting&&!violation&&!evidenceMissing&&processResult.code===0&&!processResult.failure)evidenceMissing='fresh Claude parent terminal missing after last sent continuation';
-  return finishRun(request,{trace,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,...(dump?{dumpComplete:dump.done,dumpFiles:dump.files}:{}),process:processResult,violation,evidenceMissing,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
+  return finishRun(request,{trace,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,...(dump?{dumpComplete:dump.done,dumpFiles:dump.files}:{}),process:processResult,violation,evidenceMissing,hostFailure,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
 }
 
 function rolloutFiles(home){
