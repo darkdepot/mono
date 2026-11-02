@@ -14,3 +14,6 @@ Discovery and Idea have no manually supplied shown-version bindings, so their
 correct result is binding-only unverified with passing actual idea-gate results.
 Research records pass. Its free question was answered; the next transition has
 no answer and exceeds the single target window in the discuss scenario.
+
+Original native timestamps are retained for order checks. They were restored
+from the same source line numbers; no read/write time was inferred from mtimes.

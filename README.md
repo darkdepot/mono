@@ -1743,6 +1743,12 @@ cursor chains; working Linear writes stop the suite with manual-removal links.
 The suite reports scenario/host, duration and unique monotest task count. Missing
 native evidence stays unverified. The unchanged landing gate requires passed;
 MONO-279's exact expectation/source binding is included. See [record proof inputs](references/qa-skills.md#свежий-дамп-и-сверка-записей).
+
+Record checks apply to every supplied native trace, including scouts and dump
+children. Each dump read must provably start after all scenario writes; missing
+or overlapping order stays unverified. Native times and Claude's hash-bound
+driver process interval support offline replay; request times and file mtimes do
+not. Public live excerpts retain their original native clock evidence.
 Codex approvals use delivered native rollout answers; its `{thread,prompt}` sent
 journal is not a Claude event stream. Live3 regression excerpts include that journal
 and the scripted dump's own rollout, matching the suite's record-check inputs.

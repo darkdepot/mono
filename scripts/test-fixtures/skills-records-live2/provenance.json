@@ -1,4 +1,5 @@
 {
   "source": "MONO-290 amend 2, live2 on 313b1a7, Codex/monotest, 2026-11-02",
-  "trimming": "Record/window/terminal excerpts; actor data, local commands/paths and unrelated metadata removed. Native arguments/results and stored neutral Mono text retained. research-discuss has only list_projects: no full dump was invented. Design was never reached."
+  "trimming": "Record/window/terminal excerpts; actor data, local commands/paths and unrelated metadata removed. Native arguments/results and stored neutral Mono text retained. research-discuss has only list_projects: no full dump was invented. Design was never reached.",
+  "clock": "Original native timestamps and the dump session start envelope restored from the same full rollouts. Final terminal times come from their native terminals. No clock values inferred from files or manufactured."
 }

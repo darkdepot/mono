@@ -145,15 +145,17 @@ export function readRecordDump(root,project,projectName){
  return {project:raw,comments,documents,issues,all,files};
 }
 
-function productionWrites(traces){
- const manualRemoval=new Set(),evidence=[];
+function runViolations(traces,request={}){
+ const manualRemoval=new Set(),evidence=[],transitions=[];
  for(const {host,trace,endLine} of traces){
   let data;
   try{data=nativeRecords(host,trace);}catch{
     const rows=readJsonLines(trace,{errorLines:true}).events,calls=[];
     for(const row of rows)try{calls.push(...auditRows(host,[row]).calls.filter(c=>c.name.startsWith('mcp__')));}catch{}
-    data={rows,calls};
+    data={rows,calls,audit:{calls:rows.flatMap(row=>{try{return auditRows(host,[row]).calls;}catch{return [];}})}};
   }
+  if(request.expectedRecords?.some(rule=>rule.forbidden==='start-next-stage'))for(const call of data.audit.calls)
+   if((call.name==='Skill'&&request.nextSkill&&call.input?.skill===request.nextSkill)||(['Agent','Task'].includes(call.name)&&request.nextAgent&&call.input?.subagent_type===request.nextAgent))transitions.push(`${trace}:${call.line}: forbidden start-next-stage`);
   for(const call of data.calls){
    if(!isWrite(call.name)||call.name.startsWith('mcp__paper__'))continue;
    let record;try{record=resultFor(host,call,data.rows,false);}catch{}
@@ -164,7 +166,40 @@ function productionWrites(traces){
    }
   }
  }
- return evidence.length?{status:'failed',stop:true,manualRemoval:[...manualRemoval],evidence,reason:'MCP write outside monotest: stopped; manual removal only for linked successful record URLs; no deletion attempted'}:null;
+ return evidence.length?{status:'failed',stop:true,manualRemoval:[...manualRemoval],evidence,reason:'MCP write outside monotest: stopped; manual removal only for linked successful record URLs; no deletion attempted'}:transitions.length?{status:'failed',stop:false,manualRemoval:[],evidence:transitions,reason:'forbidden start-next-stage'}:null;
+}
+
+// Cross-session order comes from native invocation/result timestamps. Claude's
+// timestamp-less stream can use the existing driver's hash-bound process result;
+// neither file mtime nor times supplied in a verification request prove order.
+function captureInterval(data){
+ if(data.interval!==undefined)return data.interval;
+ data.interval=null;
+ if(data.host!=='claude')return null;
+ const file=path.join(path.dirname(data.trace),'result.json');
+ if(!fs.existsSync(file))return null;
+ const timing=read(file).process?.traceTiming;
+ if(!timing||timing.file!==path.basename(data.trace)||timing.sha256!==sha256(fs.readFileSync(data.trace)))return null;
+ const start=date(timing.startedAt),end=date(timing.finishedAt);
+ if(!Number.isFinite(start)||!Number.isFinite(end)||start>end)missing('invalid driver trace time interval');
+ return data.interval={start,end};
+}
+function traceTime(data,line,start=false){
+ const row=data.rows.find(r=>r.line===line);
+ if(!row)return start?captureInterval(data)?.start:captureInterval(data)?.end;
+ // started_at has second precision and is a conservative lower bound.
+ if(start&&row.value.type==='event_msg'&&row.value.payload?.type==='task_started'&&Number.isSafeInteger(row.value.payload.started_at)){
+  const native=date(row.value.timestamp),seconds=row.value.payload.started_at*1000;
+  return Number.isFinite(native)?Math.min(native,seconds):seconds;
+ }
+ if(row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp))missing('invalid native trace time');return stamp;}
+ return start?captureInterval(data)?.start:captureInterval(data)?.end;
+}
+function before(left,line,right,call){
+ const startLine=call.event.type==='event_msg'?call.invocationLine:call.line;
+ if(fs.realpathSync(left.trace)===fs.realpathSync(right.trace)&&Number.isInteger(startLine))return line<startLine;
+ const end=traceTime(left,line),start=traceTime(right,startLine,true);
+ return Number.isFinite(end)&&Number.isFinite(start)&&end<start;
 }
 
 const sha256=value=>createHash('sha256').update(value).digest('hex');
@@ -245,7 +280,9 @@ function approvalCheck(request,write,data,dump){
  }
  const currentCall=data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
  if(!current||!currentCall||binding.currentLine<=reply.line||binding.currentLine>=write.line)missing('fresh version read after reply missing');
- const value=resultFor(request.host,currentCall,data.rows).value;
+ const observed=resultFor(data.host,currentCall,data.rows);
+ if(observed.resultLine>=write.line)throw new Error('fresh version read completed after approval write');
+ const value=observed.value;
  const fresh=binding.currentRecordId?(value.comments??value.documents??value.issues??[]).find(row=>idOf(row)===binding.currentRecordId):value;
  if(!fresh)missing('current version record absent from native read');
  const versioned=/mono-(?:prd|design|tech):\s*approved/.test(writeBody(write));
@@ -272,27 +309,30 @@ function approvalCheck(request,write,data,dump){
 
 export function verifyRecords(request){
  const gateResults=[];
- const traces=[{host:request.host,trace:request.trace,endLine:request.endLine},...(request.additionalTraces??[]),...(request.dumpTrace?[{host:request.host,trace:request.dumpTrace}]:[])];
+ const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,sent:request.sent},...(request.additionalTraces??[])];
+ const dumpTraces=[...(request.dumpTrace?[{host:request.host,trace:request.dumpTrace}]:[]),...(request.dumpAdditionalTraces??[])];
+ const traces=[...scenarioTraces,...dumpTraces];
  try{
-  const production=productionWrites(traces);if(production)return production;
-  const data=nativeRecords(request.host,request.trace,request.endLine),writes=[];
-  if(!completedTrace(request.host,data.rows))missing('scenario trace incomplete');
-  if(request.endLine&&nativeRecords(request.host,request.trace).calls.some(c=>c.line>request.endLine&&isWrite(c.name)))throw new Error('write after scenario terminal');
-  for(const call of data.calls.filter(c=>isWrite(c.name)&&!c.name.startsWith('mcp__paper__'))){
-   if(!call.name.startsWith('mcp__monotest__'))throw new Error('write outside monotest');
-   writes.push({...resultFor(request.host,call,data.rows),data});
-  }
-  for(const extra of request.additionalTraces??[]){
-   const child=nativeRecords(extra.host,extra.trace,extra.endLine);
-   for(const call of child.calls.filter(c=>isWrite(c.name)&&!c.name.startsWith('mcp__paper__')))writes.push({...resultFor(extra.host,call,child.rows),data:child});
-  }
+  const violation=runViolations(traces,request);if(violation)return violation;
+  const load=(source,dump)=>{
+   const full=nativeRecords(source.host,source.trace),data=nativeRecords(source.host,source.trace,source.endLine);
+   data.sent=source.sent;
+   if(dump&&full.calls.some(c=>isWrite(c.name)))throw new Error('dump attempted an external write');
+   if(source.endLine!==undefined&&full.calls.some(c=>c.line>source.endLine&&isWrite(c.name)))throw new Error('write after scenario terminal');
+   if(!completedTrace(source.host,data.rows))missing(`${dump?'dump':'scenario'} trace incomplete: ${source.trace}`);
+   data.terminal=data.rows.findLast(r=>!r.value.parent_tool_use_id&&data.audit.proof({kind:'terminal',result:r.value}).status==='confirmed');
+   if(data.calls.some(c=>c.line>data.terminal.line&&isWrite(c.name)))throw new Error('write after scenario terminal');
+   if(data.calls.some(c=>c.line>data.terminal.line))missing('call after successful trace terminal');
+   let previous=-Infinity;for(const row of data.rows)if(row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp)||stamp<previous)missing('invalid or reversed native trace time order');previous=stamp;}
+   return data;
+  };
+  const scenarios=scenarioTraces.map(source=>load(source,false)),dumps=dumpTraces.map(source=>load(source,true)),data=scenarios[0],writes=[];
+  for(const source of scenarios)for(const call of source.calls.filter(c=>isWrite(c.name)&&!c.name.startsWith('mcp__paper__')))writes.push({...resultFor(source.host,call,source.rows),data:source});
   const dump=readRecordDump(request.dumpDir,request.project,request.projectName);
   if(!request.dumpTrace)missing('fresh native dump trace required');
   if(request.dumpTrace){
-   const fresh=nativeRecords(request.host,request.dumpTrace);
-   if(!completedTrace(request.host,fresh.rows))missing('dump trace incomplete');
-   if(fresh.calls.some(c=>isWrite(c.name)))throw new Error('dump attempted an external write');
-   const reads=fresh.calls.filter(c=>!isWrite(c.name)).map(c=>resultFor(request.host,c,fresh.rows));
+   const reads=dumps.flatMap(fresh=>fresh.calls.filter(c=>!isWrite(c.name)).map(c=>({...resultFor(fresh.host,c,fresh.rows),data:fresh})));
+   const boundaries=writes.length?writes.map(w=>({data:w.data,line:w.resultLine})):scenarios.map(source=>({data:source,line:source.terminal.line}));
    for(const file of dump.files){
     const scoped=c=>{
      if(file.id)return Object.values(c.input).some(value=>value===file.id||value===file.alias);
@@ -301,9 +341,10 @@ export function verifyRecords(request){
      return (value===scope||(file.scopeAlias!==undefined&&value===file.scopeAlias))&&file.request.cursor===c.input.cursor&&Object.keys(c.input).every(key=>['projectId','project','issueId','issue','query','cursor','limit','includeArchived','orderBy'].includes(key))&&
        (c.input.limit===undefined||(Number.isInteger(c.input.limit)&&c.input.limit>0));
     };
-    const match=reads.find(c=>c.name===`mcp__monotest__${file.kind}`&&(!['list_issues','list_projects'].includes(file.kind)||c.input.includeArchived===true)&&isDeepStrictEqual(c.value,file.value)&&
+    const matches=reads.filter(c=>c.name===`mcp__monotest__${file.kind}`&&(!['list_issues','list_projects'].includes(file.kind)||c.input.includeArchived===true)&&isDeepStrictEqual(c.value,file.value)&&
      scoped(c));
-    if(!match)missing(`fresh native read does not bind ${file.file}`);
+    if(!matches.length)missing(`fresh native read does not bind ${file.file}`);
+    if(!matches.some(match=>boundaries.every(boundary=>before(boundary.data,boundary.line,match.data,match))))missing(`fresh dump read order not proved after scenario writes: ${file.file}`);
    }
   }
   let seedEndLine=0;
@@ -322,14 +363,14 @@ export function verifyRecords(request){
    const tool=field==='status'?'list_issue_statuses':'list_issue_labels',aliases=[];
    for(const call of write.data.calls.filter(c=>c.name===`mcp__monotest__${tool}`&&c.line<write.line)){
     if(!write.input.team||call.input.team!==write.input.team)continue;
-    const read=resultFor(request.host,call,write.data.rows);
+    const read=resultFor(write.data.host,call,write.data.rows);
     if(read.resultLine>=write.line)continue;
     const rows=Array.isArray(read.value)?read.value:read.value.labels;
     if(Array.isArray(rows))aliases.push(...rows);
    }
    // Updates without a team can use this record's native state history.
    for(const call of write.data.calls.filter(c=>field==='status'&&c.name==='mcp__monotest__get_issue')){
-    const read=resultFor(request.host,call,write.data.rows);
+    const read=resultFor(write.data.host,call,write.data.rows);
     if(idOf(read.value)===idOf(write.value))aliases.push(...(read.value.stateHistory??[]).map(row=>row.state));
    }
    const resolve=v=>typeof v==='string'?aliases.find(row=>row.id===v)??v:v;
@@ -342,7 +383,7 @@ export function verifyRecords(request){
    if(!groups.has(id))groups.set(id,[]);groups.get(id).push(write);
   }
   for(const [id,versions] of groups){
-   if(new Set(versions.map(w=>w.data)).size>1)missing('write ordering across traces is not established');
+   versions.sort((a,b)=>{if(a.data===b.data)return a.line-b.line;if(before(a.data,a.resultLine,b.data,b))return -1;if(before(b.data,b.resultLine,a.data,a))return 1;missing('write ordering across traces is not established');});
    const finalFields={};
    for(const [index,write] of versions.entries()){
     const value=write.value,input={...write.input},next=versions[index+1];
@@ -355,7 +396,7 @@ export function verifyRecords(request){
        confirmation=null;
        for(const read of write.data.calls.filter(c=>!isWrite(c.name)&&c.line>write.resultLine&&c.line<next.line)){
         try{
-         const observed=resultFor(request.host,read,write.data.rows);
+         const observed=resultFor(write.data.host,read,write.data.rows);
          if(observed.resultLine>=next.line)continue;
          const candidate=idOf(observed.value)===id?observed.value:(observed.value.comments??observed.value.documents??observed.value.issues??[]).find(row=>idOf(row)===id);
          if(candidate&&Object.hasOwn(candidate,field)&&!elided(candidate[field])){confirmation=candidate;break;}
@@ -376,7 +417,7 @@ export function verifyRecords(request){
    if(rule.forbidden==='project:create'){
     if(activeWrites.some(w=>w.name.endsWith('__save_project')&&!w.input.id||w.name.endsWith('__create_project')))throw new Error('forbidden project:create');
    }else if(rule.forbidden==='start-next-stage'){
-    if(data.audit.calls.some(c=>(c.name==='Skill'&&request.nextSkill&&c.input?.skill===request.nextSkill)||(['Agent','Task'].includes(c.name)&&request.nextAgent&&c.input?.subagent_type===request.nextAgent)))throw new Error('forbidden start-next-stage');
+    // Checked across every trace, before missing/partial evidence can hide it.
    }else if(rule.forbidden){
     if(activeWrites.some(w=>writeBody(w).includes(rule.forbidden))||dump.all.some(row=>(bodyOf(row)??'').includes(rule.forbidden)))throw new Error(`forbidden record: ${rule.forbidden}`);
    }else if(rule.type==='project'){
@@ -388,7 +429,7 @@ export function verifyRecords(request){
    }
   }
   const bindingGaps=[];
-  for(const write of activeWrites)try{approvalCheck(request,write,write.data,dump);}catch(error){if(!error.bindingOnly)throw error;bindingGaps.push(error.message);}
+  for(const write of activeWrites)try{approvalCheck({...request,host:write.data.host,sent:write.data.sent},write,write.data,dump);}catch(error){if(!error.bindingOnly)throw error;bindingGaps.push(error.message);}
   const gates=[...(request.gates??[])];
   for(const write of activeWrites){
    const body=writeBody(write);
@@ -441,15 +482,16 @@ export async function collectRecordDump(request,execute=runScenario){
 export async function verifyScenarioRecords({run,runRequest,scenario,project,outputDir,bindingsFile},collect=collectRecordDump){
  const start=Date.now();
  const traces=(run.auditedTraces??[]).filter(trace=>trace!==run.trace).map(trace=>({host:runRequest.host,trace}));
- const violation=productionWrites([{host:runRequest.host,trace:run.trace,endLine:run.endLine},...traces]);if(violation)return {...violation,durationMs:Date.now()-start};
+ const rules={expectedRecords:scenario.expectedRecords,nextSkill:scenario.next?`${runRequest.context.skillPrefix}:${scenario.next}`:null,nextAgent:scenario.next?`${runRequest.context.skillPrefix}-${runRequest.context.skillPrefix}-${scenario.next}`:null};
+ const violation=runViolations([{host:runRequest.host,trace:run.trace,endLine:run.endLine},...traces],rules);if(violation)return {...violation,durationMs:Date.now()-start};
  const dump=await collect({...runRequest,project,projectName:runRequest.context.projectName,outputDir,mcpServers:{monotest:runRequest.mcpServers.monotest}});
  if(dump.trace){
-  const violation=productionWrites([{host:runRequest.host,trace:dump.trace},...(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace}))]);
+  const violation=runViolations([{host:runRequest.host,trace:dump.trace},...(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace}))],rules);
   if(violation)return {...violation,durationMs:Date.now()-start};
  }
  if(dump.status!=='passed')return {...dump,status:dump.status==='failed'?'failed':'unverified',durationMs:Date.now()-start};
  const bindings=bindingsFile&&fs.existsSync(bindingsFile)?read(bindingsFile):{};
- const result=verifyRecords({host:runRequest.host,trace:run.trace,endLine:run.endLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,
+ const result=verifyRecords({host:runRequest.host,trace:run.trace,endLine:run.endLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
   approvalBindings:bindings.approvalBindings,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:scenario.next,nextSkill:scenario.next?`${runRequest.context.skillPrefix}:${scenario.next}`:null,nextAgent:scenario.next?`${runRequest.context.skillPrefix}-${runRequest.context.skillPrefix}-${scenario.next}`:null,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')});
  return {...result,durationMs:Date.now()-start};
 }

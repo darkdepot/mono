@@ -6,6 +6,9 @@ import path from 'node:path';
 import { verifyRecords, dumpPrompt, collectRecordDump, verifyScenarioRecords } from './skills-records.mjs';
 
 const projectId='00000000-0000-4000-8000-000000000001',date='2026-10-31T00:00:00Z';
+// These constructed sessions have their own deterministic clock. Native live
+// excerpts below retain the original host timestamps instead.
+const timed=(rows,base)=>rows.map((row,index)=>({...row,timestamp:new Date(Date.parse(base)+index*10).toISOString()}));
 function fixture(t){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-records-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const dumpDir=path.join(dir,'dump');fs.mkdirSync(dumpDir);
@@ -23,7 +26,7 @@ function fixture(t){
  const request={host:'claude',trace,dumpDir,dumpTrace,project,expectedRecords:[{type:'mono-test',count:1}],approvalBindings:[]};
  const flush=()=>{
   const terminal=request.host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
-  fs.writeFileSync(trace,[...events,terminal].map(e=>JSON.stringify(e)).join('\n')+'\n');
+  fs.writeFileSync(trace,timed([...events,terminal],'2026-11-02T04:00:00Z').map(e=>JSON.stringify(e)).join('\n')+'\n');
   if(request.dumpTrace!==dumpTrace)return;
   const reads=[];
   const walk=(directory)=>{for(const name of fs.readdirSync(directory)){const file=path.join(directory,name);if(fs.statSync(file).isDirectory()){walk(file);continue;}
@@ -35,7 +38,7 @@ function fixture(t){
    if(request.host==='claude')reads.push({type:'assistant',message:{content:[{type:'tool_use',id,name:`mcp__monotest__${kind}`,input}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}});
    else reads.push({type:'response_item',payload:{type:'function_call',name:`mcp__monotest__${kind}`,call_id:id,arguments:JSON.stringify(input)}},{type:'response_item',payload:{type:'function_call_output',call_id:id,output:JSON.stringify(value)}});
   }};
-  walk(dumpDir);fs.writeFileSync(dumpTrace,[...reads,terminal].map(e=>JSON.stringify(e)).join('\n')+'\n');
+  walk(dumpDir);fs.writeFileSync(dumpTrace,timed([...reads,terminal],'2026-11-02T04:01:00Z').map(e=>JSON.stringify(e)).join('\n')+'\n');
  };flush();
  const check=()=>{flush();return verifyRecords(request);};
  return {dir,dumpDir,project,record,events,save,page,check,request};
@@ -44,6 +47,87 @@ function fixture(t){
 test('records compare successful native write bodies to a fresh complete monotest dump',t=>{
  const f=fixture(t);assert.equal(f.check().status,'passed');
  f.page('comments','comments',[{...f.record,body:'mono-test: report changed after write'}]);assert.equal(f.check().status,'failed');
+});
+
+for(const name of ['Skill','Agent','Task'])for(const target of ['main','child','dump','dump-child'])test(`amend1 forbidden ${name} applies to ${target} trace`,t=>{
+ const f=fixture(t);f.request.nextSkill='mono:research';f.request.nextAgent='mono-mono-research';f.request.expectedRecords.push({forbidden:'start-next-stage'});
+ const call={type:'assistant',message:{content:[{type:'tool_use',id:'next',name,input:name==='Skill'?{skill:f.request.nextSkill}:{subagent_type:f.request.nextAgent}}]}};
+ f.check();
+ if(target==='main')f.events.push(call);
+ else if(target==='dump')fs.appendFileSync(f.request.dumpTrace,JSON.stringify(call)+'\n');
+ else {const trace=path.join(f.dir,'child.jsonl');fs.writeFileSync(trace,JSON.stringify(call)+'\n'+JSON.stringify({type:'result',subtype:'success'})+'\n');f.request[target==='child'?'additionalTraces':'dumpAdditionalTraces']=[{host:'claude',trace}];}
+ const result=target==='main'?f.check():verifyRecords(f.request);
+ assert.equal(result.status,'failed',result.reason);assert.match(result.reason,/forbidden start-next-stage/);
+});
+for(const stage of ['scenario','dump'])test(`amend1 suite wrapper preserves forbidden transitions in ${stage} children`,async t=>{
+ const f=fixture(t);f.check();const child=path.join(f.dir,'child.jsonl');
+ fs.writeFileSync(child,JSON.stringify({type:'assistant',message:{content:[{type:'tool_use',id:'next',name:'Skill',input:{skill:'mono:research'}}]}})+'\n');
+ let collections=0;
+ const result=await verifyScenarioRecords({run:{trace:f.request.trace,auditedTraces:stage==='scenario'?[f.request.trace,child]:[f.request.trace]},runRequest:{host:'claude',context:{skillPrefix:'mono'},mcpServers:{monotest:{url:'test'}}},scenario:{next:'research',expectedRecords:[{forbidden:'start-next-stage'}]},outputDir:path.join(f.dir,'unused')},async()=>{collections++;return {status:'passed',trace:f.request.dumpTrace,dumpDir:f.dumpDir,auditedTraces:[f.request.dumpTrace,child]};});
+ assert.equal(result.status,'failed');assert.match(result.reason,/forbidden start-next-stage/);assert.equal(collections,stage==='scenario'?0:1);
+});
+for(const mode of ['incomplete','failed','post-terminal-write','dump-write'])test(`amend1 child ${mode} is checked like the main trace`,t=>{
+ const f=fixture(t);f.check();const trace=path.join(f.dir,'child.jsonl');
+ let rows=mode==='incomplete'?[{type:'assistant',message:{content:[{type:'text',text:'Still running'}]}}]:[{type:'result',subtype:mode==='failed'?'error_during_execution':'success'}];
+ const extra={host:'claude',trace};
+ if(['post-terminal-write','dump-write'].includes(mode)){extra.endLine=1;rows.push(...f.events.slice(2));}
+ fs.writeFileSync(trace,timed(rows,'2026-11-02T04:00:01Z').map(e=>JSON.stringify(e)).join('\n')+'\n');
+ f.request[mode==='dump-write'?'dumpAdditionalTraces':'additionalTraces']=[extra];
+ const result=verifyRecords(f.request);assert.notEqual(result.status,'passed');
+ assert.match(result.reason,/incomplete|terminal|dump.*write/);
+});
+for(const mode of ['before','overlap','equal','missing-write-time','missing-read-time','invalid-time','completed-only'])test(`amend1 dump freshness ${mode} cannot pass`,t=>{
+ const f=fixture(t);f.check();
+ const edit=(file,fn)=>{const rows=fs.readFileSync(file,'utf8').trim().split('\n').map(JSON.parse);fn(rows);fs.writeFileSync(file,rows.map(row=>JSON.stringify(row)).join('\n')+'\n');};
+ if(['before','overlap','equal','invalid-time','missing-read-time'].includes(mode))edit(f.request.dumpTrace,rows=>{for(const row of rows){
+  if(mode==='missing-read-time')delete row.timestamp;
+  else row.timestamp=mode==='invalid-time'?'2026-02-30T00:00:00Z':mode==='before'?'2026-11-02T03:00:00Z':mode==='equal'?'2026-11-02T04:00:00.030Z':row.type==='assistant'?'2026-11-02T04:00:00Z':'2026-11-02T04:01:00Z';
+ }});
+ if(mode==='missing-write-time')edit(f.request.trace,rows=>rows.forEach(row=>delete row.timestamp));
+ if(mode==='completed-only'){
+  f.request.host='codex';f.events.splice(0,f.events.length);f.check();
+  edit(f.request.dumpTrace,rows=>{const result=[];for(let i=0;i<rows.length-1;i+=2){const call=rows[i].payload,out=rows[i+1].payload;result.push({timestamp:'2026-11-02T04:01:00Z',type:'event_msg',payload:{type:'item_completed',item:{type:'McpToolCall',id:call.call_id,server:'monotest',tool:call.name.replace('mcp__monotest__',''),arguments:JSON.parse(call.arguments),status:'completed',result:JSON.parse(out.output)}}});}result.push(rows.at(-1));rows.splice(0,rows.length,...result);});
+ }
+ const result=verifyRecords(f.request);assert.equal(result.status,'unverified',result.reason);assert.match(result.reason,/order|fresh|time/);
+});
+test('amend1 old dump with truncated final save result is not fresh read-back',t=>{
+ const f=fixture(t),content='Persisted content';f.page('comments','comments',[]);f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content});
+ f.events.splice(0,f.events.length,{type:'assistant',message:{content:[{type:'tool_use',id:'save',name:'mcp__monotest__save_document',input:{id:'doc',content}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'save',content:JSON.stringify({id:'doc',content:'… (truncated, use `get_document` for full description)'})}]}});
+ f.request.expectedRecords=[{type:'project'}];assert.equal(f.check().status,'passed');
+ const rows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(line=>({...JSON.parse(line),timestamp:'2026-11-02T03:00:00Z'}));fs.writeFileSync(f.request.dumpTrace,rows.map(row=>JSON.stringify(row)).join('\n')+'\n');
+ const result=verifyRecords(f.request);assert.equal(result.status,'unverified');assert.match(result.reason,/order|fresh/);
+});
+test('amend1 a late child write prevents an older dump from passing',t=>{
+ const f=fixture(t);f.check();const trace=path.join(f.dir,'child.jsonl');
+ fs.writeFileSync(trace,timed([...f.events.slice(2),{type:'result',subtype:'success'}],'2026-11-02T04:02:00Z').map(e=>JSON.stringify(e)).join('\n')+'\n');
+ f.events.splice(2);f.check();f.request.additionalTraces=[{host:'claude',trace}];
+ const result=verifyRecords(f.request);assert.equal(result.status,'unverified');assert.match(result.reason,/order|fresh/);
+});
+test('amend1 mixed native hosts retain the child payload/result and terminal checks',t=>{
+ const f=fixture(t);f.events.splice(2);f.check();const trace=path.join(f.dir,'codex-child.jsonl');
+ const rows=[{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__create_comment',call_id:'child-write',arguments:JSON.stringify({projectId,body:f.record.body})}},
+  {type:'response_item',payload:{type:'function_call_output',call_id:'child-write',output:JSON.stringify(f.record)}},{type:'event_msg',payload:{type:'task_complete'}}];
+ fs.writeFileSync(trace,timed(rows,'2026-11-02T04:00:01Z').map(e=>JSON.stringify(e)).join('\n')+'\n');f.request.additionalTraces=[{host:'codex',trace}];
+ assert.equal(verifyRecords(f.request).status,'passed');rows.pop();fs.writeFileSync(trace,timed(rows,'2026-11-02T04:00:01Z').map(e=>JSON.stringify(e)).join('\n')+'\n');assert.equal(verifyRecords(f.request).status,'unverified');
+});
+test('amend1 versions on separate traces require proved non-overlapping writes',t=>{
+ const f=fixture(t),trace=path.join(f.dir,'later-write.jsonl'),body=f.record.body+' corrected';f.check();
+ const rows=structuredClone(f.events.slice(2));rows[0].message.content[0].input.body=body;rows[1].message.content[0].content=JSON.stringify({...f.record,body});rows.push({type:'result',subtype:'success'});
+ f.page('comments','comments',[{...f.record,body}]);f.check();f.request.additionalTraces=[{host:'claude',trace}];
+ fs.writeFileSync(trace,timed(rows,'2026-11-02T04:00:01Z').map(e=>JSON.stringify(e)).join('\n')+'\n');assert.equal(verifyRecords(f.request).status,'passed');
+ fs.writeFileSync(trace,timed(rows,'2026-11-02T04:00:00.025Z').map(e=>JSON.stringify(e)).join('\n')+'\n');const overlap=verifyRecords(f.request);assert.equal(overlap.status,'unverified');assert.match(overlap.reason,/write ordering/);
+});
+test('amend1 request times and filesystem mtimes cannot supply missing native order',t=>{
+ const f=fixture(t);f.check();
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(line=>{const value=JSON.parse(line);delete value.timestamp;return value;});fs.writeFileSync(f.request.trace,rows.map(e=>JSON.stringify(e)).join('\n')+'\n');
+ f.request.startedAt='2026-11-02T03:00:00Z';f.request.finishedAt='2026-11-02T03:01:00Z';fs.utimesSync(f.request.trace,0,0);
+ const result=verifyRecords(f.request);assert.equal(result.status,'unverified');assert.match(result.reason,/order/);
+});
+test('amend1 a later matching native read proves freshness despite an older identical read',t=>{
+ const f=fixture(t);f.check();const fresh=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse),old=structuredClone(fresh);
+ for(const row of old){row.timestamp='2026-11-02T03:00:00Z';for(const block of row.message?.content??[]){if(block.id)block.id='old-'+block.id;if(block.tool_use_id)block.tool_use_id='old-'+block.tool_use_id;}}
+ fs.writeFileSync(f.request.dumpTrace,[...old,...fresh].map(row=>JSON.stringify(row)).join('\n')+'\n');
+ const result=verifyRecords(f.request);assert.equal(result.status,'passed',result.reason);
 });
 test('duplicate records, read mismatches and forbidden approvals are failed',t=>{
  const f=fixture(t);f.page('comments','comments',[f.record,{...f.record,id:'r2'}]);assert.equal(f.check().status,'failed');
@@ -102,6 +186,17 @@ for(const policy of ['approve','empty','refuse','discuss','changed-version','ear
  if(policy==='early-write'){f.events.splice(2,0,f.events.splice(6,1)[0]);}
  const result=f.check();assert.equal(result.status,policy==='approve'?'passed':'failed',result.reason);
 });
+test('amend1 a current-version read must complete before the approval write',t=>{
+ const f=fixture(t),draft='Shown',q={question:'Утвердить?',options:[{label:'Утвердить (Recommended)'},{label:'Ещё обсудить'}]};
+ const call=(id,name,input)=>({type:'assistant',message:{content:[{type:'tool_use',id,name,input}]}}),result=(id,value)=>({type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:typeof value==='string'?value:JSON.stringify(value)}]}});
+ f.record.body='mono-test: approved\n'+draft;f.page('comments','comments',[f.record]);f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content:draft});
+ f.events.splice(0,f.events.length,{type:'assistant',message:{content:[{type:'text',text:draft}]}},call('window','AskUserQuestion',{questions:[q]}),
+  {type:'control_request',request_id:'permission',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions:[q]}}},result('window',`Your questions have been answered: "${q.question}"="Утвердить (Recommended)". You can now continue with these answers in mind.`),
+  call('current','mcp__monotest__get_document',{id:'doc'}),call('write','mcp__monotest__create_comment',{projectId,body:f.record.body}),result('current',{id:'doc',content:draft}),result('write',f.record));
+ f.request.sent=path.join(f.dir,'sent.jsonl');fs.writeFileSync(f.request.sent,JSON.stringify({type:'control_response',response:{request_id:'permission',response:{behavior:'allow',updatedInput:{questions:[q],answers:{[q.question]:'Утвердить (Recommended)'}}}}})+'\n');
+ f.request.approvalBindings=[{recordId:'r1',windowCallId:'window',shownLine:1,currentLine:5,text:draft}];
+ const resultValue=f.check();assert.equal(resultValue.status,'failed',resultValue.reason);assert.match(resultValue.reason,/read completed after approval/);
+});
 
 test('missing native write result remains unverified and output errors never become a receipt',t=>{
  const f=fixture(t);f.events.pop();assert.equal(f.check().status,'unverified');
@@ -120,7 +215,7 @@ test('fresh dump files must match actual native reads and scoped page requests',
  const f=fixture(t),dumpTrace=path.join(f.dir,'dump.jsonl'),events=[];
  const entries=[['get_project',{id:projectId},'project.json'],['list_comments',{projectId},'comments-1.json'],['list_documents',{projectId},'documents-1.json'],['list_issues',{projectId,includeArchived:true},'issues-1.json']];
  for(const [tool,input,file]of entries){const id=String(events.length);events.push({type:'assistant',message:{content:[{type:'tool_use',id,name:`mcp__monotest__${tool}`,input}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:fs.readFileSync(path.join(f.dumpDir,file),'utf8')}]}});}
- const flush=()=>fs.writeFileSync(dumpTrace,[...events,{type:'result',subtype:'success'}].map(e=>JSON.stringify(e)).join('\n')+'\n');flush();f.request.dumpTrace=dumpTrace;
+ const flush=()=>fs.writeFileSync(dumpTrace,timed([...events,{type:'result',subtype:'success'}],'2026-11-02T04:01:00Z').map(e=>JSON.stringify(e)).join('\n')+'\n');flush();f.request.dumpTrace=dumpTrace;
  assert.equal(f.check().status,'passed');
  events[2].message.content[0].input.projectId='another-project';flush();assert.equal(f.check().status,'unverified');
  events[2].message.content[0].input.projectId=projectId;flush();f.page('comments','comments',[]);assert.equal(f.check().status,'unverified');
@@ -284,6 +379,7 @@ test('a mono-design write requires the dedicated passing design gate',t=>{
 
 for(const host of ['claude','codex'])for(const mode of ['complete','shell','foreign'])test(`${host}: fixed dump saves native raw results without model filesystem work (${mode})`,async t=>{
  const f=fixture(t),authFile=path.join(f.dir,'auth.json');fs.writeFileSync(authFile,'{}');
+ const stage=path.join(f.dir,'empty-stage.jsonl');fs.writeFileSync(stage,JSON.stringify({...(host==='codex'?{type:'event_msg',payload:{type:'task_complete'}}:{type:'result',subtype:'success'}),timestamp:new Date(Date.now()-1).toISOString()})+'\n');
  const collected=await collectRecordDump({host,cwd:f.dir,packRoot:process.cwd(),outputDir:path.join(f.dir,'fixed'),authFile,timeoutMs:10000,idleMs:10,
   binary:{command:process.execPath,args:[path.resolve('scripts/test-fixtures/skills-fixed-dump-host.mjs'),mode]},
   project:{id:projectId,name:'fixed-run'},projectName:'fixed-run',mcpServers:{monotest:{url:'https://example.test/mcp'}}});
@@ -299,8 +395,12 @@ for(const host of ['claude','codex'])for(const mode of ['complete','shell','fore
   assert.equal(collected.dumpComplete,true);assert.equal(collected.dumpFiles.length,8);
   const p=JSON.parse(fs.readFileSync(path.join(collected.dumpDir,'project.json')));assert.equal(p.content[0].type,'text');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(collected.dumpDir,'comments-2.request.json'))),{cursor:'c1'});
-  const trace=path.join(f.dir,'empty-stage.jsonl');fs.writeFileSync(trace,JSON.stringify(host==='codex'?{type:'event_msg',payload:{type:'task_complete'}}:{type:'result',subtype:'success'})+'\n');
-  const result=verifyRecords({host,trace,dumpDir:collected.dumpDir,dumpTrace:collected.trace,project:{id:projectId,name:'fixed-run'},expectedRecords:[{type:'project'}]});assert.equal(result.status,'passed',result.reason);
+  const request={host,trace:stage,dumpDir:collected.dumpDir,dumpTrace:collected.trace,project:{id:projectId,name:'fixed-run'},expectedRecords:[{type:'project'}]};
+  const result=verifyRecords(request);assert.equal(result.status,'passed',result.reason);
+  if(host==='claude'){
+   const receipt=JSON.parse(fs.readFileSync(path.join(f.dir,'fixed','result.json')));assert.match(receipt.process.traceTiming.sha256,/^[a-f0-9]{64}$/);
+   fs.appendFileSync(collected.trace,'\n');const tampered=verifyRecords(request);assert.equal(tampered.status,'unverified');assert.match(tampered.reason,/order/);
+  }
  }
 });
 test('binding-only metadata cannot hide a later failed gate',t=>{
@@ -449,8 +549,8 @@ for(const mode of ['free-window','older-window'])test(`review2: manual bindings 
    const input=JSON.parse(window.payload.arguments);delete input.questions[0].options;window.payload.arguments=JSON.stringify(input);
   }else{
    const index=rows.findIndex(r=>r.payload?.item?.tool==='save_comment'&&JSON.stringify(r.payload.item.result).includes(binding.recordId));assert(index>=binding.currentLine);
-   const later=structuredClone(window);later.payload.call_id='later-approval';
-   rows.splice(index,0,later,{type:'response_item',payload:{type:'function_call_output',call_id:'later-approval',output:'{"accepted":true}'}});f.request.endLine+=2;
+   const later=structuredClone(window);later.payload.call_id='later-approval';later.timestamp=rows[index].timestamp;
+   rows.splice(index,0,later,{timestamp:later.timestamp,type:'response_item',payload:{type:'function_call_output',call_id:'later-approval',output:'{"accepted":true}'}});f.request.endLine+=2;
   }
  });
  const result=f.check();assert.equal(result.status,'failed',result.reason);assert.match(result.reason,/latest decision window/);

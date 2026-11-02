@@ -28,7 +28,8 @@ if(args[0]==='exec'){
   {type:'event_msg',payload:{type:'item_completed',item:{id:'native-'+call,type:'McpToolCall',server,tool:job.tool,arguments:job.input,status:'completed',result:raw}}},
   {type:'response_item',payload:{type:'custom_tool_call_output',call_id:call,output:[{type:'text',text:'Script completed'},{type:'text',text:JSON.stringify(raw)}]}},
   ...(!first&&mode==='shell'?[{type:'response_item',payload:{type:'function_call',name:'exec_command',call_id:call+'-shell',arguments:'{"cmd":"rg x session"}'}}]:[]),{type:'event_msg',payload:{type:'task_complete'}}];
- fs.appendFileSync(file,rows.map(e=>JSON.stringify(e)).join('\n')+'\n');emit({type:'thread.started',thread_id:'fixed-dump'});emit({type:'turn.completed'});
+ if(first)rows.unshift({type:'session_meta'});
+ fs.appendFileSync(file,rows.map(e=>JSON.stringify({...e,timestamp:new Date().toISOString()})).join('\n')+'\n');emit({type:'thread.started',thread_id:'fixed-dump'});emit({type:'turn.completed'});
 }else{
  let n=0;readline.createInterface({input:process.stdin}).on('line',l=>{
   const e=JSON.parse(l);if(e.type!=='user')return;const first=n++===0,job=plan(e.message.content[0].text,first),call='call-'+n,server=!first&&mode==='foreign'?'linear':'monotest';

@@ -28,7 +28,7 @@ export function resultFor(host,call,rows,bindInput=true){
  if(proof.status!=='confirmed')missing(`successful record result missing at line ${result.line}`);
  return {...call,input:bindInput?callInput(host,call):call.input,value:proof.value,raw:proof.raw,resultLine:result.line};
 }
-export function nativeRecords(host,trace,endLine){return nativeData(host,traceRows(trace,host,{endLine}).rows);}
+export function nativeRecords(host,trace,endLine){return {...nativeData(host,traceRows(trace,host,{endLine}).rows.filter(r=>endLine===undefined||r.line<=endLine)),host,trace};}
 export function nativeData(host,rows){
  const audit=auditRows(host,rows);
  const calls=audit.calls.filter(c=>c.name.startsWith('mcp__'));
@@ -41,5 +41,11 @@ export function nativeData(host,rows){
   const output=rows.find(r=>r.line>call.line&&r.value.type==='response_item'&&['custom_tool_call_output','function_call_output'].includes(r.value.payload?.type)&&r.value.payload.call_id===call.callId);
   return !output||!actual.some(c=>c.name===call.name&&c.line>call.line&&c.line<output.line);
  });
+ for(const call of actual){
+  // A completion timestamp is not a request timestamp. The native session's
+  // beginning is a conservative lower bound, including concurrent MCP calls;
+  // do not guess which similarly named exec invocation owned this completion.
+  call.invocationLine=rows.find(r=>r.line<call.line&&(r.value.type==='session_meta'||r.value.type==='event_msg'&&r.value.payload?.type==='task_started'))?.line;
+ }
  return {rows,audit:{...audit,calls:audit.calls.filter(c=>!calls.includes(c)||bound.includes(c))},calls:bound};
 }
