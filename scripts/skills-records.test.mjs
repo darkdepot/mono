@@ -246,6 +246,18 @@ test('working Linear writes are failed and stop the suite with a manual removal 
  const f=fixture(t);f.events[2].message.content[0].name='mcp__linear__create_comment';f.record.url='https://linear.app/example/project/live#comment-r1';f.events[3].message.content[0].content=JSON.stringify(f.record);
  const r=f.check();assert.equal(r.status,'failed');assert.equal(r.stop,true);assert.deepEqual(r.manualRemoval,[f.record.url]);
 });
+for(const host of ['claude','codex'])for(const state of ['read','write','error','missing'])test(`${host}: foreign ${state} stays a stop; removal requires a successful mutation`,t=>{
+ const f=fixture(t),url='https://linear.app/working/issue/existing',name=`mcp__linear__${state==='read'?'get_issue':'save_issue'}`;
+ const value={id:'existing',url},callId='foreign';f.request.host=host;
+ const call=host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id:callId,name,input:{id:'existing'}}]}}:{type:'response_item',payload:{type:'function_call',name,call_id:callId,arguments:'{"id":"existing"}'}};
+ const output=host==='claude'?{type:'user',message:{content:[{type:'tool_result',tool_use_id:callId,...(state==='error'?{is_error:true}:{}),content:JSON.stringify(value)}]}}:{type:'response_item',payload:{type:'function_call_output',call_id:callId,output:JSON.stringify(state==='error'?{isError:true,content:[{type:'text',text:JSON.stringify(value)}]}:value)}};
+ f.events.splice(0,f.events.length,call,...(state==='missing'?[]:[output]));
+ const result=f.check();assert.equal(result.status,'failed');assert.equal(result.stop,true);assert.deepEqual(result.manualRemoval,state==='write'?[url]:[]);
+});
+test('foreign reads with a hyphenated MCP server stay stopped without removal links',t=>{
+ const f=fixture(t);f.events[2].message.content[0].name='mcp__working-linear__get_issue';f.record.url='https://linear.app/working/issue/existing';f.events[3].message.content[0].content=JSON.stringify(f.record);
+ const result=f.check();assert.equal(result.status,'failed');assert.equal(result.stop,true);assert.deepEqual(result.manualRemoval,[]);
+});
 test('fixed dump includes documents, issues with status/labels and all issue comments',t=>{
  const f=fixture(t);f.page('documents','documents',[{id:'doc'}]);f.page('issues','issues',[{id:'issue'}]);
  assert.equal(f.check().status,'unverified');

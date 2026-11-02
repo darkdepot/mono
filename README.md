@@ -1741,7 +1741,8 @@ expected project/route; strict payload/history checks apply to scenario writes.
 Project status matches the identity supplied by the write (id or name).
 Any unverified item retains its status while the chain gathers later evidence;
 only a real failed stops that chain. Native write results use complete fresh
-cursor chains; working Linear writes stop the suite with manual-removal links.
+cursor chains; working MCP calls stop the suite. Manual-removal links require a
+successful mutation; reads and errored or missing results never suggest deletion.
 Record counts use the stage gates’ block scanner and record locations: project
 comments for approvals/start, document fences for Research. Prose mentions and
 task logs never count as records; real duplicates still fail. Short input types match

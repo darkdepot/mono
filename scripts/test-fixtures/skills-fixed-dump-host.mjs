@@ -38,7 +38,11 @@ if(args[0]==='exec'){
  let n=0;readline.createInterface({input:process.stdin}).on('line',l=>{
   const e=JSON.parse(l);if(e.type!=='user')return;const first=n++===0,job=plan(e.message.content[0].text,first),call='call-'+n,server=!first&&mode==='foreign'?'linear':'monotest';
   if(!first&&mode==='shell')emit({type:'assistant',message:{content:[{type:'tool_use',id:call+'-shell',name:'Bash',input:{command:'rg x session'}}]}});
-  emit({type:'assistant',message:{content:[{type:'tool_use',id:call,name:`mcp__${server}__${job.tool}`,input:job.input}]}});
-  emit({type:'user',message:{content:[{type:'tool_result',tool_use_id:call,content:JSON.stringify({content:[{type:'text',text:JSON.stringify(result(job.tool,job.input))}]})}]}});emit({type:'result',subtype:'success'});
+  // Model an already completed native action. Publish its call/result together:
+  // the driver's immediate foreign-call abort must not preempt this synthetic
+  // sender between a call and a success it has not actually emitted yet.
+  const rows=[{type:'assistant',message:{content:[{type:'tool_use',id:call,name:`mcp__${server}__${job.tool}`,input:job.input}]}},
+   {type:'user',message:{content:[{type:'tool_result',tool_use_id:call,content:JSON.stringify({content:[{type:'text',text:JSON.stringify(result(job.tool,job.input))}]})}]}},{type:'result',subtype:'success'}];
+  process.stdout.write(rows.map(e=>JSON.stringify(e)).join('\n')+'\n');
  });
 }

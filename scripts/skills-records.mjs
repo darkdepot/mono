@@ -184,7 +184,9 @@ function runViolations(traces,request={}){
    const links=[record?.value?.url,...['comment','issue','project','document'].map(key=>record?.value?.[key]?.url)].filter(url=>typeof url==='string'&&url.startsWith('https://linear.app/'));
    const outside=links.filter(url=>!ownUrl(url));
    if(!call.name.startsWith('mcp__monotest__')||outside.length){
-    outside.forEach(url=>manualRemoval.add(url));evidence.push(`${trace}:${call.line}: write outside monotest: ${call.name}`);
+    // Foreign reads still stop the run, but their existing records are not
+    // mutations. Never suggest deleting a record returned by a read.
+    if(!/^mcp__.+__(?:get|list|search|read|fetch)_/.test(call.name))outside.forEach(url=>manualRemoval.add(url));evidence.push(`${trace}:${call.line}: write outside monotest: ${call.name}`);
    }
   }
  }
