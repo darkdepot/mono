@@ -1745,6 +1745,9 @@ cursor chains; working Linear writes stop the suite with manual-removal links.
 Record counts use the stage gates’ block scanner and record locations: project
 comments for approvals/start, document fences for Research. Prose mentions and
 task logs never count as records; real duplicates still fail.
+Native CommandExecution metadata identifies quoted shell command data inside exec;
+MCP names in that data are not record calls. Actual unbound monotest calls stay
+unverified, and native McpToolCall records are always retained.
 The suite reports scenario/host, duration and unique monotest task count. Missing
 native evidence stays unverified. The unchanged landing gate requires passed;
 MONO-279's exact expectation/source binding is included. See [record proof inputs](references/qa-skills.md#свежий-дамп-и-сверка-записей).

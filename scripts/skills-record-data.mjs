@@ -30,9 +30,22 @@ export function resultFor(host,call,rows,bindInput=true){
  return {...call,input:bindInput?callInput(host,call):call.input,value:proof.value,raw:proof.raw,resultLine:result.line};
 }
 export function nativeRecords(host,trace,endLine){return {...nativeData(host,traceRows(trace,host,{endLine}).rows.filter(r=>endLine===undefined||r.line<=endLine)),host,trace};}
+function recordExecCall(call,rows){
+ const item=call.event.payload;
+ if(item?.name!=='exec'||!call.name.startsWith('mcp__monotest__'))return true;
+ let source=item.type==='custom_tool_call'?item.input:item.arguments;
+ const output=rows.find(r=>r.line>call.line&&['custom_tool_call_output','function_call_output'].includes(r.value.payload?.type)&&r.value.payload.call_id===call.callId);
+ // Native shell metadata proves these exact string literals are command data,
+ // even with unquoted JS object keys. Do not parse or execute arbitrary JS.
+ for(const row of rows.filter(r=>r.line>call.line&&output&&r.line<output.line)){
+  const command=row.value.payload?.item;
+  if(command?.type==='CommandExecution'&&Array.isArray(command.command)&&typeof command.command.at(-1)==='string')source=source.replaceAll(JSON.stringify(command.command.at(-1)),'null');
+ }
+ return new RegExp(`\\btools\\.${call.name}\\s*\\(`).test(source);
+}
 export function nativeData(host,rows){
  const audit=auditRows(host,rows);
- const calls=audit.calls.filter(c=>c.name.startsWith('mcp__'));
+ const calls=audit.calls.filter(c=>c.name.startsWith('mcp__')&&recordExecCall(c,rows));
  // An exec name mention is not another action when native metadata supplies
  // its arguments/result inside that exact outer call/output interval.
  const actual=calls.filter(call=>call.event.type==='event_msg');

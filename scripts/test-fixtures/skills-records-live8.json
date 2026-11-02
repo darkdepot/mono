@@ -1,0 +1,87 @@
+{
+  "exec": {
+    "timestamp": "2026-11-02T09:52:05.207Z",
+    "ordinal": 331,
+    "type": "response_item",
+    "payload": {
+      "type": "custom_tool_call",
+      "id": "ctc_0ebbb76d451d2904016ae85d3b66008191bc18a8cf2f01fbf6",
+      "status": "completed",
+      "call_id": "call_c32aa175044542afaf768cb2a65ed02a",
+      "name": "exec",
+      "input": "text(await tools.exec_command({cmd:\"python3 /private/tmp/mono-handoff/sample/capture.py\\npython3 - <<'PY'\\nimport json,pathlib,hashlib\\nr=pathlib.Path('/private/tmp/mono-handoff/sample'); d=r/'tech'; s=r/'start-snapshot'; (s/'idea').mkdir(parents=True,exist_ok=True)\\np=json.loads((d/'project.json').read_text()); cs=json.loads((d/'comments-1.json').read_text())['comments']; a=next(c for c in cs if c['id']=='00000000-0000-4000-8000-000000000006'); rec=next(c for c in cs if c['id']=='00000000-0000-4000-8000-000000000007')\\nassert rec['body']==(r/'record-comment.md').read_text()\\nassert a['body'].count('approval_status=approved')==1\\nassert 'issues=T1:MON-157' in a['body'] and 'by=owner' in a['body']\\nlog=pathlib.Path('/scratch/workspace')\\nfor l in log.read_text().splitlines():\\n q=json.loads(l).get('payload',{})\\n if q.get('type')=='custom_tool_call' and 'tools.mcp__monotest__save_comment(' in q.get('input',''):\\n  args=q['input'].split('tools.mcp__monotest__save_comment(',1)[1].rsplit('); text(r);',1)[0]\\n  try: arg=json.loads(args)\\n  except ValueError: continue\\n  if 'mono-package: start ' in arg.get('body',''): assert arg['body']==a['body']\\n(s/'idea/project.json').write_text(json.dumps({'id':p['uuid'],'createdAt':p['createdAt'],'status':p['status']['name'],'body':p['description'],'language':'ru'}))\\n(s/'idea/idea-records.json').write_text(json.dumps({'complete':True,'comments':[{'id':c['id'],'createdAt':c['createdAt'],'body':c['body']} for c in cs]}))\\n(s/'approval.json').write_text(json.dumps({'commentId':a['id'],'createdAt':a['createdAt'],'bodySha256':hashlib.sha256(a['body'].encode()).hexdigest()}))\\n(s/'approval.md').write_text(a['body'])\\n(s/'issue-context.json').write_text(json.dumps({'projectId':p['uuid']}))\\nprint('Старт прочитан обратно, байты совпали, версия и набор задач совпали.')\\nPY\\nnode /scratch/workspace check --mode approved --snapshot /private/tmp/mono-handoff/sample/start-snapshot --config .agents/mono-workflow.config.json\",\"max_output_tokens\":1500}));\n",
+      "internal_chat_message_metadata_passthrough": {
+        "turn_id": "00000000-0000-4000-8000-000000000002",
+        "create_time": 1793613115.465432
+      }
+    }
+  },
+  "command": {
+    "timestamp": "2026-11-02T09:52:05.831Z",
+    "ordinal": 333,
+    "type": "event_msg",
+    "payload": {
+      "type": "item_completed",
+      "thread_id": "00000000-0000-4000-8000-000000000001",
+      "turn_id": "00000000-0000-4000-8000-000000000002",
+      "item": {
+        "type": "CommandExecution",
+        "id": "exec-00000000-0000-4000-8000-000000000004",
+        "process_id": "89106",
+        "command": [
+          "/bin/zsh",
+          "-lc",
+          "python3 /private/tmp/mono-handoff/sample/capture.py\npython3 - <<'PY'\nimport json,pathlib,hashlib\nr=pathlib.Path('/private/tmp/mono-handoff/sample'); d=r/'tech'; s=r/'start-snapshot'; (s/'idea').mkdir(parents=True,exist_ok=True)\np=json.loads((d/'project.json').read_text()); cs=json.loads((d/'comments-1.json').read_text())['comments']; a=next(c for c in cs if c['id']=='00000000-0000-4000-8000-000000000006'); rec=next(c for c in cs if c['id']=='00000000-0000-4000-8000-000000000007')\nassert rec['body']==(r/'record-comment.md').read_text()\nassert a['body'].count('approval_status=approved')==1\nassert 'issues=T1:MON-157' in a['body'] and 'by=owner' in a['body']\nlog=pathlib.Path('/scratch/workspace')\nfor l in log.read_text().splitlines():\n q=json.loads(l).get('payload',{})\n if q.get('type')=='custom_tool_call' and 'tools.mcp__monotest__save_comment(' in q.get('input',''):\n  args=q['input'].split('tools.mcp__monotest__save_comment(',1)[1].rsplit('); text(r);',1)[0]\n  try: arg=json.loads(args)\n  except ValueError: continue\n  if 'mono-package: start ' in arg.get('body',''): assert arg['body']==a['body']\n(s/'idea/project.json').write_text(json.dumps({'id':p['uuid'],'createdAt':p['createdAt'],'status':p['status']['name'],'body':p['description'],'language':'ru'}))\n(s/'idea/idea-records.json').write_text(json.dumps({'complete':True,'comments':[{'id':c['id'],'createdAt':c['createdAt'],'body':c['body']} for c in cs]}))\n(s/'approval.json').write_text(json.dumps({'commentId':a['id'],'createdAt':a['createdAt'],'bodySha256':hashlib.sha256(a['body'].encode()).hexdigest()}))\n(s/'approval.md').write_text(a['body'])\n(s/'issue-context.json').write_text(json.dumps({'projectId':p['uuid']}))\nprint('Старт прочитан обратно, байты совпали, версия и набор задач совпали.')\nPY\nnode /scratch/workspace check --mode approved --snapshot /private/tmp/mono-handoff/sample/start-snapshot --config .agents/mono-workflow.config.json"
+        ],
+        "cwd": "file:///scratch/workspace",
+        "parsed_cmd": [
+          {
+            "type": "unknown",
+            "cmd": "python3 /private/tmp/mono-handoff/sample/capture.py\npython3 - <<'PY'\nimport json,pathlib,hashlib\nr=pathlib.Path('/private/tmp/mono-handoff/sample'); d=r/'tech'; s=r/'start-snapshot'; (s/'idea').mkdir(parents=True,exist_ok=True)\np=json.loads((d/'project.json').read_text()); cs=json.loads((d/'comments-1.json').read_text())['comments']; a=next(c for c in cs if c['id']=='00000000-0000-4000-8000-000000000006'); rec=next(c for c in cs if c['id']=='00000000-0000-4000-8000-000000000007')\nassert rec['body']==(r/'record-comment.md').read_text()\nassert a['body'].count('approval_status=approved')==1\nassert 'issues=T1:MON-157' in a['body'] and 'by=owner' in a['body']\nlog=pathlib.Path('/scratch/workspace')\nfor l in log.read_text().splitlines():\n q=json.loads(l).get('payload',{})\n if q.get('type')=='custom_tool_call' and 'tools.mcp__monotest__save_comment(' in q.get('input',''):\n  args=q['input'].split('tools.mcp__monotest__save_comment(',1)[1].rsplit('); text(r);',1)[0]\n  try: arg=json.loads(args)\n  except ValueError: continue\n  if 'mono-package: start ' in arg.get('body',''): assert arg['body']==a['body']\n(s/'idea/project.json').write_text(json.dumps({'id':p['uuid'],'createdAt':p['createdAt'],'status':p['status']['name'],'body':p['description'],'language':'ru'}))\n(s/'idea/idea-records.json').write_text(json.dumps({'complete':True,'comments':[{'id':c['id'],'createdAt':c['createdAt'],'body':c['body']} for c in cs]}))\n(s/'approval.json').write_text(json.dumps({'commentId':a['id'],'createdAt':a['createdAt'],'bodySha256':hashlib.sha256(a['body'].encode()).hexdigest()}))\n(s/'approval.md').write_text(a['body'])\n(s/'issue-context.json').write_text(json.dumps({'projectId':p['uuid']}))\nprint('Старт прочитан обратно, байты совпали, версия и набор задач совпали.')\nPY\nnode /scratch/workspace check --mode approved --snapshot /private/tmp/mono-handoff/sample/start-snapshot --config .agents/mono-workflow.config.json"
+          }
+        ],
+        "source": "unified_exec_startup",
+        "status": "completed",
+        "stdout": "Старт прочитан обратно, байты совпали, версия и набор задач совпали.\nidea-gate: pass: pass project=00000000-0000-4000-8000-000000000008\n{\"ok\":true,\"code\":\"pass\",\"projectId\":\"00000000-0000-4000-8000-000000000008\",\"recordId\":\"00000000-0000-4000-8000-000000000005\",\"fingerprint\":\"3fe854f3d87dbedd792296e47a26f2a3b6575dcac7f51d249cff30e64482554e\",\"digest\":\"ac35923c48d7f1e8056d42c25a513774a2fd9394aaf55bd49c3ed32c2f071143\"}\n",
+        "stderr": "",
+        "aggregated_output": "Старт прочитан обратно, байты совпали, версия и набор задач совпали.\nidea-gate: pass: pass project=00000000-0000-4000-8000-000000000008\n{\"ok\":true,\"code\":\"pass\",\"projectId\":\"00000000-0000-4000-8000-000000000008\",\"recordId\":\"00000000-0000-4000-8000-000000000005\",\"fingerprint\":\"3fe854f3d87dbedd792296e47a26f2a3b6575dcac7f51d249cff30e64482554e\",\"digest\":\"ac35923c48d7f1e8056d42c25a513774a2fd9394aaf55bd49c3ed32c2f071143\"}\n",
+        "exit_code": 0,
+        "duration": {
+          "secs": 0,
+          "nanos": 422133875
+        },
+        "formatted_output": "Старт прочитан обратно, байты совпали, версия и набор задач совпали.\nidea-gate: pass: pass project=00000000-0000-4000-8000-000000000008\n{\"ok\":true,\"code\":\"pass\",\"projectId\":\"00000000-0000-4000-8000-000000000008\",\"recordId\":\"00000000-0000-4000-8000-000000000005\",\"fingerprint\":\"3fe854f3d87dbedd792296e47a26f2a3b6575dcac7f51d249cff30e64482554e\",\"digest\":\"ac35923c48d7f1e8056d42c25a513774a2fd9394aaf55bd49c3ed32c2f071143\"}\n"
+      },
+      "started_at_ms": 1793613125407,
+      "completed_at_ms": 1793613125831
+    }
+  },
+  "output": {
+    "timestamp": "2026-11-02T09:52:05.845Z",
+    "ordinal": 334,
+    "type": "response_item",
+    "payload": {
+      "type": "custom_tool_call_output",
+      "id": "ctco_00000000-0000-4000-8000-000000000003",
+      "call_id": "call_c32aa175044542afaf768cb2a65ed02a",
+      "output": [
+        {
+          "type": "input_text",
+          "text": "Script completed\nWall time 0.6 seconds\nOutput:\n"
+        },
+        {
+          "type": "input_text",
+          "text": "{\"chunk_id\":\"798700\",\"wall_time_seconds\":0.422309334,\"exit_code\":0,\"original_token_count\":119,\"output\":\"Старт прочитан обратно, байты совпали, версия и набор задач совпали.\\nidea-gate: pass: pass project=00000000-0000-4000-8000-000000000008\\n{\\\"ok\\\":true,\\\"code\\\":\\\"pass\\\",\\\"projectId\\\":\\\"00000000-0000-4000-8000-000000000008\\\",\\\"recordId\\\":\\\"00000000-0000-4000-8000-000000000005\\\",\\\"fingerprint\\\":\\\"3fe854f3d87dbedd792296e47a26f2a3b6575dcac7f51d249cff30e64482554e\\\",\\\"digest\\\":\\\"ac35923c48d7f1e8056d42c25a513774a2fd9394aaf55bd49c3ed32c2f071143\\\"}\\n\"}"
+        }
+      ],
+      "internal_chat_message_metadata_passthrough": {
+        "turn_id": "00000000-0000-4000-8000-000000000002",
+        "create_time": 1793613125.845797
+      }
+    },
+    "metadata": {
+      "client_authored": false,
+      "fallback_token_limit_override": 12000
+    }
+  }
+}

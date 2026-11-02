@@ -52,6 +52,17 @@ test('records compare successful native write bodies to a fresh complete monotes
 
 const live6=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-records-live6.json',import.meta.url)));
 const live7=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-records-live7.json',import.meta.url)));
+test('live8 shell exec MCP mentions are not records; actual unbound monotest calls remain unverified',t=>{
+ const f=fixture(t),sample=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-records-live8.json',import.meta.url)));f.request.host='codex';
+ const write={type:'response_item',payload:{type:'function_call',call_id:'write',name:'mcp__monotest__create_comment',arguments:JSON.stringify({projectId,body:f.record.body})}},result={type:'response_item',payload:{type:'function_call_output',call_id:'write',output:JSON.stringify(f.record)}};
+ f.events.splice(0,f.events.length,sample.exec,sample.command,sample.output,write,result);
+ assert.equal(f.check().status,'passed');
+ const input=`text(await tools.mcp__monotest__save_comment(${JSON.stringify({projectId,body:f.record.body})}));`;
+ sample.exec.payload.input=input;sample.output.payload.output=JSON.stringify(f.record);
+ assert.equal(f.check().status,'unverified');assert.match(f.check().reason,/unbound exec payload/);
+ sample.exec.payload.input=`text(await tools.exec_command({"cmd":"echo test"}));\n${input}`;
+ assert.equal(f.check().status,'unverified');
+});
 for(const identity of ['id','name'])test(`live7 project status uses the written ${identity} identity`,t=>{
  const f=fixture(t),status=live7.projectStatus;f.project.status=status;f.save('project.json',f.project);
  f.events.push({type:'assistant',message:{content:[{type:'tool_use',id:'status',name:'mcp__monotest__save_project',input:{id:projectId,state:status[identity]}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'status',content:JSON.stringify(f.project)}]}});

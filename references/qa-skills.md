@@ -322,6 +322,10 @@ Exit 0 — passed, 1 — failed, 2 — unverified. Suite публикует ре
 CommandExecution и другие не-MCP элементы не являются записями. Неуспешное чтение
 не подтверждает дамп; каждый файл требует успешного свежего MCP-чтения. Недоступный
 результат фиксированного чтения даёт hostFailure/unverified и один изолированный повтор дампа.
+Нативный CommandExecution внутри связанного exec доказывает, что буквальная строка
+команды — данные: имена tools.mcp__monotest внутри неё не считаются вызовами записи.
+Настоящий monotest-вызов в неподдерживаемой форме остаётся unverified; нативный
+McpToolCall сохраняется независимо от внешнего exec. Исходник JavaScript не выполняется.
 
 Нативный Codex `event_msg/item_completed/McpToolCall` связывает arguments и
 result своим id и status=completed; внешний exec не считается второй записью.
