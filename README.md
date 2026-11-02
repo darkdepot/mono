@@ -1744,7 +1744,8 @@ only a real failed stops that chain. Native write results use complete fresh
 cursor chains; working Linear writes stop the suite with manual-removal links.
 Record counts use the stage gates’ block scanner and record locations: project
 comments for approvals/start, document fences for Research. Prose mentions and
-task logs never count as records; real duplicates still fail.
+task logs never count as records; real duplicates still fail. Short input types match
+the canonical approval/start marker names exactly; suffixed names do not match.
 Native CommandExecution metadata identifies quoted shell command data inside exec;
 MCP names in that data are not record calls. Actual unbound monotest calls stay
 unverified, and native McpToolCall records are always retained.

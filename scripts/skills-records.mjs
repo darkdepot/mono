@@ -152,7 +152,8 @@ function recordLines(body){
 }
 function recordCount(body,type){
  if(type==='mono-research')return approvalBlocks(body).filter(block=>block.info==='mono-research').length;
- type=({'mono-idea':'mono-idea: approved','mono-prd':'mono-prd: approved','mono-design':'mono-design: approved','mono-tech':'mono-tech: approved','mono-package':'mono-package: start'})[type]??type;
+ const markers=['mono-idea: approved','mono-prd: approved','mono-design: approved','mono-tech: approved','mono-package: start'];
+ type=markers.find(marker=>marker.split(':')[0]===type)??type;
  return recordLines(body)
   .filter(line=>{line=type.startsWith('mono-idea')?line:line.trim();return (type.includes(':')&&line===type)||line.startsWith(type+(type.includes(':')?' ':': '));}).length;
 }

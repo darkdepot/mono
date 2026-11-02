@@ -139,6 +139,9 @@ for(const marker of ['mono-idea: approved','mono-prd: approved','mono-design: ap
  f.events[2].message.content[0].input.body=body;f.record.body=body;f.events[3].message.content[0].content=JSON.stringify(f.record);
  f.page('comments','comments',[f.record,{...f.record,id:'mention',body:mention+'\n'+marker.split(':')[0]}]);f.request.expectedRecords=[{type:marker.split(':')[0],count:1}];
  assert.equal(f.check().status,'unverified');
+ f.request.expectedRecords=[{type:marker,count:1}];assert.equal(f.check().status,'unverified');
+ f.request.expectedRecords=[{type:marker.split(':')[0]+'-extra',count:1}];
+ const unmatched=f.check();assert.equal(unmatched.status,'failed');assert.match(unmatched.reason,/observed 0/);
  f.request.expectedRecords=[{forbidden:marker}];f.events.splice(0);f.page('comments','comments',[{...f.record,id:'mention',body:mention}]);
  assert.equal(f.check().status,'passed');
  f.page('comments','comments',[f.record]);assert.equal(f.check().status,'failed');
