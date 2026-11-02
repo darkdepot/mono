@@ -1749,6 +1749,11 @@ children. Each dump read must provably start after all scenario writes; missing
 or overlapping order stays unverified. Native times and Claude's hash-bound
 driver process interval support offline replay; request times and file mtimes do
 not. Public live excerpts retain their original native clock evidence.
+Page reads use fixed per-tool arguments, preserved across the cursor chain;
+search filters cannot prove an exhaustive project dump. Approval binds the last
+owner-visible text of the decision turn. Native MCP completions need a linked
+literal invocation to prove a fresh read preceded the approval write; an excerpt
+without that invocation remains unverified.
 Codex approvals use delivered native rollout answers; its `{thread,prompt}` sent
 journal is not a Claude event stream. Live3 regression excerpts include that journal
 and the scripted dump's own rollout, matching the suite's record-check inputs.

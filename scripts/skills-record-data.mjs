@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { traceRows } from './skills-probe.mjs';
 import { auditRows } from './skills-audit.mjs';
 import { MissingEvidence } from './skills-boundary.mjs';
@@ -46,6 +47,14 @@ export function nativeData(host,rows){
   // beginning is a conservative lower bound, including concurrent MCP calls;
   // do not guess which similarly named exec invocation owned this completion.
   call.invocationLine=rows.find(r=>r.line<call.line&&(r.value.type==='session_meta'||r.value.type==='event_msg'&&r.value.payload?.type==='task_started'))?.line;
+  // Approval ordering needs an actual invocation, not that session lower bound.
+  const invocations=calls.filter(outer=>{
+   if(outer.event.payload?.name!=='exec'||outer.name!==call.name||outer.line>=call.line)return false;
+   const output=rows.find(r=>r.line>outer.line&&r.value.type==='response_item'&&['custom_tool_call_output','function_call_output'].includes(r.value.payload?.type)&&r.value.payload.call_id===outer.callId);
+   if(!output||output.line<=call.line)return false;
+   try{return isDeepStrictEqual(callInput(host,outer),call.input);}catch{return false;}
+  });
+  if(invocations.length===1)call.approvalInvocationLine=invocations[0].line;
  }
  return {rows,audit:{...audit,calls:audit.calls.filter(c=>!calls.includes(c)||bound.includes(c))},calls:bound};
 }

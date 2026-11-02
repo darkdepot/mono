@@ -252,6 +252,8 @@ function approvalCheck(request,write,data,dump){
  if(!answers.length||answers.some(answer=>!authorizes(answer)))throw new Error('approval write after empty/refuse/discuss/non-approval reply');
  if(write.line<=reply.line)throw new Error('approval write before window answer');
  if(!binding)bindingMissing(`shown-version binding missing for ${idOf(write.value)}`);
+ const ownerText=row=>request.host==='claude'?row.value.type==='assistant'&&row.value.message?.content?.some(b=>b.type==='text'&&text(b.text))
+  :row.value.payload?.type==='message'&&row.value.payload.role==='assistant'&&row.value.payload.content?.some(b=>b.type==='output_text'&&text(b.text));
  const shown=data.rows.find(r=>r.line===binding.shownLine),current=data.rows.find(r=>r.line===binding.currentLine);
  const shownText=request.host==='claude'?shown?.value.message?.content?.filter(b=>b.type==='text').map(b=>b.text).join('\n')
   :shown?.value.payload?.role==='assistant'?shown.value.payload.content?.filter(b=>b.type==='output_text').map(b=>b.text).join('\n'):null;
@@ -259,7 +261,8 @@ function approvalCheck(request,write,data,dump){
  if(request.host==='codex'){
   const terminal=data.rows.find(r=>r.line>window.line&&r.line<reply.line&&data.audit.proof({kind:'terminal',result:r.value}).status==='confirmed');
   if(!terminal||binding.shownLine<=window.line||binding.shownLine>=terminal.line)missing('shown version outside approved Codex window turn');
- }
+  if(data.rows.findLast(r=>r.line<terminal.line&&ownerText(r))?.line!==binding.shownLine)throw new Error('approval does not bind the last owner-visible text');
+ }else if(data.rows.findLast(r=>r.line<window.line&&ownerText(r))?.line!==binding.shownLine)throw new Error('approval does not bind the last owner-visible text');
  let shownVersion;
  if(!shownText.includes(binding.text)||binding.shownReadLine!==undefined){
   const before=data.audit.calls.find(c=>c.line===binding.shownReadLine&&!isWrite(c.name));
@@ -281,7 +284,8 @@ function approvalCheck(request,write,data,dump){
  const currentCall=data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
  if(!current||!currentCall||binding.currentLine<=reply.line||binding.currentLine>=write.line)missing('fresh version read after reply missing');
  const observed=resultFor(data.host,currentCall,data.rows);
- if(observed.resultLine>=write.line)throw new Error('fresh version read completed after approval write');
+ const invocation=write.event.type==='event_msg'?write.approvalInvocationLine:write.line;
+ if(Number.isInteger(invocation)&&observed.resultLine>=invocation)throw new Error('fresh version read completed after approval write invocation');
  const value=observed.value;
  const fresh=binding.currentRecordId?(value.comments??value.documents??value.issues??[]).find(row=>idOf(row)===binding.currentRecordId):value;
  if(!fresh)missing('current version record absent from native read');
@@ -305,6 +309,7 @@ function approvalCheck(request,write,data,dump){
  const persisted=dump.all.find(row=>idOf(row)===idOf(fresh));
  if(!persisted||bodyOf(persisted)!==binding.text||persisted.updatedAt!==fresh.updatedAt)throw new Error('approved version changed before final read-back');
  if(binding.documentId&&!Number.isFinite(date(fresh.updatedAt)))missing('approved document version timestamp missing');
+ if(!Number.isInteger(invocation))bindingMissing('approval write invocation not proved by native trace');
 }
 
 export function verifyRecords(request){
@@ -333,18 +338,29 @@ export function verifyRecords(request){
   if(request.dumpTrace){
    const reads=dumps.flatMap(fresh=>fresh.calls.filter(c=>!isWrite(c.name)).map(c=>({...resultFor(fresh.host,c,fresh.rows),data:fresh})));
    const boundaries=writes.length?writes.map(w=>({data:w.data,line:w.resultLine})):scenarios.map(source=>({data:source,line:source.terminal.line}));
+   const pageArguments=new Map();
    for(const file of dump.files){
     const scoped=c=>{
      if(file.id)return Object.values(c.input).some(value=>value===file.id||value===file.alias);
      const scope=file.kind==='list_projects'?request.projectName:file.scope==='.'?(request.project.id??request.project.uuid):(file.scopeId??path.basename(file.scope));
-     const value=file.kind==='list_projects'?c.input.query:file.scope==='.'?(c.input.projectId??c.input.project):(c.input.issueId??c.input.issue);
-     return (value===scope||(file.scopeAlias!==undefined&&value===file.scopeAlias))&&file.request.cursor===c.input.cursor&&Object.keys(c.input).every(key=>['projectId','project','issueId','issue','query','cursor','limit','includeArchived','orderBy'].includes(key))&&
-       (c.input.limit===undefined||(Number.isInteger(c.input.limit)&&c.input.limit>0));
+     const key=file.kind==='list_projects'?'query':file.kind==='list_issues'?'project':file.scope==='.'?'projectId':'issueId';
+     const value=c.input[key],expected={[key]:value,...file.request};
+     if(['list_issues','list_projects'].includes(file.kind))expected.includeArchived=true;
+     // Old real dumps omit list_documents' optional archive flag. Both complete
+     // forms are accepted, but a cursor chain must retain the same arguments.
+     if(file.kind==='list_documents'&&c.input.includeArchived===true)expected.includeArchived=true;
+     return (value===scope||(file.scopeAlias!==undefined&&value===file.scopeAlias))&&isDeepStrictEqual(c.input,expected);
     };
     const matches=reads.filter(c=>c.name===`mcp__monotest__${file.kind}`&&(!['list_issues','list_projects'].includes(file.kind)||c.input.includeArchived===true)&&isDeepStrictEqual(c.value,file.value)&&
      scoped(c));
     if(!matches.length)missing(`fresh native read does not bind ${file.file}`);
-    if(!matches.some(match=>boundaries.every(boundary=>before(boundary.data,boundary.line,match.data,match))))missing(`fresh dump read order not proved after scenario writes: ${file.file}`);
+    const match=matches.find(match=>boundaries.every(boundary=>before(boundary.data,boundary.line,match.data,match)));
+    if(!match)missing(`fresh dump read order not proved after scenario writes: ${file.file}`);
+    if(file.request){
+     const key=`${file.scope}:${file.kind}`,{cursor,...args}=match.input;
+     if(pageArguments.has(key)&&!isDeepStrictEqual(pageArguments.get(key),args))missing(`dump page arguments changed: ${file.file}`);
+     pageArguments.set(key,args);
+    }
    }
   }
   let seedEndLine=0;

@@ -33,7 +33,7 @@ function fixture(t){
    if(!name.endsWith('.json')||name.endsWith('.request.json'))continue;
    const relative=path.relative(dumpDir,file),value=JSON.parse(fs.readFileSync(file)),kind=/^comments-/.test(name)?'list_comments':/^documents-/.test(name)?'list_documents':/^issues-/.test(name)?'list_issues':/^projects-/.test(name)?'list_projects':relative==='project.json'?'get_project':name==='issue.json'?'get_issue':'get_document';
    const page=kind.startsWith('list_'),scope=relative.startsWith('issues/')?relative.split('/')[1]:projectId;
-   const input=page?{...(kind==='list_projects'?{query:request.projectName}:{[scope===projectId?'projectId':'issueId']:scope}),...(['list_issues','list_projects'].includes(kind)?{includeArchived:true}:{}),...(fs.existsSync(file.replace(/\.json$/,'.request.json'))?JSON.parse(fs.readFileSync(file.replace(/\.json$/,'.request.json'))):{})}:{id:value.uuid??value.id};
+   const input=page?{...(kind==='list_projects'?{query:request.projectName}:{[kind==='list_issues'?'project':scope===projectId?'projectId':'issueId']:scope}),...(['list_issues','list_projects'].includes(kind)?{includeArchived:true}:{}),...(fs.existsSync(file.replace(/\.json$/,'.request.json'))?JSON.parse(fs.readFileSync(file.replace(/\.json$/,'.request.json'))):{})}:{id:value.uuid??value.id};
    const id=String(reads.length);
    if(request.host==='claude')reads.push({type:'assistant',message:{content:[{type:'tool_use',id,name:`mcp__monotest__${kind}`,input}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}});
    else reads.push({type:'response_item',payload:{type:'function_call',name:`mcp__monotest__${kind}`,call_id:id,arguments:JSON.stringify(input)}},{type:'response_item',payload:{type:'function_call_output',call_id:id,output:JSON.stringify(value)}});
@@ -164,7 +164,7 @@ test('dump collector uses only monotest and a fixed checklist, never a model cho
  await assert.rejects(()=>collectRecordDump({...seen,mcpServers:{monotest:{url:'x'},linear:{url:'y'}}}),/only monotest/);
 });
 
-for(const policy of ['approve','empty','refuse','discuss','changed-version','early-write','unbound-write'])test(`shown version and native reply: ${policy}`,t=>{
+for(const policy of ['approve','empty','refuse','discuss','changed-version','early-write','unbound-write','later-shown'])test(`shown version and native reply: ${policy}`,t=>{
  const f=fixture(t),draft='Shown version one';
  const q={question:'Утвердить версию?',header:'Версия',options:[{label:'Утвердить (Recommended)',description:'Запись / готово'},{label:'Ещё обсудить',description:'Нет записи / ждём'}]};
  const answer=policy==='empty'?'':policy==='discuss'?'Ещё обсудить':'Утвердить (Recommended)';
@@ -183,6 +183,7 @@ for(const policy of ['approve','empty','refuse','discuss','changed-version','ear
  f.page('comments','comments',[f.record]);f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content:draft});
  const sent=path.join(f.dir,'sent.jsonl');fs.writeFileSync(sent,JSON.stringify(control)+'\n');f.request.sent=sent;
  f.request.approvalBindings=[{recordId:'r1',windowCallId:'window',shownLine:1,currentLine:5,text:draft}];
+ if(policy==='later-shown'){f.events.splice(1,0,{type:'assistant',message:{content:[{type:'text',text:'Replacement version two'}]}});f.request.approvalBindings[0].currentLine++;}
  if(policy==='early-write'){f.events.splice(2,0,f.events.splice(6,1)[0]);}
  const result=f.check();assert.equal(result.status,policy==='approve'?'passed':'failed',result.reason);
 });
@@ -213,7 +214,7 @@ test('native Codex literal JSON exec route compares writes without parsing arbit
 });
 test('fresh dump files must match actual native reads and scoped page requests',t=>{
  const f=fixture(t),dumpTrace=path.join(f.dir,'dump.jsonl'),events=[];
- const entries=[['get_project',{id:projectId},'project.json'],['list_comments',{projectId},'comments-1.json'],['list_documents',{projectId},'documents-1.json'],['list_issues',{projectId,includeArchived:true},'issues-1.json']];
+ const entries=[['get_project',{id:projectId},'project.json'],['list_comments',{projectId},'comments-1.json'],['list_documents',{projectId},'documents-1.json'],['list_issues',{project:projectId,includeArchived:true},'issues-1.json']];
  for(const [tool,input,file]of entries){const id=String(events.length);events.push({type:'assistant',message:{content:[{type:'tool_use',id,name:`mcp__monotest__${tool}`,input}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:fs.readFileSync(path.join(f.dumpDir,file),'utf8')}]}});}
  const flush=()=>fs.writeFileSync(dumpTrace,timed([...events,{type:'result',subtype:'success'}],'2026-11-02T04:01:00Z').map(e=>JSON.stringify(e)).join('\n')+'\n');flush();f.request.dumpTrace=dumpTrace;
  assert.equal(f.check().status,'passed');
@@ -315,13 +316,16 @@ function liveFixture(t,name){
 }
 for(const name of ['idea-approve','idea-empty','discovery-approve'])test(`trimmed real Codex/monotest evidence: ${name}`,t=>{
  const f=liveFixture(t,name),before=fs.readFileSync(path.join(f.dir,name==='idea-empty'?'dump/projects-1.json':'dump/comments-1.json'),'utf8');
- const r=f.check();assert.equal(r.status,'passed',r.reason);assert.equal(r.monotestTasks,name==='discovery-approve'?2:0);
+ const r=f.check();if(name==='discovery-approve')assertInvocationGap(r);else assert.equal(r.status,'passed',r.reason);assert.equal(r.monotestTasks,name==='discovery-approve'?2:0);
  if(name!=='idea-empty')assert.equal(r.gateResults[0].result.ok,true);
  assert.equal(fs.readFileSync(path.join(f.dir,name==='idea-empty'?'dump/projects-1.json':'dump/comments-1.json'),'utf8'),before,'gate must not overwrite raw evidence');
  if(name!=='idea-empty'){
   delete f.request.approvalBindings;assert.match(f.check().reason,/shown-version binding missing/);
  }
 });
+function assertInvocationGap(result){
+ assert.equal(result.status,'unverified',JSON.stringify(result));assert.equal(result.bindingOnly,true);assert.equal(result.reason,'approval write invocation not proved by native trace');
+}
 function editLiveTrace(f,mutate){
  const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);mutate(rows);
  fs.writeFileSync(f.request.trace,rows.map(e=>JSON.stringify(e)).join('\n')+'\n');
@@ -413,7 +417,7 @@ function live2Fixture(t,name){
  const request=JSON.parse(fs.readFileSync(path.join(dir,'request.json')));for(const k of ['trace','dumpTrace','dumpDir','configFile'])request[k]=path.join(dir,request[k]);request.packRoot=process.cwd();return {dir,request,check:()=>verifyRecords(request)};
 }
 for(const name of ['idea-correction','discovery-approve'])test(`live2 ${name}: native write, stored normalisation and real gate agree`,t=>{
- const f=live2Fixture(t,name);assert.equal(f.check().status,'passed',f.check().reason);delete f.request.approvalBindings;const pending=f.check();assert.equal(pending.status,'unverified');assert.equal(pending.bindingOnly,true);assert(pending.gateResults.every(g=>g.result.ok));
+ const f=live2Fixture(t,name);if(name==='discovery-approve')assertInvocationGap(f.check());else assert.equal(f.check().status,'passed',f.check().reason);delete f.request.approvalBindings;const pending=f.check();assert.equal(pending.status,'unverified');assert.equal(pending.bindingOnly,true);assert(pending.gateResults.every(g=>g.result.ok));
  editLiveTrace(f,rows=>{const item=rows.map(e=>e.payload?.item).find(i=>i?.tool==='save_project');item.arguments.description+='\nwrong substantive text';});assert.equal(f.check().status,'failed');
 });
 test('live2 failed Research has an existing seed; missing full dump is not forbidden project creation',t=>{
@@ -498,7 +502,7 @@ for(const answer of ['Передать оркестратору','Начать �
 });
 
 for(const prose of ['tokens','shown-text','inline-shown'])test(`review2: approval binding ignores spoofed ${prose} outside its record`,t=>{
- const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0],other='11111111-1111-4111-8111-111111111111',approvedId=binding.documentId;assert.equal(f.check().status,'passed');
+ const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0],other='11111111-1111-4111-8111-111111111111',approvedId=binding.documentId;assertInvocationGap(f.check());
  const text=json=>{
   if(typeof json==='string'){
    try{const value=JSON.parse(json);if(typeof value==='object'&&value!==null)return JSON.stringify(text(value));}catch{}
@@ -558,6 +562,73 @@ for(const mode of ['free-window','older-window'])test(`review2: manual bindings 
 test('review2: full inline document text still needs its native shown-version read',t=>{
  const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0];
  editLiveTrace(f,rows=>{rows[binding.shownLine-1].payload.content[0].text+='\n'+binding.text;});delete binding.documentId;
- assert.equal(f.check().status,'passed','a native before-read also binds a full inline summary');
+ assertInvocationGap(f.check()); // Content binds; this old excerpt omits the write invocation.
  delete binding.shownReadLine;const result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/shown document version read required/);
+});
+
+// Accepted amend3 cases use the same native call/message shapes as live1..4.
+for(const tool of ['list_documents','list_issues','list_comments'])test(`amend3 fixed dump rejects ${tool} filters`,t=>{
+ const f=liveFixture(t,'idea-approve');
+ const rows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);
+ const call=rows.find(r=>r.payload?.item?.tool===tool);assert(call);call.payload.item.arguments.query='selected-only';
+ fs.writeFileSync(f.request.dumpTrace,rows.map(r=>JSON.stringify(r)).join('\n')+'\n');
+ const result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/fresh native read does not bind/);
+});
+test('amend3 page arguments remain fixed across a real comments cursor chain',t=>{
+ const f=fixture(t);f.check();f.request.dumpTrace=path.join(f.dir,'chain.jsonl');
+ const raw=fs.readFileSync(path.join(f.dir,'dump-trace.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ const i=raw.findIndex(r=>r.message?.content?.[0]?.name==='mcp__monotest__list_comments');
+ const first={comments:[f.record],hasNextPage:true,cursor:f.record.id},second={comments:[],hasNextPage:false};
+ f.save('comments-1.json',first);f.save('comments-2.request.json',{cursor:f.record.id});f.save('comments-2.json',second);
+ raw[i+1].message.content[0].content=JSON.stringify(first);
+ const next=structuredClone(raw.slice(i,i+2));next[0].message.content[0].id='page2';next[0].message.content[0].input={projectId, cursor:f.record.id,orderBy:'createdAt'};next[1].message.content[0].tool_use_id='page2';next[1].message.content[0].content=JSON.stringify(second);
+ raw.splice(i+2,0,...next);fs.writeFileSync(f.request.dumpTrace,timed(raw,'2026-11-02T04:01:00Z').map(r=>JSON.stringify(r)).join('\n')+'\n');
+ const result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/fresh native read does not bind|page arguments changed/);
+});
+function codexApproval(t,{mode='sequential',laterText=false}={}){
+ const f=fixture(t),draft='Shown version one';f.request.host='codex';
+ const source=JSON.parse(fs.readFileSync('scripts/test-fixtures/skills-records-live/idea-approve/request.json'));
+ const native=fs.readFileSync('scripts/test-fixtures/skills-records-live/idea-approve/trace.jsonl','utf8').trim().split('\n').map(JSON.parse);
+ const window=native.find(r=>r.payload?.call_id===source.approvalBindings[0].windowCallId&&r.payload?.name==='request_user_input_async');
+ const index=native.indexOf(window),decision=structuredClone(native.slice(index,index+5));
+ decision[2].payload.content[0].text=draft;if(laterText)decision.splice(3,0,{type:'response_item',payload:{type:'message',role:'assistant',content:[{type:'output_text',text:'Shown replacement version two'}]}});
+ f.record.body='mono-test: approved\n'+draft;f.page('comments','comments',[f.record]);f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content:draft});
+ const input={projectId,body:f.record.body},readInput={id:'doc'},current={type:'response_item',payload:{type:'function_call',call_id:'current',name:'mcp__monotest__get_document',arguments:JSON.stringify(readInput)}},readResult={type:'response_item',payload:{type:'function_call_output',call_id:'current',output:JSON.stringify({id:'doc',content:draft})}};
+ const write={type:'event_msg',payload:{type:'item_completed',item:{type:'McpToolCall',id:'exec-write',server:'monotest',tool:'save_comment',arguments:input,status:'completed',result:f.record}}};
+ const outer={type:'response_item',payload:{type:'custom_tool_call',name:'exec',call_id:'outer-write',input:`const r = await tools.mcp__monotest__save_comment(${JSON.stringify(input)}); text(r);`}},output={type:'response_item',payload:{type:'custom_tool_call_output',call_id:'outer-write',output:JSON.stringify(f.record)}};
+ const events=[...decision,current,readResult];let currentLine=decision.length+1;
+ if(mode==='completion-only')events.push(write);
+ else if(mode==='parallel'){
+  // A real exec may start both MCP operations before either result arrives.
+  outer.payload.input=`const r = await Promise.all([tools.mcp__monotest__get_document(${JSON.stringify(readInput)}), tools.mcp__monotest__save_comment(${JSON.stringify(input)})]); text(r);`;
+  const read={type:'event_msg',payload:{type:'item_completed',item:{type:'McpToolCall',id:'exec-read',server:'monotest',tool:'get_document',arguments:readInput,status:'completed',result:{id:'doc',content:draft}}}};
+  events.splice(decision.length,2,outer,read,write,output);currentLine=decision.length+2;
+ }else events.push(outer,write,output);
+ f.events.splice(0,f.events.length,...events);f.request.approvalBindings=[{recordId:f.record.id,windowCallId:window.payload.call_id,shownLine:3,currentLine,text:draft}];
+ return f;
+}
+test('amend3 Codex approval accepts its final text and sequential literal write invocation',t=>{
+ const f=codexApproval(t);const result=f.check();assert.equal(result.status,'passed',JSON.stringify(result));
+});
+test('amend3 Codex approval cannot bind an earlier text replaced before the window is shown',t=>{
+ const f=codexApproval(t,{laterText:true}),result=f.check();assert.notEqual(result.status,'passed');assert.match(result.reason,/last owner-visible text/);
+});
+for(const mode of ['completion-only','parallel'])test(`amend3 native approval order stays unverified (${mode})`,t=>{
+ const f=codexApproval(t,{mode}),result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/write invocation/);
+});
+test('amend3 independently complete document pages cannot change base arguments',t=>{
+ const f=fixture(t);f.check();f.request.dumpTrace=path.join(f.dir,'chain.jsonl');
+ const raw=fs.readFileSync(path.join(f.dir,'dump-trace.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ const i=raw.findIndex(r=>r.message?.content?.[0]?.name==='mcp__monotest__list_documents');
+ const first={documents:[],hasNextPage:true,cursor:'doc1'},second={documents:[],hasNextPage:false};
+ // The real pagination shape requires a nonempty first page and its full body.
+ first.documents.push({id:'doc1'});f.save('documents/doc1.json',{id:'doc1',projectId,title:'Draft',content:'Text'});
+ f.save('documents-1.json',first);f.save('documents-2.request.json',{cursor:'doc1'});f.save('documents-2.json',second);
+ raw[i+1].message.content[0].content=JSON.stringify(first);
+ const next=structuredClone(raw.slice(i,i+2));next[0].message.content[0].id='page2';next[0].message.content[0].input={projectId,cursor:'doc1',includeArchived:true};next[1].message.content[0].tool_use_id='page2';next[1].message.content[0].content=JSON.stringify(second);
+ // A driver-shaped exact get_document read binds the saved document too.
+ const doc=JSON.parse(fs.readFileSync(path.join(f.dumpDir,'documents/doc1.json')));
+ next.push({type:'assistant',message:{content:[{type:'tool_use',id:'doc',name:'mcp__monotest__get_document',input:{id:'doc1'}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'doc',content:JSON.stringify(doc)}]}});
+ raw.splice(i+2,0,...next);fs.writeFileSync(f.request.dumpTrace,timed(raw,'2026-11-02T04:01:00Z').map(r=>JSON.stringify(r)).join('\n')+'\n');
+ const result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/page arguments changed/);
 });
