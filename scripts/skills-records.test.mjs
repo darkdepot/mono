@@ -49,6 +49,50 @@ test('records compare successful native write bodies to a fresh complete monotes
  f.page('comments','comments',[{...f.record,body:'mono-test: report changed after write'}]);assert.equal(f.check().status,'failed');
 });
 
+const live6=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-records-live6.json',import.meta.url)));
+for(const kind of ['mono-design','mono-research'])test(`live6 ${kind}: task prose is not a second record; a real duplicate fails`,t=>{
+ const f=fixture(t),sample=live6[kind];f.request.expectedRecords=[{type:kind,count:1}];
+ const record=kind==='mono-research'?{id:'doc',projectId,title:'Research',content:sample.record}:{...f.record,body:sample.record};
+ if(kind==='mono-research'){
+  f.events[2].message.content[0]={type:'tool_use',id:'write',name:'mcp__monotest__save_document',input:{projectId,title:record.title,content:record.content}};
+  f.page('comments','comments',[]);f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',record);
+ }else{
+  f.events[2].message.content[0].input.body=record.body;f.page('comments','comments',[record]);
+ }
+ f.events[3].message.content[0].content=JSON.stringify(record);
+ const issue={id:'task',projectId,title:'Stage log',description:'Log',status:'Todo',labels:[]};
+ f.page('issues','issues',[{id:'task'}]);f.save('issues/task/issue.json',issue);
+ f.page('issues/task/comments','comments',[{...f.record,id:'log',body:sample.taskMention}]);
+ const result=f.check();assert.equal(result.status,kind==='mono-research'?'passed':'unverified',result.reason);
+ // Even a structurally real record in a task log is outside the stage's record location.
+ f.page('issues/task/comments','comments',[{...f.record,id:'log',body:sample.record}]);
+ assert.equal(f.check().status,result.status);
+ if(kind==='mono-research'){
+  f.page('documents','documents',[{id:'doc'},{id:'duplicate'}]);f.save('documents/duplicate.json',{...record,id:'duplicate'});
+ }else f.page('comments','comments',[record,{...record,id:'duplicate'}]);
+ const duplicate=f.check();assert.equal(duplicate.status,'failed');assert.match(duplicate.reason,/expected .*: 1, observed 2/);
+ // Two native record blocks in one stored body are two records too.
+ if(kind==='mono-research'){
+  f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',{...record,content:sample.record+'\n\n'+sample.record});
+  f.events[2].message.content[0].input.content=sample.record+'\n\n'+sample.record;
+  f.events[3].message.content[0].content=JSON.stringify({...record,content:sample.record+'\n\n'+sample.record});
+ }else{
+  f.record.body=sample.record+'\n\n'+sample.record;f.page('comments','comments',[f.record]);
+  f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ }
+ assert.match(f.check().reason,/expected .*: 1, observed 2/);
+});
+
+for(const marker of ['mono-idea: approved','mono-prd: approved','mono-design: approved','mono-tech: approved','mono-package: start'])test(`record header boundary and project scope: ${marker}`,t=>{
+ const f=fixture(t),mention=`Запись ${marker} прочитана обратно.`,body=live6['mono-design'].record.replace('mono-design: approved',marker);
+ f.events[2].message.content[0].input.body=body;f.record.body=body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.page('comments','comments',[f.record,{...f.record,id:'mention',body:mention+'\n'+marker.split(':')[0]}]);f.request.expectedRecords=[{type:marker.split(':')[0],count:1}];
+ assert.equal(f.check().status,'unverified');
+ f.request.expectedRecords=[{forbidden:marker}];f.events.splice(0);f.page('comments','comments',[{...f.record,id:'mention',body:mention}]);
+ assert.equal(f.check().status,'passed');
+ f.page('comments','comments',[f.record]);assert.equal(f.check().status,'failed');
+});
+
 for(const name of ['Skill','Agent','Task'])for(const target of ['main','child','dump','dump-child'])test(`amend1 forbidden ${name} applies to ${target} trace`,t=>{
  const f=fixture(t);f.request.nextSkill='mono:research';f.request.nextAgent='mono-mono-research';f.request.expectedRecords.push({forbidden:'start-next-stage'});
  const call={type:'assistant',message:{content:[{type:'tool_use',id:'next',name,input:name==='Skill'?{skill:f.request.nextSkill}:{subagent_type:f.request.nextAgent}}]}};

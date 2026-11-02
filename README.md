@@ -1740,6 +1740,9 @@ responses; the model never writes dump files. A binding-only gap keeps the item
 unverified while its chain continues through Design and Handoff; other gaps or
 failures stop that chain. Native write results are reconciled with complete fresh
 cursor chains; working Linear writes stop the suite with manual-removal links.
+Record counts use the stage gates’ block scanner and record locations: project
+comments for approvals/start, document fences for Research. Prose mentions and
+task logs never count as records; real duplicates still fail.
 The suite reports scenario/host, duration and unique monotest task count. Missing
 native evidence stays unverified. The unchanged landing gate requires passed;
 MONO-279's exact expectation/source binding is included. See [record proof inputs](references/qa-skills.md#свежий-дамп-и-сверка-записей).

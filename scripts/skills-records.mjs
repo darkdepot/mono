@@ -114,11 +114,11 @@ export function readRecordDump(root,project,projectName){
   const files=[],projects=pages(root,'projects','projects',files);
   if(!text(projectName))missing('run project name required for absence proof');
   if(projects.some(p=>p.name===projectName))throw new Error('forbidden project:create: run project exists after refusal');
-  return {project:null,comments:[],documents:[],issues:[],all:[],files};
+  return {project:null,projectComments:[],comments:[],documents:[],issues:[],all:[],files};
  }
  const raw=rawRead(path.join(root,'project.json')),files=[{file:'project.json',value:raw,kind:'get_project',id:project.id??project.uuid}];
  if(!text(raw?.uuid)||raw.uuid!==(project.id??project.uuid)||raw.name!==project.name||!ownUrl(raw.url)||(typeof raw.description!=='string'||elided(raw.description)))missing('project read-back identity incomplete');
- const comments=pages(root,'comments','comments',files),documents=[],issues=[];
+ const projectComments=pages(root,'comments','comments',files),comments=[...projectComments],documents=[],issues=[];
  const refs=pages(root,'documents','documents',files);
  for(const ref of refs){
   const id=idOf(ref);if(!/^[A-Za-z0-9-]+$/.test(id))missing('invalid document id');
@@ -142,7 +142,27 @@ export function readRecordDump(root,project,projectName){
  }
  const all=[raw,...comments,...documents,...issues];
  for(const row of all)if(row.url!==undefined&&!ownUrl(row.url))throw new Error(`record outside monotest: ${row.url}`);
- return {project:raw,comments,documents,issues,all,files};
+ return {project:raw,projectComments,comments,documents,issues,all,files};
+}
+
+function recordLines(body){
+ // Stage gates read whole marker lines, excluding embedded snapshot/page text.
+ return approvalBlocks(body).filter(block=>!['mono-idea-snapshot','mono-tech-page'].includes(block.info))
+  .flatMap(block=>(block.fenced?block.content:block.text).split(/\r?\n/));
+}
+function recordCount(body,type){
+ if(type==='mono-research')return approvalBlocks(body).filter(block=>block.info==='mono-research').length;
+ type=({'mono-idea':'mono-idea: approved','mono-prd':'mono-prd: approved','mono-design':'mono-design: approved','mono-tech':'mono-tech: approved','mono-package':'mono-package: start'})[type]??type;
+ return recordLines(body)
+  .filter(line=>{line=type.startsWith('mono-idea')?line:line.trim();return (type.includes(':')&&line===type)||line.startsWith(type+(type.includes(':')?' ':': '));}).length;
+}
+function expectedRecords(dump,type,body=row=>bodyOf(row)){
+ const rows=type==='mono-research'?dump.documents:dump.projectComments;
+ return rows.flatMap(row=>Array.from({length:recordCount(body(row),type)},()=>row));
+}
+
+function recordWrite(write,type,dump){
+ return expectedRecords(dump,type,row=>idOf(row)===idOf(write.value)?writeBody(write):'').length>0;
 }
 
 function runViolations(traces,request={}){
@@ -223,8 +243,9 @@ function bindsSnapshot(body,info,text){
 }
 function approvalCheck(request,write,data,dump){
  const createProject=write.name.endsWith('__create_project')||(write.name.endsWith('__save_project')&&!write.input.id);
- if(!createProject&&!/mono-[\w-]+:\s*(?:approved|start)\b/.test(writeBody(write)))return;
- const packageStart=/mono-package:\s*start\b/.test(writeBody(write));
+ const markers=recordLines(writeBody(write)).map(line=>line.trim().match(/^(mono-[\w-]+: (?:approved|start))(?: |$)/)?.[1]).filter(Boolean);
+ if(!createProject&&!markers.some(type=>recordWrite(write,type,dump)))return;
+ const packageStart=recordWrite(write,'mono-package: start',dump);
  const binding=request.approvalBindings?.find(b=>b.recordId===idOf(write.value));
  const candidates=data.audit.calls.filter(c=>['AskUserQuestion','request_user_input_async'].includes(c.name)&&c.line<write.line);
  const decisions=candidates.filter(c=>windowRole(c.input?.questions)===(packageStart?'transition':'approval'));
@@ -436,11 +457,11 @@ export function verifyRecords(request){
    }else if(rule.forbidden==='start-next-stage'){
     // Checked across every trace, before missing/partial evidence can hide it.
    }else if(rule.forbidden){
-    if(activeWrites.some(w=>writeBody(w).includes(rule.forbidden))||dump.all.some(row=>(bodyOf(row)??'').includes(rule.forbidden)))throw new Error(`forbidden record: ${rule.forbidden}`);
+    if(expectedRecords(dump,rule.forbidden).length||activeWrites.some(write=>recordWrite(write,rule.forbidden,dump)))throw new Error(`forbidden record: ${rule.forbidden}`);
    }else if(rule.type==='project'){
     if(!dump.project)missing('project required');
    }else{
-    const found=dump.all.filter(row=>(bodyOf(row)??'').includes(rule.type)&&(!seedIds.has(idOf(row))||activeWrites.some(w=>idOf(w.value)===idOf(row))));
+    const found=expectedRecords(dump,rule.type).filter(row=>!seedIds.has(idOf(row))||activeWrites.some(w=>idOf(w.value)===idOf(row)));
     if(found.length!==(rule.count??1))throw new Error(`expected ${rule.type}: ${rule.count??1}, observed ${found.length}`);
     if(!activeWrites.some(w=>idOf(w.value)===idOf(found[0])))missing(`expected ${rule.type} write absent from trace`);
    }
@@ -449,8 +470,8 @@ export function verifyRecords(request){
   for(const write of activeWrites)try{approvalCheck({...request,host:write.data.host,sent:write.data.sent},write,write.data,dump);}catch(error){if(!error.bindingOnly)throw error;bindingGaps.push(error.message);}
   const gates=[...(request.gates??[])];
   for(const write of activeWrites){
-   const body=writeBody(write);
-   const command=body.includes('mono-idea: approved')?'verify':body.includes('mono-tech: approved')?'tech':body.includes('mono-design: approved')?'design':/mono-prd: approved|mono-package: start/.test(body)?'route':null;
+   const has=type=>recordWrite(write,type,dump);
+   const command=has('mono-idea: approved')?'verify':has('mono-tech: approved')?'tech':has('mono-design: approved')?'design':has('mono-prd: approved')||has('mono-package: start')?'route':null;
    if(command&&!gates.some(g=>g.command===command&&(command!=='verify'||g.recordId===idOf(write.value))))gates.push({command,...(command==='verify'?{recordId:idOf(write.value)}:{})});
   }
   const gateRoot=fs.mkdtempSync(path.join(os.tmpdir(),'mono-record-gates-'));
@@ -459,13 +480,13 @@ export function verifyRecords(request){
   for(const gate of gates){
    if(!['route','design','tech','verify'].includes(gate.command))missing('unknown idea-gate command');
    if(gate.command==='design'){
-    const approval=activeWrites.find(w=>writeBody(w).includes('mono-design: approved'));
+    const approval=activeWrites.find(w=>recordWrite(w,'mono-design: approved',dump));
     if(!approval)missing('mono-design approval write absent from trace');
     const id=writeBody(approval).match(/(?:^|\s)prd=([^\s]+)/)?.[1],doc=dump.documents.find(d=>idOf(d)===id);
     if(!doc)missing('design PRD document absent');fs.writeFileSync(path.join(gateRoot,'prd.json'),JSON.stringify(doc));
    }
    if(gate.command==='tech'){
-    const approval=activeWrites.find(w=>(writeBody(w)).includes('mono-tech: approved'));
+    const approval=activeWrites.find(w=>recordWrite(w,'mono-tech: approved',dump));
     for(const [token,file] of [['prd','prd.json'],['spec','tech-spec.json']]){
      const id=(bodyOf(approval?.value)??'').match(new RegExp(`(?:^|\\s)${token}=([^\\s]+)`))?.[1];
      const doc=dump.documents.find(d=>idOf(d)===id);if(!doc)missing(`tech ${token} document absent`);
