@@ -796,6 +796,21 @@ function textFixture(t,host='claude',intent='agree') {
  if(expected.outcome.startNext)f.events.splice(7,0,call('next','Skill',{skill:'mono:research'}));
  return {...f,expected,draft,approved,assistant,user,call,result,terminal};
 }
+for(const host of ['claude','codex'])for(const [part,content] of [['fragment','колонка'],['prefix','Что: колонка'],['suffix','Источник.']])for(const mode of ['binding-and-record','record-only'])test(`${host}: text approval rejects incomplete displayed artifact ${part} in ${mode}`,t=>{
+ const f=textFixture(t,host);assert.equal(f.check().status,'passed');
+ if(mode==='binding-and-record')f.request.approvalBindings[0].text=content;
+ f.record.body=`mono-test: approved\n${content}\n\nВладелец: ответил «${f.expected.reply}»`;
+ f.page('comments','comments',[f.record]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content});
+ f.events[4]=f.result('read',{id:'doc',content});f.events[5]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[6]=f.result('write',f.record);
+ const r=f.check();assert.equal(r.status,'failed',JSON.stringify(r));
+});
+for(const host of ['claude','codex'])test(`${host}: text approval excludes only preregistered literal framing`,t=>{
+ const f=textFixture(t,host),before='Показанный итог:\n',after='\nСовет: проверить источник.\n'+f.expected.question;
+ f.events[0]=f.assistant(before+f.draft+after);
+ assert.equal(f.check().status,'failed','unlisted framing cannot hide extra shown content');
+ f.expected.framing={before,after};assert.equal(f.check().status,'passed');
+ f.events[0]=f.assistant(before+f.draft+' Дополнение.'+after);assert.equal(f.check().status,'failed');
+});
 for(const host of ['claude','codex'])for(const position of ['before-response','after-response','final-only','preparation'])test(`${host}: text records count completed tool-only parent turn ${position}`,t=>{
  const f=textFixture(t,host);assert.equal(f.check().status,'passed',f.check().reason);
  if(position==='before-response')f.events.splice(f.events.length-1,0,f.terminal);
@@ -854,7 +869,7 @@ for(const host of ['claude','codex'])for(const intent of ['question','continuati
 function textIdeaFixture(t,delegated=false) {
  const f=liveFixture(t,'idea-approve'),question='Утверждаем описание?',reply=delegated?'Принимаю: владелец ответил «принимаю». Причина: потребность проверяема.':'принимаю';
  const expected={id:'idea',stage:'idea',role:'approval',asksStart:false,summary:['## Что','## Неизвестные'],question,reply,intent:'agree',outcome:{approval:true,startNext:false},...(delegated?{by:'orchestrator',reason:'потребность проверяема.'}:{})};
- const message=f.request.approvalBindings[1].text+'\n'+question;
+ const fullVersion=f.request.approvalBindings[1].text,message=fullVersion+'\n'+question;
  const rewrite=value=>{
   if(typeof value==='string'){
    try{return JSON.stringify(rewrite(JSON.parse(value)));}catch{}
@@ -882,7 +897,7 @@ function textIdeaFixture(t,delegated=false) {
  // The two native preparation terminals precede this synthetic stage exchange.
  f.request.stageStartLine=2;
  delete f.request.endLine;expected.response??=['Утверждение записал.'];f.request.expectedReplies=[expected];
- f.request.approvalBindings.forEach(b=>{delete b.windowCallId;b.replyId='idea';b.currentLine=rows.findIndex(row=>row.payload?.name===(b.recordId===f.request.project.id?'mcp__monotest__save_project':'mcp__monotest__save_comment'))+1;});
+ f.request.approvalBindings.forEach(b=>{delete b.windowCallId;b.replyId='idea';b.text=fullVersion;b.currentLine=rows.findIndex(row=>row.payload?.name===(b.recordId===f.request.project.id?'mcp__monotest__save_project':'mcp__monotest__save_comment'))+1;});
  if(delegated){
   const ownerTrace=path.join(f.dir,'owner.jsonl'),ownerExpected={...expected,by:'owner',reason:undefined,reply:'принимаю',response:['Передаю согласие этапу.']};
   const ownerRows=[{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:message}]}},{type:'event_msg',payload:{type:'task_complete'}},{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'принимаю'}]}},{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Передаю согласие этапу.'}]}},{type:'event_msg',payload:{type:'task_complete'}}];
@@ -895,6 +910,11 @@ function textIdeaFixture(t,delegated=false) {
 for(const delegated of [false,true])test(`text Idea retains real machine gate and persisted version; orchestrator=${delegated}`,t=>{
  const f=textIdeaFixture(t,delegated),r=f.check();assert.equal(r.status,'passed',r.reason);assert.equal(r.gateResults[0].command,'verify');assert.equal(r.gateResults[0].result.ok,true);
  if(delegated){delete f.request.approvalBindings[1].ownerEvidence;assert.equal(f.check().status,'failed');}
+});
+for(const index of [0,1])test(`text Idea requires the complete four-section binding for record ${index}`,t=>{
+ const f=textIdeaFixture(t),binding=f.request.approvalBindings[index];assert.equal(f.check().status,'passed');
+ binding.text=binding.text.slice(0,binding.text.indexOf('\n\n## Неизвестные'));
+ const result=f.check();assert.equal(result.status,'failed',result.reason);
 });
 
 function textPrdFixture(t,delegated=false) {

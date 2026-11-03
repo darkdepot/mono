@@ -1650,6 +1650,9 @@ The opt-in `expectedReplies` format in [skill QA](references/qa-skills.md#отв
 also sends literal text replies after completed parent turns. Expected approval/start
 outcomes and complete allowed final stage responses are fixed in scenario data.
 Unlisted trailing questions, start offers, extra owner replies and extra completed turns fail.
+Text approval bindings cover the complete displayed artifact; only literal framing
+declared by the scenario before the run can be excluded. Fragment, prefix or suffix
+bindings fail even when the stored record matches that shortened text.
 Native replies, exact approved versions and
 named corrections are checked against fresh records; any window in a text scenario
 or identical endings across its stage chain fail. The current window catalog and

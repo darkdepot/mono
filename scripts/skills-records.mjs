@@ -291,7 +291,7 @@ function approvalCheck(request,write,data,dump){
  }else if(data.rows.findLast(r=>r.line<window.line&&ownerText(r))?.line!==binding.shownLine)throw new Error('approval does not bind the last owner-visible text');
  return checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit:window.line});
 }
-function checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit,approvedText=binding.text,corrected=false}) {
+function checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit,approvedText=binding.text,approvedProjectText=approvedText,corrected=false}) {
  let shownVersion;
  if(!shownText.includes(binding.text)||binding.shownReadLine!==undefined){
   const before=data.audit.calls.find(c=>c.line===binding.shownReadLine&&!isWrite(c.name));
@@ -307,7 +307,7 @@ function checkApprovedVersion({request,write,data,dump,createProject,packageStar
   return; // idea-gate below independently checks the snapshot against persisted current data.
  }
  if(createProject){
-  if(markdown(write.input.description??write.value.description)!==markdown(approvedText))throw new Error('created project differs from shown version');
+  if(markdown(write.input.description??write.value.description)!==markdown(approvedProjectText))throw new Error('created project differs from shown version');
   return;
  }
  const currentCall=data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
@@ -358,7 +358,19 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
  if(createProject&&expected.stage!=='idea')throw new Error('only Idea may create the approved project');
  if(packageStart?!expected.outcome.startNext:!expected.outcome.approval)throw new Error('scenario reply does not authorize this record');
  if(binding.shownLine!==exchange.line || !text(binding.text))throw new Error('approval does not bind the last owner-visible text');
+ const framing=expected.framing??{before:'',after:'\n'+expected.question};
+ if(exchange.text!==framing.before+binding.text+framing.after)throw new Error('approval does not bind the complete displayed artifact');
  const approvedText=correctedVersion(binding.text,expected),body=writeBody(write);
+ let approvedProjectText;
+ if(createProject){
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mono-shown-idea-'));
+  try{
+   const draft=path.join(directory,'approved.md');fs.writeFileSync(draft,approvedText);
+   const run=spawnSync(process.execPath,[path.join(request.packRoot,'scripts/idea-gate.mjs'),'record','--draft',draft,'--out',directory,'--config',request.configFile],{encoding:'utf8'});
+   if(run.status!==0)throw new Error('complete shown Idea cannot generate the project body');
+   approvedProjectText=fs.readFileSync(path.join(directory,'body.md'),'utf8');
+  }finally{fs.rmSync(directory,{recursive:true,force:true});}
+ }
  const prose=approvalBlocks(body).filter(b=>!b.fenced).map(b=>b.text).join('\n').split(/\r?\n/);
  if(!createProject) {
   const quotedReply=expected.by==='orchestrator'&&expected.stage==='idea'?binding.ownerEvidence?.reply:expected.reply;
@@ -392,7 +404,7 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
   const replyCall={line:exchange.replyLine,event:data.rows.find(r=>r.line===exchange.replyLine)?.value};
   if(!before(source,actual.replyLine,data,replyCall))throw new Error('Idea owner reply must precede delegated consent');
  }
- return checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText:exchange.text,reply:{line:exchange.replyLine},shownLimit:exchange.line,approvedText,corrected:Boolean(expected.correction)});
+ return checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText:exchange.text,reply:{line:exchange.replyLine},shownLimit:exchange.line,approvedText,approvedProjectText,corrected:Boolean(expected.correction)});
 }
 
 export function verifyRecords(request){

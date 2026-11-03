@@ -48,3 +48,9 @@ test('last text reply must declare its allowed complete stage response before a 
  for(const response of [[],[''],['   '],'Записал.'])assert.throws(()=>validateReplies([{...reply,response}]),/response/);
  validateReplies([{...reply,response:['Утверждение записал.']}]);
 });
+test('text record framing must be literal strings declared by the scenario',async()=>{
+ const {validateReplies}=await import('./skills-owner.mjs');
+ const reply={id:'last',stage:'idea',role:'approval',summary:['Версия'],question:'Утверждаем?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Записал.']};
+ for(const framing of [null,[],{},'prefix',{before:'',after:1}])assert.throws(()=>validateReplies([{...reply,framing}]),/framing/);
+ validateReplies([{...reply,framing:{before:'Итог:\n',after:'\nМой совет.\nУтверждаем?'}}]);
+});

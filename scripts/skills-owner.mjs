@@ -79,6 +79,7 @@ export function validateReplies(expected) {
     if (r.intent!=='correction'&&r.correction!==undefined) throw new Error('correction without correction intent');
     if (r.by!==undefined && !['owner','orchestrator'].includes(r.by)) throw new Error('invalid reply authority');
     if (r.by==='orchestrator' && (typeof r.reason!=='string'||!r.reason.trim()||!r.reply.includes(r.reason))) throw new Error('delegated reply reason required verbatim');
+    if (r.framing!==undefined && (!r.framing || Array.isArray(r.framing) || typeof r.framing.before!=='string' || typeof r.framing.after!=='string')) throw new Error('literal scenario framing required');
   }
   if (expected.at(-1).response===undefined) throw new Error('last expected reply requires a declared stage response');
   for (const r of expected) if(r.response!==undefined && (!Array.isArray(r.response)||!r.response.length||r.response.some(text=>typeof text!=='string'||!text.trim()))) throw new Error('invalid declared stage response');
