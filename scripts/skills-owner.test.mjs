@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
 import { windowReply } from './skills-owner.mjs';
+import { correctedVersion } from './skills-owner.mjs';
 import { nativeProof } from './skills-proof.mjs';
 function claudeReplyDelivered(block,reply){
  const callId='window',call={type:'assistant',message:{content:[{type:'tool_use',id:callId,name:'AskUserQuestion'}]}},result={type:'user',message:{content:[{...block,tool_use_id:callId}]}};
@@ -9,6 +10,9 @@ function claudeReplyDelivered(block,reply){
 }
 const read = (host, name) => JSON.parse(fs.readFileSync(`evals/scenarios/probe/samples/${host}/${name}.json`));
 const policies = { recommended: {mode:'recommended'}, label:{mode:'label',label:'Зелёный'}, correction:{mode:'correction',text:'Синий, но светлее'}, empty:{mode:'empty'}, refuse:{mode:'refuse',text:'Не буду отвечать на этот вопрос.'}, discuss:{mode:'discuss'} };
+for(const after of ['$&','$$','$`',"$'"])test(`named correction preserves literal replacement token ${after}`,()=>{
+ assert.equal(correctedVersion('left old right',{correction:{before:'old',after}}),'left '+after+' right');
+});
 for (const host of ['claude','codex']) for (const [name, policy] of Object.entries(policies)) test(`${host} ${name} reply matches captured transport`, () => {
   const sample=read(host,name);
   const input=host==='claude'?sample.request.request.input:sample.call.arguments;

@@ -15,6 +15,17 @@ const read = (host, name) => JSON.parse(fs.readFileSync(fixture(host, name), 'ut
 const defect = () => read('claude', 'trace-defect-v0.38.1-approval');
 const control = () => read('claude', 'trace-control-v0.41.0-approval');
 
+test('Claude text wrapper forwards stageStartLine past completed preparation turns',async t=>{
+ const {probeText}=await import('./skills-probe.mjs'),save=scratch(t);
+ const a=text=>({type:'assistant',message:{content:[{type:'text',text}]}}),u=text=>({type:'user',message:{content:[{type:'text',text}]}}),end={type:'result',subtype:'success'};
+ const trace=save('prepared-text.jsonl',[a('Workspace confirmed.'),end,u('Seed'),a('Seed completed.'),end,u('Run stage'),a('Версия\nПринимаем?'),end,u('принимаю'),a('Записал.'),end].map(JSON.stringify).join('\n')+'\n');
+ const expectedReplies=[{id:'one',stage:'idea',role:'approval',summary:['Версия'],question:'Принимаем?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Записал.']}];
+ assert.equal(probeText({host:'claude',trace,expectedReplies,stageStartLine:5}).status,'passed');
+ assert.equal(readProbe(trace,{expectedReplies,stageStartLine:5}).status,'passed');
+ assert.equal(readProbe(trace,{expectedReplies,stageStartLine:4}).status,'unverified');
+ assert.equal(readProbe(trace,{expectedReplies}).status,'failed');
+});
+
 function scratch(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-skills-probe-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

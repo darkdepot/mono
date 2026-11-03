@@ -147,7 +147,7 @@ export function probeText({host,trace,expectedReplies,stageStartLine}) {
 }
 
 export function probeClaude(filename, options = {}) {
-  if(options.expectedReplies)return probeText({host:'claude',trace:filename,expectedReplies:options.expectedReplies});
+  if(options.expectedReplies)return probeText({host:'claude',trace:filename,expectedReplies:options.expectedReplies,stageStartLine:options.stageStartLine});
   try {
     const { rows, excerpt } = traceRows(filename,'claude');
     const phase=options.phase??(excerpt?'excerpt':'complete');

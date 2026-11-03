@@ -796,6 +796,19 @@ function textFixture(t,host='claude',intent='agree') {
  if(expected.outcome.startNext)f.events.splice(7,0,call('next','Skill',{skill:'mono:research'}));
  return {...f,expected,draft,approved,assistant,user,call,result,terminal};
 }
+for(const host of ['claude','codex'])for(const after of ['$&','$$','$`',"$'"])test(`${host}: text records preserve literal replacement token ${after}`,t=>{
+ const f=textFixture(t,host,'correction'),before='Источник.';
+ Object.assign(f.expected.correction,{before,after,description:'Заменил фрагмент буквально.'});
+ f.expected.reply='да, замени '+before+' на '+after;f.expected.response=[f.expected.correction.description];
+ f.events[2]=f.user(f.expected.reply);f.events[f.events.length-1]=f.assistant(f.expected.correction.description);
+ const persist=content=>{
+  f.record.body=`mono-test: approved\n${content}\n\nВладелец: ответил «${f.expected.reply}»\nПоправка: ${f.expected.correction.description}`;
+  f.page('comments','comments',[f.record]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content});
+  f.events[4]=f.result('read',{id:'doc',content});f.events[5]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[6]=f.result('write',f.record);
+ };
+ persist('Что: колонка '+after);assert.equal(f.check().status,'passed',f.check().reason);
+ persist(f.draft.replace(before,after));assert.equal(f.check().status,'failed');
+});
 for(const host of ['claude','codex'])for(const intent of ['agree','correction','defer'])test(`${host}: real text reply and shown plus only named correction pass (${intent})`,t=>{
  const f=textFixture(t,host,intent),r=f.check();assert.equal(r.status,'passed',r.reason);
 });

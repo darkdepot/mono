@@ -94,7 +94,7 @@ export function correctedVersion(shown, expected) {
   if (!expected.correction) return shown;
   const {before,after}=expected.correction;
   if (!shown.includes(before) || shown.indexOf(before)!==shown.lastIndexOf(before)) throw new Error('named correction must identify one exact shown passage');
-  return shown.replace(before,after);
+  return shown.replace(before,()=>after);
 }
 
 export const isOwnerWindow = name => ['AskUserQuestion','request_user_input','request_user_input_async'].includes(name);
