@@ -80,6 +80,8 @@ export function validateReplies(expected) {
     if (r.by!==undefined && !['owner','orchestrator'].includes(r.by)) throw new Error('invalid reply authority');
     if (r.by==='orchestrator' && (typeof r.reason!=='string'||!r.reason.trim()||!r.reply.includes(r.reason))) throw new Error('delegated reply reason required verbatim');
   }
+  if (expected.at(-1).response===undefined) throw new Error('last expected reply requires a declared stage response');
+  for (const r of expected) if(r.response!==undefined && (!Array.isArray(r.response)||!r.response.length||r.response.some(text=>typeof text!=='string'||!text.trim()))) throw new Error('invalid declared stage response');
   return expected;
 }
 export function textReply(scenario, lastMessage, index) {
@@ -96,3 +98,7 @@ export function correctedVersion(shown, expected) {
 }
 
 export const isOwnerWindow = name => ['AskUserQuestion','request_user_input','request_user_input_async'].includes(name);
+
+export function checkStageResponse(expected, text) {
+  if (!expected.response?.includes(text)) throw new Error('stage response differs from declared scenario policy');
+}

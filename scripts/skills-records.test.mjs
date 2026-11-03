@@ -778,8 +778,9 @@ function textFixture(t,host='claude',intent='agree') {
  const f=fixture(t),draft='Что: колонка Источник.',question='Утверждаем и начинаем Research?';
  f.request.host=host;
  const expected={id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question,reply:intent==='correction'?'да, только добавь вопрос про Codex':intent==='defer'?'да, но позже':'принимаю',intent,outcome:{approval:true,startNext:intent!=='defer'}};
+ expected.response=[intent==='correction'?'Добавлен вопрос про Codex.':'Утверждение записал.'];
  if(intent==='correction')expected.correction={description:'Добавлен вопрос про Codex.',before:'Источник.',after:'Источник. Вопрос про Codex.'};
- f.request.expectedReplies=[expected];
+ expected.response??=['Утверждение записал.'];f.request.expectedReplies=[expected];
  const approved=intent==='correction'?'Что: колонка Источник. Вопрос про Codex.':draft;
  f.record.body=`mono-test: approved\n${approved}\n\nВладелец: ответил «${expected.reply}»${expected.correction?'\nПоправка: '+expected.correction.description:''}`;
  f.page('comments','comments',[f.record]);f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content:approved});
@@ -816,7 +817,7 @@ for(const host of ['claude','codex'])for(const mode of ['forged-quote','wrong-qu
 
 for(const host of ['claude','codex'])for(const intent of ['question','continuation','unclear','refuse'])test(`${host}: ${intent} continues without approval; an approval is rejected`,t=>{
  const f=textFixture(t,host),reply={question:'а почему без Design?',continuation:'И ещё о колонке',unclear:'ну не знаю',refuse:'нет'}[intent];
- Object.assign(f.expected,{intent,reply,outcome:{approval:false,startNext:false}});
+ Object.assign(f.expected,{intent,reply,outcome:{approval:false,startNext:false},response:[intent==='unclear'?'Что смущает?':'Обсудим колонку.']});
  f.events.splice(2,f.events.length-2,f.user(reply),f.assistant(intent==='unclear'?'Что смущает?':'Обсудим колонку.'));
  f.page('comments','comments',[]);f.request.expectedRecords=[{type:'project'},{forbidden:'mono-test: approved'}];
  assert.equal(f.check().status,'passed',f.check().reason);
@@ -854,10 +855,10 @@ function textIdeaFixture(t,delegated=false) {
  const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(rewrite(JSON.parse(fs.readFileSync(file)))));}};
  walk(f.request.dumpDir);
  saveRows(f.request.dumpTrace,rewrite(fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse)),'2026-11-02T04:01:00Z');
- delete f.request.endLine;f.request.expectedReplies=[expected];
+ delete f.request.endLine;expected.response??=['Утверждение записал.'];f.request.expectedReplies=[expected];
  f.request.approvalBindings.forEach(b=>{delete b.windowCallId;b.replyId='idea';b.currentLine=rows.findIndex(row=>row.payload?.name===(b.recordId===f.request.project.id?'mcp__monotest__save_project':'mcp__monotest__save_comment'))+1;});
  if(delegated){
-  const ownerTrace=path.join(f.dir,'owner.jsonl'),ownerExpected={...expected,by:'owner',reason:undefined,reply:'принимаю'};
+  const ownerTrace=path.join(f.dir,'owner.jsonl'),ownerExpected={...expected,by:'owner',reason:undefined,reply:'принимаю',response:['Передаю согласие этапу.']};
   const ownerRows=[{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:message}]}},{type:'event_msg',payload:{type:'task_complete'}},{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'принимаю'}]}},{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Передаю согласие этапу.'}]}},{type:'event_msg',payload:{type:'task_complete'}}];
   saveRows(ownerTrace,ownerRows,'2026-11-02T04:00:00Z');
   f.request.additionalTraces=[{host:'codex',trace:ownerTrace,expectedReplies:[ownerExpected]}];
@@ -895,7 +896,7 @@ function textPrdFixture(t,delegated=false) {
  rows.splice(rows.length-1,0,{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'PRD утверждён, старт отложен.'}]}});
  for(const key of ['shownLine','shownReadLine','currentLine'])binding[key]=lineMap.get(binding[key]);
  binding.replyId='prd';delete binding.windowCallId;
- f.request.seedEndLine=lineMap.get(f.request.seedEndLine);delete f.request.endLine;f.request.expectedReplies=[expected];
+ f.request.seedEndLine=lineMap.get(f.request.seedEndLine);delete f.request.endLine;expected.response=['PRD утверждён, старт отложен.'];f.request.expectedReplies=[expected];
  fs.writeFileSync(f.request.trace,timed(transform(rows),'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
  const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(transform(JSON.parse(fs.readFileSync(file)))));}};walk(f.request.dumpDir);
  const dumpRows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);fs.writeFileSync(f.request.dumpTrace,timed(transform(dumpRows),'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');
@@ -908,7 +909,7 @@ for(const delegated of [false,true])test(`text PRD binds updatedAt and native re
 
 for(const host of ['claude','codex'])test(`${host}: Research authorizes only Discovery start, never an approval`,t=>{
  const f=textFixture(t,host),question='Начнём Discovery?';
- Object.assign(f.expected,{stage:'research',role:'transition',question,outcome:{approval:false,startNext:true}});
+ Object.assign(f.expected,{stage:'research',role:'transition',question,outcome:{approval:false,startNext:true},response:['Начинаю Discovery.']});
  f.project.status='Discovery';f.save('project.json',f.project);f.page('comments','comments',[]);f.request.expectedRecords=[{type:'project'},{forbidden:'mono-test: approved'}];
  f.events.splice(0,f.events.length,f.assistant(f.draft+'\n'+question),f.terminal,f.user('принимаю'),f.call('start','mcp__monotest__save_project',{id:projectId,status:'Discovery'}),f.result('start',f.project),f.assistant('Начинаю Discovery.'));
  assert.equal(f.check().status,'passed',f.check().reason);
@@ -944,8 +945,24 @@ test('Handoff text start binds the shown package hash; defer cannot write that s
   {type:'response_item',payload:{type:'function_call',name:'mcp__monotest__save_comment',call_id:'start',arguments:JSON.stringify({projectId:id,body:start.body})}},
   {type:'response_item',payload:{type:'function_call_output',call_id:'start',output:JSON.stringify(start)}},assistant('Старт работы записан.'),terminal];
  const expected={id:'handoff',stage:'handoff',role:'transition',asksStart:true,summary:['Пакет:'],question,reply,intent:'agree',outcome:{approval:false,startNext:true}};
- f.request.expectedReplies=[expected];f.request.expectedRecords=[{type:'mono-package: start',count:1}];f.request.approvalBindings=[{recordId:start.id,replyId:'handoff',shownLine:1,text:body,currentLine:4,currentRecordId:packet.id}];delete f.request.seedExpected;delete f.request.seedEndLine;delete f.request.seedProjectId;
+ expected.response=['Старт работы записан.'];f.request.expectedReplies=[expected];f.request.expectedRecords=[{type:'mono-package: start',count:1}];f.request.approvalBindings=[{recordId:start.id,replyId:'handoff',shownLine:1,text:body,currentLine:4,currentRecordId:packet.id}];delete f.request.seedExpected;delete f.request.seedEndLine;delete f.request.seedProjectId;
  const flush=()=>fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');flush();
  const r=f.check();assert.equal(r.status,'passed',r.reason);
  Object.assign(expected,{intent:'defer',reply:'да, но позже',outcome:{approval:false,startNext:false}});rows[2].payload.content[0].text=expected.reply;flush();const rejected=f.check();assert.equal(rejected.status,'failed');assert.match(rejected.reason,/start-next-stage without scenario authority/);
+});
+
+for(const host of ['claude','codex'])for(const sample of JSON.parse(fs.readFileSync('scripts/test-fixtures/skills-text-responses.json')))test(`${host}: record check enforces declared response ${sample.id}`,t=>{
+ const f=textFixture(t,host);Object.assign(f.expected,{intent:sample.intent,reply:sample.reply,asksStart:false,outcome:{approval:sample.intent==='agree',startNext:false},response:sample.response});
+ f.events.splice(7,f.events.length-7,f.assistant(sample.actual));f.events[2]=f.user(sample.reply);
+ if(sample.intent!=='agree'){
+  f.events.splice(3,4);f.page('comments','comments',[]);f.request.expectedRecords=[{type:'project'},{forbidden:'mono-test: approved'}];
+ }
+ const result=f.check();assert.equal(result.status,sample.status,result.reason);
+});
+
+for(const host of ['claude','codex'])test(`${host}: record checker reads extra completed response beyond endLine`,t=>{
+ const f=textFixture(t,host);assert.equal(f.check().status,'passed',f.check().reason);
+ f.expected.response.push('Start Research?');f.request.endLine=f.events.length+1;
+ f.events.push(f.terminal,f.assistant('Start Research?'));
+ const result=f.check();assert.equal(result.status,'failed',result.reason);assert.match(result.reason,/trailing/);
 });

@@ -7,7 +7,7 @@ import { auditRows, parentTurns } from './skills-audit.mjs';
 import { RecordDump } from './skills-dump.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 import { hostProcess } from './skills-process.mjs';
-import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount, textReply, validateReplies, isOwnerWindow } from './skills-owner.mjs';
+import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount, textReply, validateReplies, isOwnerWindow, checkStageResponse } from './skills-owner.mjs';
 import { checkTrace, codexItems, codexWindows, visible, completedTrace, codexTerminals } from './skills-trace.mjs';
 import { traceRows } from './skills-probe.mjs';
 import { mcpConfig, privateCodexHome, toolViolation, workspaceReadCall, workspaceReadCode, MissingEvidence, isWrite } from './skills-boundary.mjs';
@@ -170,9 +170,16 @@ export async function runClaude(request){
           dumpStart=line;if(dump.done){waiting=true;endLine=line;c.complete();}else{beginTurn();c.send(userMessage(dump.prompt()));}
         }else if(request.scenario.expectedReplies){
           if(replies.some(r=>!r.received))return missing('text reply not observed in native trace',c);
-          if(targetsAnswered(request,replies)){waiting=true;endLine=line;c.complete();}
+          const stageTurns=parentTurns('claude',traceRows(trace,'claude').rows).filter(t=>t.line>stageStartLine);
+          if(stageTurns.length!==replies.length+1)return fail('unexpected stage turn without scenario policy',c);
+          if(targetsAnswered(request,replies)){
+            const turn=stageTurns.at(-1);
+            if(!turn||turn.terminalLine!==line)return missing('final stage response missing',c);
+            try{checkStageResponse(request.scenario.expectedReplies.at(-1),turn.text);}catch(error){return fail(error.message,c);}
+            waiting=true;c.complete();
+          }
           else {
-            const turn=parentTurns('claude',traceRows(trace,'claude').rows).at(-1);
+            const turn=stageTurns.at(-1);
             if(!turn||turn.terminalLine!==line)return missing('final stage message missing before text reply',c);
             let reply;try{reply=textReply(request.scenario,turn.text,replies.length);}catch(error){return fail(error.message,c);}
             replies.push({index:replies.length,id:request.scenario.expectedReplies[replies.length].id,kind:'text',reply,question:turn.text,shownLine:turn.line,target:true,received:false});
@@ -222,7 +229,7 @@ export async function runCodex(request){
   const turn=async(prompt,confirm=false,replyRecord=null)=>{
     let hostError;
     const args=thread?['exec','resume',...codexCommon(request),thread,prompt]:['exec',...codexCommon(request),'-s','read-only','-C',request.cwd,prompt];
-    processResult=await hostProcess({binary,args,cwd:request.cwd,env,trace:stdout,sent,stderr:path.join(request.outputDir,'stderr.log'),timeoutMs:Math.max(1,deadline-Date.now()),onEvent:(e,c)=>{if(e.type==='error'&&typeof e.message==='string')hostError=e.message;if(e.type==='thread.started'){if(thread&&thread!==e.thread_id)throw new Error('thread changed');thread=e.thread_id;}if(replyRecord&&request.scenario.stopAfterExpectedWindows!==false&&targetsAnswered(request,replies)&&e.type==='turn.completed')c.complete();}});
+    processResult=await hostProcess({binary,args,cwd:request.cwd,env,trace:stdout,sent,stderr:path.join(request.outputDir,'stderr.log'),timeoutMs:Math.max(1,deadline-Date.now()),onEvent:(e,c)=>{if(e.type==='error'&&typeof e.message==='string')hostError=e.message;if(e.type==='thread.started'){if(thread&&thread!==e.thread_id)throw new Error('thread changed');thread=e.thread_id;}if(!request.scenario.expectedReplies&&replyRecord&&request.scenario.stopAfterExpectedWindows!==false&&targetsAnswered(request,replies)&&e.type==='turn.completed')c.complete();}});
     if(processResult.code!==0||processResult.failure){
       const reason=`Codex process failed: ${hostError??processResult.failure??processResult.code}`;
       if(request.readOnlyDump)throw Object.assign(new MissingEvidence(reason),{hostFailure:true});
@@ -311,8 +318,15 @@ export async function runCodex(request){
     for(let n=0;n<(request.maxTurns??(roleWindows(request.scenario.expectedWindows)?128:32));n++){
       if(endLine)break;
       if(request.scenario.expectedReplies){
-        if(targetsAnswered(request,replies))return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation});
-        const turnMessage=parentTurns('codex',rows).at(-1);
+        const stageTurns=parentTurns('codex',rows);
+        if(stageTurns.length!==1)throw new Error('unexpected stage turn without scenario policy');
+        if(targetsAnswered(request,replies)){
+          const response=stageTurns[0];
+          if(!response)throw new MissingEvidence('final stage response missing');
+          checkStageResponse(request.scenario.expectedReplies.at(-1),response.text);
+          return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation});
+        }
+        const turnMessage=stageTurns[0];
         if(!turnMessage)throw new MissingEvidence('final stage message missing before text reply');
         const reply=textReply(request.scenario,turnMessage.text,replies.length);
         const record={index:replies.length,id:request.scenario.expectedReplies[replies.length].id,kind:'text',reply,question:turnMessage.text,shownLine:turnMessage.line,target:true,received:false};

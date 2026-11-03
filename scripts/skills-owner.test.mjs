@@ -30,9 +30,17 @@ for(const name of Object.keys(policies))test(`Claude ${name} delivery requires i
 
 test('text owner sends the scenario reply verbatim and never infers its outcome',async()=>{
  const {textReply,validateReplies}=await import('./skills-owner.mjs');
- const expected=[{id:'idea',stage:'idea',role:'approval',summary:['Что'],question:'Утверждаем и начинаем Research?',reply:'принимаю',intent:'agree',asksStart:true,outcome:{approval:true,startNext:true}}];
+ const expected=[{id:'idea',stage:'idea',role:'approval',summary:['Что'],question:'Утверждаем и начинаем Research?',reply:'принимаю',intent:'agree',asksStart:true,outcome:{approval:true,startNext:true},response:['Утверждение записал.']}];
  validateReplies(expected);
  assert.equal(textReply({expectedReplies:expected},'Что: версия.\nУтверждаем и начинаем Research?',0),'принимаю');
  assert.throws(()=>textReply({expectedReplies:expected},'Другой вопрос?',0),/question|summary/);
  assert.throws(()=>validateReplies([{...expected[0],outcome:undefined}]),/outcome/);
+});
+
+test('last text reply must declare its allowed complete stage response before a run',async()=>{
+ const {validateReplies}=await import('./skills-owner.mjs');
+ const reply={id:'last',stage:'idea',role:'approval',summary:['Версия'],question:'Утверждаем?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false}};
+ assert.throws(()=>validateReplies([reply]),/response/);
+ for(const response of [[],[''],['   '],'Записал.'])assert.throws(()=>validateReplies([{...reply,response}]),/response/);
+ validateReplies([{...reply,response:['Утверждение записал.']}]);
 });

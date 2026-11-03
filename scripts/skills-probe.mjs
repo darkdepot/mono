@@ -5,7 +5,7 @@ import { auditRows, parentTurns, completedTrace } from './skills-audit.mjs';
 import { MissingEvidence } from './skills-boundary.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 
-import { validateReplies, textReply, isOwnerWindow } from './skills-owner.mjs';
+import { validateReplies, textReply, isOwnerWindow, checkStageResponse } from './skills-owner.mjs';
 
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 export const visibleText = text => typeof text === 'string' && text.replace(/[\s\p{Cf}\p{Variation_Selector}]/gu, '').length > 0;
@@ -105,18 +105,20 @@ export function textExchanges(host, rows, expectedReplies, {startLine=0}={}) {
   }
   let cursor=-1;
   for (const [index,expected] of expectedReplies.entries()) {
-    const turn=turns.find(t=>t.line>cursor && (t.question.endsWith('?')||t.reply!==undefined));
+    const turn=turns.find(t=>t.line>cursor);
     if (!turn) throw new Error(`last stage message missing for ${expected.id}`);
     textReply({expectedReplies},turn.text,index);
     if (turn.reply===undefined) throw new Error(`actual owner reply missing for ${expected.id}`);
     if (turn.reply!==expected.reply) throw new Error(`actual owner reply differs from scenario for ${expected.id}`);
     const response=turns.find(t=>t.line>turn.replyLine);
     if (!response) throw new Error(`stage did not continue after ${expected.id}`);
+    if (expected.response!==undefined) checkStageResponse(expected,response.text);
     if (expected.intent==='unclear'&&!response.text.includes('?')) throw new Error(`stage did not clarify ${expected.id}`);
     if (expected.intent==='correction'&&!response.text.includes(expected.correction.description)) throw new Error(`stage did not name correction for ${expected.id}`);
     exchanges.push({...turn,expected,response});cursor=turn.replyLine;
   }
-  if(turns.some(t=>t.line>cursor&&t.reply!==undefined))throw new Error('unexpected owner exchange without scenario policy');
+  const trailing=turns.filter(t=>t.line>cursor);
+  if(trailing.length!==1||trailing[0].reply!==undefined)throw new Error('unexpected trailing stage turn or owner exchange without scenario policy');
   return exchanges;
 }
 export function checkEndings(exchanges) {

@@ -139,10 +139,10 @@ export function checkTrace({ host, trace, expectedWindows, expectedReplies, rule
 }
 // Shared with the probe and record verifier; expected words/outcomes stay in the
 // scenario. No approval is inferred from a Russian phrase or a model's verdict.
-function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase,endLine,stageStartLine}) {
+function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase,stageStartLine}) {
   const checks=[],exchanges=[];
   let rows;
-  try{({rows}=traceRows(trace,host,{endLine}));}catch(error){return {host,trace,status:'unverified',windows:[],checks,reason:error.message};}
+  try{({rows}=traceRows(trace,host));}catch(error){return {host,trace,status:'unverified',windows:[],checks,reason:error.message};}
   try {
     validateReplies(expectedReplies);
     if (expectedWindows?.length) throw new Error('scenario must choose text replies or windows');

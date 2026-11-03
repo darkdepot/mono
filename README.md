@@ -1648,7 +1648,9 @@ with `node scripts/skills-trace.mjs <request.json>`. Deterministic scenario poli
 answer windows; a separate tool-free persona answers explicit free questions.
 The opt-in `expectedReplies` format in [skill QA](references/qa-skills.md#ответы-словами)
 also sends literal text replies after completed parent turns. Expected approval/start
-outcomes are fixed in scenario data. Native replies, exact approved versions and
+outcomes and complete allowed final stage responses are fixed in scenario data.
+Unlisted trailing questions, start offers and extra completed turns fail.
+Native replies, exact approved versions and
 named corrections are checked against fresh records; any window in a text scenario
 or identical endings across its stage chain fail. The current window catalog and
 owner-dialog rules stay in place until T2. Local text fixtures exercise both adapters

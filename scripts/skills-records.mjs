@@ -403,7 +403,7 @@ export function verifyRecords(request){
  try{
   const violation=runViolations(traces,request);if(violation)return violation;
   const load=(source,dump)=>{
-   const full=nativeRecords(source.host,source.trace),data=nativeRecords(source.host,source.trace,source.endLine);
+   const full=nativeRecords(source.host,source.trace),data=nativeRecords(source.host,source.trace,!dump&&(source.expectedReplies??request.expectedReplies)?undefined:source.endLine);
    data.sent=source.sent;
    if(dump&&full.calls.some(c=>isWrite(c.name)))throw new Error('dump attempted an external write');
    if(source.endLine!==undefined&&full.calls.some(c=>c.line>source.endLine&&isWrite(c.name)))throw new Error('write after scenario terminal');

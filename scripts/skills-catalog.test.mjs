@@ -663,7 +663,7 @@ for(const repeated of [false,true])test(`text catalog and suite preserve predete
  const f=fixture(t),index=json(path.join(f.catalogDir,'index.json'));
  for(const stage of index.stages){
   const file=path.join(f.catalogDir,stage.scenarios.find(p=>p.includes('/'+stage.main+'/'))),scenario=json(file);
-  for(const host of ['claude','codex'])scenario.hosts[host]={expectedReplies:[{id:stage.id,stage:stage.id,role:stage.id==='research'||stage.id==='handoff'?'transition':'approval',asksStart:false,summary:['Версия'],question:repeated?'Продолжим?':stage.id+'?',reply:stage.id==='research'||stage.id==='handoff'?'нет':'принимаю',intent:stage.id==='research'||stage.id==='handoff'?'refuse':'agree',outcome:{approval:stage.id!=='research'&&stage.id!=='handoff',startNext:false}}]};
+  for(const host of ['claude','codex'])scenario.hosts[host]={expectedReplies:[{id:stage.id,stage:stage.id,role:stage.id==='research'||stage.id==='handoff'?'transition':'approval',asksStart:false,summary:['Версия'],question:repeated?'Продолжим?':stage.id+'?',reply:stage.id==='research'||stage.id==='handoff'?'нет':'принимаю',intent:stage.id==='research'||stage.id==='handoff'?'refuse':'agree',outcome:{approval:stage.id!=='research'&&stage.id!=='handoff',startNext:false},response:['Записал.']}]};
   fs.writeFileSync(file,JSON.stringify(scenario));
  }
  write(path.join(f.dir,'skills/idea/SKILL.md'),'text behavior\n');f.commit();

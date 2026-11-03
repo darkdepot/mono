@@ -329,7 +329,7 @@ for(const host of ['claude','codex'])test(`${host}: text probe CLI checks ordina
  const user=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
  const terminal=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
  const rows=[assistant('Версия.\nПринимаем?'),terminal,user('согласен'),assistant('Записал.'),terminal],trace=save('text.jsonl',rows.map(JSON.stringify).join('\n')+'\n');
- const expectedReplies=[{id:'idea',stage:'idea',role:'approval',asksStart:false,summary:['Версия.'],question:'Принимаем?',reply:'согласен',intent:'agree',outcome:{approval:true,startNext:false}}];
+ const expectedReplies=[{id:'idea',stage:'idea',role:'approval',asksStart:false,summary:['Версия.'],question:'Принимаем?',reply:'согласен',intent:'agree',outcome:{approval:true,startNext:false},response:['Записал.']}];
  const request=save('request.json',{host,trace,expectedReplies}),run=()=>spawnSync(process.execPath,['scripts/skills-probe.mjs','--text',request],{encoding:'utf8'});
  assert.equal(run().status,0,run().stdout);
  const call=host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id:'window',name:'AskUserQuestion',input:{questions:[]}}]}}:{type:'response_item',payload:{type:'function_call',name:'request_user_input_async',call_id:'window',arguments:'{"questions":[]}'}};
@@ -338,11 +338,34 @@ for(const host of ['claude','codex'])test(`${host}: text probe CLI checks ordina
 
 for(const mode of ['unexpected','unfinished'])test(`Codex text probe rejects ${mode} native continuation`,t=>{
  const save=scratch(t),a=text=>({type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}}),u=text=>({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}}),end={type:'event_msg',payload:{type:'task_complete'}};
- const expectedReplies=[{id:'one',stage:'idea',role:'approval',asksStart:false,summary:['Версия'],question:'Принимаем?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:false}},{id:'two',stage:'discovery',role:'approval',asksStart:false,summary:['PRD'],question:'Утверждаем?',reply:'да',intent:'agree',outcome:{approval:true,startNext:false}}];
+ const expectedReplies=[{id:'one',stage:'idea',role:'approval',asksStart:false,summary:['Версия'],question:'Принимаем?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:false}},{id:'two',stage:'discovery',role:'approval',asksStart:false,summary:['PRD'],question:'Утверждаем?',reply:'да',intent:'agree',outcome:{approval:true,startNext:false},response:['Записал.']}];
  const rows=[a('Версия\nПринимаем?'),end,u('принимаю'),a('PRD\nУтверждаем?'),end,u('да'),a('Записал.'),end];
  if(mode==='unexpected')rows.splice(3,0,a('Чужой вопрос?'),end,u('другой ответ'));
  else rows.push(a('Работа без завершения.'));
  const trace=save('trace.jsonl',rows.map(JSON.stringify).join('\n')+'\n'),request=save('request.json',{host:'codex',trace,expectedReplies});
  const result=spawnSync(process.execPath,['scripts/skills-probe.mjs','--text',request],{encoding:'utf8'});
  assert.equal(result.status,mode==='unexpected'?1:2,result.stdout);
+});
+
+for(const host of ['claude','codex'])for(const sample of JSON.parse(fs.readFileSync('scripts/test-fixtures/skills-text-responses.json')))test(`${host}: declared final stage response ${sample.id}`,async t=>{
+ const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs'),save=scratch(t);
+ const a=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const u=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const end=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const trace=save('response.jsonl',[a('Версия\nУтверждаем?'),end,u(sample.reply),a(sample.actual),end].map(JSON.stringify).join('\n')+'\n');
+ const expectedReplies=[{id:'last',stage:'idea',role:'approval',summary:['Версия'],question:'Утверждаем?',reply:sample.reply,intent:sample.intent,asksStart:false,outcome:{approval:sample.intent==='agree',startNext:false},response:sample.response}];
+ for(const check of [probeText,checkTrace])assert.equal(check({host,trace,expectedReplies}).status,sample.status,`${sample.id}: ${check.name}`);
+});
+
+for(const host of ['claude','codex'])for(const placement of ['before-offer','between-replies','after-response'])test(`${host}: no completed turn is skipped ${placement}`,async t=>{
+ const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs'),save=scratch(t);
+ const a=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const u=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const end=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const expected={id:'one',stage:'idea',role:'approval',summary:['Версия'],question:'Утверждаем?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false}};
+ const expectedReplies=[expected,{...expected,id:'two',response:['Записал.','Start Research?']}];
+ const rows=[a('Версия\nУтверждаем?'),end,u('принимаю'),a('Версия\nУтверждаем?'),end,u('принимаю'),a('Записал.'),end];
+ const cut=rows.length;rows.splice(placement==='before-offer'?0:placement==='between-replies'?3:rows.length,0,a('Start Research?'),end);
+ const trace=save('extra-turn.jsonl',rows.map(JSON.stringify).join('\n')+'\n');
+ for(const check of [probeText,checkTrace])assert.equal(check({host,trace,expectedReplies,endLine:cut}).status,'failed',check.name);
 });

@@ -460,18 +460,30 @@ for(const host of ['claude','codex'])for(const policy of ['discuss','empty','ref
 for(const host of ['claude','codex'])for(const [intent,reply] of Object.entries({agree:'принимаю',correction:'да, только добавь вопрос про Codex',question:'а почему без Design?',continuation:'И ещё о колонке',unclear:'ну не знаю',refuse:'нет',defer:'да, но позже'}))test(`${host}: text driver sends ${intent} at a real turn boundary`,async t=>{
  const request=setup(t,host,'text');
  request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),intent];
- request.scenario={prompt:'Run text',brief:'Колонка Источник.',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Утверждаем и начинаем Research?',reply,intent,outcome:{approval:['agree','correction','defer'].includes(intent),startNext:['agree','correction'].includes(intent)},...(intent==='correction'?{correction:{description:'Добавлен вопрос про Codex.',before:'Источник.',after:'Источник. Вопрос про Codex.'}}:{})}]};
+ request.scenario={prompt:'Run text',brief:'Колонка Источник.',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Утверждаем и начинаем Research?',reply,intent,outcome:{approval:['agree','correction','defer'].includes(intent),startNext:['agree','correction'].includes(intent)},response:[intent==='unclear'?'Что смущает?':intent==='correction'?'Добавлен вопрос про Codex.':'Утверждение записал.'],...(intent==='correction'?{correction:{description:'Добавлен вопрос про Codex.',before:'Источник.',after:'Источник. Вопрос про Codex.'}}:{})}]};
  const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies[0].reply,reply);assert.equal(r.replies[0].received,true);
 });
 
 for(const host of ['claude','codex'])test(`${host}: text driver rejects a window even when the final question looks valid`,async t=>{
  const request=setup(t,host,'text');request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'window'];
- request.scenario={prompt:'Run text',brief:'Источник',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true}}]};
+ request.scenario={prompt:'Run text',brief:'Источник',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true},response:['Утверждение записал.']}]};
  const r=await runScenario(request);assert.equal(r.status,'failed');assert.match(r.reason,/window/);
 });
 
 for(const host of ['claude','codex'])test(`${host}: a sent text reply without native delivery is unverified`,async t=>{
  const request=setup(t,host,'text');request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'drop-reply'];
- request.scenario={prompt:'Run text',brief:'Источник',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true}}]};
+ request.scenario={prompt:'Run text',brief:'Источник',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true},response:['Утверждение записал.']}]};
  const r=await runScenario(request);assert.equal(r.status,'unverified');assert.equal(r.replies[0].received,false);
+});
+
+for(const host of ['claude','codex'])for(const sample of JSON.parse(fs.readFileSync('scripts/test-fixtures/skills-text-responses.json')))test(`${host}: driver enforces declared response ${sample.id}`,async t=>{
+ const request=setup(t,host,'text');request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),sample.id];
+ request.scenario={prompt:'Run text',allowedTools:['*'],expectedReplies:[{id:'last',stage:'idea',role:'approval',summary:['Что:'],question:'Research?',reply:sample.reply,intent:sample.intent,asksStart:false,outcome:{approval:sample.intent==='agree',startNext:false},response:sample.response}]};
+ const result=await runScenario(request);assert.equal(result.status,sample.status,JSON.stringify(result));
+});
+
+for(const host of ['claude','codex'])test(`${host}: driver cannot truncate an extra completed stage response`,async t=>{
+ const request=setup(t,host,'text');request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'extra-response'];
+ request.scenario={prompt:'Run text',allowedTools:['*'],expectedReplies:[{id:'last',stage:'idea',role:'approval',summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Утверждение записал.','Start Research?']}]};
+ const result=await runScenario(request);assert.equal(result.status,'failed',JSON.stringify(result));
 });
