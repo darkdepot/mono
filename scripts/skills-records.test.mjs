@@ -964,6 +964,43 @@ for(const host of ['claude','codex'])test(`${host}: Research authorizes only Dis
  f.events.splice(3,2);assert.equal(f.check().status,'passed',f.check().reason);
 });
 
+for(const type of ['function_call','custom_tool_call'])for(const field of ['status','state'])test(`text Codex literal exec ${type} ${field} preserves Discovery start authority`,t=>{
+ const f=textFixture(t,'codex'),question='Начнём Discovery?',input={id:projectId,[field]:field==='state'?{name:'Discovery'}:'Discovery'};
+ Object.assign(f.expected,{stage:'research',role:'transition',question,outcome:{approval:false,startNext:true},response:['Начинаю Discovery.']});
+ f.project.status='Discovery';f.save('project.json',f.project);f.page('comments','comments',[]);f.request.expectedRecords=[{type:'project'},{forbidden:'mono-test: approved'}];
+ f.events.splice(0,f.events.length,f.assistant(f.draft+'\n'+question),f.terminal,f.user('принимаю'),f.call('start','mcp__monotest__save_project',input),f.result('start',f.project),f.assistant('Начинаю Discovery.'));
+ assert.equal(f.check().status,'passed','direct start control');
+ const literal=`const r = await tools.mcp__monotest__save_project(${JSON.stringify(input)}); text(r);`;
+ f.events[3]={type:'response_item',payload:{type,name:'exec',call_id:'start',[type==='function_call'?'arguments':'input']:literal}};
+ f.events[4]={type:'response_item',payload:{type:type==='function_call'?'function_call_output':'custom_tool_call_output',call_id:'start',output:JSON.stringify(f.project)}};
+ assert.equal(f.check().status,'passed','same start through supported literal route');
+ Object.assign(f.expected,{intent:'defer',reply:'да, но позже',outcome:{approval:false,startNext:false}});f.events[2]=f.user(f.expected.reply);
+ const rejected=f.check();assert.equal(rejected.status,'failed');assert.match(rejected.reason,/start-next-stage without scenario authority/);
+ f.events[3]=f.call('start','mcp__monotest__save_project',input);f.events[4]=f.result('start',f.project);
+ assert.equal(f.check().status,'failed','deferred direct start control');
+});
+
+for(const host of ['claude','codex'])test(`${host}: text child scout stays audited without inheriting the owner conversation`,async t=>{
+ const f=textFixture(t,host),trace=path.join(f.dir,'scout.jsonl');assert.equal(f.check().status,'passed');
+ const write=rows=>fs.writeFileSync(trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
+ write([f.call('scout-read','mcp__monotest__get_document',{id:'doc'}),f.result('scout-read',{id:'doc',content:f.approved}),f.assistant('Scout findings: the source column is missing.'),f.terminal]);
+ f.request.additionalTraces=[{host,trace}];assert.equal(f.check().status,'passed','read-only scout is not an owner conversation');
+ const bindingsFile=path.join(f.dir,'bindings.json');fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings}));
+ const wrapped=await verifyScenarioRecords({run:{trace:f.request.trace,auditedTraces:[f.request.trace,trace]},runRequest:{host,cwd:f.dir,context:{skillPrefix:'mono',projectName:f.project.name},scenario:{expectedReplies:f.request.expectedReplies},mcpServers:{monotest:{url:'test'}}},scenario:{next:'research',expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,'unused'),bindingsFile},async()=>({status:'passed',trace:f.request.dumpTrace,dumpDir:f.dumpDir,auditedTraces:[f.request.dumpTrace]}));
+ assert.equal(wrapped.status,'passed',wrapped.reason);
+ f.request.additionalTraces[0].expectedReplies=f.request.expectedReplies;
+ assert.equal(f.check().status,'failed','source-local expectations still govern that source');delete f.request.additionalTraces[0].expectedReplies;
+ write([f.call('next','Skill',{skill:f.request.nextSkill}),f.terminal]);
+ assert.equal(f.check().status,'failed','a scout without its own expectations cannot authorize a stage start');
+ write([f.call('transition','mcp__monotest__save_project',{id:projectId,status:'Research'}),f.result('transition',{...f.project,status:'Research'}),f.terminal]);
+ const transition=f.check();assert.equal(transition.status,'failed');assert.match(transition.reason,/start-next-stage without scenario authority/);
+ write([f.assistant('Incomplete scout')]);assert.notEqual(f.check().status,'passed','child terminal still required');
+ write([f.call('foreign','mcp__linear__save_project',{id:'foreign',status:'Discovery'}),f.result('foreign',{}),f.terminal]);
+ assert.equal(f.check().status,'failed','child foreign writes still forbidden');
+ const window=host==='claude'?'AskUserQuestion':'request_user_input';write([f.call('window',window,{}),f.result('window',{}),f.terminal]);
+ assert.equal(f.check().status,'failed','child window still forbidden in text scenario');
+});
+
 for(const mode of ['wrong-triple','wrong-question','missing-owner','wrong-owner-words','owner-after-delegation'])test(`text Idea refuses broken relay: ${mode}`,t=>{
  const f=textIdeaFixture(t,true),binding=f.request.approvalBindings[1];
  if(mode==='wrong-triple')binding.ownerEvidence.text+=' invented';

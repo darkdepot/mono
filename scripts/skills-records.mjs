@@ -13,7 +13,7 @@ import { auditRows } from './skills-audit.mjs';
 import { isWrite, MissingEvidence } from './skills-boundary.mjs';
 import { unwrap } from './skills-proof.mjs';
 import { runScenario } from './skills-run.mjs';
-import { nativeRecords, resultFor } from './skills-record-data.mjs';
+import { nativeRecords, resultFor, callInput } from './skills-record-data.mjs';
 import { windowRole, correctedVersion, isOwnerWindow } from './skills-owner.mjs';
 import { latestApproval, approvalBlocks } from './idea-gate.mjs';
 
@@ -409,13 +409,13 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
 
 export function verifyRecords(request){
  const gateResults=[];
- const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,stageStartLine:request.stageStartLine,sent:request.sent},...(request.additionalTraces??[])];
+ const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,stageStartLine:request.stageStartLine,sent:request.sent,expectedReplies:request.expectedReplies},...(request.additionalTraces??[])];
  const dumpTraces=[...(request.dumpTrace?[{host:request.host,trace:request.dumpTrace}]:[]),...(request.dumpAdditionalTraces??[])];
  const traces=[...scenarioTraces,...dumpTraces];
  try{
   const violation=runViolations(traces,request);if(violation)return violation;
   const load=(source,dump)=>{
-   const full=nativeRecords(source.host,source.trace),data=nativeRecords(source.host,source.trace,!dump&&(source.expectedReplies??request.expectedReplies)?undefined:source.endLine);
+   const full=nativeRecords(source.host,source.trace),data=nativeRecords(source.host,source.trace,!dump&&source.expectedReplies?undefined:source.endLine);
    data.sent=source.sent;
    if(dump&&full.calls.some(c=>isWrite(c.name)))throw new Error('dump attempted an external write');
    if(source.endLine!==undefined&&full.calls.some(c=>c.line>source.endLine&&isWrite(c.name)))throw new Error('write after scenario terminal');
@@ -424,9 +424,9 @@ export function verifyRecords(request){
    if(data.calls.some(c=>c.line>data.terminal.line&&isWrite(c.name)))throw new Error('write after scenario terminal');
    if(data.calls.some(c=>c.line>data.terminal.line))missing('call after successful trace terminal');
    let previous=-Infinity;for(const row of data.rows)if(row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp)||stamp<previous)missing('invalid or reversed native trace time order');previous=stamp;}
-   data.expectedReplies=dump?undefined:source.expectedReplies??request.expectedReplies;
+   data.expectedReplies=dump?undefined:source.expectedReplies;
+   if(!dump&&(request.expectedReplies||source.expectedReplies)&&data.audit.calls.some(c=>isOwnerWindow(c.name)))throw new Error('stage called a window in text scenario');
    if(data.expectedReplies) {
-    if(data.audit.calls.some(c=>isOwnerWindow(c.name)))throw new Error('stage called a window in text scenario');
     data.exchanges=textExchanges(source.host,data.rows,data.expectedReplies,{startLine:source.stageStartLine});
    }
    return data;
@@ -435,22 +435,23 @@ export function verifyRecords(request){
   request={...request,scenarioData:scenarios};
   checkEndings(scenarios.flatMap(d=>d.exchanges??[]));
   const stageStarts={idea:['Research'],research:['Discovery'],discovery:['Design','Tech Evaluation','Handoff'],design:['Tech Evaluation','Handoff'],'tech-evaluation':['Handoff'],handoff:['Delivery']};
-  for(const source of scenarios)if(source.expectedReplies) {
+  for(const source of scenarios)if(source.expectedReplies||request.expectedReplies) {
    const starts=[];
    for(const call of source.audit.calls) {
-    const status=call.input?.state??call.input?.status;
-    const next=(call.name==='Skill'&&request.nextSkill&&call.input?.skill===request.nextSkill)||(['Agent','Task'].includes(call.name)&&request.nextAgent&&call.input?.subagent_type===request.nextAgent);
-    const stage=source.expectedReplies[0].stage;
+    const input=source.calls.includes(call)?callInput(source.host,call):call.input;
+    const status=input?.state??input?.status;
+    const next=(call.name==='Skill'&&request.nextSkill&&input?.skill===request.nextSkill)||(['Agent','Task'].includes(call.name)&&request.nextAgent&&input?.subagent_type===request.nextAgent);
+    const stage=(source.expectedReplies??request.expectedReplies)[0].stage;
     const transition=/__(?:save|create)_project$/.test(call.name)&&stageStarts[stage].includes(typeof status==='string'?status:status?.name);
-    const workStart=recordLines(bodyOf(call.input)??'').some(line=>line.trim().startsWith('mono-package: start '));
+    const workStart=recordLines(bodyOf(input)??'').some(line=>line.trim().startsWith('mono-package: start '));
     if(!next&&!transition&&!workStart)continue;
     const invocation=call.event.type==='event_msg'?call.approvalInvocationLine:call.line;
     if(!Number.isInteger(invocation))missing('start invocation not proved by native trace');
-    const e=source.exchanges.filter(e=>e.replyLine<invocation).at(-1);
+    const e=source.exchanges?.filter(e=>e.replyLine<invocation).at(-1);
     if(!e?.expected.outcome.startNext)throw new Error('start-next-stage without scenario authority');
     starts.push({invocation,exchange:e});
    }
-   for(const e of source.exchanges)if(e.expected.outcome.startNext&&!starts.some(s=>s.exchange===e))throw new Error('expected start-next-stage missing after actual reply');
+   for(const e of source.exchanges??[])if(e.expected.outcome.startNext&&!starts.some(s=>s.exchange===e))throw new Error('expected start-next-stage missing after actual reply');
   }
   let seedEndLine=0;
   if(request.seedExpected||request.seedEndLine!==undefined){
