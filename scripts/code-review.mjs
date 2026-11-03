@@ -16,7 +16,9 @@ function exact(value, keys) {
 function git(worktree, args) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0' });
-  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', ...args],
+  const [command, ...rest] = args;
+  const readOptions = ['diff', 'show'].includes(command) ? ['--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--submodule=short'] : [];
+  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', command, ...readOptions, ...rest],
     { cwd: worktree, env, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 }
 function treeIdentity(worktree) {
@@ -93,7 +95,8 @@ export function scanSecrets(diff, { file = null, patch = true } = {}) {
     if (SECRET_PATTERNS.some(pattern => pattern.test(value)) && !SECRET_FIXTURES.get(file)?.has(digest(value))) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped context; value withheld' });
     if (!source.startsWith('-')) line++;
   }
-  if (!patch && !matches.length && ASSIGNMENT_SECRET.test(diff.split('\n').filter(value => !SECRET_FIXTURES.get(file)?.has(digest(value))).join('\n')))
+  if (!patch && [...diff.split('\n').filter(value => !SECRET_FIXTURES.get(file)?.has(digest(value))).join('\n')
+    .matchAll(new RegExp(ASSIGNMENT_SECRET, 'gi'))].some(match => match[0].includes('\n')))
     matches.push({ file, line: 0, weight: 'P0', reason: 'credential-shaped multiline context; value withheld' });
   return matches;
 }
@@ -197,10 +200,10 @@ function failedAnswer(value) {
     const matches = scanSecrets(line, { patch: false });
     secretMatches += matches.length; return matches.length ? '[credential-shaped line withheld]' : line;
   }).join('\n');
-  const fullMatches = scanSecrets(raw, { patch: false });
+  const remaining = scanSecrets(redacted, { patch: false });
   const safe = raw.includes('PRIVATE KEY-----') ? '[private-key answer withheld]'
-    : !secretMatches && fullMatches.length ? '[credential-shaped answer withheld]' : redacted;
-  secretMatches = Math.max(secretMatches, fullMatches.length);
+    : remaining.length ? '[credential-shaped answer withheld]' : redacted;
+  secretMatches += remaining.length;
   return { text: Buffer.from(safe).subarray(0, 8188).toString('utf8'), truncated: Buffer.byteLength(safe) > 8188, secretMatches };
 }
 export function subscriptionStatus(engine, result) {

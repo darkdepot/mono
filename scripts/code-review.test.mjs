@@ -98,6 +98,57 @@ test('head or tree mutation invalidates response; later finding provenance comes
  const first=await runReviewRound(f.request,responder());fs.writeFileSync(path.join(f.worktree,'input.mjs'),'export function value(n) { return n+1; }\n');f.git('add','.');f.git('commit','-qm','fix');
  const second=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:first},responder({findings:[sample]}));assert.equal(second.findings[0].afterFirstRound,true);
 });
+test('host Git reads never execute external diff or textconv helpers, including rounds two and three provenance',async t=>{
+ for(const driver of ['external','textconv'])await t.test(driver,async t=>{
+  const f=fixture(t),tools=fs.mkdtempSync(path.join(os.tmpdir(),'mono-host-git-'));
+  t.after(()=>fs.rmSync(tools,{recursive:true,force:true}));
+  const marker=path.join(f.worktree,'unexpected-helper-write'),helper=path.join(tools,'helper');
+  fs.writeFileSync(helper,`#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)},'called');\n`,{mode:0o700});
+  if(driver==='textconv'){
+   fs.writeFileSync(path.join(f.worktree,'.git/info/attributes'),'input.mjs diff=probe\n');
+   f.git('config','diff.probe.textconv',helper);
+  }else f.git('config','diff.external',helper);
+  // Positive control: this repository really has an executable diff driver.
+  f.git('diff',f.request.base,f.request.head,'--','input.mjs');assert.ok(fs.existsSync(marker));fs.unlinkSync(marker);
+  let record=await runReviewRound(f.request,responder());assert.equal(record.outcome,'clean');
+  for(const round of [2,3]){
+   fs.appendFileSync(path.join(f.worktree,'input.mjs'),`// round ${round}\n`);f.git('add','.');f.git('commit','-qm',`head ${round}`);
+   const finding={...sample,anchor:`round ${round}`,line:round};
+   const verdicts=[...record.findings,finding].map((item,index)=>verdict({id:`F${index+1}`,origin:'pre-existing',mergeKey:findingKey(item)}));
+   const runner=responder({findings:[finding],verdicts});
+   record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:record},runner);
+   assert.equal(record.outcome,'clean');assert.equal(record.rounds.length,round);
+   assert.equal(fs.existsSync(marker),false,`${driver} ran on host in round ${round}`);
+   assert.equal(f.git('status','--porcelain=v1'),'');
+  }
+ });
+});
+test('failed answers redact multiline assignments even alongside other secrets, before retention',async t=>{
+ const f=fixture(t),password='x'.repeat(24),second='y'.repeat(25),token='ghp_'+'z'.repeat(36);
+ for(const bad of [`password =\n${password}\n${token}\n"access_token":\n"${second}"`,`${token}\nsecret =\n${second}\npassword =\n${password}`]){
+  const result=await runReviewRound(f.request,responder({responses:[review([sample]),bad,bad]}));
+  assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);
+  const failures=result.failures.filter(failure=>failure.role==='code-review-checker');assert.equal(failures.length,2);
+  for(const {answer} of failures){
+   for(const secret of [password,second,token])assert.ok(!answer.text.includes(secret),'failed answer retained a secret');
+   assert.equal(scanSecrets(answer.text,{patch:false}).length,0);assert.ok(Buffer.byteLength(answer.text)<=8192);assert.ok(answer.secretMatches>=2);
+  }
+  assert.ok(scanSecrets(bad,{patch:false}).some(match=>match.reason.includes('multiline')));
+ }
+});
+test('gitlink coverage cannot be hidden by repository or submodule ignore settings',async t=>{
+ const f=fixture(t);fs.mkdirSync(path.join(f.worktree,'module'));
+ f.git('update-index','--add','--cacheinfo',`160000,${f.request.base},module`);f.git('commit','-qm','module base');const base=f.git('rev-parse','HEAD');
+ f.git('update-index','--cacheinfo',`160000,${f.request.head},module`);f.git('commit','-qm','module head');const head=f.git('rev-parse','HEAD');
+ f.git('config','diff.ignoreSubmodules','all');f.git('config','submodule.module.ignore','all');
+ assert.equal(f.git('diff','--name-only',base,head),'');
+ const missing=responder({responses:[review([],[]),review([],[])]});
+ const result=await runReviewRound({...f.request,base,head},missing);
+ assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);assert.equal(missing.calls.length,2);
+ assert.match(missing.calls[0].prompt,/Subproject commit/);assert.match(missing.calls[1].prompt,/module/);
+ const covered=await runReviewRound({...f.request,base,head},responder({responses:[review([],['module'])]}));
+ assert.equal(covered.outcome,'clean');assert.deepEqual(covered.round.reviewedFiles,['module']);
+});
 test('secrets stop before launch; fixture exemption is exact, path-specific, covers removed secrets',async t=>{
  const secret='ghp_'+'a'.repeat(36);const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),`token = ${secret}\n`);f.git('add','.');f.git('commit','-qm','secret');
  const runner=responder(),result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.ok(!JSON.stringify(result).includes(secret));

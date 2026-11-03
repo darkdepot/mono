@@ -30,7 +30,9 @@ export function validateReviewDataset(dataset) {
 function git(cwd, args, extraEnv = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' });
-  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
+  const [command, ...rest] = args;
+  const readOptions = ['diff', 'show'].includes(command) ? ['--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--submodule=short'] : [];
+  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', command, ...readOptions, ...rest], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
 }
 export function materializeCleanControl(worktree, control) {
   need(control.file === 'CODE_REVIEW_EVAL_CONTROL.md' && nonempty(control.content), 'invalid clean control file');

@@ -8,3 +8,4 @@
 - Read repository rules from pinned Git blobs and scan header-shaped hunk lines, preventing host-file prefill and failed-answer redaction bypasses.
 - Retain rejected scope/risk flags until new checker evidence, require bound acceptance for reviewer/checker route changes, and keep old confirmed non-dangerous findings report-only at round three.
 - Screen every outgoing context source and redact failed answers, retain confirmed scope/risk flags, stop evaluation after its scored interrupted attempt, and isolate recorded fixtures from the native Codex catalog.
+- Disable host Git diff/textconv helpers on every review/evaluation read, redact mixed multiline secrets before retaining failed answers, and require coverage of gitlink updates despite submodule ignore settings.

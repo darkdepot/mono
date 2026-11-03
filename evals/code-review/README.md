@@ -92,3 +92,7 @@ startup rejects the run. Claude reports Read/Glob/Grep plus StructuredOutput
 (the schema response tool), with no MCP; denied worktree roots are refused up front.
 Reports include the actual role engines/models/families and observed tool surfaces.
 Failed role answers are secret-scanned and capped at 8 KiB per attempt.
+Mixed line secrets and multiline assignments are screened independently; retained
+answers are rescanned after line redaction. Host Git diff/show reads disable external
+diff and textconv. Submodule ignore settings cannot hide gitlink updates from the
+diff or required file coverage.
