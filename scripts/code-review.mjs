@@ -75,7 +75,7 @@ const SECRET_FIXTURES = new Map([
   ['scripts/delivery-runtime.test.mjs', new Set(['48bdd30a17a3a059408e9740b1ffb22fb2b06e1aa86c91986284bce523afbe40'])],
 ]);
 export function scanSecrets(diff) {
-  let file = null, line = 0; const matches = [];
+  let file = null, line = 0, inHunk = false; const matches = [];
   const patterns = [
     /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
     /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b/,
@@ -84,10 +84,11 @@ export function scanSecrets(diff) {
   ];
   const filename = value => value.replace(/^[ab]\//, '').replace(/^"[ab]\//, '').replace(/"$/, '');
   for (const source of diff.split('\n')) {
-    if (source.startsWith('--- ')) { file = filename(source.slice(4)); continue; }
-    if (source.startsWith('+++ ')) { if (source.slice(4) !== '/dev/null') file = filename(source.slice(4)); continue; }
-    const hunk = /^@@ .*\+(\d+)/.exec(source); if (hunk) { line = Number(hunk[1]); continue; }
-    if (source.startsWith('+') || source.startsWith('-')) {
+    if (source.startsWith('diff --git ')) { inHunk = false; file = null; continue; }
+    if (!inHunk && source.startsWith('--- ')) { file = filename(source.slice(4)); continue; }
+    if (!inHunk && source.startsWith('+++ ')) { if (source.slice(4) !== '/dev/null') file = filename(source.slice(4)); continue; }
+    const hunk = /^@@ .*\+(\d+)/.exec(source); if (hunk) { inHunk = true; line = Number(hunk[1]); continue; }
+    if (inHunk && (source.startsWith('+') || source.startsWith('-'))) {
       const value = source.slice(1);
       if (patterns.some(pattern => pattern.test(value)) && !SECRET_FIXTURES.get(file)?.has(digest(value))) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped diff content; value withheld' });
     }
@@ -302,7 +303,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const previous = record.rounds.at(-1)?.head;
     const files = number === 2 ? git(worktree, ['diff', '--name-only', '--no-renames', '-z', previous, head, '--']).split('\0').filter(Boolean) : allFiles;
     const scopeDiff = number === 2 ? git(worktree, ['diff', '--no-ext-diff', '--no-textconv', previous, head, '--']) : diff;
-    const rules = fs.existsSync(path.join(worktree, 'AGENTS.md')) ? fs.readFileSync(path.join(worktree, 'AGENTS.md'), 'utf8') : '';
+    const rules = git(worktree, ['ls-tree', head, '--', 'AGENTS.md']) ? git(worktree, ['show', `${head}:AGENTS.md`]) : '';
     const context = { worktree, head, base, contract, rules, round: number, scope: number === 2 ? 'fixes-and-open-findings' : 'full', files, diff: scopeDiff };
     const call = async (role, extra, parse) => {
       for (let attempt = 1; attempt <= 2; attempt++) {

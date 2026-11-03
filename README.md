@@ -1644,7 +1644,10 @@ origin relative to task base, merge key and scope/risk flags. Code adds whether
 the location changed after round one (±2 context lines), costs and failures.
 Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
 open unresolved findings block. Secret-shaped diff data stops all model calls,
-with an exact path/line fixture exception in code.
+with an exact path/line fixture exception in code. Headers are recognized only
+outside patch hunks, including during failed-answer redaction. Repository rules
+come from pinned Git blobs; the host never follows AGENTS.md symlinks into files
+outside the reviewed version.
 
 Outcome vocabulary is `clean`, `clean-with-successors`, `not-converged`,
 `not-reviewed`; this first slice emits no successor admission. It reports

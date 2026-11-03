@@ -5,3 +5,4 @@
 ### Fixed
 - Preserve Claude native login identity; isolate and probe Codex tools, record observed role boundaries/models, and refuse unreadable Claude worktrees before calls.
 - Use short checker IDs and retain redacted, bounded failed answers. Load exact pinned contracts in dataset v2 and record disputed danger/partial consequence decisions without changing recall denominators.
+- Read repository rules from pinned Git blobs and scan header-shaped hunk lines, preventing host-file prefill and failed-answer redaction bypasses.

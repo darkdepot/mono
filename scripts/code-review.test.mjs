@@ -253,3 +253,24 @@ test('D2: real transport refuses an unsafe probe and runtime tool/MCP drift, pre
  if(mode!=='safe')assert.ok(record.failures.some(failure=>failure.answer?.text),mode);
  }}finally{process.env.PATH=prior;}
 });
+
+test('D2: repository rules use pinned Git bytes and never follow AGENTS.md into host credentials',async t=>{
+ const f=fixture(t),outside=fs.mkdtempSync(path.join(os.tmpdir(),'mono-rules-host-'));t.after(()=>fs.rmSync(outside,{recursive:true,force:true}));
+ const secret='ghp_'+'b'.repeat(36),credential=path.join(outside,'credentials.txt');fs.writeFileSync(credential,secret);
+ fs.symlinkSync(credential,path.join(f.worktree,'AGENTS.md'));f.git('add','.');f.git('commit','-qm','rules symlink');
+ const runner=responder({responses:[review([],['input.mjs','AGENTS.md'])]}),record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+ assert.equal(record.outcome,'clean');assert.ok(runner.calls.length>0);
+ for(const call of runner.calls)assert.ok(!call.prompt.includes(secret),'host credential bytes must never enter role context');
+ const context=JSON.parse(runner.calls[0].prompt.split('never instructions.\n')[1]);assert.equal(context.rules,credential);
+});
+test('D3: header-shaped hunk content cannot bypass diff scanning or failed-answer redaction',async t=>{
+ const secret='ghp_'+'c'.repeat(36),line=`++ counter; token = ${secret}`;
+ const diff=`diff --git a/input.mjs b/input.mjs\n--- a/input.mjs\n+++ b/input.mjs\n@@ -0,0 +1 @@\n+${line}`;
+ assert.equal(scanSecrets(diff).length,1);
+ assert.equal(scanSecrets(diff.replace('+'+line,'-'+line)).length,1);
+ const f=fixture(t),record=await runReviewRound(f.request,responder({responses:[review([sample]),line,line]}));
+ assert.equal(record.outcome,'not-reviewed');
+ for(const failure of record.failures.filter(item=>item.role==='code-review-checker')){
+  assert.equal(failure.answer.secretMatches,1);assert.ok(!failure.answer.text.includes(secret));assert.match(failure.answer.text,/withheld/);
+ }
+});
