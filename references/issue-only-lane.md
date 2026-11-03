@@ -56,7 +56,7 @@ Create-then-approve intake alone writes markers: create a non-startable Issue,
 record verified owner approval of the full-contract fingerprint, authenticate
 comment author against ownerPrincipal, read back, write marker and issue-only
 label. Intake never activates delivery; mono:implement owns its check and move.
-The upstream pack keeps its own lane disabled with no repository owner principal;
+This repository opted in for its own one-PR work with its owner principal;
 consumers remain disabled until explicit repository opt-in.
 
 Resolver is pure: structure, freshness, eligibility and provenance-agreement,
