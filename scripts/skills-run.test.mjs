@@ -487,3 +487,9 @@ for(const host of ['claude','codex'])test(`${host}: driver cannot truncate an ex
  request.scenario={prompt:'Run text',allowedTools:['*'],expectedReplies:[{id:'last',stage:'idea',role:'approval',summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Утверждение записал.','Start Research?']}]};
  const result=await runScenario(request);assert.equal(result.status,'failed',JSON.stringify(result));
 });
+
+for(const host of ['claude','codex'])test(`${host}: driver rejects undeclared extra native owner reply`,async t=>{
+ const request=setup(t,host,'text');request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'extra-owner'];
+ request.scenario={prompt:'Run text',allowedTools:['*'],expectedReplies:[{id:'last',stage:'idea',role:'approval',summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Утверждение записал.']}]};
+ const result=await runScenario(request);assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.check.reason,/unexpected owner reply/);
+});

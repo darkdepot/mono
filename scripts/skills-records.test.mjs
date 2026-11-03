@@ -966,3 +966,7 @@ for(const host of ['claude','codex'])test(`${host}: record checker reads extra c
  f.events.push(f.terminal,f.assistant('Start Research?'));
  const result=f.check();assert.equal(result.status,'failed',result.reason);assert.match(result.reason,/trailing/);
 });
+
+for(const host of ['claude','codex'])test(`${host}: record checker rejects undeclared extra native owner reply`,t=>{
+ const f=textFixture(t,host);f.events.splice(3,0,f.user('Начинай Research'));const result=f.check();assert.equal(result.status,'failed');assert.match(result.reason,/unexpected owner reply/);
+});

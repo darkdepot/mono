@@ -1649,7 +1649,7 @@ answer windows; a separate tool-free persona answers explicit free questions.
 The opt-in `expectedReplies` format in [skill QA](references/qa-skills.md#ответы-словами)
 also sends literal text replies after completed parent turns. Expected approval/start
 outcomes and complete allowed final stage responses are fixed in scenario data.
-Unlisted trailing questions, start offers and extra completed turns fail.
+Unlisted trailing questions, start offers, extra owner replies and extra completed turns fail.
 Native replies, exact approved versions and
 named corrections are checked against fresh records; any window in a text scenario
 or identical endings across its stage chain fail. The current window catalog and

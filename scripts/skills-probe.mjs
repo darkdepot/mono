@@ -117,6 +117,11 @@ export function textExchanges(host, rows, expectedReplies, {startLine=0}={}) {
     if (expected.intent==='correction'&&!response.text.includes(expected.correction.description)) throw new Error(`stage did not name correction for ${expected.id}`);
     exchanges.push({...turn,expected,response});cursor=turn.replyLine;
   }
+  const replyLines=new Set(exchanges.map(e=>e.replyLine));
+  for(const row of rows.filter(r=>r.line>exchanges[0].line)){
+    const message=audit.proof({kind:'text-message',result:row.value});
+    if(message.status==='confirmed'&&message.role==='user'&&!replyLines.has(row.line))throw new Error('unexpected owner reply without scenario policy');
+  }
   const trailing=turns.filter(t=>t.line>cursor);
   if(trailing.length!==1||trailing[0].reply!==undefined)throw new Error('unexpected trailing stage turn or owner exchange without scenario policy');
   return exchanges;

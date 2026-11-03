@@ -369,3 +369,13 @@ for(const host of ['claude','codex'])for(const placement of ['before-offer','bet
  const trace=save('extra-turn.jsonl',rows.map(JSON.stringify).join('\n')+'\n');
  for(const check of [probeText,checkTrace])assert.equal(check({host,trace,expectedReplies,endLine:cut}).status,'failed',check.name);
 });
+
+for(const host of ['claude','codex'])test(`${host}: text checks reject undeclared extra native owner reply`,async t=>{
+ const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs'),save=scratch(t);
+ const a=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const u=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const end=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const expectedReplies=[{id:'one',stage:'idea',role:'approval',summary:['Версия'],question:'Принимаем?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Записал.']}];
+ const trace=save('extra-owner.jsonl',[a('Версия\nПринимаем?'),end,u('принимаю'),u('Начинай Research'),a('Записал.'),end].map(JSON.stringify).join('\n')+'\n');
+ for(const check of [probeText,checkTrace]){const result=check({host,trace,expectedReplies});assert.equal(result.status,'failed');assert.match(result.reason,/unexpected owner reply/);}
+});
