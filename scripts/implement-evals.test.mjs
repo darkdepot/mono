@@ -34,7 +34,7 @@ test('implement teaching fixture creates isolated Git repos with real green and 
       const context = JSON.parse(fs.readFileSync(path.join(repo,'fixture-context.json')));
       if (id !== 'projectless') {
         assert.deepEqual(context.seam, { package_kind: 'project-first', lifecycle_state_entity: 'project',
-          behavioral_oracle: null, risk_class: 'standard', approval_status: 'approved' });
+          behavioral_oracle: null, risk_class: null, approval_status: 'absent' });
         assert.equal(context.approval.status, 'approved', 'package approval is separate from resolver seam');
       }
       if (id === 'projectless') {

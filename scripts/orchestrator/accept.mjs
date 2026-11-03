@@ -26,13 +26,14 @@ function validatedAck(root, issue, attempt, outcome) {
   if (candidates.some(name => fs.statSync(name).mtimeMs > Date.now())) throw new Error("future-dated ack");
   const ack = candidates.length ? readJson(candidates[0]) : prior.ack;
   const gates = prior?.gates ?? entry.gates;
-  if (ack.issue !== issue || ack.phase !== "gate" || !Array.isArray(gates) || !gates.length || new Set(gates).size !== gates.length ||
+  if (ack.issue !== issue || ack.phase !== "gate") throw new Error("ack identity mismatch");
+  if (outcome !== "rejected" && (!Array.isArray(gates) || !gates.length || new Set(gates).size !== gates.length ||
       !Array.isArray(ack.gates) || !ack.gates.length || new Set(ack.gates.map(gate => gate.gate)).size !== ack.gates.length ||
-      ack.gates.some(gate => !gates.includes(gate.gate) || !["pass", "blocked"].includes(gate.status) || !gate.evidence?.trim())) throw new Error("invalid ack identity/gate coverage");
-  const passed = ack.status === "gates-passed" && ack.gates.length === gates.length && ack.gates.every(gate => gate.status === "pass");
-  const blocked = ack.status === "blocked" && ack.gates.some(gate => gate.status === "blocked");
+      ack.gates.some(gate => !gates.includes(gate.gate) || !["pass", "blocked"].includes(gate.status) || !gate.evidence?.trim()))) throw new Error("invalid ack identity/gate coverage");
+  const passed = ack.status === "gates-passed" && ack.gates?.length === gates?.length && ack.gates?.every(gate => gate.status === "pass");
+  const blocked = ack.status === "blocked" && ack.gates?.some(gate => gate.status === "blocked");
   outcome ??= passed ? "applied" : "blocked";
-  if (!["applied", "blocked", "rejected"].includes(outcome) || (!passed && !blocked) || (outcome === "applied" && !passed) || (outcome === "blocked" && !blocked)) throw new Error("ack outcome mismatch");
+  if (!["applied", "blocked", "rejected"].includes(outcome) || (outcome !== "rejected" && ((!passed && !blocked) || (outcome === "applied" && !passed) || (outcome === "blocked" && !blocked)))) throw new Error("ack outcome mismatch");
   if (!Array.isArray(entry.lifecycle_moves)) throw new Error("registry lifecycle moves missing");
   if (prior && (prior.issue !== issue || prior.attempt !== attempt || prior.outcome !== outcome || prior.ackDigest !== digest(ack) ||
       canonical(prior.ack) !== canonical(ack) || (outcome === "applied" && (!Array.isArray(prior.readback) || prior.readback.length !== entry.lifecycle_moves.length ||
