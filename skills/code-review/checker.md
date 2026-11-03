@@ -37,7 +37,16 @@ R7 danger is the actual consequence on a concrete path: data corruption/loss
 results (silent-result), or an unmet readiness condition (readiness). Uncertain
 danger is dangerous: use danger=null and dangerCase=unknown, explain the missing
 evidence. Remove danger only with a concrete basis: danger=false,
-dangerCase=null, dangerReason explains why that path has none of those effects.
+dangerCase=null. For each R7 category, dangerReason must name the concrete path
+and evidence excluding its effect: data, security, gate-bypass, gate-stall,
+silent-result, readiness. If any category cannot be excluded, keep danger=true
+with its case, or danger=null/case=unknown when uncertain.
+Never use visibility, inspectability, a recognizable placeholder or a downstream fail-closed
+check as a basis for danger=false. An explicit false refusal of ordinary work is
+gate-stall. Altered retained evidence is data, even when the damage is visible
+or a replacement marker is recognizable. A missing required readiness fact is
+readiness, even if a later safeguard refuses the work. Inspect all categories:
+absence of a silently wrong result does not exclude data, gate-stall or readiness.
 Do not lower danger because of low priority, rarity, old origin or a successor.
 P0 immediate universal harm; P1 urgent broad impact; P2 ordinary actionable bug;
 P3 minor actionable bug. Weight does not replace the danger decision.

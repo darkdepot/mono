@@ -7,6 +7,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runReviewRound, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus } from './code-review.mjs';
 import { requiredPairings, validateModels } from './runtime.mjs';
+import { scoreCheckerProbes } from './code-review-eval.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 let catalogBin, originalPath;
 before(()=>{
@@ -18,6 +19,7 @@ before(()=>{
 after(()=>{process.env.PATH=originalPath;fs.rmSync(catalogBin,{recursive:true,force:true});});
 const sample={class:'missing-validation',file:'input.mjs',anchor:'return value',line:1,title:'Invalid input is accepted',trigger:'value is negative',evidence:'input.mjs returns value without validation'};
 const transcripts=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/recorded-responses.json'),'utf8'));
+const dangerControls=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-checker-regressions.json'),'utf8'));
 const key=findingKey(sample);
 const verdict=(extra={})=>({id:'F1',outcome:'confirmed',weight:'P2',danger:false,dangerCase:null,dangerReason:'This diagnostic-only path has no data, security or gate effects.',origin:'introduced',mergeKey:key,outOfContract:false,riskRaised:false,reason:'Negative values pass through the changed public function.',closed:false,newEvidence:false,...extra});
 const review=(findings=[],reviewedFiles=['input.mjs'])=>({...transcripts.clean,findings,reviewedFiles});
@@ -40,6 +42,56 @@ test('AE1: completed covered clean first round stops without checker and prints 
  assert.equal(record.outcome,'clean');assert.equal(record.rounds.length,1);assert.equal(runner.calls.length,1);
  for(const field of ['Проверено:','Найдено:','Осталось:','Можно идти дальше'])assert.ok(formatReviewReport(record).includes(field));
  assert.equal(record.round.costs[0].usage.input_tokens,12);
+});
+test('C1: checker instructions forbid visible damage and downstream safeguards as danger exemptions within 4 KiB',()=>{
+ const prompt=fs.readFileSync(path.join(packRoot,'skills/code-review/checker.md'),'utf8');
+ assert.ok(Buffer.byteLength(prompt)<=4096);
+ for(const rule of ['visibility','inspectability','recognizable placeholder','downstream fail-closed','each R7 category'])assert.ok(prompt.includes(rule),rule);
+});
+test('C1: four recorded danger-removal shapes fail calibration; corrected controls block successors and report danger',async t=>{
+ assert.deepEqual(dangerControls.cases.map(item=>item.goldCase),['23','18','18','40']);
+ for(const item of dangerControls.cases)await t.test(item.id,async t=>{
+  const key=findingKey(item.finding),parse=value=>parseChecker({completed:true,verdicts:[value]},[{...item.finding,key}]).verdicts[0];
+  const expected=parse(item.correctedControl),observed=parse(item.observedVerdict);
+  const gold=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/cases.json'),'utf8')).cases.find(gold=>gold.id===item.goldCase);
+  assert.equal(expected.dangerCase,gold.dangerCase);
+  assert.equal(scoreCheckerProbes([expected],[observed]).releaseBlocked,true);
+  assert.equal(scoreCheckerProbes([expected],[expected]).releaseBlocked,false);
+  const f=fixture(t);let record;
+  for(let i=0;i<3;i++)record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[item.finding],verdicts:[item.correctedControl]}));
+  assert.equal(record.rounds.length,3);assert.equal(record.outcome,'not-converged');assert.deepEqual(record.successorKeys,[]);
+  assert.equal(record.findings[0].danger,true);assert.equal(record.findings[0].dangerCase,expected.dangerCase);
+  assert.match(formatReviewReport(record),/опасность/);assert.ok(!formatReviewReport(record).includes('неопасное'));
+ });
+});
+test('C3: native Claude streams retain init, fallback and modelUsage identities for either role and failures',async t=>{
+ const f=fixture(t),bin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-served-models-'));t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));
+ const modeFile=path.join(bin,'mode');fs.writeFileSync(modeFile,'success');
+ const fake=`#!${process.execPath}
+ const fs=require('node:fs');if(process.argv.includes('auth')){console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}));process.exit(0);}
+ let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{
+ const emit=o=>console.log(JSON.stringify(o));emit({type:'system',subtype:'init',model:'claude-opus-5',tools:['Read','Glob','Grep','StructuredOutput'],mcp_servers:[]});
+ emit({type:'system',subtype:'model_refusal_fallback',original_model:'claude-opus-5',fallback_model:'claude-opus-4-8'});
+ emit({type:'system',subtype:'model_refusal_fallback',original_model:'claude-opus-4-8',fallback_model:'claude-opus-fixture-final'});
+ if(fs.readFileSync(${JSON.stringify(modeFile)},'utf8')==='failure')process.exit(1);
+ emit({type:'result',subtype:'success',is_error:false,structured_output:input.includes('# Finding checker')?${JSON.stringify({completed:true,verdicts:[verdict()]})}:${JSON.stringify(review([sample]))},modelUsage:{'claude-opus-5':{},'claude-opus-4-8':{},'claude-opus-fixture-final':{},'claude-usage-only':{canonicalModel:'claude-canonical-observed'}}});});`;
+ const roles=resolveReviewRoles({},packRoot);
+ const codex=`#!${process.execPath}\nif(process.argv[2]==='debug'){console.log(JSON.stringify({models:[{slug:${JSON.stringify(roles['code-review'].model)},tool_mode:'code_mode_only',apply_patch_tool_type:'freeform',multi_agent_version:'v2'}]}));process.exit(0);}if(process.argv[2]==='login'){console.error('Logged in using ChatGPT');process.exit(0);}let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{const value=input.startsWith('Boundary audit')?{tools:['exec_command','write_stdin'],mcpServers:[]}:input.includes('# Finding checker')?${JSON.stringify({completed:true,verdicts:[verdict()]})}:${JSON.stringify(review([sample]))};console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(value)}}));console.log(JSON.stringify({type:'turn.completed'}));});`;
+ fs.writeFileSync(path.join(bin,'claude'),fake,{mode:0o700});fs.writeFileSync(path.join(bin,'codex'),codex,{mode:0o700});
+ const prior=process.env.PATH;process.env.PATH=bin+path.delimiter+prior;
+ const config={models:{roles:{'code-review':{engine:'claude',model:roles['code-review-checker'].model},'code-review-checker':{engine:'codex',model:roles['code-review'].model}}}};
+ const producer=requiredPairings(config,{packRoot,reviewerRole:'code-review'});config.models.pairingAccepted=producer.map(pair=>({...pair,by:'owner',date:'2026-11-04',linearDecision:'https://linear.app/example/issue/TEST-1#decision'}));
+ try{
+  for(const cfg of [{},config])for(const mode of ['success','failure']){fs.writeFileSync(modeFile,mode);
+   const record=await runReviewRound({...f.request,config:cfg});const boundary=record.costs.find(cost=>cost.role===(cfg===config?'code-review':'code-review-checker')).boundary;
+   assert.deepEqual(boundary.servedModels,mode==='failure'?['claude-opus-5','claude-opus-4-8','claude-opus-fixture-final']:['claude-opus-5','claude-opus-4-8','claude-opus-fixture-final','claude-usage-only','claude-canonical-observed']);
+   assert.ok(boundary.modelObservations.some(item=>item.source==='init'));
+   assert.ok(boundary.modelObservations.some(item=>item.source==='fallback.fallback_model'));
+   if(mode==='success')assert.ok(boundary.modelObservations.some(item=>item.source==='modelUsage.canonicalModel'));
+   for(const model of boundary.servedModels)assert.ok(formatReviewReport(record).includes(model));
+   assert.equal(record.outcome,mode==='failure'?'not-reviewed':'not-converged');
+  }
+ }finally{process.env.PATH=prior;}
 });
 test('AE4: two unreadable reviewer responses consume no round, never clean',async t=>{
  const runner=responder({responses:[...transcripts.unreadable]});const record=await runReviewRound(fixture(t).request,runner);

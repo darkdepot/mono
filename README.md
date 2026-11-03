@@ -1642,6 +1642,9 @@ only its evidence closes or reopens a key. Checker wire IDs are F1..Fn; code map
 them back to stable keys. Each failed answer is secret-scanned and capped at 8 KiB. It assigns P0-P3, R7 danger/case,
 origin relative to task base, merge key and scope/risk flags. Code adds whether
 the location changed after round one (±2 context lines), costs and failures.
+The checker must exclude every R7 category on the concrete path before removing
+danger. Visible damage, recognizable placeholders or downstream fail-closed
+checks do not excuse false gate refusals, altered evidence or missing readiness.
 Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
 confirmed ones stay report-only on round three; open unresolved findings block.
 Scope/risk flags persist across rounds for confirmed and rejected findings until
@@ -1677,7 +1680,8 @@ excluded. Codex gets a temporary auth-only CODEX_HOME and a native catalog with
 write/delegation tool selectors removed. Each launch probes its live tool list;
 unknown tools or MCP startup fail closed. Claude retains USER/LOGNAME for native
 login and reports its startup tool list; a tree under a denied credential directory
-is refused before any model call. Human reports name each engine, model, family
+is refused before any model call. Human reports name each engine, requested model,
+all observed served models (init, fallback events and modelUsage), family
 and observed boundary, including unknown observations. The [dataset instructions](evals/code-review/README.md) state the
 credential-read limitation and required live boundary tests.
 

@@ -1,6 +1,6 @@
 # Code review evaluation
 
-`cases.json` version 2 pins three task heads, bases, dataset versions and exact
+`cases.json` version 3 pins three task heads, bases, dataset versions and exact
 contract source blobs. The runner reads each pinned blob verbatim; authored
 summaries never enter model context or the contract digest. The repository is supplied by the host through
 an absolute `bundle` setting, never through a hardcoded local path. The bundle
@@ -30,7 +30,12 @@ remain in blindFinding's identity list and destroy an otherwise valid paid
 result. #41's claimed registration-after-resume order does not exist: acceptAmend
 registers pins first. A live retry requires reconciliation, already mandated by
 the pinned contract. Keep its historical slot visible, exclude it from eligible
-recall: 11/15 eligible, alongside nominal 12/16. These classifications and the
+recall. Version 3 additionally excludes #68: the observer-descendant exemption
+does not reach the old detached collector on documented separate CLI commands.
+See backup-switch.mjs:54–61,87 and collector.mjs:145–149,210, independently checked
+in host round 2's GPT-family danger adjudication item 5. A persistent exported-API
+controller is outside these inputs. Keep the historical slot and disputed danger
+visible; eligible totals are 10/14, alongside nominal 12/16. These classifications and the
 danger judgments were independently checked by the host. Round 1 reclassifies
 #156 and #80 as danger disputed: their matches and calibration errors are scored,
 but neither contributes to the danger veto. #156 has no pinned consumer of the
@@ -39,6 +44,17 @@ in macOS ps eww (runtime.mjs:147–152), with low confidence. #21 confirms the
 hardcoded field but only partially supports its consequence; no differing helper
 budget or field consumer is established. Evidence and the orchestrator decision
 are retained in the manifest. #17 and #41 are unchanged. Do not silently redefine the denominator.
+
+[Host round-2 enhancements](round2-enhancements.md) covers every eligible gold
+miss in that run, the partial matches, observed alternatives, inferred causes and
+concrete proposed strengthenings. Preserve the old v2 run/digest; v3 scoring is a
+new classification, not a rewrite of the measured inputs. The four checker
+danger removals (#18 twice, #23, #40) remain a release stop until host live
+recalibration. Visibility, inspectability, recognizable placeholders and later
+fail-closed safeguards do not negate an R7 category. `round2-checker-regressions.json`
+retains those observed verdicts separately from authored corrected controls.
+V3 records #18 as data loss in retained evidence and #40 as missing readiness;
+both stay dangerous. The stronger implementation-bypass claim for #40 is unproved.
 
 Match strictly only with BOTH the same code location and the same failure
 mechanism/trigger. A matching title or consequence is insufficient. Partial
@@ -91,6 +107,11 @@ probes its exposed tool list before reading the task. Any unexpected tool or MCP
 startup rejects the run. Claude reports Read/Glob/Grep plus StructuredOutput
 (the schema response tool), with no MCP; denied worktree roots are refused up front.
 Reports include the actual role engines/models/families and observed tool surfaces.
+Every observed served-model identity is retained with its stream source: init,
+refusal fallback, assistant message and modelUsage (including canonical names),
+also on failed attempts. Reports show the requested route and the observed model
+list separately; an init model cannot hide a later fallback. This records identity
+observations, not an inference about final-model ordering from modelUsage keys.
 Failed role answers are secret-scanned and capped at 8 KiB per attempt.
 Mixed line secrets and multiline assignments are screened independently; retained
 answers are rescanned after line redaction. Host Git diff/show reads disable external

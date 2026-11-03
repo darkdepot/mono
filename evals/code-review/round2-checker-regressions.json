@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "provenance": "Host round 2 on e06d7a319b400d849cea5408ec5c4e92382a27fe; retained checker fields mapped from record keys to ordinal F1. correctedControl is authored from independent danger adjudication, not a live recalibration.",
+  "cases": [
+    {
+      "id": "host-r2-1",
+      "goldCase": "23",
+      "finding": {
+        "class": "noncanonical-diff-digest",
+        "file": "scripts/review-bench.mjs",
+        "anchor": "evidence/diff digest",
+        "line": 51,
+        "title": "Make diff hashing independent of repository configuration",
+        "trigger": "The source repository has local diff.noprefix=true and a nonempty pinned change.",
+        "evidence": "The source diff respects local diff configuration, so its digest uses paths without a/ and b/. withCase initializes a fresh repository without that configuration and recomputes the digest with default prefixes. The identical commits and tree then fail 'copied code differs', excluding every otherwise compatible route. Binary and full-index flags do not normalize these settings."
+      },
+      "observedVerdict": {
+        "id": "F1",
+        "outcome": "confirmed",
+        "weight": "P2",
+        "danger": false,
+        "dangerCase": null,
+        "dangerReason": "The mismatch surfaces as an explicit exclusion ('copied code differs' / 'compatibility input unavailable') that is retained in excludedCases/excludedRoutes, so no result is silently wrong and no archive data is altered; the harm is a wrongly attributed, inspectable failure.",
+        "origin": "introduced",
+        "mergeKey": "diff-digest-depends-on-local-git-config",
+        "outOfContract": false,
+        "riskRaised": false,
+        "reason": "evidence() (review-bench.mjs:51) runs git diff with cwd=repo; GIT_CONFIG_NOSYSTEM/GIT_CONFIG_GLOBAL suppress only system and global config, so repository-local diff settings (diff.noprefix, diff.algorithm, diff.context) shape the hashed output. withCase creates the comparison repository with git init (line 194), which has none of that config, then requires byte-identical digests at line 197. With such a local setting every otherwise valid case fails after the manifest already froze the source-side digest, blocking admission and all samples.",
+        "closed": false,
+        "newEvidence": false
+      },
+      "correctedControl": {
+        "id": "F1",
+        "outcome": "confirmed",
+        "weight": "P2",
+        "danger": true,
+        "dangerCase": "gate-stall",
+        "dangerReason": "An identical valid replay is falsely refused by local diff configuration: ordinary work is stopped.",
+        "origin": "introduced",
+        "mergeKey": "diff-digest-depends-on-local-git-config",
+        "outOfContract": false,
+        "riskRaised": false,
+        "reason": "evidence() (review-bench.mjs:51) runs git diff with cwd=repo; GIT_CONFIG_NOSYSTEM/GIT_CONFIG_GLOBAL suppress only system and global config, so repository-local diff settings (diff.noprefix, diff.algorithm, diff.context) shape the hashed output. withCase creates the comparison repository with git init (line 194), which has none of that config, then requires byte-identical digests at line 197. With such a local setting every otherwise valid case fails after the manifest already froze the source-side digest, blocking admission and all samples.",
+        "closed": false,
+        "newEvidence": false
+      }
+    },
+    {
+      "id": "host-r2-2",
+      "goldCase": "18",
+      "finding": {
+        "class": "finding-location-corruption",
+        "file": "scripts/review-bench.mjs",
+        "anchor": "blindFinding/identity replacement",
+        "line": 238,
+        "title": "Preserve source locations during anonymization",
+        "trigger": "A finding references src/anthropic.ts while the default Anthropic route is declared.",
+        "evidence": "Identity replacement operates on the serialized entire finding, including code_location. The provider identity 'anthropic' changes that path to src/[route].ts, which cannot locate the supplied source. Valid custom route IDs such as 'line' can also replace JSON field names. runBench stores only the altered finding, so the original grading evidence is lost."
+      },
+      "observedVerdict": {
+        "id": "F1",
+        "outcome": "confirmed",
+        "weight": "P2",
+        "danger": false,
+        "dangerCase": null,
+        "dangerReason": "Graders see the literal '[route]' placeholder rather than a plausible wrong path, so the damage is visible rather than silently wrong; no archive data is altered and no gate is involved. Grading evidence is nevertheless degraded.",
+        "origin": "introduced",
+        "mergeKey": "anonymization-rewrites-finding-locations",
+        "outOfContract": false,
+        "riskRaised": false,
+        "reason": "blindFinding (review-bench.mjs:234-239) serializes the whole finding, including code_location, and replaces every route id, model, provider id and endpoint case-insensitively and globally. Default provider ids such as 'anthropic' (review-bench-routes.mjs:9) therefore rewrite real paths like providers/anthropic.py to providers/[route].py, and a valid route id matching a field name rewrites JSON keys. runBench stores only the rewritten finding (line 284) in both the private sample and blind.json, so the original location is unrecoverable for the grader.",
+        "closed": false,
+        "newEvidence": false
+      },
+      "correctedControl": {
+        "id": "F1",
+        "outcome": "confirmed",
+        "weight": "P2",
+        "danger": true,
+        "dangerCase": "data",
+        "dangerReason": "The only retained finding loses its original source location or JSON fields; a visible placeholder still corrupts retained evidence.",
+        "origin": "introduced",
+        "mergeKey": "anonymization-rewrites-finding-locations",
+        "outOfContract": false,
+        "riskRaised": false,
+        "reason": "blindFinding (review-bench.mjs:234-239) serializes the whole finding, including code_location, and replaces every route id, model, provider id and endpoint case-insensitively and globally. Default provider ids such as 'anthropic' (review-bench-routes.mjs:9) therefore rewrite real paths like providers/anthropic.py to providers/[route].py, and a valid route id matching a field name rewrites JSON keys. runBench stores only the rewritten finding (line 284) in both the private sample and blind.json, so the original location is unrecoverable for the grader.",
+        "closed": false,
+        "newEvidence": false
+      }
+    },
+    {
+      "id": "host-r2-3",
+      "goldCase": "18",
+      "finding": {
+        "class": "grading-evidence",
+        "file": "scripts/review-bench.mjs",
+        "anchor": "blindFinding: identity replacement over JSON.stringify(value)",
+        "line": 238,
+        "title": "Preserve source locations during anonymization",
+        "trigger": "A finding references a real path containing a default provider identity, such as providers/anthropic.py.",
+        "evidence": "Identity replacement runs over the entire serialized finding, including code_location. The default anthropic provider declaration turns that path into providers/[route].py. The altered location is persisted in both private samples and blind.json, leaving graders without the actual source location needed to verify the finding."
+      },
+      "observedVerdict": {
+        "id": "F1",
+        "outcome": "confirmed",
+        "weight": "P2",
+        "danger": false,
+        "dangerCase": null,
+        "dangerReason": "Same as F10: the substituted '[route]' marker is visible to the grader, so the loss of the source location is apparent rather than a silently wrong grading input.",
+        "origin": "introduced",
+        "mergeKey": "anonymization-rewrites-finding-locations",
+        "outOfContract": false,
+        "riskRaised": false,
+        "reason": "Duplicate of F10 with the same cause and fix: blindFinding replaces identities across the entire serialized finding including code_location (review-bench.mjs:234-239), and only the rewritten value is persisted in samples and blind.json (lines 284,291).",
+        "closed": false,
+        "newEvidence": false
+      },
+      "correctedControl": {
+        "id": "F1",
+        "outcome": "confirmed",
+        "weight": "P2",
+        "danger": true,
+        "dangerCase": "data",
+        "dangerReason": "The only retained finding loses its original source location or JSON fields; a visible placeholder still corrupts retained evidence.",
+        "origin": "introduced",
+        "mergeKey": "anonymization-rewrites-finding-locations",
+        "outOfContract": false,
+        "riskRaised": false,
+        "reason": "Duplicate of F10 with the same cause and fix: blindFinding replaces identities across the entire serialized finding including code_location (review-bench.mjs:234-239), and only the rewritten value is persisted in samples and blind.json (lines 284,291).",
+        "closed": false,
+        "newEvidence": false
+      }
+    },
+    {
+      "id": "host-r2-4",
+      "goldCase": "40",
+      "finding": {
+        "class": "correctness",
+        "file": "scripts/orchestrator/dispatch.mjs",
+        "anchor": "prepareDispatch: complete issue-only snapshot validation",
+        "line": 78,
+        "title": "Require the issue-only fingerprint before launching",
+        "trigger": "issue-only.json contains the accepted seam, marker, label, config, and ownerApproval fields but omits fingerprint.",
+        "evidence": "The completeness check omits fingerprint. Rendering then substitutes 'n/a (project-first)' for Scope fingerprint while simultaneously declaring package_kind=issue-only, and spawn registers the attempt. A missing required lane fact should refuse before launch; instead the worker receives contradictory context and must reconstruct or block on it."
+      },
+      "observedVerdict": {
+        "id": "F1",
+        "outcome": "confirmed",
+        "weight": "P2",
+        "danger": false,
+        "dangerCase": null,
+        "dangerReason": "The lane fails closed at the worker: issue-only start requires agreement of the owner-approved, live and caller-verified fingerprints, and a seam declaring package_kind=issue-only beside \"n/a (project-first)\" cannot satisfy that, so the worker blocks instead of starting on unverified approval.",
+        "origin": "introduced",
+        "mergeKey": "dispatch-issue-only-completeness-check-omits-fingerprint",
+        "outOfContract": false,
+        "riskRaised": false,
+        "reason": "Confirmed. dispatch.mjs:78 requires seam, marker, label, ownerApproval and config but not fingerprint, while line 124 substitutes `lane?.fingerprint ?? \"n/a (project-first)\"`. An issue-only snapshot missing the fingerprint therefore passes the gate start, registers the attempt and spawns, and the rendered dispatch asserts a false \"n/a (project-first)\" fact for a package it simultaneously declares issue-only — references/orchestration.md lists fingerprint among the issue-only.json facts the orchestrator must supply.",
+        "closed": false,
+        "newEvidence": false
+      },
+      "correctedControl": {
+        "id": "F1",
+        "outcome": "confirmed",
+        "weight": "P2",
+        "danger": true,
+        "dangerCase": "readiness",
+        "dangerReason": "Dispatch admits a snapshot without its required fingerprint; a downstream refusal does not supply the missing readiness fact.",
+        "origin": "introduced",
+        "mergeKey": "dispatch-issue-only-completeness-check-omits-fingerprint",
+        "outOfContract": false,
+        "riskRaised": false,
+        "reason": "Confirmed. dispatch.mjs:78 requires seam, marker, label, ownerApproval and config but not fingerprint, while line 124 substitutes `lane?.fingerprint ?? \"n/a (project-first)\"`. An issue-only snapshot missing the fingerprint therefore passes the gate start, registers the attempt and spawns, and the rendered dispatch asserts a false \"n/a (project-first)\" fact for a package it simultaneously declares issue-only — references/orchestration.md lists fingerprint among the issue-only.json facts the orchestrator must supply.",
+        "closed": false,
+        "newEvidence": false
+      }
+    }
+  ]
+}

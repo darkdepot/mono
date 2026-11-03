@@ -9,8 +9,26 @@ import { validateReviewDataset, verifyDatasetBundle, runReviewEvaluation, scoreR
 import { digest } from './runtime.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const dataset=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/cases.json'),'utf8'));
+test('C2: gold v3 excludes unreachable separate-command collector scenario with visible denominators',()=>{
+ assert.equal(dataset.version,3);const item=dataset.cases.find(item=>item.id==='68');assert.equal(item.eligible,false);assert.equal(item.dangerStatus,'disputed');
+ for(const evidence of ['backup-switch.mjs:54-61','collector.mjs:145-149','210'])assert.ok(item.reclassification.evidence.includes(evidence));
+ const result=validateReviewDataset(dataset);assert.equal(result.eligibleLate,10);assert.equal(result.eligibleExtended,14);assert.equal(result.late,12);assert.equal(result.cases,16);
+ const evaluation={datasetDigest:digest(dataset),runs:[{id:'v3-control',caseId:'MONO-146',task:'MONO-146',repeat:1,record:{outcome:'not-converged',findings:[{key:'68'}],costs:[],failures:[]}}]};
+ const score=scoreReviewEvaluation(dataset,evaluation,[{runId:'v3-control',key:'68',caseId:'68',match:'strict',judge:'independent',evidence:item.reclassification.evidence}]);
+ assert.deepEqual(score.nominalSlots,{late12:12,extended16:16});assert.deepEqual(score.rows[0].late12,{found:0,total:1});assert.deepEqual(score.rows[0].extended16,{found:0,total:2});assert.deepEqual(score.rows[0].dangerousMisses,['69']);
+ const gold={key:'68',outcome:'confirmed',weight:'P2',danger:true,dangerStatus:item.dangerStatus,mergeKey:'68'};
+ assert.equal(scoreCheckerProbes([gold],[{...gold,outcome:'rejected',danger:false}]).releaseBlocked,false);
+});
+test('C4: every host round-two eligible miss has evidence, cause analysis and a concrete strengthening',()=>{
+ const doc=fs.readFileSync(path.join(packRoot,'evals/code-review/round2-enhancements.md'),'utf8');
+ for(const id of ['17','19','20','21','24','42','156','69']){
+  const section=doc.split(`### #${id} `)[1]?.split('\n### ')[0];assert.ok(section,id);
+  for(const field of ['Observed:','Cause analysis (inference):','Strengthening:','Evidence:'])assert.ok(section.includes(field),`${id}: ${field}`);
+ }
+ assert.match(doc,/opposite mechanism/);assert.ok(fs.readFileSync(path.join(packRoot,'evals/code-review/README.md'),'utf8').includes('round2-enhancements.md'));
+});
 test('frozen cases distinguish historical slots, later fixes, clean controls and repaired gold',()=>{
- const result=validateReviewDataset(dataset);assert.equal(result.late,12);assert.equal(result.cases,16);assert.equal(result.eligibleLate,11);assert.equal(result.eligibleExtended,15);assert.equal(result.clean,3);
+ const result=validateReviewDataset(dataset);assert.equal(result.late,12);assert.equal(result.cases,16);assert.equal(result.eligibleLate,10);assert.equal(result.eligibleExtended,14);assert.equal(result.clean,3);
  assert.equal(dataset.cases.find(item=>item.id==='41').eligible,false);assert.equal(dataset.cases.find(item=>item.id==='17').eligible,true);
  assert.deepEqual(dataset.laterIntroduced.map(item=>item.id),['67','70','71']);
  for(const field of ['base','head','contractMode']){const broken=structuredClone(dataset);broken.tasks[0][field]='';assert.throws(()=>validateReviewDataset(broken));}
@@ -95,5 +113,5 @@ test('D6: disputed danger is scored without a danger veto, partial consequence a
  const verdicts=gold.map(item=>({...item,outcome:'rejected',danger:false}));
  const result=scoreCheckerProbes(gold,verdicts);assert.equal(result.rows[0].unsafe,false);assert.equal(result.rows[0].dangerDisputed,true);assert.equal(result.rows[0].falseRejection,true);assert.equal(result.rows[1].unsafe,true);assert.equal(result.releaseBlocked,true);
  assert.equal(scoreCheckerProbes(gold.slice(0,1),verdicts.slice(0,1)).releaseBlocked,false);
- assert.equal(validateReviewDataset(dataset).eligibleLate,11);assert.equal(validateReviewDataset(dataset).eligibleExtended,15);
+ assert.equal(validateReviewDataset(dataset).eligibleLate,10);assert.equal(validateReviewDataset(dataset).eligibleExtended,14);
 });

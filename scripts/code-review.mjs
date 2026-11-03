@@ -225,6 +225,29 @@ function codexResponse(result) {
   requireValue(events.every(event => !event.item || ['agent_message', 'reasoning', 'command_execution'].includes(event.item.type)), 'role used forbidden tool');
   return { response: final.item.text, usage: events.filter(event => event.type === 'turn.completed').at(-1)?.usage ?? null };
 }
+function observeServedModels(boundary, stdout, phase = 'task') {
+  boundary.servedModels ??= []; boundary.modelObservations ??= [];
+  const add = (model, source, current = false) => {
+    if (!text(model)) return;
+    if (!boundary.servedModels.includes(model)) boundary.servedModels.push(model);
+    if (!boundary.modelObservations.some(item => item.model === model && item.source === source && item.phase === phase))
+      boundary.modelObservations.push({ model, source, phase });
+    if (current) boundary.servedModel = model;
+  };
+  for (const line of stdout.split('\n')) {
+    let event; try { event = JSON.parse(line); } catch { continue; }
+    if (!object(event)) continue;
+    add(event.model, event.subtype === 'init' ? 'init' : 'event.model', true);
+    add(event.message?.model, 'message.model', true);
+    if (event.subtype === 'model_refusal_fallback') {
+      add(event.original_model, 'fallback.original_model'); add(event.fallback_model, 'fallback.fallback_model', true);
+    }
+    for (const field of ['modelUsage', 'model_usage_since_last_result']) if (object(event[field]))
+      for (const [model, usage] of Object.entries(event[field])) {
+        add(model, field); add(usage?.canonicalModel, `${field}.canonicalModel`);
+      }
+  }
+}
 function runInvocation(invocation, prompt, timeoutMs) {
   return new Promise((resolve, reject) => {
       const child = spawn(invocation.command, invocation.args, { cwd: invocation.cwd, env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
@@ -263,6 +286,7 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
       const args = [...invocation.args]; args[args.indexOf('--output-schema') + 1] = probeSchema;
       const probe = await runInvocation({ ...invocation, args }, 'Boundary audit only. Do not call tools. Enumerate ALL exposed tool names including deferred tools and wrappers, and MCP server names. Exact names, no omissions. Return the schema.', timeoutMs);
       captured = probe.stdout;
+      observeServedModels(boundary, captured, 'boundary-probe');
       const parsed = codexResponse(probe);
       const surface = JSON.parse(parsed.response);
       surface.tools = surface.tools?.map(tool => tool.replace(/^functions\./, ''));
@@ -272,13 +296,13 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
     }
     const result = await runInvocation(invocation, prompt, timeoutMs);
     captured = result.stdout;
+    observeServedModels(boundary, captured);
     let response, usage = null;
     if (route.engine === 'claude') {
       const events = result.stdout.trim().split('\n').map(line => JSON.parse(line));
       const init = events.find(event => event.type === 'system' && event.subtype === 'init');
       requireValue(init && Array.isArray(init.tools) && init.tools.length > 0 && init.tools.every(tool => ['Read', 'Glob', 'Grep', 'StructuredOutput'].includes(tool)) && Array.isArray(init.mcp_servers) && init.mcp_servers.length === 0, 'forbidden or missing observed Claude tool surface');
       invocation.boundary.observed = { tools: init.tools, mcpServers: init.mcp_servers, source: 'CLI system init' };
-      invocation.boundary.servedModel = init.model ?? null;
       const envelope = events.filter(event => event.type === 'result').at(-1);
       requireValue(envelope, 'Claude result missing');
       requireValue(envelope.is_error !== true && envelope.subtype === 'success', 'Claude did not complete');
@@ -289,7 +313,10 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
       ({ response, usage } = codexResponse(result));
     }
     return { response, usage, elapsedMs: Date.now() - started, boundary: invocation.boundary };
-  } catch (error) { error.rawAnswer ??= captured; error.boundary = boundary; throw error;
+  } catch (error) {
+    error.rawAnswer ??= captured;
+    if (boundary) observeServedModels(boundary, error.rawAnswer);
+    error.boundary = boundary; throw error;
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 function promptFor(packRoot, role, context) {
@@ -394,7 +421,7 @@ export function formatReviewReport(record) {
   const origins = { introduced: 'внесено задачей', contract: 'нарушает договор задачи', 'pre-existing': 'было раньше' };
   return [
     `Проверено: ${record.round ? `${record.round.reviewedFiles.length} файлов, круг ${record.round.number}.` : 'проверка не завершена.'}`,
-    ...(record.costs ?? record.round?.costs ?? []).map(cost => `Роль: ${cost.role}; engine=${cost.engine ?? cost.boundary?.engine ?? 'unknown'}; model=${cost.boundary?.servedModel ?? cost.model ?? 'unknown'}; family=${cost.family ?? cost.boundary?.family ?? 'unknown'}; observed boundary=${JSON.stringify(cost.boundary?.observed ?? 'not observed')}; credentialReads=${cost.boundary?.credentialReads ?? 'not observed'}.`),
+    ...(record.costs ?? record.round?.costs ?? []).map(cost => `Роль: ${cost.role}; engine=${cost.engine ?? cost.boundary?.engine ?? 'unknown'}; model=${cost.model ?? cost.boundary?.model ?? 'unknown'}; servedModels=${JSON.stringify(cost.boundary?.servedModels ?? (cost.boundary?.servedModel ? [cost.boundary.servedModel] : 'not observed'))}; family=${cost.family ?? cost.boundary?.family ?? 'unknown'}; observed boundary=${JSON.stringify(cost.boundary?.observed ?? 'not observed')}; credentialReads=${cost.boundary?.credentialReads ?? 'not observed'}.`),
     `Найдено: ${record.findings.length} замечаний${record.secrets?.length ? `; ${record.secrets.length} совпадений с шаблоном секрета (значения скрыты)` : ''}.`,
     ...record.findings.map(finding => `- ${finding.weight} ${finding.file}:${finding.line}: ${finding.title} (${statuses[finding.status]}; ${finding.danger ? 'опасность' : 'неопасное'}; ${origins[finding.origin]}). ${finding.reason}`),
     `Осталось: ${open.length} открытых замечаний; ${record.failures.length} технических сбоев.`,

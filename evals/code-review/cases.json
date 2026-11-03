@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": 2,
+  "version": 3,
   "tasks": [
     {
       "id": "MONO-81",
@@ -69,9 +69,14 @@
       "trigger": "A short route id such as body or anthropic occurs inside finding JSON fields or paths.",
       "consequence": "Unbounded substring replacement corrupts finding fields and blind grading.",
       "danger": true,
-      "dangerCase": "silent-result",
-      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
-      "class": "unbounded-redaction"
+      "dangerCase": "data",
+      "oracle": "host round 2 independent danger adjudication; orchestrator pins v7",
+      "class": "unbounded-redaction",
+      "reclassification": {
+        "by": "orchestrator",
+        "date": "2026-11-04",
+        "evidence": "0a914376 scripts/review-bench.mjs:235-239 replaces identities in complete serialized findings, including JSON keys and real source paths; :284,291-300 retain the altered evidence and :185-203 discard the temporary original. Recognizable placeholders do not undo loss of the actual source location. Independent host round 2 danger adjudication items 2 and 3 confirms R7 data; not merely silent-result."
+      }
     },
     {
       "id": "19",
@@ -165,9 +170,14 @@
       "trigger": "An issue-only snapshot omits scope fingerprint while other seam fields exist.",
       "consequence": "Worker receives a fabricated project-first fallback rather than the required approval identity.",
       "danger": true,
-      "dangerCase": "gate-bypass",
-      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
-      "class": "missing-scope-fingerprint"
+      "dangerCase": "readiness",
+      "oracle": "host round 2 independent danger adjudication; orchestrator pins v7",
+      "class": "missing-scope-fingerprint",
+      "reclassification": {
+        "by": "orchestrator",
+        "date": "2026-11-04",
+        "evidence": "28bf3c25 scripts/orchestrator/dispatch.mjs:78 omits fingerprint from the complete-snapshot check, :124 fabricates n/a (project-first), and :132-134 admits launch. references/orchestration.md:285-288 requires the fact. Independent host round 2 danger adjudication item 4 confirms unmet readiness. Downstream worker checks may refuse implementation, so the stronger implementation gate-bypass is not established; this does not remove readiness danger."
+      }
     },
     {
       "id": "41",
@@ -204,15 +214,21 @@
       "task": "MONO-146",
       "subset": "late12",
       "origin": "first-head",
-      "eligible": true,
+      "eligible": false,
       "file": "scripts/orchestrator/backup-switch.mjs",
       "anchor": "if (controls.has(row.pid)) continue",
       "trigger": "A previous-attempt collector appears among descendants of this invocation.",
       "consequence": "Caller exemption skips the collector before ownership checks, allowing overlapping collectors.",
       "danger": true,
       "dangerCase": "gate-bypass",
-      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
-      "class": "collector-caller-exemption"
+      "oracle": "host round 2 independent GPT-family danger adjudication; orchestrator pins v7",
+      "class": "collector-caller-exemption",
+      "dangerStatus": "disputed",
+      "reclassification": {
+        "by": "orchestrator",
+        "date": "2026-11-04",
+        "evidence": "02efa6e6 scripts/orchestrator/backup-switch.mjs:54-61 adds observer descendants and :87 skips them before ownership checks; collector.mjs:145-149 launches the collector detached and its CLI returns at :210. On the documented separate-command path (references/orchestration.md:730-734,1189-1191), a later stop/dispatch invocation does not own that collector as a descendant; backup-switch.mjs:65-94 checks the live collector and refuses the switch. A persistent controller using exported APIs could create the hypothesized arrangement, but that is outside the documented path. Ineligible for recall on these pinned command inputs; retain the nominal slot and disputed historical danger, excluded from the danger veto. Independent danger-adjudication/codex-adjudication.txt item 5."
+      }
     },
     {
       "id": "69",
