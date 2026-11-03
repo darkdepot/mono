@@ -469,3 +469,9 @@ for(const host of ['claude','codex'])test(`${host}: text driver rejects a window
  request.scenario={prompt:'Run text',brief:'Источник',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true}}]};
  const r=await runScenario(request);assert.equal(r.status,'failed');assert.match(r.reason,/window/);
 });
+
+for(const host of ['claude','codex'])test(`${host}: a sent text reply without native delivery is unverified`,async t=>{
+ const request=setup(t,host,'text');request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'drop-reply'];
+ request.scenario={prompt:'Run text',brief:'Источник',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true}}]};
+ const r=await runScenario(request);assert.equal(r.status,'unverified');assert.equal(r.replies[0].received,false);
+});

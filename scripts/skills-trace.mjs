@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { MissingEvidence } from './skills-boundary.mjs';
-import { auditRows } from './skills-audit.mjs';
+import { auditRows, completedTrace, codexTerminals } from './skills-audit.mjs';
 import { claudeWindows, traceRows, visibleText, textExchanges, checkEndings } from './skills-probe.mjs';
 import { roleWindows, windowRole, validateReplies, isOwnerWindow } from './skills-owner.mjs';
 
@@ -12,6 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Full rule source, including host order. A rule edit requires checker/rubric review.
 export const OWNER_DIALOG_SHA256 = 'd9e88bf7f17960e3dd1bec2cebd4589d45a256eae704fec858aba0349d6c2d67';
 export const visible = visibleText;
+export { completedTrace, codexTerminals } from './skills-audit.mjs';
 export { textExchanges, checkEndings } from './skills-probe.mjs';
 const textOf = p => (p.content ?? []).filter(b => ['text', 'output_text'].includes(b.type)).map(b => b.text).join('\n');
 export function codexItems(rows) {
@@ -47,28 +48,6 @@ export function codexWindows(rows, source, options) {
 }
 
 
-// Existing native turn boundaries also bind the terminal used for early stop.
-export function codexTerminals(rows) {
-  let turnId;
-  return rows.filter(({value:e}) => {
-    if(e.type !== 'event_msg') return false;
-    if(e.payload?.type === 'task_started') turnId = e.payload.turn_id;
-    return e.payload?.type === 'task_complete' && e.payload.turn_id === turnId;
-  });
-}
-
-export function completedTrace(host, rows, options) {
-  const audit=auditRows(host,rows,options);
-  if(options?.stdout)return audit.proof({kind:'terminal',result:rows.at(-1)?.value}).status==='confirmed';
-  if (host === 'claude') {
-    const last = rows.filter(r => r.value.type==='result'&&!r.value.parent_tool_use_id).at(-1)?.value;
-    return audit.proof({kind:'terminal',result:last}).status === 'confirmed';
-  }
-  const last = rows.filter(r => (r.value.type === 'response_item'&&['message','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(r.value.payload?.type)) ||
-    (r.value.type === 'event_msg' && ['task_complete','task_started','turn_aborted','error'].includes(r.value.payload?.type))).at(-1);
-  return last?.line === codexTerminals(rows).at(-1)?.line && audit.proof({kind:'terminal',result:last?.value}).status === 'confirmed';
-}
-
 function cardIssues(host, questions, expected) {
   const issues = [];
   if (questions.length !== 1) issues.push('one question at a time');
@@ -94,13 +73,13 @@ function cardIssues(host, questions, expected) {
   return issues;
 }
 
-export function checkTrace({ host, trace, expectedWindows, expectedReplies, rulesRoot = root, excerpt = false, phase = excerpt ? 'excerpt' : 'complete', endLine, sent }) {
+export function checkTrace({ host, trace, expectedWindows, expectedReplies, rulesRoot = root, excerpt = false, phase = excerpt ? 'excerpt' : 'complete', endLine, stageStartLine, sent }) {
   const windows = [], checks = [];
   try {
     const ruleSource = path.join(rulesRoot, 'references/owner-dialog.md');
     const rulesDigest = crypto.createHash('sha256').update(fs.readFileSync(ruleSource)).digest('hex');
     if (rulesDigest !== OWNER_DIALOG_SHA256) throw new Error('owner-dialog changed: update checker and conversation rubric together');
-    if (expectedReplies!==undefined) return checkTextTrace({host,trace,expectedReplies,expectedWindows,rulesRoot,phase,endLine});
+    if (expectedReplies!==undefined) return checkTextTrace({host,trace,expectedReplies,expectedWindows,rulesRoot,phase,endLine,stageStartLine});
     const roles=roleWindows(expectedWindows);
     if (!['claude', 'codex'].includes(host) || !Array.isArray(expectedWindows) || !expectedWindows.length || expectedWindows.some(w =>
       !w?.id || (roles&&!['approval','transition'].includes(w.role)) || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || (!roles&&!w.summary.length) || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, role, decision, advice, reason and summary anchors');
@@ -160,7 +139,7 @@ export function checkTrace({ host, trace, expectedWindows, expectedReplies, rule
 }
 // Shared with the probe and record verifier; expected words/outcomes stay in the
 // scenario. No approval is inferred from a Russian phrase or a model's verdict.
-function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase,endLine}) {
+function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase,endLine,stageStartLine}) {
   const checks=[],exchanges=[];
   let rows;
   try{({rows}=traceRows(trace,host,{endLine}));}catch(error){return {host,trace,status:'unverified',windows:[],checks,reason:error.message};}
@@ -170,7 +149,7 @@ function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase,endLin
     const audit=auditRows(host,rows);
     const windows=audit.calls.filter(c=>isOwnerWindow(c.name));
     if (windows.length) throw new Error(`stage called a window: ${windows[0].name} at ${trace}:${windows[0].line}`);
-    exchanges.push(...textExchanges(host,rows,expectedReplies));
+    exchanges.push(...textExchanges(host,rows,expectedReplies,{startLine:stageStartLine}));
     checkEndings(exchanges);
     if (phase!=='excerpt'&&!completedTrace(host,rows)) return {host,trace,status:'unverified',windows:[],exchanges,checks,reason:'successful terminal event missing'};
     return {host,trace,status:'passed',windows:[],exchanges,checks,boundary:'mechanical checks; predetermined outcomes and exact native replies, conversation quality still requires rubric'};

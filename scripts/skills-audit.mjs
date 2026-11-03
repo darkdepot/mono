@@ -99,3 +99,25 @@ export function parentTurns(host, rows) {
   }
   return turns;
 }
+
+// Existing native turn boundaries also bind the terminal used for early stop.
+export function codexTerminals(rows) {
+  let turnId;
+  return rows.filter(({value:e}) => {
+    if(e.type !== 'event_msg') return false;
+    if(e.payload?.type === 'task_started') turnId = e.payload.turn_id;
+    return e.payload?.type === 'task_complete' && e.payload.turn_id === turnId;
+  });
+}
+
+export function completedTrace(host, rows, options) {
+  const audit=auditRows(host,rows,options);
+  if(options?.stdout)return audit.proof({kind:'terminal',result:rows.at(-1)?.value}).status==='confirmed';
+  if (host === 'claude') {
+    const last = rows.filter(r => r.value.type==='result'&&!r.value.parent_tool_use_id).at(-1)?.value;
+    return audit.proof({kind:'terminal',result:last}).status === 'confirmed';
+  }
+  const last = rows.filter(r => (r.value.type === 'response_item'&&['message','reasoning','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(r.value.payload?.type)) ||
+    (r.value.type === 'event_msg' && ['task_complete','task_started','turn_aborted','error'].includes(r.value.payload?.type))).at(-1);
+  return last?.line === codexTerminals(rows).at(-1)?.line && !audit.calls.some(c=>c.line>last.line) && audit.proof({kind:'terminal',result:last?.value}).status === 'confirmed';
+}

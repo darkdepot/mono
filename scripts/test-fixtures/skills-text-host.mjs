@@ -12,7 +12,7 @@ if(args[0]==='exec') {
  const item=payload=>fresh.push({type:'response_item',payload}),prompt=args.at(-1);
  if(!rows.length){item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'workspace',arguments:'{}'});item({type:'function_call_output',call_id:'workspace',output:'{"name":"Test Space"}'});}
  else {
-  item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});
+  if(mode!=='drop-reply'||prompt==='Run text')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});
   const text=prompt==='Run text'?message:mode==='unclear'?'Что смущает?':mode==='correction'?'Добавлен вопрос про Codex.':'Утверждение записал.';
   if(mode==='window')item({type:'function_call',name:'request_user_input_async',call_id:'bad',arguments:'{"questions":[{"title":"Выбор?"}]}'});
   item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]});
@@ -26,7 +26,7 @@ input.on('line',line=>{
  const e=JSON.parse(line);if(e.type!=='user')return;
  if(!started){started=true;out({type:'assistant',message:{content:[{type:'tool_use',id:'workspace',name:'mcp__monotest__get_workspace',input:{}}]}});out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'workspace',content:'{"name":"Test Space"}'}]}});}
  else {
-  out(e);
+  if(args.includes('--replay-user-messages')&&mode!=='drop-reply')out(e);
   const prompt=e.message.content[0].text,text=prompt==='Run text'?message:mode==='unclear'?'Что смущает?':mode==='correction'?'Добавлен вопрос про Codex.':'Утверждение записал.';
   if(mode==='window')out({type:'assistant',message:{content:[{type:'tool_use',id:'bad',name:'AskUserQuestion',input:{questions:[]}}]}});
   out({type:'assistant',message:{content:[{type:'text',text}]}});

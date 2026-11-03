@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { auditRows, parentTurns } from './skills-audit.mjs';
+import { auditRows, parentTurns, completedTrace } from './skills-audit.mjs';
 import { MissingEvidence } from './skills-boundary.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 
@@ -93,16 +93,19 @@ export function traceRows(filename, host = 'claude', options) {
   return { rows, excerpt: Boolean(sample?.events) };
 }
 
-export function textExchanges(host, rows, expectedReplies) {
+export function textExchanges(host, rows, expectedReplies, {startLine=0}={}) {
   validateReplies(expectedReplies);
-  const turns=parentTurns(host,rows),exchanges=[];
+  const audit=auditRows(host,rows);
+  if(!completedTrace(host,rows))throw new MissingEvidence('successful final parent terminal missing');
+  if(!Number.isInteger(startLine)||startLine<0||(startLine>0&&audit.proof({kind:'terminal',result:rows.find(r=>r.line===startLine)?.value}).status!=='confirmed'))throw new MissingEvidence('native stage start boundary missing');
+  const turns=parentTurns(host,rows).filter(t=>t.line>startLine),exchanges=[];
   if(host==='claude') {
     const last=rows.findLast(r=>!r.value.parent_tool_use_id&&(['assistant','user','result'].includes(r.value.type)||r.value.type==='system'&&r.value.subtype==='init'));
     if(auditRows(host,rows).proof({kind:'terminal',result:last?.value}).status!=='confirmed')throw new MissingEvidence('successful final parent terminal missing');
   }
   let cursor=-1;
   for (const [index,expected] of expectedReplies.entries()) {
-    const turn=turns.find(t=>t.line>cursor && t.question.endsWith('?')&&t.question.includes(expected.question));
+    const turn=turns.find(t=>t.line>cursor && (t.question.endsWith('?')||t.reply!==undefined));
     if (!turn) throw new Error(`last stage message missing for ${expected.id}`);
     textReply({expectedReplies},turn.text,index);
     if (turn.reply===undefined) throw new Error(`actual owner reply missing for ${expected.id}`);
@@ -113,6 +116,7 @@ export function textExchanges(host, rows, expectedReplies) {
     if (expected.intent==='correction'&&!response.text.includes(expected.correction.description)) throw new Error(`stage did not name correction for ${expected.id}`);
     exchanges.push({...turn,expected,response});cursor=turn.replyLine;
   }
+  if(turns.some(t=>t.line>cursor&&t.reply!==undefined))throw new Error('unexpected owner exchange without scenario policy');
   return exchanges;
 }
 export function checkEndings(exchanges) {
@@ -123,14 +127,14 @@ export function checkEndings(exchanges) {
     endings.set(ending,stage);
   }
 }
-export function probeText({host,trace,expectedReplies}) {
+export function probeText({host,trace,expectedReplies,stageStartLine}) {
   let rows;
   try{({rows}=traceRows(trace,host));validateReplies(expectedReplies);}catch(error){return {check:'text-turns',status:'unverified',reason:error.message};}
   try {
     const audit=auditRows(host,rows);
     const windows=audit.calls.filter(c=>isOwnerWindow(c.name));
     if(windows.length)return {check:'text-turns',status:'failed',reason:'stage called a window',windows};
-    const exchanges=textExchanges(host,rows,expectedReplies);checkEndings(exchanges);
+    const exchanges=textExchanges(host,rows,expectedReplies,{startLine:stageStartLine});checkEndings(exchanges);
     return {check:'text-turns',status:'passed',exchanges,boundary:'completed parent questions and exact native replies only; full trace and record checks remain required'};
   } catch(error) {return {check:'text-turns',status:error instanceof MissingEvidence?'unverified':'failed',reason:error.message};}
 }

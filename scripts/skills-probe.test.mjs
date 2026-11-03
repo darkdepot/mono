@@ -335,3 +335,14 @@ for(const host of ['claude','codex'])test(`${host}: text probe CLI checks ordina
  const call=host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id:'window',name:'AskUserQuestion',input:{questions:[]}}]}}:{type:'response_item',payload:{type:'function_call',name:'request_user_input_async',call_id:'window',arguments:'{"questions":[]}'}};
  rows.unshift(call);save('text.jsonl',rows.map(JSON.stringify).join('\n')+'\n');assert.equal(run().status,1);assert.match(run().stdout,/stage called a window/);
 });
+
+for(const mode of ['unexpected','unfinished'])test(`Codex text probe rejects ${mode} native continuation`,t=>{
+ const save=scratch(t),a=text=>({type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}}),u=text=>({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}}),end={type:'event_msg',payload:{type:'task_complete'}};
+ const expectedReplies=[{id:'one',stage:'idea',role:'approval',asksStart:false,summary:['Версия'],question:'Принимаем?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:false}},{id:'two',stage:'discovery',role:'approval',asksStart:false,summary:['PRD'],question:'Утверждаем?',reply:'да',intent:'agree',outcome:{approval:true,startNext:false}}];
+ const rows=[a('Версия\nПринимаем?'),end,u('принимаю'),a('PRD\nУтверждаем?'),end,u('да'),a('Записал.'),end];
+ if(mode==='unexpected')rows.splice(3,0,a('Чужой вопрос?'),end,u('другой ответ'));
+ else rows.push(a('Работа без завершения.'));
+ const trace=save('trace.jsonl',rows.map(JSON.stringify).join('\n')+'\n'),request=save('request.json',{host:'codex',trace,expectedReplies});
+ const result=spawnSync(process.execPath,['scripts/skills-probe.mjs','--text',request],{encoding:'utf8'});
+ assert.equal(result.status,mode==='unexpected'?1:2,result.stdout);
+});
