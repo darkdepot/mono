@@ -1244,8 +1244,8 @@ function validateIssueOnlyLaneBehavior() {
     const issueOnlyArgs = ["--label", "issue-only", "--approval-verified", fingerprint];
 
     // Fixture 2 — happy: a valid marker plus both trusted signals and a synthetic
-    // enabled consumer config resolves the five fields correctly. The upstream
-    // pack config is deliberately disabled and checked separately below.
+    // enabled consumer config resolves the five fields correctly. A copy of the real
+    // repository config with the lane switched off is checked separately below.
     writeMarker([
       "Marker version: 1",
       `Scope fingerprint: ${fingerprint}`,
@@ -1285,14 +1285,19 @@ function validateIssueOnlyLaneBehavior() {
     }
     fs.writeFileSync(markerPath, validMarker);
 
+    // The real repository config with the lane switched off must fall back to project-first.
+    const laneOffConfigPath = path.join(dir, "config-lane-off.json");
+    const laneOffConfig = JSON.parse(read(".agents/mono-workflow.config.json"));
+    laneOffConfig.issueOnlyLane = { enabled: false };
+    fs.writeFileSync(laneOffConfigPath, `${JSON.stringify(laneOffConfig, null, 2)}\n`);
     const upstreamDisabled = JSON.parse(
-      runNode(["scripts/resolve-issue-context.mjs", "--issue", issuePath, "--marker", markerPath, "--config", ".agents/mono-workflow.config.json", ...issueOnlyArgs])
+      runNode(["scripts/resolve-issue-context.mjs", "--issue", issuePath, "--marker", markerPath, "--config", laneOffConfigPath, ...issueOnlyArgs])
     );
     if (upstreamDisabled.package_kind !== "project-first") {
-      fail("resolve-issue-context upstream pack config must keep the issue-only lane disabled");
+      fail("resolve-issue-context disabled project config must fall back to project-first");
     }
     if (upstreamDisabled.behavioral_oracle !== null) {
-      fail("resolve-issue-context disabled upstream pack config must have no behavioral oracle");
+      fail("resolve-issue-context disabled project config must have no behavioral oracle");
     }
 
     // Fixture 7 — resume-discovery. Linear narrows the scan to open,
