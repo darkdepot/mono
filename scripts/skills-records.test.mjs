@@ -964,6 +964,28 @@ for(const host of ['claude','codex'])test(`${host}: Research authorizes only Dis
  f.events.splice(3,2);assert.equal(f.check().status,'passed',f.check().reason);
 });
 
+for(const host of ['claude','codex'])for(const route of ['project','Skill','Agent','Task'])for(const mode of ['forbidden-chain','single-stage','deferred-chain','authorized-chain','before-reply','wrong-source-stage','current-stage'])test(`${host}: per-exchange transition stage ${route} ${mode}`,t=>{
+ const f=textFixture(t,host),research={id:'research',stage:'research',role:'transition',asksStart:true,summary:['Исследование:'],question:'Начнём Discovery?',reply:'принимаю',intent:'agree',outcome:{approval:false,startNext:true}},discovery={id:'discovery',stage:'discovery',role:'transition',asksStart:true,summary:['PRD:'],question:'Начнём Handoff?',reply:'да, но позже',intent:'defer',outcome:{approval:false,startNext:false},response:['Старт отложен.']};
+ if(mode==='authorized-chain')Object.assign(discovery,{reply:'начинай',intent:'start',outcome:{approval:false,startNext:true},response:['Начинаю Handoff.']});
+ f.request.expectedReplies=[research,discovery];f.request.expectedRecords=[{type:'project'}];f.request.approvalBindings=[];f.request.nextSkill='mono:discovery';f.request.nextAgent='mono-mono-discovery';
+ f.page('comments','comments',[]);f.page('documents','documents',[]);f.project.status=mode==='deferred-chain'?'Discovery':'Handoff';f.save('project.json',f.project);
+ const rows=[f.assistant('Исследование: источники изучены.\n'+research.question),f.terminal,f.user(research.reply),f.call('discovery','mcp__monotest__save_project',{id:projectId,status:'Discovery'}),f.result('discovery',{...f.project,status:'Discovery'}),f.assistant('PRD: колонка Источник.\n'+discovery.question),f.terminal,f.user(discovery.reply),f.call('handoff','mcp__monotest__save_project',{id:projectId,status:'Handoff'}),f.result('handoff',f.project),f.assistant(discovery.response[0])];
+ if(route!=='project')for(const [index,stage] of [[3,'discovery'],[8,'handoff']])rows[index]=f.call(stage,route,route==='Skill'?{skill:`mono:${stage}`}:{subagent_type:`mono-mono-${stage}`});
+ if(mode==='single-stage'){f.request.expectedReplies=[discovery];rows.splice(0,5);}
+ if(mode==='deferred-chain')rows.splice(8,2);
+ if(mode==='before-reply'){const start=rows.splice(8,2);rows.splice(7,0,...start);}
+ if(mode==='wrong-source-stage'){
+  research.response=['Начинаю Discovery.'];f.request.expectedReplies=[research];rows.splice(5,3);rows[rows.length-1]=f.assistant(research.response[0]);
+ }
+ if(mode==='current-stage'){
+  Object.assign(research,{reply:'да, но позже',intent:'defer',outcome:{approval:false,startNext:false},response:['Остаюсь в Research.']});f.request.expectedReplies=[research];f.project.status='Research';f.save('project.json',f.project);
+  rows.splice(0,rows.length,f.assistant('Исследование: источники изучены.\n'+research.question),f.terminal,f.user(research.reply),f.call('current',route==='project'?'mcp__monotest__save_project':route,route==='project'?{id:projectId,status:'Research'}:route==='Skill'?{skill:'mono:research'}:{subagent_type:'mono-mono-research'}),f.result('current',f.project),f.assistant(research.response[0]));
+ }
+ f.events.splice(0,f.events.length,...rows);const result=f.check();
+ assert.equal(result.status,['deferred-chain','authorized-chain','current-stage'].includes(mode)?'passed':'failed',result.reason);
+ if(['forbidden-chain','single-stage'].includes(mode))assert.match(result.reason,/start-next-stage without scenario authority/);
+});
+
 for(const type of ['function_call','custom_tool_call'])for(const field of ['status','state'])test(`text Codex literal exec ${type} ${field} preserves Discovery start authority`,t=>{
  const f=textFixture(t,'codex'),question='Начнём Discovery?',input={id:projectId,[field]:field==='state'?{name:'Discovery'}:'Discovery'};
  Object.assign(f.expected,{stage:'research',role:'transition',question,outcome:{approval:false,startNext:true},response:['Начинаю Discovery.']});

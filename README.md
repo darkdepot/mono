@@ -1784,7 +1784,10 @@ Record checks apply to every supplied native trace, including scouts and dump
 children. Owner-conversation expectations apply to the main trace; additional
 traces opt in with their own expectations while retaining the full call, terminal
 and record audit. Supported literal Codex exec arguments are decoded before
-start/transition checks, matching direct-call authority. Each dump read must
+start/transition checks, matching direct-call authority.
+In multi-stage traces, the preceding reply determines the source stage and
+permitted destination of each transition; earlier consent cannot authorize a
+later deferred start. Each dump read must
 provably start after all scenario writes; missing
 or overlapping order stays unverified. Native times and Claude's hash-bound
 driver process interval support offline replay; request times and file mtimes do

@@ -435,20 +435,30 @@ export function verifyRecords(request){
   request={...request,scenarioData:scenarios};
   checkEndings(scenarios.flatMap(d=>d.exchanges??[]));
   const stageStarts={idea:['Research'],research:['Discovery'],discovery:['Design','Tech Evaluation','Handoff'],design:['Tech Evaluation','Handoff'],'tech-evaluation':['Handoff'],handoff:['Delivery']};
+  const stageNames={idea:'Idea',research:'Research',discovery:'Discovery',design:'Design','tech-evaluation':'Tech Evaluation',handoff:'Handoff'};
+  const skillPrefix=request.nextSkill?.slice(0,request.nextSkill.lastIndexOf(':')+1);
+  const agentStage=Object.keys(stageNames).find(stage=>request.nextAgent?.endsWith('-'+stage));
+  const agentPrefix=agentStage?request.nextAgent.slice(0,-agentStage.length):null;
   for(const source of scenarios)if(source.expectedReplies||request.expectedReplies) {
+   const policies=source.expectedReplies??request.expectedReplies;
    const starts=[];
    for(const call of source.audit.calls) {
     const input=source.calls.includes(call)?callInput(source.host,call):call.input;
     const status=input?.state??input?.status;
-    const next=(call.name==='Skill'&&request.nextSkill&&input?.skill===request.nextSkill)||(['Agent','Task'].includes(call.name)&&request.nextAgent&&input?.subagent_type===request.nextAgent);
-    const stage=(source.expectedReplies??request.expectedReplies)[0].stage;
-    const transition=/__(?:save|create)_project$/.test(call.name)&&stageStarts[stage].includes(typeof status==='string'?status:status?.name);
+    const invocation=call.event.type==='event_msg'?call.approvalInvocationLine:call.line;
+    const e=source.exchanges?.filter(e=>e.replyLine<(invocation??call.line)).at(-1);
+    // Before any owner reply, the scenario identifies only the current stage;
+    // it cannot authorize a transition. Re-saving that stage is not a start.
+    const currentStage=stageNames[e?.expected.stage??policies[0].stage];
+    const routeTarget=Object.entries(stageNames).find(([stage])=>
+     ((call.name==='Skill'&&skillPrefix&&input?.skill===skillPrefix+stage)||(['Agent','Task'].includes(call.name)&&agentPrefix&&input?.subagent_type===agentPrefix+stage)))?.[1];
+    const next=routeTarget?routeTarget!==currentStage:(call.name==='Skill'&&request.nextSkill&&input?.skill===request.nextSkill)||(['Agent','Task'].includes(call.name)&&request.nextAgent&&input?.subagent_type===request.nextAgent);
+    const target=typeof status==='string'?status:status?.name;
+    const transition=/__(?:save|create)_project$/.test(call.name)&&Object.values(stageStarts).some(stages=>stages.includes(target))&&target!==currentStage;
     const workStart=recordLines(bodyOf(input)??'').some(line=>line.trim().startsWith('mono-package: start '));
     if(!next&&!transition&&!workStart)continue;
-    const invocation=call.event.type==='event_msg'?call.approvalInvocationLine:call.line;
     if(!Number.isInteger(invocation))missing('start invocation not proved by native trace');
-    const e=source.exchanges?.filter(e=>e.replyLine<invocation).at(-1);
-    if(!e?.expected.outcome.startNext)throw new Error('start-next-stage without scenario authority');
+    if(!e?.expected.outcome.startNext||((transition||routeTarget)&&!stageStarts[e.expected.stage].includes(transition?target:routeTarget)))throw new Error('start-next-stage without scenario authority');
     starts.push({invocation,exchange:e});
    }
    for(const e of source.exchanges??[])if(e.expected.outcome.startNext&&!starts.some(s=>s.exchange===e))throw new Error('expected start-next-stage missing after actual reply');
