@@ -190,6 +190,17 @@ sandbox.
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
 equal `VERSION`; only release tasks change them. Try unreleased code per README.
 
+### Release 0.42.0
+
+Тестировщик сценариев скиллов (`qa.skills`, драйверы хостов, проверка записей
+monotest) и ожидания сертификата только в форме `{id, source, expectation}`.
+Этапы не менялись. Surface revision 5 прежний: общая quiescence не требуется,
+текущие попытки продолжаются на сохранённом packRoot; незавершённый проход QA
+со строковыми ожиданиями повторяется. Условия [Plugin Updates](#plugin-updates),
+включая before-update для заменяемого каталога Codex, сохраняются. После merge
+оркестратор ставит `v0.42.0` и устанавливает оба хоста; обе версии равны
+**0.42.0**, оба кэша совпадают с Git-деревом тега. Откат — установка 0.41.0.
+
 ### Release 0.41.0
 
 Включены ворота `mono:qa` перед вливанием и выкладкой для продуктов с рецептом
