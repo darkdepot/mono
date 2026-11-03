@@ -45,10 +45,10 @@ export function parseChecker(value, findings) {
   if (typeof value === 'string') { try { value = JSON.parse(value); } catch { throw new Error('unreadable checker JSON'); } }
   exact(value, ['completed', 'verdicts']);
   requireValue(value.completed === true && Array.isArray(value.verdicts), 'checker incomplete');
-  const expected = new Map(findings.map(finding => [finding.key, finding])), seen = new Set();
+  const expected = new Map(findings.map((finding, index) => [`F${index + 1}`, finding])), seen = new Set();
   for (const verdict of value.verdicts) {
-    exact(verdict, ['key', 'outcome', 'weight', 'danger', 'dangerCase', 'dangerReason', 'origin', 'mergeKey', 'outOfContract', 'riskRaised', 'reason', 'closed', 'newEvidence']);
-    requireValue(expected.has(verdict.key) && !seen.has(verdict.key), 'unknown or repeated checker key'); seen.add(verdict.key);
+    exact(verdict, ['id', 'outcome', 'weight', 'danger', 'dangerCase', 'dangerReason', 'origin', 'mergeKey', 'outOfContract', 'riskRaised', 'reason', 'closed', 'newEvidence']);
+    requireValue(expected.has(verdict.id) && !seen.has(verdict.id), 'unknown or repeated checker id'); seen.add(verdict.id);
     requireValue(['confirmed', 'rejected', 'unresolved'].includes(verdict.outcome) && /^P[0-3]$/.test(verdict.weight), 'invalid checker outcome/weight');
     requireValue([true, false, null].includes(verdict.danger) && (verdict.dangerCase === null || DANGER_CASES.includes(verdict.dangerCase)), 'invalid danger');
     requireValue(verdict.danger === false ? verdict.dangerCase === null && text(verdict.dangerReason)
@@ -64,7 +64,7 @@ export function parseChecker(value, findings) {
     requireValue(!prior || ['outcome', 'weight', 'danger', 'dangerCase', 'origin', 'closed', 'outOfContract', 'riskRaised'].every(key => prior[key] === verdict[key]), 'contradictory merge verdicts');
     groups.set(verdict.mergeKey, verdict);
   }
-  return value;
+  return { ...value, verdicts: value.verdicts.map(({ id, ...verdict }) => ({ ...verdict, key: expected.get(id).key })) };
 }
 
 // Exact fixture lines only. A new path or altered example must still be scanned.
@@ -110,31 +110,79 @@ export function resolveReviewRoles(config = {}, packRoot = runtimePackRoot()) {
 }
 export function roleInvocation(role, route, { scratch, worktree, schemaFile }) {
   // Launch from a neutral directory: repository settings/hooks are never executable configuration.
-  const names = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'SystemRoot', 'PATHEXT', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR'];
+  const names = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'USER', 'LOGNAME', 'SystemRoot', 'PATHEXT', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR'];
   const env = Object.fromEntries(names.filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]]));
   Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1',
     GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: '/dev/null', GIT_CONFIG_KEY_1: 'core.fsmonitor', GIT_CONFIG_VALUE_1: 'false' });
   const common = { cwd: scratch, env, boundary: {
-    writes: false, networkTools: false, connectors: false, hooks: false, subagents: false,
+    requested: { shellPolicy: 'read-only; network denied by sandbox', writes: false, networkTools: false, connectors: false, hooks: false, subagents: false }, observed: null,
     credentialReads: route.engine === 'codex' ? 'not-enforced; same machine read access as worker (owner accepted 2026-11-01)' : 'file tools confined to worktree; credential deny rules',
-    role, family: route.provider.id, model: route.model, servedModel: null,
+    role, engine: route.engine, family: route.provider.id, model: route.model, servedModel: null,
   } };
-  if (route.engine === 'codex') return { ...common, command: 'codex', args: ['exec', '--ignore-user-config', '--ignore-rules',
+  if (route.engine === 'codex') {
+    const home = path.join(scratch, 'codex-home');
+    fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+    const auth = path.join(home, 'auth.json');
+    if (!fs.existsSync(auth)) fs.symlinkSync(path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json'), auth);
+    env.CODEX_HOME = home;
+    // Model metadata can override feature flags. Retain the native model and instructions,
+    // but remove tool selectors that would reopen writing, delegation or code-mode tools.
+    const catalogResult = spawnSync('codex', ['debug', 'models', '--bundled'], { cwd: scratch, env, encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+    requireValue(catalogResult.status === 0, 'installed Codex model catalog unavailable');
+    const catalog = JSON.parse(catalogResult.stdout);
+    requireValue(catalog.models?.some(model => model.slug === route.model), 'native model missing from installed catalog');
+    for (const model of catalog.models) Object.assign(model, { apply_patch_tool_type: null, experimental_supported_tools: [],
+      tool_mode: 'direct', multi_agent_version: 'disabled', node_repl_disabled: true, supports_search_tool: false });
+    const catalogFile = path.join(scratch, 'models.json'); fs.writeFileSync(catalogFile, JSON.stringify(catalog));
+
+    return { ...common, command: 'codex', args: ['exec', '--ignore-user-config', '--ignore-rules',
     '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '--cd', scratch, '--json',
-    '--model', route.model, '-c', `model_reasoning_effort=${JSON.stringify(route.effort)}`,
+    '--model', route.model, '-c', `model_catalog_json=${JSON.stringify(catalogFile)}`, '-c', `model_reasoning_effort=${JSON.stringify(route.effort)}`,
     '-c', 'approval_policy="never"', '-c', 'shell_environment_policy.inherit="all"', '-c', 'project_doc_max_bytes=0', '-c', 'web_search="disabled"', '-c', 'mcp_servers={}',
     '-c', 'features.apps=false', '-c', 'features.multi_agent=false', '-c', 'features.hooks=false',
+    '-c', 'agents.enabled=false', '-c', 'tools.experimental_request_user_input.enabled=false', '-c', 'tools.update_plan.enabled=false',
+    ...['plugins', 'remote_plugin', 'apps', 'multi_agent', 'multi_agent_v2', 'goals', 'image_generation', 'view_image', 'browser_use', 'computer_use',
+      'in_app_browser', 'in_app_local_automation', 'memories', 'skill_search', 'skill_mcp_dependency_install', 'tool_suggest', 'sleep_tool', 'code_mode', 'code_mode_host'].flatMap(name => ['-c', `features.${name}=false`]),
     '--output-schema', schemaFile, '-'] };
-  const deny = [path.join(os.homedir(), '.ssh'), path.join(os.homedir(), '.aws'), path.join(os.homedir(), '.codex'),
-    path.join(os.homedir(), '.claude'), path.join(os.homedir(), '.config'), path.join(os.homedir(), '.mono-agent-workflow')];
+  }
+  assertReadableWorktree(worktree);
+  const deny = claudeDeniedRoots();
   const settings = { disableAllHooks: true, disableClaudeAiConnectors: true, enableAllProjectMcpServers: false, enabledPlugins: {},
     permissions: { defaultMode: 'dontAsk', disableBypassPermissionsMode: 'disable', allow: ['Read', 'Glob', 'Grep'],
       deny: ['Edit', 'Write', 'Bash', 'Agent', 'Task', 'WebFetch', 'WebSearch', ...deny.flatMap(file => [`Read(/${file})`, `Read(/${file}/**)`])] } };
   return { ...common, command: 'claude', args: ['-p', '--safe-mode', '--restricted', '--setting-sources', '', '--settings', JSON.stringify(settings),
     '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-chrome', '--disable-slash-commands',
     '--tools', 'Read,Glob,Grep', '--permission-mode', 'dontAsk', '--permission-prompts', 'none', '--add-dir', worktree,
-    '--no-session-persistence', '--model', route.model, '--effort', route.effort, '--output-format', 'json',
+    '--no-session-persistence', '--model', route.model, '--effort', route.effort, '--output-format', 'stream-json', '--verbose',
     '--json-schema', fs.readFileSync(schemaFile, 'utf8')] };
+}
+function claudeDeniedRoots() {
+  return ['.ssh', '.aws', '.codex', '.claude', '.config', '.mono-agent-workflow'].map(name => path.join(os.homedir(), name));
+}
+function assertReadableWorktree(worktree) {
+  const real = fs.realpathSync(worktree);
+  for (const root of claudeDeniedRoots()) {
+    const denied = fs.existsSync(root) ? fs.realpathSync(root) : root;
+    requireValue(real !== denied && !real.startsWith(denied + path.sep), `Claude denied directory contains reviewed worktree: ${denied}`);
+  }
+}
+export function observeCodexBoundary(value, stderr) {
+  exact(value, ['tools', 'mcpServers']);
+  requireValue(Array.isArray(value.tools) && value.tools.length > 0, 'empty observed Codex tools');
+  requireValue(value.tools.every(tool => ['exec_command', 'write_stdin'].includes(tool)) && value.tools.includes('exec_command') &&
+    Array.isArray(value.mcpServers) && value.mcpServers.length === 0, 'forbidden observed Codex tool or MCP server');
+  requireValue(!/mcp[:_ ]|mcp-server|rmcp|https?:\/\//i.test(stderr), 'MCP/network startup observed in role stderr');
+  return { tools: value.tools, mcpServers: [], connectors: false, subagents: false, source: 'live model tool-list probe' };
+}
+function failedAnswer(value) {
+  const raw = typeof value === 'string' ? value : JSON.stringify(value ?? '');
+  const lines = raw.split('\n'); let secretMatches = 0;
+  const redacted = lines.map(line => {
+    const matches = scanSecrets('+++ b/role-answer\n@@ -0,0 +1 @@\n+' + line);
+    secretMatches += matches.length; return matches.length ? '[credential-shaped line withheld]' : line;
+  }).join('\n');
+  const safe = raw.includes('PRIVATE KEY-----') ? '[private-key answer withheld]' : redacted;
+  return { text: Buffer.from(safe).subarray(0, 8188).toString('utf8'), truncated: Buffer.byteLength(safe) > 8188, secretMatches };
 }
 export function subscriptionStatus(engine, result) {
   requireValue(result.status === 0 && !result.error, 'native subscription login not confirmed');
@@ -148,16 +196,15 @@ export function subscriptionStatus(engine, result) {
     ['pro', 'max', 'team', 'enterprise'].includes(auth.subscriptionType), 'Claude requires native subscription login');
   return { requested: 'subscription', observed: auth.authMethod, positive: true };
 }
-async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = 600000 }) {
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-role-'));
-  try {
-    const schemaFile = path.join(packRoot, 'skills/code-review', role === 'code-review' ? 'reviewer.schema.json' : 'checker.schema.json');
-    const invocation = roleInvocation(role, route, { scratch, worktree, schemaFile });
-    const started = Date.now();
-    const authArgs = route.engine === 'codex' ? ['login', 'status'] : ['--safe-mode', '--setting-sources', '', 'auth', 'status', '--json'];
-    invocation.boundary.auth = subscriptionStatus(route.engine, spawnSync(invocation.command, authArgs,
-      { cwd: invocation.cwd, env: invocation.env, encoding: 'utf8', input: '', timeout: 30000, maxBuffer: 64 * 1024 }));
-    const result = await new Promise((resolve, reject) => {
+function codexResponse(result) {
+  const events = result.stdout.trim().split('\n').map(line => JSON.parse(line));
+  const final = events.filter(event => event.type === 'item.completed' && event.item?.type === 'agent_message').at(-1);
+  requireValue(events.some(event => event.type === 'turn.completed') && final && !events.some(event => event.type === 'error' || event.type === 'turn.failed' || event.item?.type === 'error'), 'Codex did not complete');
+  requireValue(events.every(event => !event.item || ['agent_message', 'reasoning', 'command_execution'].includes(event.item.type)), 'role used forbidden tool');
+  return { response: final.item.text, usage: events.filter(event => event.type === 'turn.completed').at(-1)?.usage ?? null };
+}
+function runInvocation(invocation, prompt, timeoutMs) {
+  return new Promise((resolve, reject) => {
       const child = spawn(invocation.command, invocation.args, { cwd: invocation.cwd, env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       let stdout = '', stderr = '', exceeded = false, interrupted = false;
       const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
@@ -166,29 +213,61 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
       const cleanup = () => { clearTimeout(timer); process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt); };
       const timer = setTimeout(() => { exceeded = true; kill(); }, timeoutMs);
       child.stdout.on('data', data => { stdout += data; if (Buffer.byteLength(stdout) > 16 * 1024 * 1024) { exceeded = true; kill(); } });
-      child.stderr.on('data', data => { stderr = (stderr + data).slice(-4096); });
+      child.stderr.on('data', data => { stderr += data; if (Buffer.byteLength(stderr) > 1024 * 1024) { exceeded = true; kill(); } });
       child.stdin.on('error', error => { if (error.code !== 'EPIPE') reject(error); });
       child.once('error', error => { cleanup(); reject(error); });
       child.once('close', code => { cleanup(); kill();
-        if (interrupted) reject(Object.assign(new Error('review interrupted; role process group stopped'), { interrupted: true }));
-        else if (code !== 0 || exceeded) reject(new Error(`role ${role} failed (${exceeded ? 'timeout/output limit' : code}); no response admitted`));
+        if (interrupted) reject(Object.assign(new Error('review interrupted; role process group stopped'), { interrupted: true, rawAnswer: stdout }));
+        else if (code !== 0 || exceeded) reject(Object.assign(new Error(`role failed (${exceeded ? 'timeout/output limit' : code}); no response admitted`), { rawAnswer: stdout }));
         else resolve({ stdout, stderr }); });
       child.stdin.end(prompt);
     });
+}
+async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs = 600000 }) {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-role-'));
+  let captured = '', boundary = null;
+  try {
+    const schemaFile = path.join(packRoot, 'skills/code-review', role === 'code-review' ? 'reviewer.schema.json' : 'checker.schema.json');
+    const invocation = roleInvocation(role, route, { scratch, worktree, schemaFile });
+    boundary = invocation.boundary;
+    const started = Date.now();
+    const authArgs = route.engine === 'codex' ? ['login', 'status'] : ['--safe-mode', '--setting-sources', '', 'auth', 'status', '--json'];
+    invocation.boundary.auth = subscriptionStatus(route.engine, spawnSync(invocation.command, authArgs,
+      { cwd: invocation.cwd, env: invocation.env, encoding: 'utf8', input: '', timeout: 30000, maxBuffer: 64 * 1024 }));
+    if (route.engine === 'codex') {
+      const probeSchema = path.join(scratch, 'boundary.schema.json');
+      fs.writeFileSync(probeSchema, JSON.stringify({ type: 'object', properties: { tools: { type: 'array', items: { type: 'string' } },
+        mcpServers: { type: 'array', items: { type: 'string' } } }, required: ['tools', 'mcpServers'], additionalProperties: false }));
+      const args = [...invocation.args]; args[args.indexOf('--output-schema') + 1] = probeSchema;
+      const probe = await runInvocation({ ...invocation, args }, 'Boundary audit only. Do not call tools. Enumerate ALL exposed tool names including deferred tools and wrappers, and MCP server names. Exact names, no omissions. Return the schema.', timeoutMs);
+      captured = probe.stdout;
+      const parsed = codexResponse(probe);
+      const surface = JSON.parse(parsed.response);
+      surface.tools = surface.tools?.map(tool => tool.replace(/^functions\./, ''));
+      boundary.observed = { ...surface, source: 'live tool-list probe; not yet admitted' };
+      boundary.observed = observeCodexBoundary(surface, probe.stderr);
+      boundary.probeUsage = parsed.usage;
+    }
+    const result = await runInvocation(invocation, prompt, timeoutMs);
+    captured = result.stdout;
     let response, usage = null;
     if (route.engine === 'claude') {
-      const envelope = JSON.parse(result.stdout);
+      const events = result.stdout.trim().split('\n').map(line => JSON.parse(line));
+      const init = events.find(event => event.type === 'system' && event.subtype === 'init');
+      requireValue(init && Array.isArray(init.tools) && init.tools.length > 0 && init.tools.every(tool => ['Read', 'Glob', 'Grep', 'StructuredOutput'].includes(tool)) && Array.isArray(init.mcp_servers) && init.mcp_servers.length === 0, 'forbidden or missing observed Claude tool surface');
+      invocation.boundary.observed = { tools: init.tools, mcpServers: init.mcp_servers, source: 'CLI system init' };
+      invocation.boundary.servedModel = init.model ?? null;
+      const envelope = events.filter(event => event.type === 'result').at(-1);
+      requireValue(envelope, 'Claude result missing');
       requireValue(envelope.is_error !== true && envelope.subtype === 'success', 'Claude did not complete');
       response = envelope.structured_output; usage = envelope.usage ?? null;
       requireValue(object(response), 'Claude structured output missing');
     } else {
-      const events = result.stdout.trim().split('\n').map(line => JSON.parse(line));
-      const final = events.filter(event => event.type === 'item.completed' && event.item?.type === 'agent_message').at(-1);
-      requireValue(events.some(event => event.type === 'turn.completed') && final && !events.some(event => event.type === 'error' || event.type === 'turn.failed'), 'Codex did not complete');
-      requireValue(!events.some(event => /mcp|web_search/.test(event.item?.type ?? '')), 'role used forbidden connector/network tool');
-      response = final.item.text; usage = events.filter(event => event.type === 'turn.completed').at(-1)?.usage ?? null;
+      observeCodexBoundary({ tools: boundary.observed.tools, mcpServers: boundary.observed.mcpServers }, result.stderr);
+      ({ response, usage } = codexResponse(result));
     }
     return { response, usage, elapsedMs: Date.now() - started, boundary: invocation.boundary };
+  } catch (error) { error.rawAnswer ??= captured; error.boundary = boundary; throw error;
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 function promptFor(packRoot, role, context) {
@@ -215,6 +294,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     requireValue(git(worktree, ['merge-base', base, head]).trim() === base, 'base must be an ancestor of the reviewed head');
     const identity = treeIdentity(worktree);
     const roles = resolveReviewRoles(config, packRoot);
+    assertReadableWorktree(worktree);
     const diff = git(worktree, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', base, head, '--']);
     const secrets = scanSecrets(diff);
     if (secrets.length) return { ...fail('secret patterns in diff; no model launched'), secrets };
@@ -227,16 +307,17 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const call = async (role, extra, parse) => {
       for (let attempt = 1; attempt <= 2; attempt++) {
         const started = Date.now();
-        let costRecorded = false;
+        let costRecorded = false, answer;
         try {
           const result = await runRole({ role, route: roles[role], worktree, packRoot, prompt: promptFor(packRoot, role, { ...context, ...extra }) });
-          costs.push({ role, attempt, elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null, boundary: result.boundary ?? null });
+          answer = result.response;
+          costs.push({ role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, attempt, elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null, boundary: result.boundary ?? null });
           costRecorded = true;
           return parse(result.response);
         } catch (error) {
           // The transport may fail before usage is returned; do not invent token counts.
-          if (!costRecorded) costs.push({ role, attempt, elapsedMs: Date.now() - started, usage: null, boundary: null, failure: true });
-          record.failures.push({ head, round: number, role, attempt, reason: error.message });
+          if (!costRecorded) costs.push({ role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, attempt, elapsedMs: Date.now() - started, usage: null, boundary: error.boundary ?? null, failure: true });
+          record.failures.push({ head, round: number, role, attempt, reason: failedAnswer(error.message).text, answer: failedAnswer(answer ?? error.rawAnswer) });
           if (attempt === 2 || error.interrupted) throw error;
         }
       }
@@ -253,7 +334,8 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const findings = [...new Map([...open, ...found].map(finding => [finding.key, finding])).values()];
     const baseEvidence = [...new Set(findings.map(finding => finding.file))].map(file => ({ file,
       content: git(worktree, ['ls-tree', base, '--', file]) ? git(worktree, ['show', `${base}:${file}`]) : null }));
-    const checked = findings.length ? (await call('code-review-checker', { findings, history: record.findings, baseDiff: diff, baseEvidence }, value => parseChecker(value, findings))).verdicts : [];
+    const checked = findings.length ? (await call('code-review-checker', { findings: findings.map(({ key, ...finding }, index) => ({ ...finding, id: `F${index + 1}` })),
+      history: record.findings.filter(item => findings.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${findings.findIndex(f => f.key === key) + 1}` })), baseDiff: diff, baseEvidence }, value => parseChecker(value, findings))).verdicts : [];
     requireValue(treeIdentity(worktree) === identity, 'HEAD/tree changed during review; result discarded');
     const merged = new Map(record.findings.map(finding => [finding.key, finding]));
     for (const verdict of checked) {
@@ -276,7 +358,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const round = { number, head, base, scope: context.scope, reviewedFiles: [...covered], findingKeys: checked.map(verdict => verdict.key), outcome, costs };
     return { ...record, schemaVersion: 1, base, contractDigest, rounds: [...record.rounds, round], findings: current, round, outcome,
       successorKeys: successors.map(finding => finding.key), costs };
-  } catch (error) { return fail(error.message); }
+  } catch (error) { return fail(failedAnswer(error.message).text); }
 }
 export function formatReviewReport(record) {
   const open = record.findings.filter(finding => !['closed', 'rejected'].includes(finding.status));
@@ -284,6 +366,7 @@ export function formatReviewReport(record) {
   const origins = { introduced: 'внесено задачей', contract: 'нарушает договор задачи', 'pre-existing': 'было раньше' };
   return [
     `Проверено: ${record.round ? `${record.round.reviewedFiles.length} файлов, круг ${record.round.number}.` : 'проверка не завершена.'}`,
+    ...(record.costs ?? record.round?.costs ?? []).map(cost => `Роль: ${cost.role}; engine=${cost.engine ?? cost.boundary?.engine ?? 'unknown'}; model=${cost.boundary?.servedModel ?? cost.model ?? 'unknown'}; family=${cost.family ?? cost.boundary?.family ?? 'unknown'}; observed boundary=${JSON.stringify(cost.boundary?.observed ?? 'not observed')}; credentialReads=${cost.boundary?.credentialReads ?? 'not observed'}.`),
     `Найдено: ${record.findings.length} замечаний${record.secrets?.length ? `; ${record.secrets.length} совпадений с шаблоном секрета (значения скрыты)` : ''}.`,
     ...record.findings.map(finding => `- ${finding.weight} ${finding.file}:${finding.line}: ${finding.title} (${statuses[finding.status]}; ${finding.danger ? 'опасность' : 'неопасное'}; ${origins[finding.origin]}). ${finding.reason}`),
     `Осталось: ${open.length} открытых замечаний; ${record.failures.length} технических сбоев.`,

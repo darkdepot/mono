@@ -1,7 +1,8 @@
 # Code review evaluation
 
-`cases.json` pins three task heads, bases, dataset versions, contract summaries
-and their original source blobs. The repository is supplied by the host through
+`cases.json` version 2 pins three task heads, bases, dataset versions and exact
+contract source blobs. The runner reads each pinned blob verbatim; authored
+summaries never enter model context or the contract digest. The repository is supplied by the host through
 an absolute `bundle` setting, never through a hardcoded local path. The bundle
 must include tags `dataset/MONO-81-head`, `dataset/MONO-95-head` and
 `dataset/MONO-146-head`, with reachable bases. MONO-75 is unavailable and excluded.
@@ -28,8 +29,14 @@ result. #41's claimed registration-after-resume order does not exist: acceptAmen
 registers pins first. A live retry requires reconciliation, already mandated by
 the pinned contract. Keep its historical slot visible, exclude it from eligible
 recall: 11/15 eligible, alongside nominal 12/16. These classifications and the
-danger judgments are code-inspected candidate gold; an independent host agent
-must confirm them before live scoring. Do not silently redefine the denominator.
+danger judgments were independently checked by the host. Round 1 reclassifies
+#156 and #80 as danger disputed: their matches and calibration errors are scored,
+but neither contributes to the danger veto. #156 has no pinned consumer of the
+stale snapshot directory (dispatch.mjs:93–107); #80 may falsely match argv tokens
+in macOS ps eww (runtime.mjs:147–152), with low confidence. #21 confirms the
+hardcoded field but only partially supports its consequence; no differing helper
+budget or field consumer is established. Evidence and the orchestrator decision
+are retained in the manifest. #17 and #41 are unchanged. Do not silently redefine the denominator.
 
 Match strictly only with BOTH the same code location and the same failure
 mechanism/trigger. A matching title or consequence is insufficient. Partial
@@ -62,7 +69,7 @@ in `recorded-responses.json` are authored controls, not measured model output.
 Checker calibration uses a separate verdict oracle per finding. Pass gold and
 current parsed verdicts to `scoreCheckerProbes`; it counts false rejections,
 removed danger, incorrect severity and merging distinct causes independently.
-A known real dangerous case rejected or stripped of danger blocks release until
+An undisputed known real dangerous case rejected or stripped of danger blocks release until
 the cause is fixed and rechecked. A reviewer miss is an enhancement with cause
 analysis, not a release veto. Unreviewed probes stay missing, never pass.
 
@@ -76,4 +83,10 @@ The worker cannot prove these with recorded answers.
 The role transport leaves Codex credential reads at worker-level machine access,
 as accepted by the owner 2026-11-01. Read-only is not a credential-read deny list.
 Signing-key integrity relies on denied writes. Host probes must describe the
-actual installed tool boundaries, not infer them from launch arguments.
+actual installed tool boundaries, not infer them from launch arguments. Codex
+uses an auth-only temporary home and a tool-restricted native model catalog, then
+probes its exposed tool list before reading the task. Any unexpected tool or MCP
+startup rejects the run. Claude reports Read/Glob/Grep plus StructuredOutput
+(the schema response tool), with no MCP; denied worktree roots are refused up front.
+Reports include the actual role engines/models/families and observed tool surfaces.
+Failed role answers are secret-scanned and capped at 8 KiB per attempt.

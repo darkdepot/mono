@@ -1,45 +1,45 @@
 {
   "schemaVersion": 1,
-  "version": 1,
+  "version": 2,
   "tasks": [
     {
       "id": "MONO-81",
       "head": "0a9143760e75afe2a56c33927a6aad2c91ff2fc1",
       "base": "c16a940841d0609ac131970550e39acad5898362",
       "datasetVersion": 2,
-      "contract": "Compare reviewers on frozen code and task data. Exclude malformed/unavailable routes before helper calls. Bind helper and prompt-budget provenance to the frozen helper bytes. Redact route identity without corrupting findings. Forward only the explicit OS allowlist and declared credentials; prove ambient environment isolation. Keep failed/interrupted samples in the denominator.",
       "contractSource": {
         "file": "docs/review-bench-protocol.md",
         "blob": "4aa2347b4cfb6574deb8f3ce5621b9138ddbfa42",
         "sha256": "17856b83ab42ae3ab3fd1715e19162816e464f09d3650146543166513c2b4ea6"
       },
-      "risk": "risky"
+      "risk": "risky",
+      "contractMode": "pinned-blob"
     },
     {
       "id": "MONO-95",
       "head": "28bf3c25bcba2f04bf29a518238cb4a8588dcc5e",
       "base": "48ff105270160d72122e9a6d7879943378b71a0c",
       "datasetVersion": 2,
-      "contract": "Dispatch and accept use immutable snapshots and pinned scope/approval. An issue-only snapshot requires its scope fingerprint. Rebuilding a refused attempt removes stale Project documents. Phase queues validate all durable write identities before exposing any mutation. Amend writes and registers pins before resume; reconcile any possibly-live resume after a crash, never repeat it silently. Snapshot definitions respect Markdown fences and nested-list boundaries.",
       "contractSource": {
         "file": "references/orchestration.md",
         "blob": "f8345a9838860eba28b969dde4faf428c982ce75",
         "sha256": "f20d9ac35d87164ddf70cb73a4eceabf0fc4dd887d697ffe99ad92e1435c9cb1"
       },
-      "risk": "risky"
+      "risk": "risky",
+      "contractMode": "pinned-blob"
     },
     {
       "id": "MONO-146",
       "head": "02efa6e6e534ddae320f96dcebb7296cb0692df5",
       "base": "181786650213a526d4c1ae4656d9f84363694ac7",
       "datasetVersion": 1,
-      "contract": "Backup switching must prove previous-attempt writers and collectors are retired before replacement. Inspect previous-attempt collectors independently of caller exemptions. Process evidence must distinguish absent and unavailable. Literal path references include quoted exact paths and descendants, never a longer sibling prefix. Markers belong to the environment, not argv. Do not execute or kill unrelated processes.",
       "contractSource": {
         "file": "references/orchestration.md",
         "blob": "1192d93c96e67e2a5db66c2b8f353498e51958eb",
         "sha256": "d8f86c938ae0ded13e1fd2b070cf7ff4103c38eebe59b8c196800dea6807c685"
       },
-      "risk": "risky"
+      "risk": "risky",
+      "contractMode": "pinned-blob"
     }
   ],
   "cases": [
@@ -112,11 +112,17 @@
       "file": "scripts/review-bench.mjs",
       "anchor": "maxPromptBytes:512000",
       "trigger": "The frozen helper uses a different prompt budget than the hardcoded manifest value.",
-      "consequence": "Provenance misstates the preparation algorithm.",
+      "consequence": "The field is hardcoded; a differing helper budget is not established at this head and no consumer of the field is present.",
       "danger": false,
       "dangerCase": null,
-      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
-      "class": "hardcoded-helper-budget"
+      "oracle": "host independent gold; orchestrator round 1 decision",
+      "class": "hardcoded-helper-budget",
+      "reclassification": {
+        "by": "orchestrator",
+        "date": "2026-11-04",
+        "evidence": "0a914376 scripts/review-bench.mjs:89 hardcodes maxPromptBytes:512000; 512000 occurs nowhere else in the repo except the test. Mechanism confirmed, but the stated consequence (provenance misstates) only holds for a helper whose budget differs, which the pinned commit cannot show; the full helper bytes are embedded and digest-checked (:79-80, :86, :190-191), so the actual partitioning stays bound. Field has no consumer. Not dangerous."
+      },
+      "consequenceStatus": "partial"
     },
     {
       "id": "23",
@@ -247,11 +253,17 @@
       "file": "scripts/orchestrator/dispatch.mjs",
       "anchor": "snapshot",
       "trigger": "A refused full dispatch is rebuilt as short under the same attempt.",
-      "consequence": "Old PRD/Spec files survive and contaminate the worker snapshot.",
+      "consequence": "Stale PRD/Spec remain in the dispatch artifact; no pinned consumer of that snapshot directory proves worker contamination.",
       "danger": true,
       "dangerCase": "gate-bypass",
-      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
-      "class": "stale-refused-snapshot"
+      "oracle": "host independent gold; orchestrator round 1 decision",
+      "class": "stale-refused-snapshot",
+      "reclassification": {
+        "by": "orchestrator",
+        "date": "2026-11-04",
+        "evidence": "28bf3c25 scripts/orchestrator/dispatch.mjs:79,93-94 reuse dispatch/KEY-aN for an unregistered (refused) attempt; :105-107 copy files with mkdir recursive and no cleanup, so prd.md/tech-spec.md from a refused full attempt survive in snapshot/ beside the new extracts (refusals after copy: render :131, gate :132-133, spawn :134). But no code reads snapshot/: the worker prompt dispatch.md is re-rendered from current extracts (:123,:131), the template has no snapshot path, worker grants exclude dispatch/ (references/orchestration.md:654). The only reader of such a directory would be accept.mjs amend --full-snapshot --snapshot DIR (accept.mjs:144-147), and only if an operator passed dispatch/KEY-aN/snapshot, which no pinned doc or skill instructs (skills/mono-orchestrate/SKILL.md:212 says only '--full-snapshot when requested'). The 'contaminates the worker snapshot' consequence and the gate-bypass label are not supported by the pinned code; the harm is a misleading dispatch artifact. Disagree on danger."
+      },
+      "dangerStatus": "disputed"
     },
     {
       "id": "159",
@@ -278,10 +290,16 @@
       "anchor": "MONO_ATTEMPT",
       "trigger": "A process command argument contains the expected MONO_ATTEMPT marker, but its environment does not.",
       "consequence": "Combined ps argv/environment parsing falsely attributes the unrelated process.",
-      "danger": false,
-      "dangerCase": null,
-      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
-      "class": "argv-environment-confusion"
+      "danger": true,
+      "dangerCase": "gate-stall",
+      "oracle": "host independent gold; orchestrator round 1 decision",
+      "class": "argv-environment-confusion",
+      "reclassification": {
+        "by": "orchestrator",
+        "date": "2026-11-04",
+        "evidence": "02efa6e6 scripts/runtime.mjs:138-157 readProcessAttemptMarker on darwin (:147-152) splits 'ps eww' output (argv followed by environment) on whitespace and matches a MONO_ATTEMPT=<marker> argv token; Linux (:144-146) reads /proc/<pid>/environ correctly. A false 'matched' makes backup-switch.mjs:90-91 push a remnant and :94 refuse. Same consequence path as #69 (false refusal of an ordinary switch; pinned orchestration.md:785-789: unrelated utilities do not block). Dataset danger=false contradicts its own #69 label; dangerous (gate-stall). Low confidence: the argv token is the attempt's random UUID (launch.mjs:305)."
+      },
+      "dangerStatus": "disputed"
     }
   ],
   "cleanControls": [
@@ -349,6 +367,21 @@
     {
       "id": "41",
       "decision": "Historical slot retained for nominal 12/16 reporting but excluded from eligible denominator: acceptAmend registers pinsVersion before resume; live resume retry is an explicit reconciliation boundary, not the claimed reversed-order bug."
+    },
+    {
+      "id": "156",
+      "decision": "Danger disputed: score matches and calibration errors, exclude from danger veto.",
+      "evidence": "28bf3c25 scripts/orchestrator/dispatch.mjs:79,93-94 reuse dispatch/KEY-aN for an unregistered (refused) attempt; :105-107 copy files with mkdir recursive and no cleanup, so prd.md/tech-spec.md from a refused full attempt survive in snapshot/ beside the new extracts (refusals after copy: render :131, gate :132-133, spawn :134). But no code reads snapshot/: the worker prompt dispatch.md is re-rendered from current extracts (:123,:131), the template has no snapshot path, worker grants exclude dispatch/ (references/orchestration.md:654). The only reader of such a directory would be accept.mjs amend --full-snapshot --snapshot DIR (accept.mjs:144-147), and only if an operator passed dispatch/KEY-aN/snapshot, which no pinned doc or skill instructs (skills/mono-orchestrate/SKILL.md:212 says only '--full-snapshot when requested'). The 'contaminates the worker snapshot' consequence and the gate-bypass label are not supported by the pinned code; the harm is a misleading dispatch artifact. Disagree on danger."
+    },
+    {
+      "id": "80",
+      "decision": "Danger disputed: score matches and calibration errors, exclude from danger veto.",
+      "evidence": "02efa6e6 scripts/runtime.mjs:138-157 readProcessAttemptMarker on darwin (:147-152) splits 'ps eww' output (argv followed by environment) on whitespace and matches a MONO_ATTEMPT=<marker> argv token; Linux (:144-146) reads /proc/<pid>/environ correctly. A false 'matched' makes backup-switch.mjs:90-91 push a remnant and :94 refuse. Same consequence path as #69 (false refusal of an ordinary switch; pinned orchestration.md:785-789: unrelated utilities do not block). Dataset danger=false contradicts its own #69 label; dangerous (gate-stall). Low confidence: the argv token is the attempt's random UUID (launch.mjs:305)."
+    },
+    {
+      "id": "21",
+      "decision": "Mechanism confirmed; claimed consequence only partial.",
+      "evidence": "0a914376 scripts/review-bench.mjs:89 hardcodes maxPromptBytes:512000; 512000 occurs nowhere else in the repo except the test. Mechanism confirmed, but the stated consequence (provenance misstates) only holds for a helper whose budget differs, which the pinned commit cannot show; the full helper bytes are embedded and digest-checked (:79-80, :86, :190-191), so the actual partitioning stays bound. Field has no consumer. Not dangerous."
     }
   ],
   "measurements": {

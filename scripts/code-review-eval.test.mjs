@@ -13,7 +13,7 @@ test('frozen cases distinguish historical slots, later fixes, clean controls and
  const result=validateReviewDataset(dataset);assert.equal(result.late,12);assert.equal(result.cases,16);assert.equal(result.eligibleLate,11);assert.equal(result.eligibleExtended,15);assert.equal(result.clean,3);
  assert.equal(dataset.cases.find(item=>item.id==='41').eligible,false);assert.equal(dataset.cases.find(item=>item.id==='17').eligible,true);
  assert.deepEqual(dataset.laterIntroduced.map(item=>item.id),['67','70','71']);
- for(const field of ['base','head','contract']){const broken=structuredClone(dataset);broken.tasks[0][field]='';assert.throws(()=>validateReviewDataset(broken));}
+ for(const field of ['base','head','contractMode']){const broken=structuredClone(dataset);broken.tasks[0][field]='';assert.throws(()=>validateReviewDataset(broken));}
  const broken=structuredClone(dataset);broken.cases[0].trigger='';assert.throws(()=>validateReviewDataset(broken));
 });
 test('recall reports each run and partial separately, union is additional, failed runs remain',()=>{
@@ -57,7 +57,7 @@ test('bundle evaluation validates exact source bytes and uses the shared circle 
  const cleanHead=execFileSync('git',['commit-tree',cleanTree,'-p',base,'-m','Code review clean document control'],{cwd:repo,encoding:'utf8',env:{...process.env,GIT_AUTHOR_NAME:'Evaluation Fixture',GIT_AUTHOR_EMAIL:'fixture@example.test',GIT_AUTHOR_DATE:'2026-11-01T00:00:00Z',GIT_COMMITTER_NAME:'Evaluation Fixture',GIT_COMMITTER_EMAIL:'fixture@example.test',GIT_COMMITTER_DATE:'2026-11-01T00:00:00Z'}}).trim();
  for(const control of clone.cleanControls){control.base=base;control.head=cleanHead;control.contract='Add this documentation control.';control.content=content;control.file='CODE_REVIEW_EVAL_CONTROL.md';}
  const bundle=path.join(scratch,'heads.bundle');git('bundle','create',bundle,'--all');assert.equal(verifyDatasetBundle(clone,bundle).modelCalls,0);
- let calls=0;const evaluation=await runReviewEvaluation({dataset:clone,bundle,runId:'recorded-control',packRoot},{runRole:async()=>{calls++;return {response:{completed:true,reviewedFiles:['scripts/input.mjs','CODE_REVIEW_EVAL_CONTROL.md'],findings:[]}};}});
+ let calls=0;const evaluation=await runReviewEvaluation({dataset:clone,bundle,runId:'recorded-control',packRoot},{runRole:async request=>{calls++;const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.equal(context.contract,context.files.includes('CODE_REVIEW_EVAL_CONTROL.md')?'Add this documentation control.':'Frozen contract.\n');return {response:{completed:true,reviewedFiles:['scripts/input.mjs','CODE_REVIEW_EVAL_CONTROL.md'],findings:[]}};}});
  assert.equal(evaluation.runs.length,18);assert.equal(calls,36);assert.equal(evaluation.runs.filter(run=>run.caseId.endsWith('-clean')).length,9);assert.ok(evaluation.runs.every(run=>run.record.outcome==='clean'));
  clone.tasks[0].contractSource.sha256='0'.repeat(64);assert.throws(()=>verifyDatasetBundle(clone,bundle),/contract bytes/);
 });
@@ -67,4 +67,18 @@ test('incumbent comparison refuses changed contracts or unmatched repeats',()=>{
  const baseline={datasetDigest:'d',runs:[{...run,id:'baseline:1'}]};assert.equal(compareReviewEvaluations(candidate,baseline)[0].baseline,'baseline:1');
  assert.throws(()=>compareReviewEvaluations(candidate,{...baseline,runs:[{...run,head:'other'}]}),/inputs differ/);
  assert.throws(()=>compareReviewEvaluations(candidate,{...baseline,runs:[]}),/denominator/);assert.throws(()=>compareReviewEvaluations({...candidate,runs:[]},{...baseline,runs:[]}),/empty comparison/);
+});
+
+test('D5: dataset version changes and evaluation receives only the exact pinned contract blob',()=>{
+ assert.ok(dataset.version>=2);
+ for(const task of dataset.tasks)assert.equal(task.contractMode,'pinned-blob');
+});
+test('D6: disputed danger is scored without a danger veto, partial consequence and nominal slots stay visible',()=>{
+ for(const id of ['156','80']){const item=dataset.cases.find(item=>item.id===id);assert.equal(item.dangerStatus,'disputed');assert.match(item.reclassification.evidence,/\.mjs:/);}
+ assert.equal(dataset.cases.find(item=>item.id==='21').consequenceStatus,'partial');
+ const gold=[{key:'156',outcome:'confirmed',weight:'P2',danger:true,dangerStatus:'disputed',mergeKey:'156'},{key:'real',outcome:'confirmed',weight:'P2',danger:true,mergeKey:'real'}];
+ const verdicts=gold.map(item=>({...item,outcome:'rejected',danger:false}));
+ const result=scoreCheckerProbes(gold,verdicts);assert.equal(result.rows[0].unsafe,false);assert.equal(result.rows[0].dangerDisputed,true);assert.equal(result.rows[0].falseRejection,true);assert.equal(result.rows[1].unsafe,true);assert.equal(result.releaseBlocked,true);
+ assert.equal(scoreCheckerProbes(gold.slice(0,1),verdicts.slice(0,1)).releaseBlocked,false);
+ assert.equal(validateReviewDataset(dataset).eligibleLate,11);assert.equal(validateReviewDataset(dataset).eligibleExtended,15);
 });

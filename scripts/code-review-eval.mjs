@@ -13,7 +13,7 @@ export function validateReviewDataset(dataset) {
   need(dataset.schemaVersion === 1 && dataset.version >= 1 && Array.isArray(dataset.tasks) && dataset.tasks.length, 'invalid version/tasks');
   need(new Set(dataset.tasks.map(task => task.id)).size === dataset.tasks.length, 'duplicate task');
   for (const task of dataset.tasks) {
-    need(/^[a-f0-9]{40}$/.test(task.base) && /^[a-f0-9]{40}$/.test(task.head) && nonempty(task.contract), 'base/head/contract must be pinned');
+    need(/^[a-f0-9]{40}$/.test(task.base) && /^[a-f0-9]{40}$/.test(task.head) && task.contractMode === 'pinned-blob', 'base/head/contract must be pinned');
     need(/^[a-f0-9]{40}$/.test(task.contractSource?.blob) && /^[a-f0-9]{64}$/.test(task.contractSource?.sha256) && nonempty(task.contractSource.file), 'contract source not pinned');
   }
   need(Array.isArray(dataset.cases) && new Set(dataset.cases.map(item => item.id)).size === dataset.cases.length, 'duplicate cases');
@@ -65,6 +65,11 @@ export function verifyDatasetBundle(dataset, bundle) {
     return { ...validateReviewDataset(dataset), bundle: 'verified', modelCalls: 0 };
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
+export function pinnedReviewContract(worktree, task) {
+  const source = execFileSync('git', ['-C', worktree, 'cat-file', 'blob', task.contractSource.blob]);
+  need(createHash('sha256').update(source).digest('hex') === task.contractSource.sha256, 'contract bytes changed');
+  return source.toString('utf8');
+}
 export async function runReviewEvaluation({ dataset, bundle, config = {}, runId, packRoot = runtimePackRoot() }, dependencies = {}) {
   verifyDatasetBundle(dataset, bundle);
   need(nonempty(runId), 'unique runId required');
@@ -76,14 +81,16 @@ export async function runReviewEvaluation({ dataset, bundle, config = {}, runId,
     for (let repeat = 1; repeat <= 3; repeat++) {
       const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-case-'));
       const row = { id: `${runId}:${task.caseId}:${repeat}`, task: task.task ?? task.id, caseId: task.caseId, repeat,
-        head: task.head, base: task.base, contractDigest: digest(task.contract) };
-      await progress({ type: 'started', ...row });
+        head: task.head, base: task.base, contractDigest: null };
       try {
         git(scratch, ['init', '-q']);
         git(scratch, ['fetch', '-q', '--no-tags', bundle, `refs/tags/dataset/${task.task ?? task.id}-head`]);
         if (task.file) materializeCleanControl(scratch, task);
         else git(scratch, ['checkout', '-q', '--detach', task.head]);
-        const record = await runReviewRound({ worktree: scratch, head: task.head, base: task.base, contract: task.contract, risk: 'risky', config, packRoot }, dependencies);
+        const contract = task.file ? task.contract : pinnedReviewContract(scratch, task);
+        row.contractDigest = digest(contract);
+        await progress({ type: 'started', ...row });
+        const record = await runReviewRound({ worktree: scratch, head: task.head, base: task.base, contract, risk: 'risky', config, packRoot }, dependencies);
         runs.push({ ...row, record });
       } catch (error) {
         runs.push({ ...row, record: { outcome: 'not-reviewed', findings: [], costs: [], failures: [{ reason: error.message }] } });
@@ -129,7 +136,8 @@ export function scoreReviewEvaluation(dataset, evaluation, adjudications) {
       cleanFalseAlarms: clean ? grades.filter(grade => grade.match === 'false-positive').length : 0,
       novel: grades.filter(grade => grade.match === 'novel').length,
       ungraded: run.record.findings.filter(finding => !grades.some(grade => grade.key === finding.key)).length,
-      dangerousMisses: eligible.filter(item => item.danger && !strict.has(item.id)).map(item => item.id), costs: run.record.costs, failures: run.record.failures });
+      disputedDanger: eligible.filter(item => item.dangerStatus === 'disputed').map(item => item.id),
+      dangerousMisses: eligible.filter(item => item.danger && item.dangerStatus !== 'disputed' && !strict.has(item.id)).map(item => item.id), costs: run.record.costs, failures: run.record.failures });
   }
   return { rows, unionAdditionalOnly: [...union], nominalSlots: { late12: 12, extended16: 16 },
     enhancements: rows.flatMap(row => row.dangerousMisses.map(id => ({ runId: row.runId, missedCase: id, action: 'independent cause analysis and prompt/test strengthening' }))),
@@ -143,10 +151,10 @@ export function scoreCheckerProbes(gold, verdicts) {
   const rows = gold.map(expected => {
     const actual = verdicts.find(item => item.key === expected.key);
     return { key: expected.key, missing: !actual, falseRejection: expected.outcome === 'confirmed' && actual?.outcome === 'rejected',
-      dangerRemoved: expected.danger && actual?.danger === false,
+      dangerRemoved: expected.danger && actual?.danger === false, dangerDisputed: expected.dangerStatus === 'disputed',
       weightMismatch: actual ? actual.weight !== expected.weight : null,
       verdictMismatch: actual ? actual.outcome !== expected.outcome : null,
-      unsafe: expected.danger && expected.outcome === 'confirmed' && (actual?.danger === false || actual?.outcome === 'rejected') };
+      unsafe: expected.dangerStatus !== 'disputed' && expected.danger && expected.outcome === 'confirmed' && (actual?.danger === false || actual?.outcome === 'rejected') };
   });
   const falseMerges = [];
   for (let i = 0; i < verdicts.length; i++) for (let j = i + 1; j < verdicts.length; j++) {

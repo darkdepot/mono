@@ -1638,7 +1638,8 @@ persistence/signing. Technical failure returns no round and is retried once.
 Changed-file coverage gets one focused pass. Risky/1000-line first rounds add an
 ordinary second pass, combined by stable class/file/code-anchor key. The checker
 sees every open finding, original base content, current files and prior decisions;
-only its evidence closes or reopens a key. It assigns P0-P3, R7 danger/case,
+only its evidence closes or reopens a key. Checker wire IDs are F1..Fn; code maps
+them back to stable keys. Each failed answer is secret-scanned and capped at 8 KiB. It assigns P0-P3, R7 danger/case,
 origin relative to task base, merge key and scope/risk flags. Code adds whether
 the location changed after round one (±2 context lines), costs and failures.
 Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
@@ -1657,7 +1658,12 @@ records use `requiredPairings(config,{reviewerRole:'code-review'})`; existing
 role-less records still refer to autoreview. Pair acceptance cannot waive the
 new roles' family boundary. Each launch has its own read-only permissions and a
 neutral working directory, with user/project configuration, hooks and connectors
-excluded. The [dataset instructions](evals/code-review/README.md) state the
+excluded. Codex gets a temporary auth-only CODEX_HOME and a native catalog with
+write/delegation tool selectors removed. Each launch probes its live tool list;
+unknown tools or MCP startup fail closed. Claude retains USER/LOGNAME for native
+login and reports its startup tool list; a tree under a denied credential directory
+is refused before any model call. Human reports name each engine, model, family
+and observed boundary, including unknown observations. The [dataset instructions](evals/code-review/README.md) state the
 credential-read limitation and required live boundary tests.
 
 ## Validation
