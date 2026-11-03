@@ -19,6 +19,8 @@ node --test scripts/code-review.test.mjs scripts/code-review-eval.test.mjs
 ```
 
 The historical list has 12 late slots, extended to 16 by d-006, 156, 159 and 80.
+An interrupted attempt remains a `not-reviewed` row in scoring; no later repeat
+or task starts. Unstarted attempts stay unstarted; they are not clean results.
 Each case names its first-head origin, file, mechanism, breaking input and actual
 consequence. Later MONO-146 defects 67, 70 and 71 are excluded from first-head
 recall. Historical CSV danger labels are observations, not the oracle.

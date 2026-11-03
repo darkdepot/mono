@@ -1644,10 +1644,13 @@ origin relative to task base, merge key and scope/risk flags. Code adds whether
 the location changed after round one (±2 context lines), costs and failures.
 Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
 confirmed ones stay report-only on round three; open unresolved findings block.
-Scope/risk flags persist across rounds, including rejected findings, until the
-checker supplies new evidence clearing them. Secret-shaped diff data stops all model calls,
-with an exact path/line fixture exception in code. Headers are recognized only
-outside patch hunks, including during failed-answer redaction. Repository rules
+Scope/risk flags persist across rounds for confirmed and rejected findings until
+new checker evidence clears them. Before each launch, secret scanning covers the
+whole context: contract, rules, diff context, findings, history and base evidence;
+retained failed answers are screened too. Exact file/line fixture exceptions stay
+in code. Plain file text never acts as patch framing. Failed answers are redacted
+and capped; interruption stops later evaluation calls and remains a scored row.
+Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules
 come from pinned Git blobs; the host never follows AGENTS.md symlinks into files
 outside the reviewed version.
 

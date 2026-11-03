@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,6 +8,14 @@ import { fileURLToPath } from 'node:url';
 import { runReviewRound, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus } from './code-review.mjs';
 import { requiredPairings, validateModels } from './runtime.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+let catalogBin, originalPath;
+before(()=>{
+ catalogBin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-recorded-catalog-'));originalPath=process.env.PATH;
+ const model=resolveReviewRoles({},packRoot)['code-review'].model;
+ fs.writeFileSync(path.join(catalogBin,'codex'),`#!${process.execPath}\nif(process.argv.slice(2).join(' ')!=='debug models --bundled')process.exit(98);console.log(JSON.stringify({models:[{slug:${JSON.stringify(model)},tool_mode:'code_mode_only',apply_patch_tool_type:'freeform',multi_agent_version:'v2'}]}));\n`,{mode:0o700});
+ process.env.PATH=catalogBin+path.delimiter+originalPath;
+});
+after(()=>{process.env.PATH=originalPath;fs.rmSync(catalogBin,{recursive:true,force:true});});
 const sample={class:'missing-validation',file:'input.mjs',anchor:'return value',line:1,title:'Invalid input is accepted',trigger:'value is negative',evidence:'input.mjs returns value without validation'};
 const transcripts=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/recorded-responses.json'),'utf8'));
 const key=findingKey(sample);
@@ -321,4 +329,71 @@ test('R5: closing task defects in round three converges with old non-dangerous f
  assert.equal(record.round.number,3);assert.equal(record.outcome,'clean');assert.deepEqual(record.successorKeys,[]);
  assert.equal(record.findings.find(finding=>finding.key===findingKey(old)).status,'confirmed');
  assert.match(formatReviewReport(record),/было раньше/);
+});
+
+test('C2 secrets: every outgoing context source is screened before its role starts',async t=>{
+ const secret='ghp_'+'q'.repeat(36);
+ for(const source of ['contract','rules','history','failed-answer','diff-context','base-evidence']){
+  await t.test(source,async t=>{
+  const f=fixture(t);let request={...f.request};
+  if(source==='contract')request.contract+=' '+secret;
+  if(source==='rules'){
+   fs.writeFileSync(path.join(f.worktree,'AGENTS.md'),secret);f.git('add','.');f.git('commit','-qm','existing rules');request.base=f.git('rev-parse','HEAD');
+   fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// unrelated change\n');f.git('add','.');f.git('commit','-qm','head with unchanged rules');request.head=f.git('rev-parse','HEAD');
+  }
+  if(source==='history')request.stageRecord={rounds:[],findings:[{...sample,key,status:'rejected',reason:secret}],failures:[]};
+  if(source==='failed-answer')request.stageRecord={rounds:[],findings:[],failures:[{answer:{text:secret}}]};
+  if(['diff-context','base-evidence'].includes(source)){
+   const content=n=>`// ${secret}\n// unchanged 2\n// unchanged 3\n// unchanged 4\n// unchanged 5\nexport function value(n) { return ${n}; }\n`;
+   fs.writeFileSync(path.join(f.worktree,'input.mjs'),content('0'));f.git('add','.');f.git('commit','-qm','base');request.base=f.git('rev-parse','HEAD');
+   fs.writeFileSync(path.join(f.worktree,'input.mjs'),content('n'));f.git('add','.');f.git('commit','-qm','edit');request.head=f.git('rev-parse','HEAD');
+   if(source==='diff-context'){request.base=f.request.base;request.contract+=' safe'; /* use a nearby unchanged credential below */
+    fs.writeFileSync(path.join(f.worktree,'input.mjs'),`// ${secret}\nexport function value(n) { return 0; }\n`);f.git('add','.');f.git('commit','-qm','near base');request.base=f.git('rev-parse','HEAD');
+    fs.writeFileSync(path.join(f.worktree,'input.mjs'),`// ${secret}\nexport function value(n) { return n; }\n`);f.git('add','.');f.git('commit','-qm','near edit');request.head=f.git('rev-parse','HEAD');}
+  }
+  const runner=responder({findings:source==='base-evidence'?[sample]:[]}),record=await runReviewRound(request,runner);
+  assert.equal(record.outcome,'not-reviewed',source);assert.equal(record.rounds.length,0,source);
+  assert.equal(runner.calls.length,source==='base-evidence'?1:0,source);
+  assert.ok(record.secrets?.length,source);assert.ok(!JSON.stringify(record.secrets).includes(secret),source);
+  });
+ }
+});
+
+test('C2 secrets: failed answers redact plain assignment objects and patch-looking text',async t=>{
+ const f=fixture(t),secret='x'.repeat(24);
+ for(const response of [{password:secret},'password =\n'+secret]){
+ const runner=responder({responses:[review([sample]),response,response]}),record=await runReviewRound(f.request,runner);
+ assert.equal(record.outcome,'not-reviewed');
+ for(const failure of record.failures.filter(item=>item.role==='code-review-checker')){
+  assert.ok(!failure.answer.text.includes(secret));assert.ok(failure.answer.secretMatches>0);
+ }
+ }
+});
+
+test('C2 secrets: pinned fixture lines stay exempt in base evidence without parsing file text as a diff',async t=>{
+ const f=fixture(t),file='evals/code-review/secret-example.txt',fake='token = '+'ghp_'+'0'.repeat(36);
+ fs.mkdirSync(path.dirname(path.join(f.worktree,file)),{recursive:true});fs.writeFileSync(path.join(f.worktree,file),'diff --git a/other b/other\n'+fake+'\n');
+ f.git('add','.');f.git('commit','-qm','fixture base');const base=f.git('rev-parse','HEAD');
+ fs.appendFileSync(path.join(f.worktree,file),'documentation change\n');f.git('add','.');f.git('commit','-qm','fixture head');
+ const finding={...sample,file},runner=responder({findings:[finding],responses:[review([finding],[file]),{completed:true,verdicts:[verdict({origin:'pre-existing'})]}]});
+ const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},runner);assert.equal(record.outcome,'clean');assert.equal(runner.calls.length,2);
+});
+
+test('C2 flags: confirmed scope/risk cannot disappear without new evidence in later rounds',async t=>{
+ for(const flag of ['outOfContract','riskRaised']){
+  const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({origin:'pre-existing',[flag]:true})]}));
+  const second=await runReviewRound({...f.request,stageRecord:first},responder({verdicts:[verdict({origin:'pre-existing'})]}));
+  assert.equal(second.outcome,'not-converged');assert.equal(second.findings[0][flag],true);
+  const third=await runReviewRound({...f.request,stageRecord:second},responder({verdicts:[verdict({origin:'pre-existing',newEvidence:true,reason:'New code evidence resolves the earlier scope/risk concern.'})]}));
+  assert.equal(third.outcome,'clean');assert.equal(third.findings[0][flag],false);
+ }
+});
+
+test('C2 CLI: recorded boundary fixtures do not depend on the installed native catalog',t=>{
+ const bin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-empty-catalog-'));t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));
+ const canary=path.join(bin,'native-called');
+ fs.writeFileSync(path.join(bin,'codex'),`#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(canary)},'called');console.log(JSON.stringify({models:[]}));\n`,{mode:0o700});
+ const env={...process.env,PATH:bin+path.delimiter+process.env.PATH};delete env.NODE_TEST_CONTEXT;
+ const result=spawnSync(process.execPath,['--test','--test-name-pattern=^D2: Codex uses isolated',path.join(packRoot,'scripts/code-review.test.mjs')],{env,encoding:'utf8'});
+ assert.equal(result.status,0,result.stdout+result.stderr);assert.equal(fs.existsSync(canary),false);
 });

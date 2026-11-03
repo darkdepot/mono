@@ -77,7 +77,7 @@ export async function runReviewEvaluation({ dataset, bundle, config = {}, runId,
   const tasks = [...dataset.tasks.map(task => ({ ...task, caseId: task.id })), ...dataset.cleanControls.map(item => ({ ...dataset.tasks.find(task => task.id === item.task), ...item, caseId: item.id }))];
   const progress = dependencies.onProgress ?? (() => {});
   await progress({ type: 'plan', runId, datasetDigest: digest(dataset), runs: tasks.flatMap(task => [1, 2, 3].map(repeat => ({ id: `${runId}:${task.caseId}:${repeat}`, caseId: task.caseId, repeat, status: 'not-run' }))) });
-  for (const task of tasks) {
+  tasksLoop: for (const task of tasks) {
     for (let repeat = 1; repeat <= 3; repeat++) {
       const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-case-'));
       const row = { id: `${runId}:${task.caseId}:${repeat}`, task: task.task ?? task.id, caseId: task.caseId, repeat,
@@ -93,12 +93,13 @@ export async function runReviewEvaluation({ dataset, bundle, config = {}, runId,
         const record = await runReviewRound({ worktree: scratch, head: task.head, base: task.base, contract, risk: 'risky', config, packRoot }, dependencies);
         runs.push({ ...row, record });
       } catch (error) {
-        runs.push({ ...row, record: { outcome: 'not-reviewed', findings: [], costs: [], failures: [{ reason: error.message }] } });
+        runs.push({ ...row, record: { outcome: 'not-reviewed', interrupted: !!error.interrupted, findings: [], costs: [], failures: [{ reason: error.message }] } });
       } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
       await progress({ type: 'result', ...runs.at(-1) });
+      if (runs.at(-1).record.interrupted) break tasksLoop;
     }
   }
-  return { schemaVersion: 1, datasetDigest: digest(dataset), runId, runs, quality: 'unscored; separate independent adjudications required' };
+  return { schemaVersion: 1, datasetDigest: digest(dataset), runId, runs, interrupted: runs.some(run => run.record.interrupted), quality: 'unscored; separate independent adjudications required' };
 }
 export function compareReviewEvaluations(candidate, baseline) {
   need(candidate.datasetDigest === baseline.datasetDigest, 'comparison dataset differs');
@@ -173,6 +174,7 @@ if (isMain(import.meta.url)) {
     else if (mode === '--request' && !args.length) {
       const evaluation = await runReviewEvaluation(JSON.parse(fs.readFileSync(file, 'utf8')), { onProgress: event => console.log(JSON.stringify(event)) });
       console.log(JSON.stringify({ type: 'complete', evaluation }));
+      if (evaluation.interrupted) process.exitCode = 130;
     }
     else throw new Error('use --help');
   } catch (error) { console.error(error.message); process.exitCode = 2; }
