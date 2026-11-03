@@ -796,6 +796,50 @@ function textFixture(t,host='claude',intent='agree') {
  if(expected.outcome.startNext)f.events.splice(7,0,call('next','Skill',{skill:'mono:research'}));
  return {...f,expected,draft,approved,assistant,user,call,result,terminal};
 }
+for(const name of ['Skill','Agent','Task'])for(const route of ['absent','direct','literal'])test(`r8 diagnosis: Codex ${name} deferred start ${route}`,t=>{
+ const f=textFixture(t,'codex','defer');f.request.nextAgent='mono-mono-research';
+ const input=name==='Skill'?{skill:'mono:research'}:{subagent_type:'mono-mono-research'};
+ if(route!=='absent')f.events.splice(7,0,f.call('next',name,input),f.result('next',{}));
+ if(route==='literal'){
+  f.events[7]={type:'response_item',payload:{type:'custom_tool_call',name:'exec',call_id:'next',input:`const r = await tools.${name}(${JSON.stringify(input)}); text(r);`}};
+  f.events[8]={type:'response_item',payload:{type:'custom_tool_call_output',call_id:'next',output:'{}'}};
+ }
+ const r=f.check();assert.equal(r.status,route==='absent'?'passed':'failed',JSON.stringify(r));
+});
+for(const host of ['claude','codex'])for(const written of [true,false])test(`r8 diagnosis: ${host} declared approval requires actual bound write (${written})`,t=>{
+ const f=textFixture(t,host,'defer');
+ Object.assign(f.expected,{question:'Утверждаем эту версию?',asksStart:false,reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:false}});
+ f.record.body=`mono-test: approved\n${f.draft}\n\nВладелец: ответил «принимаю»`;f.page('comments','comments',[f.record]);
+ f.events[0]=f.assistant(f.draft+'\n'+f.expected.question);f.events[2]=f.user(f.expected.reply);
+ f.events[5]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[6]=f.result('write',f.record);
+ if(!written){
+  f.request.expectedRecords=[{type:'project'}];f.request.approvalBindings=[];f.page('comments','comments',[]);f.page('documents','documents',[]);
+  f.events.splice(0,f.events.length,f.assistant(f.draft+'\n'+f.expected.question),f.terminal,f.user(f.expected.reply),f.assistant(f.expected.response[0]));
+ }
+ const r=f.check();assert.equal(r.status,written?'passed':'failed',JSON.stringify(r));
+});
+for(const name of ['Skill','Agent','Task'])for(const type of ['function_call','custom_tool_call'])test(`r8 literal arguments: Codex ${name} ${type} uses the same start authority and forbidden policy`,t=>{
+ const f=textFixture(t,'codex');f.request.nextSkill='mono:discovery';f.request.nextAgent='mono-mono-discovery';
+ Object.assign(f.expected,{stage:'research',role:'transition',question:'Начнём Discovery?',outcome:{approval:false,startNext:true},response:['Начинаю Discovery.']});
+ f.request.expectedRecords=[{type:'project'}];f.request.approvalBindings=[];f.page('comments','comments',[]);f.page('documents','documents',[]);
+ const input=name==='Skill'?{skill:'mono:discovery'}:{subagent_type:'mono-mono-discovery'};
+ f.events.splice(0,f.events.length,f.assistant(f.draft+'\n'+f.expected.question),f.terminal,f.user(f.expected.reply),
+  {type:'response_item',payload:{type,name:'exec',call_id:'next',[type==='function_call'?'arguments':'input']:`const r = await tools.${name}(${JSON.stringify(input)}); text(r);`}},
+  {type:'response_item',payload:{type:type==='function_call'?'function_call_output':'custom_tool_call_output',call_id:'next',output:'{}'}},f.assistant(f.expected.response[0]));
+ assert.equal(f.check().status,'passed','authorized literal start');
+ Object.assign(f.expected,{intent:'defer',reply:'да, но позже',outcome:{approval:false,startNext:false}});f.events[2]=f.user(f.expected.reply);
+ const deferred=f.check();assert.equal(deferred.status,'failed',JSON.stringify(deferred));assert.match(deferred.reason,/start-next-stage without scenario authority/);
+ f.request.expectedRecords.push({forbidden:'start-next-stage'});
+ const forbidden=f.check();assert.equal(forbidden.status,'failed',JSON.stringify(forbidden));assert.match(forbidden.reason,/forbidden start-next-stage/);
+});
+test('r8 literal arguments: unsupported stage payload cannot mask a foreign write',t=>{
+ const f=textFixture(t,'codex','defer');f.request.expectedRecords.push({forbidden:'start-next-stage'});
+ f.events.splice(7,0,{type:'response_item',payload:{type:'custom_tool_call',name:'exec',call_id:'next',input:'await tools.Skill(input);'}},
+  {type:'response_item',payload:{type:'custom_tool_call_output',call_id:'next',output:'{}'}});
+ assert.equal(f.check().status,'unverified','unsupported input remains unknown');
+ f.events.splice(9,0,f.call('foreign','mcp__linear__save_project',{id:'foreign',status:'Discovery'}),f.result('foreign',{}));
+ const r=f.check();assert.equal(r.status,'failed',JSON.stringify(r));assert.equal(r.stop,true);assert.match(r.reason,/outside monotest/);
+});
 for(const host of ['claude','codex'])for(const [part,content] of [['fragment','колонка'],['prefix','Что: колонка'],['suffix','Источник.']])for(const mode of ['binding-and-record','record-only'])test(`${host}: text approval rejects incomplete displayed artifact ${part} in ${mode}`,t=>{
  const f=textFixture(t,host);assert.equal(f.check().status,'passed');
  if(mode==='binding-and-record')f.request.approvalBindings[0].text=content;
