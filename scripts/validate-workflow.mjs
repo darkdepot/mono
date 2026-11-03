@@ -1244,8 +1244,8 @@ function validateIssueOnlyLaneBehavior() {
     const issueOnlyArgs = ["--label", "issue-only", "--approval-verified", fingerprint];
 
     // Fixture 2 — happy: a valid marker plus both trusted signals and a synthetic
-    // enabled consumer config resolves the five fields correctly. The upstream
-    // pack config is deliberately disabled and checked separately below.
+    // enabled consumer config resolves the five fields correctly. A copy of the real
+    // repository config with the lane switched off is checked separately below.
     writeMarker([
       "Marker version: 1",
       `Scope fingerprint: ${fingerprint}`,
