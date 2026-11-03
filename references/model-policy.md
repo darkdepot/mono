@@ -44,9 +44,9 @@ from its routes table.
 `models.pairingAccepted[]`: {producer,reviewer,riskClasses,linearDecision,by,date}.
 Routes bind engine/model, effort|effortByRisk, provider{id,endpoint}, credentialEnv;
 producer adds role. Compare every field/five risks; changes renew owner approval.
-New circles call `requiredPairings(config,{reviewerRole:'code-review'})` and name
-reviewer.role=`code-review`; absent role keeps legacy `autoreview`. Acceptance
-never waives different reviewer/checker families or native subscriptions.
+`requiredPairings(config,{reviewerRole:'code-review'})` binds reviewer.role and
+reviewer.checker routes. Either change renews acceptance. No role: legacy
+`autoreview`. Acceptance never waives native auth or different families.
 
 ## Audience profile
 

@@ -109,7 +109,9 @@ test('role permissions are separate from writer transport; new pairing names rev
  assert.ok(codex.args.includes('project_doc_max_bytes=0'));assert.ok(codex.args.includes('read-only'));assert.ok(codex.args.includes('--ignore-user-config'));assert.ok(!codex.args.includes('--add-dir'));assert.ok(codex.args.includes('mcp_servers={}'));
  const claude=roleInvocation('code-review-checker',roles['code-review-checker'],{scratch:neutral,worktree:os.tmpdir(),schemaFile:path.join(packRoot,'skills/code-review/checker.schema.json')});
  assert.equal(claude.args[claude.args.indexOf('--tools')+1],'Read,Glob,Grep');assert.ok(claude.args.includes('--restricted'));assert.ok(claude.args.includes('--safe-mode'));assert.ok(!JSON.stringify(claude.args).includes('GH_TOKEN'));
- const cfg={models:{roles:{'code-review-checker':{engine:'codex',model:roles['code-review'].model}}}};assert.throws(()=>resolveReviewRoles(cfg,packRoot),/different families/);
+ const cfg={models:{roles:{'code-review-checker':{engine:'codex',model:roles['code-review'].model}}}};
+ cfg.models.pairingAccepted=requiredPairings(cfg,{packRoot,reviewerRole:'code-review'}).map(pair=>({...pair,by:'owner',date:'2026-11-01',linearDecision:'https://linear.app/example/issue/TEST-1#decision'}));
+ assert.throws(()=>resolveReviewRoles(cfg,packRoot),/different families/);
  const pairConfig={models:{roles:{'code-review':{model:'gpt-fixture'}}}};const pairs=requiredPairings(pairConfig,{packRoot,reviewerRole:'code-review'});assert.equal(pairs[0].reviewer.role,'code-review');
  pairConfig.models.pairingAccepted=pairs.map(pair=>({...pair,by:'owner',date:'2026-11-01',linearDecision:'https://linear.app/example/issue/TEST-1#decision'}));assert.doesNotThrow(()=>validateModels(pairConfig,{packRoot}));
 });
@@ -273,4 +275,50 @@ test('D3: header-shaped hunk content cannot bypass diff scanning or failed-answe
  for(const failure of record.failures.filter(item=>item.role==='code-review-checker')){
   assert.equal(failure.answer.secretMatches,1);assert.ok(!failure.answer.text.includes(secret));assert.match(failure.answer.text,/withheld/);
  }
+});
+
+test('R1: rejected scope/risk flags survive later rounds until the checker supplies new evidence',async t=>{
+ for(const flag of ['outOfContract','riskRaised']){
+  const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({outcome:'rejected',[flag]:true})]}));
+  assert.equal(first.outcome,'not-converged');
+  const runner=responder({verdicts:[verdict({outcome:'rejected'})]});
+  const second=await runReviewRound({...f.request,stageRecord:first},runner);
+  assert.equal(second.outcome,'not-converged');assert.equal(second.findings[0][flag],true);
+  assert.equal(runner.calls.filter(call=>call.role==='code-review-checker').length,1);
+  f.git('commit','--allow-empty','-qm','record corrected scope evidence');
+  const third=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:second},responder({verdicts:[verdict({outcome:'rejected',newEvidence:true,reason:'The corrected scope is now supported by new evidence.'})]}));
+  assert.equal(third.outcome,'clean');assert.equal(third.findings[0][flag],false);
+ }
+});
+
+test('R2: reviewer and checker route changes require exact new-circle pairing acceptance',()=>{
+ const accept=config=>{config.models.pairingAccepted=requiredPairings(config,{packRoot,reviewerRole:'code-review'}).map(pair=>({...pair,by:'owner',date:'2026-11-04',linearDecision:'https://linear.app/example/issue/TEST-1#decision'}));return config;};
+ for(const role of ['code-review','code-review-checker']){
+  const config={models:{roles:{[role]:{model:role==='code-review'?'gpt-fixture-review':'claude-fixture-checker'}}}};
+  assert.throws(()=>resolveReviewRoles(config,packRoot),/pair.*pairingAccepted/);
+  assert.throws(()=>validateModels(config,{packRoot}),/pair.*pairingAccepted/);
+  accept(config);assert.doesNotThrow(()=>resolveReviewRoles(config,packRoot));
+  for(const field of ['model','effort']){
+   const stale=structuredClone(config);stale.models.roles[role][field]=field==='model'?'fixture-changed-model':'low';
+   assert.throws(()=>resolveReviewRoles(stale,packRoot),/pair.*changed/);
+  }
+ }
+ const both=accept({models:{roles:{'code-review':{model:'gpt-fixture-review'}}}});
+ both.models.roles['code-review-checker']={model:'fixture-changed-checker'};
+ assert.throws(()=>resolveReviewRoles(both,packRoot),/pair.*changed/);
+ const legacy={models:{roles:{'worker-default':{model:'fixture-worker'}}}};
+ legacy.models.pairingAccepted=requiredPairings(legacy,{packRoot}).map(pair=>({...pair,by:'owner',date:'2026-11-04',linearDecision:'https://linear.app/example/issue/TEST-1#legacy'}));
+ assert.doesNotThrow(()=>validateModels(legacy,{packRoot}));
+ assert.throws(()=>resolveReviewRoles(legacy,packRoot),/pair.*pairingAccepted/);
+});
+
+test('R5: closing task defects in round three converges with old non-dangerous findings report-only',async t=>{
+ const f=fixture(t),old={...sample,class:'old-diagnostic',anchor:'old diagnostic',title:'Old diagnostic label'};
+ const batch=closed=>[verdict(closed?{outcome:'rejected',closed:true,reason:'The corrected guard fixes the task defect.'}:{}),verdict({id:'F2',origin:'pre-existing',weight:'P3',mergeKey:findingKey(old)})];
+ let record=await runReviewRound(f.request,responder({findings:[sample,old],verdicts:batch(false)}));
+ record=await runReviewRound({...f.request,stageRecord:record},responder({verdicts:batch(false)}));
+ record=await runReviewRound({...f.request,stageRecord:record},responder({verdicts:batch(true)}));
+ assert.equal(record.round.number,3);assert.equal(record.outcome,'clean');assert.deepEqual(record.successorKeys,[]);
+ assert.equal(record.findings.find(finding=>finding.key===findingKey(old)).status,'confirmed');
+ assert.match(formatReviewReport(record),/было раньше/);
 });

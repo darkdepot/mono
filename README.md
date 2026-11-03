@@ -1643,7 +1643,9 @@ them back to stable keys. Each failed answer is secret-scanned and capped at 8 K
 origin relative to task base, merge key and scope/risk flags. Code adds whether
 the location changed after round one (±2 context lines), costs and failures.
 Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
-open unresolved findings block. Secret-shaped diff data stops all model calls,
+confirmed ones stay report-only on round three; open unresolved findings block.
+Scope/risk flags persist across rounds, including rejected findings, until the
+checker supplies new evidence clearing them. Secret-shaped diff data stops all model calls,
 with an exact path/line fixture exception in code. Headers are recognized only
 outside patch hunks, including during failed-answer redaction. Repository rules
 come from pinned Git blobs; the host never follows AGENTS.md symlinks into files
@@ -1658,7 +1660,10 @@ Roles [code-review](references/model-policy.md#roles) and
 [code-review-checker](references/model-policy.md#roles) resolve separately with
 native subscription auth and different known families. New circle pairing
 records use `requiredPairings(config,{reviewerRole:'code-review'})`; existing
-role-less records still refer to autoreview. Pair acceptance cannot waive the
+role-less records still refer to autoreview. New records bind the full checker
+route in `reviewer.checker`; either role change requires renewed acceptance.
+New circle launches also check changed producer routes against that pair.
+Pair acceptance cannot waive the
 new roles' family boundary. Each launch has its own read-only permissions and a
 neutral working directory, with user/project configuration, hooks and connectors
 excluded. Codex gets a temporary auth-only CODEX_HOME and a native catalog with

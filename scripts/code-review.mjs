@@ -323,7 +323,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
         }
       }
     };
-    const open = record.findings.filter(finding => !['closed', 'rejected'].includes(finding.status));
+    const open = record.findings.filter(finding => !['closed', 'rejected'].includes(finding.status) || finding.outOfContract || finding.riskRaised);
     const found = [], covered = new Set();
     const absorb = result => { result.reviewedFiles.forEach(file => covered.add(file)); found.push(...result.findings); };
     absorb(await call('code-review', { openFindings: open, pass: 'all-defects' }, parseReviewer));
@@ -354,8 +354,8 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const active = current.filter(finding => !['closed', 'rejected'].includes(finding.status));
     const blocking = active.filter(finding => finding.outcome === 'unresolved' || finding.origin !== 'pre-existing');
     // Successor creation/signing belongs to T3. A round reports the obligation; it cannot manufacture permission.
-    const successors = active.filter(finding => (finding.origin === 'pre-existing' && finding.danger) || (number === 3 && !finding.danger));
-    const outcome = blocking.length || checked.some(verdict => verdict.outOfContract || verdict.riskRaised) || successors.length ? 'not-converged' : 'clean';
+    const successors = active.filter(finding => (finding.origin === 'pre-existing' && finding.danger) || (number === 3 && blocking.includes(finding) && !finding.danger));
+    const outcome = blocking.length || current.some(finding => finding.outOfContract || finding.riskRaised) || successors.length ? 'not-converged' : 'clean';
     const round = { number, head, base, scope: context.scope, reviewedFiles: [...covered], findingKeys: checked.map(verdict => verdict.key), outcome, costs };
     return { ...record, schemaVersion: 1, base, contractDigest, rounds: [...record.rounds, round], findings: current, round, outcome,
       successorKeys: successors.map(finding => finding.key), costs };
