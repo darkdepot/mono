@@ -66,6 +66,21 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
     let value,raw;
     if (!['claude','codex'].includes(host)) absent();
     guarded(call); guarded(result);
+    if (kind === 'text-message') {
+      const r=native(result);
+      if (host==='claude' && (result?.parent_tool_use_id || !['assistant','user'].includes(result?.type))) absent();
+      if (host==='codex' && (r?.type!=='message' || !['assistant','user'].includes(r.role))) absent();
+      const role=host==='claude'?result.type:r.role;
+      const content=host==='claude'?at(result,['message','content']):at(r,['content']);
+      if (typeof content==='string' && host==='claude' && role==='user') return {status:'confirmed',value:content,role};
+      const type=host==='claude'?'text':role==='user'?'input_text':'output_text';
+      if (!Array.isArray(content) || !content.length) absent();
+      const blocks=content.map((_,i)=>at(content,[i]));
+      if(blocks.some(b=>b.type!==type&&!(host==='claude'&&role==='assistant'&&['thinking','redacted_thinking'].includes(b.type))))absent();
+      const texts=blocks.filter(b=>b.type===type).map(b=>at(b,['text']));
+      if(!texts.length||texts.some(text=>typeof text!=='string'))absent();
+      return {status:'confirmed',value:texts.join('\n'),role,phase:r.phase,messageId:result.message?.id};
+    }
     if (kind === 'persona') {
       if(host==='codex'){
         if(result?.type!=='item.completed'||at(result,['item']).type!=='agent_message'||typeof at(result,['item','text'])!=='string') absent();

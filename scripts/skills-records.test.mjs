@@ -773,3 +773,179 @@ test('retry cannot hide a write observed in a failed dump attempt',async t=>{
  const result=await collectRecordDump({host:'claude',outputDir:path.join(f.dir,'bad-attempt'),project:f.project,mcpServers:{monotest:{url:'test'}}},async()=>{calls++;return {status:'unverified',hostFailure:true,trace:f.request.trace,reason:'host process failed'};});
  assert.equal(calls,1);assert.equal(result.status,'failed');assert.match(result.reason,/monotest reads only/);assert.equal(result.attempts.length,1);
 });
+
+function textFixture(t,host='claude',intent='agree') {
+ const f=fixture(t),draft='Что: колонка Источник.',question='Утверждаем и начинаем Research?';
+ f.request.host=host;
+ const expected={id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question,reply:intent==='correction'?'да, только добавь вопрос про Codex':intent==='defer'?'да, но позже':'принимаю',intent,outcome:{approval:true,startNext:intent!=='defer'}};
+ if(intent==='correction')expected.correction={description:'Добавлен вопрос про Codex.',before:'Источник.',after:'Источник. Вопрос про Codex.'};
+ f.request.expectedReplies=[expected];
+ const approved=intent==='correction'?'Что: колонка Источник. Вопрос про Codex.':draft;
+ f.record.body=`mono-test: approved\n${approved}\n\nВладелец: ответил «${expected.reply}»${expected.correction?'\nПоправка: '+expected.correction.description:''}`;
+ f.page('comments','comments',[f.record]);f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content:approved});
+ const assistant=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const user=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const call=(id,name,input)=>host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id,name,input}]}}:{type:'response_item',payload:{type:'function_call',name,call_id:id,arguments:JSON.stringify(input)}};
+ const result=(id,value)=>host==='claude'?{type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}}:{type:'response_item',payload:{type:'function_call_output',call_id:id,output:JSON.stringify(value)}};
+ const terminal=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ f.events.splice(0,f.events.length,assistant(draft+'\n'+question),terminal,user(expected.reply),call('read','mcp__monotest__get_document',{id:'doc'}),result('read',{id:'doc',content:approved}),call('write','mcp__monotest__create_comment',{projectId,body:f.record.body}),result('write',f.record),assistant(expected.correction?.description??'Утверждение записал.'));
+ f.request.approvalBindings=[{recordId:'r1',replyId:'decision',shownLine:1,currentLine:4,text:draft}];
+ f.request.expectedRecords=[{type:'mono-test',count:1}];
+ f.request.nextSkill='mono:research';
+ if(expected.outcome.startNext)f.events.splice(7,0,call('next','Skill',{skill:'mono:research'}));
+ return {...f,expected,draft,approved,assistant,user,call,result,terminal};
+}
+for(const host of ['claude','codex'])for(const intent of ['agree','correction','defer'])test(`${host}: real text reply and shown plus only named correction pass (${intent})`,t=>{
+ const f=textFixture(t,host,intent),r=f.check();assert.equal(r.status,'passed',r.reason);
+});
+for(const host of ['claude','codex'])for(const mode of ['forged-quote','wrong-question','no-reply','early-record','extra-change','deferred-start','clarification'])test(`${host}: text record rejects ${mode}`,t=>{
+ const f=textFixture(t,host,mode==='extra-change'?'correction':mode==='deferred-start'?'defer':'agree');
+ if(mode==='wrong-question')f.events[0]=f.assistant(f.draft+'\nДругой вопрос?');
+ if(mode==='no-reply')f.events[2]=f.user('');
+ if(mode==='early-record'){const write=f.events.splice(5,2);f.events.splice(2,0,...write);}
+ if(mode==='clarification')Object.assign(f.expected,{role:'clarification',asksStart:false,outcome:{approval:false,startNext:false}});
+ if(['forged-quote','extra-change'].includes(mode)){
+  f.record.body=f.record.body.replace(mode==='forged-quote'?'«принимаю»':f.approved,mode==='forged-quote'?'«утверждаю»':f.approved+' Постороннее.');
+  f.events[5]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[6]=f.result('write',f.record);f.page('comments','comments',[f.record]);
+ }
+ if(mode==='extra-change'){f.events[4]=f.result('read',{id:'doc',content:f.approved+' Постороннее.'});f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content:f.approved+' Постороннее.'});}
+ if(mode==='deferred-start')f.events.push(f.call('next','Skill',{skill:'mono:research'}));
+ f.request.nextSkill='mono:research';
+ const r=f.check();assert.equal(r.status,'failed',r.reason);
+});
+
+for(const host of ['claude','codex'])for(const intent of ['question','continuation','unclear','refuse'])test(`${host}: ${intent} continues without approval; an approval is rejected`,t=>{
+ const f=textFixture(t,host),reply={question:'а почему без Design?',continuation:'И ещё о колонке',unclear:'ну не знаю',refuse:'нет'}[intent];
+ Object.assign(f.expected,{intent,reply,outcome:{approval:false,startNext:false}});
+ f.events.splice(2,f.events.length-2,f.user(reply),f.assistant(intent==='unclear'?'Что смущает?':'Обсудим колонку.'));
+ f.page('comments','comments',[]);f.request.expectedRecords=[{type:'project'},{forbidden:'mono-test: approved'}];
+ assert.equal(f.check().status,'passed',f.check().reason);
+ f.events.splice(3,0,f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body}),f.result('write',f.record));f.page('comments','comments',[f.record]);
+ assert.equal(f.check().status,'failed');
+});
+
+// Native persisted Idea content comes from the live window fixture; the text
+// exchange and owner prose below are explicitly synthetic, not a new live run.
+function textIdeaFixture(t,delegated=false) {
+ const f=liveFixture(t,'idea-approve'),question='Утверждаем описание?',reply=delegated?'Принимаю: владелец ответил «принимаю». Причина: потребность проверяема.':'принимаю';
+ const expected={id:'idea',stage:'idea',role:'approval',asksStart:false,summary:['## Что','## Неизвестные'],question,reply,intent:'agree',outcome:{approval:true,startNext:false},...(delegated?{by:'orchestrator',reason:'потребность проверяема.'}:{})};
+ const message=f.request.approvalBindings[1].text+'\n'+question;
+ const rewrite=value=>{
+  if(typeof value==='string'){
+   try{return JSON.stringify(rewrite(JSON.parse(value)));}catch{}
+   if(value.includes('mono-idea: approved')){
+    value=value.replace('by=owner','by='+(delegated?'orchestrator':'owner'));
+    value+='\n\nВладелец: ответил «принимаю»'+(delegated?'\nby=orchestrator\nПричина: потребность проверяема.':'');
+   }
+   return value;
+  }
+  if(Array.isArray(value))return value.map(rewrite);
+  if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,rewrite(v)]));
+  return value;
+ };
+ let rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+ rows[2]={type:'event_msg',payload:{type:'token_count'}};rows[3]={type:'event_msg',payload:{type:'token_count'}};
+ rows[4].payload.content[0].text=message;rows[6].payload.content[0].text=reply;
+ rows[7]={type:'event_msg',payload:{type:'token_count'}};rows[9]={type:'event_msg',payload:{type:'token_count'}};
+ rows=rows.flatMap(row=>{const item=row.payload?.item;if(item?.type!=='McpToolCall')return [row];return [{type:'response_item',payload:{type:'function_call',name:`mcp__${item.server}__${item.tool}`,call_id:item.id,arguments:JSON.stringify(item.arguments)}},{type:'response_item',payload:{type:'function_call_output',call_id:item.id,output:JSON.stringify(item.result)}}];});
+ rows.splice(rows.length-1,0,{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Утверждение записал.'}]}});
+ const saveRows=(file,data,base)=>fs.writeFileSync(file,timed(data,base).map(JSON.stringify).join('\n')+'\n');
+ saveRows(f.request.trace,rewrite(rows),'2026-11-02T04:00:01Z');
+ const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(rewrite(JSON.parse(fs.readFileSync(file)))));}};
+ walk(f.request.dumpDir);
+ saveRows(f.request.dumpTrace,rewrite(fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse)),'2026-11-02T04:01:00Z');
+ delete f.request.endLine;f.request.expectedReplies=[expected];
+ f.request.approvalBindings.forEach(b=>{delete b.windowCallId;b.replyId='idea';b.currentLine=rows.findIndex(row=>row.payload?.name===(b.recordId===f.request.project.id?'mcp__monotest__save_project':'mcp__monotest__save_comment'))+1;});
+ if(delegated){
+  const ownerTrace=path.join(f.dir,'owner.jsonl'),ownerExpected={...expected,by:'owner',reason:undefined,reply:'принимаю'};
+  const ownerRows=[{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:message}]}},{type:'event_msg',payload:{type:'task_complete'}},{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'принимаю'}]}},{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Передаю согласие этапу.'}]}},{type:'event_msg',payload:{type:'task_complete'}}];
+  saveRows(ownerTrace,ownerRows,'2026-11-02T04:00:00Z');
+  f.request.additionalTraces=[{host:'codex',trace:ownerTrace,expectedReplies:[ownerExpected]}];
+  f.request.approvalBindings.forEach(b=>b.ownerEvidence={host:'codex',trace:ownerTrace,shownLine:1,replyLine:3,text:message,question,reply:'принимаю'});
+ }
+ return f;
+}
+for(const delegated of [false,true])test(`text Idea retains real machine gate and persisted version; orchestrator=${delegated}`,t=>{
+ const f=textIdeaFixture(t,delegated),r=f.check();assert.equal(r.status,'passed',r.reason);assert.equal(r.gateResults[0].command,'verify');assert.equal(r.gateResults[0].result.ok,true);
+ if(delegated){delete f.request.approvalBindings[1].ownerEvidence;assert.equal(f.check().status,'failed');}
+});
+
+function textPrdFixture(t,delegated=false) {
+ const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0],question='Принимаем показанный PRD?',reply=delegated?'Принимаю PRD: причина — требования проверяемы.':'принимаю';
+ const expected={id:'prd',stage:'discovery',role:'approval',asksStart:false,summary:['## Кратко','## Требования'],question,reply,intent:'agree',outcome:{approval:true,startNext:false},...(delegated?{by:'orchestrator',reason:'требования проверяемы.'}:{})};
+ const transform=value=>{
+  if(typeof value==='string'){
+   try{return JSON.stringify(transform(JSON.parse(value)));}catch{}
+   if(value.includes('mono-prd: approved'))return value.replace('by=owner','by='+(delegated?'orchestrator':'owner'))+'\n\nВладелец: ответил «'+reply+'»'+(delegated?'\nПричина: требования проверяемы.':'');
+   return value;
+  }
+  if(Array.isArray(value))return value.map(transform);
+  return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,transform(v)])):value;
+ };
+ const original=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse),rows=[],lineMap=new Map();
+ for(const [i,row] of original.entries()){
+  lineMap.set(i+1,rows.length+1);
+  if(i+1===binding.shownLine)row.payload.content[0].text=binding.text+'\n'+question;
+  if(i+1===32)row.payload.content[0].text=reply;
+  if([28,29].includes(i+1)){rows.push({type:'event_msg',payload:{type:'token_count'}});continue;}
+  const item=row.payload?.item;
+  if(item?.type==='McpToolCall')rows.push({type:'response_item',payload:{type:'function_call',name:`mcp__${item.server}__${item.tool}`,call_id:item.id,arguments:JSON.stringify(item.arguments)}},{type:'response_item',payload:{type:'function_call_output',call_id:item.id,output:JSON.stringify(item.result)}});
+  else rows.push(row);
+ }
+ rows.splice(rows.length-1,0,{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'PRD утверждён, старт отложен.'}]}});
+ for(const key of ['shownLine','shownReadLine','currentLine'])binding[key]=lineMap.get(binding[key]);
+ binding.replyId='prd';delete binding.windowCallId;
+ f.request.seedEndLine=lineMap.get(f.request.seedEndLine);delete f.request.endLine;f.request.expectedReplies=[expected];
+ fs.writeFileSync(f.request.trace,timed(transform(rows),'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
+ const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(transform(JSON.parse(fs.readFileSync(file)))));}};walk(f.request.dumpDir);
+ const dumpRows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);fs.writeFileSync(f.request.dumpTrace,timed(transform(dumpRows),'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');
+ return f;
+}
+for(const delegated of [false,true])test(`text PRD binds updatedAt and native reads through real route gate; delegated=${delegated}`,t=>{
+ const f=textPrdFixture(t,delegated),r=f.check();assert.equal(r.status,'passed',r.reason);assert.equal(r.gateResults[0].result.ok,true);
+ if(delegated){f.request.expectedReplies[0].by='owner';assert.equal(f.check().status,'failed');}
+});
+
+for(const host of ['claude','codex'])test(`${host}: Research authorizes only Discovery start, never an approval`,t=>{
+ const f=textFixture(t,host),question='Начнём Discovery?';
+ Object.assign(f.expected,{stage:'research',role:'transition',question,outcome:{approval:false,startNext:true}});
+ f.project.status='Discovery';f.save('project.json',f.project);f.page('comments','comments',[]);f.request.expectedRecords=[{type:'project'},{forbidden:'mono-test: approved'}];
+ f.events.splice(0,f.events.length,f.assistant(f.draft+'\n'+question),f.terminal,f.user('принимаю'),f.call('start','mcp__monotest__save_project',{id:projectId,status:'Discovery'}),f.result('start',f.project),f.assistant('Начинаю Discovery.'));
+ assert.equal(f.check().status,'passed',f.check().reason);
+ Object.assign(f.expected,{intent:'defer',reply:'да, но позже',outcome:{approval:false,startNext:false}});f.events[2]=f.user(f.expected.reply);assert.equal(f.check().status,'failed');
+ f.events.splice(3,2);assert.equal(f.check().status,'passed',f.check().reason);
+});
+
+for(const mode of ['wrong-triple','wrong-question','missing-owner','wrong-owner-words','owner-after-delegation'])test(`text Idea refuses broken relay: ${mode}`,t=>{
+ const f=textIdeaFixture(t,true),binding=f.request.approvalBindings[1];
+ if(mode==='wrong-triple')binding.ownerEvidence.text+=' invented';
+ if(mode==='wrong-question')binding.ownerEvidence.question='Другой вопрос?';
+ if(mode==='missing-owner')delete binding.ownerEvidence;
+ if(mode==='wrong-owner-words')binding.ownerEvidence.reply='согласен';
+ if(mode==='owner-after-delegation'){
+  const file=binding.ownerEvidence.trace,rows=fs.readFileSync(file,'utf8').trim().split('\n').map(JSON.parse);fs.writeFileSync(file,timed(rows,'2026-11-02T04:00:02Z').map(JSON.stringify).join('\n')+'\n');
+ }
+ assert.equal(f.check().status,'failed');
+});
+
+test('Handoff text start binds the shown package hash; defer cannot write that start',async t=>{
+ const {createHash}=await import('node:crypto'),{unwrap}=await import('./skills-proof.mjs'),f=textPrdFixture(t),id=f.request.project.id;
+ const body='Пакет: одна задача для показа источника прогона.',question='Начинаем работу по этому пакету?',reply='принимаю';
+ const packet={id:'00000000-0000-4000-8000-000000000091',body,createdAt:'2026-11-02T03:59:00Z',updatedAt:'2026-11-02T03:59:00Z'};
+ const start={id:'00000000-0000-4000-8000-000000000092',createdAt:'2026-11-02T03:59:01Z',updatedAt:'2026-11-02T03:59:01Z',body:`\`\`\`text\nmono-package: start project=${id} record=${packet.id} sha256=${createHash('sha256').update(body).digest('hex')} issues=T1:MON-1 by=owner\napproval_status=approved\n\`\`\`\n\nВладелец: ответил «${reply}»`};
+ const commentsFile=path.join(f.request.dumpDir,'comments-1.json'),comments=unwrap(JSON.parse(fs.readFileSync(commentsFile)));comments.comments.unshift(start,packet);fs.writeFileSync(commentsFile,JSON.stringify(comments));
+ const dumpRows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);
+ for(const row of dumpRows){const item=row.payload?.item;if(item?.tool==='list_comments'&&item.arguments.projectId===id)item.result=comments;}
+ fs.writeFileSync(f.request.dumpTrace,timed(dumpRows,'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');
+ const assistant=text=>({type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}}),terminal={type:'event_msg',payload:{type:'task_complete'}};
+ const rows=[assistant(body+'\n'+question),terminal,{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:reply}]}},
+  {type:'response_item',payload:{type:'function_call',name:'mcp__monotest__list_comments',call_id:'packet-read',arguments:JSON.stringify({projectId:id})}},
+  {type:'response_item',payload:{type:'function_call_output',call_id:'packet-read',output:JSON.stringify({comments:[packet],hasNextPage:false})}},
+  {type:'response_item',payload:{type:'function_call',name:'mcp__monotest__save_comment',call_id:'start',arguments:JSON.stringify({projectId:id,body:start.body})}},
+  {type:'response_item',payload:{type:'function_call_output',call_id:'start',output:JSON.stringify(start)}},assistant('Старт работы записан.'),terminal];
+ const expected={id:'handoff',stage:'handoff',role:'transition',asksStart:true,summary:['Пакет:'],question,reply,intent:'agree',outcome:{approval:false,startNext:true}};
+ f.request.expectedReplies=[expected];f.request.expectedRecords=[{type:'mono-package: start',count:1}];f.request.approvalBindings=[{recordId:start.id,replyId:'handoff',shownLine:1,text:body,currentLine:4,currentRecordId:packet.id}];delete f.request.seedExpected;delete f.request.seedEndLine;delete f.request.seedProjectId;
+ const flush=()=>fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');flush();
+ const r=f.check();assert.equal(r.status,'passed',r.reason);
+ Object.assign(expected,{intent:'defer',reply:'да, но позже',outcome:{approval:false,startNext:false}});rows[2].payload.content[0].text=expected.reply;flush();const rejected=f.check();assert.equal(rejected.status,'failed');assert.match(rejected.reason,/start-next-stage without scenario authority/);
+});

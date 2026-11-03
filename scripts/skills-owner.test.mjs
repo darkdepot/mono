@@ -27,3 +27,12 @@ for(const name of Object.keys(policies))test(`Claude ${name} delivery requires i
  assert.equal(claudeReplyDelivered({...sample.toolResult,content:'unrelated answer'},sample.response),false);
  assert.equal(claudeReplyDelivered({...sample.toolResult,is_error:name==='refuse'?false:true},sample.response),false);
 });
+
+test('text owner sends the scenario reply verbatim and never infers its outcome',async()=>{
+ const {textReply,validateReplies}=await import('./skills-owner.mjs');
+ const expected=[{id:'idea',stage:'idea',role:'approval',summary:['Что'],question:'Утверждаем и начинаем Research?',reply:'принимаю',intent:'agree',asksStart:true,outcome:{approval:true,startNext:true}}];
+ validateReplies(expected);
+ assert.equal(textReply({expectedReplies:expected},'Что: версия.\nУтверждаем и начинаем Research?',0),'принимаю');
+ assert.throws(()=>textReply({expectedReplies:expected},'Другой вопрос?',0),/question|summary/);
+ assert.throws(()=>validateReplies([{...expected[0],outcome:undefined}]),/outcome/);
+});

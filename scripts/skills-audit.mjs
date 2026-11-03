@@ -68,3 +68,34 @@ export function auditRows(host, rows, {stdout = false} = {}) {
   };
   return {calls,notes,proof,windowProof};
 }
+
+// Only completed parent turns can offer a text question. A tool call or result
+// invalidates earlier prose; tool-result user envelopes are never owner replies.
+export function parentTurns(host, rows) {
+  const audit=auditRows(host,rows),turns=[];
+  let candidate=null,pending=null,turnId;
+  for (const {value:e,line} of rows) {
+    if (e.parent_tool_use_id) continue;
+    const p=e.payload;
+    if(host==='codex'&&e.type==='event_msg'&&p?.type==='task_started')turnId=p.turn_id;
+    const message=audit.proof({kind:'text-message',result:e});
+    if (message.status==='confirmed'&&message.role==='user') {
+      if (pending) {pending.reply=message.value;pending.replyLine=line;pending=null;}
+      candidate=null;
+    } else if (message.status==='confirmed'&&message.role==='assistant') {
+      pending=null;
+      const text=host==='claude'&&candidate?.messageId&&candidate.messageId===message.messageId?candidate.text+'\n'+message.value:message.value;
+      candidate={line,text,messageId:message.messageId,phase:message.phase};
+    } else if (audit.calls.some(c=>c.line===line) || (host==='claude'&&['user','assistant'].includes(e.type)) ||
+        (host==='codex'&&e.type==='response_item'&&['reasoning','message','function_call_output','custom_tool_call_output'].includes(p?.type))) {candidate=null;pending=null;}
+    if (audit.proof({kind:'terminal',result:e}).status==='confirmed'&&(host==='claude'||p?.turn_id===turnId)) {
+      if (candidate && (host==='claude'||candidate.phase==='final_answer')) {
+        pending={...candidate,question:candidate.text.trim().split('\n').at(-1),terminalLine:line};turns.push(pending);
+      }else pending=null;
+      candidate=null;
+    }
+    if ((host==='claude'&&e.type==='system'&&e.subtype==='init') ||
+        (host==='codex'&&e.type==='event_msg'&&['task_started','turn_aborted','error'].includes(p?.type))) candidate=null;
+  }
+  return turns;
+}

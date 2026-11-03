@@ -3,14 +3,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { MissingEvidence } from './skills-boundary.mjs';
 import { auditRows } from './skills-audit.mjs';
-import { claudeWindows, traceRows, visibleText } from './skills-probe.mjs';
-import { roleWindows, windowRole } from './skills-owner.mjs';
+import { claudeWindows, traceRows, visibleText, textExchanges, checkEndings } from './skills-probe.mjs';
+import { roleWindows, windowRole, validateReplies, isOwnerWindow } from './skills-owner.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Full rule source, including host order. A rule edit requires checker/rubric review.
 export const OWNER_DIALOG_SHA256 = 'd9e88bf7f17960e3dd1bec2cebd4589d45a256eae704fec858aba0349d6c2d67';
 export const visible = visibleText;
+export { textExchanges, checkEndings } from './skills-probe.mjs';
 const textOf = p => (p.content ?? []).filter(b => ['text', 'output_text'].includes(b.type)).map(b => b.text).join('\n');
 export function codexItems(rows) {
   auditRows('codex',rows);
@@ -92,12 +94,13 @@ function cardIssues(host, questions, expected) {
   return issues;
 }
 
-export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, excerpt = false, phase = excerpt ? 'excerpt' : 'complete', endLine, sent }) {
+export function checkTrace({ host, trace, expectedWindows, expectedReplies, rulesRoot = root, excerpt = false, phase = excerpt ? 'excerpt' : 'complete', endLine, sent }) {
   const windows = [], checks = [];
   try {
     const ruleSource = path.join(rulesRoot, 'references/owner-dialog.md');
     const rulesDigest = crypto.createHash('sha256').update(fs.readFileSync(ruleSource)).digest('hex');
     if (rulesDigest !== OWNER_DIALOG_SHA256) throw new Error('owner-dialog changed: update checker and conversation rubric together');
+    if (expectedReplies!==undefined) return checkTextTrace({host,trace,expectedReplies,expectedWindows,rulesRoot,phase,endLine});
     const roles=roleWindows(expectedWindows);
     if (!['claude', 'codex'].includes(host) || !Array.isArray(expectedWindows) || !expectedWindows.length || expectedWindows.some(w =>
       !w?.id || (roles&&!['approval','transition'].includes(w.role)) || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || (!roles&&!w.summary.length) || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, role, decision, advice, reason and summary anchors');
@@ -154,6 +157,24 @@ export function checkTrace({ host, trace, expectedWindows, rulesRoot = root, exc
     const status = [...windows,...checks].some(c => c.status === 'failed') ? 'failed' : [...windows,...checks].some(c => c.status === 'unverified') ? 'unverified' : 'passed';
     return { host, status, phase, trace, windows, checks, rules: { source:ruleSource, sha256:rulesDigest }, boundary:'mechanical checks only; conversation rubric still requires tester judgment' };
   } catch (error) { return {host,status:'unverified',trace,windows:[],checks,reason:error.message}; }
+}
+// Shared with the probe and record verifier; expected words/outcomes stay in the
+// scenario. No approval is inferred from a Russian phrase or a model's verdict.
+function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase,endLine}) {
+  const checks=[],exchanges=[];
+  let rows;
+  try{({rows}=traceRows(trace,host,{endLine}));}catch(error){return {host,trace,status:'unverified',windows:[],checks,reason:error.message};}
+  try {
+    validateReplies(expectedReplies);
+    if (expectedWindows?.length) throw new Error('scenario must choose text replies or windows');
+    const audit=auditRows(host,rows);
+    const windows=audit.calls.filter(c=>isOwnerWindow(c.name));
+    if (windows.length) throw new Error(`stage called a window: ${windows[0].name} at ${trace}:${windows[0].line}`);
+    exchanges.push(...textExchanges(host,rows,expectedReplies));
+    checkEndings(exchanges);
+    if (phase!=='excerpt'&&!completedTrace(host,rows)) return {host,trace,status:'unverified',windows:[],exchanges,checks,reason:'successful terminal event missing'};
+    return {host,trace,status:'passed',windows:[],exchanges,checks,boundary:'mechanical checks; predetermined outcomes and exact native replies, conversation quality still requires rubric'};
+  } catch(error) {return {host,trace,status:error instanceof MissingEvidence?'unverified':'failed',windows:[],exchanges,checks,reason:error.message};}
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try { const request = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')); const r = checkTrace(request); console.log(JSON.stringify(r,null,2)); process.exitCode = r.status === 'passed' ? 0 : r.status === 'failed' ? 1 : 2; }

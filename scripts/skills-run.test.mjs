@@ -456,3 +456,16 @@ for(const host of ['claude','codex'])for(const policy of ['discuss','empty','ref
  request.scenario.stopAfterExpectedWindows=true;request.scenario.freeQuestions=[{contains:'?'}];
  const result=await runScenario(request);assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.replies.length,1);assert.equal(result.freeReplies.length,0);assert.equal(fs.readdirSync(request.outputDir).filter(p=>p.startsWith('persona-')).length,0);
 });
+
+for(const host of ['claude','codex'])for(const [intent,reply] of Object.entries({agree:'принимаю',correction:'да, только добавь вопрос про Codex',question:'а почему без Design?',continuation:'И ещё о колонке',unclear:'ну не знаю',refuse:'нет',defer:'да, но позже'}))test(`${host}: text driver sends ${intent} at a real turn boundary`,async t=>{
+ const request=setup(t,host,'text');
+ request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),intent];
+ request.scenario={prompt:'Run text',brief:'Колонка Источник.',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Утверждаем и начинаем Research?',reply,intent,outcome:{approval:['agree','correction','defer'].includes(intent),startNext:['agree','correction'].includes(intent)},...(intent==='correction'?{correction:{description:'Добавлен вопрос про Codex.',before:'Источник.',after:'Источник. Вопрос про Codex.'}}:{})}]};
+ const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies[0].reply,reply);assert.equal(r.replies[0].received,true);
+});
+
+for(const host of ['claude','codex'])test(`${host}: text driver rejects a window even when the final question looks valid`,async t=>{
+ const request=setup(t,host,'text');request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'window'];
+ request.scenario={prompt:'Run text',brief:'Источник',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true}}]};
+ const r=await runScenario(request);assert.equal(r.status,'failed');assert.match(r.reason,/window/);
+});

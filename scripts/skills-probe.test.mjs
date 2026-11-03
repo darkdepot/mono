@@ -323,3 +323,15 @@ test('format and variation characters alone are not a visible position',t=>{
     assert.equal(probeClaude(write('format-only.json',sample)).status,'failed');
   }
 });
+
+for(const host of ['claude','codex'])test(`${host}: text probe CLI checks ordinary replies and prohibits windows`,t=>{
+ const save=scratch(t),assistant=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const user=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const terminal=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const rows=[assistant('Версия.\nПринимаем?'),terminal,user('согласен'),assistant('Записал.'),terminal],trace=save('text.jsonl',rows.map(JSON.stringify).join('\n')+'\n');
+ const expectedReplies=[{id:'idea',stage:'idea',role:'approval',asksStart:false,summary:['Версия.'],question:'Принимаем?',reply:'согласен',intent:'agree',outcome:{approval:true,startNext:false}}];
+ const request=save('request.json',{host,trace,expectedReplies}),run=()=>spawnSync(process.execPath,['scripts/skills-probe.mjs','--text',request],{encoding:'utf8'});
+ assert.equal(run().status,0,run().stdout);
+ const call=host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id:'window',name:'AskUserQuestion',input:{questions:[]}}]}}:{type:'response_item',payload:{type:'function_call',name:'request_user_input_async',call_id:'window',arguments:'{"questions":[]}'}};
+ rows.unshift(call);save('text.jsonl',rows.map(JSON.stringify).join('\n')+'\n');assert.equal(run().status,1);assert.match(run().stdout,/stage called a window/);
+});

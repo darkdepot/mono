@@ -1646,6 +1646,13 @@ The Codex startup read retry audits the entire failed turn and its completion be
 Run a scenario with `node scripts/skills-run.mjs <request.json>` or check a trace
 with `node scripts/skills-trace.mjs <request.json>`. Deterministic scenario policies
 answer windows; a separate tool-free persona answers explicit free questions.
+The opt-in `expectedReplies` format in [skill QA](references/qa-skills.md#ответы-словами)
+also sends literal text replies after completed parent turns. Expected approval/start
+outcomes are fixed in scenario data. Native replies, exact approved versions and
+named corrections are checked against fresh records; any window in a text scenario
+or identical endings across its stage chain fail. The current window catalog and
+owner-dialog rules stay in place until T2. Local text fixtures exercise both adapters
+and retain the original window regression corpus.
 The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 17
 scenarios, with per-host target window roles and probe-derived seeds. Other choices
 use the recommended answer; free questions use the persona. Fresh seed routes are

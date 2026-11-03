@@ -658,3 +658,23 @@ for(const mode of ['binding-only','bad-write','missing-page'])test(`live3 actual
  if(mode==='binding-only'){assert.equal(checked.bindingOnly,true);assert.equal(checked.gateResults[0].result.next,'design');assert.equal(result.results[0].status,'unverified');}
  else{assert.notEqual(checked.bindingOnly,true);assert.equal(checked.status,mode==='bad-write'?'failed':'unverified');}
 });
+
+for(const repeated of [false,true])test(`text catalog and suite preserve predetermined replies; repeated endings=${repeated}`,async t=>{
+ const f=fixture(t),index=json(path.join(f.catalogDir,'index.json'));
+ for(const stage of index.stages){
+  const file=path.join(f.catalogDir,stage.scenarios.find(p=>p.includes('/'+stage.main+'/'))),scenario=json(file);
+  for(const host of ['claude','codex'])scenario.hosts[host]={expectedReplies:[{id:stage.id,stage:stage.id,role:stage.id==='research'||stage.id==='handoff'?'transition':'approval',asksStart:false,summary:['Версия'],question:repeated?'Продолжим?':stage.id+'?',reply:stage.id==='research'||stage.id==='handoff'?'нет':'принимаю',intent:stage.id==='research'||stage.id==='handoff'?'refuse':'agree',outcome:{approval:stage.id!=='research'&&stage.id!=='handoff',startNext:false}}]};
+  fs.writeFileSync(file,JSON.stringify(scenario));
+ }
+ write(path.join(f.dir,'skills/idea/SKILL.md'),'text behavior\n');f.commit();
+ const selection=f.select(),unit=selection.units.find(u=>u.target.startsWith('idea/'));selection.units=[unit];selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id);
+ const result=await runSuite(suiteRequest(f,selection),async request=>{
+  assert(request.scenario.expectedReplies);assert.equal(request.scenario.expectedWindows,undefined);
+  assert(request.scenario.prompt.includes('обычным текстом'));assert(!request.scenario.prompt.includes('Не подменяй окно текстом'));
+  write(request.context.projectFile,JSON.stringify(runProject(request)));
+  const expected=request.scenario.expectedReplies[0];
+  return {...passedStage(request),check:{exchanges:[{text:'Версия\n'+expected.question,expected}]}};
+ });
+ assert.equal(result.status,repeated?'failed':'passed',JSON.stringify(result));
+ if(repeated)assert(result.results.some(r=>r.result.reason==='identical endings across stages'));
+});

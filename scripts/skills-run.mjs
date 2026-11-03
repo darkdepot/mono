@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { auditRows } from './skills-audit.mjs';
+import { auditRows, parentTurns } from './skills-audit.mjs';
 import { RecordDump } from './skills-dump.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 import { hostProcess } from './skills-process.mjs';
-import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount } from './skills-owner.mjs';
+import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount, textReply, validateReplies, isOwnerWindow } from './skills-owner.mjs';
 import { checkTrace, codexItems, codexWindows, visible, completedTrace, codexTerminals } from './skills-trace.mjs';
 import { traceRows } from './skills-probe.mjs';
 import { mcpConfig, privateCodexHome, toolViolation, workspaceReadCall, workspaceReadCode, MissingEvidence, isWrite } from './skills-boundary.mjs';
@@ -18,7 +18,7 @@ const ownerText = event => (event.message?.content??[]).filter?.(b=>b.type==='te
 function childEnv(home){const env={...process.env};delete env.ANTHROPIC_API_KEY;delete env.ANTHROPIC_AUTH_TOKEN;delete env.OPENAI_API_KEY;if(home)env.CODEX_HOME=home;return env;}
 function modelArgs(request){return request.model?['--model',request.model]:[];}
 function codexCommon(request){return ['--json','--disable','apps','--disable','remote_plugin','--skip-git-repo-check','-c','approval_policy="never"','-c','sandbox_mode="workspace-write"','-c','sandbox_workspace_write.network_access=true',...(request.writableRoots?.length?['-c',`sandbox_workspace_write.writable_roots=${JSON.stringify(request.writableRoots)}`]:[]),...modelArgs(request)];}
-const targetsAnswered=(request,replies)=>targetReplyCount(replies)===request.scenario.expectedWindows.length;
+const targetsAnswered=(request,replies)=>targetReplyCount(replies)===(request.scenario.expectedReplies??request.scenario.expectedWindows).length;
 export function checkSeedRoute(request){
   const seed=request.seed;let raw;
   try{raw=fs.readFileSync(seed.projectFile,'utf8');}catch(error){
@@ -37,12 +37,14 @@ export function checkSeedRoute(request){
 }
 const answeredStop=(request,replies)=>targetsAnswered(request,replies)&&replies.every(r=>r.received)&&['discuss','empty','refuse'].includes(replies.filter(r=>r.target!==false).at(-1)?.policy);
 function requestToolViolation(request,name,input,confirmed) {
+  if(request.scenario.expectedReplies&&isOwnerWindow(name))return 'stage called a window in text scenario';
   return (request.recordDump&&!name.startsWith('mcp__')&&!['exec'].includes(name)?'fixed dump does not permit host commands':null) ?? toolViolation(name,input,request.scenario,confirmed) ?? (request.readOnlyDump && name.startsWith('mcp__') &&
     (!name.startsWith('mcp__monotest__') || isWrite(name)) ? 'record dump permits monotest reads only' : null);
 }
 function validate(request){
   if(!['claude','codex'].includes(request.host)||!path.isAbsolute(request.outputDir??'')||!path.isAbsolute(request.cwd??'')||!path.isAbsolute(request.packRoot??''))throw new Error('host and absolute outputDir/cwd/packRoot required');
-  if(!request.scenario?.prompt?.trim()||(!request.readOnlyDump&&!request.scenario.expectedWindows?.length)||(request.scenario.allowedTools!==undefined&&request.scenario.allowedTools!=='*'&&!Array.isArray(request.scenario.allowedTools))||(!request.readOnlyDump&&!request.scenario.windows?.length))throw new Error('scenario prompt, expectedWindows, allowedTools and policies required');
+  if(!request.scenario?.prompt?.trim()||(!request.readOnlyDump&&!request.scenario.expectedReplies&&!request.scenario.expectedWindows?.length)||(request.scenario.allowedTools!==undefined&&request.scenario.allowedTools!=='*'&&!Array.isArray(request.scenario.allowedTools))||(!request.readOnlyDump&&!request.scenario.expectedReplies&&!request.scenario.windows?.length))throw new Error('scenario prompt, expectedWindows, allowedTools and policies required');
+  if(request.scenario.expectedReplies){validateReplies(request.scenario.expectedReplies);if(request.scenario.expectedWindows?.length||request.scenario.windows?.length)throw new Error('scenario must choose text replies or windows');}
   const proof=request.workspaceProof;
   if(!/^mcp__monotest__\w+$/.test(proof?.tool??'')||!Array.isArray(proof.path)||proof.equals==null||isWrite(proof.tool))throw new Error('explicit monotest read proof required');
   mcpConfig(request.mcpServers);
@@ -106,9 +108,17 @@ export async function runClaude(request){
       if(e.type==='assistant'){
         if(!e.parent_tool_use_id&&(e.message?.content??[]).some(b=>['text','thinking','tool_use'].includes(b.type))){waiting=false;lastMessage=ownerText(e)||lastMessage;}
         for(const b of e.message?.content??[])if(b.type==='tool_use'){
+          if(request.scenario.expectedReplies&&isOwnerWindow(b.name))return fail('stage called a window in text scenario',c);
           if(!e.parent_tool_use_id)calls.set(b.id,{event:e,block:b});
           if(b.name==='AskUserQuestion'&&!e.parent_tool_use_id)pendingWindows.push(b.id);
           if(b.name!=='AskUserQuestion'){const reason=requestToolViolation(request,b.name,b.input,confirmed)??(phase==='confirm'&&isWrite(b.name)?'write during workspace confirmation':null);if(reason)return fail(reason,c);}
+        }
+      }
+      if(request.scenario.expectedReplies&&phase==='stage'&&e.type==='user'&&!e.parent_tool_use_id){
+        const proof=audit.proof({kind:'text-message',result:e}),reply=replies.at(-1);
+        if(proof.status==='confirmed'&&reply&&!reply.received){
+          if(proof.value!==reply.reply)return fail('actual owner reply differs from sent text',c);
+          reply.received=true;
         }
       }
       if(e.type==='user'&&!e.parent_tool_use_id&&Array.isArray(e.message?.content))for(const b of e.message.content){
@@ -158,6 +168,16 @@ export async function runClaude(request){
         }else if(dump){
           try{dump.consume('claude',traceRows(trace,'claude').rows.filter(r=>r.line>dumpStart));}catch(error){hostFailure=Boolean(error.hostFailure);return error instanceof MissingEvidence?missing(error.message,c):fail(error.message,c);}
           dumpStart=line;if(dump.done){waiting=true;endLine=line;c.complete();}else{beginTurn();c.send(userMessage(dump.prompt()));}
+        }else if(request.scenario.expectedReplies){
+          if(replies.some(r=>!r.received))return missing('text reply not observed in native trace',c);
+          if(targetsAnswered(request,replies)){waiting=true;endLine=line;c.complete();}
+          else {
+            const turn=parentTurns('claude',traceRows(trace,'claude').rows).at(-1);
+            if(!turn||turn.terminalLine!==line)return missing('final stage message missing before text reply',c);
+            let reply;try{reply=textReply(request.scenario,turn.text,replies.length);}catch(error){return fail(error.message,c);}
+            replies.push({index:replies.length,id:request.scenario.expectedReplies[replies.length].id,kind:'text',reply,question:turn.text,shownLine:turn.line,target:true,received:false});
+            beginTurn();c.send(userMessage(reply));
+          }
         }else{waiting=true;if(request.scenario.stopAfterExpectedWindows!==false&&targetsAnswered(request,replies)&&replies.every(r=>r.received)&&!pendingWindows.length&&(answeredStop(request,replies)||!(roleWindows(request.scenario.expectedWindows)&&lastMessage.includes('?')))){endLine=line;c.complete();}else c.idle();}
       }else if(waiting)c.idle();
     },
@@ -223,7 +243,11 @@ export async function runCodex(request){
       }
     }
     if(replyRecord){
-      replyRecord.received=fresh.some(r=>audit.proof({kind:'answer',call:replyRecord.nativeCall,result:r.value,callId:replyRecord.callId,prompt}).status==='confirmed');
+      replyRecord.received=fresh.some(r=>{
+        if(replyRecord.kind!=='text')return audit.proof({kind:'answer',call:replyRecord.nativeCall,result:r.value,callId:replyRecord.callId,prompt}).status==='confirmed';
+        const proof=audit.proof({kind:'text-message',result:r.value});
+        return proof.status==='confirmed'&&proof.role==='user'&&proof.value===prompt;
+      });
       if(!replyRecord.received)throw new MissingEvidence('window reply not observed in resumed rollout');
     }
     let retryError;
@@ -285,6 +309,15 @@ export async function runCodex(request){
     if(request.readOnlyDump)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,auditedTraces:[...auditedTraces],process:processResult,violation});
     for(let n=0;n<(request.maxTurns??(roleWindows(request.scenario.expectedWindows)?128:32));n++){
       if(endLine)break;
+      if(request.scenario.expectedReplies){
+        if(targetsAnswered(request,replies))return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,auditedTraces:[...auditedTraces],process:processResult,violation});
+        const turnMessage=parentTurns('codex',rows).at(-1);
+        if(!turnMessage)throw new MissingEvidence('final stage message missing before text reply');
+        const reply=textReply(request.scenario,turnMessage.text,replies.length);
+        const record={index:replies.length,id:request.scenario.expectedReplies[replies.length].id,kind:'text',reply,question:turnMessage.text,shownLine:turnMessage.line,target:true,received:false};
+        replies.push(record);fs.appendFileSync(sent,JSON.stringify({thread,prompt:reply})+'\n');
+        rows=await turn(reply,false,record);continue;
+      }
       const windows=codexWindows(rows.filter(r=>r.line>scenarioStart),rollout,{phase:'card'}).filter(w=>!seen.has(w.callId));
       if(windows.length){
         const uncertain=windows.find(w=>!w.executionConfirmed);
@@ -333,10 +366,10 @@ function finishRun(request,run){
     const status=run.violation?'failed':reason||!run.confirmed||!complete||run.process?.code!==0?'unverified':'passed';
     return {host:request.host,...run,status,hostFailure:Boolean(!run.violation&&(run.hostFailure||run.process&&(run.process.failure||run.process.code!==0))),reason:reason??(!complete?'incomplete dump trace':null)};
   }
-  const check=checkTrace({host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,rulesRoot:request.rulesRoot,endLine:run.endLine,sent:run.sent});
+  const check=checkTrace({host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,expectedReplies:request.scenario.expectedReplies,rulesRoot:request.rulesRoot,endLine:run.endLine,sent:run.sent});
   let notes=[];try{const {rows}=traceRows(run.trace,request.host,{endLine:run.endLine});notes=auditRows(request.host,rows).notes;}catch{}
   const failure=run.violation??(run.evidenceMissing?null:run.process?.failure??(run.process?.code!==0?'host process failed':null));
-  const allReplied=targetsAnswered(request,run.replies)&&run.replies.every(r=>r.received)&&check.windows.every(w=>run.replies.some(r=>r.callId===w.callId&&r.received));
+  const allReplied=targetsAnswered(request,run.replies)&&run.replies.every(r=>r.received)&&(request.scenario.expectedReplies?check.exchanges?.length===request.scenario.expectedReplies.length:check.windows.every(w=>run.replies.some(r=>r.callId===w.callId&&r.received)));
   const status=failure?'failed':run.evidenceMissing?'unverified':check.status!=='passed'?check.status:allReplied?'passed':'unverified';
   return {host:request.host,status,...run,check,notes,reason:failure??run.evidenceMissing??(!allReplied?'not every expected window was answered':null),conversation:{status:'unverified',rubric:'references/qa-skills.md#рубрика-разговора'}};
 }
