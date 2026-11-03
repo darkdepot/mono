@@ -35,6 +35,24 @@ function scratch(t) {
     return file;
   };
 }
+for(const host of ['claude','codex'])for(const position of ['before-response','after-response','final-only','preparation'])test(`${host}: completed tool-only parent turn ${position} is counted`,async t=>{
+ const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs'),{parentTurns}=await import('./skills-audit.mjs'),save=scratch(t);
+ const a=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const u=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const end=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const service=host==='claude'?[{type:'assistant',message:{content:[{type:'tool_use',id:'read',name:'mcp__monotest__get_document',input:{id:'doc'}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'read',content:'{"id":"doc"}'}]}}]:[{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__get_document',call_id:'read',arguments:'{"id":"doc"}'}},{type:'response_item',payload:{type:'function_call_output',call_id:'read',output:'{"id":"doc"}'}}];
+ const offer=[a('Version\nApprove?'),end,u('agreed')],response=[a('Recorded.'),end],toolOnly=[...service,end];
+ const events=position==='preparation'?[...toolOnly,u('Run stage'),...offer,...response]:position==='before-response'?[...offer,...toolOnly,...response]:position==='after-response'?[...offer,...response,...toolOnly]:[...offer,...toolOnly];
+ const rows=events.map((value,i)=>({value,line:i+1})),turns=parentTurns(host,rows);
+ const trace=save('tool-only.jsonl',events.map(JSON.stringify).join('\n')+'\n');
+ const expectedReplies=[{id:'one',stage:'idea',role:'approval',summary:['Version'],question:'Approve?',reply:'agreed',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Recorded.']}];
+ const request={host,trace,expectedReplies,...(position==='preparation'?{stageStartLine:3}:{})};
+ const expected=position==='preparation'?'passed':'failed';
+ for(const check of [probeText,checkTrace]){const result=check(request);assert.equal(result.status,expected,result.reason??JSON.stringify(result));}
+ assert.equal(turns.length,position==='final-only'?2:3);
+ assert.equal(turns.filter(turn=>!turn.text).length,1);
+ if(position==='preparation')for(const check of [probeText,checkTrace])assert.equal(check({...request,stageStartLine:2}).status,'unverified');
+});
 const cli = file => spawnSync(process.execPath, ['scripts/skills-probe.mjs', file, '--excerpt'], { encoding: 'utf8' });
 
 test('recorded v0.38.1 defect fails at the original window line; fixed control passes', () => {

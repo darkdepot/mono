@@ -69,8 +69,8 @@ export function auditRows(host, rows, {stdout = false} = {}) {
   return {calls,notes,proof,windowProof};
 }
 
-// Only completed parent turns can offer a text question. A tool call or result
-// invalidates earlier prose; tool-result user envelopes are never owner replies.
+// Keep every completed parent turn, including those with no final text. A tool
+// call or result invalidates earlier prose; its user envelope is not an owner reply.
 export function parentTurns(host, rows) {
   const audit=auditRows(host,rows),turns=[];
   let candidate=null,pending=null,turnId;
@@ -90,8 +90,9 @@ export function parentTurns(host, rows) {
         (host==='codex'&&e.type==='response_item'&&['reasoning','message','function_call_output','custom_tool_call_output'].includes(p?.type))) {candidate=null;pending=null;}
     if (audit.proof({kind:'terminal',result:e}).status==='confirmed'&&(host==='claude'||p?.turn_id===turnId)) {
       if (candidate && (host==='claude'||candidate.phase==='final_answer')) {
-        pending={...candidate,question:candidate.text.trim().split('\n').at(-1),terminalLine:line};turns.push(pending);
-      }else pending=null;
+        pending={...candidate,question:candidate.text.trim().split('\n').at(-1),terminalLine:line};
+      }else pending={line,text:'',question:'',terminalLine:line};
+      turns.push(pending);
       candidate=null;
     }
     if ((host==='claude'&&e.type==='system'&&e.subtype==='init') ||

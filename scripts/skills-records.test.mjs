@@ -796,6 +796,17 @@ function textFixture(t,host='claude',intent='agree') {
  if(expected.outcome.startNext)f.events.splice(7,0,call('next','Skill',{skill:'mono:research'}));
  return {...f,expected,draft,approved,assistant,user,call,result,terminal};
 }
+for(const host of ['claude','codex'])for(const position of ['before-response','after-response','final-only','preparation'])test(`${host}: text records count completed tool-only parent turn ${position}`,t=>{
+ const f=textFixture(t,host);assert.equal(f.check().status,'passed',f.check().reason);
+ if(position==='before-response')f.events.splice(f.events.length-1,0,f.terminal);
+ if(position==='after-response')f.events.push(f.terminal,f.call('extra','mcp__monotest__get_document',{id:'doc'}),f.result('extra',{id:'doc',content:f.approved}));
+ if(position==='final-only')f.events.pop();
+ if(position==='preparation'){
+  f.events.unshift(f.call('prep','mcp__monotest__get_document',{id:'doc'}),f.result('prep',{id:'doc',content:f.approved}),f.terminal);
+  f.request.stageStartLine=3;f.request.approvalBindings[0].shownLine+=3;f.request.approvalBindings[0].currentLine+=3;
+ }
+ const result=f.check();assert.equal(result.status,position==='preparation'?'passed':'failed',result.reason??JSON.stringify(result));
+});
 for(const host of ['claude','codex'])for(const after of ['$&','$$','$`',"$'"])test(`${host}: text records preserve literal replacement token ${after}`,t=>{
  const f=textFixture(t,host,'correction'),before='Источник.';
  Object.assign(f.expected.correction,{before,after,description:'Заменил фрагмент буквально.'});
@@ -868,6 +879,8 @@ function textIdeaFixture(t,delegated=false) {
  const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(rewrite(JSON.parse(fs.readFileSync(file)))));}};
  walk(f.request.dumpDir);
  saveRows(f.request.dumpTrace,rewrite(fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse)),'2026-11-02T04:01:00Z');
+ // The two native preparation terminals precede this synthetic stage exchange.
+ f.request.stageStartLine=2;
  delete f.request.endLine;expected.response??=['Утверждение записал.'];f.request.expectedReplies=[expected];
  f.request.approvalBindings.forEach(b=>{delete b.windowCallId;b.replyId='idea';b.currentLine=rows.findIndex(row=>row.payload?.name===(b.recordId===f.request.project.id?'mcp__monotest__save_project':'mcp__monotest__save_comment'))+1;});
  if(delegated){
@@ -909,6 +922,7 @@ function textPrdFixture(t,delegated=false) {
  rows.splice(rows.length-1,0,{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'PRD утверждён, старт отложен.'}]}});
  for(const key of ['shownLine','shownReadLine','currentLine'])binding[key]=lineMap.get(binding[key]);
  binding.replyId='prd';delete binding.windowCallId;
+ f.request.stageStartLine=lineMap.get(18); // Successful preparation turn before the stage prompt.
  f.request.seedEndLine=lineMap.get(f.request.seedEndLine);delete f.request.endLine;expected.response=['PRD утверждён, старт отложен.'];f.request.expectedReplies=[expected];
  fs.writeFileSync(f.request.trace,timed(transform(rows),'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
  const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(transform(JSON.parse(fs.readFileSync(file)))));}};walk(f.request.dumpDir);
@@ -959,6 +973,7 @@ test('Handoff text start binds the shown package hash; defer cannot write that s
   {type:'response_item',payload:{type:'function_call_output',call_id:'start',output:JSON.stringify(start)}},assistant('Старт работы записан.'),terminal];
  const expected={id:'handoff',stage:'handoff',role:'transition',asksStart:true,summary:['Пакет:'],question,reply,intent:'agree',outcome:{approval:false,startNext:true}};
  expected.response=['Старт работы записан.'];f.request.expectedReplies=[expected];f.request.expectedRecords=[{type:'mono-package: start',count:1}];f.request.approvalBindings=[{recordId:start.id,replyId:'handoff',shownLine:1,text:body,currentLine:4,currentRecordId:packet.id}];delete f.request.seedExpected;delete f.request.seedEndLine;delete f.request.seedProjectId;
+ delete f.request.stageStartLine; // This replacement trace starts directly with Handoff.
  const flush=()=>fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');flush();
  const r=f.check();assert.equal(r.status,'passed',r.reason);
  Object.assign(expected,{intent:'defer',reply:'да, но позже',outcome:{approval:false,startNext:false}});rows[2].payload.content[0].text=expected.reply;flush();const rejected=f.check();assert.equal(rejected.status,'failed');assert.match(rejected.reason,/start-next-stage without scenario authority/);
