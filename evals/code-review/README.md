@@ -1,0 +1,79 @@
+# Code review evaluation
+
+`cases.json` pins three task heads, bases, dataset versions, contract summaries
+and their original source blobs. The repository is supplied by the host through
+an absolute `bundle` setting, never through a hardcoded local path. The bundle
+must include tags `dataset/MONO-81-head`, `dataset/MONO-95-head` and
+`dataset/MONO-146-head`, with reachable bases. MONO-75 is unavailable and excluded.
+`code-review-eval.mjs` verifies each commit, source blob and case code anchor
+without contacting models. Clean controls add one inert document to each pinned base. Their commit IDs,
+content and contract are pinned in the manifest; the runner reconstructs the
+exact commits with fixed fixture identity/date using git commit-tree, then
+checks the expected hash. They are actual nonempty diffs, not empty-tree passes.
+No personal data or credentials belong here.
+
+```bash
+node scripts/code-review-eval.mjs --validate evals/code-review/cases.json --bundle /absolute/heads.bundle
+node --test scripts/code-review.test.mjs scripts/code-review-eval.test.mjs
+```
+
+The historical list has 12 late slots, extended to 16 by d-006, 156, 159 and 80.
+Each case names its first-head origin, file, mechanism, breaking input and actual
+consequence. Later MONO-146 defects 67, 70 and 71 are excluded from first-head
+recall. Historical CSV danger labels are observations, not the oracle.
+
+Rechecked before calls: #17 is retained because rejected provider-less routes
+remain in blindFinding's identity list and destroy an otherwise valid paid
+result. #41's claimed registration-after-resume order does not exist: acceptAmend
+registers pins first. A live retry requires reconciliation, already mandated by
+the pinned contract. Keep its historical slot visible, exclude it from eligible
+recall: 11/15 eligible, alongside nominal 12/16. These classifications and the
+danger judgments are code-inspected candidate gold; an independent host agent
+must confirm them before live scoring. Do not silently redefine the denominator.
+
+Match strictly only with BOTH the same code location and the same failure
+mechanism/trigger. A matching title or consequence is insufficient. Partial
+matches are separate. A judge must cite evidence; no lexical matching heuristic.
+The judge works separately from the reviewer/checker. Gold and input digest stay
+frozen throughout an experiment; changing either requires a new version/run.
+
+Host live request: `{dataset:<parsed cases.json>,bundle:<absolute path>,config,
+runId}` to `node scripts/code-review-eval.mjs --request <json>`. Every task and
+authored documentation change control runs three times with risky production prompts through
+the SAME runReviewRound function. Each invocation is its own row; failures and
+costs remain in the row, not silently dropped. The CLI emits JSONL plan/started/result/complete events; preserve stdout and
+interruption evidence outside the repository so an interrupted call stays in
+the denominator. The final complete event contains the whole evaluation. The host compares incumbent results on exactly
+the same head/base/contract and repeats, not the old summary percentages. `compareReviewEvaluations` rejects changed
+head/base/contract or repeat denominators before pairing incumbent rows.
+`scoreReviewEvaluation(dataset,evaluation,adjudications)` requires independent
+`{runId,key,match,caseId,judge,evidence}` annotations for strict/partial matches;
+novel/false-positive annotations omit caseId. It reports each run, ungraded
+findings, dangerous misses, and union only as an additional column. There is no
+automatic promotion based on recall. Novel findings are not automatically false.
+
+`historical-checker.json` preserves both batches of checker replies from
+2026-10-31 in their ORIGINAL schema, including all duplicates and disagreements.
+These are observations, never a successful run of the new roles. The historical
+prompts were broader and used different danger names; current prompts and exact
+schemas live beside the manual skill. Deterministic current-schema transcripts
+in `recorded-responses.json` are authored controls, not measured model output.
+
+Checker calibration uses a separate verdict oracle per finding. Pass gold and
+current parsed verdicts to `scoreCheckerProbes`; it counts false rejections,
+removed danger, incorrect severity and merging distinct causes independently.
+A known real dangerous case rejected or stripped of danger blocks release until
+the cause is fixed and rechecked. A reviewer miss is an enhancement with cause
+analysis, not a release veto. Unreviewed probes stay missing, never pass.
+
+Before merge the host owns: live write/network/credential/config/hook refusal
+tests on both tools; manual invocation from both systems (or explicitly recorded
+separate local read-only roles with the same schemas/boundaries if nesting is
+unavailable); three independent live repeats and incumbent comparison; independent
+gold and checker calibration; results and enhancements recorded in the Issue.
+The worker cannot prove these with recorded answers.
+
+The role transport leaves Codex credential reads at worker-level machine access,
+as accepted by the owner 2026-11-01. Read-only is not a credential-read deny list.
+Signing-key integrity relies on denied writes. Host probes must describe the
+actual installed tool boundaries, not infer them from launch arguments.

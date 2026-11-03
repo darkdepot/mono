@@ -1583,6 +1583,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) | One checked technical solution, one version-approved plain-language page, then a short Tech Spec; same stage for owner or delegated orchestrator |
 | [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
 | [mono:handoff](skills/handoff/SKILL.md) | Team lead: reconciles approved inputs, slices (one Issue by default), one reviewed package record, Ready; work starts by owner or delegated orchestrator; repair by the record |
+| [mono:code-review](skills/code-review/SKILL.md) | Manual code report with an independent checker; delivery still uses Preflight |
 | [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |
 | [mono:check](skills/check/SKILL.md) | Readiness-only transition assessment |
 | [mono:deliver](skills/deliver/SKILL.md) | One delivery context sequencing its three phase owners |
@@ -1619,6 +1620,46 @@ Keep gates and responsibilities intact in both interactive and orchestrated deli
 
 Treat Markdown as agent instructions. Protect executable behavior with fixtures, artifact contracts with their bounded fingerprints and consumer checks, and document shape with skeleton checks. Do not encode agent-only rules twice or pin sentences. Every pack change begins with a Linear Issue; README freshness is mandatory even when the optional documentation workflow is unavailable.
 
+## Manual code review pilot
+
+`mono:code-review` reports checked code, verified findings, remaining work and
+whether ordinary checks can continue. It leaves the tree and Linear untouched.
+Use `node scripts/code-review.mjs --request <temporary.json>` with
+`{worktree,head,base,contract,risk,config}`; head/base are full immutable commits,
+the tree must be clean, config is the parsed product config. Human report is the
+default; `--json` prints the returned record. It neither runs verify nor signs or
+issues a delivery certificate. Preflight, autoreview and Ship remain unchanged.
+
+`runReviewRound(input,{runRole?})` in `scripts/code-review.mjs` is the sole circle
+boundary for the host and manual command. Input includes the task contract and
+optional `stageRecord`; output has schemaVersion, base, contractDigest, rounds,
+findings, failures, the current round and the code-computed outcome. Callers own
+persistence/signing. Technical failure returns no round and is retried once.
+Changed-file coverage gets one focused pass. Risky/1000-line first rounds add an
+ordinary second pass, combined by stable class/file/code-anchor key. The checker
+sees every open finding, original base content, current files and prior decisions;
+only its evidence closes or reopens a key. It assigns P0-P3, R7 danger/case,
+origin relative to task base, merge key and scope/risk flags. Code adds whether
+the location changed after round one (±2 context lines), costs and failures.
+Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
+open unresolved findings block. Secret-shaped diff data stops all model calls,
+with an exact path/line fixture exception in code.
+
+Outcome vocabulary is `clean`, `clean-with-successors`, `not-converged`,
+`not-reviewed`; this first slice emits no successor admission. It reports
+successorKeys and keeps their obligations not-converged until the later stage
+owner implements confirmed successor IDs. No model selects a stage outcome.
+
+Roles [code-review](references/model-policy.md#roles) and
+[code-review-checker](references/model-policy.md#roles) resolve separately with
+native subscription auth and different known families. New circle pairing
+records use `requiredPairings(config,{reviewerRole:'code-review'})`; existing
+role-less records still refer to autoreview. Pair acceptance cannot waive the
+new roles' family boundary. Each launch has its own read-only permissions and a
+neutral working directory, with user/project configuration, hooks and connectors
+excluded. The [dataset instructions](evals/code-review/README.md) state the
+credential-read limitation and required live boundary tests.
+
 ## Validation
 
 Наблюдённые способы поднять безопасную копию и сохранить доказательства для
@@ -1637,6 +1678,13 @@ node scripts/verify.mjs
 ```
 
 The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures.
+It also runs the recorded code-review round and evaluation fixtures:
+`node --test scripts/code-review.test.mjs scripts/code-review-eval.test.mjs`.
+These prove parsing, coverage, secret refusal and result calculation; host
+isolation and live model quality remain host checks, as described in the
+[review dataset](evals/code-review/README.md).
+
+
 It also runs the [skills host probe regression](evals/scenarios/probe/README.md):
 recorded window replies from both hosts and the Claude text-before-window defect/control.
 Run it alone with `node --test scripts/skills-probe.test.mjs`. These local samples

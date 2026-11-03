@@ -1,0 +1,109 @@
+{
+  "type": "object",
+  "properties": {
+    "completed": {
+      "type": "boolean",
+      "const": true
+    },
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "rejected",
+              "unresolved"
+            ]
+          },
+          "weight": {
+            "type": "string",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "danger": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "dangerCase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "data",
+              "security",
+              "gate-bypass",
+              "gate-stall",
+              "silent-result",
+              "readiness",
+              "unknown",
+              null
+            ]
+          },
+          "dangerReason": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "introduced",
+              "contract",
+              "pre-existing"
+            ]
+          },
+          "mergeKey": {
+            "type": "string"
+          },
+          "outOfContract": {
+            "type": "boolean"
+          },
+          "riskRaised": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "newEvidence": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "outcome",
+          "weight",
+          "danger",
+          "dangerCase",
+          "dangerReason",
+          "origin",
+          "mergeKey",
+          "outOfContract",
+          "riskRaised",
+          "reason",
+          "closed",
+          "newEvidence"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "completed",
+    "verdicts"
+  ],
+  "additionalProperties": false
+}

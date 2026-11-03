@@ -22,6 +22,7 @@ process.on("exit", () => {
 const failures = [];
 const EXPECTED_SKILLS = [
   "check",
+  "code-review",
   "deploy",
   "deliver",
   "design",
@@ -212,6 +213,11 @@ function validateReadBudgetFixtures() {
       require(measureReadBudget(scratch).files.length === DELIVERY_SKILLS.length + 3, "alias counted twice");
       write("references/nested.md", "Read `references/shared.md`.\n");
     });
+    fixture("pack-root evaluation input counts in a manual skill", () => {
+      write("evals/manual.md", "# Recorded responses\n");
+      write("skills/manual/SKILL.md", "Read now:\n1. `AGENTS.md`\n2. `<pack-root>/evals/manual.md`\n");
+      require(measureReadBudget(scratch, { skills: ["manual"] }).files.some(entry => entry.path === "evals/manual.md"), "evaluation input omitted");
+    });
     fixture("bare filename in a reading list is counted", () => {
       write("skills/ship/large.md", "x".repeat(READ_BUDGET_MAX_BYTES));
       write("skills/ship/SKILL.md", base + "- `large.md` — conditional.\n");
@@ -338,7 +344,7 @@ function validateReadFirstPath(referencedPath, from = "") {
   const named = referencedPath.replace(/^<(?:корень|pack-root)>\//, "");
   if (/[$<>]/.test(named)) return false;
   if (referencedPath.startsWith("./") || referencedPath.startsWith("../")) return false;
-  if (/^(skills|references|templates|scripts)\//.test(named)) return fs.existsSync(resolveSkillPath(root, from, referencedPath));
+  if (/^(skills|references|templates|scripts|evals)\//.test(named)) return fs.existsSync(resolveSkillPath(root, from, referencedPath));
   return false;
 }
 
@@ -5165,7 +5171,7 @@ function validateProjectUpdateSurface() {
 const MODEL_POLICY_PATH = "references/model-policy.md";
 const MODEL_ROLES = [
   "orchestrator", "second-voice", "second-voice-alt", "worker-default",
-  "worker-complex", "worker-claude", "autoreview", "idea-helper", "scout", "qa",
+  "worker-complex", "worker-claude", "autoreview", "idea-helper", "scout", "qa", "code-review", "code-review-checker",
 ];
 const MODEL_ENUM_ALLOWLIST = new Set([
   "claude-code-desktop", "claude-5", "gpt-worker", "gpt-5",
@@ -5359,6 +5365,7 @@ function checkModelPolicy(base) {
   }
   for (const [file, section] of NORMATIVE_MODEL_SECTIONS) binding(file, modelSection(body(file), section), ["autoreview"]);
   const preflightFile = "skills/preflight/SKILL.md";
+  binding("skills/code-review/SKILL.md", body("skills/code-review/SKILL.md"), ["code-review", "code-review-checker"]);
   const preflight = body(preflightFile);
   const reviewStep = namedWorkflowStep(preflight, "autoreview") ?? "";
   binding(preflightFile, reviewStep, ["autoreview"]);
@@ -5451,7 +5458,7 @@ function checkModelPolicy(base) {
 function validateModelPolicyFixtures() {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-model-policy-"));
   try {
-    for (const name of ["skills", "agents", "references", "templates", "scripts", "AGENTS.md", "README.md"]) {
+    for (const name of ["skills", "agents", "references", "templates", "scripts", "evals/code-review", "AGENTS.md", "README.md"]) {
       fs.cpSync(path.join(root, name), path.join(scratch, name), { recursive: true });
     }
     const script = path.join(scratch, "scripts/validate-workflow.mjs");
@@ -7098,7 +7105,7 @@ function validateAe6Fixtures() {
     if (failures.length === before) console.log(`PASS AE6 ${label}: red, restored green`);
   }
   try {
-    for (const name of ["skills", "agents", "references", "templates", "scripts", "AGENTS.md", "README.md", "CHANGELOG.md", "examples", "VERSION", ".claude-plugin", ".codex-plugin"]) {
+    for (const name of ["skills", "agents", "references", "templates", "scripts", "evals/code-review", "AGENTS.md", "README.md", "CHANGELOG.md", "examples", "VERSION", ".claude-plugin", ".codex-plugin"]) {
       fs.cpSync(path.join(root, name), file(name), { recursive: true });
     }
     check();

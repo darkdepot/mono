@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "provenance": "Authored deterministic response controls, not live model measurements.",
+  "clean": {
+    "completed": true,
+    "reviewedFiles": [
+      "input.mjs"
+    ],
+    "findings": []
+  },
+  "finding": {
+    "completed": true,
+    "reviewedFiles": [
+      "input.mjs"
+    ],
+    "findings": [
+      {
+        "class": "missing-validation",
+        "file": "input.mjs",
+        "anchor": "return value",
+        "line": 1,
+        "title": "Invalid input is accepted",
+        "trigger": "value is negative",
+        "evidence": "input.mjs returns value without validation"
+      }
+    ]
+  },
+  "incomplete": {
+    "completed": true,
+    "reviewedFiles": [],
+    "findings": []
+  },
+  "unreadable": [
+    "not JSON",
+    "still not JSON"
+  ],
+  "missingVerdict": {
+    "completed": true,
+    "verdicts": []
+  }
+}

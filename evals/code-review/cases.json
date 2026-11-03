@@ -1,0 +1,362 @@
+{
+  "schemaVersion": 1,
+  "version": 1,
+  "tasks": [
+    {
+      "id": "MONO-81",
+      "head": "0a9143760e75afe2a56c33927a6aad2c91ff2fc1",
+      "base": "c16a940841d0609ac131970550e39acad5898362",
+      "datasetVersion": 2,
+      "contract": "Compare reviewers on frozen code and task data. Exclude malformed/unavailable routes before helper calls. Bind helper and prompt-budget provenance to the frozen helper bytes. Redact route identity without corrupting findings. Forward only the explicit OS allowlist and declared credentials; prove ambient environment isolation. Keep failed/interrupted samples in the denominator.",
+      "contractSource": {
+        "file": "docs/review-bench-protocol.md",
+        "blob": "4aa2347b4cfb6574deb8f3ce5621b9138ddbfa42",
+        "sha256": "17856b83ab42ae3ab3fd1715e19162816e464f09d3650146543166513c2b4ea6"
+      },
+      "risk": "risky"
+    },
+    {
+      "id": "MONO-95",
+      "head": "28bf3c25bcba2f04bf29a518238cb4a8588dcc5e",
+      "base": "48ff105270160d72122e9a6d7879943378b71a0c",
+      "datasetVersion": 2,
+      "contract": "Dispatch and accept use immutable snapshots and pinned scope/approval. An issue-only snapshot requires its scope fingerprint. Rebuilding a refused attempt removes stale Project documents. Phase queues validate all durable write identities before exposing any mutation. Amend writes and registers pins before resume; reconcile any possibly-live resume after a crash, never repeat it silently. Snapshot definitions respect Markdown fences and nested-list boundaries.",
+      "contractSource": {
+        "file": "references/orchestration.md",
+        "blob": "f8345a9838860eba28b969dde4faf428c982ce75",
+        "sha256": "f20d9ac35d87164ddf70cb73a4eceabf0fc4dd887d697ffe99ad92e1435c9cb1"
+      },
+      "risk": "risky"
+    },
+    {
+      "id": "MONO-146",
+      "head": "02efa6e6e534ddae320f96dcebb7296cb0692df5",
+      "base": "181786650213a526d4c1ae4656d9f84363694ac7",
+      "datasetVersion": 1,
+      "contract": "Backup switching must prove previous-attempt writers and collectors are retired before replacement. Inspect previous-attempt collectors independently of caller exemptions. Process evidence must distinguish absent and unavailable. Literal path references include quoted exact paths and descendants, never a longer sibling prefix. Markers belong to the environment, not argv. Do not execute or kill unrelated processes.",
+      "contractSource": {
+        "file": "references/orchestration.md",
+        "blob": "1192d93c96e67e2a5db66c2b8f353498e51958eb",
+        "sha256": "d8f86c938ae0ded13e1fd2b070cf7ff4103c38eebe59b8c196800dea6807c685"
+      },
+      "risk": "risky"
+    }
+  ],
+  "cases": [
+    {
+      "id": "17",
+      "task": "MONO-81",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/review-bench.mjs",
+      "anchor": "r.provider.id",
+      "trigger": "One otherwise valid route plus a rejected provider-less route. blindFinding reads every declared route after the valid route returns.",
+      "consequence": "The rejected route is excluded by routeCheck, but unguarded blindFinding loses the paid valid result.",
+      "danger": false,
+      "dangerCase": null,
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "invalid-route-anonymization"
+    },
+    {
+      "id": "18",
+      "task": "MONO-81",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/review-bench.mjs",
+      "anchor": "text.replace(new RegExp",
+      "trigger": "A short route id such as body or anthropic occurs inside finding JSON fields or paths.",
+      "consequence": "Unbounded substring replacement corrupts finding fields and blind grading.",
+      "danger": true,
+      "dangerCase": "silent-result",
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "unbounded-redaction"
+    },
+    {
+      "id": "19",
+      "task": "MONO-81",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/review-bench.mjs",
+      "anchor": "routeCheck(route,env)",
+      "trigger": "A declared route lacks id; schema-error exclusion and persisted admission must still complete.",
+      "consequence": "Malformed route can fail the whole run rather than remain an excluded admission.",
+      "danger": false,
+      "dangerCase": null,
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "missing-route-id"
+    },
+    {
+      "id": "20",
+      "task": "MONO-81",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/review-bench.test.mjs",
+      "anchor": "TOKENS",
+      "trigger": "Set an ambient numeric token setting; the fixture asserts a literal independent of child environment.",
+      "consequence": "Required isolation proof cannot fail when its guarded behavior breaks.",
+      "danger": true,
+      "dangerCase": "readiness",
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "vacuous-numeric-env-fixture"
+    },
+    {
+      "id": "21",
+      "task": "MONO-81",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/review-bench.mjs",
+      "anchor": "maxPromptBytes:512000",
+      "trigger": "The frozen helper uses a different prompt budget than the hardcoded manifest value.",
+      "consequence": "Provenance misstates the preparation algorithm.",
+      "danger": false,
+      "dangerCase": null,
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "hardcoded-helper-budget"
+    },
+    {
+      "id": "23",
+      "task": "MONO-81",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/review-bench.mjs",
+      "anchor": "git(repo,'diff'",
+      "trigger": "The source repository has a supported local diff setting that changes emitted diff bytes.",
+      "consequence": "An identical scratch checkout produces different digests and replay rejects every selected case.",
+      "danger": true,
+      "dangerCase": "gate-stall",
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "local-diff-config"
+    },
+    {
+      "id": "24",
+      "task": "MONO-81",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/review-bench.test.mjs",
+      "anchor": "environment",
+      "trigger": "A regression forwards an unrelated environment key into the helper.",
+      "consequence": "No fixture exercises the required child allowlist; the readiness proof is missing.",
+      "danger": true,
+      "dangerCase": "readiness",
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "missing-env-allowlist-proof"
+    },
+    {
+      "id": "40",
+      "task": "MONO-95",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/orchestrator/dispatch.mjs",
+      "anchor": "fingerprint",
+      "trigger": "An issue-only snapshot omits scope fingerprint while other seam fields exist.",
+      "consequence": "Worker receives a fabricated project-first fallback rather than the required approval identity.",
+      "danger": true,
+      "dangerCase": "gate-bypass",
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "missing-scope-fingerprint"
+    },
+    {
+      "id": "41",
+      "task": "MONO-95",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": false,
+      "file": "scripts/orchestrator/accept.mjs",
+      "anchor": "pinsVersion = version",
+      "trigger": "Crash after successful resume, before acceptAmend returns; caller retries the identical amendment.",
+      "consequence": "Pins are already registered before resume in this head; the claimed opposite ordering does not exist. Live-process refusal requires reconciliation already mandated by the contract.",
+      "danger": false,
+      "dangerCase": null,
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "amend-resume-recovery"
+    },
+    {
+      "id": "42",
+      "task": "MONO-95",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/orchestrator/snapshot.mjs",
+      "anchor": "indent",
+      "trigger": "A nested definition is followed by a list item outdented to the parent list.",
+      "consequence": "The parser absorbs a sibling into the prior definition, violating snapshot selection boundaries.",
+      "danger": false,
+      "dangerCase": null,
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "nested-definition-outdent"
+    },
+    {
+      "id": "68",
+      "task": "MONO-146",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/orchestrator/backup-switch.mjs",
+      "anchor": "if (controls.has(row.pid)) continue",
+      "trigger": "A previous-attempt collector appears among descendants of this invocation.",
+      "consequence": "Caller exemption skips the collector before ownership checks, allowing overlapping collectors.",
+      "danger": true,
+      "dangerCase": "gate-bypass",
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "collector-caller-exemption"
+    },
+    {
+      "id": "69",
+      "task": "MONO-146",
+      "subset": "late12",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/orchestrator/backup-switch.mjs",
+      "anchor": "exactAttemptReference",
+      "trigger": "Reference /tmp/worktree; command reads a quoted longer sibling /tmp/worktree copy/check.mjs.",
+      "consequence": "Quote-insensitive delimiter logic treats the sibling as this task and falsely blocks an ordinary switch.",
+      "danger": true,
+      "dangerCase": "gate-stall",
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "quoted-prefix-reference"
+    },
+    {
+      "id": "d-006",
+      "task": "MONO-81",
+      "subset": "extended16",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/review-bench.mjs",
+      "anchor": "hash(helperBytes)",
+      "trigger": "A real receipt stores digest(canonical helper string), while bench hashes raw bytes.",
+      "consequence": "Every real helper is excluded; the main operation cannot replay receipts.",
+      "danger": true,
+      "dangerCase": "readiness",
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "helper-digest-contract"
+    },
+    {
+      "id": "156",
+      "task": "MONO-95",
+      "subset": "extended16",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/orchestrator/dispatch.mjs",
+      "anchor": "snapshot",
+      "trigger": "A refused full dispatch is rebuilt as short under the same attempt.",
+      "consequence": "Old PRD/Spec files survive and contaminate the worker snapshot.",
+      "danger": true,
+      "dangerCase": "gate-bypass",
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "stale-refused-snapshot"
+    },
+    {
+      "id": "159",
+      "task": "MONO-95",
+      "subset": "extended16",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/orchestrator/command-state.mjs",
+      "anchor": "confirmQueue",
+      "trigger": "A new missing write precedes an already-applied id reused with changed payload.",
+      "consequence": "The confirmation stub stops at first missing write; accept prints the conflicting later write before checking every identity.",
+      "danger": true,
+      "dangerCase": "gate-bypass",
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "late-write-identity-check"
+    },
+    {
+      "id": "80",
+      "task": "MONO-146",
+      "subset": "extended16",
+      "origin": "first-head",
+      "eligible": true,
+      "file": "scripts/runtime.mjs",
+      "anchor": "MONO_ATTEMPT",
+      "trigger": "A process command argument contains the expected MONO_ATTEMPT marker, but its environment does not.",
+      "consequence": "Combined ps argv/environment parsing falsely attributes the unrelated process.",
+      "danger": false,
+      "dangerCase": null,
+      "oracle": "reconstructed-from-pinned-code; independent host adjudication deferred",
+      "class": "argv-environment-confusion"
+    }
+  ],
+  "cleanControls": [
+    {
+      "id": "MONO-81-clean",
+      "task": "MONO-81",
+      "base": "c16a940841d0609ac131970550e39acad5898362",
+      "head": "800a3f181b7f653dbb1d47c63662e73513173d78",
+      "contract": "Add the evaluation-control document. No executable behavior changes; unrelated older bugs are outside this control contract.",
+      "gold": [],
+      "file": "CODE_REVIEW_EVAL_CONTROL.md",
+      "content": "# Review evaluation control\n\nThis document is a clean change used to check false alarms.\n"
+    },
+    {
+      "id": "MONO-95-clean",
+      "task": "MONO-95",
+      "base": "48ff105270160d72122e9a6d7879943378b71a0c",
+      "head": "685a2bde5d08b0f5a64fe766e218474f16547f6e",
+      "contract": "Add the evaluation-control document. No executable behavior changes; unrelated older bugs are outside this control contract.",
+      "gold": [],
+      "file": "CODE_REVIEW_EVAL_CONTROL.md",
+      "content": "# Review evaluation control\n\nThis document is a clean change used to check false alarms.\n"
+    },
+    {
+      "id": "MONO-146-clean",
+      "task": "MONO-146",
+      "base": "181786650213a526d4c1ae4656d9f84363694ac7",
+      "head": "a709bd11ec56bc4b332c02ffaae58c245c05564e",
+      "contract": "Add the evaluation-control document. No executable behavior changes; unrelated older bugs are outside this control contract.",
+      "gold": [],
+      "file": "CODE_REVIEW_EVAL_CONTROL.md",
+      "content": "# Review evaluation control\n\nThis document is a clean change used to check false alarms.\n"
+    }
+  ],
+  "excluded": [
+    {
+      "task": "MONO-75",
+      "head": "ee80e7c4",
+      "reason": "Head unavailable; excluded, never counted as a miss or clean."
+    }
+  ],
+  "laterIntroduced": [
+    {
+      "id": "67",
+      "task": "MONO-146",
+      "reason": "First pinned head has no epoch fields/eval parsing path; belongs to later revisions, not first-pass recall."
+    },
+    {
+      "id": "70",
+      "task": "MONO-146",
+      "reason": "First pinned head has no epoch fields/eval parsing path; belongs to later revisions, not first-pass recall."
+    },
+    {
+      "id": "71",
+      "task": "MONO-146",
+      "reason": "First pinned head has no epoch fields/eval parsing path; belongs to later revisions, not first-pass recall."
+    }
+  ],
+  "matchingRule": "Same code location AND same failure mechanism/trigger. A title or consequence match alone is partial, never strict. Judge independently with evidence; no string-similarity matching.",
+  "reclassifications": [
+    {
+      "id": "17",
+      "decision": "Retain: missing provider safely fails route admission but blindFinding dereferences all routes after a valid paid response; introduced contract defect, not a whole-machine secret threat."
+    },
+    {
+      "id": "41",
+      "decision": "Historical slot retained for nominal 12/16 reporting but excluded from eligible denominator: acceptAmend registers pinsVersion before resume; live resume retry is an explicit reconciliation boundary, not the claimed reversed-order bug."
+    }
+  ],
+  "measurements": {
+    "host": "deferred",
+    "historicalSlots": 12,
+    "extendedSlots": 16,
+    "eligibleLate": 11,
+    "eligibleExtended": 15,
+    "repeats": 3
+  }
+}
