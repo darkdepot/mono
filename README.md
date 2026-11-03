@@ -1,6 +1,6 @@
 # Mono Agent Workflow
 
-Текущий выпуск: **0.41.0**. См. [заметки выпуска](CHANGELOG.md#0410---2026-10-30).
+Текущий выпуск: **0.42.0**. См. [заметки выпуска](CHANGELOG.md#0420---2026-11-03).
 Private vulnerability reports: [SECURITY.md](SECURITY.md).
 
 ## Один владелец этапа
@@ -258,6 +258,17 @@ ship-сертификат и не требует регистрации испо
 локальные файлы ship. Наблюдатели читают единый конфиг хоста, а не копию исполнителя. Пак подключается терминальным рецептом;
 примеры вымышленного продукта в справочнике подключением не являются.
 Проверка после выкладки сохраняется.
+
+## Обновление до 0.42.0
+
+Тестировщик проверяет и скиллы: сценарии шести этапов Mono проходят в Claude Code
+и Codex на тестовом пространстве monotest, след и свежий дамп записей сверяются
+механически, сертификат принимает пункты `scenario`. Продукт подключает это полем
+`qa.skills`; конфиг самого Mono подключается после установки 0.42.0. Ожидания
+сертификата теперь только объекты `{id, source, expectation}`: строковые id 0.41.0
+не принимаются, незавершённую проверку QA проходят заново. Сами этапы не менялись,
+формат протокола прежний (surface revision 5), общий покой продуктов не нужен;
+установка обоих хостов — [Release 0.42.0](references/install.md#release-0420).
 
 ## Обновление до 0.41.0
 
@@ -1645,7 +1656,7 @@ saved selection and the explicit index path to `node scripts/skills-suite.mjs
 Use configFile/expectedFile/taskExpectedFile in selection to save scenario × host
 expectations in task-expected.json. Per-change selection can be disabled while
 release/acceptance still select the full catalog. Mono's own config is activated
-only after the intermediate pack is installed. The expected items are frozen before the first host call;
+only after 0.42.0 is installed. The expected items are frozen before the first host call;
 removed scenarios are refused. Main paths use short chains in one fresh monotest
 project, other neighbors use their own seeds. Design requires a request-supplied
 Paper file id and the neutral pre-execution guard. These data files are not part
