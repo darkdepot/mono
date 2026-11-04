@@ -8,6 +8,7 @@ import { verifyScenarioRecords as verifyWindowScenarioRecords, verifyRecords as 
 const verifyScenarioRecords=(input,...rest)=>input.runRequest.scenario?.expectedReplies?verifyTextScenarioRecords(input,...rest):verifyWindowScenarioRecords(input,...rest);
 const verifyRecords=request=>request.expectedReplies?verifyTextRecords(request):verifyWindowRecords(request);
 import { nativeRecords } from './skills-record-data.mjs';
+import { ideaFingerprint } from './idea-gate.mjs';
 
 const projectId='00000000-0000-4000-8000-000000000001',date='2026-10-31T00:00:00Z';
 // These constructed sessions have their own deterministic clock. Native live
@@ -975,6 +976,86 @@ for(const index of [0,1])test(`text Idea requires the complete four-section bind
  const f=textIdeaFixture(t),binding=f.request.approvalBindings[index];assert.equal(f.check().status,'passed');
  binding.text=binding.text.slice(0,binding.text.indexOf('\n\n## Неизвестные'));
  const result=f.check();assert.equal(result.status,'failed',result.reason);
+});
+
+function correctedIdeaFixture(t,passage='unknowns') {
+ const f=textIdeaFixture(t),expected=f.request.expectedReplies[0],full=f.request.approvalBindings[1].text;
+ const before=passage==='unknowns'?full.slice(full.indexOf('Какие значения источника')):'Источник читается сразу рядом с именем.';
+ const after=before+' Проверить отображение в Codex.';
+ Object.assign(expected,{question:{anchors:['описание']},presentation:'inline',driverStart:null,intent:'correction',reply:'да, только добавь проверку Codex',correction:{before,anchors:['Codex'],descriptionAnchors:['Codex']},response:{anchors:['запис','Codex'],question:false}});
+ for(const binding of f.request.approvalBindings)binding.artifactEnd=full.length;
+ f.request.rubricDefinition='Full Idea plus only the named Codex check; project body derived independently; same owner exchange and fixed approval outcome.';
+ const rewrite=(value,key)=>{
+  if(typeof value==='string'){
+   try{return JSON.stringify(rewrite(JSON.parse(value)));}catch{}
+   if(value.includes('mono-idea: approved'))return value.replace(full,full.replace(before,after)).replace(ideaFingerprint(full),ideaFingerprint(full.replace(before,after))).replace('Владелец: ответил «принимаю»',`Владелец: ответил «${expected.reply}»\nПоправка: добавлена проверка Codex.`);
+   return key==='description'?value.replace(before,after):value;
+  }
+  if(Array.isArray(value))return value.map(v=>rewrite(v));
+  return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,rewrite(v,k)])):value;
+ };
+ const transform=(fn)=>{
+  for(const file of [f.request.trace,f.request.dumpTrace]){
+   const rows=fs.readFileSync(file,'utf8').trim().split('\n').map(JSON.parse).map(row=>fn(row));
+   fs.writeFileSync(file,rows.map(JSON.stringify).join('\n')+'\n');
+  }
+  const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(fn(JSON.parse(fs.readFileSync(file)))));}};
+  walk(f.request.dumpDir);
+ };
+ transform(rewrite);
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+ rows.find(row=>row.payload?.type==='message'&&row.payload.role==='user').payload.content[0].text=expected.reply;
+ rows.findLast(row=>row.payload?.type==='message'&&row.payload.role==='assistant').payload.content[0].text='Добавил проверку Codex. Утверждение записал.';
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');
+ const attest=()=>{
+  delete f.request.rubric;
+  const result=f.check();
+  if(result.status==='unverified'&&result.rubricDigest)f.request.rubric={digest:result.rubricDigest,reviewer:'curated corrected Idea regression',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'native record fixture plus named Codex check',reason:'Shown four sections plus only the declared addition; canonical project body and verbatim consent.'}))};
+  return f.check();
+ };
+ return {...f,transform,attest,full,before,after};
+}
+for(const passage of ['unknowns','result'])test(`continue5 corrected Idea uses its approval snapshot, not creation/currentLine (${passage})`,t=>{
+ const f=correctedIdeaFixture(t,passage),result=f.attest();
+ assert.equal(result.status,'passed',JSON.stringify(result));
+ assert.equal(result.gateResults[0].result.ok,true);
+});
+for(const mode of ['forged-quote','extra-change','wrong-question','early-project','early-approval','approval-before-project','other-exchange','project-change','project-misses-correction','missing-snapshot'])test(`continue5 corrected Idea still rejects ${mode}`,t=>{
+ const f=correctedIdeaFixture(t,mode==='project-misses-correction'?'result':'unknowns');
+ if(['forged-quote','extra-change','project-change','project-misses-correction','missing-snapshot'].includes(mode)){
+  const rewrite=(value,key)=>{
+   if(typeof value==='string'){
+    try{return JSON.stringify(rewrite(JSON.parse(value)));}catch{}
+    if(mode==='project-change')return key==='description'?value+' Постороннее.':value;
+    if(mode==='project-misses-correction')return key==='description'?value.replace(f.after,f.before):value;
+    if(!value.includes('mono-idea: approved'))return value;
+    if(mode==='forged-quote')return value.replace('«да, только добавь проверку Codex»','«принимаю»');
+    if(mode==='missing-snapshot')return value.replace(/```mono-idea-snapshot[\s\S]*?```/,'');
+    const approved=f.full.replace(f.before,f.after),changed=approved.replace('## Что\n','## Что\nПостороннее изменение.\n');
+    return value.replace(approved,changed).replace(ideaFingerprint(approved),ideaFingerprint(changed));
+   }
+   if(Array.isArray(value))return value.map(v=>rewrite(v));
+   return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,rewrite(v,k)])):value;
+  };
+  f.transform(rewrite);
+ }
+ if(mode==='other-exchange')f.request.approvalBindings[1].replyId='another-exchange';
+ if(['wrong-question','early-project','early-approval','approval-before-project'].includes(mode)){
+  const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+  if(mode==='wrong-question')rows.find(row=>row.payload?.content?.[0]?.text?.startsWith(f.full)).payload.content[0].text=f.full+'\nКакой источник проверяем?';
+  else if(mode==='approval-before-project') {
+   const at=rows.findIndex(row=>row.payload?.name==='mcp__monotest__save_comment'),pair=rows.splice(at,2),project=rows.findIndex(row=>row.payload?.name==='mcp__monotest__save_project');
+   rows.splice(project,0,...pair);
+   f.request.approvalBindings.forEach(b=>b.currentLine=rows.findIndex(row=>row.payload?.name===(b.recordId===f.request.project.id?'mcp__monotest__save_project':'mcp__monotest__save_comment'))+1);
+  }else {
+   const name=mode==='early-project'?'mcp__monotest__save_project':'mcp__monotest__save_comment',at=rows.findIndex(row=>row.payload?.name===name),pair=rows.splice(at,2),reply=rows.findIndex(row=>row.payload?.role==='user');
+   rows.splice(reply,0,...pair);
+  }
+  fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:01Z').map(JSON.stringify).join('\n')+'\n');
+ }
+ const result=f.attest();assert.equal(result.status,'failed',JSON.stringify(result));
+ const reasons={'forged-quote':/verbatim owner reply/,'extra-change':/change outside named passage/,'wrong-question':/question lacks scenario anchors/,'early-project':/actual owner reply missing/,'early-approval':/actual owner reply missing/,'approval-before-project':/snapshot must follow consent/,'other-exchange':/same exchange required/,'project-change':/created project differs/,'project-misses-correction':/created project differs/,'missing-snapshot':/change outside named passage/};
+ assert.match(result.reason,reasons[mode]);
 });
 
 function textPrdFixture(t,delegated=false) {

@@ -283,13 +283,13 @@ function documentPresentation(data,exchange,binding,dump) {
  if(!persisted||bodyOf(persisted)!==approved)throw new Error('approved version changed before final read-back');
  return {documentId:idOf(shown.value),shownBody,shownHash:sha256(shownBody),approvedBody:approved,approvedHash:sha256(approved),shownReadLine:shown.line,currentLine:fresh.line};
 }
-function approvalCheck(request,write,data,dump){
+function approvalCheck(request,write,data,dump,writes){
  const createProject=write.name.endsWith('__create_project')||(write.name.endsWith('__save_project')&&!write.input.id);
  const markers=recordLines(writeBody(write)).map(line=>line.trim().match(/^(mono-[\w-]+: (?:approved|start))(?: |$)/)?.[1]).filter(Boolean);
  if(!createProject&&!markers.some(type=>recordWrite(write,type,dump)))return;
  const packageStart=recordWrite(write,'mono-package: start',dump);
  const binding=request.approvalBindings?.find(b=>b.recordId===idOf(write.value));
- if(data.expectedReplies) return textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding});
+ if(data.expectedReplies) return textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding,writes});
  throw new Error('text approval requires scenario expectedReplies');
 }
 
@@ -344,7 +344,7 @@ function checkApprovedVersion({request,write,data,dump,createProject,packageStar
  if(!Number.isInteger(invocation))bindingMissing('approval write invocation not proved by native trace');
 }
 
-function textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding}) {
+function textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding,writes}) {
  if(!binding)bindingMissing(`shown-version binding missing for ${idOf(write.value)}`);
  const exchange=data.exchanges.find(e=>e.expected.id===binding.replyId);
  if(!exchange)throw new Error('text approval has no scenario reply binding');
@@ -373,8 +373,20 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
  if(anchored(expected)&&presentation==='document') {
   approvedText=documentPresentation(data,exchange,binding,dump).approvedBody;
  } else if(anchored(expected)&&expected.correction) {
-  const snapshot=approvalBlocks(body).find(b=>b.info==='mono-idea-snapshot'||b.info==='mono-tech-page')?.content.replace(/[\r\n]+$/,'');
-  const call=data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
+  let snapshotBody=body;
+  if(createProject) {
+   const approvals=writes.filter(candidate=>candidate.data===data&&recordWrite(candidate,'mono-idea: approved',dump)&&
+    request.approvalBindings?.some(b=>b.recordId===idOf(candidate.value)&&b.replyId===binding.replyId&&b.shownLine===exchange.line&&b.text===binding.text)&&
+    data.exchanges.filter(e=>e.replyLine<candidate.line).at(-1)===exchange);
+   if(approvals.length!==1)throw new Error('unique Idea approval snapshot for the same exchange required');
+   const approval=approvals[0],invocation=approval.event.type==='event_msg'?approval.approvalInvocationLine:approval.line;
+   if(!Number.isInteger(invocation)||invocation<=exchange.replyLine||invocation<=write.resultLine)throw new Error('Idea approval snapshot must follow consent and project creation');
+   // Creation stores only three sections. The agreed four-section version lives
+   // in this exchange's approval record; the project body is checked separately.
+   snapshotBody=writeBody(approval);
+  }
+  const snapshot=approvalBlocks(snapshotBody).find(b=>b.info==='mono-idea-snapshot'||b.info==='mono-tech-page')?.content.replace(/[\r\n]+$/,'');
+  const call=!createProject&&data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
   const actual=snapshot??(call?bodyOf(resultFor(data.host,call,data.rows).value):undefined);
   approvedText=correctedVersion(binding.text,expected,actual);
  } else approvedText=correctedVersion(binding.text,expected);
@@ -632,7 +644,7 @@ export function verifyRecords(request){
   }
   const bindingGaps=[],approvedExchanges=new Set();
   for(const write of activeWrites)try{
-   for(const exchange of approvalCheck({...request,host:write.data.host,sent:write.data.sent},write,write.data,dump)??[])approvedExchanges.add(exchange);
+   for(const exchange of approvalCheck({...request,host:write.data.host,sent:write.data.sent},write,write.data,dump,activeWrites)??[])approvedExchanges.add(exchange);
   }catch(error){if(!error.bindingOnly)throw error;bindingGaps.push(error.message);}
   const gates=[...(request.gates??[])];
   for(const write of activeWrites){
