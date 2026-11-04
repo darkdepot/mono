@@ -208,6 +208,7 @@ test('failed transport answers decode JSONL and object fields before redaction, 
   'diagnostic prefix\n'+JSON.stringify({type:'result',result:`"access_token": "${secret}"`}),
   {completed:false,diagnostic:{password:secret}},
   '{"type":"assistant","text":"password = \\"'+secret,
+  JSON.stringify({message:{content:assignment}},null,2).slice(0,-1),
  ];
  for(const rawAnswer of bad){
   const result=await runReviewRound(f.request,{runRole:async()=>{throw Object.assign(new Error('role failed (1)'),{rawAnswer});}});

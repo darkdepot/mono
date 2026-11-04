@@ -203,11 +203,12 @@ export function observeCodexBoundary(value, stderr) {
   return { tools: value.tools, mcpServers: [], connectors: false, subagents: false, source: 'live model tool-list probe' };
 }
 function failedAnswer(value) {
+  let unreadable = false;
   const decodedText = entry => typeof entry === 'string' ? entry : Array.isArray(entry) ? entry.map(decodedText).join('\n')
     : object(entry) ? Object.entries(entry).map(([key, content]) => `${key}: ${decodedText(content)}`).join('\n') : String(entry ?? '');
   const decodeLine = line => {
     if (!/^[\s]*[\[{]/.test(line)) return line;
-    try { return decodedText(JSON.parse(line)); } catch { return '[unreadable transport answer withheld]'; }
+    try { return decodedText(JSON.parse(line)); } catch { unreadable = true; return ''; }
   };
   let raw;
   if (typeof value !== 'string') raw = decodedText(value);
@@ -215,6 +216,7 @@ function failedAnswer(value) {
     try { raw = decodedText(JSON.parse(value)); }
     catch { raw = value.split('\n').map(decodeLine).join('\n'); }
   }
+  if (unreadable) raw = '[unreadable transport answer withheld]';
   const lines = raw.split('\n'); let secretMatches = 0;
   const redacted = lines.map(line => {
     const matches = scanSecrets(line, { patch: false });
