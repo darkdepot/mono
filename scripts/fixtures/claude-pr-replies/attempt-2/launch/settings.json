@@ -1,0 +1,111 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "disableBypassPermissionsMode": "disable",
+    "allow": [
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/reports/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/repo/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/repo/.git/**)",
+      "Edit(//private/tmp/m322-probe/**)",
+      "Bash(gh api:*)",
+      "Read(//Users/sasha/.codex/plugins/cache/mono-marketplace/mono/0.42.0/**)",
+      "Read(//Users/sasha/.codex/skills/**)"
+    ],
+    "deny": [
+      "WebFetch",
+      "WebSearch",
+      "Edit(//Users/sasha/.codex/plugins/cache/mono-marketplace/mono/0.42.0/**)",
+      "Edit(//Users/sasha/.codex/skills/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/evidence/mono-agent-workflow/**)",
+      "Edit(//Users/sasha/.claude/**)",
+      "Edit(//Users/sasha/.claude.json/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/attempt1/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/launch-a2/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/launch-run-a2.err/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/launch-run-a2.out/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/logs/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/managed-settings/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/model-routes.json/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/probe-launch.mjs/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/prompt-a2.md/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/prompt.md/**)",
+      "Edit(//Users/sasha/.mono-agent-workflow/probes/MONO-322-inputs/**)",
+      "Edit(//Users/sasha/.config/gh/**)",
+      "Edit(//Users/sasha/.config/gh/hosts.yml/**)",
+      "Edit(//private/tmp/claude-501/**)",
+      "Edit(//private/var/folders/dw/fc6_vlfn7g3_hbw1fhbqxd9h0000gn/T/claude-501/**)",
+      "Edit(//private/tmp/claude/**)",
+      "Edit(//Users/sasha/.npm/_logs/**)",
+      "Edit(//Users/sasha/.claude/debug/**)",
+      "Read(//Users/sasha/.config/gh)",
+      "Read(//Users/sasha/.config/gh/**)",
+      "Edit(//Users/sasha/.config/gh)",
+      "Read(//Users/sasha/.config/gh/hosts.yml)",
+      "Read(//Users/sasha/.config/gh/hosts.yml/**)",
+      "Edit(//Users/sasha/.config/gh/hosts.yml)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "allowWrite": [
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/reports",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/repo",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/repo/.git",
+        "/private/tmp/m322-probe"
+      ],
+      "denyWrite": [
+        "/Users/sasha/.codex/plugins/cache/mono-marketplace/mono/0.42.0",
+        "/Users/sasha/.codex/skills",
+        "/Users/sasha/.mono-agent-workflow/evidence/mono-agent-workflow",
+        "/Users/sasha/.claude",
+        "/Users/sasha/.claude.json",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/attempt1",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/launch-a2",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/launch-run-a2.err",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/launch-run-a2.out",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/logs",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/managed-settings",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/model-routes.json",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/probe-launch.mjs",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/prompt-a2.md",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/prompt.md",
+        "/Users/sasha/.mono-agent-workflow/probes/MONO-322-inputs",
+        "/Users/sasha/.config/gh",
+        "/Users/sasha/.config/gh/hosts.yml",
+        "/private/tmp/claude-501",
+        "/private/var/folders/dw/fc6_vlfn7g3_hbw1fhbqxd9h0000gn/T/claude-501",
+        "/private/tmp/claude",
+        "/Users/sasha/.npm/_logs",
+        "/Users/sasha/.claude/debug"
+      ],
+      "denyRead": [
+        "/Users/sasha/.config/gh",
+        "/Users/sasha/.config/gh/hosts.yml"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "uploads.github.com",
+        "raw.githubusercontent.com"
+      ],
+      "strictAllowlist": true,
+      "allowAllUnixSockets": false,
+      "allowUnixSockets": [],
+      "allowLocalBinding": false,
+      "allowMachLookup": [
+        "com.apple.trustd",
+        "com.apple.trustd.agent"
+      ]
+    }
+  },
+  "disableAllHooks": true,
+  "disableClaudeAiConnectors": true,
+  "enableAllProjectMcpServers": false,
+  "enabledPlugins": {}
+}

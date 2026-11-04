@@ -5261,7 +5261,8 @@ function modelActiveFiles(base) {
     for (const entry of fs.readdirSync(path.join(base, relative), { withFileTypes: true })) {
       const child = path.posix.join(relative, entry.name);
       if (entry.isDirectory()) walk(child);
-      else if (entry.isFile() && !/^scripts\/fixtures\/idea-gate\/probe\/(?:claude-code|codex)\/(?:get_project\.json|list_comments(?:\.limit4)?\.page-[1-3]\.json|calls\.json|README\.md|MANIFEST\.sha256)$/.test(child)) files.push(child);
+      else if (entry.isFile() && !/^scripts\/fixtures\/idea-gate\/probe\/(?:claude-code|codex)\/(?:get_project\.json|list_comments(?:\.limit4)?\.page-[1-3]\.json|calls\.json|README\.md|MANIFEST\.sha256)$/.test(child) &&
+        !/^scripts\/fixtures\/claude-pr-replies\/(?:attempt-1\/MONO-322-mono-deliver-a1\.jsonl|attempt-2\/MONO-322-mono-deliver-a2\.jsonl|attempt-[12]\/launch\/(?:entry|invocation|settings|startup-check)\.json)$/.test(child)) files.push(child);
     }
   }
   for (const directory of ["skills", "references", "templates", "scripts"]) walk(directory);
@@ -5586,7 +5587,19 @@ function validateModelPolicyFixtures() {
     for (const [name] of NORMATIVE_MODEL_SECTIONS) {
       negative(`normative reference ${name}`, () => change(name, (text) => text.replace(/\[role:autoreview\]\([^)]+\)/g, "reviewer")), `${name}: role binding must be autoreview`);
     }
-    for (const name of ["README.md", "references/execution-quality.md", "templates/orchestrator-brief.md", "scripts/verify.mjs"]) {
+    change("scripts/fixtures/claude-pr-replies/attempt-1/launch/entry.json", text =>
+      JSON.stringify({ ...JSON.parse(text), model: fabricated("claude", "archived") }));
+    check(); restore(); check();
+    console.log("PASS model-policy archived Claude probe is data, not launch policy");
+    const probeNeighbor = "scripts/fixtures/claude-pr-replies/active.mjs";
+    try {
+      fs.writeFileSync(file(probeNeighbor), `const model = "${fabricated("claude", "neighbor")}";\n`);
+      expectCommandFailure("archived probe executable neighbor", check, `${probeNeighbor}: executable model id outside policy`);
+    } finally { fs.rmSync(file(probeNeighbor), { force: true }); }
+    check();
+    console.log("PASS model-policy executable neighbor stays checked");
+    for (const name of ["README.md", "references/execution-quality.md", "templates/orchestrator-brief.md", "scripts/verify.mjs",
+      "scripts/fixtures/claude-pr-replies/README.md", "scripts/claude-delivery.test.mjs"]) {
       negative(`active detector ${name}`, () => change(name, (text) => text + `\n${fabricated("claude", "stale")}\n`), `${name}: executable model id outside policy`);
     }
     change("README.md", (text) => text + `\n${[...MODEL_ENUM_ALLOWLIST].join(" ")}\n`);

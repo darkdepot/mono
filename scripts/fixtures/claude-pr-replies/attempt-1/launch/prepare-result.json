@@ -1,0 +1,13 @@
+{
+  "githubConfigDir": "/private/tmp/m322-probe/mono-gh-YBWpMf",
+  "credentialPaths": [
+    "/Users/sasha/.config/gh",
+    "/Users/sasha/.config/gh/hosts.yml"
+  ],
+  "auth": {
+    "requested": "subscription",
+    "observed": "claude.ai",
+    "positive": true
+  },
+  "githubToken": "[REDACTED: present]"
+}

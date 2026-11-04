@@ -1,0 +1,12 @@
+{
+  "issue": "MONO-322",
+  "attempt": 1,
+  "thread_id": "5aea6143-992a-4ee4-8115-8604c0aeab16",
+  "attemptMarker": "83927972-8507-45ef-9803-bb106701f671",
+  "model_launch": {
+    "model_parameter": "claude-opus-5",
+    "effort_parameter": "high"
+  },
+  "settingsFile": "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/managed-settings/MONO-322-a1.json",
+  "log": "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/logs/MONO-322-mono-deliver-a1.jsonl"
+}

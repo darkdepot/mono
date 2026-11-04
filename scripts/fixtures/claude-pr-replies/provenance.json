@@ -1,0 +1,117 @@
+{
+  "date": "2026-11-04",
+  "repository": "darkdepot/mono",
+  "pr": 244,
+  "claudeCodeVersion": "2.1.316",
+  "packVersion": "0.42.0",
+  "files": [
+    {
+      "path": "attempt-1/MONO-322-mono-deliver-a1.jsonl",
+      "sha256": "a473793345b940df5dbef99bb74da4e26e2b2ec33c675c1378929a6820c3814b",
+      "sourceSha256": "0c3f8960d81f2549fd9025f5687b4cc182643277d945ef88db1e22eac813cad3",
+      "normalization": "Removed one leading LF only; all recorded JSON event bytes unchanged."
+    },
+    {
+      "path": "attempt-1/launch/entry.json",
+      "sha256": "75399f85922dc1bfa08c8abb3134d55880aa658e8bf7de7a8ab450545357c25c"
+    },
+    {
+      "path": "attempt-1/launch/settings.json",
+      "sha256": "62dd4d850ae91c86fdd56a9298d168d99b7fe85b9c1b38e89c0dc7bd3d101b7c"
+    },
+    {
+      "path": "attempt-1/launch/invocation.json",
+      "sha256": "28e08fbb05d39075a19914ee658f2d9fc3561721058c7da34cc2e2e8f3377b4c"
+    },
+    {
+      "path": "attempt-1/launch/startup-check.json",
+      "sha256": "592f5822328a2958ba742e1e4264ffd6ead286c2d67cff8c3680e2b2765431fd"
+    },
+    {
+      "path": "attempt-1/launch/environment-redacted.json",
+      "sha256": "4607bbfb4aa5cacb34857feb0eb17bbf05e3e7af5775e3198193b6b6be3edb69"
+    },
+    {
+      "path": "attempt-1/launch/prepare-result.json",
+      "sha256": "533ea1a3fb2a329184075a3f88d05673cb89eea0c8b27ac81687a24cae395e5d"
+    },
+    {
+      "path": "attempt-2/MONO-322-mono-deliver-a2.jsonl",
+      "sha256": "c0e890c0b1bbad0a3e8361ef7a7c53fd0321612bae9d3514fc588bebdfd76086",
+      "sourceSha256": "b592e4b7ee68968fb02ed0b895fcd0efaaaf080e4a20372c58136e2a5f9f696f",
+      "normalization": "Removed one leading LF only; all recorded JSON event bytes unchanged."
+    },
+    {
+      "path": "attempt-2/launch/entry.json",
+      "sha256": "a9014403c448481f7c3a6e2d54ab7aa85d4dbc6c364ad50121f806a6349be95c"
+    },
+    {
+      "path": "attempt-2/launch/settings.json",
+      "sha256": "64d02f99ba872a6f46d6d7ec42e0b838f2add85e0893ea5c103b4484c77a266d"
+    },
+    {
+      "path": "attempt-2/launch/invocation.json",
+      "sha256": "9b9a58c5a7ba62bbf364a546e6efff81ad31f672c4f4b0703ca1a8ca55fedb34"
+    },
+    {
+      "path": "attempt-2/launch/startup-check.json",
+      "sha256": "bcefcfcd7640123a88bf9d1e6c5a88dc6e8b2a6d61edb62b06f78451a32e94aa"
+    },
+    {
+      "path": "attempt-2/launch/environment-redacted.json",
+      "sha256": "d3cf5ab14a02440aaed726d72c3fca1ef5c4979fd34d49b4d0bbd5d379ad3dc4"
+    },
+    {
+      "path": "attempt-2/launch/prepare-result.json",
+      "sha256": "12e556c0f74cecf1eb47cabdd6d84c12ec4ff97288bca384d42cb3c5e09f4c73"
+    },
+    {
+      "path": "attempt-2/session-out/01-line-comment.json",
+      "sha256": "35c62b4a255bfc152021904e59af80e9816008cabf40b700a622b5613669196f"
+    },
+    {
+      "path": "attempt-2/session-out/02-reply.json",
+      "sha256": "c71b4d13fcaebaa49d94eebf4489c2d2018f74a27a749756cca28cd589940913"
+    },
+    {
+      "path": "attempt-2/session-out/03-reply-verify.json",
+      "sha256": "c71b4d13fcaebaa49d94eebf4489c2d2018f74a27a749756cca28cd589940913"
+    },
+    {
+      "path": "attempt-2/session-out/04-review-state.json",
+      "sha256": "74f3c3f13a414dc87747941d9d6e9d4053f6bb660d266ec5658f70d04d138a5b"
+    },
+    {
+      "path": "attempt-2/session-out/05-threads-before.json",
+      "sha256": "3afb5afcd6ea42d5eed49a0a49f6ee77370ad31eddabce520e741d9a48213dbc"
+    },
+    {
+      "path": "attempt-2/session-out/06-resolve.json",
+      "sha256": "721ca43c1e0ebe20c272da03f97fa380a55d657fdd3fcfffb2d59c310f286824"
+    },
+    {
+      "path": "attempt-2/session-out/07-threads-after.json",
+      "sha256": "c67da59fddbe82ab13ebdc9fcd1aa5aa20bd433980df03a41488a5a3557706de"
+    },
+    {
+      "path": "attempt-2/session-out/08-bot-comment.json",
+      "sha256": "bc357974f64786416b963b6269d9a0f63f76c26ac7cf842dd619402bae800786"
+    },
+    {
+      "path": "host-reread/graphql-review-threads.json",
+      "sha256": "f7e6848ef5b7e0539e0825780d14f4f1427a009811aa09bf7d892257be4679c8"
+    },
+    {
+      "path": "host-reread/pulls-244-reviews.json",
+      "sha256": "9d8ecf7ded1b868853e97c8fba1f57b0d24796479fe6b850f0984e76c0bacd1c"
+    },
+    {
+      "path": "host-reread/pull-244-after-close.json",
+      "sha256": "f4860acfa5d796bb0bcb6da06b40ded801922f56b2c60a9da7341da56e4e1ece"
+    },
+    {
+      "path": "host-reread/bot-comment-reactions.json",
+      "sha256": "a122a6a7359fa3879250fa66656aa15dcee247bef1daeef1105c39707857b733"
+    }
+  ]
+}
