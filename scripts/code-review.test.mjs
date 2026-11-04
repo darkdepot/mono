@@ -825,7 +825,9 @@ test('v2 decoder preserves escaped key pairing and fails closed beyond eight lay
   }
  }
  let over='ordinary';for(let i=0;i<10;i++)over=JSON.stringify(over);
- for(const source of [over,String.raw`JSON.parse('{"pass\uZZZZord":"synthetic"}')`])assert.equal(screenModelOutput(source,{input:true}).rejected,true);
+ assert.equal(screenModelOutput(over,{input:true}).rejected,true);
+ // An invalid escape in a non-secret source key is already at a fixpoint.
+ assert.equal(screenModelOutput(String.raw`JSON.parse('{"pass\uZZZZord":"synthetic"}')`,{input:true}).rejected,false);
  let safe={note:'ordinary'};for(let i=0;i<3;i++)safe=JSON.stringify(safe);
  assert.equal(screenModelOutput(safe,{input:true}).rejected,false);
 });
@@ -966,7 +968,8 @@ test('C19: real-byte regression fixtures retain host snapshot identities',()=>{
  for(const [file,sha] of [['codex-0.159.2-catalog.json','262dc36e0e7beb290aef8196bd59f42acf51647b8f7b68dafa533ae7742019e6'],['MONO-302.diff','c95056cbc1ec87b2e2c4b3c4aeadca097ffb4500dbe99d678b6ac65133da0f88'],['checker-r3.json','8aa830a8427d85f57012783f21931b2e13a1a3198d2592ad9a3f278921eda902']])assert.equal(createHash('sha256').update(fs.readFileSync(path.join(realScreenFixture,file))).digest('hex'),sha,file);
 });
 test('C19 MONO-326: successful JSON decoding and ordinary source backslashes are not ambiguous',()=>{
- for(const value of [String.raw`/\w+\s/.test(value)`,String.raw`const text = \`line\nnext\`;`,JSON.stringify({reason:'a\nb "quoted" '+String.raw`/\w+/`}),{reason:String.raw`Use /\w+/ and \n in source`}])for(const options of [{input:true},{},{diagnostic:true}])assert.equal(screenModelOutput(value,options).rejected,false);
+ assert.equal(parseChecker({completed:true,verdicts:[verdict({reason:String.raw`Use \"\w+\" in the matcher.`})]},[{...sample,key}]).verdicts.length,1);
+ for(const value of [String.raw`Use "\w+" and "\p{L}" in the matcher.`,String.raw`/\w+\s/.test(value)`,String.raw`const text = \`line\nnext\`;`,JSON.stringify({reason:'a\nb "quoted" '+String.raw`/\w+/`}),{reason:String.raw`Use /\w+/ and \n in source`}])for(const options of [{input:true},{},{diagnostic:true}])assert.equal(screenModelOutput(value,options).rejected,false);
 });
 test('C19: all nine reconstructed real r3 checker answers remain valid',()=>{
  const entries=JSON.parse(fs.readFileSync(path.join(realScreenFixture,'checker-r3.json'),'utf8'));assert.equal(entries.length,9);
@@ -999,8 +1002,20 @@ test('C19: r4 tiny request reaches role launch with the actual Codex 0.159.2 cat
 });
 
 test('C19: prose, placeholders and short key values are benign; actual assignment values are caught',()=>{
- const benign=['task-'+'sk-'+'x'.repeat(24),'risk-repeat-stratification','desk-'+'sk-'+'x'.repeat(24),'dispatch-afk-leading-token: only leading AFK selects the short profile','- Changing a password or other authentication credential: Ask the user to take over',String.raw`/\w+/`, 'token: <placeholder-value>', 'password=${VARIABLE}', 'credential: ************', 'secret=""', 'api-key=short', '# password=opaque-value-long', '// token=opaque-value-long'];
+ const benign=['task-'+'sk-'+'x'.repeat(24),'risk-repeat-stratification','desk-'+'sk-'+'x'.repeat(24),'dispatch-afk-leading-token: only leading AFK selects the short profile','- Changing a password or other authentication credential: Ask the user to take over',String.raw`/\w+/`, 'token: <placeholder-value>', 'password=${VARIABLE}', 'credential: ************', 'secret=""', 'api-key=short', '# password=opaque-value-long', '// token=opaque-value-long', '// note; token=abcdefgh', '# note; password=abcdefgh', 'const name = 1; // note; token=abcdefgh', '/* note; token=abcdefgh */'];
  for(const value of benign)for(const input of[true,false])assert.equal(screenModelOutput(value,{input}).rejected,false,value);
- for(const name of['token','password','api-key','session_token'])for(const value of[`export ${name}=opaque-value-long`,`${name}: opaque-value-long`,`--${name} opaque-value-long`,`--${name}=opaque-value-long`,JSON.stringify({[name]:'opaque-value-long'})])assert.equal(screenModelOutput(value,{input:true}).rejected,true,value);
+ for(const name of['token','password','api-key','session_token','foo-barPassword','ключPassword'])for(const value of[`export ${name}=opaque-value-long`,`MODE=test ${name}=opaque-value-long`,`ERROR: ${name}=opaque-value-long`,`${name}: opaque-value-long`,`--${name} opaque-value-long`,`--${name}=opaque-value-long`,JSON.stringify({[name]:'opaque-value-long'})])assert.equal(screenModelOutput(value,{input:true}).rejected,true,value);
  for(const value of[17,false,null,'', '<placeholder>', '${VARIABLE}', '***'])assert.equal(screenModelOutput({password:value}).rejected,false);
+});
+
+test('C19: decoded keys cannot overwrite a different key/value binding',async t=>{
+ const ambiguous={['complet'+String.raw`\u0065`+'d']:false,completed:true};
+ for(const value of[ambiguous,JSON.stringify(ambiguous)])for(const input of[true,false])assert.equal(screenModelOutput(value,{input}).rejected,true);
+ const answer={...ambiguous,...review()},record=await runReviewRound(fixture(t).request,responder({responses:[answer,answer]}));
+ assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);
+});
+
+test('C19: safe quoted text cannot suppress decoding of adjacent credential escapes',()=>{
+ const opaque='opaqueFixture'+'m'.repeat(24),values=[String.raw`"bad\w \u0067hp_`+'a'.repeat(36)+'"',String.raw`\u0067hp_`+'a'.repeat(36)+' "safe"',String.raw`pass\u0077ord: `+JSON.stringify(opaque)];
+ for(const value of values)for(const options of[{input:true},{},{diagnostic:true}]){const result=screenModelOutput(value,options);assert.equal(result.rejected,true);assert.ok(!JSON.stringify(result.value).includes(opaque));}
 });
