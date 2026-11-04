@@ -202,7 +202,7 @@ Research, Discovery, Design и Tech Evaluation первым шагом кажд�
 
 Handoff ставит Ready после записи пакета, задач и PASS проверки, до слова
 владельца: Ready значит «проверено и записано», а не «начато». Обычный проект начинает
-владелец кнопкой или словами; делегированный допускает старт оркестратора
+владелец ответом словами; делегированный допускает старт оркестратора
 с причиной и противовесом. Если Ready в рабочем пространстве нет, проект остаётся в Discovery,
 проверка это сообщает. Реализация начинается из Ready; Discovery допустим у
 старого проекта или при отсутствии Ready, если пакет прошёл проверки. Крупная
@@ -1632,6 +1632,9 @@ and a native post-reply action after the current stage rubric passes. Canonical
 document identities come from native responses, including slug lookups. Harmless
 deferral wording is allowed; exact forbidden offers and the semantic rubric remain
 blocking. Window decoders live only in archived test fixtures.
+The AC1 guard reads all files under `skills/` and `templates/`, plus
+`references/owner-dialog.md` and `references/orchestration.md`, for retired window
+labels and answer-list formatting. History and old fixtures are outside that scope.
 The suite saves the native trace, writes and fresh dump with their rubric digest.
 Review that saved evidence, then use the same request with `resume: true` to
 continue without rerunning a completed stage. Changed evidence or digest refuses

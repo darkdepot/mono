@@ -4,12 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadCatalog } from './skills-catalog.mjs';
 
-const stages=['idea','research','discovery','design','tech-evaluation','handoff'];
 const read=file=>fs.readFileSync(new URL('../'+file,import.meta.url),'utf8');
-const files=dir=>fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?files(path.join(dir,e.name)):e.name.endsWith('.md')?[path.join(dir,e.name)]:[]);
-test('all six active stage contracts replace window labels with conversation',()=>{
- const corpus=[...stages.flatMap(s=>files(`skills/${s}`)), 'references/owner-dialog.md','references/orchestration.md','templates/stage-agent.md'];
- for(const file of corpus) assert.doesNotMatch(read(file),/«(?:Утвердить[^»]*|Начать[^»]*|Ещё обсудить)»|(?:вызови|открой|доступный)\s+`?(?:AskUserQuestion|request_user_input)/,file);
+const files=dir=>fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?files(path.join(dir,e.name)):e.isFile()?[path.join(dir,e.name)]:[]);
+test('all active stage contracts replace window labels with conversation across the whole AC1 scope',()=>{
+ const corpus=[...files('skills'),...files('templates'),'references/owner-dialog.md','references/orchestration.md'];
+ // These are retired answer labels and window-format markers, not prose pins.
+ const windowForm=/«(?:Утвердить[^»]*|Начать[^»]*|Ещё обсудить|Разбить\s+проект|Разрешить\s+больше задач)»|(?:вызови|открой|доступный)\s+`?(?:AskUserQuestion|request_user_input)|\(Recommended\)|Свободный\s+ответ\s+доступен|Варианты\s+со\s+свободным\s+ответом/;
+ const violations=corpus.flatMap(file=>{const match=read(file).match(windowForm);return match?[`${file}: ${match[0]}`]:[];});
+ assert.deepEqual(violations,[],'AC1 active instructions contain window-style answers');
  const dialogue=read('references/owner-dialog.md');
  assert.match(dialogue,/Владелец: ответил/);assert.match(dialogue,/Поправка:/);
  assert.match(dialogue,/shown\.md/);assert.match(dialogue,/approved\.md/);
