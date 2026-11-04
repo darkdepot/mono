@@ -361,7 +361,7 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
  if(createProject&&expected.stage!=='idea')throw new Error('only Idea may create the approved project');
  if(packageStart?!expected.outcome.startNext:!expected.outcome.approval)throw new Error('scenario reply does not authorize this record');
  if(binding.shownLine!==exchange.line || !text(binding.text))throw new Error('approval does not bind the last owner-visible text');
- const framing=expected.framing??{before:'',after:'\n'+expected.question};
+ const framing=expected.framing??{before:'',after:'\n'+exchange.question};
  if(exchange.text!==framing.before+binding.text+framing.after)throw new Error('approval does not bind the complete displayed artifact');
  const approvedText=correctedVersion(binding.text,expected),body=writeBody(write);
  let approvedProjectText;

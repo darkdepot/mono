@@ -840,6 +840,19 @@ test('r8 literal arguments: unsupported stage payload cannot mask a foreign writ
  f.events.splice(9,0,f.call('foreign','mcp__linear__save_project',{id:'foreign',status:'Discovery'}),f.result('foreign',{}));
  const r=f.check();assert.equal(r.status,'failed',JSON.stringify(r));assert.equal(r.stop,true);assert.match(r.reason,/outside monotest/);
 });
+for(const host of ['claude','codex'])for(const mode of ['full','fragment-record','fragment-binding-and-record','explicit-framing'])test(`r9 default framing: ${host} substring question anchor ${mode}`,t=>{
+ const f=textFixture(t,host,'defer'),question=f.expected.question;
+ f.expected.question='Research?';
+ if(mode==='explicit-framing')f.expected.framing={before:'',after:'\n'+question};
+ if(mode.startsWith('fragment')){
+  const content='колонка';
+  if(mode==='fragment-binding-and-record')f.request.approvalBindings[0].text=content;
+  f.record.body=`mono-test: approved\n${content}\n\nВладелец: ответил «${f.expected.reply}»`;
+  f.page('comments','comments',[f.record]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content});
+  f.events[4]=f.result('read',{id:'doc',content});f.events[5]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[6]=f.result('write',f.record);
+ }
+ const r=f.check();assert.equal(r.status,mode.startsWith('fragment')?'failed':'passed',JSON.stringify(r));
+});
 for(const host of ['claude','codex'])for(const [part,content] of [['fragment','колонка'],['prefix','Что: колонка'],['suffix','Источник.']])for(const mode of ['binding-and-record','record-only'])test(`${host}: text approval rejects incomplete displayed artifact ${part} in ${mode}`,t=>{
  const f=textFixture(t,host);assert.equal(f.check().status,'passed');
  if(mode==='binding-and-record')f.request.approvalBindings[0].text=content;
