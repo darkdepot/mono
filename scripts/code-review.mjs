@@ -129,15 +129,17 @@ function familyMatches(source) {
     [...source.matchAll(new RegExp(pattern, pattern.flags + 'g'))]
       .filter(([match]) => !validate || validate(match)).map(([match]) => match));
 }
+const SECRET_KEY_SUFFIXES = ['secret', 'token', 'password', 'passwd', 'credential', 'privatekey', 'apikey', 'sessiontoken', 'sessionkey', 'secretaccesskey'];
 function secretKey(key) {
   const name = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
-  return /(?:secret|token|password|passwd|credential|privatekey|apikey|sessionkey)$/.test(name) || /^(?:aws)?secretaccesskey$/.test(name);
+  return SECRET_KEY_SUFFIXES.some(suffix => name.endsWith(suffix));
 }
-// Key assignments are withheld regardless of value length or type. No source
-// expression is evaluated; parsed objects also cover nested/non-string values.
-const ASSIGNMENT_KEY = /["']([^"'\r\n]+)["']\s*[:=]\s*(?=\S)|\b((?:api|private|session)[ \t]+(?:key|token)|secret[ \t]+access[ \t]+key|[A-Za-z_$][\w$.-]*)\s*[:=]\s*(?=\S)/gi;
+// Text and parsed keys share the same normalized suffixes. Separators may be
+// arbitrary punctuation, including YAML's unquoted key characters; no partial
+// identifier capture can drop a key prefix before classification.
+const ASSIGNMENT_KEY = new RegExp('(?:' + SECRET_KEY_SUFFIXES.map(name => [...name].join('[^A-Za-z0-9]*')).join('|') + ')[^A-Za-z0-9:=]*[:=]\\s*(?=\\S)', 'gi');
 function secretAssignments(source) {
-  return [...source.matchAll(ASSIGNMENT_KEY)].filter(match => secretKey(match[1] ?? match[2]));
+  return [...source.matchAll(ASSIGNMENT_KEY)];
 }
 function scanPayloadText(diff, { file = null, patch = true } = {}) {
   let line = 0, inHunk = false; const matches = [], before = [], after = [];

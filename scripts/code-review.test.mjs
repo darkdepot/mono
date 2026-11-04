@@ -842,3 +842,19 @@ test('v2 family table must cover multiline payload and patch sides',async t=>{
  const blobRunner=responder(),blobRecord=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},blobRunner);
  assert.equal(blobRecord.outcome,'not-reviewed');assert.equal(blobRunner.calls.length,0);
 });
+
+test('v2 unquoted secret-like names use the same any-separator rule in every payload screen',async t=>{
+ const f=fixture(t);
+ const credential='synthetic'+'v'.repeat(24),names=['privatekey','apikey','sessiontoken','sessionkey','secret','token','password','passwd','credential','secretaccesskey'];
+ const payloads=['private/key: '+credential,...names.flatMap(name=>['/',';','=',':','_','-','.',' ','\t','|','+','!','—','\n'].map(separator=>name.split('').join(separator)+': '+credential))];
+ for(const payload of payloads){
+  assert.ok(scanSecrets(payload,{patch:false}).length,payload);
+  for(const options of [{input:true},{},{diagnostic:true}]){const result=screenModelOutput({reason:payload},options);assert.equal(result.rejected,true,payload);assert.ok(!JSON.stringify(result.value).includes(credential));}
+ }
+ assert.equal(screenModelOutput({session:'ordinary',secretMatches:0}).rejected,false);
+ const yaml='private/key: '+credential,runner=responder(),record=await runReviewRound({...f.request,contract:yaml},runner);
+ assert.equal(record.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.ok(record.secrets?.length);
+ fs.writeFileSync(path.join(f.worktree,'input.mjs'),yaml);f.git('add','.');f.git('commit','-qm','synthetic unquoted key');
+ const blobRunner=responder(),blob=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},blobRunner);
+ assert.equal(blob.outcome,'not-reviewed');assert.equal(blobRunner.calls.length,0);assert.ok(blob.secrets?.length);
+});
