@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runReviewRound, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, screenModelOutput } from './code-review.mjs';
+import { runReviewRound, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, screenModelOutput, MAX_SCREEN_VALUE_BYTES } from './code-review.mjs';
 import { requiredPairings, validateModels } from './runtime.mjs';
 import { scoreCheckerProbes } from './code-review-eval.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -68,15 +68,22 @@ test('C3: native Claude streams retain init, fallback and modelUsage identities 
  const f=fixture(t),bin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-served-models-'));t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));
  const stream=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-model-stream.json'),'utf8'));
  const modeFile=path.join(bin,'mode');fs.writeFileSync(modeFile,'success');
- const fake=`#!${process.execPath}
- const fs=require('node:fs');if(process.argv.includes('auth')){console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}));process.exit(0);}
- let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{
- const emit=o=>console.log(JSON.stringify(o));emit(${JSON.stringify(stream.init)});
- for(const event of ${JSON.stringify(stream.fallbacks)})emit(event);
- if(fs.readFileSync(${JSON.stringify(modeFile)},'utf8')==='failure')process.exit(1);
- emit({type:'result',subtype:'success',is_error:false,structured_output:input.includes('# Finding checker')?${JSON.stringify({completed:true,verdicts:[verdict()]})}:${JSON.stringify(review([sample]))},modelUsage:${JSON.stringify(stream.modelUsage)}});});`;
  const roles=resolveReviewRoles({},packRoot);
- const codex=`#!${process.execPath}\nif(process.argv[2]==='debug'){console.log(JSON.stringify({models:[{slug:${JSON.stringify(roles['code-review'].model)},tool_mode:'code_mode_only',apply_patch_tool_type:'freeform',multi_agent_version:'v2'}]}));process.exit(0);}if(process.argv[2]==='login'){console.error('Logged in using ChatGPT');process.exit(0);}let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{const value=input.startsWith('Boundary audit')?{tools:['exec_command','write_stdin'],mcpServers:[]}:input.includes('# Finding checker')?${JSON.stringify({completed:true,verdicts:[verdict()]})}:${JSON.stringify(review([sample]))};console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(value)}}));console.log(JSON.stringify({type:'turn.completed'}));});`;
+ fs.writeFileSync(path.join(bin,'fixture.json'),JSON.stringify({stream,model:roles['code-review'].model,checker:{completed:true,verdicts:[verdict()]},reviewer:review([sample])}));
+ const fake=`#!/usr/bin/env node
+ const fs=require('node:fs'),path=require('node:path'),data=JSON.parse(fs.readFileSync(path.join(__dirname,'fixture.json'),'utf8'));
+ if(process.argv.includes('auth')){console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}));process.exit(0);}
+ let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{
+ const emit=o=>console.log(JSON.stringify(o));emit(data.stream.init);
+ for(const event of data.stream.fallbacks)emit(event);
+ if(fs.readFileSync(path.join(__dirname,'mode'),'utf8')==='failure')process.exit(1);
+ emit({type:'result',subtype:'success',is_error:false,structured_output:input.includes('# Finding checker')?data.checker:data.reviewer,modelUsage:data.stream.modelUsage});});`;
+ const codex=`#!/usr/bin/env node
+ const fs=require('node:fs'),path=require('node:path'),data=JSON.parse(fs.readFileSync(path.join(__dirname,'fixture.json'),'utf8'));
+ if(process.argv[2]==='debug'){console.log(JSON.stringify({models:[{slug:data.model,tool_mode:'code_mode_only',apply_patch_tool_type:'freeform',multi_agent_version:'v2'}]}));process.exit(0);}
+ if(process.argv[2]==='login'){console.error('Logged in using ChatGPT');process.exit(0);}
+ let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{const value=input.startsWith('Boundary audit')?{tools:['exec_command','write_stdin'],mcpServers:[]}:input.includes('# Finding checker')?data.checker:data.reviewer;
+ console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(value)}}));console.log(JSON.stringify({type:'turn.completed'}));});`;
  fs.writeFileSync(path.join(bin,'claude'),fake,{mode:0o700});fs.writeFileSync(path.join(bin,'codex'),codex,{mode:0o700});
  const prior=process.env.PATH;process.env.PATH=bin+path.delimiter+prior;
  const config={models:{roles:{'code-review':{engine:'claude',model:roles['code-review-checker'].model},'code-review-checker':{engine:'codex',model:roles['code-review'].model}}}};
@@ -910,4 +917,26 @@ test('C17: catalog, auth, probe and role stdout/stderr are screened before parsi
   const record=JSON.parse(child.stdout);assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);
   assert.ok(record.failures.some(item=>/child process output withheld/.test(item.reason)),'process secret was not refused at the shared output boundary');
  });
+});
+
+test('C18: 1 MiB harmless lines have bounded screening time without overlapping suffix rescans',()=>{
+ for(const value of ['a-'.repeat(524288),'a_'.repeat(524288),'trace.'.repeat(174762),'e.'.repeat(524288),'I.'.repeat(524288),'e30.'.repeat(262144),'ghp_'.repeat(262144),'-----BEGIN '.repeat(95325)]){
+  const started=performance.now(),screened=screenModelOutput(value,{input:true});
+  assert.equal(screened.rejected,false);
+  assert.ok(performance.now()-started<750,'1 MiB screen exceeded 750ms');
+ }
+});
+test('C18: per-value size and cumulative JWT header work limits withhold before interpretation',()=>{
+ for(const value of ['a'.repeat(MAX_SCREEN_VALUE_BYTES+1),'é'.repeat(MAX_SCREEN_VALUE_BYTES/2+1)]){
+  assert.ok(scanSecrets(value,{patch:false}).length);
+  for(const input of [true,false]){
+   const result=screenModelOutput({note:value},{input});assert.equal(result.rejected,true);assert.ok(!JSON.stringify(result.value).includes(value));
+   assert.throws(()=>screenModelOutput(value,{input,strict:true}),/withheld/);
+  }
+  assert.equal(screenModelOutput({[value]:'ordinary'}).rejected,true);
+ }
+ assert.equal(screenModelOutput('a'.repeat(MAX_SCREEN_VALUE_BYTES),{input:true}).rejected,false);
+ assert.equal(screenModelOutput('e-'.repeat(2048)+'.b.c',{input:true}).rejected,true);
+ const jwt=[Buffer.from(JSON.stringify({alg:'none'})).toString('base64url'),'e30',''].join('.');
+ for(const prefix of ['trace.info.','invalid-','trace..'])assert.ok(scanSecrets(prefix+jwt,{patch:false}).length);
 });

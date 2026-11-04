@@ -1653,7 +1653,7 @@ whole context: contract, rules, diff context, findings, history and base evidenc
 payload screening uses the same bounded literal JSON decoder for input and output,
 including JSON embedded in source text. One family table covers AWS AKIA/ASIA,
 GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
-Candidate matches overlap, so an invalid dotted prefix cannot hide a valid JWT.
+JWT scanning visits base64url segments once, so an invalid dotted prefix cannot hide a valid JWT. Header-suffix decoding has a linear cumulative work budget; exhaustion withholds the value. Prefix-anchored families use non-overlapping matching and withhold the entire matching value.
 Secret-like keys withhold quoted, nested and non-string values; plain `session`
 alone is allowed. JSON decoding preserves literal/key boundaries and checks each
 layer, up to eight layers. Unresolved escapes, ambiguous pairing and limits fail
@@ -1669,7 +1669,7 @@ fail closed. Exact fixture exceptions remain in code; their values are redacted
 from output too. Plain file text never acts as patch framing. Every embedded
 JSON/JSONL string layer is decoded to a fixed point with literal `JSON.parse`
 before line redaction and a final multiline scan. Undecodable or over-limit
-content and lossy JSON numbers are withheld (8 decoding layers, 32 structural levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
+content and lossy JSON numbers are withheld (2 MiB per string/key or screened text, checked before parsing and matching; 8 decoding layers, 32 structural levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
 retained; records/rendering: 131072 nodes, 16 MiB). Interruption stops
 later evaluation calls and remains a scored row.
 Every child process owned by the circle captures both stdout and stderr: Git,

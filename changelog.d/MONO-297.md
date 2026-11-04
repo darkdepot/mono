@@ -21,3 +21,5 @@
 - Apply the same family table to whole multiline payloads and reconstructed patch sides before input forwarding or output retention.
 - Derive unquoted assignment matching and parsed-key classification from the same normalized secret-key suffixes, covering arbitrary separators without losing key prefixes.
 - Keep overlapping credential candidates visible after an invalid JWT-shaped prefix, so dotted context cannot consume a supported JWT before validation.
+
+Исправления PR: линейный поиск JWT с ограничением объёма строки и работы декодера; итоги набора 10/14; статические CLI-фикстуры читают JSON без вставки данных в исходный код.

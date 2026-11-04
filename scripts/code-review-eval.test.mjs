@@ -39,7 +39,7 @@ test('C17: captured Git output preserves the exact BOM-prefixed contract blob',t
 test('C2: gold v3 excludes unreachable separate-command collector scenario with visible denominators',()=>{
  assert.equal(dataset.version,3);const item=dataset.cases.find(item=>item.id==='68');assert.equal(item.eligible,false);assert.equal(item.dangerStatus,'disputed');
  for(const evidence of ['backup-switch.mjs:54-61','collector.mjs:145-149','210'])assert.ok(item.reclassification.evidence.includes(evidence));
- const result=validateReviewDataset(dataset);assert.equal(result.eligibleLate,10);assert.equal(result.eligibleExtended,14);assert.equal(result.late,12);assert.equal(result.cases,16);
+ const result=validateReviewDataset(dataset);assert.equal(dataset.measurements.eligibleLate,result.eligibleLate);assert.equal(dataset.measurements.eligibleExtended,result.eligibleExtended);assert.equal(result.eligibleLate,10);assert.equal(result.eligibleExtended,14);assert.equal(result.late,12);assert.equal(result.cases,16);
  const evaluation={datasetDigest:digest(dataset),runs:[{id:'v3-control',caseId:'MONO-146',task:'MONO-146',repeat:1,record:{outcome:'not-converged',findings:[{key:'68'}],costs:[],failures:[]}}]};
  const score=scoreReviewEvaluation(dataset,evaluation,[{runId:'v3-control',key:'68',caseId:'68',match:'strict',judge:'independent',evidence:item.reclassification.evidence}]);
  assert.deepEqual(score.nominalSlots,{late12:12,extended16:16});assert.deepEqual(score.rows[0].late12,{found:0,total:1});assert.deepEqual(score.rows[0].extended16,{found:0,total:2});assert.deepEqual(score.rows[0].dangerousMisses,['69']);

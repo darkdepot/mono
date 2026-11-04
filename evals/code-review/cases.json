@@ -404,8 +404,8 @@
     "host": "deferred",
     "historicalSlots": 12,
     "extendedSlots": 16,
-    "eligibleLate": 11,
-    "eligibleExtended": 15,
+    "eligibleLate": 10,
+    "eligibleExtended": 14,
     "repeats": 3
   }
 }

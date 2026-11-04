@@ -137,16 +137,44 @@ const SECRET_FAMILIES = [
   ['slack', /\bxox[A-Za-z]-[A-Za-z0-9-]{10,}\b/],
   ['google', /\bAIza[A-Za-z0-9_-]{20,}\b/],
   ['pem', /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/],
-  ['jwt', /\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*/, value => {
-    try { const header = JSON.parse(Buffer.from(value.split('.')[0], 'base64url').toString('utf8')); return header !== null && typeof header === 'object' && Object.hasOwn(header, 'alg'); }
-    catch { return false; }
-  }],
   ['bearer', /\bBearer\s+[A-Za-z0-9._~+/=-]+/i],
 ];
+// Each run/segment is visited once. Header suffixes after '-' are still
+// candidates (the old word-boundary rule); bound their cumulative decode work
+// linearly and withhold ambiguous input instead of rescanning an unbounded tail.
+export const MAX_SCREEN_VALUE_BYTES = 2 * 1024 * 1024;
+function jwtMatches(source) {
+  let remaining = source.length * 2;
+  for (const [run] of source.matchAll(/[A-Za-z0-9_.-]+/g)) {
+    const segments = run.split('.');
+    for (let index = 0; index + 2 < segments.length; index++) {
+      const header = segments[index];
+      for (let offset = 0; offset < header.length; offset++) {
+        if (!/[A-Za-z0-9_]/.test(header[offset]) || (offset > 0 && header[offset - 1] !== '-')) continue;
+        // JSON objects can start only with '{' or JSON whitespace. Their
+        // first base64url character is therefore e/I/C/D; skip other tokens
+        // without allocation or exception-heavy JSON parsing.
+        // Even {"alg":0}, the shortest possible header, needs 12 base64 characters.
+        if (header.length - offset < 12 || !'eICD'.includes(header[offset])) continue;
+        remaining -= header.length - offset;
+        if (remaining < 0) return true;
+        try {
+          const decoded = Buffer.from(header.slice(offset), 'base64url').toString('utf8');
+          if (!decoded.trimStart().startsWith('{') || !decoded.includes('"')) continue;
+          const value = JSON.parse(decoded);
+          if (value !== null && typeof value === 'object' && Object.hasOwn(value, 'alg')) return true;
+        } catch {}
+      }
+    }
+  }
+  return false;
+}
 function familyMatches(source) {
-  return SECRET_FAMILIES.flatMap(([, pattern, validate]) =>
-    [...source.matchAll(new RegExp(`(?=(${pattern.source}))`, pattern.flags + 'g'))]
-      .map(([, match]) => match).filter(match => !validate || validate(match)));
+  // Prefix-anchored families need no overlapping enumeration: once a token
+  // matches, withholding its entire value also withholds any nested token.
+  const matches = SECRET_FAMILIES.flatMap(([, pattern]) => [...source.matchAll(new RegExp(pattern.source, pattern.flags + 'g'))].map(([match]) => match));
+  if (jwtMatches(source)) matches.push('JWT candidate');
+  return matches;
 }
 const SECRET_KEY_SUFFIXES = ['secret', 'token', 'password', 'passwd', 'credential', 'privatekey', 'apikey', 'sessiontoken', 'sessionkey', 'secretaccesskey'];
 function secretKey(key) {
@@ -161,6 +189,7 @@ function secretAssignments(source) {
   return [...source.matchAll(ASSIGNMENT_KEY)];
 }
 function scanPayloadText(diff, { file = null, patch = true } = {}) {
+  if (diff.length > MAX_SCREEN_VALUE_BYTES || Buffer.byteLength(diff) > MAX_SCREEN_VALUE_BYTES) return [{ file, line: 0, weight: 'P0', reason: 'over-limit payload withheld' }];
   let line = 0, inHunk = false; const matches = [], before = [], after = [];
   const multiline = content => {
     if (secretAssignments(content).some(match => match[0].includes('\n')) || familyMatches(content).some(match => match.includes('\n')))
@@ -310,7 +339,9 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
   const visit = (entry, depth = 0, file = null, layers = 0, patch = inputPatch) => {
     if (depth > 32 || ++nodes > maxNodes) return hide();
     if (typeof entry === 'string') {
-      bytes += Buffer.byteLength(entry); if (bytes > maxBytes) return hide();
+      if (entry.length > MAX_SCREEN_VALUE_BYTES) return hide();
+      const size = Buffer.byteLength(entry); bytes += size;
+      if (size > MAX_SCREEN_VALUE_BYTES || bytes > maxBytes) return hide();
       if (markers.has(entry)) return { value: entry, text: entry };
       if (layers > 8) return hide();
       const stringRevision = revision, initialSafe = input ? redact(entry, file, patch) : entry;
