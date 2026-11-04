@@ -112,6 +112,8 @@ refusal fallback, assistant message and modelUsage (including canonical names),
 also on failed attempts. Reports show the requested route and the observed model
 list separately; an init model cannot hide a later fallback. This records identity
 observations, not an inference about final-model ordering from modelUsage keys.
+`round2-model-stream.json` separates the observed refusal fallback from authored
+multi-fallback and usage-alias controls; these names are data, not model policy.
 Failed role answers are secret-scanned and capped at 8 KiB per attempt.
 Mixed line secrets and multiline assignments are screened independently; retained
 answers are rescanned after line redaction. Host Git diff/show reads disable external

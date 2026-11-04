@@ -66,15 +66,15 @@ test('C1: four recorded danger-removal shapes fail calibration; corrected contro
 });
 test('C3: native Claude streams retain init, fallback and modelUsage identities for either role and failures',async t=>{
  const f=fixture(t),bin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-served-models-'));t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));
+ const stream=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-model-stream.json'),'utf8'));
  const modeFile=path.join(bin,'mode');fs.writeFileSync(modeFile,'success');
  const fake=`#!${process.execPath}
  const fs=require('node:fs');if(process.argv.includes('auth')){console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}));process.exit(0);}
  let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{
- const emit=o=>console.log(JSON.stringify(o));emit({type:'system',subtype:'init',model:'claude-opus-5',tools:['Read','Glob','Grep','StructuredOutput'],mcp_servers:[]});
- emit({type:'system',subtype:'model_refusal_fallback',original_model:'claude-opus-5',fallback_model:'claude-opus-4-8'});
- emit({type:'system',subtype:'model_refusal_fallback',original_model:'claude-opus-4-8',fallback_model:'claude-opus-fixture-final'});
+ const emit=o=>console.log(JSON.stringify(o));emit(${JSON.stringify(stream.init)});
+ for(const event of ${JSON.stringify(stream.fallbacks)})emit(event);
  if(fs.readFileSync(${JSON.stringify(modeFile)},'utf8')==='failure')process.exit(1);
- emit({type:'result',subtype:'success',is_error:false,structured_output:input.includes('# Finding checker')?${JSON.stringify({completed:true,verdicts:[verdict()]})}:${JSON.stringify(review([sample]))},modelUsage:{'claude-opus-5':{},'claude-opus-4-8':{},'claude-opus-fixture-final':{},'claude-usage-only':{canonicalModel:'claude-canonical-observed'}}});});`;
+ emit({type:'result',subtype:'success',is_error:false,structured_output:input.includes('# Finding checker')?${JSON.stringify({completed:true,verdicts:[verdict()]})}:${JSON.stringify(review([sample]))},modelUsage:${JSON.stringify(stream.modelUsage)}});});`;
  const roles=resolveReviewRoles({},packRoot);
  const codex=`#!${process.execPath}\nif(process.argv[2]==='debug'){console.log(JSON.stringify({models:[{slug:${JSON.stringify(roles['code-review'].model)},tool_mode:'code_mode_only',apply_patch_tool_type:'freeform',multi_agent_version:'v2'}]}));process.exit(0);}if(process.argv[2]==='login'){console.error('Logged in using ChatGPT');process.exit(0);}let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{const value=input.startsWith('Boundary audit')?{tools:['exec_command','write_stdin'],mcpServers:[]}:input.includes('# Finding checker')?${JSON.stringify({completed:true,verdicts:[verdict()]})}:${JSON.stringify(review([sample]))};console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(value)}}));console.log(JSON.stringify({type:'turn.completed'}));});`;
  fs.writeFileSync(path.join(bin,'claude'),fake,{mode:0o700});fs.writeFileSync(path.join(bin,'codex'),codex,{mode:0o700});
@@ -84,7 +84,7 @@ test('C3: native Claude streams retain init, fallback and modelUsage identities 
  try{
   for(const cfg of [{},config])for(const mode of ['success','failure']){fs.writeFileSync(modeFile,mode);
    const record=await runReviewRound({...f.request,config:cfg});const boundary=record.costs.find(cost=>cost.role===(cfg===config?'code-review':'code-review-checker')).boundary;
-   assert.deepEqual(boundary.servedModels,mode==='failure'?['claude-opus-5','claude-opus-4-8','claude-opus-fixture-final']:['claude-opus-5','claude-opus-4-8','claude-opus-fixture-final','claude-usage-only','claude-canonical-observed']);
+   assert.deepEqual(boundary.servedModels,mode==='failure'?stream.expectedBeforeResult:stream.expectedAfterResult);
    assert.ok(boundary.modelObservations.some(item=>item.source==='init'));
    assert.ok(boundary.modelObservations.some(item=>item.source==='fallback.fallback_model'));
    if(mode==='success')assert.ok(boundary.modelObservations.some(item=>item.source==='modelUsage.canonicalModel'));
