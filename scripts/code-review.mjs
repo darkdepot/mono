@@ -122,14 +122,7 @@ export function parseChecker(value, findings) {
   return { ...value, verdicts: value.verdicts.map(({ id, ...verdict }) => ({ ...verdict, key: expected.get(id).key })) };
 }
 
-// Exact fixture lines only. A new path or altered example must still be scanned.
-const SECRET_FIXTURES = new Map([
-  ['evals/code-review/secret-example.txt', new Set([digest('token = ' + 'ghp_' + '0'.repeat(36))])],
-  // Exact synthetic decoys in the frozen MONO-81/MONO-146 test inputs.
-  ['scripts/review-bench.test.mjs', new Set(['f2d1b92bbaa41c23135e0b0bb089358019be57d40b1e75bf0ab80686ef6b6c11'])],
-  ['scripts/delivery-runtime.test.mjs', new Set(['48bdd30a17a3a059408e9740b1ffb22fb2b06e1aa86c91986284bce523afbe40'])],
-]);
-// Dataset v2 payload contract. Unknown credential families belong to MONO-329.
+// Dataset v3 payload contract; lexical boundaries from continue:19. Unknown credential families belong to MONO-329.
 const SECRET_FAMILIES = [
   ['aws', /(?:AKIA|ASIA)[0-9A-Z]{16}/],
   ['github', /(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})/],
@@ -139,40 +132,26 @@ const SECRET_FAMILIES = [
   ['pem', /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/],
   ['bearer', /Bearer\s+[A-Za-z0-9._~+/=-]+/i],
 ];
-// Each run/segment is visited once. Every header suffix is a candidate,
-// including after filename separators; bound cumulative decode work
-// linearly and withhold ambiguous input instead of rescanning an unbounded tail.
 export const MAX_SCREEN_VALUE_BYTES = 2 * 1024 * 1024;
 function jwtMatches(source) {
-  let remaining = source.length * 2;
+  // Each segment is decoded at most once; dots delimit overlapping candidates.
+  // Whole-token matching never searches suffixes inside a longer identifier.
   for (const [run] of source.matchAll(/[A-Za-z0-9_.-]+/g)) {
     const segments = run.split('.');
     for (let index = 0; index + 2 < segments.length; index++) {
       const header = segments[index];
-      for (let offset = 0; offset < header.length; offset++) {
-        // JSON objects can start only with '{' or JSON whitespace. Their
-        // first base64url character is therefore e/I/C/D; skip other tokens
-        // without allocation or exception-heavy JSON parsing.
-        // Even {"alg":0}, the shortest possible header, needs 12 base64 characters.
-        if (header.length - offset < 12 || !'eICD'.includes(header[offset])) continue;
-        remaining -= header.length - offset;
-        if (remaining < 0) return true;
-        try {
-          const decoded = Buffer.from(header.slice(offset), 'base64url').toString('utf8');
-          if (!decoded.trimStart().startsWith('{') || !decoded.includes('"')) continue;
-          const value = JSON.parse(decoded);
-          if (value !== null && typeof value === 'object' && Object.hasOwn(value, 'alg')) return true;
-        } catch {}
-      }
+      if (header.length < 12 || !'eICD'.includes(header[0])) continue;
+      try {
+        const value = JSON.parse(Buffer.from(header, 'base64url').toString('utf8'));
+        if (object(value) && Object.hasOwn(value, 'alg')) return true;
+      } catch {}
     }
   }
   return false;
 }
 function familyMatches(source) {
-  // Fixed-prefix families are searched at every position, without word
-  // boundaries. They need no overlapping enumeration: once a token
-  // matches, withholding its entire value also withholds any nested token.
-  const matches = SECRET_FAMILIES.flatMap(([, pattern]) => [...source.matchAll(new RegExp(pattern.source, pattern.flags + 'g'))].map(([match]) => match));
+  const matches = SECRET_FAMILIES.flatMap(([, pattern]) => [...source.matchAll(
+    new RegExp('(?<![A-Za-z0-9_-])(?:' + pattern.source + ')(?![A-Za-z0-9_-])', pattern.flags + 'g'))].map(([match]) => match));
   if (jwtMatches(source)) matches.push('JWT candidate');
   return matches;
 }
@@ -181,12 +160,42 @@ function secretKey(key) {
   const name = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
   return SECRET_KEY_SUFFIXES.some(suffix => name.endsWith(suffix));
 }
-// Text and parsed keys share the same normalized suffixes. Separators may be
-// arbitrary punctuation, including YAML's unquoted key characters; no partial
-// identifier capture can drop a key prefix before classification.
-const ASSIGNMENT_KEY = new RegExp('(?:' + SECRET_KEY_SUFFIXES.map(name => [...name].join('[^A-Za-z0-9]*')).join('|') + ')[^A-Za-z0-9:=]*[:=]\\s*(?=\\S)', 'gi');
+// Decode only JSON escape tokens, using the native parser for their semantics.
+// Unknown source escapes (e.g. regexp \w) are already at a fixpoint.
+function decodeEscapeLayer(value) {
+  return value.replace(/\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})/g, escape => JSON.parse('"' + escape + '"'));
+}
+function decodedKey(value) {
+  for (let layer = 0; layer < 8; layer++) {
+    const next = decodeEscapeLayer(value); if (next === value) return value; value = next;
+  }
+  return decodeEscapeLayer(value) === value ? value : null;
+}
+function credentialValue(value, depth = 0) {
+  if (depth > 32) return true;
+  if (value && typeof value === 'object') return Object.values(value).some(child => credentialValue(child, depth + 1));
+  if (value === null || typeof value === 'boolean') return false;
+  const source = String(value);
+  return source.length >= 8 && !/\s/.test(source) && !/^(?:<.*>|\$\{.*\}|\*+)$/.test(source);
+}
+// Restrict keys to assignment positions. Spaces inside a key are permitted,
+// but prose cannot contribute an arbitrary prefix before its final word.
+const KEY_TEXT = '(?:[A-Za-z0-9_$]*' + SECRET_KEY_SUFFIXES.map(name => [...name].join('[^A-Za-z0-9]*')).join('|[A-Za-z0-9_$]*') + ')';
+const QUOTED_TEXT = String.raw`"(?:[^"\\]|\\[\s\S])*"|'[^'\n]*'`;
+const VALUE_TEXT = String.raw`${QUOTED_TEXT}|\$\{[^}\n]*\}|<[^>\n]*>|[^\s,;}]+`;
+const ASSIGNMENT = new RegExp(String.raw`(?:^|[\n{,;=])[ \t]*(?:export[ \t]+)?(${QUOTED_TEXT}|${KEY_TEXT})[ \t]*[:=][ \t\r\n]*(${VALUE_TEXT})`, 'gi');
+const FLAG_ASSIGNMENT = new RegExp(String.raw`(?:^|\s)--(${KEY_TEXT})(?:[ \t]+|=)(${VALUE_TEXT})`, 'gi');
 function secretAssignments(source) {
-  return [...source.matchAll(ASSIGNMENT_KEY)];
+  const matches = [];
+  for (const pattern of [ASSIGNMENT, FLAG_ASSIGNMENT]) for (const match of source.matchAll(pattern)) {
+    const scalar = raw => {
+      if (raw.startsWith('"')) { try { return JSON.parse(raw); } catch { return raw; } }
+      return raw.startsWith("'") ? raw.slice(1, -1) : raw;
+    };
+    const name = decodedKey(scalar(match[1])), value = scalar(match[2]);
+    if (name === null || (secretKey(name) && credentialValue(value))) matches.push(match);
+  }
+  return matches;
 }
 function scanPayloadText(diff, { file = null, patch = true } = {}) {
   if (diff.length > MAX_SCREEN_VALUE_BYTES || Buffer.byteLength(diff) > MAX_SCREEN_VALUE_BYTES) return [{ file, line: 0, weight: 'P0', reason: 'over-limit payload withheld' }];
@@ -203,7 +212,7 @@ function scanPayloadText(diff, { file = null, patch = true } = {}) {
     if (patch && !inHunk && source.startsWith('+++ ') && source.slice(4) !== '/dev/null') file = filename(source.slice(4));
     const hunk = patch && /^@@ .*\+(\d+)/.exec(source); if (hunk) { finishHunk(); inHunk = true; line = Number(hunk[1]); }
     const value = inHunk && /^[+ -]/.test(source) ? source.slice(1) : source;
-    if ((familyMatches(value).length > 0 || secretAssignments(value).length > 0) && !SECRET_FIXTURES.get(file)?.has(digest(value))) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped context; value withheld' });
+    if ((familyMatches(value).length > 0 || secretAssignments(value).length > 0)) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped context; value withheld' });
     if (patch && inHunk && /^[+ -]/.test(source)) {
       if (source[0] !== '+') before.push(value);
       if (source[0] !== '-') after.push(value);
@@ -211,7 +220,7 @@ function scanPayloadText(diff, { file = null, patch = true } = {}) {
     if (!source.startsWith('-')) line++;
   }
   if (patch) finishHunk();
-  else multiline(diff.split('\n').map(value => SECRET_FIXTURES.get(file)?.has(digest(value)) ? '' : value).join('\n'));
+  else multiline(diff);
   return matches;
 }
 export function scanSecrets(value, options = {}) {
@@ -267,15 +276,19 @@ export function roleInvocation(role, route, { scratch, worktree, schemaFile }) {
     env.CODEX_HOME = home;
     // Model metadata can override feature flags. Retain the native model and instructions,
     // but remove tool selectors that would reopen writing, delegation or code-mode tools.
-    const catalogResult = screenChildOutput(spawnSync('codex', ['debug', 'models', '--bundled'], {
+    const catalogResult = spawnSync('codex', ['debug', 'models', '--bundled'], {
       cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, maxBuffer: 16 * 1024 * 1024,
-    }));
+    });
     requireValue(catalogResult.status === 0 && !catalogResult.error, 'installed Codex model catalog unavailable');
-    const catalog = JSON.parse(catalogResult.stdout);
+    let catalog;
+    try { catalog = JSON.parse(catalogResult.stdout); } catch { throw new Error('installed Codex model catalog unreadable'); }
     requireValue(catalog.models?.some(model => model.slug === route.model), 'native model missing from installed catalog');
     for (const model of catalog.models) Object.assign(model, { apply_patch_tool_type: null, experimental_supported_tools: [],
       tool_mode: 'direct', multi_agent_version: 'disabled', node_repl_disabled: true, supports_search_tool: false });
-    const catalogFile = path.join(scratch, 'models.json'); fs.writeFileSync(catalogFile, JSON.stringify(catalog));
+    // Native diagnostics stay transient; only the outgoing catalog is retained.
+    const catalogFile = path.join(scratch, 'models.json'), catalogText = JSON.stringify(catalog);
+    screenModelOutput(catalogText, { input: true, strict: true });
+    fs.writeFileSync(catalogFile, catalogText);
 
     return { ...common, command: 'codex', args: ['exec', '--ignore-user-config', '--ignore-rules',
     '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only', '--cd', scratch, '--json',
@@ -345,20 +358,6 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (markers.has(entry)) return { value: entry, text: entry };
       if (layers > 8) return hide();
       const stringRevision = revision, initialSafe = input ? redact(entry, file, patch) : entry;
-      const literalResults = [];
-      // A failed literal cannot restart at its escaped quotes; residual escapes fail closed below.
-      for (const match of entry.matchAll(/(?<!\\)"(?:[^"\\]|\\[\s\S])*"/g)) {
-        let literal;
-        try { literal = JSON.parse(match[0]); } catch { return hide(); }
-        if (secretKey(literal) && /^\s*[:=]/.test(entry.slice(match.index + match[0].length))) return hide(Math.max(1, scanPayloadText(entry, { file, patch }).length));
-        if (!match[0].includes('\\')) continue;
-        if (layers === 8) return hide();
-        // Keep the original boundary: never splice an unquoted decoded key
-        // into source. Refuse residual escapes rather than guess its pairing.
-        if (literal.includes('\\') && !/^\s*[\[{\"]/.test(literal)) return hide();
-        literalResults.push(visit(literal, depth + 1, file, layers + 1, patch));
-      }
-      if (literalResults.some(child => child.text === withheld)) return hide();
       let parsed, decoded = false;
       try { parsed = JSON.parse(entry.trim(), (_key, child) => {
         if (typeof child === 'number' && (!Number.isFinite(child) || (Number.isInteger(child) && !Number.isSafeInteger(child)))) throw new Error('lossy JSON number');
@@ -369,27 +368,37 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       }
       if (decoded) {
         if (layers === 8) return hide();
-        const before = stringRevision, child = visit(parsed, depth + 1, file, layers + 1, patch);
-        if (!input && revision === before && scanPayloadText(entry, { file, patch: false }).length) return hide(1);
-        return { value: revision !== before ? JSON.stringify(child.value) : entry, text: child.text };
+        const child = visit(parsed, depth + 1, file, layers + 1, patch);
+        return { value: revision !== stringRevision ? JSON.stringify(child.value) : entry, text: child.text };
       }
-      const lines = entry.split('\n');
-      if (lines.length > 1 && lines.some(line => /^\s*[\[{\"]/.test(line) && !markers.has(line))) {
-        const before = revision;
-        // Count mixed multiline assignments even if another line is malformed.
-        const matches = scanPayloadText(entry, { patch: false });
-        const parts = lines.map(line => visit(line, depth + 1, file, layers, patch)), rendered = parts.map(part => part.text).join('\n');
-        if (parts.some(part => part.text === withheld)) { secretMatches += matches.length; return hide(); }
-        return { value: revision !== before ? redact(rendered, file, patch) : entry, text: redact(rendered, file, patch) };
+      const lines = entry.split('\n').filter(line => line.trim());
+      if (lines.length > 1 && lines.every(line => /^\s*[\[{"]/.test(line))) {
+        const children = lines.map(line => visit(line, depth + 1, file, layers, patch));
+        return { value: revision !== stringRevision ? children.map(child => child.value) : entry, text: children.map(child => child.text).join('\n') };
       }
+      let literals = 0, startsWithLiteral = false; const literalResults = [];
+      // Failed literals cannot restart at escaped quotes. Keep each decoded
+      // literal separate: decoding cannot rebind its key to another value.
+      for (const match of entry.matchAll(/(?<!\\)"(?:[^"\\\r\n]|\\[^\r\n])*"/g)) {
+        literals++; if (match.index === entry.search(/\S/)) startsWithLiteral = true;
+        let literal; try { literal = JSON.parse(match[0]); } catch { return hide(); }
+        if (!match[0].includes('\\')) continue;
+        if (layers === 8) return hide();
+        literalResults.push(visit(literal, depth + 1, file, layers + 1, patch));
+      }
+      if (!literals) {
+        const next = decodeEscapeLayer(entry);
+        if (next !== entry) {
+          if (layers === 8) return hide();
+          visit(next, depth + 1, file, layers + 1, patch);
+        }
+      }
+      if (/^\s*(?:\{|\[(?![A-Za-z]))/.test(entry) || (/^\s*"/.test(entry) && !startsWithLiteral)) return hide();
       const safe = input ? initialSafe : redact(entry, file);
-      if (input) {
-        if (literalResults.length && rejected) return hide();
-        const outsideLiterals = entry.replace(/(?<!\\)"(?:[^"\\]|\\[\s\S])*"/g, '""').replace(/^\\ No newline at end of file$/gm, '');
-        if (outsideLiterals.includes('\\')) return hide();
-        return { value: safe, text: safe };
+      if (revision !== stringRevision && literalResults.length) {
+        const text = literalResults.map(child => child.text).join('\n');
+        return { value: text, text };
       }
-      if (/^\s*(?:\{|\[(?![A-Za-z])|")/.test(entry) || entry.includes('\\')) return hide();
       return { value: safe, text: safe };
     }
     if (typeof entry === 'number' && (!Number.isFinite(entry) || (Number.isInteger(entry) && !Number.isSafeInteger(entry)))) return hide();
@@ -405,8 +414,9 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
     const entries = Object.entries(entry); if (entries.length > maxNodes) return hide();
     const children = entries.map(([key, content]) => {
       const keyResult = visit(key, depth + 1, file, layers, patch), child = visit(content, depth + 1, file, layers, input ? ['diff', 'baseDiff'].includes(key) : patch);
-      const name = typeof keyResult.value === 'string' ? keyResult.value : withheld;
-      if (secretKey(name) && !markers.has(content)) { rejected = true; revision++; secretMatches++; child.value = fieldHidden; child.text = fieldHidden; }
+      const name = typeof keyResult.value === 'string' ? decodedKey(keyResult.value) : null;
+      if (name === null) return { name: withheld, ...hide() };
+      if (secretKey(name) && credentialValue(content) && !markers.has(content)) { rejected = true; revision++; secretMatches++; child.value = fieldHidden; child.text = fieldHidden; }
       return { name, ...child };
     });
     const joined = children.map(child => child.text).join('\n'), safe = input ? joined : redact(joined, file);

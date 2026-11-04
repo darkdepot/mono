@@ -1,0 +1,24 @@
+# Real-byte screening regressions
+
+These fixtures reproduce the host r4 failure on MONO-297 head
+`dd79ff621f164f9a025f58871f8abcef70f87906`. They are regression inputs,
+not successful live role runs or a new calibration measurement.
+
+- `codex-0.159.2-catalog.json`: unchanged bytes from the bundled native catalog;
+  SHA-256 `262dc36e0e7beb290aef8196bd59f42acf51647b8f7b68dafa533ae7742019e6`.
+  Codex instruction attribution is retained in [NOTICE](../../../skills/code-review/NOTICE.md).
+- `MONO-302.diff`: actual Git diff from `8226fca80635dedf0c97d86979b529275976b565`
+  to `ca16110b9ef28817a1506621511ea6725dbc5f94`; no reconstructed source lines.
+- `requests.json`: host manual/tiny requests with only machine-local worktree paths
+  omitted. The tests recreate the tiny repository from `tiny-files.json` and remap
+  its head/base to the new temporary commits; the original pinned SHAs remain here.
+- `checker-r3.json`: nine reconstructed r3 answers and their exact finding fields,
+  using the same field selection as the host replay. No changed reasons or merge keys.
+
+The tests require a completed round and 9/9 accepted answers. Continue:19's
+approved lexical rules treat `risk-repeat-stratification`, the quoted test title
+containing `token:` and native prose containing `credential:` as benign. Their
+bytes stay unchanged. Credential probes still run independently through the same
+screen, with no path, filename or exact-string exemptions. Model responses in
+these regressions are recorded fixtures; the orchestrator must still repeat live
+manual checks from both host systems before merge.

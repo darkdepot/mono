@@ -1651,13 +1651,10 @@ Scope/risk flags persist across rounds for confirmed and rejected findings until
 new checker evidence clears them. Before each launch, secret scanning covers the
 whole context: contract, rules, diff context, findings, history and base evidence;
 payload screening uses the same bounded literal JSON decoder for input and output,
-including JSON embedded in source text. Unterminated literals never restart at escaped quotes. One family table covers AWS AKIA/ASIA,
+including JSON embedded in source text. Unterminated literals never restart at escaped quotes; a successful decode or an ordinary source backslash is not ambiguous. One family table covers AWS AKIA/ASIA,
 GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
-JWT scanning visits base64url segments once, so an invalid dotted prefix cannot hide a valid JWT. Every header suffix is a candidate, including after underscores. Header decoding has a linear cumulative work budget; exhaustion withholds the value. Fixed-prefix families search without word boundaries, so filename separators cannot hide credentials; non-overlapping matches withhold the entire value.
-Secret-like keys withhold quoted, nested and non-string values; plain `session`
-alone is allowed. JSON decoding preserves literal/key boundaries and checks each
-layer, up to eight layers. Unresolved escapes, ambiguous pairing and limits fail
-closed. Families absent from the table belong to MONO-329. This screens payloads
+JWT scanning visits each base64url segment once, retaining overlapping dotted candidates with linear decoding work. Family prefixes and bodies match whole tokens: boundaries are outside `[A-Za-z0-9_-]`, so `task-…`, `risk-…` and `desk-…` identifiers do not become credentials.
+Secret-like keys match assignment/key-value positions (JSON/YAML/INI/env/CLI flags), with case, separators and camelCase normalized. Values must be credential-shaped: at least eight characters, no whitespace, and neither empty nor a `<…>`, `${…}` or `***` placeholder. Nested/numeric values follow the same shape rule; prose and comments do not create keys. Plain `session` alone is allowed. JSON decoding preserves literal/key boundaries and checks each layer, up to eight layers. No fixpoint within limits or disagreeing key/value pairing fails closed. Families absent from the table belong to MONO-329. This screens payloads
 the circle sends or retains: prompt, contract, rules, filenames, history, checker
 evidence, diagnostics and model output. It does not screen role tool reads, files
 changed after screening, or values reconstructed by evaluation (concatenation,
@@ -1665,17 +1662,14 @@ character arrays, decryption).
 All model output crosses `screenModelOutput` before parsing, retention, another
 role, reporting or evaluation output. The same screen covers successful fields,
 failed answers, metadata, legacy records and derived text; secret-bearing replies
-fail closed. Exact fixture exceptions remain in code; their values are redacted
-from output too. Plain file text never acts as patch framing. Every embedded
+fail closed. There are no path, filename or exact-string screening exemptions, including synthetic credential fixtures. Plain file text never acts as patch framing. Every embedded
 JSON/JSONL string layer is decoded to a fixed point with literal `JSON.parse`
 before line redaction and a final multiline scan. Undecodable or over-limit
 content and lossy JSON numbers are withheld (2 MiB per string/key or screened text, checked before parsing and matching; 8 decoding layers, 32 structural levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
 retained; records/rendering: 131072 nodes, 16 MiB). Interruption stops
 later evaluation calls and remains a scored row.
 Every child process owned by the circle captures both stdout and stderr: Git,
-the native catalog, subscription checks and role launches. Both streams and their
-joined content cross the same family/key screen before parsing, metadata writes,
-diagnostics or forwarding. A hit withholds both streams, including on success,
+the native catalog, subscription checks and role launches. Both streams and their joined content cross the same family/key screen before diagnostics, metadata writes or forwarding. The native catalog is consumed transiently without withholding and its unused stderr is discarded; its derived outgoing catalog is screened before it is written for the role. A hit withholds both streams, including on success,
 failure or interruption; Git errors expose no raw subprocess diagnostics.
 Pinned raw blobs retain their exact bytes after screening, and only Git stdout
 uses the existing path-bound fixture exceptions.

@@ -25,3 +25,6 @@
 Исправления PR: линейный поиск JWT с ограничением объёма строки и работы декодера; итоги набора 10/14; статические CLI-фикстуры читают JSON без вставки данных в исходный код.
 Незавершённые JSON-литералы также не запускают повторный поиск с экранированных кавычек.
 Локальный P1: поддерживаемый токен в имени файла больше не скрывается за подчёркиванием или текстовым префиксом; правило исправлено для всех семейств и JWT.
+
+- Resolve MONO-326: one bounded decoder accepts successful JSON decoding and source backslashes; catalog resolution stays transient and outgoing content is screened.
+- Apply approved whole-token family boundaries and credential-shaped assignment values without path/string exemptions; replay the real native catalog, MONO-302 diff, tiny request and all nine r3 checker answers.
