@@ -100,10 +100,6 @@ export function textExchanges(host, rows, expectedReplies, {startLine=0}={}) {
   if(!Number.isInteger(startLine)||startLine<0||(startLine>0&&audit.proof({kind:'terminal',result:rows.find(r=>r.line===startLine)?.value}).status!=='confirmed'))throw new MissingEvidence('native stage start boundary missing');
   const turns=parentTurns(host,rows).filter(t=>t.line>startLine),exchanges=[];
   if(turns.some(turn=>!visibleText(turn.text)))throw new Error('completed parent stage turn has no final text');
-  if(host==='claude') {
-    const last=rows.findLast(r=>!r.value.parent_tool_use_id&&(['assistant','user','result'].includes(r.value.type)||r.value.type==='system'&&r.value.subtype==='init'));
-    if(auditRows(host,rows).proof({kind:'terminal',result:last?.value}).status!=='confirmed')throw new MissingEvidence('successful final parent terminal missing');
-  }
   let cursor=-1;
   for (const [index,expected] of expectedReplies.entries()) {
     const turn=turns.find(t=>t.line>cursor);

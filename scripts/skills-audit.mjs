@@ -69,15 +69,37 @@ export function auditRows(host, rows, {stdout = false} = {}) {
   return {calls,notes,proof,windowProof};
 }
 
+// A turn closes at its native successful parent terminal (Codex: the active
+// turn_id). A session is complete only when its last parent activity is such a
+// terminal. Text policy is separate: a completed tool-only scout is legitimate.
+function turnState(host, rows, options) {
+  const audit=auditRows(host,rows,options),terminals=[],activityLines=new Set();
+  const calls=new Set(audit.calls.map(c=>c.line));
+  let turnId,lastActivity;
+  for(const row of rows) {
+    const e=row.value,p=e.payload;
+    if(e.parent_tool_use_id)continue;
+    if(host==='codex'&&e.type==='event_msg'&&p?.type==='task_started')turnId=p.turn_id;
+    const terminal=audit.proof({kind:'terminal',result:e}).status==='confirmed' &&
+      (host==='claude'||p?.turn_id===turnId);
+    if(terminal){terminals.push(row);if(host==='codex')turnId=undefined;}
+    const activity=host==='claude'
+      ? ['assistant','user','result','control_request'].includes(e.type)||(e.type==='system'&&e.subtype==='init')
+      : (e.type==='response_item'&&['message','reasoning','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(p?.type)) ||
+        (e.type==='event_msg'&&['task_complete','task_started','turn_aborted','error','item_started','item_completed','user_message','agent_message','agent_reasoning'].includes(p?.type));
+    if(activity||calls.has(row.line)){lastActivity=row;activityLines.add(row.line);}
+  }
+  return {audit,terminals,activityLines,complete:terminals.length>0&&lastActivity===terminals.at(-1)};
+}
+
 // Keep every completed parent turn, including those with no final text. A tool
 // call or result invalidates earlier prose; its user envelope is not an owner reply.
 export function parentTurns(host, rows) {
-  const audit=auditRows(host,rows),turns=[];
-  let candidate=null,pending=null,turnId;
+  const {audit,terminals,activityLines}=turnState(host,rows),turns=[];
+  const terminalLines=new Set(terminals.map(r=>r.line));
+  let candidate=null,pending=null;
   for (const {value:e,line} of rows) {
     if (e.parent_tool_use_id) continue;
-    const p=e.payload;
-    if(host==='codex'&&e.type==='event_msg'&&p?.type==='task_started')turnId=p.turn_id;
     const message=audit.proof({kind:'text-message',result:e});
     if (message.status==='confirmed'&&message.role==='user') {
       if (pending) {pending.reply=message.value;pending.replyLine=line;pending=null;}
@@ -86,39 +108,27 @@ export function parentTurns(host, rows) {
       pending=null;
       const text=host==='claude'&&candidate?.messageId&&candidate.messageId===message.messageId?candidate.text+'\n'+message.value:message.value;
       candidate={line,text,messageId:message.messageId,phase:message.phase};
-    } else if (audit.calls.some(c=>c.line===line) || (host==='claude'&&['user','assistant'].includes(e.type)) ||
-        (host==='codex'&&e.type==='response_item'&&['reasoning','message','function_call_output','custom_tool_call_output'].includes(p?.type))) {candidate=null;pending=null;}
-    if (audit.proof({kind:'terminal',result:e}).status==='confirmed'&&(host==='claude'||p?.turn_id===turnId)) {
+    } else if (activityLines.has(line)&&!terminalLines.has(line)) {candidate=null;pending=null;}
+    if (terminalLines.has(line)) {
       if (candidate && (host==='claude'||candidate.phase==='final_answer')) {
         pending={...candidate,question:candidate.text.trim().split('\n').at(-1),terminalLine:line};
       }else pending={line,text:'',question:'',terminalLine:line};
       turns.push(pending);
       candidate=null;
     }
-    if ((host==='claude'&&e.type==='system'&&e.subtype==='init') ||
-        (host==='codex'&&e.type==='event_msg'&&['task_started','turn_aborted','error'].includes(p?.type))) candidate=null;
   }
   return turns;
 }
 
 // Existing native turn boundaries also bind the terminal used for early stop.
 export function codexTerminals(rows) {
-  let turnId;
-  return rows.filter(({value:e}) => {
-    if(e.type !== 'event_msg') return false;
-    if(e.payload?.type === 'task_started') turnId = e.payload.turn_id;
-    return e.payload?.type === 'task_complete' && e.payload.turn_id === turnId;
-  });
+  return turnState('codex',rows).terminals;
 }
 
 export function completedTrace(host, rows, options) {
-  const audit=auditRows(host,rows,options);
-  if(options?.stdout)return audit.proof({kind:'terminal',result:rows.at(-1)?.value}).status==='confirmed';
-  if (host === 'claude') {
-    const last = rows.filter(r => r.value.type==='result'&&!r.value.parent_tool_use_id).at(-1)?.value;
-    return audit.proof({kind:'terminal',result:last}).status === 'confirmed';
+  if(options?.stdout){
+    const audit=auditRows(host,rows,options);
+    return audit.proof({kind:'terminal',result:rows.at(-1)?.value}).status==='confirmed';
   }
-  const last = rows.filter(r => (r.value.type === 'response_item'&&['message','reasoning','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(r.value.payload?.type)) ||
-    (r.value.type === 'event_msg' && ['task_complete','task_started','turn_aborted','error'].includes(r.value.payload?.type))).at(-1);
-  return last?.line === codexTerminals(rows).at(-1)?.line && !audit.calls.some(c=>c.line>last.line) && audit.proof({kind:'terminal',result:last?.value}).status === 'confirmed';
+  return turnState(host,rows,options).complete;
 }

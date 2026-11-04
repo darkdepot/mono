@@ -1134,3 +1134,73 @@ for(const host of ['claude','codex'])test(`${host}: record checker reads extra c
 for(const host of ['claude','codex'])test(`${host}: record checker rejects undeclared extra native owner reply`,t=>{
  const f=textFixture(t,host);f.events.splice(3,0,f.user('Начинай Research'));const result=f.check();assert.equal(result.status,'failed');assert.match(result.reason,/unexpected owner reply/);
 });
+
+// Expected outcomes are declared before evaluating a host. Native completeness
+// does not depend on whether this source owns a conversational reply policy.
+const completenessMatrix = [
+ ['completed',true,'passed','passed'],
+ ['unfinished',false,'unverified','unverified'],
+ ['tool-only',true,'failed','passed'],
+ ['completed-then-assistant',false,'unverified','unverified'],
+ ['completed-then-user',false,'unverified','unverified'],
+ ['completed-then-tool',false,'unverified','unverified'],
+ ['completed-then-tool-result',false,'unverified','unverified'],
+ ['completed-then-thinking',false,'unverified','unverified'],
+ ['completed-then-init',false,'unverified','unverified'],
+ ['failed-terminal',false,'unverified','unverified'],
+ ['informational-footer',true,'passed','passed'],
+ ['nested-child-footer',true,'passed','passed'],
+ ['codex-wrong-turn-terminal',false,'unverified','unverified'],
+ ['codex-native-tool-tail',false,'unverified','unverified'],
+ ['completed-then-failed-terminal',false,'unverified','unverified'],
+ ['tool-only-unfinished',false,'unverified','unverified'],
+ ['empty-final-text',true,'failed','passed'],
+ ['nested-terminal-footer',true,'passed','passed'],
+ ['claude-permission-tail',false,'unverified','unverified'],
+ ['codex-stale-closed-turn',false,'unverified','unverified'],
+ ['codex-message-event-tail',false,'unverified','unverified'],
+];
+for(const host of ['claude','codex'])for(const scope of ['main','scout'])for(const [shape,complete,mainStatus,scoutStatus] of completenessMatrix){
+ if(shape.startsWith('codex-')&&host!=='codex'||shape.startsWith('claude-')&&host!=='claude')continue;
+ test(`completeness matrix: ${host} ${scope} ${shape}`,async t=>{
+  const {completedTrace,parentTurns}=await import('./skills-audit.mjs');
+  const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs');
+  const f=textFixture(t,host);assert.equal(f.check().status,'passed');
+  const read=[f.call('matrix-read','mcp__monotest__get_document',{id:'doc'}),f.result('matrix-read',{id:'doc',content:f.approved})];
+  const rows=structuredClone(scope==='main'?[...f.events,f.terminal]:[...read,f.assistant('Scout findings.'),f.terminal]);
+  if(shape==='unfinished')rows.pop();
+  if(shape==='tool-only')rows.splice(rows.length-2,1,f.call('matrix-final-read','mcp__monotest__get_document',{id:'doc'}),f.result('matrix-final-read',{id:'doc',content:f.approved}));
+  if(shape==='completed-then-assistant')rows.push(f.assistant('Unfinished continuation.'));
+  if(shape==='completed-then-user')rows.push(f.user('Continue'));
+  if(shape==='completed-then-tool')rows.push(read[0]);
+  if(shape==='completed-then-tool-result')rows.push(read[1]);
+  if(shape==='completed-then-thinking')rows.push(host==='claude'?{type:'assistant',message:{content:[{type:'thinking',thinking:'Continuing'}]}}:{type:'response_item',payload:{type:'reasoning',summary:[]}});
+  if(shape==='completed-then-init')rows.push(host==='claude'?{type:'system',subtype:'init'}:{type:'event_msg',payload:{type:'task_started',turn_id:'new'}});
+  if(shape==='failed-terminal')rows[rows.length-1]=host==='claude'?{type:'result',subtype:'error_during_execution'}:{type:'event_msg',payload:{type:'turn_aborted'}};
+  if(shape==='informational-footer')rows.push(host==='claude'?{type:'system',subtype:'thinking_tokens'}:{type:'event_msg',payload:{type:'task_summary'}});
+  if(shape==='nested-child-footer')rows.push({...f.assistant('Nested activity belongs to its own trace.'),parent_tool_use_id:'nested'});
+  if(shape==='codex-wrong-turn-terminal')rows.splice(rows.length-1,1,{type:'event_msg',payload:{type:'task_started',turn_id:'current'}},{type:'event_msg',payload:{type:'task_complete',turn_id:'stale'}});
+  if(shape==='codex-native-tool-tail')rows.push({type:'event_msg',payload:{type:'item_completed',item:{type:'McpToolCall',id:'late',server:'monotest',tool:'get_document',arguments:{id:'doc'},status:'completed',result:{id:'doc',content:f.approved}}}});
+  if(shape==='completed-then-failed-terminal')rows.push(host==='claude'?{type:'result',subtype:'error_during_execution'}:{type:'event_msg',payload:{type:'error'}});
+  if(shape==='tool-only-unfinished')rows.splice(rows.length-2,2,...read);
+  if(shape==='empty-final-text')rows[rows.length-2]=f.assistant('');
+  if(shape==='nested-terminal-footer')rows.push({...f.terminal,parent_tool_use_id:'nested'});
+  if(shape==='claude-permission-tail')rows.push({type:'control_request',request_id:'pending',request:{subtype:'can_use_tool',tool_name:'Read',input:{file_path:'doc'}}});
+  if(shape==='codex-stale-closed-turn'){
+   // A known ID is consumed by its terminal; it cannot close another turn.
+   rows.push({type:'event_msg',payload:{type:'task_started',turn_id:'closed'}},f.assistant('Completed turn.'),{type:'event_msg',payload:{type:'task_complete',turn_id:'closed'}},f.assistant('Unfinished continuation.'),{type:'event_msg',payload:{type:'task_complete',turn_id:'closed'}});
+  }
+  if(shape==='codex-message-event-tail')rows.push({type:'event_msg',payload:{type:'agent_message',message:'Unfinished continuation.'}});
+  const nativeRows=rows.map((value,i)=>({value,line:i+1}));
+  assert.equal(completedTrace(host,nativeRows),complete,'shared session completeness');
+  if(shape==='tool-only')assert.equal(parentTurns(host,nativeRows).at(-1).text,'','native tool-only turn retained');
+  const trace=scope==='main'?f.request.trace:path.join(f.dir,'matrix-scout.jsonl');
+  fs.writeFileSync(trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
+  if(scope==='scout')f.request.additionalTraces=[{host,trace}];
+  const expected=scope==='main'?mainStatus:scoutStatus;
+  const result=verifyRecords(f.request);assert.equal(result.status,expected,result.reason);
+  if(scope==='main')for(const check of [probeText,checkTrace]){
+   const result=check(f.request);assert.equal(result.status,expected,result.reason);
+  }
+ });
+}
