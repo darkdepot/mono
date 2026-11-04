@@ -124,6 +124,11 @@ const SECRET_FAMILIES = [
   }],
   ['bearer', /\bBearer\s+[A-Za-z0-9._~+/=-]+/i],
 ];
+function familyMatches(source) {
+  return SECRET_FAMILIES.flatMap(([, pattern, validate]) =>
+    [...source.matchAll(new RegExp(pattern, pattern.flags + 'g'))]
+      .filter(([match]) => !validate || validate(match)).map(([match]) => match));
+}
 function secretKey(key) {
   const name = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
   return /(?:secret|token|password|passwd|credential|privatekey|apikey|sessionkey)$/.test(name) || /^(?:aws)?secretaccesskey$/.test(name);
@@ -137,7 +142,7 @@ function secretAssignments(source) {
 function scanPayloadText(diff, { file = null, patch = true } = {}) {
   let line = 0, inHunk = false; const matches = [], before = [], after = [];
   const multiline = content => {
-    if (secretAssignments(content).some(match => match[0].includes('\n')))
+    if (secretAssignments(content).some(match => match[0].includes('\n')) || familyMatches(content).some(match => match.includes('\n')))
       matches.push({ file, line: 0, weight: 'P0', reason: 'credential-shaped multiline context; value withheld' });
   };
   const finishHunk = () => { multiline(before.join('\n')); multiline(after.join('\n')); before.length = after.length = 0; };
@@ -148,7 +153,7 @@ function scanPayloadText(diff, { file = null, patch = true } = {}) {
     if (patch && !inHunk && source.startsWith('+++ ') && source.slice(4) !== '/dev/null') file = filename(source.slice(4));
     const hunk = patch && /^@@ .*\+(\d+)/.exec(source); if (hunk) { finishHunk(); inHunk = true; line = Number(hunk[1]); }
     const value = inHunk && /^[+ -]/.test(source) ? source.slice(1) : source;
-    if ((SECRET_FAMILIES.some(([, pattern, validate]) => validate ? [...value.matchAll(new RegExp(pattern, 'g'))].some(([match]) => validate(match)) : pattern.test(value)) || secretAssignments(value).length > 0) && !SECRET_FIXTURES.get(file)?.has(digest(value))) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped context; value withheld' });
+    if ((familyMatches(value).length > 0 || secretAssignments(value).length > 0) && !SECRET_FIXTURES.get(file)?.has(digest(value))) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped context; value withheld' });
     if (patch && inHunk && /^[+ -]/.test(source)) {
       if (source[0] !== '+') before.push(value);
       if (source[0] !== '-') after.push(value);

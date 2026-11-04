@@ -827,3 +827,18 @@ test('v2 payload channels share successful/failed screening and encoded pairing 
   for(const options of [{input:true},{}]){const screened=screenModelOutput(source,options);assert.equal(screened.rejected,true);assert.ok(!JSON.stringify(screened.value).includes(opaque));assert.ok(!JSON.stringify(screened.value).includes(synthetic));}
  }
 });
+
+test('v2 family table must cover multiline payload and patch sides',async t=>{
+ const f=fixture(t);
+ const credential='fixture'.repeat(5),value='Bearer\n '+credential;
+ for(const options of [{input:true},{},{diagnostic:true}]){
+  const lower=screenModelOutput({reason:value.toLowerCase()},options);assert.equal(lower.rejected,true);assert.ok(!JSON.stringify(lower.value).includes(credential));const result=screenModelOutput({reason:value},options);assert.equal(result.rejected,true);assert.ok(!JSON.stringify(result.value).includes(credential));
+ }
+ assert.ok(scanSecrets(value,{patch:false}).length);
+ for(const sign of ['+','-'])assert.ok(scanSecrets('+++ b/input.txt\n@@ -1,2 +1,2 @@\n'+sign+'Bearer\n'+sign+' '+credential).length);
+ const runner=responder(),record=await runReviewRound({...f.request,contract:value},runner);
+ assert.equal(record.outcome,'not-reviewed');assert.equal(runner.calls.length,0);
+ fs.writeFileSync(path.join(f.worktree,'input.mjs'),value);f.git('add','.');f.git('commit','-qm','synthetic multiline payload');
+ const blobRunner=responder(),blobRecord=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},blobRunner);
+ assert.equal(blobRecord.outcome,'not-reviewed');assert.equal(blobRunner.calls.length,0);
+});

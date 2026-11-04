@@ -17,3 +17,4 @@
 - Strengthen checker R7 exclusions after four live danger removals, retain served-model fallback/usage identities, reclassify unreachable #68 in gold v3 (10/14 eligible, 12/16 nominal), and document all eight reviewer misses with proposed strengthenings. Host recalibration remains release-blocking.
 - Apply the shared Git helper policy inside role environments and neutralize repository discovery; screen encoded input JSON layers through the same bounded decoder as output before any affected role starts.
 - Apply dataset v2 payload screening through one credential-family table and secret-like key rule, including AWS STS; preserve quoted key/value boundaries during bounded JSON decoding and withhold unresolved layers. Document tool-read, post-screen edit and evaluation-reconstruction exclusions; unknown families remain MONO-329.
+- Apply the same family table to whole multiline payloads and reconstructed patch sides before input forwarding or output retention.

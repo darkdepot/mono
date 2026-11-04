@@ -18,7 +18,7 @@ Link `role:<role>` to `#roles`; report values.
 | `qa` | `claude-opus-5-5` | `high` | Independent QA; models.roles override. | Owner. |
 | `code-review` | `gpt-6.1-sol` | `high` | Manual reviewer. | Owner, 2026-11-01. |
 | `code-review-checker` | `claude-opus-5` | `high` | Finding checker. | Owner, 2026-11-01. |
-| `autoreview` | `claude-opus-5` | [Routes](autoreview-routing.md#canonical-routes) | Old. | Owner. |
+| `autoreview` | `claude-opus-5` | [Canonical Routes](autoreview-routing.md#canonical-routes) | Old. | Owner. |
 
 `idea-helper`/`scout`: `resolveRole` takes actual `host: "claude-code"|"codex"`
 (default codex). `models.roles.<role>` overrides; omissions inherit. Stages use `scout`;
