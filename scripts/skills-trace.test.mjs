@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { checkTrace } from './skills-trace.mjs';
+import { checkTrace as textTrace } from './skills-trace.mjs';
+import { checkTrace as windowTrace } from './test-fixtures/legacy-window-trace.mjs';
+const checkTrace=request=>request.expectedReplies?textTrace(request):windowTrace(request);
 const expected = {id:'approval',decision:'описание',advice:'Research',reason:'риск',summary:['Дальше:','Что']};
 const base='evals/scenarios/probe/samples';
 function scratch(t){const d=fs.mkdtempSync(path.join(os.tmpdir(),'skills-trace-'));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));return (events)=>{const p=path.join(d,'trace.jsonl');fs.writeFileSync(p,events.map(e=>JSON.stringify(e)).join('\n')+'\n');return p;};}

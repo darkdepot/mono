@@ -5,7 +5,7 @@
   "kind": "correction",
   "seed": "seeds/prd-design.json",
   "next": "handoff",
-  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии. В итоге оставь ссылку на показанный документ или запись пакета, прочитанную нативно; после ответа перечитай её перед записью.",
   "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Для проверки Design используется готовый тестовый макет этой таблицы в Paper и посеянная память.",
   "hosts": {
     "claude": {
@@ -17,14 +17,24 @@
           "summary": [
             "Источник"
           ],
-          "question": "Этот макет принимаем?",
+          "question": {
+            "anchors": [
+              [
+                "макет",
+                "дизайн"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "Измени показанный результат: источник поставь перед именем прогона, затем покажи новую версию.",
           "intent": "continuation",
           "outcome": {
             "approval": false,
             "startNext": false
-          }
+          },
+          "presentation": "document",
+          "driverStart": null
         },
         {
           "id": "design-correction",
@@ -33,7 +43,15 @@
           "summary": [
             "Источник"
           ],
-          "question": "Этот макет принимаем?",
+          "question": {
+            "anchors": [
+              [
+                "макет",
+                "дизайн"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "утверждаю",
           "intent": "agree",
@@ -41,9 +59,19 @@
             "approval": true,
             "startNext": false
           },
-          "response": [
-            "Утверждение записал, дизайн закончил."
-          ]
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд",
+                "закончил"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": null
         }
       ]
     },
@@ -56,14 +84,24 @@
           "summary": [
             "Источник"
           ],
-          "question": "Этот макет принимаем?",
+          "question": {
+            "anchors": [
+              [
+                "макет",
+                "дизайн"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "Измени показанный результат: источник поставь перед именем прогона, затем покажи новую версию.",
           "intent": "continuation",
           "outcome": {
             "approval": false,
             "startNext": false
-          }
+          },
+          "presentation": "document",
+          "driverStart": null
         },
         {
           "id": "design-correction",
@@ -72,7 +110,15 @@
           "summary": [
             "Источник"
           ],
-          "question": "Этот макет принимаем?",
+          "question": {
+            "anchors": [
+              [
+                "макет",
+                "дизайн"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "утверждаю",
           "intent": "agree",
@@ -80,9 +126,19 @@
             "approval": true,
             "startNext": false
           },
-          "response": [
-            "Утверждение записал, дизайн закончил."
-          ]
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд",
+                "закончил"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": null
         }
       ]
     }

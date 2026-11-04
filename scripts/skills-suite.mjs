@@ -9,6 +9,8 @@ import { scenarioExpectation } from './skills-select.mjs';
 import { verifyScenarioRecords } from './skills-records.mjs';
 import { checkEndings } from './skills-trace.mjs';
 import { runScenario } from './skills-run.mjs';
+import { anchored } from './skills-owner.mjs';
+import { permittedStages } from './skills-stage-driver.mjs';
 
 const json = file => JSON.parse(fs.readFileSync(file,'utf8'));
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
@@ -44,7 +46,7 @@ export function scenarioPrompt({scenario,host,seed,seedProjectFile,projectName,p
     `Этап под проверкой: ${scenario.stage}. Следующий этап после завершения (followingStage): ${next ?? 'none'}. Это выход текущего этапа, не маршрут его посева. ${routeHint ?? ''}`,
     `Начни ${skillPrefix}:${scenario.stage}. ${scenario.prompt}`,
     'Для проверяемых записей Codex каждый monotest MCP вызывай отдельным exec строго в форме const r = await tools.<имя>(<JSON>); text(r); с буквальным JSON аргументов. Не объединяй MCP-вызовы в один exec. Это сохраняет связь запроса, ответа и свежего чтения.',
-    'Проверяем только этот этап до результата разговора с владельцем. Соблюдай правила установленной версии этапа. Следующий этап запускает драйвер отдельным вызовом в этом же проекте; передай результат и закончи ход. Не начинай реализацию, доставку или установку.'
+    'Проверяем только этот этап до результата разговора с владельцем. Соблюдай правила установленной версии этапа. Не выполняй сам следующий этап: для вызова следующего этапа после разрешающего ответа используй mcp__stage_driver__start_stage с stage=followingStage и projectId текущего проекта. Это перехват вызова, следующий этап выполнит драйвер. Нет согласия на старт или нет этого инструмента — следующего вызова нет. Собственная запись старта Handoff остаётся в Handoff. Не начинай реализацию, доставку или установку.'
   ].filter(Boolean).join('\n\n');
 }
 
@@ -85,13 +87,16 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
   const results=[],exportLeftovers=new Set();
   runs: for (const unit of selection.units) for (const host of selection.hosts) {
     const projectName=`monotest-${request.runId}-${host}-${unit.id}`;
-    let project=null;const chainExchanges=[];
+    let project=null,previousResult=null;const chainExchanges=[];
     for (const [position,key] of unit.scenarios.entries()) {
       const outputDir=path.join(request.outputDir,`${unit.id}-${host}-${position}`);
       let result,paperLog,runRequest,scenario,observedProject,seedProject;const stageStart=Date.now();
       try {
         manifestDir ??= fs.mkdtempSync(path.join(request.cwd,`.mono-skills-${request.runId}-`));
         scenario=catalog.scenarios.get(key);
+        if(position>0&&previousResult?.anchored) {
+          if(previousResult.status==='failed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage))throw new Error('driver start blocked: scenario permission and post-reply stage signal required');
+        }
         if (!scenario) throw new Error(`selected scenario removed: ${key}`);
         const flow=scenario.hosts[host];
         const projectFile=path.join(manifestDir,`${unit.id}-${host}-${position}-project.json`);
@@ -114,6 +119,10 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         const target=catalog.scenarios.get(unit.target);
         if (!target) throw new Error('selected unit target missing');
         const brief=target.brief+` Идентификатор тестового проекта этой правки: ${projectName}. Название колонки всегда «Источник», имя прогона в него не добавляй.`;
+        if(flow.expectedReplies.some(anchored)&&nextKey) {
+          const destination=catalog.scenarios.get(nextKey)?.stage;
+          if(!flow.expectedReplies.some(r=>r.outcome.startNext&&permittedStages(r).includes(destination)))throw new Error('chain has no predefined next-stage permission');
+        }
         const prompt=scenarioPrompt({scenario:{...scenario,brief},host,seed,seedProjectFile,projectName,projectFile,project,next,packRoot:request.packRoot,paper:scenario.stage==='design'?request.paper:null,designMemoryFile:request.designMemoryFile,
           designMemory:designMemory ? {...designMemory,firstLine:`Репозиторий: ${request.cwd}`,fileId:request.paper.fileId} : null,
           productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:catalog.index.routeHints?.[next]});
@@ -122,7 +131,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
           timeoutMs:request.timeoutMs ?? 1_800_000,idleMs:20_000,maxTurns:request.maxTurns??128,mcpServers:servers,
           workspaceProof:proof,
           ...(seed?{seed:{prompt:seedPrompt({seed,projectName,projectFile:seedProjectFile,dumpDir,packRoot:request.packRoot,brief}),projectName,projectFile:seedProjectFile,dumpDir,expectedStage:seed.entryStage??null,configFile:path.join(request.cwd,'.agents/mono-workflow.config.json')}}:{}),
-          context:{skillPrefix:catalog.index.skillPrefix,projectName,projectFile,project,entryStage:scenario.stage,followingStage:next},scenario:{prompt,brief,allowedTools:['*'],...flow}};
+          context:{skillPrefix:catalog.index.skillPrefix,projectName,projectFile,project,entryStage:scenario.stage,followingStage:next},scenario:{prompt,brief,allowedTools:['*'],...flow,rubricDefinition:fs.readFileSync(path.join(path.dirname(scenario.file),'rubric.md'),'utf8')}};
         fs.writeFileSync(outputDir+'-request.json',JSON.stringify(runRequest,null,2)+'\n',{flag:'wx'});
         checkPack(request.packRoot,selection.head);
         result=await execute(runRequest);
@@ -164,6 +173,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
           result={...result,records,status:result.status==='failed'||records.status==='failed'?'failed':result.status!=='passed'||records.status!=='passed'?'unverified':'passed'};
         }catch(error){result={...result,status:result.status==='failed'?'failed':'unverified',records:{status:'unverified',reason:error.message}};}
       }
+      previousResult={...result,anchored:runRequest?.scenario.expectedReplies?.some(anchored)};
       const item={durationMs:Date.now()-stageStart,monotestTasks:result.records?.monotestTasks??null,unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
       if(result.records?.stop)break runs;
       if (result.status === 'failed') break;

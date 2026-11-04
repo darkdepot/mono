@@ -157,8 +157,7 @@
       "main": "approve",
       "chain": [
         "discovery",
-        "design",
-        "handoff"
+        "design"
       ],
       "scenarios": [
         "design/approve/scenario.json",

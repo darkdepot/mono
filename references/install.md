@@ -756,3 +756,11 @@ prove that old gates reject a findings receipt despite its former accepted
 declines and accept a fresh full clean review when all other checks pass; retain
 commands/results with the rollback record. Only then resume affected work. Do not
 reuse a 0.30.x certificate, continuation, or accepted-with-declines result.
+
+## Conversation QA migration
+
+The next release ships the U7 text scenario format: native document ID/body hashes,
+role/outcome anchors plus mandatory rubric, and driver-owned next-stage invocation.
+Old clicked approvals remain valid; active scenarios require expectedReplies and
+cannot use the archived window transport. This change does not install a version:
+MONO-310 owns the release and live Claude Desktop/Codex application check.

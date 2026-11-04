@@ -42,6 +42,10 @@ for(const host of ['claude','codex'])for(const scenario of shippedCatalog.scenar
   if(['design','handoff'].includes(stage))messages=[base[0],base[0].replace('Источник','Источник перед именем, новая версия'),base[1]];
   else{const at=base[0].lastIndexOf('\n');messages=[base[0].slice(0,at)+'\nФильтр и сортировку не добавляем.'+base[0].slice(at),'Экспорт добавлен к исключениям. '+base[1]];}
  }
+ if(scenario.kind==='main'&&['idea','discovery','tech-evaluation'].includes(stage)){
+  const questions={idea:'Принимаем эту идею и начинаем Research?',discovery:'Утверждаем PRD и начинаем Design?', 'tech-evaluation':'Принимаем решение и начинаем Handoff?'};
+  const lines=messages[0].split('\n');lines[lines.length-1]=questions[stage];messages[0]=lines.join('\n');
+ }
  const plan=path.join(dir,'plan.json');fs.writeFileSync(plan,JSON.stringify({messages}));
  const authFile=path.join(dir,'auth.json');fs.writeFileSync(authFile,'{}');
  const result=await runScenario({host,cwd:dir,packRoot:process.cwd(),outputDir:path.join(dir,'run'),authFile,timeoutMs:10000,idleMs:10,

@@ -1,8 +1,9 @@
+import { stageDriverTool } from './skills-stage-driver.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
 export function mcpConfig(servers) {
-  if (!servers?.monotest || Object.keys(servers).some(k=>!['monotest','paper'].includes(k))) throw new Error('only monotest and optional Paper servers allowed');
+  if (!servers?.monotest || Object.keys(servers).some(k=>!['monotest','paper','stage_driver'].includes(k))) throw new Error('only monotest and optional Paper servers allowed');
   return {mcpServers:servers};
 }
 export function privateCodexHome(home, authFile, servers) {
@@ -40,10 +41,11 @@ export function workspaceReadCall(item, proof) {
 }
 // Before confirmation MCP actions must be recognizable reads. After it, all
 // monotest tools are available; this does not classify command contents.
-export const isWrite = name => name.startsWith('mcp__') ? !/^mcp__(?:monotest|paper)__(get|list|search|read|fetch)_/.test(name) : ['Write','Edit'].includes(name);
+export const isWrite = name => name===stageDriverTool?false:name.startsWith('mcp__') ? !/^mcp__(?:monotest|paper)__(get|list|search|read|fetch)_/.test(name) : ['Write','Edit'].includes(name);
 export function toolViolation(name, input, scenario, confirmed) {
   if(typeof name!=='string')return 'missing tool name';
-  if(name.startsWith('mcp__')&&!name.startsWith('mcp__monotest__')&&!name.startsWith('mcp__paper__'))return `MCP outside test servers: ${name}`;
+  if(name===stageDriverTool&&!confirmed)return 'stage start before workspace confirmation';
+  if(name!==stageDriverTool&&name.startsWith('mcp__')&&!name.startsWith('mcp__monotest__')&&!name.startsWith('mcp__paper__'))return `MCP outside test servers: ${name}`;
   if(isWrite(name)&&!confirmed)return 'write before workspace confirmation';
   const allowed=scenario.allowedTools??'*';
   if(!allowed.includes('*')&&!name.startsWith('mcp__monotest__')&&!allowed.includes(name))return `tool not on scenario list: ${name}`;

@@ -5,7 +5,7 @@
   "kind": "correction",
   "seed": "seeds/prd-handoff.json",
   "next": null,
-  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии. В итоге оставь ссылку на показанный документ или запись пакета, прочитанную нативно; после ответа перечитай её перед записью.",
   "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
   "hosts": {
     "claude": {
@@ -17,14 +17,25 @@
           "summary": [
             "Источник"
           ],
-          "question": "Начинаем работу по этому пакету?",
+          "question": {
+            "anchors": [
+              [
+                "работ",
+                "пакет",
+                "нач"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": true,
           "reply": "Измени показанный результат: источник поставь перед именем прогона, затем покажи новую версию.",
           "intent": "continuation",
           "outcome": {
             "approval": false,
             "startNext": false
-          }
+          },
+          "presentation": "document",
+          "driverStart": null
         },
         {
           "id": "handoff-correction",
@@ -33,7 +44,16 @@
           "summary": [
             "Источник"
           ],
-          "question": "Начинаем работу по этому пакету?",
+          "question": {
+            "anchors": [
+              [
+                "работ",
+                "пакет",
+                "нач"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": true,
           "reply": "да, начинаем работу",
           "intent": "agree",
@@ -41,9 +61,18 @@
             "approval": false,
             "startNext": true
           },
-          "response": [
-            "Старт записал, начинаю работу."
-          ]
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "нач"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": null
         }
       ]
     },
@@ -56,14 +85,25 @@
           "summary": [
             "Источник"
           ],
-          "question": "Начинаем работу по этому пакету?",
+          "question": {
+            "anchors": [
+              [
+                "работ",
+                "пакет",
+                "нач"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": true,
           "reply": "Измени показанный результат: источник поставь перед именем прогона, затем покажи новую версию.",
           "intent": "continuation",
           "outcome": {
             "approval": false,
             "startNext": false
-          }
+          },
+          "presentation": "document",
+          "driverStart": null
         },
         {
           "id": "handoff-correction",
@@ -72,7 +112,16 @@
           "summary": [
             "Источник"
           ],
-          "question": "Начинаем работу по этому пакету?",
+          "question": {
+            "anchors": [
+              [
+                "работ",
+                "пакет",
+                "нач"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": true,
           "reply": "да, начинаем работу",
           "intent": "agree",
@@ -80,9 +129,18 @@
             "approval": false,
             "startNext": true
           },
-          "response": [
-            "Старт записал, начинаю работу."
-          ]
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "нач"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": null
         }
       ]
     }

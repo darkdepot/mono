@@ -17,7 +17,17 @@
           "summary": [
             "Источник"
           ],
-          "question": "Такое техническое решение подходит?",
+          "question": {
+            "anchors": [
+              [
+                "решени",
+                "Tech",
+                "спек",
+                "подход"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
           "intent": "correction",
@@ -25,14 +35,37 @@
             "approval": true,
             "startNext": false
           },
-          "response": [
-            "Экспорт добавлен к исключениям. Tech Spec и утверждение записал."
-          ],
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [
+              "Handoff"
+            ],
+            "question": false
+          },
           "correction": {
-            "description": "Экспорт добавлен к исключениям.",
             "before": "Фильтр и сортировку не добавляем.",
-            "after": "Фильтр, сортировку и экспорт не добавляем."
-          }
+            "anchors": [
+              "экспорт",
+              [
+                "не добавляем",
+                "не входит",
+                "исключ"
+              ]
+            ],
+            "descriptionAnchors": [
+              "экспорт"
+            ]
+          },
+          "presentation": [
+            "inline",
+            "document"
+          ],
+          "driverStart": null
         }
       ]
     },
@@ -45,7 +78,17 @@
           "summary": [
             "Источник"
           ],
-          "question": "Такое техническое решение подходит?",
+          "question": {
+            "anchors": [
+              [
+                "решени",
+                "Tech",
+                "спек",
+                "подход"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
           "intent": "correction",
@@ -53,14 +96,37 @@
             "approval": true,
             "startNext": false
           },
-          "response": [
-            "Экспорт добавлен к исключениям. Tech Spec и утверждение записал."
-          ],
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [
+              "Handoff"
+            ],
+            "question": false
+          },
           "correction": {
-            "description": "Экспорт добавлен к исключениям.",
             "before": "Фильтр и сортировку не добавляем.",
-            "after": "Фильтр, сортировку и экспорт не добавляем."
-          }
+            "anchors": [
+              "экспорт",
+              [
+                "не добавляем",
+                "не входит",
+                "исключ"
+              ]
+            ],
+            "descriptionAnchors": [
+              "экспорт"
+            ]
+          },
+          "presentation": [
+            "inline",
+            "document"
+          ],
+          "driverStart": null
         }
       ]
     }

@@ -7,6 +7,7 @@ import { auditRows, parentTurns } from './skills-audit.mjs';
 import { RecordDump } from './skills-dump.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 import { hostProcess } from './skills-process.mjs';
+import { stageDriverTool, permittedStages } from './skills-stage-driver.mjs';
 import { textReply, validateReplies, isOwnerWindow, checkStageResponse } from './skills-owner.mjs';
 import { checkTrace, completedTrace, codexTerminals } from './skills-trace.mjs';
 import { traceRows } from './skills-probe.mjs';
@@ -302,7 +303,13 @@ function finishRun(request,run){
 export async function runScenario(request){
   let run,created=false;
   try{
-    validate(request);fs.mkdirSync(request.outputDir);created=true; // a run never overwrites another run
+    validate(request);
+    if(!request.readOnlyDump&&request.scenario.expectedReplies.some(r=>r.driverStart)) {
+      if(request.mcpServers.stage_driver)throw new Error('stage driver server is owned by the driver');
+      const allowed=[...new Set(request.scenario.expectedReplies.flatMap(permittedStages))];
+      request={...request,mcpServers:{...request.mcpServers,stage_driver:{command:process.execPath,args:[path.join(request.packRoot,'scripts/skills-stage-driver.mjs'),JSON.stringify(allowed)]}}};
+    }
+    fs.mkdirSync(request.outputDir);created=true; // a run never overwrites another run
     run=request.host==='claude'?await runClaude(request):await runCodex(request);
     fs.writeFileSync(path.join(request.outputDir,'result.json'),JSON.stringify(run,null,2)+'\n');return run;
   }catch(error){

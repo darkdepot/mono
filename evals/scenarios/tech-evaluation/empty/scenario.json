@@ -17,7 +17,17 @@
           "summary": [
             "Источник"
           ],
-          "question": "Такое техническое решение подходит?",
+          "question": {
+            "anchors": [
+              [
+                "решени",
+                "Tech",
+                "спек",
+                "подход"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "ну не знаю",
           "intent": "unclear",
@@ -25,9 +35,26 @@
             "approval": false,
             "startNext": false
           },
-          "response": [
-            "Что смущает?"
-          ]
+          "response": {
+            "anchors": [
+              [
+                "смущ",
+                "уточн",
+                "непонят",
+                "обсуд",
+                "измени"
+              ]
+            ],
+            "forbidden": [
+              "Handoff"
+            ],
+            "question": true
+          },
+          "presentation": [
+            "inline",
+            "document"
+          ],
+          "driverStart": null
         }
       ]
     },
@@ -40,7 +67,17 @@
           "summary": [
             "Источник"
           ],
-          "question": "Такое техническое решение подходит?",
+          "question": {
+            "anchors": [
+              [
+                "решени",
+                "Tech",
+                "спек",
+                "подход"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "ну не знаю",
           "intent": "unclear",
@@ -48,9 +85,26 @@
             "approval": false,
             "startNext": false
           },
-          "response": [
-            "Что смущает?"
-          ]
+          "response": {
+            "anchors": [
+              [
+                "смущ",
+                "уточн",
+                "непонят",
+                "обсуд",
+                "измени"
+              ]
+            ],
+            "forbidden": [
+              "Handoff"
+            ],
+            "question": true
+          },
+          "presentation": [
+            "inline",
+            "document"
+          ],
+          "driverStart": null
         }
       ]
     }

@@ -5,7 +5,7 @@
   "kind": "main",
   "seed": "seeds/prd-tech.json",
   "next": "handoff",
-  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии. После показа спрашивай об утверждении и старте followingStage: владелец готов решить оба вопроса сейчас.",
   "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
   "hosts": {
     "claude": {
@@ -17,16 +17,46 @@
           "summary": [
             "Источник"
           ],
-          "question": "Такое техническое решение подходит?",
-          "asksStart": false,
+          "question": {
+            "anchors": [
+              [
+                "решени",
+                "Tech",
+                "спек",
+                "подход"
+              ],
+              [
+                "Handoff"
+              ],
+              [
+                "Handoff"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
           "reply": "поехали",
           "intent": "agree",
           "outcome": {
             "approval": true,
-            "startNext": false
+            "startNext": true
           },
-          "response": [
-            "Tech Spec и утверждение записал."
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": [
+            "inline",
+            "document"
+          ],
+          "driverStart": [
+            "handoff"
           ]
         }
       ]
@@ -40,16 +70,46 @@
           "summary": [
             "Источник"
           ],
-          "question": "Такое техническое решение подходит?",
-          "asksStart": false,
+          "question": {
+            "anchors": [
+              [
+                "решени",
+                "Tech",
+                "спек",
+                "подход"
+              ],
+              [
+                "Handoff"
+              ],
+              [
+                "Handoff"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
           "reply": "поехали",
           "intent": "agree",
           "outcome": {
             "approval": true,
-            "startNext": false
+            "startNext": true
           },
-          "response": [
-            "Tech Spec и утверждение записал."
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": [
+            "inline",
+            "document"
+          ],
+          "driverStart": [
+            "handoff"
           ]
         }
       ]

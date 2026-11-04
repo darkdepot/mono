@@ -20,7 +20,15 @@
             "Образ результата",
             "Неизвестные"
           ],
-          "question": "Принимаем эту идею?",
+          "question": {
+            "anchors": [
+              [
+                "иде",
+                "описани"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
           "intent": "correction",
@@ -28,14 +36,34 @@
             "approval": true,
             "startNext": false
           },
-          "response": [
-            "Экспорт добавлен к исключениям. Утверждение записал."
-          ],
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [
+              "Research"
+            ],
+            "question": false
+          },
           "correction": {
-            "description": "Экспорт добавлен к исключениям.",
             "before": "Фильтр и сортировку не добавляем.",
-            "after": "Фильтр, сортировку и экспорт не добавляем."
-          }
+            "anchors": [
+              "экспорт",
+              [
+                "не добавляем",
+                "не входит",
+                "исключ"
+              ]
+            ],
+            "descriptionAnchors": [
+              "экспорт"
+            ]
+          },
+          "presentation": "inline",
+          "driverStart": null
         }
       ]
     },
@@ -51,7 +79,15 @@
             "Образ результата",
             "Неизвестные"
           ],
-          "question": "Принимаем эту идею?",
+          "question": {
+            "anchors": [
+              [
+                "иде",
+                "описани"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
           "intent": "correction",
@@ -59,14 +95,34 @@
             "approval": true,
             "startNext": false
           },
-          "response": [
-            "Экспорт добавлен к исключениям. Утверждение записал."
-          ],
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [
+              "Research"
+            ],
+            "question": false
+          },
           "correction": {
-            "description": "Экспорт добавлен к исключениям.",
             "before": "Фильтр и сортировку не добавляем.",
-            "after": "Фильтр, сортировку и экспорт не добавляем."
-          }
+            "anchors": [
+              "экспорт",
+              [
+                "не добавляем",
+                "не входит",
+                "исключ"
+              ]
+            ],
+            "descriptionAnchors": [
+              "экспорт"
+            ]
+          },
+          "presentation": "inline",
+          "driverStart": null
         }
       ]
     }

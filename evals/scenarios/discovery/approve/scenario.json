@@ -5,7 +5,7 @@
   "kind": "main",
   "seed": "seeds/research.json",
   "next": "design",
-  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии. После показа спрашивай об утверждении и старте followingStage: владелец готов решить оба вопроса сейчас. В итоге оставь ссылку на показанный документ или запись пакета, прочитанную нативно; после ответа перечитай её перед записью.",
   "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
   "hosts": {
     "claude": {
@@ -17,16 +17,49 @@
           "summary": [
             "Источник"
           ],
-          "question": "Согласен с таким результатом?",
-          "asksStart": false,
+          "question": {
+            "anchors": [
+              [
+                "PRD",
+                "результат",
+                "решени",
+                "соглас"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
           "reply": "согласен",
           "intent": "agree",
           "outcome": {
             "approval": true,
-            "startNext": false
+            "startNext": true
           },
-          "response": [
-            "PRD утвердил."
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": [
+            "design",
+            "tech-evaluation",
+            "handoff"
           ]
         }
       ]
@@ -40,16 +73,49 @@
           "summary": [
             "Источник"
           ],
-          "question": "Согласен с таким результатом?",
-          "asksStart": false,
+          "question": {
+            "anchors": [
+              [
+                "PRD",
+                "результат",
+                "решени",
+                "соглас"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
           "reply": "согласен",
           "intent": "agree",
           "outcome": {
             "approval": true,
-            "startNext": false
+            "startNext": true
           },
-          "response": [
-            "PRD утвердил."
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": [
+            "design",
+            "tech-evaluation",
+            "handoff"
           ]
         }
       ]

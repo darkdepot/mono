@@ -1621,30 +1621,18 @@ Run it alone with `node --test scripts/skills-probe.test.mjs`. These local sampl
 do not certify host isolation, Linear writes, Design or client screenshots.
 Host drivers and the trace checker are documented in [skill QA](references/qa-skills.md).
 The Codex startup read retry audits the entire failed turn and its completion before resuming.
-Run a scenario with `node scripts/skills-run.mjs <request.json>` or check a trace
-with `node scripts/skills-trace.mjs <request.json>`. Deterministic scenario policies
-answer windows; a separate tool-free persona answers explicit free questions.
-The opt-in `expectedReplies` format in [skill QA](references/qa-skills.md#ответы-словами)
-also sends literal text replies after completed parent turns. Expected approval/start
-outcomes and complete allowed final stage responses are fixed in scenario data.
-Unlisted trailing questions, start offers, extra owner replies and extra completed turns fail.
-Main and scout traces share native turn/session completeness; a previous success
-cannot hide unfinished activity, while completed tool-only scouts remain valid.
-Native turn starts preserve the pending question until its actual owner reply;
-Codex text fixtures cover both start/reply orders with real turn IDs.
-Identified sessions retain that mode after completion, and raw native reasoning
-counts as activity; legacy traces without IDs remain supported.
-Text approval bindings cover the complete displayed artifact; only literal framing
-declared by the scenario before the run can be excluded. Fragment, prefix or suffix
-bindings fail even when the stored record matches that shortened text.
-Native replies, exact approved versions and
-named corrections are checked against fresh records; any window in a text scenario
-or identical endings across its stage chain fail. The current window catalog and
-owner-dialog rules stay in place until T2. Local text fixtures exercise both adapters
-and retain the original window regression corpus.
-The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 17
-scenarios, with per-host target window roles and probe-derived seeds. Other choices
-use the recommended answer; free questions use the persona. Fresh seed routes are
+Run a scenario with `node scripts/skills-run.mjs <request.json>` or check its native
+trace with `node scripts/skills-trace.mjs <request.json>`. The active catalog uses
+word replies only. Question roles, approval/start outcomes and anchors are fixed
+before the run; a required rubric judges their meaning against the native document.
+A short summary links to the document ID and body hash read before showing and
+freshly after the reply; updatedAt is auxiliary. Corrections change only the named
+passage. The driver starts a following stage only with predefined scenario permission
+and a native post-reply action. Window decoders live only in archived test fixtures.
+Extra replies, questions, completed turns, forged quotes, early writes and unfinished
+main/scout activity remain blocking. See [skill QA](references/qa-skills.md).
+The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 18
+scenarios, with per-host question roles and probe-derived seeds. Scenario replies are fixed before the run. Fresh seed routes are
 checked before the stage starts. Select a committed
 `base...head` with `node scripts/skills-select.mjs <request.json>`, then pass that
 saved selection and the explicit index path to `node scripts/skills-suite.mjs
@@ -1666,8 +1654,8 @@ an absent seed pointer means `unverified: seed not completed`, before the stage 
 Every stage's manifest is compared field by field (`id`, `name`, `url`) with
 the existing project, including the first stage with its validated seed pointer;
 JSON key order does not affect identity. If an unverified stage omits its own
-manifest, its validated seed project still routes the next stage and fresh record
-reads; it does not trigger another seed or promote the stage to passed. A passed
+manifest, its validated seed project still routes fresh record reads; next-stage execution
+also requires predefined permission and a post-reply action; it does not trigger another seed or promote the stage to passed. A passed
 stage still requires its own manifest.
 The suite requires a Git checkout at `packRoot` on `selection.head`, with no
 tracked changes or untracked execution files. It checks again before and after
@@ -1675,7 +1663,7 @@ each stage; unversioned scratch copies have no silent override. Stage file rules
 include consumed contracts and references. If no stage maps a change under
 `skills/`, `references/` or `templates/`, selection is explicitly `uncovered`
 (CLI exit 2), and the suite returns `unverified` rather than a zero-item pass.
-Codex answers trailing plain-text questions through the persona before finishing.
+Extra stage questions outside scenario policy fail.
 Design alone grants the test product memory directory, its `approved/` archive,
 and a fresh export run directory;
 its approval reason anchor is advice, without requiring the next stage name.
@@ -1689,16 +1677,10 @@ Unit preparation failures persist completed items, fail that unit and leave its
 later chain unverified while independent units continue. Empty selection is
 `not-required` (CLI exit 0), never a pass. Scout definitions select their launching
 stages; missing project manifest paths are refused before prompt generation.
-Transition anchors check advice; option labels identify
-their role. Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs`.
-The shared audit keeps MCP actions bounded to monotest/Paper and requires a real
-workspace read before writes. Direct Codex MCP calls retain namespace and name. MCP actions in every test-home
-rollout, including child threads and native McpToolCall records, share this boundary;
-windows, answers and completion remain tied to the main thread. Claude refusal
-delivery requires the exact linked receipt for its sent deny and preserves the stage reaction.
-Multi-question Claude windows deliver every answer while retaining the one-question rule violation.
-Codex optionless windows accept text policies; option-dependent policies report a scenario mismatch.
-Exact recommended labels are accepted, and Codex completion must match the active turn ID.
+Focused checks: `node --test scripts/skills-catalog.test.mjs scripts/skills-window-roles.test.mjs`.
+The shared audit bounds real MCP actions to monotest/Paper and a local stage-driver
+control tool, and requires a workspace read before writes. Every main/child rollout
+shares that boundary; replies and completion stay tied to the main thread.
 Cleanup still signals the process group after its leader exits. A fixed 500 ms
 grace bounds held pipes; timeout remains a failure, and normal exit retains its
 evidence verdict. ESRCH and macOS EPERM for an exited leader stay quiet.
@@ -1712,13 +1694,8 @@ notes. Exec audits tool names, without command lists or a JavaScript parser.
 Host tools default to `"*"`; all monotest tools are available after confirmation.
 The private Codex home retains a disabled Linear transport and approves test MCP
 servers. A startup read race retries once. Native proofs still require linked
-host evidence, visible windows, delivered answers and fresh completion. The default
-stage budget is one hour. Scenarios stop after their last expected answered
-window and its terminal; raw evidence is retained with an `endLine` boundary.
-A new parent Claude init requires a fresh result when the conversation stays
-open. Persona answers consume their question; each continuation uses fresh text.
-Full real host event shapes, multi-block native output and the startup race join
-the 18 recorded probe controls. Thinking-only Claude window198 stays red.
+host evidence, native text, delivered replies and fresh completion. The default
+stage budget is one hour; text checks retain the full native trace.
 Run `node --test scripts/skills-{owner,run,trace,probe,proof}.test.mjs`.
 Codex audits after a turn and cannot promise pre-execution refusal; isolation comes
 from the test home and servers, not from command strings. A mechanical pass still

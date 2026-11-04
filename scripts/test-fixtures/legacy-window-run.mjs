@@ -3,13 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { auditRows, parentTurns } from '../skills-audit.mjs';
+import { auditRows, parentTurns } from './legacy-window-audit.mjs';
 import { RecordDump } from '../skills-dump.mjs';
 import { readJsonLines } from '../transports/journal.mjs';
 import { hostProcess } from '../skills-process.mjs';
 import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount, textReply, validateReplies, isOwnerWindow, checkStageResponse } from './legacy-window-owner.mjs';
-import { checkTrace, codexItems, codexWindows, visible, completedTrace, codexTerminals } from '../skills-trace.mjs';
-import { traceRows } from '../skills-probe.mjs';
+import { checkTrace, codexItems, codexWindows, visible, completedTrace, codexTerminals } from './legacy-window-trace.mjs';
+import { traceRows } from './legacy-window-probe.mjs';
 import { mcpConfig, privateCodexHome, toolViolation, workspaceReadCall, workspaceReadCode, MissingEvidence, isWrite } from '../skills-boundary.mjs';
 
 const userMessage = text => ({type:'user',message:{role:'user',content:[{type:'text',text}]},parent_tool_use_id:null,session_id:''});

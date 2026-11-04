@@ -20,7 +20,15 @@
             "Образ результата",
             "Неизвестные"
           ],
-          "question": "Принимаем эту идею и начинаем Research?",
+          "question": {
+            "anchors": [
+              [
+                "иде",
+                "описани"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": true,
           "reply": "да, но позже",
           "intent": "defer",
@@ -28,9 +36,18 @@
             "approval": true,
             "startNext": false
           },
-          "response": [
-            "Утверждение записал, Research начнём позже."
-          ]
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "inline",
+          "driverStart": null
         }
       ]
     },
@@ -46,7 +63,15 @@
             "Образ результата",
             "Неизвестные"
           ],
-          "question": "Принимаем эту идею и начинаем Research?",
+          "question": {
+            "anchors": [
+              [
+                "иде",
+                "описани"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": true,
           "reply": "да, но позже",
           "intent": "defer",
@@ -54,9 +79,18 @@
             "approval": true,
             "startNext": false
           },
-          "response": [
-            "Утверждение записал, Research начнём позже."
-          ]
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "inline",
+          "driverStart": null
         }
       ]
     }

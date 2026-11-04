@@ -20,7 +20,15 @@
             "Образ результата",
             "Неизвестные"
           ],
-          "question": "Принимаем эту идею?",
+          "question": {
+            "anchors": [
+              [
+                "иде",
+                "описани"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "ну не знаю",
           "intent": "unclear",
@@ -28,9 +36,23 @@
             "approval": false,
             "startNext": false
           },
-          "response": [
-            "Что смущает?"
-          ]
+          "response": {
+            "anchors": [
+              [
+                "смущ",
+                "уточн",
+                "непонят",
+                "обсуд",
+                "измени"
+              ]
+            ],
+            "forbidden": [
+              "Research"
+            ],
+            "question": true
+          },
+          "presentation": "inline",
+          "driverStart": null
         }
       ]
     },
@@ -46,7 +68,15 @@
             "Образ результата",
             "Неизвестные"
           ],
-          "question": "Принимаем эту идею?",
+          "question": {
+            "anchors": [
+              [
+                "иде",
+                "описани"
+              ]
+            ],
+            "forbidden": []
+          },
           "asksStart": false,
           "reply": "ну не знаю",
           "intent": "unclear",
@@ -54,9 +84,23 @@
             "approval": false,
             "startNext": false
           },
-          "response": [
-            "Что смущает?"
-          ]
+          "response": {
+            "anchors": [
+              [
+                "смущ",
+                "уточн",
+                "непонят",
+                "обсуд",
+                "измени"
+              ]
+            ],
+            "forbidden": [
+              "Research"
+            ],
+            "question": true
+          },
+          "presentation": "inline",
+          "driverStart": null
         }
       ]
     }

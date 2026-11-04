@@ -9,7 +9,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadCatalog } from './skills-catalog.mjs';
 import { selectScenarios, saveSelection } from './skills-select.mjs';
 import { runSuite as actualSuite, scenarioPrompt } from './skills-suite.mjs';
-import { checkTrace } from './skills-trace.mjs';
+import { checkTrace as textTrace } from './skills-trace.mjs';
+import { checkTrace as windowTrace } from './test-fixtures/legacy-window-trace.mjs';
+const checkTrace=request=>request.expectedReplies?textTrace(request):windowTrace(request);
 
 // These fixtures isolate suite orchestration. Native response/record verification
 // has separate real-consumer fixtures. Only mocked hosts get constructed exchanges.
@@ -18,7 +20,7 @@ const runSuiteWithRecords=(request,execute,verify)=>actualSuite(request,async r=
  if(result.status==='passed'&&!result.check)result.check={exchanges:r.scenario.expectedReplies.map(expected=>({expected,text:expected.summary.join('\n')+'\nПозиция.\n'+expected.stage+' '+expected.id+'?'}))};
  return result;
 },verify);
-const runSuite=(request,execute)=>runSuiteWithRecords(request,execute,async()=>({status:'passed',monotestTasks:0}));
+const runSuite=(request,execute)=>runSuiteWithRecords(request,execute,async input=>({status:'passed',monotestTasks:0,starts:input.runRequest.scenario.expectedReplies.flatMap(r=>(r.driverStart===null||r.driverStart===undefined)?[]:(Array.isArray(r.driverStart)?r.driverStart:[r.driverStart]).map(stage=>({stage,replyId:r.id})))}));
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const source=path.join(root,'evals/scenarios');
 const neighbors={idea:['research'],research:['idea','discovery'],discovery:['research','design','tech-evaluation','handoff'],
@@ -34,6 +36,9 @@ function suiteRequest(f,selection,extra={}) {
 function fixture(t) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-catalog-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const catalogDir=path.join(dir,'custom-catalog');fs.cpSync(source,catalogDir,{recursive:true});
+  // Preserve every T1 orchestration input/outcome. Current U7 catalog and native
+  // transition/rubric consumers have separate tests below and in dialogue/records.
+  for(const [relative,value] of Object.entries(json(path.join(root,'scripts/test-fixtures/skills-t1-catalog.json'))))write(path.join(catalogDir,relative),JSON.stringify(value,null,2)+'\n');
   const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   git('init','-q');git('config','user.name','Mono Fixture');git('config','user.email','fixture@example.test');
   for (const stage of Object.keys(neighbors)) write(path.join(dir,`skills/${stage}/SKILL.md`),'baseline\n');
@@ -163,7 +168,8 @@ test('catalog reply anchors accept the full final message and preserve the exact
  for(const scenario of catalog.scenarios.values())for(const host of ['claude','codex']){
   const expected=scenario.hosts[host].expectedReplies;
   for(const [i,r] of expected.entries()){
-   const shown=r.summary.join('\n')+'\nМоя позиция по '+scenario.stage+'.\nКак поступим'+r.question;
+   const question=typeof r.question==='string'?r.question:r.question.anchors.map(a=>Array.isArray(a)?a[0]:a).join(' ')+'?';
+   const shown=r.summary.join('\n')+'\nМоя позиция по '+scenario.stage+'.\nКак поступим: '+question;
    assert.equal(textReply({expectedReplies:expected},shown,i),r.reply);
    assert.throws(()=>textReply({expectedReplies:expected},'Другой итог без вопроса',i),/question|summary/);
   }
@@ -530,7 +536,6 @@ test('qa.skills config connects another product and binds task expectations befo
 test('another product config flows from selected scenarios through suite and unchanged certificate gate',async t=>{
  const {selectQaScenarios}=await import('./skills-select.mjs');
  const {qaDeliveryState}=await import('./qa-gate.mjs');
- const {checkTrace}=await import('./skills-trace.mjs');
  const f=fixture(t),qaRoot=path.join(f.dir,'host-qa'),indexFile=path.join(f.catalogDir,'index.json');
  const index=json(indexFile);index.productName='Example Skills';index.skillPrefix='example';write(indexFile,JSON.stringify(index));const base=f.commit();
  write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');const head=f.commit();
@@ -614,7 +619,7 @@ test('failed seeded stage still verifies its existing seed project rather than I
 });
 
 for(const mode of ['binding-only','bad-write','missing-page'])test(`live3 actual Discovery records control the suite's next Design invocation: ${mode}`,async t=>{
- const {verifyRecords}=await import('./skills-records.mjs');
+ const {verifyRecords}=await import('./test-fixtures/legacy-window-records.mjs');
  const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
  const selection=f.select(),unit=selection.units.find(u=>u.id==='design-approve');selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
  const live=path.join(f.dir,'receipts');fs.cpSync(path.join(root,'scripts/test-fixtures/skills-records-live3'),live,{recursive:true});
@@ -658,4 +663,22 @@ for(const repeated of [false,true])test(`text catalog and suite preserve predete
  });
  assert.equal(result.status,repeated?'failed':'passed',JSON.stringify(result));
  if(repeated)assert(result.results.some(r=>r.result.reason==='identical endings across stages'));
+});
+
+for(const mode of ['authorized','missing-signal','no-permission','rubric-failed'])test(`U7 suite driver owns the next invocation: ${mode}`,async t=>{
+ const f=fixture(t);
+ // Unlike the preserved T1 regressions, these inputs are the shipped U7 policies.
+ for(const key of ['research/approve','discovery/approve']){
+  const scenario=json(path.join(source,key,'scenario.json'));
+  if(mode==='no-permission'&&key==='research/approve')for(const host of ['claude','codex'])scenario.hosts[host].expectedReplies[0].driverStart=null;
+  write(path.join(f.catalogDir,key,'scenario.json'),JSON.stringify(scenario));
+ }
+ f.commit();const selection=f.select(),unit={id:'driver-proof',target:'research/approve',scenarios:['research/approve','discovery/approve']};
+ selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=unit.scenarios.map(scenario=>({id:`${unit.id}:${scenario}:codex`,source:'scenario',expectation:`${scenario} / codex / ${unit.id}: conversation, word replies and fresh monotest records`,unit:unit.id,scenario,host:'codex'}));
+ const calls=[];
+ const result=await runSuiteWithRecords(suiteRequest(f,selection),async request=>{
+  calls.push(request.context.entryStage);write(request.context.projectFile,JSON.stringify(runProject(request)));return passedStage(request);
+ },async()=>({status:mode==='rubric-failed'?'failed':'passed',starts:mode==='missing-signal'?[]:[{stage:'discovery',replyId:'research-approve',kind:'intercepted',line:12}],monotestTasks:0}));
+ assert.deepEqual(calls,mode==='authorized'?['research','discovery']:mode==='no-permission'?[]:['research']);
+ assert.equal(result.status,mode==='authorized'?'passed':'failed');
 });
