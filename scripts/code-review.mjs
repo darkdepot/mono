@@ -20,7 +20,7 @@ function screenChildOutput(result, stdoutOptions = {}) {
   catch { throw new Error('child process output withheld: non-UTF8 stream'); }
   const out = screenModelOutput(stdout, stdoutOptions), err = screenModelOutput(stderr);
   const joined = stdout && stderr ? screenModelOutput(`${stdout}\n${stderr}`, stdoutOptions) : null;
-  if (out.rejected || err.rejected || joined?.rejected) throw Object.assign(new Error('child process output withheld by secret screen'), {
+  if ([out, err, joined].some(screened => screened?.rejected || screened?.diagnostic.secretMatches > 0)) throw Object.assign(new Error('child process output withheld by secret screen'), {
     rawAnswer: '[child process output withheld]',
     secrets: [{ file: stdoutOptions.inputFile ?? null, line: 0, weight: 'P0', reason: 'credential-shaped or undecodable child output; both streams withheld' }],
   });

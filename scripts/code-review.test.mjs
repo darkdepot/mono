@@ -876,9 +876,9 @@ test('C17: catalog, auth, probe and role stdout/stderr are screened before parsi
  const modeFile=path.join(bin,'mode'),credential='ghp_'+'d'.repeat(36),model=resolveReviewRoles({},packRoot)['code-review'].model;
  const fake=`#!${process.execPath}
  const fs=require('node:fs'),[stage,stream,flag]=fs.readFileSync(${JSON.stringify(modeFile)},'utf8').split(':');
- const secret=flag==='key'?'private/key: synthetic-credential':${JSON.stringify(credential)},emit=value=>console.log(JSON.stringify(value));
+ const secret=flag==='fixture'?'token = '+'ghp_'+'0'.repeat(36):flag==='key'?'private/key: synthetic-credential':${JSON.stringify(credential)},emit=value=>console.log(JSON.stringify(value));
  const hit=name=>stage===name,diagnostic=()=>{if(stream==='stderr')process.stderr.write(secret);};
- if(process.argv[2]==='debug'){emit({models:[{slug:${JSON.stringify(model)}}],...(hit('catalog')&&stream==='stdout'?{note:secret}:{})});if(hit('catalog'))diagnostic();process.exit(0);}
+ if(process.argv[2]==='debug'){emit({models:[{slug:${JSON.stringify(model)}}],...(flag==='fixture'?{file:'evals/code-review/secret-example.txt'}:{}),...(hit('catalog')&&stream==='stdout'?{note:secret}:{})});if(hit('catalog'))diagnostic();process.exit(0);}
  if(process.argv[2]==='login'){console.error('Logged in using ChatGPT');if(hit('auth')){if(stream==='stdout')console.log(secret);else diagnostic();}process.exit(0);}
  let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{
  const name=input.startsWith('Boundary audit')?'probe':'role';
@@ -889,7 +889,7 @@ test('C17: catalog, auth, probe and role stdout/stderr are screened before parsi
  });`;
  fs.writeFileSync(path.join(bin,'codex'),fake,{mode:0o700});
  const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};console.log(JSON.stringify(await runReviewRound(${JSON.stringify(f.request)})));`;
- for(const mode of ['catalog:stdout','catalog:stderr','auth:stdout','auth:stderr','probe:stdout','probe:stderr','role:stdout','role:stderr','role:stderr:fail','catalog:stderr:key','auth:stdout:key','probe:stderr:key','role:stdout:key'])await t.test(mode,()=>{
+ for(const mode of ['catalog:stdout','catalog:stderr','auth:stdout','auth:stderr','probe:stdout','probe:stderr','role:stdout','role:stderr','role:stderr:fail','catalog:stderr:key','auth:stdout:key','probe:stderr:key','role:stdout:key','catalog:stdout:fixture'])await t.test(mode,()=>{
   fs.writeFileSync(modeFile,mode);
   const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',env:{...process.env,PATH:bin+path.delimiter+process.env.PATH},stdio:['ignore','pipe','pipe']});
   assert.equal(child.status,0);assert.equal(child.stderr.includes(credential),false);assert.equal(child.stdout.includes(credential),false);
