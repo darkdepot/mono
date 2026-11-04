@@ -1657,7 +1657,7 @@ fail closed. Exact fixture exceptions remain in code; their values are redacted
 from output too. Plain file text never acts as patch framing. Every embedded
 JSON/JSONL string layer is decoded to a fixed point with literal `JSON.parse`
 before line redaction and a final multiline scan. Undecodable or over-limit
-content is withheld (32 levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
+content and lossy JSON numbers are withheld (32 levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
 retained; records/rendering: 131072 nodes, 16 MiB). Interruption stops
 later evaluation calls and remains a scored row.
 Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules

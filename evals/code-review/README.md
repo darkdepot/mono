@@ -119,7 +119,7 @@ replies, every field, metadata, history, reports, evaluation progress and scorin
 No model field is persisted, rendered or forwarded before that screen. Secret
 replies fail closed, while retained diagnostics redact values. Every JSON/JSONL
 string layer uses literal `JSON.parse` to a fixed point, including Codex
-`item.text`; malformed or over-limit content is withheld. Bounds are 32 levels,
+`item.text`; malformed, lossy-number or over-limit content is withheld. Bounds are 32 levels,
 4096 nodes/256 KiB for role diagnostics (8 KiB retained per attempt), and
 131072 nodes/16 MiB for records and renderers. Mixed line and multiline matches
 are independent; text is rescanned after redaction. Tests cover successful and

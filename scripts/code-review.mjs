@@ -249,7 +249,10 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       bytes += Buffer.byteLength(entry); if (bytes > maxBytes) return hide();
       if (markers.has(entry)) return { value: entry, text: entry };
       let parsed, decoded = false;
-      try { parsed = JSON.parse(entry.trim()); decoded = true; } catch {}
+      try { parsed = JSON.parse(entry.trim(), (_key, child) => {
+        if (typeof child === 'number' && (!Number.isFinite(child) || (Number.isInteger(child) && !Number.isSafeInteger(child)))) throw new Error('lossy JSON number');
+        return child;
+      }); decoded = true; } catch {}
       if (decoded && (parsed === null || !['object', 'string'].includes(typeof parsed))) {
         const safe = redact(entry, file); return { value: safe, text: safe };
       }
@@ -270,6 +273,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (/^\s*(?:\{|\[(?![A-Za-z])|")/.test(entry) || entry.includes('\\')) return hide();
       return { value: safe, text: safe };
     }
+    if (typeof entry === 'number' && (!Number.isFinite(entry) || (Number.isInteger(entry) && !Number.isSafeInteger(entry)))) return hide();
     if (!entry || typeof entry !== 'object') return { value: entry, text: String(entry ?? '') };
     if (typeof entry.file === 'string') file = entry.file;
     else if (typeof entry.id === 'string' && Object.hasOwn(filesById, entry.id)) file = filesById[entry.id];

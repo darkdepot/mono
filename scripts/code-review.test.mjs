@@ -270,8 +270,10 @@ test('shared model screen preserves benign JSON/code and exact fixture exception
 });
 test('numeric-looking secret strings keep their literal bytes through every JSON layer',async t=>{
  const f=fixture(t),secret='1'.repeat(24);
+ assert.equal(screenModelOutput({password:Number(secret)}).rejected,true,'already-decoded lossy numbers are withheld too');
+ assert.equal(screenModelOutput({reason:'{"password":'+secret+'e400}'}).rejected,true,'overflowing JSON numbers cannot retain their raw source');
  for(const depth of [0,1,2]){
-  let reason={password:secret};for(let layer=0;layer<depth;layer++)reason=JSON.stringify(reason);
+  let reason=depth===0?'{"password":'+secret+'}':{password:secret};for(let layer=0;layer<depth;layer++)reason=JSON.stringify(reason);
   const runner=responder({findings:[sample],verdicts:[verdict({reason:typeof reason==='string'?reason:JSON.stringify(reason)})]});
   const record=await runReviewRound(f.request,runner);
   assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.ok(!JSON.stringify(record).includes(secret));
