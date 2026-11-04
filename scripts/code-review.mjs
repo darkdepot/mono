@@ -250,6 +250,9 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (markers.has(entry)) return { value: entry, text: entry };
       let parsed, decoded = false;
       try { parsed = JSON.parse(entry.trim()); decoded = true; } catch {}
+      if (decoded && (parsed === null || !['object', 'string'].includes(typeof parsed))) {
+        const safe = redact(entry, file); return { value: safe, text: safe };
+      }
       if (decoded) {
         const before = revision, child = visit(parsed, depth + 1, file);
         return { value: revision !== before ? JSON.stringify(child.value) : entry, text: child.text };

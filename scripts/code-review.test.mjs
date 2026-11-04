@@ -268,6 +268,15 @@ test('shared model screen preserves benign JSON/code and exact fixture exception
   const screened=screenModelOutput(value);assert.equal(screened.rejected,true);assert.equal(screenModelOutput(screened.value).rejected,false,'sanitized state is safe to persist and read back');
  }
 });
+test('numeric-looking secret strings keep their literal bytes through every JSON layer',async t=>{
+ const f=fixture(t),secret='1'.repeat(24);
+ for(const depth of [0,1,2]){
+  let reason={password:secret};for(let layer=0;layer<depth;layer++)reason=JSON.stringify(reason);
+  const runner=responder({findings:[sample],verdicts:[verdict({reason:typeof reason==='string'?reason:JSON.stringify(reason)})]});
+  const record=await runReviewRound(f.request,runner);
+  assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.ok(!JSON.stringify(record).includes(secret));
+ }
+});
 test('all model output is screened before successful fields, metadata or derived reports escape',async t=>{
  const f=fixture(t),secret='opaqueFixture'+'v'.repeat(24),encoded=JSON.stringify(JSON.stringify({password:secret}));
  const cases=[
