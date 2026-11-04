@@ -11,6 +11,7 @@ import { checkEndings } from './skills-trace.mjs';
 import { runScenario } from './skills-run.mjs';
 import { anchored } from './skills-owner.mjs';
 import { permittedStages } from './skills-stage-driver.mjs';
+import { rubricDigest } from './skills-rubric.mjs';
 
 const json = file => JSON.parse(fs.readFileSync(file,'utf8'));
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value);
@@ -73,25 +74,48 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
   if (request.mcpServers?.paper) throw new Error('Paper must be configured through the file guard');
   const expected=selection.units.flatMap(unit=>selection.hosts.flatMap(host=>unit.scenarios.map(key=>scenarioExpectation(unit.id,key,host))));
   if (JSON.stringify(expected) !== JSON.stringify(selection.expectedItems)) throw new Error('saved expected items do not match selected units');
-  fs.mkdirSync(request.outputDir); // never overwrite an earlier run
-  fs.writeFileSync(path.join(request.outputDir,'expected-items.json'),JSON.stringify(selection.expectedItems,null,2)+'\n',{flag:'wx'});
+  const {resume,prepareReview,recordBindings,...executionRequest}=request;
+  if(prepareReview&&!resume)throw new Error('review preparation requires saved suite evidence');
+  const requestDigest=rubricDigest({request:executionRequest,selection}),stateFile=path.join(request.outputDir,'suite-state.json');
+  let saved={results:[],revision:0,startedAt};
+  if(resume) {
+    saved=json(stateFile);const {digest,...payload}=saved;
+    if(digest!==rubricDigest(payload)||saved.requestDigest!==requestDigest)throw new Error('saved suite evidence or request changed; resume refused');
+    for(const item of saved.results)for(const [file,hash] of item.files)if(!fs.existsSync(file)||rubricDigest(fs.readFileSync(file,'utf8'))!==hash)throw new Error('saved suite evidence changed; resume refused');
+  } else {
+    fs.mkdirSync(request.outputDir); // never overwrite an earlier run
+    fs.writeFileSync(path.join(request.outputDir,'expected-items.json'),JSON.stringify(selection.expectedItems,null,2)+'\n',{flag:'wx'});
+  }
+  const checkpoints=[];
+  const saveState=()=>{
+    const payload={requestDigest,revision:saved.revision+(resume?1:0),startedAt:saved.startedAt,results:[...checkpoints,...saved.results.filter(old=>!checkpoints.some(current=>current.unit===old.unit&&current.scenario===old.scenario&&current.host===old.host))],exportLeftovers:[...exportLeftovers]};
+    const temporary=stateFile+'.tmp';fs.writeFileSync(temporary,JSON.stringify({...payload,digest:rubricDigest(payload)},null,2)+'\n',{flag:'wx'});fs.renameSync(temporary,stateFile);
+  };
   if(selection.uncovered?.length){
     const result={status:'unverified',reason:'uncovered selection',uncovered:selection.uncovered,items:[],results:[]};
-    fs.writeFileSync(path.join(request.outputDir,'suite-result.json'),JSON.stringify(result,null,2)+'\n',{flag:'wx'});return result;
+    fs.writeFileSync(path.join(request.outputDir,resume?`suite-result-${saved.revision+1}.json`:'suite-result.json'),JSON.stringify(result,null,2)+'\n',{flag:'wx'});return result;
   }
   if (!selection.expectedItems.length) {
     const result={status:'not-required',items:[],results:[]};
-    fs.writeFileSync(path.join(request.outputDir,'suite-result.json'),JSON.stringify(result,null,2)+'\n',{flag:'wx'});return result;
+    fs.writeFileSync(path.join(request.outputDir,resume?`suite-result-${saved.revision+1}.json`:'suite-result.json'),JSON.stringify(result,null,2)+'\n',{flag:'wx'});return result;
   }
   let manifestDir;
-  const results=[],exportLeftovers=new Set();
+  const results=[],exportLeftovers=new Set(saved.exportLeftovers??[]);
   runs: for (const unit of selection.units) for (const host of selection.hosts) {
     const projectName=`monotest-${request.runId}-${host}-${unit.id}`;
     let project=null,previousResult=null;const chainExchanges=[];
     for (const [position,key] of unit.scenarios.entries()) {
       const outputDir=path.join(request.outputDir,`${unit.id}-${host}-${position}`);
       let result,paperLog,runRequest,scenario,observedProject,seedProject;const stageStart=Date.now();
+      const prior=saved.results.find(r=>r.unit===unit.id&&r.scenario===key&&r.host===host);
+      if(prepareReview&&!prior)break;
       try {
+        if(prior) {
+          scenario=catalog.scenarios.get(key);runRequest=prior.runRequest;result=prior.run;
+          observedProject=prior.project;project=observedProject??project;
+          if(result.status==='passed') {chainExchanges.push(...result.check.exchanges);checkEndings(chainExchanges);}
+          if(position>0&&previousResult?.anchored&&(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage)))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
+        } else {
         manifestDir ??= fs.mkdtempSync(path.join(request.cwd,`.mono-skills-${request.runId}-`));
         scenario=catalog.scenarios.get(key);
         if(position>0&&previousResult?.anchored) {
@@ -151,6 +175,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         } else if (result.status==='unverified' && seedProject) {
           project=seedProject;
         }
+        }
       } catch(error) {
         result={...result,status:'failed',reason:error.message};
       } finally {
@@ -166,15 +191,19 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
           if (error.code!=='ENOENT') result={...result,status:'failed',reason:`Paper guard log: ${error.message}`};
         }
       }
+      const stageRun=JSON.parse(JSON.stringify(result));
       if(result && runRequest && scenario){
         try{
-          const records=await verify({run:result,runRequest,scenario,project:observedProject??project??seedProject,outputDir:outputDir+'-records',bindingsFile:request.recordBindings?.[`${unit.id}:${key}:${host}`]});
+          if(prior&&!prior.reviewEvidence)throw new Error('saved native review evidence missing; resume refused');
+          const records=await verify({run:result,runRequest,scenario,project:observedProject??project??seedProject,outputDir:outputDir+'-records',bindingsFile:recordBindings?.[`${unit.id}:${key}:${host}`],...(prior?{resumeEvidence:prior.reviewEvidence,prepareReview}: {})});
           if(!records.stop)checkPack(request.packRoot,selection.head);
           result={...result,records,status:result.status==='failed'||records.status==='failed'?'failed':result.status!=='passed'||records.status!=='passed'?'unverified':'passed'};
-        }catch(error){result={...result,status:result.status==='failed'?'failed':'unverified',records:{status:'unverified',reason:error.message}};}
+        }catch(error){result={...result,status:result.status==='failed'||prior?.records?.status==='failed'?'failed':'unverified',records:{...prior?.records,status:prior?.records?.status==='failed'?'failed':'unverified',reason:error.message}};}
       }
       previousResult={...result,anchored:runRequest?.scenario.expectedReplies?.some(anchored)};
       const item={durationMs:Date.now()-stageStart,monotestTasks:result.records?.monotestTasks??null,unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
+      const files=[outputDir+'-request.json',outputDir+'-project.json',result.records?.reviewEvidence].filter(file=>file&&fs.existsSync(file)).map(file=>[file,rubricDigest(fs.readFileSync(file,'utf8'))]);
+      checkpoints.push({unit:unit.id,scenario:key,host,run:stageRun,runRequest,project:observedProject??project??seedProject,reviewEvidence:result.records?.reviewEvidence??prior?.reviewEvidence,records:result.records,files});saveState();
       if(result.records?.stop)break runs;
       if (result.status === 'failed'||previousResult.anchored&&result.status!=='passed') break;
     }
@@ -186,7 +215,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
   const status=items.some(i=>i.status==='failed')?'failed':items.some(i=>i.status!=='passed')?'unverified':'passed';
   const taskCounts=results.map(r=>r.monotestTasks),taskIds=new Set(results.flatMap(r=>r.result.records?.taskIds??[]));
   const result={status,startedAt,finishedAt:new Date().toISOString(),durationMs:Date.now()-suiteStart,monotestTasks:taskCounts.some(c=>c===null)?null:taskIds.size,items,results,exportLeftovers:[...exportLeftovers],boundary:'mechanical driver results; fresh records verified separately for every host; conversation rubric remains required before a QA certificate'};
-  fs.writeFileSync(path.join(request.outputDir,'suite-result.json'),JSON.stringify(result,null,2)+'\n',{flag:'wx'});
+  fs.writeFileSync(path.join(request.outputDir,resume?`suite-result-${saved.revision+1}.json`:'suite-result.json'),JSON.stringify(result,null,2)+'\n',{flag:'wx'});
   return result;
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

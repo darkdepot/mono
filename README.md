@@ -1632,6 +1632,10 @@ and a native post-reply action after the current stage rubric passes. Canonical
 document identities come from native responses, including slug lookups. Harmless
 deferral wording is allowed; exact forbidden offers and the semantic rubric remain
 blocking. Window decoders live only in archived test fixtures.
+The suite saves the native trace, writes and fresh dump with their rubric digest.
+Review that saved evidence, then use the same request with `resume: true` to
+continue without rerunning a completed stage. Changed evidence or digest refuses
+resume; failed and unverified rubric results still block the next stage.
 Extra replies, questions, completed turns, forged quotes, early writes and unfinished
 main/scout activity remain blocking. See [skill QA](references/qa-skills.md).
 The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 18

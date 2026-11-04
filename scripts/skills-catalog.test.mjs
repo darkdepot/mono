@@ -694,3 +694,56 @@ test('continue1 Handoff correction revises package verification while preserving
   assert.equal(start.role,'transition');assert.equal(start.outcome.startNext,true);
  }
 });
+
+for(const reviewStatus of ['passed','unverified','failed'])test(`continue3 suite resumes saved research only for ${reviewStatus} rubric`,async t=>{
+ const f=fixture(t);
+ for(const key of ['research/approve','discovery/approve'])write(path.join(f.catalogDir,key,'scenario.json'),fs.readFileSync(path.join(source,key,'scenario.json')));
+ f.commit();const selection=f.select(),unit={id:'resume-proof',target:'research/approve',scenarios:['research/approve','discovery/approve']};
+ selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=unit.scenarios.map(scenario=>({id:`${unit.id}:${scenario}:codex`,source:'scenario',expectation:`${scenario} / codex / ${unit.id}: conversation, word replies and fresh monotest records`,unit:unit.id,scenario,host:'codex'}));
+ const request=suiteRequest(f,selection),calls=[],verifications=[];
+ const execute=async r=>{calls.push(r.context.entryStage);write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);};
+ const verify=async input=>{
+  verifications.push({stage:input.runRequest.context.entryStage,resume:Boolean(input.resumeEvidence)});
+  const file=input.outputDir+'-evidence.json';if(!input.resumeEvidence)write(file,'saved native trace, writes and fresh dump');
+  return {status:input.resumeEvidence?reviewStatus:'unverified',reviewEvidence:file,rubricDigest:'a'.repeat(64),starts:[{stage:'discovery',replyId:'research-approve'}],monotestTasks:0};
+ };
+ const initial=await runSuiteWithRecords(request,execute,verify);assert.equal(initial.status,'unverified');assert.deepEqual(calls,['research']);
+ const resumed=await runSuiteWithRecords({...request,resume:true},execute,verify);
+ assert.deepEqual(calls,reviewStatus==='passed'?['research','discovery']:['research'],'research execution is never repeated');
+ assert.deepEqual(verifications.slice(0,2),[{stage:'research',resume:false},{stage:'research',resume:true}]);
+ assert.equal(resumed.results[0].status,reviewStatus);
+ if(reviewStatus==='passed') {
+  assert.equal(resumed.results[1].scenario,'discovery/approve');
+  const completed=await runSuiteWithRecords({...request,resume:true},execute,verify);
+  assert.equal(completed.status,'passed');assert.deepEqual(calls,['research','discovery'],'each completed stage is reused on subsequent resume');
+  assert.ok(fs.existsSync(path.join(request.outputDir,'suite-result.json')));assert.ok(fs.existsSync(path.join(request.outputDir,'suite-result-2.json')));
+ }
+});
+
+test('continue3 Design correction changes picture only within the approved requirement',()=>{
+ const scenario=loadCatalog(path.join(source,'index.json')).scenarios.get('design/correction');
+ for(const host of ['claude','codex']){
+  const [revise,approval]=scenario.hosts[host].expectedReplies;
+  assert.match(revise.reply,/после имени прогона/);
+  assert.match(revise.reply,/макет|картинк/);assert.doesNotMatch(revise.reply,/перед именем/);
+  assert.deepEqual(revise.outcome,{approval:false,startNext:false});assert.deepEqual(approval.outcome,{approval:true,startNext:false});
+ }
+});
+
+for(const changed of ['saved-state','saved-evidence','saved-request','selection'])test(`continue3 suite refuses changed ${changed} before any host`,async t=>{
+ const f=fixture(t);write(path.join(f.catalogDir,'research/approve/scenario.json'),fs.readFileSync(path.join(source,'research/approve/scenario.json')));f.commit();
+ const selection=f.select(),unit={id:'changed-proof',target:'research/approve',scenarios:['research/approve']};
+ selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=[{id:`${unit.id}:research/approve:codex`,source:'scenario',expectation:`research/approve / codex / ${unit.id}: conversation, word replies and fresh monotest records`,unit:unit.id,scenario:'research/approve',host:'codex'}];
+ const request=suiteRequest(f,selection);let calls=0,reads=0;
+ const execute=async r=>{calls++;write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);};
+ const verify=async input=>{reads++;const file=input.outputDir+'-evidence.json';write(file,'saved trace, writes and dump');return {status:'unverified',reviewEvidence:file};};
+ await runSuiteWithRecords(request,execute,verify);
+ const item=json(path.join(request.outputDir,'suite-state.json')).results[0];
+ if(changed==='saved-state'){
+  const file=path.join(request.outputDir,'suite-state.json'),state=json(file);state.results[0].run.status='passed';state.requestDigest='wrong';write(file,JSON.stringify(state));
+ }else if(changed==='selection'){
+  const saved=json(request.selectionFile);saved.reason='modified selection';write(request.selectionFile,JSON.stringify(saved));
+ }else fs.appendFileSync(changed==='saved-evidence'?item.reviewEvidence:path.join(request.outputDir,'changed-proof-codex-0-request.json'),' ');
+ await assert.rejects(()=>runSuiteWithRecords({...request,resume:true},execute,verify),/saved suite evidence|request changed/);
+ assert.equal(calls,1);assert.equal(reads,1,'changed evidence refused before verification or a new execution');
+});

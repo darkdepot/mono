@@ -1377,3 +1377,47 @@ for(const host of ['claude','codex'])for(const lookup of ['doc','prd-source-slug
  f.fresh.id='different-document';f.events[6]=f.result('read',f.fresh);
  const changed=f.check();assert.equal(changed.status,'failed');assert.match(changed.reason,/document changed/);
 });
+
+for(const host of ['claude','codex'])for(const mode of ['passed','unverified','failed','trace-change','dump-change','digest-change','bindings-change','extra-dump-file'])test(`continue3 ${host}: saved native review ${mode}`,async t=>{
+ const f=u7DocumentFixture(t,host);f.attest();const rubric=f.request.rubric;delete f.request.rubric;
+ const bindingsFile=path.join(f.dir,'review.json');
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings}));
+ let collections=0;
+ const input={run:{trace:f.request.trace},runRequest:{host,cwd:f.dir,packRoot:process.cwd(),context:{skillPrefix:'mono',projectName:f.project.name},scenario:{expectedReplies:f.request.expectedReplies,rubricDefinition:f.request.rubricDefinition},mcpServers:{monotest:{url:'test'}}},scenario:{next:'handoff',expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,'review-capture'),bindingsFile};
+ const collect=async()=>{collections++;return {status:'passed',trace:f.request.dumpTrace,dumpDir:f.dumpDir};};
+ const initial=await verifyTextScenarioRecords(input,collect);
+ assert.equal(initial.status,'unverified',JSON.stringify(initial));assert.equal(initial.rubricDigest,rubric.digest);
+ assert.ok(fs.existsSync(initial.reviewEvidence));
+ const review={...rubric,checks:rubric.checks.map(c=>({...c,status:['failed','unverified'].includes(mode)?mode:'passed'}))};
+ const bindings={approvalBindings:f.request.approvalBindings,rubric:review};
+ if(mode==='trace-change')fs.appendFileSync(f.request.trace,'\n');
+ if(mode==='dump-change')f.save('project.json',{...f.project,description:'changed'});
+ if(mode==='extra-dump-file')f.save('extra.json',{unexpected:'data'});
+ if(mode==='digest-change'){
+  const saved=JSON.parse(fs.readFileSync(initial.reviewEvidence));saved.rubricDigest='b'.repeat(64);fs.writeFileSync(initial.reviewEvidence,JSON.stringify(saved));
+ }
+ if(mode==='bindings-change')bindings.approvalBindings=[{...f.request.approvalBindings[0],text:'different document'}];
+ fs.writeFileSync(bindingsFile,JSON.stringify(bindings));
+ const resume=()=>verifyTextScenarioRecords({...input,resumeEvidence:initial.reviewEvidence},()=>{throw Error('resume must not collect another dump');});
+ if(mode.includes('change')||mode==='extra-dump-file')await assert.rejects(resume,/saved (evidence|bindings|rubric digest) changed/);
+ else {
+  const resumed=await resume();assert.equal(resumed.status,mode,JSON.stringify(resumed));assert.equal(resumed.rubricDigest,initial.rubricDigest);
+  assert.deepEqual(resumed.rubricInput,initial.rubricInput,'same native evidence, records and dump are reviewed');
+ }
+ assert.equal(collections,1);
+});
+
+for(const host of ['claude','codex'])test(`continue3 ${host}: annotate saved native bindings before rubric review without rerun`,async t=>{
+ const f=u7DocumentFixture(t,host);f.check();const bindingsFile=path.join(f.dir,'annotations.json');
+ const input={run:{trace:f.request.trace},runRequest:{host,cwd:f.dir,packRoot:process.cwd(),context:{skillPrefix:'mono',projectName:f.project.name},scenario:{expectedReplies:f.request.expectedReplies,rubricDefinition:f.request.rubricDefinition},mcpServers:{monotest:{url:'test'}}},scenario:{next:'handoff',expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,'unannotated')};
+ const initial=await verifyTextScenarioRecords(input,async()=>({status:'passed',trace:f.request.dumpTrace,dumpDir:f.dumpDir}));
+ assert.equal(initial.status,'failed',JSON.stringify(initial));assert.match(initial.reason,/expected approval missing actual record bound to shown version/);assert.equal(initial.rubricDigest,undefined);
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings}));
+ const noCollect=()=>{throw Error('review preparation/resume must reuse the saved dump');};
+ const prepared=await verifyTextScenarioRecords({...input,resumeEvidence:initial.reviewEvidence,bindingsFile,prepareReview:true},noCollect);
+ assert.equal(prepared.status,'unverified');assert.ok(prepared.rubricDigest);
+ const rubric={digest:prepared.rubricDigest,reviewer:'native saved-evidence fixture',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'same saved native document and trace',reason:'Compared the fixed scenario, artifact, question, reply and write.'}))};
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings,rubric}));
+ const resumed=await verifyTextScenarioRecords({...input,resumeEvidence:prepared.reviewEvidence,bindingsFile},noCollect);
+ assert.equal(resumed.status,'passed',JSON.stringify(resumed));assert.equal(resumed.rubricDigest,prepared.rubricDigest);
+});

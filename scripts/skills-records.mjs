@@ -15,7 +15,7 @@ import { unwrap } from './skills-proof.mjs';
 import { runScenario } from './skills-run.mjs';
 import { nativeRecords, resultFor, callInput } from './skills-record-data.mjs';
 import { correctedVersion, isOwnerWindow, anchored, checkAnchors } from './skills-owner.mjs';
-import { checkRubric } from './skills-rubric.mjs';
+import { checkRubric, rubricDigest } from './skills-rubric.mjs';
 import { stageDriverTool, permittedStages } from './skills-stage-driver.mjs';
 import { latestApproval, approvalBlocks } from './idea-gate.mjs';
 
@@ -699,7 +699,47 @@ export async function collectRecordDump(request,execute=runScenario){
  }
 
 }
-export async function verifyScenarioRecords({run,runRequest,scenario,project,outputDir,bindingsFile},collect=collectRecordDump){
+// Save the native inputs, not a fresh run recipe. Review may add only a rubric;
+// every file used by the verifier stays bound to the original capture.
+function evidenceFiles(request) {
+ const files=new Map();
+ const capture=file=>{
+  if(!file)return;
+  if(!fs.existsSync(file)){files.set(file,null);return;}
+  const stat=fs.lstatSync(file);
+  if(stat.isDirectory()) {
+   files.set(file,fs.readdirSync(file).sort());
+   for(const name of fs.readdirSync(file).sort())capture(path.join(file,name));
+  } else if(stat.isFile())files.set(file,sha256(fs.readFileSync(file)));
+  else throw new Error('saved evidence must contain regular files and directories');
+ };
+ capture(request.dumpDir);capture(request.configFile);
+ for(const file of [request.trace,request.dumpTrace,...(request.additionalTraces??[]).map(t=>t.trace),...(request.dumpAdditionalTraces??[]).map(t=>t.trace),...(request.approvalBindings??[]).map(b=>b.ownerEvidence?.trace)].filter(Boolean)) {
+  capture(file);capture(path.join(path.dirname(file),'result.json'));
+ }
+ return [...files];
+}
+export function resumeScenarioRecords({resumeEvidence,bindingsFile,prepareReview=false}) {
+ const saved=read(resumeEvidence),{digest,...payload}=saved;
+ if(digest!==rubricDigest(payload)||JSON.stringify(evidenceFiles(saved.request))!==JSON.stringify(saved.files))throw new Error('saved evidence changed; resume refused');
+ const bindings=bindingsFile?read(bindingsFile):{};
+ // Missing native bindings can be annotated after capture, before a review
+ // digest exists. Preparation never accepts a rubric or starts another stage.
+ if(prepareReview&&saved.rubricDigest===null) {
+  const request={...saved.request,...Object.fromEntries(['approvalBindings','presentationBindings','gates'].filter(key=>bindings[key]!==undefined).map(key=>[key,bindings[key]]))};
+  delete request.rubric;
+  const result=verifyRecords(request),reviewEvidence=resumeEvidence+'.prepared.json';
+  const prepared={request,files:evidenceFiles(request),rubricDigest:result.rubricDigest??null,rubricInput:result.rubricInput??null};
+  fs.writeFileSync(reviewEvidence,JSON.stringify({...prepared,digest:rubricDigest(prepared)},null,2)+'\n',{flag:'wx'});
+  return {...result,reviewEvidence};
+ }
+ for(const key of ['approvalBindings','presentationBindings','gates'])if(bindings[key]!==undefined&&!isDeepStrictEqual(bindings[key],saved.request[key]))throw new Error('saved bindings changed; resume refused');
+ const result=verifyRecords({...saved.request,rubric:bindings.rubric??saved.request.rubric});
+ if(result.rubricDigest!==saved.rubricDigest)throw new Error('saved rubric digest changed; resume refused');
+ return {...result,reviewEvidence:resumeEvidence};
+}
+export async function verifyScenarioRecords({run,runRequest,scenario,project,outputDir,bindingsFile,resumeEvidence,prepareReview=false},collect=collectRecordDump){
+ if(resumeEvidence)return resumeScenarioRecords({resumeEvidence,bindingsFile,prepareReview});
  const start=Date.now();
  const traces=(run.auditedTraces??[]).filter(trace=>trace!==run.trace).map(trace=>({host:runRequest.host,trace}));
  const next=runRequest.context.followingStage??scenario.next;
@@ -712,9 +752,12 @@ export async function verifyScenarioRecords({run,runRequest,scenario,project,out
  }
  if(dump.status!=='passed')return {...dump,status:dump.status==='failed'?'failed':'unverified',durationMs:Date.now()-start};
  const bindings=bindingsFile&&fs.existsSync(bindingsFile)?read(bindingsFile):{};
- const result=verifyRecords({host:runRequest.host,trace:run.trace,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
-  expectedReplies:runRequest.scenario?.expectedReplies,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')});
- return {...result,durationMs:Date.now()-start};
+ const verification={host:runRequest.host,trace:run.trace,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
+  expectedReplies:runRequest.scenario?.expectedReplies,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
+ const result=verifyRecords(verification),reviewEvidence=outputDir+'-evidence.json';
+ const payload={request:verification,files:evidenceFiles(verification),rubricDigest:result.rubricDigest??null,rubricInput:result.rubricInput??null};
+ fs.writeFileSync(reviewEvidence,JSON.stringify({...payload,digest:rubricDigest(payload)},null,2)+'\n',{flag:'wx'});
+ return {...result,reviewEvidence,durationMs:Date.now()-start};
 }
 if(process.argv[1]===fileURLToPath(import.meta.url)){
  try{const result=verifyRecords(read(process.argv[2]));console.log(JSON.stringify(result,null,2));process.exitCode=result.status==='passed'?0:result.status==='failed'?1:2;}
