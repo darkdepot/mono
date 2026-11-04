@@ -1653,7 +1653,7 @@ whole context: contract, rules, diff context, findings, history and base evidenc
 payload screening uses the same bounded literal JSON decoder for input and output,
 including JSON embedded in source text. Unterminated literals never restart at escaped quotes. One family table covers AWS AKIA/ASIA,
 GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
-JWT scanning visits base64url segments once, so an invalid dotted prefix cannot hide a valid JWT. Header-suffix decoding has a linear cumulative work budget; exhaustion withholds the value. Prefix-anchored families use non-overlapping matching and withhold the entire matching value.
+JWT scanning visits base64url segments once, so an invalid dotted prefix cannot hide a valid JWT. Every header suffix is a candidate, including after underscores. Header decoding has a linear cumulative work budget; exhaustion withholds the value. Fixed-prefix families search without word boundaries, so filename separators cannot hide credentials; non-overlapping matches withhold the entire value.
 Secret-like keys withhold quoted, nested and non-string values; plain `session`
 alone is allowed. JSON decoding preserves literal/key boundaries and checks each
 layer, up to eight layers. Unresolved escapes, ambiguous pairing and limits fail

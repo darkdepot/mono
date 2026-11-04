@@ -945,3 +945,18 @@ test('C18: an unterminated escaped literal is withheld without rescanning each e
  const value=String.fromCharCode(34)+String.fromCharCode(92,34).repeat(524288);
  for(const input of [true,false]){const start=performance.now(),result=screenModelOutput(value,{input});assert.equal(result.rejected,true);assert.ok(performance.now()-start<750,'escaped-literal screen exceeded 750ms');}
 });
+
+test('C18 local: supported families cannot hide behind underscore or alphanumeric filename prefixes',()=>{
+ const jwt=[Buffer.from(JSON.stringify({alg:'HS256'})).toString('base64url'),'e30','j'.repeat(24)].join('.');
+ const values=['AKIA'+'A'.repeat(16),'ASIA'+'B'.repeat(16),'ghp_'+'c'.repeat(36),'github_pat_'+'c'.repeat(44),'sk-'+'d'.repeat(24),'sk-ant-'+'e'.repeat(24),'xoxb-'+'f'.repeat(24),'AIza'+'g'.repeat(35),'-----BEGIN '+'PRIVATE KEY-----',jwt,'Bearer '+'k'.repeat(24)];
+ for(const token of values)for(const prefix of ['notes_','notes'])for(const suffix of ['.txt','_suffix.txt']){
+  const value=prefix+token+suffix;assert.ok(scanSecrets(value,{patch:false}).length,token.slice(0,8));
+  for(const options of [{input:true},{},{diagnostic:true}]){const result=screenModelOutput({file:value},options);assert.equal(result.rejected,true,token.slice(0,8));assert.ok(!JSON.stringify(result.value).includes(token));}
+ }
+});
+test('C18 local: a supported credential in a changed filename never reaches either role',async t=>{
+ const f=fixture(t),token='ghp_'+'c'.repeat(36),file='notes_'+token+'.txt';
+ fs.writeFileSync(path.join(f.worktree,file),'Harmless notes.\n');f.git('add','.');f.git('commit','-qm','filename control');
+ let calls=0;const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async()=>{calls++;return {response:review([],['input.mjs',file])};}});
+ assert.equal(result.outcome,'not-reviewed');assert.equal(calls,0);assert.ok(!JSON.stringify(result).includes(token));
+});

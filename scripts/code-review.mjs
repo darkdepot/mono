@@ -131,16 +131,16 @@ const SECRET_FIXTURES = new Map([
 ]);
 // Dataset v2 payload contract. Unknown credential families belong to MONO-329.
 const SECRET_FAMILIES = [
-  ['aws', /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/],
-  ['github', /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b/],
-  ['openai-anthropic', /\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b/],
-  ['slack', /\bxox[A-Za-z]-[A-Za-z0-9-]{10,}\b/],
-  ['google', /\bAIza[A-Za-z0-9_-]{20,}\b/],
+  ['aws', /(?:AKIA|ASIA)[0-9A-Z]{16}/],
+  ['github', /(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})/],
+  ['openai-anthropic', /sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}/],
+  ['slack', /xox[A-Za-z]-[A-Za-z0-9-]{10,}/],
+  ['google', /AIza[A-Za-z0-9_-]{20,}/],
   ['pem', /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/],
-  ['bearer', /\bBearer\s+[A-Za-z0-9._~+/=-]+/i],
+  ['bearer', /Bearer\s+[A-Za-z0-9._~+/=-]+/i],
 ];
-// Each run/segment is visited once. Header suffixes after '-' are still
-// candidates (the old word-boundary rule); bound their cumulative decode work
+// Each run/segment is visited once. Every header suffix is a candidate,
+// including after filename separators; bound cumulative decode work
 // linearly and withhold ambiguous input instead of rescanning an unbounded tail.
 export const MAX_SCREEN_VALUE_BYTES = 2 * 1024 * 1024;
 function jwtMatches(source) {
@@ -150,7 +150,6 @@ function jwtMatches(source) {
     for (let index = 0; index + 2 < segments.length; index++) {
       const header = segments[index];
       for (let offset = 0; offset < header.length; offset++) {
-        if (!/[A-Za-z0-9_]/.test(header[offset]) || (offset > 0 && header[offset - 1] !== '-')) continue;
         // JSON objects can start only with '{' or JSON whitespace. Their
         // first base64url character is therefore e/I/C/D; skip other tokens
         // without allocation or exception-heavy JSON parsing.
@@ -170,7 +169,8 @@ function jwtMatches(source) {
   return false;
 }
 function familyMatches(source) {
-  // Prefix-anchored families need no overlapping enumeration: once a token
+  // Fixed-prefix families are searched at every position, without word
+  // boundaries. They need no overlapping enumeration: once a token
   // matches, withholding its entire value also withholds any nested token.
   const matches = SECRET_FAMILIES.flatMap(([, pattern]) => [...source.matchAll(new RegExp(pattern.source, pattern.flags + 'g'))].map(([match]) => match));
   if (jwtMatches(source)) matches.push('JWT candidate');
