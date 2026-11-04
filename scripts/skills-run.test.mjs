@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { runScenario, runPersona, runClaude, runCodex } from './skills-run.mjs';
+import { runScenario as runTextScenario } from './skills-run.mjs';
+import { runScenario as runWindowFixture, runPersona, runClaude, runCodex } from './test-fixtures/legacy-window-run.mjs';
+const runScenario=request=>request.scenario.expectedReplies?runTextScenario(request):runWindowFixture(request);
 import { privateCodexHome, codexToolCalls, toolViolation, MissingEvidence } from './skills-boundary.mjs';
 import { nativeProof } from './skills-proof.mjs';
 // Synthetic native linkage around the recorded payload cuts.
@@ -492,4 +494,8 @@ for(const host of ['claude','codex'])test(`${host}: driver rejects undeclared ex
  const request=setup(t,host,'text');request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'extra-owner'];
  request.scenario={prompt:'Run text',allowedTools:['*'],expectedReplies:[{id:'last',stage:'idea',role:'approval',summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Утверждение записал.']}]};
  const result=await runScenario(request);assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.check.reason,/unexpected owner reply/);
+});
+
+for(const host of ['claude','codex'])test(`${host}: active driver refuses retired window policies before invoking the host`,async t=>{
+ const r=await runTextScenario(setup(t,host));assert.equal(r.status,'unverified');assert.match(r.reason,/retired/);
 });

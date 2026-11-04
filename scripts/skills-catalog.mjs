@@ -48,17 +48,9 @@ export function loadCatalog(indexFile) {
       if (scenario.next !== null && !stages.has(scenario.next)) fail(`unknown next ${key}`);
       for (const host of ['claude','codex']) {
         const flow = scenario.hosts?.[host];
-        if(flow?.expectedReplies!==undefined){
-          validateReplies(flow.expectedReplies);
-          if(flow.expectedReplies.some(r=>r.stage!==stage.id)||flow.windows?.length||flow.expectedWindows?.length)fail(`invalid ${host} text flow ${key}`);
-          continue;
-        }
-        if (!flow || !Array.isArray(flow.windows) || !flow.windows.length || flow.windows.length !== flow.expectedWindows?.length ||
-            !unique(flow.expectedWindows.map(w => w.id)) || flow.expectedWindows.some(w => !text(w.id) ||
-              !['approval','transition'].includes(w.role) || ['decision','advice','reason'].some(k => !text(w[k])) || !Array.isArray(w.summary) || !w.summary.every(text)) ||
-            flow.windows.some(w => !['recommended','label','correction','empty','refuse','discuss'].includes(w.mode) ||
-              (['correction','refuse'].includes(w.mode) && !text(w.text)) || (w.mode === 'label' && !text(w.label))) ||
-            !Array.isArray(flow.freeQuestions) || flow.freeQuestions.some(q => !text(q.contains))) fail(`invalid ${host} windows ${key}`);
+        if(!flow?.expectedReplies || Object.hasOwn(flow,'windows') || Object.hasOwn(flow,'expectedWindows'))fail(`text replies required for ${host} ${key}`);
+        validateReplies(flow.expectedReplies);
+        if(flow.expectedReplies.some(r=>r.stage!==stage.id))fail(`invalid ${host} text flow ${key}`);
       }
       scenarios.set(key, { ...scenario, file, relative });
     }

@@ -2,53 +2,55 @@
   "schemaVersion": 1,
   "id": "empty",
   "stage": "handoff",
-  "kind": "empty",
+  "kind": "unclear",
   "seed": "seeds/prd-handoff.json",
   "next": null,
-  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста. Передача оркестратору разрешена только после настоящего окна; код не писать.",
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
   "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
   "hosts": {
     "claude": {
-      "windows": [
+      "expectedReplies": [
         {
-          "mode": "empty"
-        }
-      ],
-      "expectedWindows": [
-        {
-          "id": "handoff-approval",
-          "decision": "Совет",
-          "advice": "Совет",
-          "reason": "Совет",
-          "summary": [],
-          "role": "transition"
-        }
-      ],
-      "freeQuestions": [
-        {
-          "contains": "?"
+          "id": "handoff-empty",
+          "stage": "handoff",
+          "role": "transition",
+          "summary": [
+            "Источник"
+          ],
+          "question": "Начинаем работу по этому пакету?",
+          "asksStart": true,
+          "reply": "ну не знаю",
+          "intent": "unclear",
+          "outcome": {
+            "approval": false,
+            "startNext": false
+          },
+          "response": [
+            "Что смущает?"
+          ]
         }
       ]
     },
     "codex": {
-      "windows": [
+      "expectedReplies": [
         {
-          "mode": "empty"
-        }
-      ],
-      "expectedWindows": [
-        {
-          "id": "handoff-approval",
-          "decision": "Совет",
-          "advice": "Совет",
-          "reason": "Совет",
-          "summary": [],
-          "role": "transition"
-        }
-      ],
-      "freeQuestions": [
-        {
-          "contains": "?"
+          "id": "handoff-empty",
+          "stage": "handoff",
+          "role": "transition",
+          "summary": [
+            "Источник"
+          ],
+          "question": "Начинаем работу по этому пакету?",
+          "asksStart": true,
+          "reply": "ну не знаю",
+          "intent": "unclear",
+          "outcome": {
+            "approval": false,
+            "startNext": false
+          },
+          "response": [
+            "Что смущает?"
+          ]
         }
       ]
     }
@@ -61,6 +63,9 @@
     },
     {
       "forbidden": "mono-package: start"
+    },
+    {
+      "forbidden": "start-next-stage"
     }
   ]
 }

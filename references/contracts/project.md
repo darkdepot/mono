@@ -13,7 +13,7 @@ single source for presentation shape.
 
 Use this contract for Linear Project mutations. Raw ideas and existing Idea
 Projects route to `mono:idea`; an Idea Project with a verified approval record routes
-to `mono:research` when the owner starts Research («Начать исследование» or words),
+to `mono:research` when the owner starts Research in words in reply to an explicit start question or by an explicit start request,
 or the orchestrator starts it for a delegated Project defined in PC-019. An existing Project in Discovery without a Research document routes
 to `mono:research`, except a package approved strictly before `researchGate.since` (config, otherwise `RESEARCH_GATE_DEFAULT_SINCE` in
 `scripts/idea-gate.mjs`); without an approved PRD, a Project on the old path
@@ -30,7 +30,7 @@ stop or a date: keep its recorded Tech Evaluation route until reapproval.
 No `next=` is the Tech Evaluation old path; the router remains unchanged. Handoff
 first verifies any effective `mono-tech` for the current PRD and consumes a valid
 record without another offer. Only without a valid tech record does ordinary or
-large size require «Начать Tech Evaluation» / «Ещё обсудить». Consent from the owner
+large size require a contextual text question about starting Tech Evaluation. Consent from the owner
 (or delegated orchestrator) is the request
 that opens Tech Evaluation on the old path. Without consent, Handoff stops before
 writing a package; discussion cannot bypass Tech Evaluation. Tiny work may skip it.
@@ -149,9 +149,11 @@ Only the latest Idea approval comment's outside-fence line
 repeat it on Idea reapproval. Projects delegated before this version may use an
 explicit owner decision in a Project comment. Without either, the owner leads.
 Do not add `by` to the strict `mono-idea` record. The owner always approves Idea
-by pressing its approval button. A `stale` or `legacy-migrate` Idea record stops
+in words on the shown version. Through an orchestrator, the exact stage description
+is shown verbatim as its final message; the shown text, actual question and verbatim
+owner reply are relayed to the stage. Without those words Idea is not approved. A `stale` or `legacy-migrate` Idea record stops
 autonomous Research and work starts: the orchestrator carries it to the owner,
-waits for their new button approval, confirmed record and fresh check. Its own
+waits for their new approval in words, confirmed record and fresh check. Its own
 start cannot reapprove an Idea snapshot. After that the delegated orchestrator
 may start Research and work, answer stages
 and approve their shown versions with reasons, including irreversible decisions

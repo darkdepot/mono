@@ -576,7 +576,7 @@ for(const name of ['discovery-approve','idea-correction'])test(`live3 ${name}: a
  const bad=f.check();assert.notEqual(bad.bindingOnly,true);assert.notEqual(bad.status,'passed');
 });
 test('live3 Research: records pass but a second target transition remains unanswered',async t=>{
- const {checkTrace,codexWindows}=await import('./skills-trace.mjs'),{traceRows}=await import('./skills-probe.mjs'),{windowPolicy,windowRole}=await import('./skills-owner.mjs');
+ const {checkTrace,codexWindows}=await import('./skills-trace.mjs'),{traceRows}=await import('./skills-probe.mjs'),{windowPolicy,windowRole}=await import('./test-fixtures/legacy-window-owner.mjs');
  const f=live3Fixture(t,'research-discuss');assert.equal(f.check().status,'passed',f.check().reason);
  const scenario=JSON.parse(fs.readFileSync(path.join(f.base,'windows.json'))),windows=codexWindows(traceRows(f.request.trace,'codex').rows,f.request.trace);
  assert.deepEqual(windows.map(w=>windowRole(w.questions)),['transition',null,'transition']);

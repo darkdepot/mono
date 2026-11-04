@@ -8,10 +8,16 @@ import readline from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadCatalog } from './skills-catalog.mjs';
 import { selectScenarios, saveSelection } from './skills-select.mjs';
-import { runSuite as runSuiteWithRecords, scenarioPrompt } from './skills-suite.mjs';
+import { runSuite as actualSuite, scenarioPrompt } from './skills-suite.mjs';
 import { checkTrace } from './skills-trace.mjs';
 
-// These fixtures isolate catalog/driver behavior; record verification has its own native fixtures.
+// These fixtures isolate suite orchestration. Native response/record verification
+// has separate real-consumer fixtures. Only mocked hosts get constructed exchanges.
+const runSuiteWithRecords=(request,execute,verify)=>actualSuite(request,async r=>{
+ const result=await execute(r);
+ if(result.status==='passed'&&!result.check)result.check={exchanges:r.scenario.expectedReplies.map(expected=>({expected,text:expected.summary.join('\n')+'\nПозиция.\n'+expected.stage+' '+expected.id+'?'}))};
+ return result;
+},verify);
 const runSuite=(request,execute)=>runSuiteWithRecords(request,execute,async()=>({status:'passed',monotestTasks:0}));
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const source=path.join(root,'evals/scenarios');
@@ -39,12 +45,12 @@ function fixture(t) {
   return {dir,catalogDir,git,base,commit,select};
 }
 
-test('Mono catalog has exactly six stage contracts, all host windows and no stored run identities',()=>{
+test('Mono catalog has exactly six stage contracts, all host text replies and no stored run identities',()=>{
   const catalog=loadCatalog(path.join(source,'index.json'));
-  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,17);
+  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,18);
   for(const [id,stage] of catalog.stages){
-    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:3);
-    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','discuss']:['main','correction','empty']);
+    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:id==='idea'?4:3);
+    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','question']:id==='idea'?['main','correction','unclear','defer']:['main','correction','unclear']);
     assert(!stage.files.includes('templates/qa-output.md'));
     for(const common of ['references/owner-dialog.md','scripts/russian-stages.mjs','scripts/idea-gate.mjs']) assert(stage.files.includes(common));
   }
@@ -53,8 +59,8 @@ test('Mono catalog has exactly six stage contracts, all host windows and no stor
     assert(scenario.brief.includes('cli/runs.mjs') && scenario.brief.includes('source'),'brief describes the existing neutral test product');
     if(scenario.stage==='idea')assert.equal(scenario.seed,null);
     for(const host of ['claude','codex']){
-      assert.equal(scenario.hosts[host].windows.length,scenario.hosts[host].expectedWindows.length);
-      assert(scenario.hosts[host].expectedWindows.every(w=>['approval','transition'].includes(w.role)),'only target roles are expected');
+      assert(scenario.hosts[host].expectedReplies.length);
+      assert(scenario.hosts[host].expectedReplies.every(r=>['approval','transition','clarification'].includes(r.role)),'roles are predetermined');
     }
   }
   for(const [file,bytes] of catalog.files){
@@ -112,7 +118,7 @@ test('Design memory seed passes real design gate with repository prefix and arch
  const result=await runSuite(suiteRequest(f,f.select(),{paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:memory}),async request=>{
   if(request.context.entryStage==='design'){
    design++;const guard=json(request.mcpServers.paper.args[1]);assert.deepEqual(request.writableRoots,[path.dirname(memory),archive,guard.exportRunDir]);assert(fs.statSync(guard.exportRunDir).isDirectory());assert(!request.scenario.prompt.includes('собирает оркестратор'));assert(!request.scenario.prompt.includes('не переноси'));assert(request.scenario.prompt.includes('обычный шаг архивации'));
-   assert(request.scenario.expectedWindows.every(w=>w.reason==='Совет'));
+   assert(request.scenario.expectedReplies.every(r=>r.stage==='design'&&!r.asksStart));
    fs.cpSync(path.join(dump,'approved'),path.join(archive,'11111111-1111-1111-1111-111111111111'),{recursive:true});
    checkMemory(request.cwd,'stale-images');
    const seeded=JSON.parse(request.scenario.prompt.match(/Посей память: (.+?)\. Не меняй owner-taste/)[1]);
@@ -151,37 +157,17 @@ test('seed route is isolated from the following stage before any real stage runs
   assert(checked>0);
 });
 
-test('catalog window anchors accept live wording in both hosts without requiring topic prose',t=>{
-  const catalog=loadCatalog(path.join(source,'index.json'));
-  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-window-wording-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
-  const titles={
-    idea:[
-      'Утверждаем самостоятельную идею с колонкой источника? Советую перейти в Research: нужно проверить потребность.',
-      'Утверждаем колонку источника? Советую утвердить и начать Research: описание полное, а открыт только вопрос спроса.',
-      'Утверждаем учёт расходников по мастерам без остатков и закупок? Советую утвердить и начать Research: нужно выяснить потребность.'
-    ],
-    research:['Начинаем Discovery для колонки источника? Советую перейти: нужно выбрать проверку результата.', 'Продолжаем разбор колонки? Советую перейти: рамка уже ясна.'],
-    discovery:['Утверждаем колонку без настройки? Советую начать Design: нужно показать её в списке.'],
-    design:['Утверждаем макет колонки? Советую утвердить и передать в Handoff: рамка уже согласована.','Утверждаем колонку? Советую утвердить: источник читается сразу.'],
-    'tech-evaluation':['Утверждаем страницу решения? Советую начать Handoff: способ проверен.'],
-    handoff:['Начинаем пакет? Советую передать оркестратору: зависимости проверены.', 'Добавляем «Источник» после имени прогона, с прочерком для пустых значений? Советую начать работу: одна задача готова и проверена.']
-  };
-  for(const scenario of catalog.scenarios.values())for(const host of ['claude','codex'])for(const expected of scenario.hosts[host].expectedWindows){
-    if(expected.id.endsWith('-followup'))continue; // native optionless question, not an approval card
-    for(const title of titles[scenario.stage]){
-      const labels=[expected.role==='approval'?'Утвердить, продолжу позже (Recommended)':'Начать следующий этап (Recommended)','Ещё обсудить'];
-      const consequences=['Запишем выбор / рамку уже не меняем','Уточним рамку / переход ждёт'];
-      const summary=expected.summary.length?expected.summary.join('\n'):'Полный видимый итог текущего решения.';
-      const rows=host==='claude'
-        ? [{type:'assistant',message:{id:'wording',content:[{type:'text',text:summary},{type:'tool_use',id:'window',name:'AskUserQuestion',input:{questions:[{header:'Решение',question:title,options:labels.map((label,i)=>({label,description:consequences[i]}))}]}}]}}]
-        : [{type:'response_item',payload:{type:'function_call',call_id:'window',name:'request_user_input_async',arguments:JSON.stringify({questions:[{title:title+'\n'+labels.map((label,i)=>`${label}: ${consequences[i]}`).join('\n'),options:labels}]})}},
-          {type:'response_item',payload:{type:'function_call_output',call_id:'window',output:'{"accepted":true}'}},
-          {type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:summary}]}}];
-      const trace=path.join(dir,'trace.jsonl');fs.writeFileSync(trace,rows.map(r=>JSON.stringify(r)).join('\n')+'\n');
-      const result=checkTrace({host,trace,expectedWindows:[expected],excerpt:true});
-      assert.equal(result.status,'passed',`${scenario.stage}/${scenario.id}/${host}/${expected.id}: ${JSON.stringify(result)}`);
-    }
+test('catalog reply anchors accept the full final message and preserve the exact owner reply',async()=>{
+ const {textReply}=await import('./skills-owner.mjs');
+ const catalog=loadCatalog(path.join(source,'index.json'));
+ for(const scenario of catalog.scenarios.values())for(const host of ['claude','codex']){
+  const expected=scenario.hosts[host].expectedReplies;
+  for(const [i,r] of expected.entries()){
+   const shown=r.summary.join('\n')+'\nМоя позиция по '+scenario.stage+'.\nКак поступим'+r.question;
+   assert.equal(textReply({expectedReplies:expected},shown,i),r.reply);
+   assert.throws(()=>textReply({expectedReplies:expected},'Другой итог без вопроса',i),/question|summary/);
   }
+ }
 });
 
 test('stage-only diff selects all own scenarios and only main paths of every declared neighbor',t=>{
@@ -194,7 +180,7 @@ test('stage-only diff selects all own scenarios and only main paths of every dec
 
 test('shared owner-dialog change selects all scenarios of all six stages (AE4)',t=>{
   const f=fixture(t);write(path.join(f.dir,'references/owner-dialog.md'),'changed\n');f.commit();
-  const selected=f.select();assert.deepEqual(selected.affected,Object.keys(neighbors));assert.equal(selected.selected.length,17);
+  const selected=f.select();assert.deepEqual(selected.affected,Object.keys(neighbors));assert.equal(selected.selected.length,18);
 });
 
 test('unrelated QA template does not select stage behavior',t=>{
@@ -210,10 +196,10 @@ test('deleted scenario is refused even if index replaces it with another well-sh
   assert.throws(f.select,/removed scenario: idea\/empty/);
 });
 
-test('missing window, missing seed and escaped paths cannot produce a valid catalog',t=>{
+test('missing reply, missing seed and escaped paths cannot produce a valid catalog',t=>{
   const f=fixture(t), file=path.join(f.catalogDir,'design/approve/scenario.json'), original=fs.readFileSync(file);
-  let scenario=json(file);scenario.hosts.codex.expectedWindows=[];fs.writeFileSync(file,JSON.stringify(scenario));
-  assert.throws(()=>loadCatalog(path.join(f.catalogDir,'index.json')),/windows/);
+  let scenario=json(file);scenario.hosts.codex.expectedReplies=[];fs.writeFileSync(file,JSON.stringify(scenario));
+  assert.throws(()=>loadCatalog(path.join(f.catalogDir,'index.json')),/expectedReplies/);
   fs.writeFileSync(file,original);scenario=json(file);scenario.seed='../outside.json';fs.writeFileSync(file,JSON.stringify(scenario));
   assert.throws(()=>loadCatalog(path.join(f.catalogDir,'index.json')),/invalid path/);
   fs.writeFileSync(file,original);fs.rmSync(path.join(f.catalogDir,'seeds/prd-design.json'));
@@ -237,15 +223,10 @@ test('suite persists expectations before calls and shares one read-back project 
   const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'fixture',outputDir,cwd,packRoot:f.dir,
     mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'test-file',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'test-memory.md')},async request=>{
     assert.deepEqual(json(path.join(outputDir,'expected-items.json')),selection.expectedItems);
-    assert.equal(request.idleMs,20000);assert.equal(request.timeoutMs,1800000);assert(request.maxTurns>request.scenario.windows.length);
-    assert.equal(request.workspaceProof.equals,'Mono Test');assert(request.scenario.prompt.includes('не исполнитель-воркер'));
-    const next=request.context.followingStage;
-    const names={research:'Research',discovery:'Discovery',design:'Design','tech-evaluation':'Tech Evaluation',handoff:'Handoff'};
-    for(const window of request.scenario.expectedWindows){
-      if(window.role==='transition')for(const field of ['decision','advice','reason'])assert.equal(window[field],'Совет','transition role comes from labels, not title wording');
-      else if(request.context.entryStage==='design')assert.equal(window.reason,'Совет','Design does not require a following stage name');
-      else if(names[next])assert.equal(window.reason,names[next],'approval anchor follows the actual chain route');
-    }
+    assert.equal(request.idleMs,20000);assert.equal(request.timeoutMs,1800000);assert(request.maxTurns>request.scenario.expectedReplies.length);
+    assert.equal(request.workspaceProof.equals,'Mono Test');assert(request.scenario.prompt.includes('имитированным владельцем'));
+    assert.equal(request.scenario.expectedWindows,undefined);
+    assert(request.scenario.expectedReplies.every(r=>r.stage===request.context.entryStage));
     const relative=path.relative(cwd,request.context.projectFile);
     assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative),'model manifest must be writable under cwd, independent of outputDir');
     assert(!fs.existsSync(request.context.projectFile),'each stage must write its own manifest');
@@ -648,7 +629,7 @@ for(const mode of ['binding-only','bad-write','missing-page'])test(`live3 actual
   calls.push(r.context.entryStage);
   if(r.context.entryStage==='design')return {status:'unverified',reason:'Offline boundary: real Design evidence does not exist yet'};
   assert.equal(r.context.projectName,recordRequest.project.name);write(r.context.projectFile,JSON.stringify(recordRequest.project));
-  const check=checkTrace({host:'codex',trace:recordRequest.trace,endLine:recordRequest.endLine,expectedWindows:r.scenario.expectedWindows});assert.equal(check.status,'passed',JSON.stringify(check));
+  const check=checkTrace({host:'codex',trace:recordRequest.trace,endLine:recordRequest.endLine,expectedWindows:[{id:'discovery-approval',role:'approval',decision:'Утвержд',advice:'Совет',reason:'Design',summary:[]}]});assert.equal(check.status,'passed',JSON.stringify(check));
   return {status:'passed',seedRoute:{project:recordRequest.project},seedEndLine:recordRequest.seedEndLine,trace:recordRequest.trace,sent:recordRequest.sent};
  },async({scenario})=>{
   if(scenario.stage==='design')return {status:'unverified',reason:'No Design records supplied'};

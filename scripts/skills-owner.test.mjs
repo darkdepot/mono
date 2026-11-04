@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
-import { windowReply } from './skills-owner.mjs';
+import { windowReply } from './test-fixtures/legacy-window-owner.mjs';
 import { correctedVersion } from './skills-owner.mjs';
 import { nativeProof } from './skills-proof.mjs';
 function claudeReplyDelivered(block,reply){

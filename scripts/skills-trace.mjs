@@ -9,8 +9,8 @@ import { claudeWindows, traceRows, visibleText, textExchanges, checkEndings } fr
 import { roleWindows, windowRole, validateReplies, isOwnerWindow } from './skills-owner.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-// Full rule source, including host order. A rule edit requires checker/rubric review.
-export const OWNER_DIALOG_SHA256 = 'd9e88bf7f17960e3dd1bec2cebd4589d45a256eae704fec858aba0349d6c2d67';
+// Full rule source, including final-message order. A rule edit requires checker/rubric review.
+export const OWNER_DIALOG_SHA256 = '9b07cb3b2cdede5df62cc26f125676f5d533a5588ac849f49a4887d3755c5be3';
 export const visible = visibleText;
 export { completedTrace, codexTerminals } from './skills-audit.mjs';
 export { textExchanges, checkEndings } from './skills-probe.mjs';

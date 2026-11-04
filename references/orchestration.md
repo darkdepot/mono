@@ -20,7 +20,7 @@ answering as the delegated owner; a stage session owns its artifact and read-bac
 
 | Stage | Runs in |
 | --- | --- |
-| `mono:idea` | stage agent; orchestrator shows owner its description/window and relays only the owner's press |
+| `mono:idea` | stage agent; orchestrator shows owner its description verbatim as its final message and relays the shown text, question and verbatim owner reply |
 | `mono:research` | stage agent after authorized start; no owner questions or separate approval |
 | `mono:discovery` | stage agent; orchestrator answers with reasons and approves the shown PRD |
 | `mono:design` | stage agent when routed; first-product exemplars and taste consent remain with owner |
@@ -39,7 +39,7 @@ reapproval. A Project delegated before this version can rely on an explicit owne
 decision in a Project comment. Without either the owner leads: only owner starts
 Research and work (`by=owner`). Do not add `by` to strict `mono-idea` records.
 A `stale`/`legacy-migrate` Idea stops autonomous Research/work despite delegation:
-carry it to owner for button approval, confirmed new record and fresh check first.
+carry it to owner for approval in words on the shown version, confirmed new record and fresh check first.
 The orchestrator's reply or bundled start cannot approve that Idea snapshot.
 Only delegated Projects with that current approval allow autonomous Research/work,
 write start `by=orchestrator` with a reason, answer and approve after Idea, including
@@ -49,7 +49,7 @@ execute external writes or spending. Configured merge/release/deploy policy (`de
 Before each `by=orchestrator` record apply the countercheck below. The owner keeps
 Idea approval, first-product exemplars and consent to new taste rules. Their words
 reopen any approval. Owner-led stage sessions never accept another agent's reply
-as a press; the sole exception is a stage launched by the orchestrator, never Idea.
+as approval; the sole exception is a stage launched by the orchestrator, never Idea.
 
 Narrow control-plane exception: an explicit owner mandate may permit operational
 and deploy-repair changes (scripts, infra config, docs sweeps), recorded in the ledger
@@ -74,22 +74,22 @@ by size. Reapproval invalidates lower records when the route changes. Run `route
 before exemptions, then verify required records in chain order. PRD without
 `next=` retains the router's old path. Handoff verifies effective `mono-tech` for
 current PRD and consumes a valid record without another offer. Only absent/invalid
-tech with ordinary/large size gets «Начать Tech Evaluation» / «Ещё обсудить».
+tech with ordinary/large size gets a contextual text question about starting Tech Evaluation.
 Consent opens that old path; without it no package or continuation.
 Tech Evaluation owns new Tech Specs; Handoff consumes them and owns package repair.
 A changed tech page returns to its owner; class 3 repair needs a new authorized start.
 
 Stage agents use the same dialogue as owner sessions. Their last turn contains
-the result and window labels as text. Reply with exact label and reason on that
+the result, position and one contextual question as its final message. Reply in words with a reason on that
 version; agent records `by=orchestrator`, reason and countercheck outside fences,
-then reads back. Idea instead requires the owner's press in the orchestrator window.
+then reads back. Idea requires the owner: show the stage description verbatim as the orchestrator's final message, then relay that text, the actual question and the verbatim owner reply. A paraphrase is insufficient; without the owner's words no Idea approval.
 Do not relay other stage questions to the owner. After every stage send the owner
 its R1 result (conclusion, decisions, exclusions/reason, next, link; 120 words,
 Handoff 150), plus «Утвердил сам, потому что…». Decisions on their behalf come first:
 «Решил за тебя: …, потому что …». Show exceptions and deferred/irreversible choices.
 
-Handoff offers «Начать работу» / «Передать оркестратору» / «Ещё обсудить».
-In an ordinary Project the button or typed «передай оркестратору» records
+Handoff asks a contextual question about starting work.
+Only explicit owner words delegating work record
 `by=owner` and transfers delivery to the orchestrator. A delegated Project accepts
 orchestrator start with reason/countercheck. Ready alone never starts delivery.
 
@@ -154,7 +154,7 @@ when user config is ignored.
 
 Record verdict with model and reviewed-text version outside fences in that same
 approval comment, alongside reason; machine lines unchanged. Text or reason changes:
-check again. Objection: reply «Ещё обсудить» with it. Repeated objection on the same
+check again. Objection: explain it in words without approving. Repeated objection on the same
 point: decide, retain objection/rejection reason in record; first owner-result line:
 «Решил за тебя: … вопреки второй модели, потому что …». No response after one retry:
 no approval; report reason and continue other Projects. This countercheck is separate
@@ -347,7 +347,7 @@ For a package record, `tech-spec.md` holds the content of the current record's
 parseable; the dispatch label `Tech Spec:` stays) and `approval.md` is the authorized
 start comment; before dispatch verify ordinary `by=owner`, or delegated
 `by=orchestrator` with reason/countercheck (latest Idea mark or earlier owner decision),
-never bundling unapproved stale/legacy Idea: owner button/record/fresh check first; listing this
+never bundling unapproved stale/legacy Idea: owner agreement/record/fresh check first; listing this
 Issue, and names the record version it started with its `sha256`; the current
 version is that one or is reached from it by a verified chain of class 1-2
 versions with protected surfaces and Issue set unchanged. A class 3 version after

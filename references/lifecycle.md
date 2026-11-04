@@ -6,15 +6,13 @@
 `linear-scout` and `code-scout`, gather linked facts in parallel before the recap.
 Unmistakable one-PR projectless work routes to `mono:issue` only when the configured
 lane is enabled and has `ownerPrincipal`; otherwise it goes through a Project.
-Questions concern meaning, at most three, each built on the last answer (independent ones
-may go together); a route question is separate and may come early from the Linear facts.
+Questions concern meaning, at most three, each built on the last answer (one at a time); a route question is separate and may come early from the Linear facts.
 The stage session runs Idea; its orchestrator answers questions with reasons,
-shows the description/window to the owner and relays only their approval press.
+shows the description verbatim as its final message and relays the shown text, question and verbatim owner reply.
 
 Exit requires the owner's approval of What / Why / Target outcome / prioritized
-Unknowns, given only by pressing an approval option from `references/owner-dialog.md` (also under the
-orchestrator; chat words never approve; without a window there is no approval and
-nothing is written), and successful `verify` for that exact Project record. The writing
+Unknowns, given by clear agreement in words (or historical press) per `references/owner-dialog.md` (also through the orchestrator with the verbatim owner triple; no owner reply
+means no approval or record), and successful `verify` for that exact Project record. The writing
 and recovery steps live only in `skills/idea/references/record.md`. After «Готово» the
 status stays Idea, confirmed by read-back, then `mono:check idea` must pass. A Project returned
 with the three idea sections unchanged keeps its body, package and status;
@@ -27,10 +25,10 @@ Unknowns stay in the record. No Research document, PRD, Tech Spec, Issue, implem
 plan, ExecPlan or code is created here. A refusal returns to Idea.
 
 The next stage is Research (`mono:research`). The description itself is the summary,
-with one line on what Research will check, immediately above the combined approval/start
-window from `references/owner-dialog.md`. Prepare the Research plan before showing it
+with one line on what Research will check, a position and one contextual question
+as the final message per `references/owner-dialog.md`. Prepare the Research plan before showing it
 (`skills/research/references/plan.md`). After verified recording, give one recording line
-and honor the selected start or deferral; no second summary/window. A later explicit start
+and honor the selected start or deferral; no repeated summary. A later explicit start
 reuses verified approval of the same version. Ordinary Projects need owner start. Delegated Projects
 (PC-019: latest Idea delegation mark or earlier explicit owner decision) allow
 orchestrator Research start after confirmed Idea approval. The Project stays in Idea until then.
@@ -57,13 +55,13 @@ transition, except Design in a separate session whose parent ran Discovery.
 Ordinary Projects need owner Research/work start. Delegated Projects use the
 latest Idea delegation mark (or earlier explicit owner Project comment); only then
 may orchestrator start Research/work itself, `by=orchestrator` with reason and
-countercheck. Handoff window: «Начать работу» / «Передать оркестратору» / «Ещё обсудить».
-Owner's button or typed «передай оркестратору» records `by=owner` and transfers work.
+countercheck. Handoff asks about starting the shown package in a final text message. Delegation needs explicit owner words.
+Owner's explicit words «передай оркестратору» records `by=owner` and transfers work.
 Stage agents finish with confirmed record and selected transition; orchestrator
 launches the next stage. Each session writes and reads back its own Linear records.
 Single writer applies only to implement/preflight/ship workers' queued mutations.
-Shared `owner-dialog.md` owns the launch-context exception: orchestrator label/reason
-is a press on the shown version, never for Idea or in owner sessions. No stage agents
+Shared `owner-dialog.md` owns the launch-context exception: orchestrator words/reason
+is agreement in words on the shown version, never for Idea or in owner sessions. No stage agents
 spawn stages. Discovery callbacks from Design/Tech Evaluation stay in that session,
 with partial-write recovery unchanged. Every `by=orchestrator` record requires the
 orchestrator's independent countercheck, verdict/model/version and reason outside
@@ -74,7 +72,7 @@ fences in the same comment. Every stage result goes to owner immediately.
 `mono:discovery` takes the approved Idea record and Research («Исследование»),
 searches for the solution with the owner in conversation (own view, two or three
 solutions that differ by what the owner gets, a live example), obtains an explicit
-choice and writes the chosen solution's PRD in Linear with a clicked approval option
+choice and writes the chosen solution's PRD in Linear with clear agreement in words or a historical press
 bound to the shown document version. It runs in
 the owner session or a stage agent launched by the orchestrator; delivery workers
 (codex-cli, claude-cli) do not lead stages. Launch task alone identifies the owner. Details and the selected Research link stay in the Discovery task.
@@ -101,7 +99,7 @@ drift applies, without rechecking PRD yes.
 The entry `fresh` check admits `pass`; owner-led stale/legacy Ideas are shown in
 Handoff and carried only in owner-approved start (legacy: package approval).
 Delegated `stale`/`legacy-migrate` stops autonomous Research/work: carry Idea to
-owner, obtain their button approval, confirmed record and fresh check first.
+owner, obtain their agreement in words or historical button approval, confirmed record and fresh check first.
 An orchestrator reply/start never approves that Idea snapshot. Migration alone
 never permits implementation. `no-record` on a new project returns to `mono:idea`.
 Implement checks `approved` before start.
@@ -177,11 +175,11 @@ A PRD correction uses one approval of mockups and «Было / Стало». Dis
 writes the PRD and its approval with `design=needed next=design`, then Design
 writes its record with the new `prd-updatedAt` in the same touch. Only the first
 succeeded: retry the second under the same approval. Designer never edits PRD.
-Owner-led Discovery offers «Утвердить и начать Design»; Desktop opens a fresh
+Owner-led Discovery asks about approving the shown PRD and starting Design; Desktop opens a fresh
 session via `mcp__ccd_session__start_session` using
 `$TMPDIR/mono-design/<project>/brief.md`; Codex/terminal use that brief with
 `mono:design`. Design ends after checked recording, without a
-next-stage window. Return: round marker to the waiting Claude Code parent;
+question about starting the next stage. Return: round marker to the waiting Claude Code parent;
 manual in Codex; agent turn end under delegation. Parent verifies the record
 before offering `next`. The orchestrator approves the shown version
 `by=orchestrator` with reason and countercheck. No product memory: the owner
@@ -219,8 +217,7 @@ large Projects; tiny work goes directly to Handoff. Route by records, not dates:
 `next=tech-evaluation|handoff` in `mono-prd: approved`. A PRD approval without
 `next=` is the **Tech Evaluation old path**; the router is unchanged. Handoff
 verifies any effective `mono-tech` for the current PRD: a valid record is consumed
-without another offer. Without one, ordinary/large PRD requires «Начать Tech Evaluation» /
-«Ещё обсудить». Owner/delegated consent is the request opening that route; without
+without another offer. Without one, ordinary/large PRD requires a text question about starting Tech Evaluation. Owner/delegated consent is the request opening that route; without
 it no package or continuation. Tiny work may skip. This differs from Discovery's
 no-PRD old path. Existing tech is consumed even on the Design old path.
 Discovery first decides design at every approval, then size: needed goes to
@@ -232,7 +229,7 @@ Changed routes invalidate lower approvals; same route allows renewal without
 showing only when that stage itself confirms unchanged screens/page.
 
 Tech Evaluation owns the technical decision and new Tech Spec. Owner-led: show
-one page immediately above the combined approval/start window from `references/owner-dialog.md`,
+one page with a position and contextual question as the final message per `references/owner-dialog.md`,
 on that exact version, `by=owner`. Orchestrator-led:
 the stage agent runs the same stage; orchestrator approves `by=orchestrator`
 with a reason, including irreversible decisions, a deferred PRD item and a
@@ -287,7 +284,7 @@ Tech Evaluation calls Discovery in the same touch. Only Discovery moves that
 item into «Что не входит в MVP», records a new `mono-prd: approved`, deciding design then size again
 (on the owner-requested old path without mockups, `next=tech-evaluation`), and appends a
 line to its closed stage task's decision comment without reopening the task.
-Owner-led: `by=owner` and «по нажатию на странице техлида <дата>».
+Owner-led: `by=owner` and «Владелец: ответил «<verbatim reply to the tech page>»».
 Orchestrator-led: `by=orchestrator` with the reason. Then Tech Evaluation writes
 the Spec and `mono-tech` with the new PRD version and latest design id. It never edits PRD itself.
 
@@ -344,8 +341,8 @@ Required:
 - One package record as a Project comment, then execution Issues, `mono:check handoff`,
   and Ready set and read back. If Ready is absent from the workspace, keep Discovery;
   the check reports that fallback.
-- Final message, then the summary with «Начать работу» / «Передать оркестратору» / «Ещё обсудить».
-- Authorized start written/read back: ordinary `by=owner` after button or words;
+- Final message, the summary, position and one contextual text question as the final message.
+- Authorized start written/read back: ordinary `by=owner` after clear agreement in words or a historical button press;
   delegated `by=orchestrator` with reason/countercheck per PC-019.
 
 Forbidden:
@@ -543,7 +540,7 @@ Required:
   its selected transition; orchestrator starts the next session, not the stage.
 - Single Linear writer only for implement/preflight/ship workers: orchestrator
   applies their queued mutations. Pre-delivery stage agents write their own records.
-- Idea always waits for owner press. Delegated Projects per PC-019 allow autonomous
+- Idea always waits for owner agreement in words. Delegated Projects per PC-019 allow autonomous
   Research/work start and approvals with reason/countercheck; ordinary Projects do not.
 - Owner retains new taste rules and first exemplars. Each result reaches them with
   «Утвердил сам, потому что…» and leading «Решил за тебя: …, потому что …» where needed.
@@ -552,7 +549,6 @@ Required:
 - Append messages immediately to product `.claude/session-views/`, locally excluded
   via `.git/info/exclude` if needed; link conversation in owner result.
 - Deploy approval follows configured policy.
-
 
 Forbidden:
 

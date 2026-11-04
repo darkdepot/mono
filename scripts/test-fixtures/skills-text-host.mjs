@@ -3,7 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 const [mode,...rawArgs]=process.argv.slice(2),home=process.env.CODEX_HOME;
-const userBeforeStart=rawArgs.includes('--user-before-start'),args=rawArgs.filter(a=>a!=='--user-before-start');
+const userBeforeStart=rawArgs.includes('--user-before-start'),args=rawArgs.filter((a,i)=>a!=='--user-before-start'&&a!=='--plan'&&rawArgs[i-1]!=='--plan');
+const planIndex=rawArgs.indexOf('--plan');
+const plan=planIndex<0?null:JSON.parse(fs.readFileSync(rawArgs[planIndex+1],'utf8'));
+let planTurn=0;
 const out=e=>process.stdout.write(JSON.stringify(e)+'\n');
 const samples=JSON.parse(fs.readFileSync(new URL('./skills-text-responses.json',import.meta.url)));
 const response=()=>samples.find(sample=>sample.id===mode)?.actual??(mode==='unclear'?'Что смущает?':mode==='correction'?'Добавлен вопрос про Codex.':'Утверждение записал.');
@@ -20,7 +23,7 @@ if(args[0]==='exec') {
   if(mode!=='drop-reply'||prompt==='Run text')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});
   if(userBeforeStart)start();
   if(mode==='extra-owner'&&prompt!=='Run text')item({type:'message',role:'user',content:[{type:'input_text',text:'Начинай Research'}]});
-  const text=prompt==='Run text'?message:response();
+  const text=plan?plan.messages[rows.filter(r=>r.type==='response_item'&&r.payload?.type==='message'&&r.payload.role==='user').length]:prompt==='Run text'?message:response();
   if(mode==='window')item({type:'function_call',name:'request_user_input_async',call_id:'bad',arguments:'{"questions":[{"title":"Выбор?"}]}'});
   item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]});
  }
@@ -37,7 +40,7 @@ input.on('line',line=>{
  else {
   if(args.includes('--replay-user-messages')&&mode!=='drop-reply')out(e);
   if(mode==='extra-owner'&&e.message.content[0].text!=='Run text')out({...e,message:{role:'user',content:[{type:'text',text:'Начинай Research'}]}});
-  const prompt=e.message.content[0].text,text=prompt==='Run text'?message:response();
+  const prompt=e.message.content[0].text,text=plan?plan.messages[planTurn++]:prompt==='Run text'?message:response();
   if(mode==='window')out({type:'assistant',message:{content:[{type:'tool_use',id:'bad',name:'AskUserQuestion',input:{questions:[]}}]}});
   out({type:'assistant',message:{content:[{type:'text',text}]}});
  }

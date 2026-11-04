@@ -1,5 +1,22 @@
 # Plugin Installation and Compatibility
 
+## Stage dialogue migration (MONO-309)
+
+After installing a release containing this change, start fresh stage sessions:
+existing sessions keep their loaded rules. Idea, Research, Discovery, Design,
+Tech Evaluation and Handoff use the final chat message for the full result,
+position and one contextual question. They do not invoke choice windows; the
+Claude Code Desktop next-step frame receives only the result, without a question
+or response buttons. Approvals contain verbatim owner words and only the named
+correction. Existing clicked records and machine formats remain valid.
+
+The project artifact contract fingerprint changes explicitly; other artifact
+contracts, delivery gates and `idea-gate.mjs` semantics stay unchanged. The stage
+catalog uses T1 `expectedReplies`; old window traces are historical fixtures,
+not a runnable catalog path. Release/version changes and live Claude Desktop /
+Codex app acceptance belong to MONO-310. Historical release sections below
+report the behavior of those releases, not current stage instructions.
+
 ## Source Of Truth
 
 Install from the GitHub marketplace repository `darkdepot/mono`, never a local
