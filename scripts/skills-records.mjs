@@ -256,7 +256,6 @@ function presentationRead(data,line,recordId) {
  const read=resultFor(data.host,call,data.rows);
  if(recordId&&Array.isArray(read.value.comments))read.value=read.value.comments.find(row=>idOf(row)===recordId);
  if(!text(idOf(read.value))||typeof bodyOf(read.value)!=='string')missing('native document identity/body missing');
- if(call.name.endsWith('__get_document')&&callInput(data.host,call).id!==idOf(read.value))throw new Error('native document read identity differs from requested document');
  return read;
 }
 function presentationKind(expected,binding) {

@@ -1115,6 +1115,15 @@ test('Handoff text start binds the shown package hash; defer cannot write that s
  delete f.request.stageStartLine; // This replacement trace starts directly with Handoff.
  const flush=()=>fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');flush();
  const r=f.check();assert.equal(r.status,'passed',r.reason);
+ const approvedStart=start.body;
+ const persistStart=body=>{
+  start.body=body;rows[5].payload.arguments=JSON.stringify({projectId:id,body});rows[6].payload.output=JSON.stringify(start);
+  fs.writeFileSync(commentsFile,JSON.stringify(comments));
+  fs.writeFileSync(f.request.dumpTrace,timed(dumpRows,'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');flush();
+ };
+ persistStart(approvedStart.replace(createHash('sha256').update(body).digest('hex'),'0'.repeat(64)));
+ const stalePackage=f.check();assert.equal(stalePackage.status,'failed');assert.match(stalePackage.reason,/shown content\/version/);
+ persistStart(approvedStart);assert.equal(f.check().status,'passed');
  Object.assign(expected,{intent:'defer',reply:'да, но позже',outcome:{approval:false,startNext:false}});rows[2].payload.content[0].text=expected.reply;flush();const rejected=f.check();assert.equal(rejected.status,'failed');assert.match(rejected.reason,/start-next-stage without scenario authority/);
 });
 
@@ -1358,4 +1367,13 @@ for(const host of ['claude','codex'])test(`U7 ${host}: correction with valid anc
  f.record.body=`mono-test: approved\n${changed}\n\nВладелец: ответил «${f.expected.reply}»\nПоправка: экспорт включён.`;
  f.page('comments','comments',[f.record]);f.events[7]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[8]=f.result('write',f.record);
  f.attest({correction:'failed'});const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.equal(result.reason,'scenario rubric failed');
+});
+
+for(const host of ['claude','codex'])for(const lookup of ['doc','prd-source-slug'])test(`continue1 ${host}: native document identity comes from response (${lookup})`,t=>{
+ const f=u7DocumentFixture(t,host);
+ f.events[0]=f.call('shown','mcp__monotest__get_document',{id:lookup});
+ f.events[5]=f.call('read','mcp__monotest__get_document',{id:lookup});
+ f.attest();assert.equal(f.check().status,'passed',f.check().reason);
+ f.fresh.id='different-document';f.events[6]=f.result('read',f.fresh);
+ const changed=f.check();assert.equal(changed.status,'failed');assert.match(changed.reason,/document changed/);
 });

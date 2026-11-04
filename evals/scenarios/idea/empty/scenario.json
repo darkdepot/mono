@@ -46,10 +46,17 @@
                 "измени"
               ]
             ],
-            "forbidden": [
-              "Research"
-            ],
-            "question": true
+            "forbidden": [],
+            "question": true,
+            "forbiddenExact": [
+              "Начинаю Research.",
+              "Начинаю Research",
+              "Начинаем Research.",
+              "Начнём Research?",
+              "Начнем Research?",
+              "Давай начнём Research.",
+              "Начать Research?"
+            ]
           },
           "presentation": "inline",
           "driverStart": null
@@ -94,10 +101,17 @@
                 "измени"
               ]
             ],
-            "forbidden": [
-              "Research"
-            ],
-            "question": true
+            "forbidden": [],
+            "question": true,
+            "forbiddenExact": [
+              "Начинаю Research.",
+              "Начинаю Research",
+              "Начинаем Research.",
+              "Начнём Research?",
+              "Начнем Research?",
+              "Давай начнём Research.",
+              "Начать Research?"
+            ]
           },
           "presentation": "inline",
           "driverStart": null

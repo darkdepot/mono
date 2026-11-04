@@ -3,11 +3,13 @@ export const targetReplyCount = replies => replies.filter(r=>r.target!==false).l
 export const anchored = r => typeof r.question==='object' && r.question!==null;
 const strings = values => Array.isArray(values) && values.every(s=>typeof s==='string'&&s.trim());
 function anchorPolicy(policy) {
-  return policy && Array.isArray(policy.anchors) && policy.anchors.length && policy.anchors.every(s=>typeof s==='string'?s.trim():strings(s)&&s.length) && strings(policy.forbidden??[]);
+  return policy && Array.isArray(policy.anchors) && policy.anchors.length && policy.anchors.every(s=>typeof s==='string'?s.trim():strings(s)&&s.length) && strings(policy.forbidden??[]) && strings(policy.forbiddenExact??[]);
 }
 export function checkAnchors(policy, value, label) {
   if (!policy.anchors.every(group=>(Array.isArray(group)?group:[group]).some(s=>value.toLocaleLowerCase().includes(s.toLocaleLowerCase())))) throw new Error(`${label} lacks scenario anchors`);
   if ((policy.forbidden??[]).some(s=>value.toLocaleLowerCase().includes(s.toLocaleLowerCase()))) throw new Error(`${label} has forbidden scenario anchor`);
+  const lines=value.split('\n').map(line=>line.trim().toLocaleLowerCase());
+  if ((policy.forbiddenExact??[]).some(s=>lines.includes(s.trim().toLocaleLowerCase()))) throw new Error(`${label} has forbidden exact scenario line`);
 }
 export function validateReplies(expected) {
   if (!Array.isArray(expected) || !expected.length) throw new Error('scenario expectedReplies required');

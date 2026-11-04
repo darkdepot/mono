@@ -43,10 +43,17 @@
                 "утверд"
               ]
             ],
-            "forbidden": [
-              "Research"
-            ],
-            "question": false
+            "forbidden": [],
+            "question": false,
+            "forbiddenExact": [
+              "Начинаю Research.",
+              "Начинаю Research",
+              "Начинаем Research.",
+              "Начнём Research?",
+              "Начнем Research?",
+              "Давай начнём Research.",
+              "Начать Research?"
+            ]
           },
           "correction": {
             "before": "Фильтр и сортировку не добавляем.",
@@ -102,10 +109,17 @@
                 "утверд"
               ]
             ],
-            "forbidden": [
-              "Research"
-            ],
-            "question": false
+            "forbidden": [],
+            "question": false,
+            "forbiddenExact": [
+              "Начинаю Research.",
+              "Начинаю Research",
+              "Начинаем Research.",
+              "Начнём Research?",
+              "Начнем Research?",
+              "Давай начнём Research.",
+              "Начать Research?"
+            ]
           },
           "correction": {
             "before": "Фильтр и сортировку не добавляем.",

@@ -665,7 +665,7 @@ for(const repeated of [false,true])test(`text catalog and suite preserve predete
  if(repeated)assert(result.results.some(r=>r.result.reason==='identical endings across stages'));
 });
 
-for(const mode of ['authorized','missing-signal','no-permission','rubric-failed'])test(`U7 suite driver owns the next invocation: ${mode}`,async t=>{
+for(const mode of ['authorized','missing-signal','no-permission','rubric-failed','rubric-unverified'])test(`U7 suite driver owns the next invocation: ${mode}`,async t=>{
  const f=fixture(t);
  // Unlike the preserved T1 regressions, these inputs are the shipped U7 policies.
  for(const key of ['research/approve','discovery/approve']){
@@ -678,7 +678,19 @@ for(const mode of ['authorized','missing-signal','no-permission','rubric-failed'
  const calls=[];
  const result=await runSuiteWithRecords(suiteRequest(f,selection),async request=>{
   calls.push(request.context.entryStage);write(request.context.projectFile,JSON.stringify(runProject(request)));return passedStage(request);
- },async()=>({status:mode==='rubric-failed'?'failed':'passed',starts:mode==='missing-signal'?[]:[{stage:'discovery',replyId:'research-approve',kind:'intercepted',line:12}],monotestTasks:0}));
+ },async()=>({status:mode==='rubric-failed'?'failed':mode==='rubric-unverified'?'unverified':'passed',starts:mode==='missing-signal'?[]:[{stage:'discovery',replyId:'research-approve',kind:'intercepted',line:12}],monotestTasks:0}));
  assert.deepEqual(calls,mode==='authorized'?['research','discovery']:mode==='no-permission'?[]:['research']);
- assert.equal(result.status,mode==='authorized'?'passed':'failed');
+ assert.equal(result.status,mode==='authorized'?'passed':mode==='rubric-unverified'?'unverified':'failed');
+});
+
+test('continue1 Handoff correction revises package verification while preserving requirements',()=>{
+ const scenario=loadCatalog(path.join(source,'index.json')).scenarios.get('handoff/correction');
+ assert.match(scenario.brief,/после имени прогона/);
+ for(const host of ['claude','codex']){
+  const [revise,start]=scenario.hosts[host].expectedReplies;
+  assert.match(revise.reply,/проверке задачи/);assert.match(revise.reply,/без поля source/);
+  assert.doesNotMatch(revise.reply,/перед именем/);
+  assert.equal(revise.intent,'continuation');assert.deepEqual(revise.outcome,{approval:false,startNext:false});
+  assert.equal(start.role,'transition');assert.equal(start.outcome.startNext,true);
+ }
 });

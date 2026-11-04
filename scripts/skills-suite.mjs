@@ -95,7 +95,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         manifestDir ??= fs.mkdtempSync(path.join(request.cwd,`.mono-skills-${request.runId}-`));
         scenario=catalog.scenarios.get(key);
         if(position>0&&previousResult?.anchored) {
-          if(previousResult.status==='failed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage))throw new Error('driver start blocked: scenario permission and post-reply stage signal required');
+          if(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
         }
         if (!scenario) throw new Error(`selected scenario removed: ${key}`);
         const flow=scenario.hosts[host];
@@ -176,7 +176,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
       previousResult={...result,anchored:runRequest?.scenario.expectedReplies?.some(anchored)};
       const item={durationMs:Date.now()-stageStart,monotestTasks:result.records?.monotestTasks??null,unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
       if(result.records?.stop)break runs;
-      if (result.status === 'failed') break;
+      if (result.status === 'failed'||previousResult.anchored&&result.status!=='passed') break;
     }
   }
   const items=selection.expectedItems.map(expected=>{

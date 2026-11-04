@@ -1628,7 +1628,10 @@ before the run; a required rubric judges their meaning against the native docume
 A short summary links to the document ID and body hash read before showing and
 freshly after the reply; updatedAt is auxiliary. Corrections change only the named
 passage. The driver starts a following stage only with predefined scenario permission
-and a native post-reply action. Window decoders live only in archived test fixtures.
+and a native post-reply action after the current stage rubric passes. Canonical
+document identities come from native responses, including slug lookups. Harmless
+deferral wording is allowed; exact forbidden offers and the semantic rubric remain
+blocking. Window decoders live only in archived test fixtures.
 Extra replies, questions, completed turns, forged quotes, early writes and unfinished
 main/scout activity remain blocking. See [skill QA](references/qa-skills.md).
 The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 18

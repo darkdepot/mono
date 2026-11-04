@@ -39,7 +39,8 @@ for(const host of ['claude','codex'])for(const scenario of shippedCatalog.scenar
  if(scenario.id==='discuss')messages=[base[0],'Исследование закрыло неизвестные; в Discovery выберем решение.'];
  if(scenario.id==='defer')messages=[base[0].replace('Принимаем эту идею?','Принимаем эту идею и начинаем Research?'),'Утверждение записал, Research начнём позже.'];
  if(scenario.id==='correction'){
-  if(['design','handoff'].includes(stage))messages=[base[0],base[0].replace('Источник','Источник перед именем, новая версия'),base[1]];
+  if(stage==='design')messages=[base[0],base[0].replace('Источник','Источник перед именем, новая версия'),base[1]];
+  else if(stage==='handoff')messages=[base[0],base[0].replace('пакет, проверки и Ready готовы','пакет новой версии, проверка записи без source и Ready готовы'),base[1]];
   else{const at=base[0].lastIndexOf('\n');messages=[base[0].slice(0,at)+'\nФильтр и сортировку не добавляем.'+base[0].slice(at),'Экспорт добавлен к исключениям. '+base[1]];}
  }
  if(scenario.kind==='main'&&['idea','discovery','tech-evaluation'].includes(stage)){

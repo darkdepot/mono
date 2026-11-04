@@ -69,3 +69,11 @@ test('U7 anchor policy accepts alternate wording but retains structural reply an
  assert.throws(()=>textReply({expectedReplies:[r]},'Источник\nНачинаем Design?',0),/question/);
  assert.throws(()=>validateReplies([{...r,by:'orchestrator',reason:'так',reply:'принимаю, так',driverStart:'design',outcome:{approval:true,startNext:true}}]),/authority|delegated/);
 });
+
+for(const stage of ['idea','discovery','tech-evaluation'])test(`continue1 ${stage}: harmless deferred mention passes; literal start offers remain forbidden`,async()=>{
+ const {checkStageResponse}=await import('./skills-owner.mjs');
+ const file=new URL(`../evals/scenarios/${stage}/correction/scenario.json`,import.meta.url),expected=JSON.parse(fs.readFileSync(file)).hosts.codex.expectedReplies[0];
+ const next={idea:'Research',discovery:'Design','tech-evaluation':'Handoff'}[stage];
+ for(const mention of [`${next} пока не начинаю.`,`Не начинаю ${next}.`,`${next} начнём позже.`])checkStageResponse(expected,`Экспорт исключён. Утверждение записал. ${mention}`);
+ for(const offer of [`Начинаю ${next}.`,`Начнём ${next}?`])assert.throws(()=>checkStageResponse(expected,`Экспорт исключён. Утверждение записал.\n${offer}`),/forbidden|question/);
+});

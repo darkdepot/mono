@@ -42,10 +42,17 @@
                 "утверд"
               ]
             ],
-            "forbidden": [
-              "Handoff"
-            ],
-            "question": false
+            "forbidden": [],
+            "question": false,
+            "forbiddenExact": [
+              "Начинаю Handoff.",
+              "Начинаю Handoff",
+              "Начинаем Handoff.",
+              "Начнём Handoff?",
+              "Начнем Handoff?",
+              "Давай начнём Handoff.",
+              "Начать Handoff?"
+            ]
           },
           "correction": {
             "before": "Фильтр и сортировку не добавляем.",
@@ -103,10 +110,17 @@
                 "утверд"
               ]
             ],
-            "forbidden": [
-              "Handoff"
-            ],
-            "question": false
+            "forbidden": [],
+            "question": false,
+            "forbiddenExact": [
+              "Начинаю Handoff.",
+              "Начинаю Handoff",
+              "Начинаем Handoff.",
+              "Начнём Handoff?",
+              "Начнем Handoff?",
+              "Давай начнём Handoff.",
+              "Начать Handoff?"
+            ]
           },
           "correction": {
             "before": "Фильтр и сортировку не добавляем.",

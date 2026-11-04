@@ -45,12 +45,31 @@
                 "измени"
               ]
             ],
-            "forbidden": [
-              "Design",
-              "Tech Evaluation",
-              "Handoff"
-            ],
-            "question": true
+            "forbidden": [],
+            "question": true,
+            "forbiddenExact": [
+              "Начинаю Design.",
+              "Начинаю Design",
+              "Начинаем Design.",
+              "Начнём Design?",
+              "Начнем Design?",
+              "Давай начнём Design.",
+              "Начать Design?",
+              "Начинаю Tech Evaluation.",
+              "Начинаю Tech Evaluation",
+              "Начинаем Tech Evaluation.",
+              "Начнём Tech Evaluation?",
+              "Начнем Tech Evaluation?",
+              "Давай начнём Tech Evaluation.",
+              "Начать Tech Evaluation?",
+              "Начинаю Handoff.",
+              "Начинаю Handoff",
+              "Начинаем Handoff.",
+              "Начнём Handoff?",
+              "Начнем Handoff?",
+              "Давай начнём Handoff.",
+              "Начать Handoff?"
+            ]
           },
           "presentation": "document",
           "driverStart": null
@@ -94,12 +113,31 @@
                 "измени"
               ]
             ],
-            "forbidden": [
-              "Design",
-              "Tech Evaluation",
-              "Handoff"
-            ],
-            "question": true
+            "forbidden": [],
+            "question": true,
+            "forbiddenExact": [
+              "Начинаю Design.",
+              "Начинаю Design",
+              "Начинаем Design.",
+              "Начнём Design?",
+              "Начнем Design?",
+              "Давай начнём Design.",
+              "Начать Design?",
+              "Начинаю Tech Evaluation.",
+              "Начинаю Tech Evaluation",
+              "Начинаем Tech Evaluation.",
+              "Начнём Tech Evaluation?",
+              "Начнем Tech Evaluation?",
+              "Давай начнём Tech Evaluation.",
+              "Начать Tech Evaluation?",
+              "Начинаю Handoff.",
+              "Начинаю Handoff",
+              "Начинаем Handoff.",
+              "Начнём Handoff?",
+              "Начнем Handoff?",
+              "Давай начнём Handoff.",
+              "Начать Handoff?"
+            ]
           },
           "presentation": "document",
           "driverStart": null

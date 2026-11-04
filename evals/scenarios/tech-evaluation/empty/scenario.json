@@ -45,10 +45,17 @@
                 "измени"
               ]
             ],
-            "forbidden": [
-              "Handoff"
-            ],
-            "question": true
+            "forbidden": [],
+            "question": true,
+            "forbiddenExact": [
+              "Начинаю Handoff.",
+              "Начинаю Handoff",
+              "Начинаем Handoff.",
+              "Начнём Handoff?",
+              "Начнем Handoff?",
+              "Давай начнём Handoff.",
+              "Начать Handoff?"
+            ]
           },
           "presentation": [
             "inline",
@@ -95,10 +102,17 @@
                 "измени"
               ]
             ],
-            "forbidden": [
-              "Handoff"
-            ],
-            "question": true
+            "forbidden": [],
+            "question": true,
+            "forbiddenExact": [
+              "Начинаю Handoff.",
+              "Начинаю Handoff",
+              "Начинаем Handoff.",
+              "Начнём Handoff?",
+              "Начнем Handoff?",
+              "Давай начнём Handoff.",
+              "Начать Handoff?"
+            ]
           },
           "presentation": [
             "inline",
