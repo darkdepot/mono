@@ -1651,15 +1651,18 @@ Scope/risk flags persist across rounds for confirmed and rejected findings until
 new checker evidence clears them. Before each launch, secret scanning covers the
 whole context: contract, rules, diff context, findings, history and base evidence;
 retained failed answers are screened too. Exact file/line fixture exceptions stay
-in code. Plain file text never acts as patch framing. Failed answers are redacted
-line by line, then scanned again for remaining multiline assignments before retention,
-and capped; interruption stops later evaluation calls and remains a scored row.
+in code. Plain file text never acts as patch framing. Failed answers decode
+JSON/JSONL transport fields before line redaction and a final multiline scan.
+Malformed envelopes are withheld; retained answers are capped. Interruption stops
+later evaluation calls and remains a scored row.
 Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules
 come from pinned Git blobs; the host never follows AGENTS.md symlinks into files
 outside the reviewed version.
 All host Git diff/show reads disable external diff and textconv, alongside hook
-and fsmonitor overrides. Diffs and file inventories override submodule ignore
-settings and show gitlink changes explicitly; coverage must include those paths.
+and fsmonitor overrides. Status and diff override submodule ignore settings.
+Dirty submodules are refused before any role;
+gitlink changes are explicitly unsupported and return `not-reviewed`. Patch secret
+screening reconstructs both sides of each hunk to detect multiline assignments.
 
 Outcome vocabulary is `clean`, `clean-with-successors`, `not-converged`,
 `not-reviewed`; this first slice emits no successor admission. It reports

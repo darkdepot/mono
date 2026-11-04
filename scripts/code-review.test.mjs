@@ -188,6 +188,51 @@ test('failed answers redact multiline assignments even alongside other secrets, 
   assert.ok(scanSecrets(bad,{patch:false}).some(match=>match.reason.includes('multiline')));
  }
 });
+test('patch multiline assignments stop before any role, on both sides and across context lines',async t=>{
+ for(const shape of ['added','removed','context'])await t.test(shape,async t=>{
+  const f=fixture(t),secret='opaqueFixture'+'x'.repeat(24);
+  const before=shape==='added'?'export const safe = 1;\n':`password =\n"${shape==='context'?'short':secret}"\n`;
+  fs.writeFileSync(path.join(f.worktree,'input.mjs'),before);f.git('add','.');f.git('commit','-qm','before assignment');const base=f.git('rev-parse','HEAD');
+  fs.writeFileSync(path.join(f.worktree,'input.mjs'),shape==='removed'?'export const safe = 2;\n':`password =\n"${secret}"\n`);
+  f.git('add','.');f.git('commit','-qm','assignment change');const head=f.git('rev-parse','HEAD'),runner=responder();
+  const result=await runReviewRound({...f.request,base,head},runner);
+  assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.equal(result.rounds.length,0);
+  assert.ok(result.secrets.length);assert.ok(!JSON.stringify(result).includes(secret));
+ });
+});
+test('failed transport answers decode JSONL and object fields before redaction, withholding malformed envelopes',async t=>{
+ const f=fixture(t),secret='opaqueFixture'+'z'.repeat(24),assignment=`password =\n"${secret}"`;
+ const bad=[
+  JSON.stringify({type:'assistant',message:{content:[{type:'text',text:assignment}]}})+'\n',
+  JSON.stringify({type:'thread.started',thread_id:'fixture'})+'\n'+JSON.stringify({type:'item.completed',item:{type:'agent_message',text:assignment}})+'\n',
+  'diagnostic prefix\n'+JSON.stringify({type:'result',result:`"access_token": "${secret}"`}),
+  {completed:false,diagnostic:{password:secret}},
+  '{"type":"assistant","text":"password = \\"'+secret,
+ ];
+ for(const rawAnswer of bad){
+  const result=await runReviewRound(f.request,{runRole:async()=>{throw Object.assign(new Error('role failed (1)'),{rawAnswer});}});
+  const failures=result.failures.filter(failure=>failure.answer);assert.equal(failures.length,2);
+  assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);
+  for(const {answer} of failures){assert.ok(!answer.text.includes(secret),'decoded secret survived retention');assert.ok(Buffer.byteLength(answer.text)<=8192);}
+ }
+ const safe=JSON.stringify({type:'assistant',message:{content:[{text:'Safe diagnostic for the operator'}]}})+'\n';
+ const result=await runReviewRound(f.request,{runRole:async()=>{throw Object.assign(new Error('role failed (1)'),{rawAnswer:safe});}});
+ assert.match(result.failures[0].answer.text,/Safe diagnostic for the operator/);
+});
+test('ignored populated submodule dirtiness is refused before any role',async t=>{
+ for(const ignore of ['all','dirty'])for(const change of ['tracked','untracked','head'])await t.test(`${ignore}/${change}`,async t=>{
+  const f=fixture(t),upstream=fixture(t);
+  f.git('-c','protocol.file.allow=always','submodule','add','-q',upstream.worktree,'module');f.git('commit','-qm','add populated submodule');const head=f.git('rev-parse','HEAD');
+  f.git('config','submodule.module.ignore',ignore);f.git('config','diff.ignoreSubmodules','all');
+  const module=path.join(f.worktree,'module');
+  if(change==='head')execFileSync('git',['checkout','-q',upstream.request.base],{cwd:module});
+  else fs.writeFileSync(path.join(module,change==='tracked'?'input.mjs':'untracked.txt'),'unpinned content\n');
+  if(ignore==='all'||change!=='head')assert.equal(f.git('status','--porcelain=v1'),'');
+  assert.match(f.git('status','--porcelain=v1','--ignore-submodules=none'),/module/);
+  const runner=responder(),result=await runReviewRound({...f.request,head},runner);
+  assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);assert.equal(runner.calls.length,0);
+ });
+});
 test('gitlink coverage cannot be hidden by repository or submodule ignore settings',async t=>{
  const f=fixture(t);fs.mkdirSync(path.join(f.worktree,'module'));
  f.git('update-index','--add','--cacheinfo',`160000,${f.request.base},module`);f.git('commit','-qm','module base');const base=f.git('rev-parse','HEAD');
@@ -196,10 +241,10 @@ test('gitlink coverage cannot be hidden by repository or submodule ignore settin
  assert.equal(f.git('diff','--name-only',base,head),'');
  const missing=responder({responses:[review([],[]),review([],[])]});
  const result=await runReviewRound({...f.request,base,head},missing);
- assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);assert.equal(missing.calls.length,2);
- assert.match(missing.calls[0].prompt,/Subproject commit/);assert.match(missing.calls[1].prompt,/module/);
+ assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);assert.equal(missing.calls.length,0);
+ assert.match(result.failures.at(-1).reason,/gitlink changes.*unsupported/);
  const covered=await runReviewRound({...f.request,base,head},responder({responses:[review([],['module'])]}));
- assert.equal(covered.outcome,'clean');assert.deepEqual(covered.round.reviewedFiles,['module']);
+ assert.equal(covered.outcome,'not-reviewed');assert.equal(covered.rounds.length,0);
 });
 test('secrets stop before launch; fixture exemption is exact, path-specific, covers removed secrets',async t=>{
  const secret='ghp_'+'a'.repeat(36);const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),`token = ${secret}\n`);f.git('add','.');f.git('commit','-qm','secret');

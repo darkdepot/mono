@@ -17,7 +17,8 @@ function git(worktree, args) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0' });
   const [command, ...rest] = args;
-  const readOptions = ['diff', 'show'].includes(command) ? ['--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--submodule=short'] : [];
+  const readOptions = ['diff', 'show'].includes(command) ? ['--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--submodule=short']
+    : command === 'status' ? ['--ignore-submodules=none'] : [];
   return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', command, ...readOptions, ...rest],
     { cwd: worktree, env, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 }
@@ -84,20 +85,28 @@ const SECRET_PATTERNS = [
     ASSIGNMENT_SECRET,
   ];
 export function scanSecrets(diff, { file = null, patch = true } = {}) {
-  let line = 0, inHunk = false; const matches = [];
+  let line = 0, inHunk = false; const matches = [], before = [], after = [];
+  const multiline = content => {
+    if ([...content.matchAll(new RegExp(ASSIGNMENT_SECRET, 'gi'))].some(match => match[0].includes('\n')))
+      matches.push({ file, line: 0, weight: 'P0', reason: 'credential-shaped multiline context; value withheld' });
+  };
+  const finishHunk = () => { multiline(before.join('\n')); multiline(after.join('\n')); before.length = after.length = 0; };
   const filename = value => value.replace(/^[ab]\//, '').replace(/^"[ab]\//, '').replace(/"$/, '');
   for (const source of diff.split('\n')) {
-    if (patch && source.startsWith('diff --git ')) { inHunk = false; file = null; }
+    if (patch && source.startsWith('diff --git ')) { finishHunk(); inHunk = false; file = null; }
     if (patch && !inHunk && source.startsWith('--- ')) file = filename(source.slice(4));
     if (patch && !inHunk && source.startsWith('+++ ') && source.slice(4) !== '/dev/null') file = filename(source.slice(4));
-    const hunk = patch && /^@@ .*\+(\d+)/.exec(source); if (hunk) { inHunk = true; line = Number(hunk[1]); }
+    const hunk = patch && /^@@ .*\+(\d+)/.exec(source); if (hunk) { finishHunk(); inHunk = true; line = Number(hunk[1]); }
     const value = inHunk && /^[+ -]/.test(source) ? source.slice(1) : source;
     if (SECRET_PATTERNS.some(pattern => pattern.test(value)) && !SECRET_FIXTURES.get(file)?.has(digest(value))) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped context; value withheld' });
+    if (patch && inHunk && /^[+ -]/.test(source)) {
+      if (source[0] !== '+') before.push(value);
+      if (source[0] !== '-') after.push(value);
+    }
     if (!source.startsWith('-')) line++;
   }
-  if (!patch && [...diff.split('\n').filter(value => !SECRET_FIXTURES.get(file)?.has(digest(value))).join('\n')
-    .matchAll(new RegExp(ASSIGNMENT_SECRET, 'gi'))].some(match => match[0].includes('\n')))
-    matches.push({ file, line: 0, weight: 'P0', reason: 'credential-shaped multiline context; value withheld' });
+  if (patch) finishHunk();
+  else multiline(diff.split('\n').map(value => SECRET_FIXTURES.get(file)?.has(digest(value)) ? '' : value).join('\n'));
   return matches;
 }
 function contextSecrets(value, file = null, patch = false) {
@@ -194,7 +203,18 @@ export function observeCodexBoundary(value, stderr) {
   return { tools: value.tools, mcpServers: [], connectors: false, subagents: false, source: 'live model tool-list probe' };
 }
 function failedAnswer(value) {
-  const raw = typeof value === 'string' ? value : JSON.stringify(value ?? '');
+  const decodedText = entry => typeof entry === 'string' ? entry : Array.isArray(entry) ? entry.map(decodedText).join('\n')
+    : object(entry) ? Object.entries(entry).map(([key, content]) => `${key}: ${decodedText(content)}`).join('\n') : String(entry ?? '');
+  const decodeLine = line => {
+    if (!/^[\s]*[\[{]/.test(line)) return line;
+    try { return decodedText(JSON.parse(line)); } catch { return '[unreadable transport answer withheld]'; }
+  };
+  let raw;
+  if (typeof value !== 'string') raw = decodedText(value);
+  else {
+    try { raw = decodedText(JSON.parse(value)); }
+    catch { raw = value.split('\n').map(decodeLine).join('\n'); }
+  }
   const lines = raw.split('\n'); let secretMatches = 0;
   const redacted = lines.map(line => {
     const matches = scanSecrets(line, { patch: false });
@@ -347,6 +367,8 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const roles = resolveReviewRoles(config, packRoot);
     assertReadableWorktree(worktree);
     const diff = git(worktree, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', base, head, '--']);
+    requireValue(!git(worktree, ['diff', '--raw', '--no-renames', base, head, '--']).split('\n')
+      .some(row => /^:(?:160000 \d{6}|\d{6} 160000) /.test(row)), 'gitlink changes are unsupported; review the submodule separately');
     const secrets = scanSecrets(diff);
     if (secrets.length) return { ...fail('secret patterns in diff; no model launched'), secrets };
     const allFiles = git(worktree, ['diff', '--name-only', '--no-renames', '-z', base, head, '--']).split('\0').filter(Boolean);

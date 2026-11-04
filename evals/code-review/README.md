@@ -114,8 +114,10 @@ list separately; an init model cannot hide a later fallback. This records identi
 observations, not an inference about final-model ordering from modelUsage keys.
 `round2-model-stream.json` separates the observed refusal fallback from authored
 multi-fallback and usage-alias controls; these names are data, not model policy.
-Failed role answers are secret-scanned and capped at 8 KiB per attempt.
+Failed role answers decode JSON/JSONL fields before secret scanning and are capped
+at 8 KiB per attempt; malformed envelopes are withheld.
 Mixed line secrets and multiline assignments are screened independently; retained
 answers are rescanned after line redaction. Host Git diff/show reads disable external
-diff and textconv. Submodule ignore settings cannot hide gitlink updates from the
-diff or required file coverage.
+diff and textconv. Patch scanning reconstructs old and new hunk content for
+multiline assignments. Status and diff override submodule ignore settings; dirty
+submodules and gitlink changes return `not-reviewed` before any role launches.
