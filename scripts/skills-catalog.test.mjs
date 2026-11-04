@@ -8,11 +8,19 @@ import readline from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadCatalog } from './skills-catalog.mjs';
 import { selectScenarios, saveSelection } from './skills-select.mjs';
-import { runSuite as runSuiteWithRecords, scenarioPrompt } from './skills-suite.mjs';
-import { checkTrace } from './skills-trace.mjs';
+import { runSuite as actualSuite, scenarioPrompt } from './skills-suite.mjs';
+import { checkTrace as textTrace } from './skills-trace.mjs';
+import { checkTrace as windowTrace } from './test-fixtures/legacy-window-trace.mjs';
+const checkTrace=request=>request.expectedReplies?textTrace(request):windowTrace(request);
 
-// These fixtures isolate catalog/driver behavior; record verification has its own native fixtures.
-const runSuite=(request,execute)=>runSuiteWithRecords(request,execute,async()=>({status:'passed',monotestTasks:0}));
+// These fixtures isolate suite orchestration. Native response/record verification
+// has separate real-consumer fixtures. Only mocked hosts get constructed exchanges.
+const runSuiteWithRecords=(request,execute,verify)=>actualSuite(request,async r=>{
+ const result=await execute(r);
+ if(result.status==='passed'&&!result.check)result.check={exchanges:r.scenario.expectedReplies.map(expected=>({expected,text:expected.summary.join('\n')+'\nПозиция.\n'+expected.stage+' '+expected.id+'?'}))};
+ return result;
+},verify);
+const runSuite=(request,execute)=>runSuiteWithRecords(request,execute,async input=>({status:'passed',monotestTasks:0,starts:input.runRequest.scenario.expectedReplies.flatMap(r=>(r.driverStart===null||r.driverStart===undefined)?[]:(Array.isArray(r.driverStart)?r.driverStart:[r.driverStart]).map(stage=>({stage,replyId:r.id})))}));
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const source=path.join(root,'evals/scenarios');
 const neighbors={idea:['research'],research:['idea','discovery'],discovery:['research','design','tech-evaluation','handoff'],
@@ -28,6 +36,9 @@ function suiteRequest(f,selection,extra={}) {
 function fixture(t) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-catalog-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const catalogDir=path.join(dir,'custom-catalog');fs.cpSync(source,catalogDir,{recursive:true});
+  // Preserve every T1 orchestration input/outcome. Current U7 catalog and native
+  // transition/rubric consumers have separate tests below and in dialogue/records.
+  for(const [relative,value] of Object.entries(json(path.join(root,'scripts/test-fixtures/skills-t1-catalog.json'))))write(path.join(catalogDir,relative),JSON.stringify(value,null,2)+'\n');
   const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   git('init','-q');git('config','user.name','Mono Fixture');git('config','user.email','fixture@example.test');
   for (const stage of Object.keys(neighbors)) write(path.join(dir,`skills/${stage}/SKILL.md`),'baseline\n');
@@ -39,12 +50,12 @@ function fixture(t) {
   return {dir,catalogDir,git,base,commit,select};
 }
 
-test('Mono catalog has exactly six stage contracts, all host windows and no stored run identities',()=>{
+test('Mono catalog has exactly six stage contracts, all host text replies and no stored run identities',()=>{
   const catalog=loadCatalog(path.join(source,'index.json'));
-  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,17);
+  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,18);
   for(const [id,stage] of catalog.stages){
-    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:3);
-    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','discuss']:['main','correction','empty']);
+    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:id==='idea'?4:3);
+    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','question']:id==='idea'?['main','correction','unclear','defer']:['main','correction','unclear']);
     assert(!stage.files.includes('templates/qa-output.md'));
     for(const common of ['references/owner-dialog.md','scripts/russian-stages.mjs','scripts/idea-gate.mjs']) assert(stage.files.includes(common));
   }
@@ -53,8 +64,8 @@ test('Mono catalog has exactly six stage contracts, all host windows and no stor
     assert(scenario.brief.includes('cli/runs.mjs') && scenario.brief.includes('source'),'brief describes the existing neutral test product');
     if(scenario.stage==='idea')assert.equal(scenario.seed,null);
     for(const host of ['claude','codex']){
-      assert.equal(scenario.hosts[host].windows.length,scenario.hosts[host].expectedWindows.length);
-      assert(scenario.hosts[host].expectedWindows.every(w=>['approval','transition'].includes(w.role)),'only target roles are expected');
+      assert(scenario.hosts[host].expectedReplies.length);
+      assert(scenario.hosts[host].expectedReplies.every(r=>['approval','transition','clarification'].includes(r.role)),'roles are predetermined');
     }
   }
   for(const [file,bytes] of catalog.files){
@@ -112,7 +123,7 @@ test('Design memory seed passes real design gate with repository prefix and arch
  const result=await runSuite(suiteRequest(f,f.select(),{paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:memory}),async request=>{
   if(request.context.entryStage==='design'){
    design++;const guard=json(request.mcpServers.paper.args[1]);assert.deepEqual(request.writableRoots,[path.dirname(memory),archive,guard.exportRunDir]);assert(fs.statSync(guard.exportRunDir).isDirectory());assert(!request.scenario.prompt.includes('собирает оркестратор'));assert(!request.scenario.prompt.includes('не переноси'));assert(request.scenario.prompt.includes('обычный шаг архивации'));
-   assert(request.scenario.expectedWindows.every(w=>w.reason==='Совет'));
+   assert(request.scenario.expectedReplies.every(r=>r.stage==='design'&&!r.asksStart));
    fs.cpSync(path.join(dump,'approved'),path.join(archive,'11111111-1111-1111-1111-111111111111'),{recursive:true});
    checkMemory(request.cwd,'stale-images');
    const seeded=JSON.parse(request.scenario.prompt.match(/Посей память: (.+?)\. Не меняй owner-taste/)[1]);
@@ -151,37 +162,18 @@ test('seed route is isolated from the following stage before any real stage runs
   assert(checked>0);
 });
 
-test('catalog window anchors accept live wording in both hosts without requiring topic prose',t=>{
-  const catalog=loadCatalog(path.join(source,'index.json'));
-  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-window-wording-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
-  const titles={
-    idea:[
-      'Утверждаем самостоятельную идею с колонкой источника? Советую перейти в Research: нужно проверить потребность.',
-      'Утверждаем колонку источника? Советую утвердить и начать Research: описание полное, а открыт только вопрос спроса.',
-      'Утверждаем учёт расходников по мастерам без остатков и закупок? Советую утвердить и начать Research: нужно выяснить потребность.'
-    ],
-    research:['Начинаем Discovery для колонки источника? Советую перейти: нужно выбрать проверку результата.', 'Продолжаем разбор колонки? Советую перейти: рамка уже ясна.'],
-    discovery:['Утверждаем колонку без настройки? Советую начать Design: нужно показать её в списке.'],
-    design:['Утверждаем макет колонки? Советую утвердить и передать в Handoff: рамка уже согласована.','Утверждаем колонку? Советую утвердить: источник читается сразу.'],
-    'tech-evaluation':['Утверждаем страницу решения? Советую начать Handoff: способ проверен.'],
-    handoff:['Начинаем пакет? Советую передать оркестратору: зависимости проверены.', 'Добавляем «Источник» после имени прогона, с прочерком для пустых значений? Советую начать работу: одна задача готова и проверена.']
-  };
-  for(const scenario of catalog.scenarios.values())for(const host of ['claude','codex'])for(const expected of scenario.hosts[host].expectedWindows){
-    if(expected.id.endsWith('-followup'))continue; // native optionless question, not an approval card
-    for(const title of titles[scenario.stage]){
-      const labels=[expected.role==='approval'?'Утвердить, продолжу позже (Recommended)':'Начать следующий этап (Recommended)','Ещё обсудить'];
-      const consequences=['Запишем выбор / рамку уже не меняем','Уточним рамку / переход ждёт'];
-      const summary=expected.summary.length?expected.summary.join('\n'):'Полный видимый итог текущего решения.';
-      const rows=host==='claude'
-        ? [{type:'assistant',message:{id:'wording',content:[{type:'text',text:summary},{type:'tool_use',id:'window',name:'AskUserQuestion',input:{questions:[{header:'Решение',question:title,options:labels.map((label,i)=>({label,description:consequences[i]}))}]}}]}}]
-        : [{type:'response_item',payload:{type:'function_call',call_id:'window',name:'request_user_input_async',arguments:JSON.stringify({questions:[{title:title+'\n'+labels.map((label,i)=>`${label}: ${consequences[i]}`).join('\n'),options:labels}]})}},
-          {type:'response_item',payload:{type:'function_call_output',call_id:'window',output:'{"accepted":true}'}},
-          {type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:summary}]}}];
-      const trace=path.join(dir,'trace.jsonl');fs.writeFileSync(trace,rows.map(r=>JSON.stringify(r)).join('\n')+'\n');
-      const result=checkTrace({host,trace,expectedWindows:[expected],excerpt:true});
-      assert.equal(result.status,'passed',`${scenario.stage}/${scenario.id}/${host}/${expected.id}: ${JSON.stringify(result)}`);
-    }
+test('catalog reply anchors accept the full final message and preserve the exact owner reply',async()=>{
+ const {textReply}=await import('./skills-owner.mjs');
+ const catalog=loadCatalog(path.join(source,'index.json'));
+ for(const scenario of catalog.scenarios.values())for(const host of ['claude','codex']){
+  const expected=scenario.hosts[host].expectedReplies;
+  for(const [i,r] of expected.entries()){
+   const question=typeof r.question==='string'?r.question:r.question.anchors.map(a=>Array.isArray(a)?a[0]:a).join(' ')+'?';
+   const shown=r.summary.join('\n')+'\nМоя позиция по '+scenario.stage+'.\nКак поступим: '+question;
+   assert.equal(textReply({expectedReplies:expected},shown,i),r.reply);
+   assert.throws(()=>textReply({expectedReplies:expected},'Другой итог без вопроса',i),/question|summary/);
   }
+ }
 });
 
 test('stage-only diff selects all own scenarios and only main paths of every declared neighbor',t=>{
@@ -194,7 +186,7 @@ test('stage-only diff selects all own scenarios and only main paths of every dec
 
 test('shared owner-dialog change selects all scenarios of all six stages (AE4)',t=>{
   const f=fixture(t);write(path.join(f.dir,'references/owner-dialog.md'),'changed\n');f.commit();
-  const selected=f.select();assert.deepEqual(selected.affected,Object.keys(neighbors));assert.equal(selected.selected.length,17);
+  const selected=f.select();assert.deepEqual(selected.affected,Object.keys(neighbors));assert.equal(selected.selected.length,18);
 });
 
 test('unrelated QA template does not select stage behavior',t=>{
@@ -210,10 +202,10 @@ test('deleted scenario is refused even if index replaces it with another well-sh
   assert.throws(f.select,/removed scenario: idea\/empty/);
 });
 
-test('missing window, missing seed and escaped paths cannot produce a valid catalog',t=>{
+test('missing reply, missing seed and escaped paths cannot produce a valid catalog',t=>{
   const f=fixture(t), file=path.join(f.catalogDir,'design/approve/scenario.json'), original=fs.readFileSync(file);
-  let scenario=json(file);scenario.hosts.codex.expectedWindows=[];fs.writeFileSync(file,JSON.stringify(scenario));
-  assert.throws(()=>loadCatalog(path.join(f.catalogDir,'index.json')),/windows/);
+  let scenario=json(file);scenario.hosts.codex.expectedReplies=[];fs.writeFileSync(file,JSON.stringify(scenario));
+  assert.throws(()=>loadCatalog(path.join(f.catalogDir,'index.json')),/expectedReplies/);
   fs.writeFileSync(file,original);scenario=json(file);scenario.seed='../outside.json';fs.writeFileSync(file,JSON.stringify(scenario));
   assert.throws(()=>loadCatalog(path.join(f.catalogDir,'index.json')),/invalid path/);
   fs.writeFileSync(file,original);fs.rmSync(path.join(f.catalogDir,'seeds/prd-design.json'));
@@ -237,15 +229,10 @@ test('suite persists expectations before calls and shares one read-back project 
   const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'fixture',outputDir,cwd,packRoot:f.dir,
     mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'test-file',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'test-memory.md')},async request=>{
     assert.deepEqual(json(path.join(outputDir,'expected-items.json')),selection.expectedItems);
-    assert.equal(request.idleMs,20000);assert.equal(request.timeoutMs,1800000);assert(request.maxTurns>request.scenario.windows.length);
-    assert.equal(request.workspaceProof.equals,'Mono Test');assert(request.scenario.prompt.includes('не исполнитель-воркер'));
-    const next=request.context.followingStage;
-    const names={research:'Research',discovery:'Discovery',design:'Design','tech-evaluation':'Tech Evaluation',handoff:'Handoff'};
-    for(const window of request.scenario.expectedWindows){
-      if(window.role==='transition')for(const field of ['decision','advice','reason'])assert.equal(window[field],'Совет','transition role comes from labels, not title wording');
-      else if(request.context.entryStage==='design')assert.equal(window.reason,'Совет','Design does not require a following stage name');
-      else if(names[next])assert.equal(window.reason,names[next],'approval anchor follows the actual chain route');
-    }
+    assert.equal(request.idleMs,20000);assert.equal(request.timeoutMs,1800000);assert(request.maxTurns>request.scenario.expectedReplies.length);
+    assert.equal(request.workspaceProof.equals,'Mono Test');assert(request.scenario.prompt.includes('имитированным владельцем'));
+    assert.equal(request.scenario.expectedWindows,undefined);
+    assert(request.scenario.expectedReplies.every(r=>r.stage===request.context.entryStage));
     const relative=path.relative(cwd,request.context.projectFile);
     assert(relative && !relative.startsWith('..') && !path.isAbsolute(relative),'model manifest must be writable under cwd, independent of outputDir');
     assert(!fs.existsSync(request.context.projectFile),'each stage must write its own manifest');
@@ -549,7 +536,6 @@ test('qa.skills config connects another product and binds task expectations befo
 test('another product config flows from selected scenarios through suite and unchanged certificate gate',async t=>{
  const {selectQaScenarios}=await import('./skills-select.mjs');
  const {qaDeliveryState}=await import('./qa-gate.mjs');
- const {checkTrace}=await import('./skills-trace.mjs');
  const f=fixture(t),qaRoot=path.join(f.dir,'host-qa'),indexFile=path.join(f.catalogDir,'index.json');
  const index=json(indexFile);index.productName='Example Skills';index.skillPrefix='example';write(indexFile,JSON.stringify(index));const base=f.commit();
  write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');const head=f.commit();
@@ -633,7 +619,7 @@ test('failed seeded stage still verifies its existing seed project rather than I
 });
 
 for(const mode of ['binding-only','bad-write','missing-page'])test(`live3 actual Discovery records control the suite's next Design invocation: ${mode}`,async t=>{
- const {verifyRecords}=await import('./skills-records.mjs');
+ const {verifyRecords}=await import('./test-fixtures/legacy-window-records.mjs');
  const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
  const selection=f.select(),unit=selection.units.find(u=>u.id==='design-approve');selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
  const live=path.join(f.dir,'receipts');fs.cpSync(path.join(root,'scripts/test-fixtures/skills-records-live3'),live,{recursive:true});
@@ -648,7 +634,7 @@ for(const mode of ['binding-only','bad-write','missing-page'])test(`live3 actual
   calls.push(r.context.entryStage);
   if(r.context.entryStage==='design')return {status:'unverified',reason:'Offline boundary: real Design evidence does not exist yet'};
   assert.equal(r.context.projectName,recordRequest.project.name);write(r.context.projectFile,JSON.stringify(recordRequest.project));
-  const check=checkTrace({host:'codex',trace:recordRequest.trace,endLine:recordRequest.endLine,expectedWindows:r.scenario.expectedWindows});assert.equal(check.status,'passed',JSON.stringify(check));
+  const check=checkTrace({host:'codex',trace:recordRequest.trace,endLine:recordRequest.endLine,expectedWindows:[{id:'discovery-approval',role:'approval',decision:'Утвержд',advice:'Совет',reason:'Design',summary:[]}]});assert.equal(check.status,'passed',JSON.stringify(check));
   return {status:'passed',seedRoute:{project:recordRequest.project},seedEndLine:recordRequest.seedEndLine,trace:recordRequest.trace,sent:recordRequest.sent};
  },async({scenario})=>{
   if(scenario.stage==='design')return {status:'unverified',reason:'No Design records supplied'};
@@ -677,4 +663,87 @@ for(const repeated of [false,true])test(`text catalog and suite preserve predete
  });
  assert.equal(result.status,repeated?'failed':'passed',JSON.stringify(result));
  if(repeated)assert(result.results.some(r=>r.result.reason==='identical endings across stages'));
+});
+
+for(const mode of ['authorized','missing-signal','no-permission','rubric-failed','rubric-unverified'])test(`U7 suite driver owns the next invocation: ${mode}`,async t=>{
+ const f=fixture(t);
+ // Unlike the preserved T1 regressions, these inputs are the shipped U7 policies.
+ for(const key of ['research/approve','discovery/approve']){
+  const scenario=json(path.join(source,key,'scenario.json'));
+  if(mode==='no-permission'&&key==='research/approve')for(const host of ['claude','codex'])scenario.hosts[host].expectedReplies[0].driverStart=null;
+  write(path.join(f.catalogDir,key,'scenario.json'),JSON.stringify(scenario));
+ }
+ f.commit();const selection=f.select(),unit={id:'driver-proof',target:'research/approve',scenarios:['research/approve','discovery/approve']};
+ selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=unit.scenarios.map(scenario=>({id:`${unit.id}:${scenario}:codex`,source:'scenario',expectation:`${scenario} / codex / ${unit.id}: conversation, word replies and fresh monotest records`,unit:unit.id,scenario,host:'codex'}));
+ const calls=[];
+ const result=await runSuiteWithRecords(suiteRequest(f,selection),async request=>{
+  calls.push(request.context.entryStage);write(request.context.projectFile,JSON.stringify(runProject(request)));return passedStage(request);
+ },async()=>({status:mode==='rubric-failed'?'failed':mode==='rubric-unverified'?'unverified':'passed',starts:mode==='missing-signal'?[]:[{stage:'discovery',replyId:'research-approve',kind:'intercepted',line:12}],monotestTasks:0}));
+ assert.deepEqual(calls,mode==='authorized'?['research','discovery']:mode==='no-permission'?[]:['research']);
+ assert.equal(result.status,mode==='authorized'?'passed':mode==='rubric-unverified'?'unverified':'failed');
+});
+
+test('continue1 Handoff correction revises package verification while preserving requirements',()=>{
+ const scenario=loadCatalog(path.join(source,'index.json')).scenarios.get('handoff/correction');
+ assert.match(scenario.brief,/после имени прогона/);
+ for(const host of ['claude','codex']){
+  const [revise,start]=scenario.hosts[host].expectedReplies;
+  assert.match(revise.reply,/проверке задачи/);assert.match(revise.reply,/без поля source/);
+  assert.doesNotMatch(revise.reply,/перед именем/);
+  assert.equal(revise.intent,'continuation');assert.deepEqual(revise.outcome,{approval:false,startNext:false});
+  assert.equal(start.role,'transition');assert.equal(start.outcome.startNext,true);
+ }
+});
+
+for(const reviewStatus of ['passed','unverified','failed'])test(`continue3 suite resumes saved research only for ${reviewStatus} rubric`,async t=>{
+ const f=fixture(t);
+ for(const key of ['research/approve','discovery/approve'])write(path.join(f.catalogDir,key,'scenario.json'),fs.readFileSync(path.join(source,key,'scenario.json')));
+ f.commit();const selection=f.select(),unit={id:'resume-proof',target:'research/approve',scenarios:['research/approve','discovery/approve']};
+ selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=unit.scenarios.map(scenario=>({id:`${unit.id}:${scenario}:codex`,source:'scenario',expectation:`${scenario} / codex / ${unit.id}: conversation, word replies and fresh monotest records`,unit:unit.id,scenario,host:'codex'}));
+ const request=suiteRequest(f,selection),calls=[],verifications=[];
+ const execute=async r=>{calls.push(r.context.entryStage);write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);};
+ const verify=async input=>{
+  verifications.push({stage:input.runRequest.context.entryStage,resume:Boolean(input.resumeEvidence)});
+  const file=input.outputDir+'-evidence.json';if(!input.resumeEvidence)write(file,'saved native trace, writes and fresh dump');
+  return {status:input.resumeEvidence?reviewStatus:'unverified',reviewEvidence:file,rubricDigest:'a'.repeat(64),starts:[{stage:'discovery',replyId:'research-approve'}],monotestTasks:0};
+ };
+ const initial=await runSuiteWithRecords(request,execute,verify);assert.equal(initial.status,'unverified');assert.deepEqual(calls,['research']);
+ const resumed=await runSuiteWithRecords({...request,resume:true},execute,verify);
+ assert.deepEqual(calls,reviewStatus==='passed'?['research','discovery']:['research'],'research execution is never repeated');
+ assert.deepEqual(verifications.slice(0,2),[{stage:'research',resume:false},{stage:'research',resume:true}]);
+ assert.equal(resumed.results[0].status,reviewStatus);
+ if(reviewStatus==='passed') {
+  assert.equal(resumed.results[1].scenario,'discovery/approve');
+  const completed=await runSuiteWithRecords({...request,resume:true},execute,verify);
+  assert.equal(completed.status,'passed');assert.deepEqual(calls,['research','discovery'],'each completed stage is reused on subsequent resume');
+  assert.ok(fs.existsSync(path.join(request.outputDir,'suite-result.json')));assert.ok(fs.existsSync(path.join(request.outputDir,'suite-result-2.json')));
+ }
+});
+
+test('continue3 Design correction changes picture only within the approved requirement',()=>{
+ const scenario=loadCatalog(path.join(source,'index.json')).scenarios.get('design/correction');
+ for(const host of ['claude','codex']){
+  const [revise,approval]=scenario.hosts[host].expectedReplies;
+  assert.match(revise.reply,/после имени прогона/);
+  assert.match(revise.reply,/макет|картинк/);assert.doesNotMatch(revise.reply,/перед именем/);
+  assert.deepEqual(revise.outcome,{approval:false,startNext:false});assert.deepEqual(approval.outcome,{approval:true,startNext:false});
+ }
+});
+
+for(const changed of ['saved-state','saved-evidence','saved-request','selection'])test(`continue3 suite refuses changed ${changed} before any host`,async t=>{
+ const f=fixture(t);write(path.join(f.catalogDir,'research/approve/scenario.json'),fs.readFileSync(path.join(source,'research/approve/scenario.json')));f.commit();
+ const selection=f.select(),unit={id:'changed-proof',target:'research/approve',scenarios:['research/approve']};
+ selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=[{id:`${unit.id}:research/approve:codex`,source:'scenario',expectation:`research/approve / codex / ${unit.id}: conversation, word replies and fresh monotest records`,unit:unit.id,scenario:'research/approve',host:'codex'}];
+ const request=suiteRequest(f,selection);let calls=0,reads=0;
+ const execute=async r=>{calls++;write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);};
+ const verify=async input=>{reads++;const file=input.outputDir+'-evidence.json';write(file,'saved trace, writes and dump');return {status:'unverified',reviewEvidence:file};};
+ await runSuiteWithRecords(request,execute,verify);
+ const item=json(path.join(request.outputDir,'suite-state.json')).results[0];
+ if(changed==='saved-state'){
+  const file=path.join(request.outputDir,'suite-state.json'),state=json(file);state.results[0].run.status='passed';state.requestDigest='wrong';write(file,JSON.stringify(state));
+ }else if(changed==='selection'){
+  const saved=json(request.selectionFile);saved.reason='modified selection';write(request.selectionFile,JSON.stringify(saved));
+ }else fs.appendFileSync(changed==='saved-evidence'?item.reviewEvidence:path.join(request.outputDir,'changed-proof-codex-0-request.json'),' ');
+ await assert.rejects(()=>runSuiteWithRecords({...request,resume:true},execute,verify),/saved suite evidence|request changed/);
+ assert.equal(calls,1);assert.equal(reads,1,'changed evidence refused before verification or a new execution');
 });

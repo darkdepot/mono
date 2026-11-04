@@ -4,9 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { runScenario, runPersona, runClaude, runCodex } from './skills-run.mjs';
+import { runScenario as runTextScenario } from './skills-run.mjs';
+import { runScenario as runWindowFixture, runPersona, runClaude, runCodex } from './test-fixtures/legacy-window-run.mjs';
+const runScenario=request=>request.scenario.expectedReplies?runTextScenario(request):runWindowFixture(request);
 import { privateCodexHome, codexToolCalls, toolViolation, MissingEvidence } from './skills-boundary.mjs';
-import { nativeProof } from './skills-proof.mjs';
+import { nativeProof as textProof } from './skills-proof.mjs';
+import { nativeProof as windowProof } from './test-fixtures/legacy-window-proof.mjs';
+const nativeProof=request=>['window','answer'].includes(request.kind)?windowProof(request):textProof(request);
 // Synthetic native linkage around the recorded payload cuts.
 function workspaceEvidence(output,proof){
  const call={type:'function_call',call_id:'read',name:'exec'},result={type:'function_call_output',call_id:'read',output};
@@ -223,8 +227,8 @@ test('Codex error-marked terminal proof is unverified for either native flag',as
 // Same completed child traces enter every public behavioral reader. Unsupported
 // forms are synthetic perturbations; the known control stays beside them.
 test('online and offline entry points agree on the same native traces in both hosts',async t=>{
- const {checkTrace,codexWindows,codexItems,completedTrace}=await import('./skills-trace.mjs');
- const {traceRows,claudeWindows,probeClaude}=await import('./skills-probe.mjs');
+ const {checkTrace,codexWindows,codexItems,completedTrace}=await import('./test-fixtures/legacy-window-trace.mjs');
+ const {traceRows,claudeWindows,probeClaude}=await import('./test-fixtures/legacy-window-probe.mjs');
  const {auditRows}=await import('./skills-audit.mjs');
  const observations=[];
  const verdict=fn=>{try{const v=fn();return typeof v==='boolean'?(v?'passed':'unverified'):Array.isArray(v)?v.some(w=>w.status==='unverified')?'unverified':v.some(w=>w.status==='failed')?'failed':'passed':v.status??'passed';}catch{return 'unverified';}};
@@ -253,8 +257,8 @@ test('online and offline entry points agree on the same native traces in both ho
 // Compare finished traces only with finished readers, and card/excerpt with the
 // same explicit phase; raw loaders and terminal predicates certify neither.
 test('shared equality table distinguishes finished full traces, excerpt probes and pre-answer cards',async t=>{
- const {checkTrace,codexWindows}=await import('./skills-trace.mjs');
- const {traceRows,claudeWindows,probeClaude}=await import('./skills-probe.mjs');
+ const {checkTrace,codexWindows}=await import('./test-fixtures/legacy-window-trace.mjs');
+ const {traceRows,claudeWindows,probeClaude}=await import('./test-fixtures/legacy-window-probe.mjs');
  for(const host of ['claude','codex'])for(const mode of host==='claude'?['ok','missing-permission','unlinked-permission','errored-permission','unanswered']:['ok','window-missing-result','window-unlinked-result','window-error','unanswered']){
   const request=setup(t,host,mode),online=await runScenario(request),trace=online.trace;
   const rows=traceRows(trace,host).rows;
@@ -391,7 +395,7 @@ for(const [host,mode,expected] of [['claude','claude','failed'],['claude','claud
  request.scenario.windows=host==='claude'?[{mode:'recommended'},{mode:'discuss'}]:[{mode:'recommended'}];
  request.scenario.expectedWindows=(host==='claude'?['first','thinking']:['first']).map(id=>({id,decision:'описание',advice:'Research',reason:'риск',summary:['Что:','Дальше:']}));
  const r=await runScenario(request);assert.equal(r.status,expected,JSON.stringify(r));assert.ok(!r.check.checks.some(c=>c.status==='unverified'),JSON.stringify(r));
- if(host==='claude'){const {checkTrace}=await import('./skills-trace.mjs');const full=checkTrace({host,trace:r.trace,expectedWindows:request.scenario.expectedWindows});assert.equal(full.status,expected);assert.ok(!full.checks.some(c=>c.status==='unverified'));}
+ if(host==='claude'){const {checkTrace}=await import('./test-fixtures/legacy-window-trace.mjs');const full=checkTrace({host,trace:r.trace,expectedWindows:request.scenario.expectedWindows});assert.equal(full.status,expected);assert.ok(!full.checks.some(c=>c.status==='unverified'));}
  if(mode==='claude'){assert.equal(r.check.windows[1].line,198);assert.equal(r.check.windows[1].status,'failed');assert.match(r.check.windows[1].reason,/thinking/);}
 });
 
@@ -492,4 +496,18 @@ for(const host of ['claude','codex'])test(`${host}: driver rejects undeclared ex
  const request=setup(t,host,'text');request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'extra-owner'];
  request.scenario={prompt:'Run text',allowedTools:['*'],expectedReplies:[{id:'last',stage:'idea',role:'approval',summary:['Что:'],question:'Research?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Утверждение записал.']}]};
  const result=await runScenario(request);assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.check.reason,/unexpected owner reply/);
+});
+
+for(const host of ['claude','codex'])test(`${host}: active driver refuses retired window policies before invoking the host`,async t=>{
+ const r=await runTextScenario(setup(t,host));assert.equal(r.status,'unverified');assert.match(r.reason,/retired/);
+});
+
+test('U7 stage-driver MCP intercepts only predefined destinations without executing a stage',()=>{
+ const requests=[{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05'}},{jsonrpc:'2.0',id:2,method:'tools/list'},{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'start_stage',arguments:{stage:'discovery',projectId:'fixture-project'}}},{jsonrpc:'2.0',id:4,method:'tools/call',params:{name:'start_stage',arguments:{stage:'handoff',projectId:'fixture-project'}}}];
+ const result=spawnSync(process.execPath,['scripts/skills-stage-driver.mjs','["discovery"]'],{input:requests.map(JSON.stringify).join('\n')+'\n',encoding:'utf8'});
+ assert.equal(result.status,0,result.stderr);const replies=result.stdout.trim().split('\n').map(JSON.parse);
+ assert.equal(replies.length,4);assert.deepEqual(replies.map(r=>r.id),[1,2,3,4]);
+ assert.deepEqual(replies[1].result.tools[0].inputSchema.properties.stage.enum,['discovery']);
+ assert.deepEqual(JSON.parse(replies[2].result.content[0].text),{driverIntercepted:true,stage:'discovery',projectId:'fixture-project'});
+ assert.match(replies[3].error.message,/permission/);assert.equal(replies[3].result,undefined);
 });

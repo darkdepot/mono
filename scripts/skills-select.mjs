@@ -61,7 +61,7 @@ export function selectScenarios({indexFile, worktree, base, head = 'HEAD', hosts
 }
 
 export function scenarioExpectation(unit, scenario, host) {
-  return {id:`${unit}:${scenario}:${host}`,source:'scenario',expectation:`${scenario} / ${host} / ${unit}: conversation, windows and fresh monotest records`,unit,scenario,host};
+  return {id:`${unit}:${scenario}:${host}`,source:'scenario',expectation:`${scenario} / ${host} / ${unit}: conversation, word replies and fresh monotest records`,unit,scenario,host};
 }
 
 // The host saves these inputs before any scenario runs; the certificate never selects.

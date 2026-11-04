@@ -5,60 +5,108 @@
   "kind": "main",
   "seed": null,
   "next": "research",
-  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста.",
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии. После показа спрашивай об утверждении и старте followingStage: владелец готов решить оба вопроса сейчас.",
   "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
   "hosts": {
     "claude": {
-      "windows": [
+      "expectedReplies": [
         {
-          "mode": "label",
-          "label": "Утвердить, продолжу позже"
-        }
-      ],
-      "expectedWindows": [
-        {
-          "id": "idea-approval",
-          "decision": "Утвержд",
-          "advice": "Совет",
-          "reason": "Research",
+          "id": "idea-approve",
+          "stage": "idea",
+          "role": "approval",
           "summary": [
             "Что",
             "Зачем",
-            "Дальше"
+            "Образ результата",
+            "Неизвестные"
           ],
-          "role": "approval"
-        }
-      ],
-      "freeQuestions": [
-        {
-          "contains": "?"
+          "question": {
+            "anchors": [
+              [
+                "иде",
+                "описани"
+              ],
+              [
+                "Research"
+              ],
+              [
+                "Research"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
+          "reply": "принимаю",
+          "intent": "agree",
+          "outcome": {
+            "approval": true,
+            "startNext": true
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "inline",
+          "driverStart": [
+            "research"
+          ]
         }
       ]
     },
     "codex": {
-      "windows": [
+      "expectedReplies": [
         {
-          "mode": "label",
-          "label": "Утвердить, продолжу позже"
-        }
-      ],
-      "expectedWindows": [
-        {
-          "id": "idea-approval",
-          "decision": "Утвержд",
-          "advice": "Совет",
-          "reason": "Research",
+          "id": "idea-approve",
+          "stage": "idea",
+          "role": "approval",
           "summary": [
             "Что",
             "Зачем",
-            "Дальше"
+            "Образ результата",
+            "Неизвестные"
           ],
-          "role": "approval"
-        }
-      ],
-      "freeQuestions": [
-        {
-          "contains": "?"
+          "question": {
+            "anchors": [
+              [
+                "иде",
+                "описани"
+              ],
+              [
+                "Research"
+              ],
+              [
+                "Research"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
+          "reply": "принимаю",
+          "intent": "agree",
+          "outcome": {
+            "approval": true,
+            "startNext": true
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "inline",
+          "driverStart": [
+            "research"
+          ]
         }
       ]
     }

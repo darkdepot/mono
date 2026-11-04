@@ -5,92 +5,138 @@
   "kind": "correction",
   "seed": null,
   "next": "research",
-  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста.",
-  "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+  "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Граница результата в показанном тексте: «Фильтр и сортировку не добавляем.».",
   "hosts": {
     "claude": {
-      "windows": [
+      "expectedReplies": [
         {
-          "mode": "correction",
-          "text": "Уточни пустой source: null, отсутствующий ключ и пустая строка дают один прочерк. Остальную рамку сохрани. Покажи изменённую версию целиком на утверждение."
-        },
-        {
-          "mode": "label",
-          "label": "Утвердить, продолжу позже"
-        }
-      ],
-      "expectedWindows": [
-        {
-          "id": "idea-approval",
-          "decision": "Утвержд",
-          "advice": "Совет",
-          "reason": "Research",
+          "id": "idea-correction",
+          "stage": "idea",
+          "role": "approval",
           "summary": [
             "Что",
             "Зачем",
-            "Дальше"
+            "Образ результата",
+            "Неизвестные"
           ],
-          "role": "approval"
-        },
-        {
-          "id": "idea-reapproval",
-          "decision": "Утвержд",
-          "advice": "Совет",
-          "reason": "Research",
-          "summary": [
-            "Что",
-            "Зачем",
-            "Дальше"
-          ],
-          "role": "approval"
-        }
-      ],
-      "freeQuestions": [
-        {
-          "contains": "?"
+          "question": {
+            "anchors": [
+              [
+                "иде",
+                "описани"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": false,
+          "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
+          "intent": "correction",
+          "outcome": {
+            "approval": true,
+            "startNext": false
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false,
+            "forbiddenExact": [
+              "Начинаю Research.",
+              "Начинаю Research",
+              "Начинаем Research.",
+              "Начнём Research?",
+              "Начнем Research?",
+              "Давай начнём Research.",
+              "Начать Research?"
+            ]
+          },
+          "correction": {
+            "before": "Фильтр и сортировку не добавляем.",
+            "anchors": [
+              "экспорт",
+              [
+                "не добавляем",
+                "не входит",
+                "исключ"
+              ]
+            ],
+            "descriptionAnchors": [
+              "экспорт"
+            ]
+          },
+          "presentation": "inline",
+          "driverStart": null
         }
       ]
     },
     "codex": {
-      "windows": [
+      "expectedReplies": [
         {
-          "mode": "correction",
-          "text": "Уточни пустой source: null, отсутствующий ключ и пустая строка дают один прочерк. Остальную рамку сохрани. Покажи изменённую версию целиком на утверждение."
-        },
-        {
-          "mode": "label",
-          "label": "Утвердить, продолжу позже"
-        }
-      ],
-      "expectedWindows": [
-        {
-          "id": "idea-approval",
-          "decision": "Утвержд",
-          "advice": "Совет",
-          "reason": "Research",
+          "id": "idea-correction",
+          "stage": "idea",
+          "role": "approval",
           "summary": [
             "Что",
             "Зачем",
-            "Дальше"
+            "Образ результата",
+            "Неизвестные"
           ],
-          "role": "approval"
-        },
-        {
-          "id": "idea-reapproval",
-          "decision": "Утвержд",
-          "advice": "Совет",
-          "reason": "Research",
-          "summary": [
-            "Что",
-            "Зачем",
-            "Дальше"
-          ],
-          "role": "approval"
-        }
-      ],
-      "freeQuestions": [
-        {
-          "contains": "?"
+          "question": {
+            "anchors": [
+              [
+                "иде",
+                "описани"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": false,
+          "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
+          "intent": "correction",
+          "outcome": {
+            "approval": true,
+            "startNext": false
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false,
+            "forbiddenExact": [
+              "Начинаю Research.",
+              "Начинаю Research",
+              "Начинаем Research.",
+              "Начнём Research?",
+              "Начнем Research?",
+              "Давай начнём Research.",
+              "Начать Research?"
+            ]
+          },
+          "correction": {
+            "before": "Фильтр и сортировку не добавляем.",
+            "anchors": [
+              "экспорт",
+              [
+                "не добавляем",
+                "не входит",
+                "исключ"
+              ]
+            ],
+            "descriptionAnchors": [
+              "экспорт"
+            ]
+          },
+          "presentation": "inline",
+          "driverStart": null
         }
       ]
     }

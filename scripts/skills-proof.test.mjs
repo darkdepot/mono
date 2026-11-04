@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
-import { auditRows } from './skills-audit.mjs';
-import { nativeProof } from './skills-proof.mjs';
+import { auditRows } from './test-fixtures/legacy-window-audit.mjs';
+import { nativeProof as textProof } from './skills-proof.mjs';
+import { nativeProof as windowProof } from './test-fixtures/legacy-window-proof.mjs';
+const nativeProof=request=>['window','answer'].includes(request.kind)?windowProof(request):textProof(request);
 const read=(host,name)=>JSON.parse(fs.readFileSync(`evals/scenarios/probe/samples/${host}/${name}.json`));
 // Recorded payloads, synthetic linkage/envelopes and command contents. Every
 // negative below is a synthetic perturbation, not an observed host refusal.

@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { verifyRecords, dumpPrompt, collectRecordDump, verifyScenarioRecords } from './skills-records.mjs';
+import { verifyRecords as verifyTextRecords, dumpPrompt, collectRecordDump, verifyScenarioRecords as verifyTextScenarioRecords } from './skills-records.mjs';
+import { verifyScenarioRecords as verifyWindowScenarioRecords, verifyRecords as verifyWindowRecords } from './test-fixtures/legacy-window-records.mjs';
+const verifyScenarioRecords=(input,...rest)=>input.runRequest.scenario?.expectedReplies?verifyTextScenarioRecords(input,...rest):verifyWindowScenarioRecords(input,...rest);
+const verifyRecords=request=>request.expectedReplies?verifyTextRecords(request):verifyWindowRecords(request);
 import { nativeRecords } from './skills-record-data.mjs';
+import { ideaFingerprint } from './idea-gate.mjs';
 
 const projectId='00000000-0000-4000-8000-000000000001',date='2026-10-31T00:00:00Z';
 // These constructed sessions have their own deterministic clock. Native live
@@ -534,7 +538,7 @@ test('live2 failed Research has an existing seed; missing full dump is not forbi
  const f=live2Fixture(t,'research-discuss'),result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/incomplete dump: missing project.json/);assert.notEqual(result.bindingOnly,true);
 });
 test('live2 Research second window retains its transition role and remains unverified without answer',async t=>{
- const {checkTrace}=await import('./skills-trace.mjs'),f=live2Fixture(t,'research-discuss'),r=JSON.parse(fs.readFileSync(path.join(f.dir,'trace-check.json')));r.trace=f.request.trace;
+ const {checkTrace}=await import('./test-fixtures/legacy-window-trace.mjs'),f=live2Fixture(t,'research-discuss'),r=JSON.parse(fs.readFileSync(path.join(f.dir,'trace-check.json')));r.trace=f.request.trace;
  const full=checkTrace(r);assert.equal(full.status,'unverified');const second=full.windows[1];assert.equal(second.questions.length,1);assert.equal(second.role,'transition');assert.equal(second.executionConfirmed,false);
  const stopped=checkTrace({...r,endLine:r.intendedEndLine});assert.equal(stopped.status,'passed');
 });
@@ -576,7 +580,7 @@ for(const name of ['discovery-approve','idea-correction'])test(`live3 ${name}: a
  const bad=f.check();assert.notEqual(bad.bindingOnly,true);assert.notEqual(bad.status,'passed');
 });
 test('live3 Research: records pass but a second target transition remains unanswered',async t=>{
- const {checkTrace,codexWindows}=await import('./skills-trace.mjs'),{traceRows}=await import('./skills-probe.mjs'),{windowPolicy,windowRole}=await import('./skills-owner.mjs');
+ const {checkTrace,codexWindows}=await import('./test-fixtures/legacy-window-trace.mjs'),{traceRows}=await import('./skills-probe.mjs'),{windowPolicy,windowRole}=await import('./test-fixtures/legacy-window-owner.mjs');
  const f=live3Fixture(t,'research-discuss');assert.equal(f.check().status,'passed',f.check().reason);
  const scenario=JSON.parse(fs.readFileSync(path.join(f.base,'windows.json'))),windows=codexWindows(traceRows(f.request.trace,'codex').rows,f.request.trace);
  assert.deepEqual(windows.map(w=>windowRole(w.questions)),['transition',null,'transition']);
@@ -974,6 +978,86 @@ for(const index of [0,1])test(`text Idea requires the complete four-section bind
  const result=f.check();assert.equal(result.status,'failed',result.reason);
 });
 
+function correctedIdeaFixture(t,passage='unknowns') {
+ const f=textIdeaFixture(t),expected=f.request.expectedReplies[0],full=f.request.approvalBindings[1].text;
+ const before=passage==='unknowns'?full.slice(full.indexOf('Какие значения источника')):'Источник читается сразу рядом с именем.';
+ const after=before+' Проверить отображение в Codex.';
+ Object.assign(expected,{question:{anchors:['описание']},presentation:'inline',driverStart:null,intent:'correction',reply:'да, только добавь проверку Codex',correction:{before,anchors:['Codex'],descriptionAnchors:['Codex']},response:{anchors:['запис','Codex'],question:false}});
+ for(const binding of f.request.approvalBindings)binding.artifactEnd=full.length;
+ f.request.rubricDefinition='Full Idea plus only the named Codex check; project body derived independently; same owner exchange and fixed approval outcome.';
+ const rewrite=(value,key)=>{
+  if(typeof value==='string'){
+   try{return JSON.stringify(rewrite(JSON.parse(value)));}catch{}
+   if(value.includes('mono-idea: approved'))return value.replace(full,full.replace(before,after)).replace(ideaFingerprint(full),ideaFingerprint(full.replace(before,after))).replace('Владелец: ответил «принимаю»',`Владелец: ответил «${expected.reply}»\nПоправка: добавлена проверка Codex.`);
+   return key==='description'?value.replace(before,after):value;
+  }
+  if(Array.isArray(value))return value.map(v=>rewrite(v));
+  return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,rewrite(v,k)])):value;
+ };
+ const transform=(fn)=>{
+  for(const file of [f.request.trace,f.request.dumpTrace]){
+   const rows=fs.readFileSync(file,'utf8').trim().split('\n').map(JSON.parse).map(row=>fn(row));
+   fs.writeFileSync(file,rows.map(JSON.stringify).join('\n')+'\n');
+  }
+  const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(fn(JSON.parse(fs.readFileSync(file)))));}};
+  walk(f.request.dumpDir);
+ };
+ transform(rewrite);
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+ rows.find(row=>row.payload?.type==='message'&&row.payload.role==='user').payload.content[0].text=expected.reply;
+ rows.findLast(row=>row.payload?.type==='message'&&row.payload.role==='assistant').payload.content[0].text='Добавил проверку Codex. Утверждение записал.';
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');
+ const attest=()=>{
+  delete f.request.rubric;
+  const result=f.check();
+  if(result.status==='unverified'&&result.rubricDigest)f.request.rubric={digest:result.rubricDigest,reviewer:'curated corrected Idea regression',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'native record fixture plus named Codex check',reason:'Shown four sections plus only the declared addition; canonical project body and verbatim consent.'}))};
+  return f.check();
+ };
+ return {...f,transform,attest,full,before,after};
+}
+for(const passage of ['unknowns','result'])test(`continue5 corrected Idea uses its approval snapshot, not creation/currentLine (${passage})`,t=>{
+ const f=correctedIdeaFixture(t,passage),result=f.attest();
+ assert.equal(result.status,'passed',JSON.stringify(result));
+ assert.equal(result.gateResults[0].result.ok,true);
+});
+for(const mode of ['forged-quote','extra-change','wrong-question','early-project','early-approval','approval-before-project','other-exchange','project-change','project-misses-correction','missing-snapshot'])test(`continue5 corrected Idea still rejects ${mode}`,t=>{
+ const f=correctedIdeaFixture(t,mode==='project-misses-correction'?'result':'unknowns');
+ if(['forged-quote','extra-change','project-change','project-misses-correction','missing-snapshot'].includes(mode)){
+  const rewrite=(value,key)=>{
+   if(typeof value==='string'){
+    try{return JSON.stringify(rewrite(JSON.parse(value)));}catch{}
+    if(mode==='project-change')return key==='description'?value+' Постороннее.':value;
+    if(mode==='project-misses-correction')return key==='description'?value.replace(f.after,f.before):value;
+    if(!value.includes('mono-idea: approved'))return value;
+    if(mode==='forged-quote')return value.replace('«да, только добавь проверку Codex»','«принимаю»');
+    if(mode==='missing-snapshot')return value.replace(/```mono-idea-snapshot[\s\S]*?```/,'');
+    const approved=f.full.replace(f.before,f.after),changed=approved.replace('## Что\n','## Что\nПостороннее изменение.\n');
+    return value.replace(approved,changed).replace(ideaFingerprint(approved),ideaFingerprint(changed));
+   }
+   if(Array.isArray(value))return value.map(v=>rewrite(v));
+   return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,rewrite(v,k)])):value;
+  };
+  f.transform(rewrite);
+ }
+ if(mode==='other-exchange')f.request.approvalBindings[1].replyId='another-exchange';
+ if(['wrong-question','early-project','early-approval','approval-before-project'].includes(mode)){
+  const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+  if(mode==='wrong-question')rows.find(row=>row.payload?.content?.[0]?.text?.startsWith(f.full)).payload.content[0].text=f.full+'\nКакой источник проверяем?';
+  else if(mode==='approval-before-project') {
+   const at=rows.findIndex(row=>row.payload?.name==='mcp__monotest__save_comment'),pair=rows.splice(at,2),project=rows.findIndex(row=>row.payload?.name==='mcp__monotest__save_project');
+   rows.splice(project,0,...pair);
+   f.request.approvalBindings.forEach(b=>b.currentLine=rows.findIndex(row=>row.payload?.name===(b.recordId===f.request.project.id?'mcp__monotest__save_project':'mcp__monotest__save_comment'))+1);
+  }else {
+   const name=mode==='early-project'?'mcp__monotest__save_project':'mcp__monotest__save_comment',at=rows.findIndex(row=>row.payload?.name===name),pair=rows.splice(at,2),reply=rows.findIndex(row=>row.payload?.role==='user');
+   rows.splice(reply,0,...pair);
+  }
+  fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:01Z').map(JSON.stringify).join('\n')+'\n');
+ }
+ const result=f.attest();assert.equal(result.status,'failed',JSON.stringify(result));
+ const reasons={'forged-quote':/verbatim owner reply/,'extra-change':/change outside named passage/,'wrong-question':/question lacks scenario anchors/,'early-project':/actual owner reply missing/,'early-approval':/actual owner reply missing/,'approval-before-project':/snapshot must follow consent/,'other-exchange':/same exchange required/,'project-change':/created project differs/,'project-misses-correction':/created project differs/,'missing-snapshot':/change outside named passage/};
+ assert.match(result.reason,reasons[mode]);
+});
+
 function textPrdFixture(t,delegated=false) {
  const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0],question='Принимаем показанный PRD?',reply=delegated?'Принимаю PRD: причина — требования проверяемы.':'принимаю';
  const expected={id:'prd',stage:'discovery',role:'approval',asksStart:false,summary:['## Кратко','## Требования'],question,reply,intent:'agree',outcome:{approval:true,startNext:false},...(delegated?{by:'orchestrator',reason:'требования проверяемы.'}:{})};
@@ -1112,6 +1196,15 @@ test('Handoff text start binds the shown package hash; defer cannot write that s
  delete f.request.stageStartLine; // This replacement trace starts directly with Handoff.
  const flush=()=>fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');flush();
  const r=f.check();assert.equal(r.status,'passed',r.reason);
+ const approvedStart=start.body;
+ const persistStart=body=>{
+  start.body=body;rows[5].payload.arguments=JSON.stringify({projectId:id,body});rows[6].payload.output=JSON.stringify(start);
+  fs.writeFileSync(commentsFile,JSON.stringify(comments));
+  fs.writeFileSync(f.request.dumpTrace,timed(dumpRows,'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');flush();
+ };
+ persistStart(approvedStart.replace(createHash('sha256').update(body).digest('hex'),'0'.repeat(64)));
+ const stalePackage=f.check();assert.equal(stalePackage.status,'failed');assert.match(stalePackage.reason,/shown content\/version/);
+ persistStart(approvedStart);assert.equal(f.check().status,'passed');
  Object.assign(expected,{intent:'defer',reply:'да, но позже',outcome:{approval:false,startNext:false}});rows[2].payload.content[0].text=expected.reply;flush();const rejected=f.check();assert.equal(rejected.status,'failed');assert.match(rejected.reason,/start-next-stage without scenario authority/);
 });
 
@@ -1164,7 +1257,7 @@ for(const host of ['claude','codex'])for(const scope of ['main','scout'])for(con
  if(shape.startsWith('codex-')&&host!=='codex'||shape.startsWith('claude-')&&host!=='claude')continue;
  test(`completeness matrix: ${host} ${scope} ${shape}`,async t=>{
   const {completedTrace,parentTurns}=await import('./skills-audit.mjs');
-  const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs');
+  const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./test-fixtures/legacy-window-trace.mjs');
   const f=textFixture(t,host);assert.equal(f.check().status,'passed');
   const read=[f.call('matrix-read','mcp__monotest__get_document',{id:'doc'}),f.result('matrix-read',{id:'doc',content:f.approved})];
   const rows=structuredClone(scope==='main'?[...f.events,f.terminal]:[...read,f.assistant('Scout findings.'),f.terminal]);
@@ -1207,7 +1300,7 @@ for(const host of ['claude','codex'])for(const scope of ['main','scout'])for(con
 
 for(const order of ['start-before-user','user-before-start'])for(const mode of ['correct','forged-quote','wrong-question','no-reply','early-record'])test(`native Codex approval order: ${order} ${mode}`,async t=>{
  const {completedTrace,parentTurns}=await import('./skills-audit.mjs');
- const {probeText,textExchanges}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs');
+ const {probeText,textExchanges}=await import('./skills-probe.mjs'),{checkTrace}=await import('./test-fixtures/legacy-window-trace.mjs');
  const f=textFixture(t,'codex');
  if(mode==='wrong-question')f.events[0]=f.assistant(f.draft+'\nДругой вопрос?');
  if(mode==='no-reply')f.events.splice(2,1);
@@ -1259,8 +1352,153 @@ for(const scope of ['main','scout'])for(const mode of ['complete','unbound-termi
  const native=rows.map((value,i)=>({value,line:i+1}));
  assert.equal(completedTrace('codex',native),mode==='complete');
  if(scope==='main'){
-  const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs');
+  const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./test-fixtures/legacy-window-trace.mjs');
   for(const check of [probeText,checkTrace])assert.equal(check(f.request).status,expected,check.name);
  }
  assert.equal(result.status,expected,JSON.stringify(result));
+});
+
+function u7DocumentFixture(t,host='claude',intent='agree') {
+ const f=textFixture(t,host,intent),url='https://linear.app/monotest/document/prd',shown='Что: колонка Источник.\nФильтр не входит.',approved=intent==='correction'?'Что: колонка Источник.\nФильтр и экспорт не входят.':shown;
+ f.request.rubricDefinition='U7 fixed summary/question/response/correction rubric; expected outcome is immutable.';
+ Object.assign(f.expected,{stage:'discovery',asksStart:false,question:{anchors:[['PRD','результат']],forbidden:['Design']},summary:['Источник'],presentation:'document',driverStart:null,response:{anchors:[['запис','утверд']],forbidden:['Design'],question:false},outcome:{approval:true,startNext:false}});
+ if(intent==='correction')f.expected.correction={before:'Фильтр не входит.',anchors:['экспорт','не входят'],descriptionAnchors:['экспорт']};
+ const old={id:'doc',projectId,title:'PRD',url,content:shown,updatedAt:date},fresh={...old,content:approved,updatedAt:'2026-11-01T00:00:00Z'};
+ f.record.body=`mono-test: approved\n${approved}\n\nВладелец: ответил «${f.expected.reply}»${intent==='correction'?'\nПоправка: экспорт исключён.':''}`;
+ f.page('comments','comments',[f.record]);f.save('documents/doc.json',fresh);
+ f.events.splice(0,f.events.length,f.call('shown','mcp__monotest__get_document',{id:'doc'}),f.result('shown',old),f.assistant(`Источник после имени; советую одну колонку. [PRD](${url})\nПринимаем этот PRD?`),f.terminal,f.user(f.expected.reply),f.call('read','mcp__monotest__get_document',{id:'doc'}),f.result('read',fresh),f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body}),f.result('write',f.record),f.assistant(intent==='correction'?'Экспорт исключён. Утверждение записал.':'Утверждение PRD записал.'));
+ f.request.approvalBindings=[{recordId:'r1',replyId:'decision',shownLine:3,shownReadLine:1,currentLine:6,text:shown}];
+ const attest=(checks={})=>{
+  delete f.request.rubric;const result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));assert.ok(result.rubricDigest,JSON.stringify(result));
+  f.request.rubric={digest:result.rubricDigest,reviewer:'curated U7 fixture oracle',checks:['summary','question','response','correction'].map(id=>({id,status:checks[id]??'passed',evidence:`native fixture ${id}`,reason:'Compared the actual document, question role, fixed outcome and named correction.'}))};
+ };
+ return {...f,old,fresh,shown,approved,attest};
+}
+for(const host of ['claude','codex'])for(const intent of ['agree','correction'])test(`U7 ${host}: short native PRD summary, alternate wording and body-hash binding (${intent})`,t=>{
+ const f=u7DocumentFixture(t,host,intent);f.attest();assert.equal(f.check().status,'passed',f.check().reason);
+});
+for(const host of ['claude','codex'])for(const mode of ['body-change','id-change','forged-quote','wrong-question','extra-turn','early-record','extra-change','stale-rubric','missing-rubric','summary-meaning','response-meaning','correction-meaning','unnamed-transition'])test(`U7 ${host}: rejects ${mode} while retaining valid anchors`,t=>{
+ const f=u7DocumentFixture(t,host,mode.includes('correction')||mode==='extra-change'?'correction':'agree');
+ if(mode==='body-change'){f.fresh.content+=' Mutation';f.events[6]=f.result('read',f.fresh);f.save('documents/doc.json',f.fresh);}
+ if(mode==='id-change'){f.fresh.id='other';f.events[6]=f.result('read',f.fresh);}
+ if(mode==='forged-quote'){f.record.body=f.record.body.replace('«принимаю»','«да»');f.events[7]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[8]=f.result('write',f.record);f.page('comments','comments',[f.record]);}
+ if(mode==='wrong-question')f.events[2]=f.assistant(`Источник [PRD](${f.old.url})\nКак назовём PRD?`);
+ if(mode==='extra-turn')f.events.push(f.terminal,f.assistant('Ещё ход.'));
+ if(mode==='early-record'){const write=f.events.splice(7,2);f.events.splice(4,0,...write);}
+ if(mode==='extra-change'){f.fresh.content='Лишнее. '+f.fresh.content;f.events[6]=f.result('read',f.fresh);f.save('documents/doc.json',f.fresh);}
+ if(mode==='summary-meaning')f.events[2]=f.assistant(`Источник скрываем; советую это. [PRD](${f.old.url})\nПринимаем PRD?`);
+ if(mode==='response-meaning')f.events[9]=f.assistant('Утверждение не записал.');
+ if(mode==='correction-meaning')f.events[9]=f.assistant('Экспорт оставил, поправку не внёс, утверждение записал.');
+ if(mode==='unnamed-transition')f.events[9]=f.assistant('Утверждение записал, приступаю к следующему этапу.');
+ if(['summary-meaning','response-meaning','correction-meaning','unnamed-transition','wrong-question'].includes(mode))f.attest({[mode==='summary-meaning'?'summary':mode==='wrong-question'?'question':mode==='correction-meaning'?'correction':'response']:'failed'});
+ if(mode==='stale-rubric'){f.attest();f.events[9]=f.assistant('PRD успешно записал.');}
+ const result=f.check();assert.equal(result.status,['missing-rubric','stale-rubric'].includes(mode)?'unverified':'failed',JSON.stringify(result));
+});
+
+for(const host of ['claude','codex'])for(const mode of ['allowed','no-permission','no-signal','early','defer','clarification','delegated','wrong-project','prose-only'])test(`U7 ${host}: driver start requires permission and a post-reply native action (${mode})`,t=>{
+ const f=u7DocumentFixture(t,host);
+ Object.assign(f.expected,{stage:'research',role:'transition',question:{anchors:['Discovery']},asksStart:true,driverStart:['discovery'],outcome:{approval:false,startNext:true},response:{anchors:['Discovery'],forbidden:[],question:false}});
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.request.presentationBindings=f.request.approvalBindings;f.request.approvalBindings=[];f.request.nextSkill='mono:discovery';
+ f.events[2]=f.assistant(`Источник [Исследование](${f.old.url})\nНачинаем Discovery?`);
+ const input={stage:'discovery',projectId:mode==='wrong-project'?'foreign':projectId};
+ const signal=[f.call('driver','mcp__stage_driver__start_stage',input),f.result('driver',{driverIntercepted:true,...input})];
+ f.events.splice(7,2,...(['no-signal','prose-only','defer','clarification'].includes(mode)?[]:signal));
+ f.events[f.events.length-1]=f.assistant('Перехватил старт Discovery для драйвера.');
+ if(mode==='no-permission')f.expected.driverStart=null;
+ if(mode==='early'){f.events.splice(7,2);f.events.splice(4,0,...signal);}
+ if(['defer','clarification','delegated'].includes(mode)){
+  f.expected.outcome.startNext=false;f.expected.driverStart=null;
+  if(mode==='defer'){f.expected.intent='defer';f.expected.reply='да, но позже';}
+  if(mode==='clarification'){f.expected.role='clarification';f.expected.asksStart=false;}
+  if(mode==='delegated'){f.expected.by='orchestrator';f.expected.reason='фактов достаточно';f.expected.reply='принимаю: фактов достаточно';}
+  f.events[4]=f.user(f.expected.reply);
+  f.events[f.events.length-1]=f.assistant('Discovery оставил на потом.');
+ }
+ if(['allowed','defer','clarification'].includes(mode)){f.attest();const result=f.check();assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.starts.length,mode==='allowed'?1:0);}
+ else assert.equal(f.check().status,'failed',JSON.stringify(f.check()));
+});
+
+for(const host of ['claude','codex'])test(`U7 ${host}: explicit forbidden-start rule includes the driver control tool`,t=>{
+ const f=u7DocumentFixture(t,host);
+ f.request.expectedRecords.push({forbidden:'start-next-stage'});
+ f.events.splice(7,0,f.call('driver','mcp__stage_driver__start_stage',{stage:'design',projectId}),f.result('driver',{driverIntercepted:true,stage:'design',projectId}));
+ const r=f.check();assert.equal(r.status,'failed',JSON.stringify(r));assert.match(r.reason,/forbidden start-next-stage/);
+});
+
+for(const mode of ['complete','fragment'])test(`U7 inline Idea binds the full artifact before varying advice (${mode})`,t=>{
+ const f=textIdeaFixture(t),expected=f.request.expectedReplies[0],full=f.request.approvalBindings[1].text;
+ Object.assign(expected,{question:{anchors:['описание']},presentation:'inline',driverStart:null,response:{anchors:['запис'],question:false}});
+ f.request.rubricDefinition='Full four-section Idea, role, fixed outcome and no hidden correction.';
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+ const shown=rows.find(row=>row.payload?.type==='message'&&row.payload.role==='assistant'&&row.payload.content?.[0]?.text.startsWith(full));
+ shown.payload.content[0].text=full+'\nСоветую исследовать ограничения.\nУтверждаем описание?';
+ for(const b of f.request.approvalBindings){b.artifactEnd=full.length;if(mode==='fragment'){b.text=full.slice(0,full.indexOf('## Неизвестные'));b.artifactEnd=b.text.length;}}
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');
+ let result=f.check();
+ if(mode==='fragment'){assert.equal(result.status,'failed',JSON.stringify(result));return;}
+ assert.equal(result.status,'unverified',JSON.stringify(result));assert.ok(result.rubricDigest);
+ f.request.rubric={digest:result.rubricDigest,reviewer:'curated full Idea control',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'native Idea fixture and canonical gate',reason:'Full artifact is identical; only unapproved advice varies outside it.'}))};
+ result=f.check();assert.equal(result.status,'passed',JSON.stringify(result));
+});
+
+for(const host of ['claude','codex'])test(`U7 ${host}: correction with valid anchors but opposite document meaning fails rubric`,t=>{
+ const f=u7DocumentFixture(t,host,'correction');
+ const changed='Что: колонка Источник.\nФильтр и экспорт не входят в исключения: они включены в результат.';
+ f.fresh.content=changed;f.save('documents/doc.json',f.fresh);f.events[6]=f.result('read',f.fresh);
+ f.record.body=`mono-test: approved\n${changed}\n\nВладелец: ответил «${f.expected.reply}»\nПоправка: экспорт включён.`;
+ f.page('comments','comments',[f.record]);f.events[7]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[8]=f.result('write',f.record);
+ f.attest({correction:'failed'});const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.equal(result.reason,'scenario rubric failed');
+});
+
+for(const host of ['claude','codex'])for(const lookup of ['doc','prd-source-slug'])test(`continue1 ${host}: native document identity comes from response (${lookup})`,t=>{
+ const f=u7DocumentFixture(t,host);
+ f.events[0]=f.call('shown','mcp__monotest__get_document',{id:lookup});
+ f.events[5]=f.call('read','mcp__monotest__get_document',{id:lookup});
+ f.attest();assert.equal(f.check().status,'passed',f.check().reason);
+ f.fresh.id='different-document';f.events[6]=f.result('read',f.fresh);
+ const changed=f.check();assert.equal(changed.status,'failed');assert.match(changed.reason,/document changed/);
+});
+
+for(const host of ['claude','codex'])for(const mode of ['passed','unverified','failed','trace-change','dump-change','digest-change','bindings-change','extra-dump-file'])test(`continue3 ${host}: saved native review ${mode}`,async t=>{
+ const f=u7DocumentFixture(t,host);f.attest();const rubric=f.request.rubric;delete f.request.rubric;
+ const bindingsFile=path.join(f.dir,'review.json');
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings}));
+ let collections=0;
+ const input={run:{trace:f.request.trace},runRequest:{host,cwd:f.dir,packRoot:process.cwd(),context:{skillPrefix:'mono',projectName:f.project.name},scenario:{expectedReplies:f.request.expectedReplies,rubricDefinition:f.request.rubricDefinition},mcpServers:{monotest:{url:'test'}}},scenario:{next:'handoff',expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,'review-capture'),bindingsFile};
+ const collect=async()=>{collections++;return {status:'passed',trace:f.request.dumpTrace,dumpDir:f.dumpDir};};
+ const initial=await verifyTextScenarioRecords(input,collect);
+ assert.equal(initial.status,'unverified',JSON.stringify(initial));assert.equal(initial.rubricDigest,rubric.digest);
+ assert.ok(fs.existsSync(initial.reviewEvidence));
+ const review={...rubric,checks:rubric.checks.map(c=>({...c,status:['failed','unverified'].includes(mode)?mode:'passed'}))};
+ const bindings={approvalBindings:f.request.approvalBindings,rubric:review};
+ if(mode==='trace-change')fs.appendFileSync(f.request.trace,'\n');
+ if(mode==='dump-change')f.save('project.json',{...f.project,description:'changed'});
+ if(mode==='extra-dump-file')f.save('extra.json',{unexpected:'data'});
+ if(mode==='digest-change'){
+  const saved=JSON.parse(fs.readFileSync(initial.reviewEvidence));saved.rubricDigest='b'.repeat(64);fs.writeFileSync(initial.reviewEvidence,JSON.stringify(saved));
+ }
+ if(mode==='bindings-change')bindings.approvalBindings=[{...f.request.approvalBindings[0],text:'different document'}];
+ fs.writeFileSync(bindingsFile,JSON.stringify(bindings));
+ const resume=()=>verifyTextScenarioRecords({...input,resumeEvidence:initial.reviewEvidence},()=>{throw Error('resume must not collect another dump');});
+ if(mode.includes('change')||mode==='extra-dump-file')await assert.rejects(resume,/saved (evidence|bindings|rubric digest) changed/);
+ else {
+  const resumed=await resume();assert.equal(resumed.status,mode,JSON.stringify(resumed));assert.equal(resumed.rubricDigest,initial.rubricDigest);
+  assert.deepEqual(resumed.rubricInput,initial.rubricInput,'same native evidence, records and dump are reviewed');
+ }
+ assert.equal(collections,1);
+});
+
+for(const host of ['claude','codex'])test(`continue3 ${host}: annotate saved native bindings before rubric review without rerun`,async t=>{
+ const f=u7DocumentFixture(t,host);f.check();const bindingsFile=path.join(f.dir,'annotations.json');
+ const input={run:{trace:f.request.trace},runRequest:{host,cwd:f.dir,packRoot:process.cwd(),context:{skillPrefix:'mono',projectName:f.project.name},scenario:{expectedReplies:f.request.expectedReplies,rubricDefinition:f.request.rubricDefinition},mcpServers:{monotest:{url:'test'}}},scenario:{next:'handoff',expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,'unannotated')};
+ const initial=await verifyTextScenarioRecords(input,async()=>({status:'passed',trace:f.request.dumpTrace,dumpDir:f.dumpDir}));
+ assert.equal(initial.status,'failed',JSON.stringify(initial));assert.match(initial.reason,/expected approval missing actual record bound to shown version/);assert.equal(initial.rubricDigest,undefined);
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings}));
+ const noCollect=()=>{throw Error('review preparation/resume must reuse the saved dump');};
+ const prepared=await verifyTextScenarioRecords({...input,resumeEvidence:initial.reviewEvidence,bindingsFile,prepareReview:true},noCollect);
+ assert.equal(prepared.status,'unverified');assert.ok(prepared.rubricDigest);
+ const rubric={digest:prepared.rubricDigest,reviewer:'native saved-evidence fixture',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'same saved native document and trace',reason:'Compared the fixed scenario, artifact, question, reply and write.'}))};
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings,rubric}));
+ const resumed=await verifyTextScenarioRecords({...input,resumeEvidence:prepared.reviewEvidence,bindingsFile},noCollect);
+ assert.equal(resumed.status,'passed',JSON.stringify(resumed));assert.equal(resumed.rubricDigest,prepared.rubricDigest);
 });

@@ -5,52 +5,118 @@
   "kind": "main",
   "seed": "seeds/research.json",
   "next": "design",
-  "prompt": "Бриф полный, вопросов о том, кто пользователь, что сейчас и что станет, нет. Следуй правилам этапа проверяемой версии. Не исправляй известные дефекты окна обходом текста.",
+  "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии. После показа спрашивай об утверждении и старте followingStage: владелец готов решить оба вопроса сейчас. В итоге оставь ссылку на показанный документ или запись пакета, прочитанную нативно; после ответа перечитай её перед записью.",
   "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
   "hosts": {
     "claude": {
-      "windows": [
+      "expectedReplies": [
         {
-          "mode": "label",
-          "label": "Утвердить, продолжу позже"
-        }
-      ],
-      "expectedWindows": [
-        {
-          "id": "discovery-approval",
-          "decision": "Утвержд",
-          "advice": "Совет",
-          "reason": "Design",
-          "summary": [],
-          "role": "approval"
-        }
-      ],
-      "freeQuestions": [
-        {
-          "contains": "?"
+          "id": "discovery-approve",
+          "stage": "discovery",
+          "role": "approval",
+          "summary": [
+            "Источник"
+          ],
+          "question": {
+            "anchors": [
+              [
+                "PRD",
+                "результат",
+                "решени",
+                "соглас"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
+          "reply": "согласен",
+          "intent": "agree",
+          "outcome": {
+            "approval": true,
+            "startNext": true
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": [
+            "design",
+            "tech-evaluation",
+            "handoff"
+          ]
         }
       ]
     },
     "codex": {
-      "windows": [
+      "expectedReplies": [
         {
-          "mode": "label",
-          "label": "Утвердить, продолжу позже"
-        }
-      ],
-      "expectedWindows": [
-        {
-          "id": "discovery-approval",
-          "decision": "Утвержд",
-          "advice": "Совет",
-          "reason": "Design",
-          "summary": [],
-          "role": "approval"
-        }
-      ],
-      "freeQuestions": [
-        {
-          "contains": "?"
+          "id": "discovery-approve",
+          "stage": "discovery",
+          "role": "approval",
+          "summary": [
+            "Источник"
+          ],
+          "question": {
+            "anchors": [
+              [
+                "PRD",
+                "результат",
+                "решени",
+                "соглас"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff"
+              ],
+              [
+                "Design",
+                "Tech Evaluation",
+                "Handoff"
+              ]
+            ],
+            "forbidden": []
+          },
+          "asksStart": true,
+          "reply": "согласен",
+          "intent": "agree",
+          "outcome": {
+            "approval": true,
+            "startNext": true
+          },
+          "response": {
+            "anchors": [
+              [
+                "запис",
+                "утверд"
+              ]
+            ],
+            "forbidden": [],
+            "question": false
+          },
+          "presentation": "document",
+          "driverStart": [
+            "design",
+            "tech-evaluation",
+            "handoff"
+          ]
         }
       ]
     }

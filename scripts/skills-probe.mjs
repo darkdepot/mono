@@ -10,69 +10,6 @@ import { validateReplies, textReply, isOwnerWindow, checkStageResponse } from '.
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 export const visibleText = text => typeof text === 'string' && text.replace(/[\s\p{Cf}\p{Variation_Selector}]/gu, '').length > 0;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-function validQuestion(question) {
-  return question && nonempty(question.question) && nonempty(question.header) &&
-    (question.multiSelect === undefined || typeof question.multiSelect === 'boolean') &&
-    Array.isArray(question.options) && question.options.length >= 2 &&
-    question.options.every(option => option && nonempty(option.label) && nonempty(option.description));
-}
-
-// The host probe's narrow Claude check: visible text in the current parent turn.
-// Thinking content is supplementary evidence and never the detection rule.
-export function claudeWindows(rows, source, options) {
-  const audit=auditRows('claude',rows);
-  const windows = [], seen = new Set();
-  let text = [], thinking = [], toolResult = null;
-  for (const { value: event, line } of rows) {
-    if (!object(event) || !nonempty(event.type)) throw new Error(`line ${line}: invalid trace event`);
-    if (event.parent_tool_use_id != null && !nonempty(event.parent_tool_use_id))
-      throw new Error(`line ${line}: invalid parent_tool_use_id`);
-    if (!event.parent_tool_use_id && (event.type === 'result' || (event.type === 'system' && event.subtype === 'init'))) {
-      text = []; thinking = []; toolResult = null;
-      continue;
-    }
-    if (!['user', 'assistant'].includes(event.type)) continue;
-    if (!object(event.message)) throw new Error(`line ${line}: invalid message`);
-    const blocks = event.message.content;
-    const userString = event.type === 'user' && typeof blocks === 'string';
-    if (!userString && (!Array.isArray(blocks) || blocks.some(block => !object(block) || !nonempty(block.type))))
-      throw new Error(`line ${line}: invalid message content`);
-    if (event.type === 'user' && !userString && blocks.some(block => block.type === 'tool_result' && !nonempty(block.tool_use_id)))
-      throw new Error(`line ${line}: invalid tool_result id`);
-    if (event.type === 'user') {
-      if (event.parent_tool_use_id) continue;
-      text = []; thinking = [];
-      toolResult = !userString && blocks.some(b => b.type === 'tool_result') ? line : null;
-      continue;
-    }
-    for (const block of blocks) {
-      if (block.type === 'text' && typeof block.text !== 'string')
-        throw new Error(`line ${line}: invalid text block`);
-      if (block.type === 'tool_use' && (!nonempty(block.id) || !nonempty(block.name)))
-        throw new Error(`line ${line}: invalid tool_use`);
-      if (block.type === 'tool_use' && block.name === 'AskUserQuestion' &&
-          (!Array.isArray(block.input?.questions) || !block.input.questions.length || !block.input.questions.every(validQuestion)))
-        throw new Error(`line ${line}: malformed AskUserQuestion`);
-      if (event.parent_tool_use_id) continue;
-      if (block.type === 'text' && visibleText(block.text)) text.push(line);
-      if (block.type === 'thinking') thinking.push(line);
-      if (block.type !== 'tool_use' || block.name !== 'AskUserQuestion') continue;
-      if (seen.has(block.id)) continue;
-      seen.add(block.id);
-      const proof=audit.windowProof(event,line,block.id,options);
-      windows.push({
-        evidence: `${source}:${line}`, line, callId: block.id, toolResult,
-        textLines: [...new Set(text)], thinkingLines: [...new Set(thinking)],
-        questions: block.input.questions,
-        executionConfirmed:proof.status==='confirmed',
-        status: proof.status==='unverified'?'unverified':text.length ? 'passed' : 'failed',
-        reason: proof.status==='unverified'?'successful native permission or delivered answer missing for this phase':text.length ? 'visible text before window' : 'no visible text before window; thinking is not owner text',
-      });
-    }
-  }
-  return windows;
-}
-
 export function traceRows(filename, host = 'claude', options) {
   const data = fs.readFileSync(filename, 'utf8');
   let sample;
@@ -110,8 +47,8 @@ export function textExchanges(host, rows, expectedReplies, {startLine=0}={}) {
     const response=turns.find(t=>t.line>turn.replyLine);
     if (!response) throw new Error(`stage did not continue after ${expected.id}`);
     if (expected.response!==undefined) checkStageResponse(expected,response.text);
-    if (expected.intent==='unclear'&&!response.text.includes('?')) throw new Error(`stage did not clarify ${expected.id}`);
-    if (expected.intent==='correction'&&!response.text.includes(expected.correction.description)) throw new Error(`stage did not name correction for ${expected.id}`);
+    if (expected.intent==='unclear'&&!response.text.trimEnd().endsWith('?')) throw new Error(`stage did not clarify ${expected.id}`);
+    if (expected.intent==='correction'&&expected.correction.description&&!response.text.includes(expected.correction.description)) throw new Error(`stage did not name correction for ${expected.id}`);
     exchanges.push({...turn,expected,response});cursor=turn.replyLine;
   }
   const replyLines=new Set(exchanges.map(e=>e.replyLine));
@@ -143,31 +80,9 @@ export function probeText({host,trace,expectedReplies,stageStartLine}) {
   } catch(error) {return {check:'text-turns',status:error instanceof MissingEvidence?'unverified':'failed',reason:error.message};}
 }
 
-export function probeClaude(filename, options = {}) {
-  if(options.expectedReplies)return probeText({host:'claude',trace:filename,expectedReplies:options.expectedReplies,stageStartLine:options.stageStartLine});
-  try {
-    const { rows, excerpt } = traceRows(filename,'claude');
-    const phase=options.phase??(excerpt?'excerpt':'complete');
-    const windows = claudeWindows(rows, filename, {phase});
-    const status = !windows.length ? 'unverified' : windows.some(w => w.status === 'unverified') ? 'unverified' : windows.some(w => w.status === 'failed') ? 'failed' : 'passed';
-    return { check: 'claude-text-before-window', phase, status, windows,
-      boundary: excerpt ? 'sanitized excerpt; original line numbers' : phase==='excerpt'?'explicit narrow excerpt probe':phase==='card'?'pre-answer card check':'supplied finished stream-json trace only',
-      ...(windows.length ? {} : { reason: 'no top-level AskUserQuestion reached; harness evidence required' }) };
-  } catch (error) {
-    return { check: 'claude-text-before-window', status: 'unverified', windows: [], reason: error.message };
-  }
-}
-
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  if(process.argv[2]==='--text') {
-    let result;try{result=probeText(JSON.parse(fs.readFileSync(process.argv[3],'utf8')));}catch(error){result={status:'unverified',reason:error.message};}
-    console.log(JSON.stringify(result,null,2));process.exit(result.status==='passed'?0:result.status==='failed'?1:2);
-  }
-  if (![3,4].includes(process.argv.length) || (process.argv.length===4&&process.argv[3]!=='--excerpt') || ['--help', '-h'].includes(process.argv[2])) {
-    console.error('Usage: node scripts/skills-probe.mjs <claude-stream.jsonl|trace-excerpt.json> [--excerpt]');
-    process.exit(['--help', '-h'].includes(process.argv[2]) ? 0 : 2);
-  }
-  const result = probeClaude(process.argv[2],process.argv[3]==='--excerpt'?{phase:'excerpt'}:{});
-  console.log(JSON.stringify(result, null, 2));
-  process.exit(result.status === 'passed' ? 0 : result.status === 'failed' ? 1 : 2);
+ try {
+  const file=process.argv[2]==='--text'?process.argv[3]:process.argv[2];
+  const r=probeText(JSON.parse(fs.readFileSync(file,'utf8'))); console.log(JSON.stringify(r,null,2)); process.exitCode=r.status==='passed'?0:r.status==='failed'?1:2;
+ } catch(error) {console.log(JSON.stringify({status:'unverified',reason:error.message}));process.exitCode=2;}
 }

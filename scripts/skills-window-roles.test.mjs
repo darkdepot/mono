@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import test from 'node:test';
-import {runScenario} from './skills-run.mjs';
+import {runScenario} from './test-fixtures/legacy-window-run.mjs';
 const repo=process.cwd();
 function setup(t,host,mode){
  const cwd=fs.mkdtempSync(path.join(os.tmpdir(),'mono-roles-'));t.after(()=>fs.rmSync(cwd,{recursive:true,force:true}));
