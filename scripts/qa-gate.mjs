@@ -53,12 +53,14 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
       } else {
         const latest = Math.max(...eligible.map(row => Date.parse(row.mergedAt)));
         const last = eligible.filter(row => Date.parse(row.mergedAt) === latest);
-        need(last.length === 1, 'latest project landing is ambiguous');
-        final = last[0].issue;
+        need(last.length === 1 || (!held.includes(issue) && !last.some(row => row.issue === issue)), 'latest project landing is ambiguous');
+        final = last.length === 1 ? last[0].issue : null;
       }
       if (held.includes(issue) || final === issue) {
         need(typeof final === 'string', 'final issue required');
-        need(build.every(row => sha(row.head)), 'project build head missing');
+        need(eligible.every(row => sha(row.head) || (row.mergedAt === null && row.head == null)), 'project build head missing');
+        const missingPr = eligible.find(row => row.head == null);
+        if (missingPr) return { state: 'waiting', reason: `QA: waiting for PR of ${missingPr.issue}`, connected };
         const target = implementation.find(row => row.issue === final);
         need(target && sha(target.head), 'final issue/head missing');
         need(state.tasks?.[final]?.head === target.head && state.tasks[final].project === task.project, 'final task state mismatch');
@@ -80,12 +82,14 @@ export function qaDeliveryState({ root, config, issue, head, shipCertificate }) 
     }
     return { state: 'passed', reason: final ? 'task and project QA passed' : 'task QA passed' };
   } catch (error) {
-    return { state: error.code === 'ENOENT' ? 'waiting' : 'failed', reason: `QA: ${error.message}`, connected };
+    return { state: error.code === 'ENOENT' ? 'waiting' : 'failed',
+      reason: error.message.startsWith('QA: ') ? error.message : `QA: ${error.message}`, connected };
   }
 }
 
 export function requireQaPassed(input) {
   const qa = qaDeliveryState(input);
-  need(['passed', 'not-connected'].includes(qa.state), `${qa.state}: ${qa.reason}`);
+  if (!['passed', 'not-connected'].includes(qa.state))
+    throw new Error(`QA: ${qa.state}: ${qa.reason.replace(/^QA: /, '')}`);
   return qa;
 }
