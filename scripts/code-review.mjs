@@ -346,7 +346,8 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (layers > 8) return hide();
       const stringRevision = revision, initialSafe = input ? redact(entry, file, patch) : entry;
       const literalResults = [];
-      for (const match of entry.matchAll(/"(?:[^"\\]|\\[\s\S])*"/g)) {
+      // A failed literal cannot restart at its escaped quotes; residual escapes fail closed below.
+      for (const match of entry.matchAll(/(?<!\\)"(?:[^"\\]|\\[\s\S])*"/g)) {
         let literal;
         try { literal = JSON.parse(match[0]); } catch { return hide(); }
         if (secretKey(literal) && /^\s*[:=]/.test(entry.slice(match.index + match[0].length))) return hide(Math.max(1, scanPayloadText(entry, { file, patch }).length));
@@ -384,7 +385,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       const safe = input ? initialSafe : redact(entry, file);
       if (input) {
         if (literalResults.length && rejected) return hide();
-        const outsideLiterals = entry.replace(/"(?:[^"\\]|\\[\s\S])*"/g, '""').replace(/^\\ No newline at end of file$/gm, '');
+        const outsideLiterals = entry.replace(/(?<!\\)"(?:[^"\\]|\\[\s\S])*"/g, '""').replace(/^\\ No newline at end of file$/gm, '');
         if (outsideLiterals.includes('\\')) return hide();
         return { value: safe, text: safe };
       }

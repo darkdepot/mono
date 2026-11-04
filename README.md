@@ -1651,7 +1651,7 @@ Scope/risk flags persist across rounds for confirmed and rejected findings until
 new checker evidence clears them. Before each launch, secret scanning covers the
 whole context: contract, rules, diff context, findings, history and base evidence;
 payload screening uses the same bounded literal JSON decoder for input and output,
-including JSON embedded in source text. One family table covers AWS AKIA/ASIA,
+including JSON embedded in source text. Unterminated literals never restart at escaped quotes. One family table covers AWS AKIA/ASIA,
 GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
 JWT scanning visits base64url segments once, so an invalid dotted prefix cannot hide a valid JWT. Header-suffix decoding has a linear cumulative work budget; exhaustion withholds the value. Prefix-anchored families use non-overlapping matching and withhold the entire matching value.
 Secret-like keys withhold quoted, nested and non-string values; plain `session`

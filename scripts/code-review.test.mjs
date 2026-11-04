@@ -940,3 +940,8 @@ test('C18: per-value size and cumulative JWT header work limits withhold before 
  const jwt=[Buffer.from(JSON.stringify({alg:'none'})).toString('base64url'),'e30',''].join('.');
  for(const prefix of ['trace.info.','invalid-','trace..'])assert.ok(scanSecrets(prefix+jwt,{patch:false}).length);
 });
+
+test('C18: an unterminated escaped literal is withheld without rescanning each escaped quote',()=>{
+ const value=String.fromCharCode(34)+String.fromCharCode(92,34).repeat(524288);
+ for(const input of [true,false]){const start=performance.now(),result=screenModelOutput(value,{input});assert.equal(result.rejected,true);assert.ok(performance.now()-start<750,'escaped-literal screen exceeded 750ms');}
+});

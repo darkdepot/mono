@@ -23,3 +23,4 @@
 - Keep overlapping credential candidates visible after an invalid JWT-shaped prefix, so dotted context cannot consume a supported JWT before validation.
 
 Исправления PR: линейный поиск JWT с ограничением объёма строки и работы декодера; итоги набора 10/14; статические CLI-фикстуры читают JSON без вставки данных в исходный код.
+Незавершённые JSON-литералы также не запускают повторный поиск с экранированных кавычек.
