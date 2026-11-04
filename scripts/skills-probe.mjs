@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { auditRows } from './skills-audit.mjs';
+import { auditRows, parentTurns, completedTrace } from './skills-audit.mjs';
+import { MissingEvidence } from './skills-boundary.mjs';
 import { readJsonLines } from './transports/journal.mjs';
+
+import { validateReplies, textReply, isOwnerWindow, checkStageResponse } from './skills-owner.mjs';
 
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 export const visibleText = text => typeof text === 'string' && text.replace(/[\s\p{Cf}\p{Variation_Selector}]/gu, '').length > 0;
@@ -90,7 +93,58 @@ export function traceRows(filename, host = 'claude', options) {
   return { rows, excerpt: Boolean(sample?.events) };
 }
 
+export function textExchanges(host, rows, expectedReplies, {startLine=0}={}) {
+  validateReplies(expectedReplies);
+  const audit=auditRows(host,rows);
+  if(!completedTrace(host,rows))throw new MissingEvidence('successful final parent terminal missing');
+  if(!Number.isInteger(startLine)||startLine<0||(startLine>0&&audit.proof({kind:'terminal',result:rows.find(r=>r.line===startLine)?.value}).status!=='confirmed'))throw new MissingEvidence('native stage start boundary missing');
+  const turns=parentTurns(host,rows).filter(t=>t.line>startLine),exchanges=[];
+  if(turns.some(turn=>!visibleText(turn.text)))throw new Error('completed parent stage turn has no final text');
+  let cursor=-1;
+  for (const [index,expected] of expectedReplies.entries()) {
+    const turn=turns.find(t=>t.line>cursor);
+    if (!turn) throw new Error(`last stage message missing for ${expected.id}`);
+    textReply({expectedReplies},turn.text,index);
+    if (turn.reply===undefined) throw new Error(`actual owner reply missing for ${expected.id}`);
+    if (turn.reply!==expected.reply) throw new Error(`actual owner reply differs from scenario for ${expected.id}`);
+    const response=turns.find(t=>t.line>turn.replyLine);
+    if (!response) throw new Error(`stage did not continue after ${expected.id}`);
+    if (expected.response!==undefined) checkStageResponse(expected,response.text);
+    if (expected.intent==='unclear'&&!response.text.includes('?')) throw new Error(`stage did not clarify ${expected.id}`);
+    if (expected.intent==='correction'&&!response.text.includes(expected.correction.description)) throw new Error(`stage did not name correction for ${expected.id}`);
+    exchanges.push({...turn,expected,response});cursor=turn.replyLine;
+  }
+  const replyLines=new Set(exchanges.map(e=>e.replyLine));
+  for(const row of rows.filter(r=>r.line>exchanges[0].line)){
+    const message=audit.proof({kind:'text-message',result:row.value});
+    if(message.status==='confirmed'&&message.role==='user'&&!replyLines.has(row.line))throw new Error('unexpected owner reply without scenario policy');
+  }
+  const trailing=turns.filter(t=>t.line>cursor);
+  if(trailing.length!==1||trailing[0].reply!==undefined)throw new Error('unexpected trailing stage turn or owner exchange without scenario policy');
+  return exchanges;
+}
+export function checkEndings(exchanges) {
+  const endings=new Map();
+  for (const exchange of exchanges) {
+    const ending=exchange.text.trim().split('\n').at(-1).trim(),stage=exchange.expected.stage;
+    if (endings.has(ending)&&endings.get(ending)!==stage) throw new Error('identical endings across stages');
+    endings.set(ending,stage);
+  }
+}
+export function probeText({host,trace,expectedReplies,stageStartLine}) {
+  let rows;
+  try{({rows}=traceRows(trace,host));validateReplies(expectedReplies);}catch(error){return {check:'text-turns',status:'unverified',reason:error.message};}
+  try {
+    const audit=auditRows(host,rows);
+    const windows=audit.calls.filter(c=>isOwnerWindow(c.name));
+    if(windows.length)return {check:'text-turns',status:'failed',reason:'stage called a window',windows};
+    const exchanges=textExchanges(host,rows,expectedReplies,{startLine:stageStartLine});checkEndings(exchanges);
+    return {check:'text-turns',status:'passed',exchanges,boundary:'completed parent questions and exact native replies only; full trace and record checks remain required'};
+  } catch(error) {return {check:'text-turns',status:error instanceof MissingEvidence?'unverified':'failed',reason:error.message};}
+}
+
 export function probeClaude(filename, options = {}) {
+  if(options.expectedReplies)return probeText({host:'claude',trace:filename,expectedReplies:options.expectedReplies,stageStartLine:options.stageStartLine});
   try {
     const { rows, excerpt } = traceRows(filename,'claude');
     const phase=options.phase??(excerpt?'excerpt':'complete');
@@ -105,6 +159,10 @@ export function probeClaude(filename, options = {}) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  if(process.argv[2]==='--text') {
+    let result;try{result=probeText(JSON.parse(fs.readFileSync(process.argv[3],'utf8')));}catch(error){result={status:'unverified',reason:error.message};}
+    console.log(JSON.stringify(result,null,2));process.exit(result.status==='passed'?0:result.status==='failed'?1:2);
+  }
   if (![3,4].includes(process.argv.length) || (process.argv.length===4&&process.argv[3]!=='--excerpt') || ['--help', '-h'].includes(process.argv[2])) {
     console.error('Usage: node scripts/skills-probe.mjs <claude-stream.jsonl|trace-excerpt.json> [--excerpt]');
     process.exit(['--help', '-h'].includes(process.argv[2]) ? 0 : 2);

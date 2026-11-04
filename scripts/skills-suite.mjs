@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { loadCatalog, catalogFile } from './skills-catalog.mjs';
 import { scenarioExpectation } from './skills-select.mjs';
 import { verifyScenarioRecords } from './skills-records.mjs';
+import { checkEndings } from './skills-trace.mjs';
 import { runScenario } from './skills-run.mjs';
 
 const json = file => JSON.parse(fs.readFileSync(file,'utf8'));
@@ -28,11 +29,12 @@ function projectIdentity(data, name) {
   return data;
 }
 
-export function scenarioPrompt({scenario,seed,seedProjectFile,projectName,projectFile,project,next,packRoot,paper,designMemoryFile,designMemory,productName,skillPrefix,routeHint}) {
+export function scenarioPrompt({scenario,host,seed,seedProjectFile,projectName,projectFile,project,next,packRoot,paper,designMemoryFile,designMemory,productName,skillPrefix,routeHint}) {
   for (const [key,value] of Object.entries({projectFile,packRoot})) if (!path.isAbsolute(value ?? '') || path.basename(value)==='undefined') throw new Error(`absolute ${key} required`);
   if (seed && !project && !path.isAbsolute(seedProjectFile ?? '')) throw new Error('absolute seedProjectFile required');
   if (!projectName?.trim()) throw new Error('projectName required');
-  const owner=`Это отдельная сессия владельца тестового продукта: проверяем скиллы ${productName} с имитированным владельцем, не исполнитель-воркер и не помощник делегированного этапа. Отвечает драйвер через настоящие окна. Владелец явно начинает указанный этап; правила окна проверяемой версии не меняй.`;
+  const textFlow=Boolean(scenario.hosts?.[host]?.expectedReplies);
+  const owner=textFlow?`Это отдельная сессия владельца тестового продукта: проверяем скиллы ${productName} с имитированным владельцем. Драйвер отвечает обычным текстом на последнее сообщение завершённого хода. Владелец явно начинает указанный этап; правила проверяемой версии не меняй.`:`Это отдельная сессия владельца тестового продукта: проверяем скиллы ${productName} с имитированным владельцем, не исполнитель-воркер и не помощник делегированного этапа. Отвечает драйвер через настоящие окна. Владелец явно начинает указанный этап; правила окна проверяемой версии не меняй.`;
   const entry=project
     ? `Проект уже существует: ${JSON.stringify(project)}. Перед записью прочитай его через monotest; id, имя и пространство обязаны совпасть. Используй только этот проект, новый не создавай.`
     : seed ? `Посев уже выполнен отдельным ходом. Прочитай указатель ${seedProjectFile}, затем свежий get_project этого проекта monotest. Используй только его; новый проект не создавай. Не переписывай маршрут посева из-за поля followingStage.`
@@ -43,7 +45,7 @@ export function scenarioPrompt({scenario,seed,seedProjectFile,projectName,projec
     `Этап под проверкой: ${scenario.stage}. Следующий этап после завершения (followingStage): ${next ?? 'none'}. Это выход текущего этапа, не маршрут его посева. ${routeHint ?? ''}`,
     `Начни ${skillPrefix}:${scenario.stage}. ${scenario.prompt}`,
     'Для проверяемых записей Codex каждый monotest MCP вызывай отдельным exec строго в форме const r = await tools.<имя>(<JSON>); text(r); с буквальным JSON аргументов. Не объединяй MCP-вызовы в один exec. Это сохраняет связь запроса, ответа и свежего чтения.',
-    'Проверяем только этот этап до результата целевого окна. Промежуточные выборы и свободные вопросы отвечаются драйвером. Следующий этап запускает драйвер отдельным вызовом в этом же проекте; передай результат и закончи ход. Не начинай реализацию, доставку или установку. Не подменяй окно текстом и не считай свободный ответ утверждением.'
+    textFlow?'Проверяем только этот этап до результата разговора с владельцем. Соблюдай правила установленной версии этапа. Следующий этап запускает драйвер отдельным вызовом в этом же проекте; передай результат и закончи ход. Не начинай реализацию, доставку или установку.':'Проверяем только этот этап до результата целевого окна. Промежуточные выборы и свободные вопросы отвечаются драйвером. Следующий этап запускает драйвер отдельным вызовом в этом же проекте; передай результат и закончи ход. Не начинай реализацию, доставку или установку. Не подменяй окно текстом и не считай свободный ответ утверждением.'
   ].filter(Boolean).join('\n\n');
 }
 
@@ -84,7 +86,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
   const results=[],exportLeftovers=new Set();
   runs: for (const unit of selection.units) for (const host of selection.hosts) {
     const projectName=`monotest-${request.runId}-${host}-${unit.id}`;
-    let project=null;
+    let project=null;const chainExchanges=[];
     for (const [position,key] of unit.scenarios.entries()) {
       const outputDir=path.join(request.outputDir,`${unit.id}-${host}-${position}`);
       let result,paperLog,runRequest,scenario,observedProject,seedProject;const stageStart=Date.now();
@@ -98,7 +100,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         const seedPath=position===0 && unit.seed ? unit.seed : scenario.seed;
         const seed=!project && seedPath ? JSON.parse(JSON.stringify(json(catalogFile(catalog.root,seedPath))).replaceAll('<projectName>',projectName)) : null;
         const nextKey=unit.scenarios[position+1], next=nextKey ? catalog.scenarios.get(nextKey)?.stage : scenario.next;
-        const expectedWindows=flow.expectedWindows.map(window=>next && scenario.stage!=='design' && window.role==='approval'
+        const expectedWindows=(flow.expectedWindows??[]).map(window=>next && scenario.stage!=='design' && window.role==='approval'
           ? {...window,reason:catalog.stages.get(next).name} : window);
         const servers={...request.mcpServers};
         let exportRunDir;
@@ -115,7 +117,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         const target=catalog.scenarios.get(unit.target);
         if (!target) throw new Error('selected unit target missing');
         const brief=target.brief+` Идентификатор тестового проекта этой правки: ${projectName}. Название колонки всегда «Источник», имя прогона в него не добавляй.`;
-        const prompt=scenarioPrompt({scenario:{...scenario,brief},seed,seedProjectFile,projectName,projectFile,project,next,packRoot:request.packRoot,paper:scenario.stage==='design'?request.paper:null,designMemoryFile:request.designMemoryFile,
+        const prompt=scenarioPrompt({scenario:{...scenario,brief},host,seed,seedProjectFile,projectName,projectFile,project,next,packRoot:request.packRoot,paper:scenario.stage==='design'?request.paper:null,designMemoryFile:request.designMemoryFile,
           designMemory:designMemory ? {...designMemory,firstLine:`Репозиторий: ${request.cwd}`,fileId:request.paper.fileId} : null,
           productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:catalog.index.routeHints?.[next]});
         runRequest={host,cwd:request.cwd,packRoot:request.packRoot,outputDir,authFile:request.authFile,
@@ -123,10 +125,14 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
           timeoutMs:request.timeoutMs ?? 1_800_000,idleMs:20_000,maxTurns:request.maxTurns??128,mcpServers:servers,
           workspaceProof:proof,
           ...(seed?{seed:{prompt:seedPrompt({seed,projectName,projectFile:seedProjectFile,dumpDir,packRoot:request.packRoot,brief}),projectName,projectFile:seedProjectFile,dumpDir,expectedStage:seed.entryStage??null,configFile:path.join(request.cwd,'.agents/mono-workflow.config.json')}}:{}),
-          context:{skillPrefix:catalog.index.skillPrefix,projectName,projectFile,project,entryStage:scenario.stage,followingStage:next},scenario:{prompt,brief,allowedTools:['*'],stopAfterExpectedWindows:true,...flow,expectedWindows}};
+          context:{skillPrefix:catalog.index.skillPrefix,projectName,projectFile,project,entryStage:scenario.stage,followingStage:next},scenario:{prompt,brief,allowedTools:['*'],stopAfterExpectedWindows:true,...flow,...(flow.expectedReplies?{}:{expectedWindows})}};
         fs.writeFileSync(outputDir+'-request.json',JSON.stringify(runRequest,null,2)+'\n',{flag:'wx'});
         checkPack(request.packRoot,selection.head);
         result=await execute(runRequest);
+        if(flow.expectedReplies&&result.status==='passed') {
+          if(!result.check?.exchanges?.length)throw new Error('text stage exchange evidence missing');
+          chainExchanges.push(...result.check.exchanges);checkEndings(chainExchanges);
+        }
         checkPack(request.packRoot,selection.head);
         if (seed && result.seedRoute?.project) seedProject=projectIdentity(result.seedRoute.project,projectName);
         if (result.status !== 'failed' && (result.status==='passed'||fs.existsSync(projectFile)) && (scenario.expectedRecords.some(record=>record.type==='project') || nextKey || project || seed || fs.existsSync(projectFile))) {

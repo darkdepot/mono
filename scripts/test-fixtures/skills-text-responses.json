@@ -1,0 +1,11 @@
+[
+  {"id":"declared-statement","intent":"agree","reply":"принимаю","response":["Утверждение записал."],"actual":"Утверждение записал.","status":"passed"},
+  {"id":"start-research-tail","intent":"agree","reply":"принимаю","response":["Утверждение записал."],"actual":"Утверждение записал.\nStart Research?","status":"failed"},
+  {"id":"other-question","intent":"agree","reply":"принимаю","response":["Утверждение записал."],"actual":"Утверждение записал.\nНачинаем работу?","status":"failed"},
+  {"id":"start-offer-without-question-mark","intent":"agree","reply":"принимаю","response":["Утверждение записал."],"actual":"Утверждение записал. Предлагаю начать Research.","status":"failed"},
+  {"id":"undeclared-statement","intent":"agree","reply":"принимаю","response":["Утверждение записал."],"actual":"Принято, передаю оркестратору.","status":"failed"},
+  {"id":"allowed-clarification","intent":"unclear","reply":"ну не знаю","response":["Что смущает?"],"actual":"Что смущает?","status":"passed"},
+  {"id":"clarification-plus-start","intent":"unclear","reply":"ну не знаю","response":["Что смущает?"],"actual":"Что смущает?\nStart Research?","status":"failed"},
+  {"id":"other-clarification","intent":"unclear","reply":"ну не знаю","response":["Что смущает?"],"actual":"Может, сразу начнём?","status":"failed"},
+  {"id":"explicit-start-question-policy","intent":"agree","reply":"принимаю","response":["Утверждение записал.\nStart Research?"],"actual":"Утверждение записал.\nStart Research?","status":"passed"}
+]

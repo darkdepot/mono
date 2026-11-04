@@ -160,3 +160,13 @@ test('observed Codex title-only window is natively confirmed without options',()
  const proof=nativeProof({host:'codex',kind:'window',call:sample.call,result:sample.result});
  assert.equal(proof.status,'confirmed');assert.equal(proof.value.questions[0].options,undefined);
 });
+
+for(const host of ['claude','codex'])test(`${host}: text replies need a real parent user message, never tool text`,()=>{
+ const original=host==='claude'?{type:'user',message:{content:[{type:'text',text:'принимаю'}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'принимаю'}]}};
+ const check=result=>nativeProof({host,kind:'text-message',result});
+ assert.equal(check(original).value,'принимаю');
+ const bad=structuredClone(original),blocks=host==='claude'?bad.message.content:bad.payload.content;
+ blocks[0].type='tool_result';assert.equal(check(bad).status,'unverified');
+ const flagged=structuredClone(original);(host==='claude'?flagged.message.content:flagged.payload.content)[0].is_error=true;assert.equal(check(flagged).status,'unverified');
+ if(host==='claude')assert.equal(check({...original,parent_tool_use_id:'child'}).status,'unverified');
+});

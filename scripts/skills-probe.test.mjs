@@ -15,6 +15,17 @@ const read = (host, name) => JSON.parse(fs.readFileSync(fixture(host, name), 'ut
 const defect = () => read('claude', 'trace-defect-v0.38.1-approval');
 const control = () => read('claude', 'trace-control-v0.41.0-approval');
 
+test('Claude text wrapper forwards stageStartLine past completed preparation turns',async t=>{
+ const {probeText}=await import('./skills-probe.mjs'),save=scratch(t);
+ const a=text=>({type:'assistant',message:{content:[{type:'text',text}]}}),u=text=>({type:'user',message:{content:[{type:'text',text}]}}),end={type:'result',subtype:'success'};
+ const trace=save('prepared-text.jsonl',[a('Workspace confirmed.'),end,u('Seed'),a('Seed completed.'),end,u('Run stage'),a('Версия\nПринимаем?'),end,u('принимаю'),a('Записал.'),end].map(JSON.stringify).join('\n')+'\n');
+ const expectedReplies=[{id:'one',stage:'idea',role:'approval',summary:['Версия'],question:'Принимаем?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Записал.']}];
+ assert.equal(probeText({host:'claude',trace,expectedReplies,stageStartLine:5}).status,'passed');
+ assert.equal(readProbe(trace,{expectedReplies,stageStartLine:5}).status,'passed');
+ assert.equal(readProbe(trace,{expectedReplies,stageStartLine:4}).status,'unverified');
+ assert.equal(readProbe(trace,{expectedReplies}).status,'failed');
+});
+
 function scratch(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-skills-probe-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -24,6 +35,24 @@ function scratch(t) {
     return file;
   };
 }
+for(const host of ['claude','codex'])for(const position of ['before-response','after-response','final-only','preparation'])test(`${host}: completed tool-only parent turn ${position} is counted`,async t=>{
+ const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs'),{parentTurns}=await import('./skills-audit.mjs'),save=scratch(t);
+ const a=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const u=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const end=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const service=host==='claude'?[{type:'assistant',message:{content:[{type:'tool_use',id:'read',name:'mcp__monotest__get_document',input:{id:'doc'}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'read',content:'{"id":"doc"}'}]}}]:[{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__get_document',call_id:'read',arguments:'{"id":"doc"}'}},{type:'response_item',payload:{type:'function_call_output',call_id:'read',output:'{"id":"doc"}'}}];
+ const offer=[a('Version\nApprove?'),end,u('agreed')],response=[a('Recorded.'),end],toolOnly=[...service,end];
+ const events=position==='preparation'?[...toolOnly,u('Run stage'),...offer,...response]:position==='before-response'?[...offer,...toolOnly,...response]:position==='after-response'?[...offer,...response,...toolOnly]:[...offer,...toolOnly];
+ const rows=events.map((value,i)=>({value,line:i+1})),turns=parentTurns(host,rows);
+ const trace=save('tool-only.jsonl',events.map(JSON.stringify).join('\n')+'\n');
+ const expectedReplies=[{id:'one',stage:'idea',role:'approval',summary:['Version'],question:'Approve?',reply:'agreed',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Recorded.']}];
+ const request={host,trace,expectedReplies,...(position==='preparation'?{stageStartLine:3}:{})};
+ const expected=position==='preparation'?'passed':'failed';
+ for(const check of [probeText,checkTrace]){const result=check(request);assert.equal(result.status,expected,result.reason??JSON.stringify(result));}
+ assert.equal(turns.length,position==='final-only'?2:3);
+ assert.equal(turns.filter(turn=>!turn.text).length,1);
+ if(position==='preparation')for(const check of [probeText,checkTrace])assert.equal(check({...request,stageStartLine:2}).status,'unverified');
+});
 const cli = file => spawnSync(process.execPath, ['scripts/skills-probe.mjs', file, '--excerpt'], { encoding: 'utf8' });
 
 test('recorded v0.38.1 defect fails at the original window line; fixed control passes', () => {
@@ -322,4 +351,60 @@ test('format and variation characters alone are not a visible position',t=>{
     const sample=control();sample.events.find(r=>r.line===138).event.message.content[0].text=text;
     assert.equal(probeClaude(write('format-only.json',sample)).status,'failed');
   }
+});
+
+for(const host of ['claude','codex'])test(`${host}: text probe CLI checks ordinary replies and prohibits windows`,t=>{
+ const save=scratch(t),assistant=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const user=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const terminal=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const rows=[assistant('Версия.\nПринимаем?'),terminal,user('согласен'),assistant('Записал.'),terminal],trace=save('text.jsonl',rows.map(JSON.stringify).join('\n')+'\n');
+ const expectedReplies=[{id:'idea',stage:'idea',role:'approval',asksStart:false,summary:['Версия.'],question:'Принимаем?',reply:'согласен',intent:'agree',outcome:{approval:true,startNext:false},response:['Записал.']}];
+ const request=save('request.json',{host,trace,expectedReplies}),run=()=>spawnSync(process.execPath,['scripts/skills-probe.mjs','--text',request],{encoding:'utf8'});
+ assert.equal(run().status,0,run().stdout);
+ const call=host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id:'window',name:'AskUserQuestion',input:{questions:[]}}]}}:{type:'response_item',payload:{type:'function_call',name:'request_user_input_async',call_id:'window',arguments:'{"questions":[]}'}};
+ rows.unshift(call);save('text.jsonl',rows.map(JSON.stringify).join('\n')+'\n');assert.equal(run().status,1);assert.match(run().stdout,/stage called a window/);
+});
+
+for(const mode of ['unexpected','unfinished'])test(`Codex text probe rejects ${mode} native continuation`,t=>{
+ const save=scratch(t),a=text=>({type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}}),u=text=>({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}}),end={type:'event_msg',payload:{type:'task_complete'}};
+ const expectedReplies=[{id:'one',stage:'idea',role:'approval',asksStart:false,summary:['Версия'],question:'Принимаем?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:false}},{id:'two',stage:'discovery',role:'approval',asksStart:false,summary:['PRD'],question:'Утверждаем?',reply:'да',intent:'agree',outcome:{approval:true,startNext:false},response:['Записал.']}];
+ const rows=[a('Версия\nПринимаем?'),end,u('принимаю'),a('PRD\nУтверждаем?'),end,u('да'),a('Записал.'),end];
+ if(mode==='unexpected')rows.splice(3,0,a('Чужой вопрос?'),end,u('другой ответ'));
+ else rows.push(a('Работа без завершения.'));
+ const trace=save('trace.jsonl',rows.map(JSON.stringify).join('\n')+'\n'),request=save('request.json',{host:'codex',trace,expectedReplies});
+ const result=spawnSync(process.execPath,['scripts/skills-probe.mjs','--text',request],{encoding:'utf8'});
+ assert.equal(result.status,mode==='unexpected'?1:2,result.stdout);
+});
+
+for(const host of ['claude','codex'])for(const sample of JSON.parse(fs.readFileSync('scripts/test-fixtures/skills-text-responses.json')))test(`${host}: declared final stage response ${sample.id}`,async t=>{
+ const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs'),save=scratch(t);
+ const a=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const u=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const end=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const trace=save('response.jsonl',[a('Версия\nУтверждаем?'),end,u(sample.reply),a(sample.actual),end].map(JSON.stringify).join('\n')+'\n');
+ const expectedReplies=[{id:'last',stage:'idea',role:'approval',summary:['Версия'],question:'Утверждаем?',reply:sample.reply,intent:sample.intent,asksStart:false,outcome:{approval:sample.intent==='agree',startNext:false},response:sample.response}];
+ for(const check of [probeText,checkTrace])assert.equal(check({host,trace,expectedReplies}).status,sample.status,`${sample.id}: ${check.name}`);
+});
+
+for(const host of ['claude','codex'])for(const placement of ['before-offer','between-replies','after-response'])test(`${host}: no completed turn is skipped ${placement}`,async t=>{
+ const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs'),save=scratch(t);
+ const a=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const u=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const end=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const expected={id:'one',stage:'idea',role:'approval',summary:['Версия'],question:'Утверждаем?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false}};
+ const expectedReplies=[expected,{...expected,id:'two',response:['Записал.','Start Research?']}];
+ const rows=[a('Версия\nУтверждаем?'),end,u('принимаю'),a('Версия\nУтверждаем?'),end,u('принимаю'),a('Записал.'),end];
+ const cut=rows.length;rows.splice(placement==='before-offer'?0:placement==='between-replies'?3:rows.length,0,a('Start Research?'),end);
+ const trace=save('extra-turn.jsonl',rows.map(JSON.stringify).join('\n')+'\n');
+ for(const check of [probeText,checkTrace])assert.equal(check({host,trace,expectedReplies,endLine:cut}).status,'failed',check.name);
+});
+
+for(const host of ['claude','codex'])test(`${host}: text checks reject undeclared extra native owner reply`,async t=>{
+ const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs'),save=scratch(t);
+ const a=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const u=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const end=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const expectedReplies=[{id:'one',stage:'idea',role:'approval',summary:['Версия'],question:'Принимаем?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Записал.']}];
+ const trace=save('extra-owner.jsonl',[a('Версия\nПринимаем?'),end,u('принимаю'),u('Начинай Research'),a('Записал.'),end].map(JSON.stringify).join('\n')+'\n');
+ for(const check of [probeText,checkTrace]){const result=check({host,trace,expectedReplies});assert.equal(result.status,'failed');assert.match(result.reason,/unexpected owner reply/);}
 });

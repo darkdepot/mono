@@ -1646,6 +1646,24 @@ The Codex startup read retry audits the entire failed turn and its completion be
 Run a scenario with `node scripts/skills-run.mjs <request.json>` or check a trace
 with `node scripts/skills-trace.mjs <request.json>`. Deterministic scenario policies
 answer windows; a separate tool-free persona answers explicit free questions.
+The opt-in `expectedReplies` format in [skill QA](references/qa-skills.md#ответы-словами)
+also sends literal text replies after completed parent turns. Expected approval/start
+outcomes and complete allowed final stage responses are fixed in scenario data.
+Unlisted trailing questions, start offers, extra owner replies and extra completed turns fail.
+Main and scout traces share native turn/session completeness; a previous success
+cannot hide unfinished activity, while completed tool-only scouts remain valid.
+Native turn starts preserve the pending question until its actual owner reply;
+Codex text fixtures cover both start/reply orders with real turn IDs.
+Identified sessions retain that mode after completion, and raw native reasoning
+counts as activity; legacy traces without IDs remain supported.
+Text approval bindings cover the complete displayed artifact; only literal framing
+declared by the scenario before the run can be excluded. Fragment, prefix or suffix
+bindings fail even when the stored record matches that shortened text.
+Native replies, exact approved versions and
+named corrections are checked against fresh records; any window in a text scenario
+or identical endings across its stage chain fail. The current window catalog and
+owner-dialog rules stay in place until T2. Local text fixtures exercise both adapters
+and retain the original window regression corpus.
 The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 17
 scenarios, with per-host target window roles and probe-derived seeds. Other choices
 use the recommended answer; free questions use the persona. Fresh seed routes are
@@ -1769,7 +1787,14 @@ native evidence stays unverified. The unchanged landing gate requires passed;
 MONO-279's exact expectation/source binding is included. See [record proof inputs](references/qa-skills.md#свежий-дамп-и-сверка-записей).
 
 Record checks apply to every supplied native trace, including scouts and dump
-children. Each dump read must provably start after all scenario writes; missing
+children. Owner-conversation expectations apply to the main trace; additional
+traces opt in with their own expectations while retaining the full call, terminal
+and record audit. Supported literal Codex exec arguments are decoded before
+start/transition checks, matching direct-call authority.
+In multi-stage traces, the preceding reply determines the source stage and
+permitted destination of each transition; earlier consent cannot authorize a
+later deferred start. Each dump read must
+provably start after all scenario writes; missing
 or overlapping order stays unverified. Native times and Claude's hash-bound
 driver process interval support offline replay; request times and file mtimes do
 not. Public live excerpts retain their original native clock evidence.
