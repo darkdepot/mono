@@ -18,7 +18,7 @@ Link `role:<role>` to `#roles`; report values.
 | `qa` | `claude-opus-5-5` | `high` | Independent QA; models.roles override. | Owner. |
 | `code-review` | `gpt-6.1-sol` | `high` | Manual reviewer. | Owner, 2026-11-01. |
 | `code-review-checker` | `claude-opus-5` | `high` | Finding checker. | Owner, 2026-11-01. |
-| `autoreview` | `claude-opus-5` | [Canonical Routes](autoreview-routing.md#canonical-routes) | Legacy. | Owner. |
+| `autoreview` | `claude-opus-5` | [Routes](autoreview-routing.md#canonical-routes) | Old. | Owner. |
 
 `idea-helper`/`scout`: `resolveRole` takes actual `host: "claude-code"|"codex"`
 (default codex). `models.roles.<role>` overrides; omissions inherit. Stages use `scout`;
@@ -26,7 +26,7 @@ Link `role:<role>` to `#roles`; report values.
 
 ## Reviewer and producer
 
-Owner approves capable pairs; disclose equal-model legacy review.
+Owner approves pairs; disclose equal-model autoreview.
 
 ## Product overrides
 
@@ -38,14 +38,13 @@ changes require compatible model/effort/provider. `orchestrator` and
 Workers: codex-cli → worker-default|worker-complex; claude-cli → worker-claude
 (native subscription). Engine matrix: `ROLE_ENGINES`.
 Efforts: Claude/Codex low|medium|high|xhigh|max; Kimi on|off;
-Pi off|minimal|low|medium|high|xhigh. Autoreview: five risk keys in routes.
+Pi off|minimal|low|medium|high|xhigh.
 
 `models.pairingAccepted[]`: {producer,reviewer,riskClasses,linearDecision,by,date}.
 Routes bind engine/model, effort|effortByRisk, provider{id,endpoint}, credentialEnv;
 producer adds role. Compare every field/five risks; changes renew owner approval.
 `requiredPairings(config,{reviewerRole:'code-review'})` binds reviewer.role and
-reviewer.checker routes. Either change renews acceptance. No role: legacy
-`autoreview`. Acceptance never waives native auth or different families. Payloads use `scripts/code-review.mjs` screening (8 decoding layers); excludes role tool reads, post-screen edits and evaluation reconstruction.
+reviewer.checker routes. Either change renews acceptance. Default: `autoreview`. Acceptance never waives native auth or different families. Payload screening excludes role tool reads, post-screen edits and evaluation reconstruction.
 
 ## Audience profile
 
