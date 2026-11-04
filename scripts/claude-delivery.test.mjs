@@ -346,14 +346,14 @@ const watchProbe = (f, entry, events) => {
   return observed;
 };
 
-test("worker contract distinguishes compound call form from denied bare PR writes", () => {
+test("worker contract links the versioned Claude PR probe archive", () => {
   const contract = fs.readFileSync(new URL("../references/worker-contract.md", import.meta.url), "utf8");
-  const rule = contract.split("## Claude PR probe\n")[1].split("\n## ")[0];
-  assert.match(rule, /one bare `gh api`\/Bash call/);
-  assert.match(rule, /Compound `permission_denied`[\s\S]*cd\/&&\/;\/pipes\/redirection/);
-  assert.match(rule, /wrong form; retry same write bare/);
-  assert.match(rule, /Only bare denial: stop «нет права публиковать ответы»; no green/);
-  for (const qualifier of ["no nested contents/edits", "no inserted words", "without capture"]) assert.ok(contract.includes(qualifier));
+  const section = contract.split("## Claude PR probe\n")[1]?.split("\n## ")[0];
+  assert.ok(section, "probe section exists");
+  const manifest = probeJson("provenance.json");
+  for (const value of ["scripts/fixtures/claude-pr-replies/", manifest.claudeCodeVersion, manifest.packVersion]) {
+    assert.ok(section.includes(value), `probe section references ${value}`);
+  }
 });
 
 test("synthetic denied bare gh api write stops with reason, never a green delivery", () => withFixture(f => {

@@ -1634,6 +1634,8 @@ paths as historical data; neighboring documentation and executable code remain
 checked. Provenance reconstructs the original journal hashes after removal of
 one leading empty line; all recorded JSON content is unchanged. The bare-denial
 scenario is synthetic; the recorded compound denial is not evidence of no rights.
+Instruction sentences and descriptive qualifiers stay free to reword: tests check
+archive/version structure and recorded behavior; review checks instruction meaning.
 
 Наблюдённые способы поднять безопасную копию и сохранить доказательства для
 веба, терминального пака и мобильного симулятора собраны в
