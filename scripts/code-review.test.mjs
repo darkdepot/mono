@@ -175,6 +175,18 @@ test('host Git reads never execute external diff or textconv helpers, including 
   }
  });
 });
+test('forced Git color cannot hide multiline patch secrets before model launch',async t=>{
+ for(const setting of ['color.diff','color.ui'])await t.test(setting,async t=>{
+  const f=fixture(t),secret='opaqueFixture'+'c'.repeat(24);
+  fs.writeFileSync(path.join(f.worktree,'input.mjs'),`password =\n"${secret}"\n`);
+  f.git('add','.');f.git('commit','-qm','multiline credential');const head=f.git('rev-parse','HEAD');
+  f.git('config',setting,'always');
+  const colored=f.git('diff',f.request.base,head);assert.match(colored,/\u001b\[/);
+  const runner=responder(),result=await runReviewRound({...f.request,head},runner);
+  assert.equal(runner.calls.length,0);assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);
+  assert.ok(result.secrets.length);assert.ok(!JSON.stringify(result).includes(secret));
+ });
+});
 test('failed answers redact multiline assignments even alongside other secrets, before retention',async t=>{
  const f=fixture(t),password='x'.repeat(24),second='y'.repeat(25),token='ghp_'+'z'.repeat(36);
  for(const bad of [`password =\n${password}\n${token}\n"access_token":\n"${second}"`,`${token}\nsecret =\n${second}\npassword =\n${password}`]){

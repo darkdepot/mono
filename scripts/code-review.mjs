@@ -17,9 +17,10 @@ function git(worktree, args) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0' });
   const [command, ...rest] = args;
-  const readOptions = ['diff', 'show'].includes(command) ? ['--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--submodule=short']
+  const readOptions = ['diff', 'show'].includes(command) ? ['--no-color', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--submodule=short']
     : command === 'status' ? ['--ignore-submodules=none'] : [];
-  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', command, ...readOptions, ...rest],
+  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false',
+    '-c', 'color.ui=false', '-c', 'color.diff=false', command, ...readOptions, ...rest],
     { cwd: worktree, env, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 }
 function treeIdentity(worktree) {

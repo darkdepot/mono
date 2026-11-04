@@ -5,10 +5,29 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { validateReviewDataset, verifyDatasetBundle, runReviewEvaluation, scoreReviewEvaluation, scoreCheckerProbes, compareReviewEvaluations } from './code-review-eval.mjs';
+import { validateReviewDataset, verifyDatasetBundle, pinnedReviewContract, runReviewEvaluation, scoreReviewEvaluation, scoreCheckerProbes, compareReviewEvaluations } from './code-review-eval.mjs';
+import { createHash } from 'node:crypto';
 import { digest } from './runtime.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const dataset=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/cases.json'),'utf8'));
+test('all host Git reads share the non-executing, colorless wrapper, including raw contract blobs',async t=>{
+ for(const file of ['code-review.mjs','code-review-eval.mjs'])await t.test(file,()=>{
+  const source=fs.readFileSync(path.join(packRoot,'scripts',file),'utf8');
+  assert.equal([...source.matchAll(/execFileSync\('git',/g)].length,1,`${file}: Git read bypasses wrapper`);
+  const wrapper=source.slice(source.indexOf('function git('),source.indexOf('\n}',source.indexOf('function git('))+2);
+  for(const flag of ['--no-color','--no-ext-diff','--no-textconv','core.hooksPath=/dev/null','core.fsmonitor=false','color.ui=false','color.diff=false'])
+   assert.ok(wrapper.includes(flag),`${file}: missing ${flag}`);
+ });
+});
+test('color normalization preserves exact pinned contract bytes and rejects a different hash',t=>{
+ const repo=fs.mkdtempSync(path.join(os.tmpdir(),'mono-contract-color-'));t.after(()=>fs.rmSync(repo,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8'}).trim();
+ git('init','-q');git('config','color.ui','always');git('config','color.diff','always');
+ const source='\n  Точный договор.  \n\n';fs.writeFileSync(path.join(repo,'contract.md'),source);git('add','.');
+ const task={contractSource:{blob:git('rev-parse',':contract.md'),sha256:createHash('sha256').update(source).digest('hex')}};
+ assert.equal(pinnedReviewContract(repo,task),source);
+ assert.throws(()=>pinnedReviewContract(repo,{contractSource:{...task.contractSource,sha256:'0'.repeat(64)}}),/contract bytes changed/);
+});
 test('C2: gold v3 excludes unreachable separate-command collector scenario with visible denominators',()=>{
  assert.equal(dataset.version,3);const item=dataset.cases.find(item=>item.id==='68');assert.equal(item.eligible,false);assert.equal(item.dangerStatus,'disputed');
  for(const evidence of ['backup-switch.mjs:54-61','collector.mjs:145-149','210'])assert.ok(item.reclassification.evidence.includes(evidence));

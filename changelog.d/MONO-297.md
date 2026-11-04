@@ -3,6 +3,7 @@
 - Add pinned historical defect cases, recorded checker responses and reproducible per-run evaluation with dangerous-case calibration. Live host checks remain required before merge.
 
 ### Fixed
+- Normalize color on every host Git read, including raw diffs and exact contract blobs, so repository color settings cannot bypass patch secret scanning.
 - Detect multiline assignments on both patch sides, decode failed JSON/JSONL answers before redaction, and refuse ignored dirty submodules or changed gitlinks before model calls.
 - Preserve Claude native login identity; isolate and probe Codex tools, record observed role boundaries/models, and refuse unreadable Claude worktrees before calls.
 - Use short checker IDs and retain redacted, bounded failed answers. Load exact pinned contracts in dataset v2 and record disputed danger/partial consequence decisions without changing recall denominators.

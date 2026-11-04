@@ -27,12 +27,15 @@ export function validateReviewDataset(dataset) {
   return { datasetDigest: digest(dataset), cases: dataset.cases.length, late: 12, eligibleLate: dataset.cases.filter(item => item.subset === 'late12' && item.eligible).length,
     eligibleExtended: dataset.cases.filter(item => item.eligible).length, clean: dataset.cleanControls.length };
 }
-function git(cwd, args, extraEnv = {}) {
+function git(cwd, args, extraEnv = {}, raw = false) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' });
   const [command, ...rest] = args;
-  const readOptions = ['diff', 'show'].includes(command) ? ['--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--submodule=short'] : [];
-  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', command, ...readOptions, ...rest], { cwd, env: { ...env, ...extraEnv }, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
+  const readOptions = ['diff', 'show'].includes(command) ? ['--no-color', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--submodule=short'] : [];
+  const result = execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
+    '-c', 'color.ui=false', '-c', 'color.diff=false', command, ...readOptions, ...rest],
+    { cwd, env: { ...env, ...extraEnv }, encoding: raw ? null : 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  return raw ? result : result.trim();
 }
 export function materializeCleanControl(worktree, control) {
   need(control.file === 'CODE_REVIEW_EVAL_CONTROL.md' && nonempty(control.content), 'invalid clean control file');
@@ -59,7 +62,7 @@ export function verifyDatasetBundle(dataset, bundle) {
     for (const task of dataset.tasks) {
       need(git(scratch, ['rev-parse', `${task.head}^{commit}`]) === task.head && git(scratch, ['merge-base', task.base, task.head]) === task.base, `unavailable base/head ${task.id}`);
       need(git(scratch, ['rev-parse', `${task.head}:${task.contractSource.file}`]) === task.contractSource.blob, `contract blob changed ${task.id}`);
-      const source = execFileSync('git', ['-C', scratch, 'cat-file', 'blob', task.contractSource.blob]);
+      const source = git(scratch, ['cat-file', 'blob', task.contractSource.blob], {}, true);
       need(createHash('sha256').update(source).digest('hex') === task.contractSource.sha256, `contract bytes changed ${task.id}`);
       for (const item of dataset.cases.filter(item => item.task === task.id)) need(git(scratch, ['show', `${task.head}:${item.file}`]).includes(item.anchor), `code anchor missing ${item.id}`);
     }
@@ -68,7 +71,7 @@ export function verifyDatasetBundle(dataset, bundle) {
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 export function pinnedReviewContract(worktree, task) {
-  const source = execFileSync('git', ['-C', worktree, 'cat-file', 'blob', task.contractSource.blob]);
+  const source = git(worktree, ['cat-file', 'blob', task.contractSource.blob], {}, true);
   need(createHash('sha256').update(source).digest('hex') === task.contractSource.sha256, 'contract bytes changed');
   return source.toString('utf8');
 }

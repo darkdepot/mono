@@ -1658,8 +1658,9 @@ later evaluation calls and remains a scored row.
 Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules
 come from pinned Git blobs; the host never follows AGENTS.md symlinks into files
 outside the reviewed version.
-All host Git diff/show reads disable external diff and textconv, alongside hook
-and fsmonitor overrides. Status and diff override submodule ignore settings.
+All host Git reads override color, hooks and fsmonitor; diff/show, including raw
+diffs, force `--no-color` and disable external diff and textconv. Exact contract
+blob reads share those overrides without trimming bytes. Status and diff override submodule ignore settings.
 Dirty submodules are refused before any role;
 gitlink changes are explicitly unsupported and return `not-reviewed`. Patch secret
 screening reconstructs both sides of each hunk to detect multiline assignments.
