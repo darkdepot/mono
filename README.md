@@ -1654,6 +1654,8 @@ Main and scout traces share native turn/session completeness; a previous success
 cannot hide unfinished activity, while completed tool-only scouts remain valid.
 Native turn starts preserve the pending question until its actual owner reply;
 Codex text fixtures cover both start/reply orders with real turn IDs.
+Identified sessions retain that mode after completion, and raw native reasoning
+counts as activity; legacy traces without IDs remain supported.
 Text approval bindings cover the complete displayed artifact; only literal framing
 declared by the scenario before the run can be excluded. Fragment, prefix or suffix
 bindings fail even when the stored record matches that shortened text.

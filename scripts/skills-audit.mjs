@@ -75,18 +75,21 @@ export function auditRows(host, rows, {stdout = false} = {}) {
 function turnState(host, rows, options) {
   const audit=auditRows(host,rows,options),terminals=[],activityLines=new Set();
   const calls=new Set(audit.calls.map(c=>c.line));
-  let turnId,lastActivity;
+  let turnId,lastActivity,identified=false;
   for(const row of rows) {
     const e=row.value,p=e.payload;
     if(e.parent_tool_use_id)continue;
-    if(host==='codex'&&e.type==='event_msg'&&p?.type==='task_started')turnId=p.turn_id;
+    if(host==='codex'&&e.type==='event_msg'){
+      if(['task_started','task_complete'].includes(p?.type)&&p.turn_id!==undefined)identified=true;
+      if(p?.type==='task_started')turnId=p.turn_id;
+    }
     const terminal=audit.proof({kind:'terminal',result:e}).status==='confirmed' &&
-      (host==='claude'||p?.turn_id===turnId);
+      (host==='claude'||p?.turn_id===turnId&&(!identified||typeof turnId==='string'&&turnId.length>0));
     if(terminal){terminals.push(row);if(host==='codex')turnId=undefined;}
     const activity=host==='claude'
       ? ['assistant','user','result','control_request'].includes(e.type)||(e.type==='system'&&e.subtype==='init')
       : (e.type==='response_item'&&['message','reasoning','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(p?.type)) ||
-        (e.type==='event_msg'&&['task_complete','task_started','turn_aborted','error','item_started','item_completed','user_message','agent_message','agent_reasoning'].includes(p?.type));
+        (e.type==='event_msg'&&['task_complete','task_started','turn_aborted','error','item_started','item_completed','user_message','agent_message','agent_reasoning','agent_reasoning_raw_content'].includes(p?.type));
     if(activity||calls.has(row.line)){lastActivity=row;activityLines.add(row.line);}
   }
   return {audit,terminals,activityLines,complete:terminals.length>0&&lastActivity===terminals.at(-1)};

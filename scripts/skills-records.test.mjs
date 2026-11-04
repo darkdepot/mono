@@ -1238,3 +1238,29 @@ for(const order of ['start-before-user','user-before-start'])for(const mode of [
   const exchanges=textExchanges('codex',native,f.request.expectedReplies);assert.equal(exchanges[0].reply,f.expected.reply);
  }
 });
+
+for(const scope of ['main','scout'])for(const mode of ['complete','unbound-terminal','raw-reasoning-tail'])test(`native completeness modes: ${scope} ${mode}`,async t=>{
+ const {completedTrace}=await import('./skills-audit.mjs');
+ const f=textFixture(t,'codex');assert.equal(f.check().status,'passed');
+ const start=id=>({type:'event_msg',payload:{type:'task_started',turn_id:id}}),end=id=>({type:'event_msg',payload:{type:'task_complete',turn_id:id}});
+ let rows;
+ if(scope==='main'){
+  rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);rows[1].payload.turn_id='offer';rows.unshift(start('offer'));
+  f.request.approvalBindings[0].shownLine=2;f.request.approvalBindings[0].currentLine=5;
+  if(mode!=='unbound-terminal'){rows.splice(3,0,start('response'));rows.at(-1).payload.turn_id='response';f.request.approvalBindings[0].currentLine++;}
+ }else{
+  rows=[start('scout'),f.assistant('Complete scout findings.'),end('scout')];
+  if(mode==='unbound-terminal')rows.push(f.assistant('Unfinished scout continuation.'),{type:'event_msg',payload:{type:'task_complete'}});
+ }
+ if(mode==='raw-reasoning-tail')rows.push({type:'event_msg',payload:{type:'agent_reasoning_raw_content',text:'Unfinished native reasoning'}});
+ const trace=scope==='main'?f.request.trace:path.join(f.dir,'native-scout.jsonl');fs.writeFileSync(trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
+ if(scope==='scout')f.request.additionalTraces=[{host:'codex',trace}];
+ const result=verifyRecords(f.request),expected=mode==='complete'?'passed':'unverified';
+ const native=rows.map((value,i)=>({value,line:i+1}));
+ assert.equal(completedTrace('codex',native),mode==='complete');
+ if(scope==='main'){
+  const {probeText}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs');
+  for(const check of [probeText,checkTrace])assert.equal(check(f.request).status,expected,check.name);
+ }
+ assert.equal(result.status,expected,JSON.stringify(result));
+});
