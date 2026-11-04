@@ -145,8 +145,8 @@ const SECRET_FAMILIES = [
 ];
 function familyMatches(source) {
   return SECRET_FAMILIES.flatMap(([, pattern, validate]) =>
-    [...source.matchAll(new RegExp(pattern, pattern.flags + 'g'))]
-      .filter(([match]) => !validate || validate(match)).map(([match]) => match));
+    [...source.matchAll(new RegExp(`(?=(${pattern.source}))`, pattern.flags + 'g'))]
+      .map(([, match]) => match).filter(match => !validate || validate(match)));
 }
 const SECRET_KEY_SUFFIXES = ['secret', 'token', 'password', 'passwd', 'credential', 'privatekey', 'apikey', 'sessiontoken', 'sessionkey', 'secretaccesskey'];
 function secretKey(key) {

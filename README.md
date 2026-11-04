@@ -1653,6 +1653,7 @@ whole context: contract, rules, diff context, findings, history and base evidenc
 payload screening uses the same bounded literal JSON decoder for input and output,
 including JSON embedded in source text. One family table covers AWS AKIA/ASIA,
 GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
+Candidate matches overlap, so an invalid dotted prefix cannot hide a valid JWT.
 Secret-like keys withhold quoted, nested and non-string values; plain `session`
 alone is allowed. JSON decoding preserves literal/key boundaries and checks each
 layer, up to eight layers. Unresolved escapes, ambiguous pairing and limits fail

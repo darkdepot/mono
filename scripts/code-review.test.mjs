@@ -760,6 +760,19 @@ test('C2 CLI: recorded boundary fixtures do not depend on the installed native c
  assert.equal(result.status,0,result.stdout+result.stderr);assert.equal(fs.existsSync(canary),false);
 });
 
+test('C17 local: JWT scanning checks overlapping candidates after invalid dotted prefixes',()=>{
+ const jwt=[Buffer.from(JSON.stringify({alg:'HS256'})).toString('base64url'),'e30','j'.repeat(24)].join('.');
+ for(const prefix of ['trace.','trace.info.','a.b.c.']){
+  const value=prefix+jwt;
+  assert.ok(scanSecrets(value,{patch:false}).length,prefix);
+  for(const options of [{input:true},{},{diagnostic:true}]){
+   const screened=screenModelOutput({note:value},options);
+   assert.equal(screened.rejected,true,prefix);assert.ok(!JSON.stringify(screened.value).includes(jwt));
+  }
+ }
+ assert.equal(screenModelOutput({note:'trace.info.ordinary'}).rejected,false);
+});
+
 test('v2 payload family table: AWS STS and all contracted families are screened in every sink',()=>{
  const synthetic=[
   'AKIA'+'A'.repeat(16),'ASIA'+'B'.repeat(16),
