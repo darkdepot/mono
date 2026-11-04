@@ -13,16 +13,39 @@ const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
 function exact(value, keys) {
   requireValue(object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)), 'response fields differ from schema');
 }
-function git(worktree, args) {
+export function reviewGit(worktree, args, extraEnv = {}, raw = false) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-  Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0' });
+  Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_GLOBAL: '/dev/null', GIT_GRAFT_FILE: '/dev/null',
+    GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_ATTR_NOSYSTEM: '1' });
+  for (const [key, value] of Object.entries(extraEnv)) {
+    requireValue(/^GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL|DATE)$/.test(key), 'unsupported review Git environment override'); env[key] = value;
+  }
+  const safeArgs = ['--no-pager', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false',
+    '-c', 'color.ui=false', '-c', 'color.diff=false', '-c', 'diff.external=', '-c', 'core.attributesFile=/dev/null',
+    '-c', 'core.alternateRefsCommand=', '-c', 'credential.helper=', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=false',
+    '-c', 'log.showSignature=false', '-c', 'advice.graftFileDeprecated=false'];
+  const disabled = [];
+  const run = (commandArgs, binary = false) => execFileSync('git', [...safeArgs, ...disabled, ...commandArgs],
+    { cwd: worktree, env, encoding: binary ? null : 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  // Read configuration as data before any operation that could perform conversion.
+  let keys;
+  try { keys = run(['config', '--null', '--name-only', '--get-regexp', '^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.(command|textconv)|merge\\..*\\.driver)$']); }
+  catch (error) { requireValue(error.status === 1, 'cannot inspect review Git helper configuration'); keys = ''; }
+  for (const key of new Set(keys.split('\0').filter(Boolean))) {
+    requireValue(!key.includes('='), 'unsupported Git helper name; cannot safely disable its configuration');
+    disabled.push('-c', `${key}=${key.endsWith('.required') ? 'false' : ''}`);
+  }
   const [command, ...rest] = args;
+  if (['status', 'diff', 'checkout', 'add'].includes(command)) {
+    const entries = run(['ls-files', '-v', '--stage', '-z']).split('\0').filter(Boolean);
+    requireValue(!entries.some(entry => /^[a-zS] /.test(entry)), 'index hints (assume-unchanged/skip-worktree) are unsupported for pinned review');
+    requireValue(!entries.some(entry => entry.slice(2).startsWith('160000 ')), 'gitlink changes and submodules are unsupported for host review reads');
+  }
   const readOptions = ['diff', 'show'].includes(command) ? ['--no-color', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--submodule=short']
     : command === 'status' ? ['--ignore-submodules=none'] : [];
-  return execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false',
-    '-c', 'color.ui=false', '-c', 'color.diff=false', command, ...readOptions, ...rest],
-    { cwd: worktree, env, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  return run([command, ...readOptions, ...rest], raw);
 }
+const git = reviewGit;
 function treeIdentity(worktree) {
   const untracked = git(worktree, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean).sort();
   return digest({ head: git(worktree, ['rev-parse', 'HEAD']).trim(), status: git(worktree, ['status', '--porcelain=v1', '-z']),
@@ -375,6 +398,16 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const secrets = scanSecrets(diff);
     if (secrets.length) return { ...fail('secret patterns in diff; no model launched'), secrets };
     const allFiles = git(worktree, ['diff', '--name-only', '--no-renames', '-z', base, head, '--']).split('\0').filter(Boolean);
+    for (const revision of [base, head]) for (const file of allFiles) {
+      if (!git(worktree, ['ls-tree', revision, '--', file])) continue;
+      const bytes = git(worktree, ['cat-file', 'blob', `${revision}:${file}`], {}, true);
+      requireValue(!bytes.includes(0), 'opaque blob changes are unsupported; no model launched');
+      let content;
+      try { content = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+      catch { throw new Error('non-UTF8 blob changes are unsupported; no model launched'); }
+      secrets.push(...scanSecrets(content, { file, patch: false }));
+    }
+    if (secrets.length) return { ...fail('secret patterns in pinned blobs; no model launched'), secrets };
     const previous = record.rounds.at(-1)?.head;
     const files = number === 2 ? git(worktree, ['diff', '--name-only', '--no-renames', '-z', previous, head, '--']).split('\0').filter(Boolean) : allFiles;
     const scopeDiff = number === 2 ? git(worktree, ['diff', '--no-ext-diff', '--no-textconv', previous, head, '--']) : diff;

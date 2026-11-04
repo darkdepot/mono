@@ -117,9 +117,12 @@ multi-fallback and usage-alias controls; these names are data, not model policy.
 Failed role answers decode JSON/JSONL fields before secret scanning and are capped
 at 8 KiB per attempt; malformed envelopes are withheld.
 Mixed line secrets and multiline assignments are screened independently; retained
-answers are rescanned after line redaction. Every host Git read uses the same
-hook/fsmonitor and color overrides; diff/show (including raw diffs) additionally
-force `--no-color`, no external diff and no textconv. Raw contract blobs keep their
-exact bytes for hash validation. Patch scanning reconstructs old and new hunk content for
-multiline assignments. Status and diff override submodule ignore settings; dirty
-submodules and gitlink changes return `not-reviewed` before any role launches.
+answers are rescanned after line redaction. Circle and evaluation Git calls share
+one policy: hook/fsmonitor and color overrides, configured content filters and
+diff/merge helpers disabled, and diff/show (including raw diffs) forced colorless
+without external diff or textconv. Raw contracts keep exact hash-validated bytes.
+Before worktree reads, gitlinks and index hints are refused; this also avoids
+entering submodules with independent executable configuration. Both pinned blobs
+of every changed path are scanned regardless of attributes. NUL-containing or
+non-UTF8 blobs are refused before roles; patch scanning still reconstructs both
+hunk sides for multiline assignments. Unsupported helper names fail closed.

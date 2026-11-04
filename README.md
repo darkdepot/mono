@@ -1658,12 +1658,14 @@ later evaluation calls and remains a scored row.
 Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules
 come from pinned Git blobs; the host never follows AGENTS.md symlinks into files
 outside the reviewed version.
-All host Git reads override color, hooks and fsmonitor; diff/show, including raw
-diffs, force `--no-color` and disable external diff and textconv. Exact contract
-blob reads share those overrides without trimming bytes. Status and diff override submodule ignore settings.
-Dirty submodules are refused before any role;
-gitlink changes are explicitly unsupported and return `not-reviewed`. Patch secret
-screening reconstructs both sides of each hunk to detect multiline assignments.
+The circle and evaluation share one host Git policy: override color, hooks and
+fsmonitor, disable configured content filters and diff/merge helpers before every
+call, and force `--no-color`, no external diff and no textconv on diff/show.
+Exact contract blobs keep their bytes. Worktree reads refuse gitlinks and index
+hints (`assume-unchanged`, `skip-worktree`) before inspecting files.
+Every changed path is secret-screened from both pinned blobs independently of
+attributes; NUL-containing and non-UTF8 blobs return `not-reviewed` before any role.
+Patch screening also reconstructs both hunk sides for multiline assignments.
 
 Outcome vocabulary is `clean`, `clean-with-successors`, `not-converged`,
 `not-reviewed`; this first slice emits no successor admission. It reports

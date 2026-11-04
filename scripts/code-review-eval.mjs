@@ -3,8 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import { runReviewRound } from './code-review.mjs';
+import { runReviewRound, reviewGit } from './code-review.mjs';
 import { digest, isMain, runtimePackRoot } from './runtime.mjs';
 
 const need = (ok, reason) => { if (!ok) throw new Error(`review evaluation: ${reason}`); };
@@ -28,13 +27,7 @@ export function validateReviewDataset(dataset) {
     eligibleExtended: dataset.cases.filter(item => item.eligible).length, clean: dataset.cleanControls.length };
 }
 function git(cwd, args, extraEnv = {}, raw = false) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-  Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' });
-  const [command, ...rest] = args;
-  const readOptions = ['diff', 'show'].includes(command) ? ['--no-color', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--submodule=short'] : [];
-  const result = execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
-    '-c', 'color.ui=false', '-c', 'color.diff=false', command, ...readOptions, ...rest],
-    { cwd, env: { ...env, ...extraEnv }, encoding: raw ? null : 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  const result = reviewGit(cwd, args, extraEnv, raw);
   return raw ? result : result.trim();
 }
 export function materializeCleanControl(worktree, control) {

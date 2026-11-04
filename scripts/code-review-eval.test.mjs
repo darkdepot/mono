@@ -5,19 +5,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { validateReviewDataset, verifyDatasetBundle, pinnedReviewContract, runReviewEvaluation, scoreReviewEvaluation, scoreCheckerProbes, compareReviewEvaluations } from './code-review-eval.mjs';
+import { validateReviewDataset, verifyDatasetBundle, pinnedReviewContract, materializeCleanControl, runReviewEvaluation, scoreReviewEvaluation, scoreCheckerProbes, compareReviewEvaluations } from './code-review-eval.mjs';
 import { createHash } from 'node:crypto';
 import { digest } from './runtime.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const dataset=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/cases.json'),'utf8'));
-test('all host Git reads share the non-executing, colorless wrapper, including raw contract blobs',async t=>{
- for(const file of ['code-review.mjs','code-review-eval.mjs'])await t.test(file,()=>{
-  const source=fs.readFileSync(path.join(packRoot,'scripts',file),'utf8');
-  assert.equal([...source.matchAll(/execFileSync\('git',/g)].length,1,`${file}: Git read bypasses wrapper`);
-  const wrapper=source.slice(source.indexOf('function git('),source.indexOf('\n}',source.indexOf('function git('))+2);
+test('all host Git reads share the non-executing, colorless wrapper, including raw contract blobs',()=>{
+  const source=fs.readFileSync(path.join(packRoot,'scripts/code-review.mjs'),'utf8');
+  assert.equal([...source.matchAll(/(?:execFileSync|spawnSync|spawn)\('git',/g)].length,1,'Git invocation bypasses the shared policy');
+  const wrapper=source.slice(source.indexOf('export function reviewGit('),source.indexOf('\nconst git = reviewGit;'));
   for(const flag of ['--no-color','--no-ext-diff','--no-textconv','core.hooksPath=/dev/null','core.fsmonitor=false','color.ui=false','color.diff=false'])
-   assert.ok(wrapper.includes(flag),`${file}: missing ${flag}`);
- });
+   assert.ok(wrapper.includes(flag),`missing ${flag}`);
+  const evaluation=fs.readFileSync(path.join(packRoot,'scripts/code-review-eval.mjs'),'utf8');
+  assert.ok(evaluation.includes('reviewGit(cwd, args, extraEnv, raw)'));
+  assert.ok(!/\b(?:execFileSync|spawnSync|spawn)\(/.test(evaluation),'evaluation must use the shared Git policy');
 });
 test('color normalization preserves exact pinned contract bytes and rejects a different hash',t=>{
  const repo=fs.mkdtempSync(path.join(os.tmpdir(),'mono-contract-color-'));t.after(()=>fs.rmSync(repo,{recursive:true,force:true}));
@@ -96,6 +97,20 @@ async function evaluationFixture(t){
  const bundle=path.join(scratch,'heads.bundle');git('bundle','create',bundle,'--all');assert.equal(verifyDatasetBundle(clone,bundle).modelCalls,0);
  return {clone,bundle};
 }
+test('host Git isolation also disables smudge and process filters in evaluation checkouts',async t=>{
+ for(const driver of ['smudge','process'])await t.test(driver,async t=>{
+  const {clone,bundle}=await evaluationFixture(t),dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-eval-host-filter-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const repo=path.join(dir,'checkout'),marker=path.join(dir,'host-ran'),helper=path.join(dir,'helper.cjs');
+  execFileSync('git',['clone','-q',bundle,repo],{stdio:'pipe'});
+  fs.writeFileSync(helper,`require('node:fs').writeFileSync(${JSON.stringify(marker)},'executed');${driver==='process'?'process.exit(1);':"process.stdout.write(require('node:fs').readFileSync(0));"}\n`);
+  fs.writeFileSync(path.join(repo,'.git','info','attributes'),'scripts/input.mjs filter=probe\n');
+  execFileSync('git',['config',`filter.probe.${driver}`,`${process.execPath} ${helper}`],{cwd:repo});
+  execFileSync('git',['config','filter.probe.required','true'],{cwd:repo});
+  let result,error;try{result=materializeCleanControl(repo,clone.cleanControls[0]);}catch(value){error=value;}
+  assert.equal(fs.existsSync(marker),false,'evaluation ran a repository-configured filter on the host');
+  assert.ifError(error);assert.equal(result,clone.cleanControls[0].head);
+ });
+});
 test('bundle evaluation validates exact source bytes and uses the shared circle for all 3 repeats and clean controls',async t=>{
  const {clone,bundle}=await evaluationFixture(t);
  let calls=0;const evaluation=await runReviewEvaluation({dataset:clone,bundle,runId:'recorded-control',packRoot},{runRole:async request=>{calls++;const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.equal(context.contract,context.files.includes('CODE_REVIEW_EVAL_CONTROL.md')?'Add this documentation control.':'Frozen contract.\n');return {response:{completed:true,reviewedFiles:['scripts/input.mjs','CODE_REVIEW_EVAL_CONTROL.md'],findings:[]}};}});

@@ -187,6 +187,63 @@ test('forced Git color cannot hide multiline patch secrets before model launch',
   assert.ok(result.secrets.length);assert.ok(!JSON.stringify(result).includes(secret));
  });
 });
+test('host Git isolation disables content filters and drivers before every worktree read',async t=>{
+ for(const driver of ['clean','process'])for(const late of [false,true])await t.test(`${driver}/${late?'during':'before'}`,async t=>{
+  const f=fixture(t),marker=path.join(f.worktree,'.git','host-ran');
+  fs.writeFileSync(path.join(f.worktree,'.gitattributes'),'input.mjs filter=probe diff=probe merge=probe\n');
+  fs.writeFileSync(path.join(f.worktree,'witness.txt'),'original tracked bytes\n');
+  fs.writeFileSync(path.join(f.worktree,'helper.cjs'),`const fs=require('node:fs');fs.writeFileSync('.git/host-ran','executed');fs.writeFileSync('witness.txt','host changed tracked bytes');${driver==='process'?'process.exit(1);':"process.stdout.write(fs.readFileSync(0));"}\n`);
+  f.git('add','.');f.git('commit','-qm','tracked filter helper');const head=f.git('rev-parse','HEAD');
+  const command=`${process.execPath} helper.cjs`;
+  fs.writeFileSync(path.join(f.worktree,'.git','included-config'),`[filter "probe"]\n ${driver} = ${command}\n required = true\n[diff "probe"]\n command = ${command}\n textconv = ${command}\n[merge "probe"]\n driver = ${command}\n`);
+  const configure=()=>{f.git('config','include.path','included-config');const time=new Date(Date.now()+5000);fs.utimesSync(path.join(f.worktree,'input.mjs'),time,time);};
+  if(!late)configure();
+  const runner=responder({responses:[review([],['input.mjs','.gitattributes','witness.txt','helper.cjs'])]});
+  const result=await runReviewRound({...f.request,head},{runRole:async request=>{const answer=await runner.runRole(request);if(late)configure();return answer;}});
+  assert.equal(fs.existsSync(marker),false,'repository helper executed on the host');
+  assert.equal(fs.readFileSync(path.join(f.worktree,'witness.txt'),'utf8'),'original tracked bytes\n');
+  assert.equal(result.outcome,'clean');assert.equal(runner.calls.length,1);
+ });
+});
+test('host Git isolation refuses helper names that cannot be represented by a config override',async t=>{
+ const f=fixture(t),marker=path.join(f.worktree,'.git','host-ran');
+ fs.writeFileSync(path.join(f.worktree,'.gitattributes'),'input.mjs filter=probe=hidden\n');
+ fs.writeFileSync(path.join(f.worktree,'helper.cjs'),"require('node:fs').writeFileSync('.git/host-ran','executed');process.stdout.write(require('node:fs').readFileSync(0));\n");
+ f.git('add','.');f.git('commit','-qm','ambiguous helper name');const head=f.git('rev-parse','HEAD');
+ f.git('config','filter.probe=hidden.clean',`${process.execPath} helper.cjs`);
+ const time=new Date(Date.now()+5000);fs.utimesSync(path.join(f.worktree,'input.mjs'),time,time);
+ const runner=responder(),result=await runReviewRound({...f.request,head},runner);
+ assert.equal(fs.existsSync(marker),false);assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);
+ assert.match(result.failures.at(-1).reason,/unsupported Git helper name/);
+});
+test('host Git isolation screens both pinned blobs even when attributes hide their diff',async t=>{
+ for(const attribute of ['-diff','binary','diff=hidden'])for(const side of ['added','removed'])await t.test(`${attribute}/${side}`,async t=>{
+  const f=fixture(t),secret='opaqueFixture'+'b'.repeat(24),credential=`password =\n"${secret}"\n`,safe='export const safe = 1;\n';
+  fs.writeFileSync(path.join(f.worktree,'.gitattributes'),`input.mjs ${attribute}\n`);
+  f.git('config','diff.hidden.binary','true');
+  fs.writeFileSync(path.join(f.worktree,'input.mjs'),side==='removed'?credential:safe);f.git('add','.');f.git('commit','-qm','before hidden diff');const base=f.git('rev-parse','HEAD');
+  fs.writeFileSync(path.join(f.worktree,'input.mjs'),side==='added'?credential:safe);f.git('add','.');f.git('commit','-qm','after hidden diff');const head=f.git('rev-parse','HEAD');
+  assert.ok(!f.git('diff',base,head).includes(secret),'positive control must suppress the text');
+  const runner=responder(),result=await runReviewRound({...f.request,base,head},runner);
+  assert.equal(runner.calls.length,0);assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);
+  assert.ok(result.secrets.length);assert.ok(!JSON.stringify(result).includes(secret));
+ });
+});
+test('host Git isolation refuses opaque blob bytes before a role can read them',async t=>{
+ for(const bytes of [Buffer.from([0,65,66]),Buffer.from([0xff,0xfe,65])])await t.test(bytes.toString('hex'),async t=>{
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),bytes);f.git('add','.');f.git('commit','-qm','opaque blob');
+  const runner=responder(),result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+  assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.equal(result.rounds.length,0);
+ });
+});
+test('host Git isolation refuses index hints initially and if introduced during a round',async t=>{
+ for(const flag of ['--assume-unchanged','--skip-worktree'])for(const late of [false,true])await t.test(`${flag}/${late?'during':'before'}`,async t=>{
+  const f=fixture(t),runner=responder(),hide=()=>{f.git('update-index',flag,'input.mjs');fs.writeFileSync(path.join(f.worktree,'input.mjs'),'export function value(n) { return 0; }\n');};
+  if(!late){hide();assert.equal(f.git('status','--porcelain'),'');assert.equal(f.git('diff','HEAD'),'');}
+  const result=await runReviewRound(f.request,{runRole:async request=>{const answer=await runner.runRole(request);if(late)hide();return answer;}});
+  assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);assert.equal(runner.calls.length,late?1:0);
+ });
+});
 test('failed answers redact multiline assignments even alongside other secrets, before retention',async t=>{
  const f=fixture(t),password='x'.repeat(24),second='y'.repeat(25),token='ghp_'+'z'.repeat(36);
  for(const bad of [`password =\n${password}\n${token}\n"access_token":\n"${second}"`,`${token}\nsecret =\n${second}\npassword =\n${password}`]){
@@ -504,7 +561,12 @@ test('C2 secrets: every outgoing context source is screened before its role star
   }
   if(source==='history')request.stageRecord={rounds:[],findings:[{...sample,key,status:'rejected',reason:secret}],failures:[]};
   if(source==='failed-answer')request.stageRecord={rounds:[],findings:[],failures:[{answer:{text:secret}}]};
-  if(['diff-context','base-evidence'].includes(source)){
+  if(source==='base-evidence'){
+   // Changed blobs are now screened before the reviewer; keep exercising the later checker evidence boundary.
+   fs.writeFileSync(path.join(f.worktree,'neighbor.mjs'),`// ${secret}\nexport const value = 0;\n`);f.git('add','.');f.git('commit','-qm','unchanged evidence base');request.base=f.git('rev-parse','HEAD');
+   fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// safe edit\n');f.git('add','.');f.git('commit','-qm','unrelated edit');request.head=f.git('rev-parse','HEAD');
+  }
+  if(source==='diff-context'){
    const content=n=>`// ${secret}\n// unchanged 2\n// unchanged 3\n// unchanged 4\n// unchanged 5\nexport function value(n) { return ${n}; }\n`;
    fs.writeFileSync(path.join(f.worktree,'input.mjs'),content('0'));f.git('add','.');f.git('commit','-qm','base');request.base=f.git('rev-parse','HEAD');
    fs.writeFileSync(path.join(f.worktree,'input.mjs'),content('n'));f.git('add','.');f.git('commit','-qm','edit');request.head=f.git('rev-parse','HEAD');
@@ -512,7 +574,7 @@ test('C2 secrets: every outgoing context source is screened before its role star
     fs.writeFileSync(path.join(f.worktree,'input.mjs'),`// ${secret}\nexport function value(n) { return 0; }\n`);f.git('add','.');f.git('commit','-qm','near base');request.base=f.git('rev-parse','HEAD');
     fs.writeFileSync(path.join(f.worktree,'input.mjs'),`// ${secret}\nexport function value(n) { return n; }\n`);f.git('add','.');f.git('commit','-qm','near edit');request.head=f.git('rev-parse','HEAD');}
   }
-  const runner=responder({findings:source==='base-evidence'?[sample]:[]}),record=await runReviewRound(request,runner);
+  const runner=responder({findings:source==='base-evidence'?[{...sample,file:'neighbor.mjs'}]:[]}),record=await runReviewRound(request,runner);
   assert.equal(record.outcome,'not-reviewed',source);assert.equal(record.rounds.length,0,source);
   assert.equal(runner.calls.length,source==='base-evidence'?1:0,source);
   assert.ok(record.secrets?.length,source);assert.ok(!JSON.stringify(record.secrets).includes(secret),source);
