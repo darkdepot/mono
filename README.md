@@ -1621,6 +1621,17 @@ Treat Markdown as agent instructions. Protect executable behavior with fixtures,
 
 ## Validation
 
+The recorded [Claude PR publication probe](references/worker-contract.md#claude-pr-probe)
+on Claude Code 2.1.316 / pack 0.42.0 confirmed replies, thread resolution and PR
+comments with existing transport permissions. Use bare `gh api` calls; denied
+publication stops delivery with a reason. Raw GitHub responses and denied/successful
+session fixtures for the next Ship work live in `scripts/fixtures/claude-pr-replies/`;
+replay them with `node --test scripts/claude-delivery.test.mjs`. Replay does not
+replace the orchestrator's live GitHub check before merge.
+The model-policy scan treats only the exact recorded journals and launch JSON
+paths as historical data; neighboring documentation and executable code remain
+checked. Provenance checks retain the original captured bytes.
+
 Наблюдённые способы поднять безопасную копию и сохранить доказательства для
 веба, терминального пака и мобильного симулятора собраны в
 [рецептах QA](references/qa-recipes.md). Там же — результат загрузки WebM в

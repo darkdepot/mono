@@ -1,0 +1,33 @@
+{
+  "command": "claude",
+  "args": [
+    "--print",
+    "--verbose",
+    "--output-format",
+    "stream-json",
+    "--input-format",
+    "text",
+    "--session-id",
+    "0d27c36a-33f7-4373-902b-7b385ae4c835",
+    "--model",
+    "claude-opus-5",
+    "--effort",
+    "high",
+    "--permission-mode",
+    "dontAsk",
+    "--settings",
+    "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/orch/managed-settings/MONO-322-a2.json",
+    "--setting-sources",
+    "",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "{\"mcpServers\":{}}",
+    "--no-chrome",
+    "--tools",
+    "Bash,Read,Edit,Write,NotebookEdit,Glob,Grep",
+    "--disallowedTools",
+    "WebFetch,WebSearch"
+  ],
+  "runner": "/Users/sasha/.codex/plugins/cache/mono-marketplace/mono/0.42.0/scripts/transports/claude-runner.mjs",
+  "cwd": "/Users/sasha/.mono-agent-workflow/probes/MONO-322-20261104T101124Z/repo"
+}

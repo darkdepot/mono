@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { workerTransport } from "./worker-transport.mjs";
 import { correlatedDeliveryReport, publishPhase, confirmQueue, waitForConfirmation, confirmationPath } from "./delivery-state.mjs";
 
 // Event shapes come from the documented discovery. Real confirmation waits and
-// collection remain the orchestrator's closeout probe; these are synthetic logs.
+// collection remain the orchestrator's closeout probe. Synthetic logs below are
+// separate from the recorded MONO-322 PR probe at the end of this file.
 // No model is invoked. Every executable fixture uses a private, closed PATH.
 const transport = workerTransport("claude-cli");
 const put = (file, value) => {
@@ -247,4 +249,93 @@ test('Claude silent Bash calls defer stalls until every matching result arrives'
   assert.match(watch([command('one'), result('one')]), /EVENT:stall/);
   assert.match(watch([command('one'), { ...f.instance, pid: 42 }]), /EVENT:stall/);
   assert.match(watch([]), /EVENT:stall/);
+}));
+
+const probeRoot = new URL("./fixtures/claude-pr-replies/", import.meta.url);
+const probeJson = name => JSON.parse(fs.readFileSync(new URL(name, probeRoot), "utf8"));
+const probeSession = attempt => {
+  const log = new URL(`attempt-${attempt}/MONO-322-mono-deliver-a${attempt}.jsonl`, probeRoot);
+  const parsed = transport.readLog(log);
+  assert.deepEqual(parsed.errors, []);
+  const events = parsed.events.map(event => event.value);
+  const instance = events.find(event => event.type === "mono.worker-instance");
+  const entry = { ...probeJson(`attempt-${attempt}/launch/entry.json`), ...instance, log };
+  return { entry, events };
+};
+
+test("recorded Claude PR probe preserves raw inputs and passes transport startup identity", () => {
+  const manifest = probeJson("provenance.json");
+  assert.equal(manifest.claudeCodeVersion, "2.1.316");
+  assert.equal(manifest.packVersion, "0.42.0");
+  for (const file of manifest.files) {
+    assert.equal(createHash("sha256").update(fs.readFileSync(new URL(file.path, probeRoot))).digest("hex"), file.sha256, file.path);
+  }
+  for (const attempt of [1, 2]) {
+    const { entry, events } = probeSession(attempt), state = {};
+    for (const event of events) transport.startupEvent(event, entry, state);
+    assert.ok(state.response && state.procStart);
+    assert.equal(state.identity.permissionMode, "dontAsk");
+    const settings = probeJson(`attempt-${attempt}/launch/settings.json`);
+    assert.deepEqual(settings.permissions.allow.filter(rule => rule.startsWith("Bash(")), ["Bash(gh api:*)"]);
+    assert.equal(settings.sandbox.network.strictAllowlist, true);
+    assert.equal(settings.sandbox.allowUnsandboxedCommands, false);
+    assert.deepEqual(settings.sandbox.network.allowedDomains, ["github.com", "api.github.com", "uploads.github.com", "raw.githubusercontent.com"]);
+    const args = probeJson(`attempt-${attempt}/launch/invocation.json`).args;
+    assert.equal(args[args.indexOf("--setting-sources") + 1], "");
+    assert.ok(args.includes("--strict-mcp-config"));
+    assert.equal(args[args.indexOf("--mcp-config") + 1], '{"mcpServers":{}}');
+    const init = events.find(event => event.type === "system" && event.subtype === "init");
+    assert.throws(() => transport.startupEvent({ ...init, permissionMode: "bypassPermissions" }, entry, {}), /permission mode/);
+  }
+});
+
+test("recorded PR reply is submitted, resolved and independently read back; bot mention persists", () => {
+  const line = probeJson("attempt-2/session-out/01-line-comment.json");
+  const reply = probeJson("attempt-2/session-out/02-reply.json");
+  const reread = probeJson("attempt-2/session-out/03-reply-verify.json");
+  const review = probeJson("attempt-2/session-out/04-review-state.json");
+  assert.equal(reply.in_reply_to_id, line.id);
+  assert.equal(reread.id, reply.id);
+  assert.equal(reply.pull_request_review_id, review.id);
+  assert.equal(review.state, "COMMENTED");
+  assert.ok(review.submitted_at);
+  const before = probeJson("attempt-2/session-out/05-threads-before.json").data.repository.pullRequest.reviewThreads.nodes[0];
+  const resolved = probeJson("attempt-2/session-out/06-resolve.json").data.resolveReviewThread.thread;
+  const after = probeJson("attempt-2/session-out/07-threads-after.json").data.repository.pullRequest.reviewThreads.nodes[0];
+  const host = probeJson("host-reread/graphql-review-threads.json").data.repository.pullRequest.reviewThreads.nodes[0];
+  assert.equal(before.isResolved, false);
+  for (const thread of [resolved, after, host]) {
+    assert.equal(thread.id, before.id);
+    assert.equal(thread.isResolved, true);
+  }
+  assert.equal(host.comments.nodes.find(comment => comment.databaseId === reply.id).pullRequestReview.state, "COMMENTED");
+  assert.equal(probeJson("attempt-2/session-out/08-bot-comment.json").body, "@greptileai review");
+  const closed = probeJson("host-reread/pull-244-after-close.json");
+  assert.equal(closed.number, 244);
+  assert.equal(closed.state, "closed");
+  assert.equal(closed.merged, false);
+  assert.equal(closed.merged_at, null);
+});
+
+test("recorded Claude permission denial ends with an explicit stop, never a green delivery", () => withFixture(f => {
+  const { entry, events } = probeSession(1);
+  const denial = events.find(event => event.type === "system" && event.subtype === "permission_denied");
+  assert.equal(denial.decision_reason_type, "mode");
+  const result = events.find(event => event.type === "result");
+  assert.equal(result.is_error, false, "CLI success is not delivery success");
+  assert.match(result.result, /нет права публиковать ответы/);
+  assert.doesNotMatch(result.result, /Ship: green|mono-ship green certificate/);
+  assert.equal(result.permission_denials[0].tool_use_id, denial.tool_use_id);
+  assert.match(result.permission_denials[0].tool_input.command, /^cd .*&& gh api -X POST/);
+  const afterDenial = events.slice(events.indexOf(denial) + 1);
+  assert.equal(afterDenial.flatMap(event => event.message?.content ?? [])
+    .filter(item => item.type === "tool_use" && item.name === "Bash").length, 0);
+  // The real consumer must not promote the successful CLI result to green.
+  const log = path.join(f.root, "logs", `${entry.issue}-mono-deliver-a1.jsonl`);
+  fs.copyFileSync(entry.log, log);
+  fs.unlinkSync(f.entry.log);
+  put(path.join(f.root, "workers.json"), { [entry.issue]: { ...f.entry, ...entry, log } });
+  const observed = f.watch();
+  assert.match(observed, /EVENT:completed-without-report/);
+  assert.doesNotMatch(observed, /EVENT:report/);
 }));
