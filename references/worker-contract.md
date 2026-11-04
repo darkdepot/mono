@@ -4,20 +4,20 @@
 
 ## AFK Contract
 
-Dispatch Issue/branch/worktree only. No branch changes/sub-workers/session
-management/other-Issue edits or orchestrator state access (workers.json/ledger.md/
+Dispatch Issue/branch/worktree only; no branch changes/sub-workers/session
+management/other-Issue edits/orchestrator state (workers.json/ledger.md/
 control.json/dispatch/consumed/logs/other reports). Read-only: own
 consumed/<KEY>-gate-ack-a<N>.json and pinned own snapshot/design.json and
-snapshot/design/*.png. No secrets/.orchestrator commits/user questions: mailbox recommendation, stop.
+snapshot/design/*.png. No secrets/.orchestrator commits/questions: mailbox recommendation, stop.
 Other registry/dispatch reads: gates only. Report before stops except passed pause
 ack. Sequenced stops park; standalone keeps statuses.
 
 ## Orchestration Mode Precedence
 
-Snapshot replaces Linear/resolver; skill owns rules, dispatch facts. Queue after
-gates; confirm before dependencies except code-report below. Disclose lag; no
-unapplied/inferred/skipped proof. Missing inputs block. Standalone parks
-needs-decision; interactive retains access/approval/handshake.
+Snapshot replaces Linear/resolver; skill rules/dispatch facts. Queue post-gates;
+confirm before dependencies except code-report. Disclose lag; no unapplied/inferred/
+skipped proof. Missing inputs block. Standalone needs-decision; interactive
+keeps access/approval/handshake.
 
 ## Pack identity gate invocation
 
@@ -70,20 +70,21 @@ disclosure; deadlines/queues unchanged.
 
 ## Sandbox ladder
 
-Workspace-write/network: worktree, derived worktree/common Git dirs, <root>/reports
-(--add-dir spawn; writable_roots resume). codex 0.153.4 guards explicit linked-worktree
-metadata. Set capsule.writable_roots at launch/resume. Orchestrator
-root/confirmations/registry/control/consumed/logs read-only.
-No early PR/push/unrelated network. Standalone implement: network only by exception;
+Workspace-write/network: worktree, derived/common Git dirs, <root>/reports
+(--add-dir spawn; writable_roots resume); copy grants to capsule.writable_roots.
+codex 0.153.4 guards linked-worktree metadata. Orchestrator
+root/confirmations/registry/control/consumed/logs: read-only.
+No early PR/push/unrelated network. Standalone implement network by exception;
 preflight network/.git, ship push. Exact hidden grants. Log disabled sandbox in
 orchestrator ledger. Denied mailbox: same uncommitted JSON fallback.
 
 ## Claude PR probe
 
-Claude Code 2.1.316/pack 0.42.0: `gh api` reply COMMENTED, resolve/PR comment/bot
-mention OK; compound denied; no added rights. #244 closed unmerged.
-`scripts/fixtures/claude-pr-replies/`.
-Denial: report «нет права публиковать ответы», never green.
+Claude Code 2.1.316/pack 0.42.0: COMMENTED reply/resolve/PR comment/bot mention OK;
+#244 closed/unmerged; same rights. `scripts/fixtures/claude-pr-replies/`.
+PR writes one bare `gh api`/Bash call. Compound `permission_denied`
+(cd/&&/;/pipes/redirection): wrong form; retry same write bare.
+Only bare denial: stop «нет права публиковать ответы»; no green.
 
 ## Context seam
 
@@ -123,21 +124,21 @@ premature code/Delivery/missing review; no fail-closed package creation.
 
 ## Review contract
 
-Read-only package/config/branch/PR. Outcomes: ready/advisory-ready/needs-fixes/blocked.
-Check artifact/execution quality, coherence, feasibility, one PR, durable AFK-HITL,
-applicable UI/security/data/ship/deep-risky architecture. Valid lane needs no Project/docs.
+Read-only package/config/branch/PR: ready/advisory-ready/needs-fixes/blocked.
+Check artifact/execution quality, coherence/feasibility/one PR/durable AFK-HITL,
+applicable UI/security/data/ship/deep-risky architecture. Valid lane: no Project/docs.
 Return verdict/meaning/mode/risk/gate-reason/inspected/boundary/next; findings
 (blocking/proposed-fix/decision/fyi): artifact/evidence/impact/recommendation/owner.
-Missing context/disposition blocks; repair: handoff/issue renewal/ship drift.
+Missing context/disposition blocks; repair→handoff/issue renewal/ship drift.
 
 ## Execution and artifact handling
 
 Apply `references/execution-quality.md`/`references/artifact-quality.md`.
-Intake: paths → snapshot/reviews → decisions → configured roots → gstack; no broad
-scans; absent roots unavailable. Approved Linear outranks scratch; carry only
-compatible stale choices. Missing/conflicting scope/proof/risk/slicing stops writes;
+Intake: paths→snapshot/reviews→decisions→configured roots→gstack; no broad
+scans; absent roots unavailable. Approved Linear > scratch; compatible stale
+choices only. Missing/conflicting scope/proof/risk/slicing stops writes;
 no stale certificates/local bodies. Translate roles. Nonempty notes:
-read/unavailable/stale_or_ignored/conflicts/decisions_carried_forward/confidence_boundary,
+read/unavailable/stale_or_ignored/conflicts/decisions_carried_forward/confidence_boundary:
 one Russian sentence.
 
 ## Certificate recovery
@@ -148,8 +149,8 @@ report/chat omit human lead.
 
 ## Delivery Reports and Capsule
 
-Dispatch terminal green/parked; intermediate ready/implemented-needs-preflight.
-Stops park, no respawn; standalone keeps statuses/certificates.
+Dispatch: green/parked terminal; ready/implemented-needs-preflight interim.
+Stops park; no respawn; standalone keeps statuses/certificates.
 reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json or denied-write .orchestrator,
 never both. Final fields + phase/increasing positive sequence/kind
 (phase|confirmation-request)/head/phase_result. Capsule phase/head match;
@@ -163,7 +164,7 @@ Wait rejects dispatch-derived capsule.writable_roots paths; binds report digest/
 sequence/verified results. Reconcile writes/collection receipts; apply missing only, fsync
 consumed/<ISSUE-KEY>-a<N>/ results; confirm whole queue. Unknown/conflict/read-error
 or partial/stale/foreign confirmation blocks. Reconcile lost replies/comments.
-Resume dispatch/capsule/actual branch; preserve done/foreign changes; no reset/
+Resume dispatch/capsule/branch; keep done/foreign changes; no reset/
 repeat applied moves/writes. Timeout
 orchestration.delivery.confirmationTimeoutSec (default 1800 seconds) parks
 write-unconfirmed (запись не подтверждена).
@@ -203,31 +204,30 @@ Code exits (blocked/needs-human too): criteria, summary (2–3 product-language 
 not_built/not_verified arrays (possibly empty); phase_result string.
 After admission capture-criteria freezes Issue snapshot/standalone start-read
 «Готово, когда:» into <root>/reports/<KEY>-criteria-a<N>.json, never report fields.
-Immutable; publication compares items before writes: no omission/addition/
-rewording/reorder; whitespace normalization only. Standalone:
+Immutable: compare items before writes; no omission/addition/rewording/reorder;
+whitespace normalization only. Standalone:
 uncommitted .orchestrator. «Как проверить» separately in verification_items.
 criteria: criterion, done:boolean, outcome:confirmed|unverified|broken,
 proof (before edits), result (observed), head (40 hex), worktree_fingerprint (64 hex).
-confirmed: done:true, exit-0 command on delivered head/fingerprint after
-last relevant edit, including dirty edits. Failed-run subtests cannot confirm; narrow passing runs can. Fingerprint only by
+confirmed: done:true, exit 0 on delivered head/fingerprint after last edit (dirty too). Failed-run subtests never confirm; narrow passes can. Fingerprint only by
 `node <pack-root>/scripts/worktree-fingerprint.mjs --worktree <worktree> --delivery-root <delivery-root>`;
-Command in proof; SHA-256: `git diff --binary HEAD`, sorted
+Proof command; SHA-256: `git diff --binary HEAD`, sorted
 `git ls-files --others --exclude-standard` path/NUL/value/NUL:
 file=SHA-256(content) hex, nested repo dir=gitlink:<full HEAD SHA|none if unborn>
-both omit only in-tree delivery-root
+(no nested contents/edits); both omit only in-tree delivery-root
 (`.orchestrator/` standalone); unreadable: nonzero refusal, path/reason;
 report/log: delivery-root.
 not_built:[{what,reason}]; not_verified:[{what,why,risk}], one per unverified
 criterion, what=criterion. unverified/done:true built/untested; done:false unfinished;
 broken never becomes unverified. Screen visibility without browser: unverified,
 even with HTML tests passing. Summary: «экран в браузере не проверен».
-Tiny text-only: verbatim «поведение не меняется» in pre-edit evidence and summary line 2, with reason/check boundary; summary exactly 3 lines: result / exception / Preflight handoff; evidence excluded.
+Tiny text-only: verbatim «поведение не меняется» (no inserted words) in pre-edit evidence and summary line 2, with reason/check boundary; summary exactly 3 lines: result / exception / Preflight handoff; evidence excluded.
 Issue comment: summary → «Не проверено» → «Найдена поломка» → evidence
 (criteria, significant-state table before edits, exclusions, decisions).
-Breakage/unfinished/no progress: blocked, saved state. implemented-needs-preflight:
+Breakage/unfinished/no progress: blocked; save state. implemented-needs-preflight:
 all done:true/no broken; publication rejects incomplete success.
 
-Empty criteria only for pre-capture refusals:
+Empty criteria without capture only for pre-capture refusals:
 capture refusal (missing/ambiguous/unsupported-language section): blocked;
 start refusal: blocked|needs-human. pre_capture_stop: kind=capture-refused|start-refused,
 command/exit/reason; capture also absolute issue_file, start also verdict.

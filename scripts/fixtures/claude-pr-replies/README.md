@@ -2,13 +2,19 @@
 
 Host inputs supplied for MONO-322, 2026-11-04, Claude Code 2.1.316, installed
 Mono 0.42.0. Temporary draft: https://github.com/darkdepot/mono/pull/244.
-`provenance.json` records SHA-256 digests of byte-identical supplied files.
+`provenance.json` records SHA-256 digests. Journals omit one leading empty line
+to avoid watcher contamination warnings; source hashes and the exact transformation
+are recorded. Other supplied files remain byte-identical.
 No model or GitHub calls run when these fixtures are replayed.
 
 `attempt-1` retains the real compound Bash write denial and Claude's explicit
 «нет права публиковать ответы» stop. `result.is_error=false` means the CLI completed,
 not that delivery succeeded. GitHub never received that denied write. The cause
 within the compound command was not isolated; this is not a GitHub 403 fixture.
+That historical no-right conclusion was premature: retry the same write as one
+bare `gh api` per Bash call. Only denial of that bare call establishes
+«нет права публиковать ответы». The synthetic bare-denial scenario in the test
+is not an observed GitHub response.
 
 `attempt-2` used one bare `gh api` command per Bash call with the same permission
 policy, storing responses through Write. It created a line comment, posted a reply,

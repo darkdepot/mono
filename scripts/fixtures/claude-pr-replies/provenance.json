@@ -7,7 +7,9 @@
   "files": [
     {
       "path": "attempt-1/MONO-322-mono-deliver-a1.jsonl",
-      "sha256": "0c3f8960d81f2549fd9025f5687b4cc182643277d945ef88db1e22eac813cad3"
+      "sha256": "a473793345b940df5dbef99bb74da4e26e2b2ec33c675c1378929a6820c3814b",
+      "sourceSha256": "0c3f8960d81f2549fd9025f5687b4cc182643277d945ef88db1e22eac813cad3",
+      "normalization": "Removed one leading LF only; all recorded JSON event bytes unchanged."
     },
     {
       "path": "attempt-1/launch/entry.json",
@@ -35,7 +37,9 @@
     },
     {
       "path": "attempt-2/MONO-322-mono-deliver-a2.jsonl",
-      "sha256": "b592e4b7ee68968fb02ed0b895fcd0efaaaf080e4a20372c58136e2a5f9f696f"
+      "sha256": "c0e890c0b1bbad0a3e8361ef7a7c53fd0321612bae9d3514fc588bebdfd76086",
+      "sourceSha256": "b592e4b7ee68968fb02ed0b895fcd0efaaaf080e4a20372c58136e2a5f9f696f",
+      "normalization": "Removed one leading LF only; all recorded JSON event bytes unchanged."
     },
     {
       "path": "attempt-2/launch/entry.json",

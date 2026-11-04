@@ -1623,14 +1623,17 @@ Treat Markdown as agent instructions. Protect executable behavior with fixtures,
 
 The recorded [Claude PR publication probe](references/worker-contract.md#claude-pr-probe)
 on Claude Code 2.1.316 / pack 0.42.0 confirmed replies, thread resolution and PR
-comments with existing transport permissions. Use bare `gh api` calls; denied
-publication stops delivery with a reason. Raw GitHub responses and denied/successful
+comments with existing transport permissions. Use one bare `gh api` per Bash
+call. A compound-command denial means retry the same write bare; only denial
+of the bare write stops delivery with «нет права публиковать ответы». Raw GitHub responses and denied/successful
 session fixtures for the next Ship work live in `scripts/fixtures/claude-pr-replies/`;
 replay them with `node --test scripts/claude-delivery.test.mjs`. Replay does not
 replace the orchestrator's live GitHub check before merge.
 The model-policy scan treats only the exact recorded journals and launch JSON
 paths as historical data; neighboring documentation and executable code remain
-checked. Provenance checks retain the original captured bytes.
+checked. Provenance reconstructs the original journal hashes after removal of
+one leading empty line; all recorded JSON content is unchanged. The bare-denial
+scenario is synthetic; the recorded compound denial is not evidence of no rights.
 
 Наблюдённые способы поднять безопасную копию и сохранить доказательства для
 веба, терминального пака и мобильного симулятора собраны в

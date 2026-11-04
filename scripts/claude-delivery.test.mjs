@@ -268,7 +268,13 @@ test("recorded Claude PR probe preserves raw inputs and passes transport startup
   assert.equal(manifest.claudeCodeVersion, "2.1.316");
   assert.equal(manifest.packVersion, "0.42.0");
   for (const file of manifest.files) {
-    assert.equal(createHash("sha256").update(fs.readFileSync(new URL(file.path, probeRoot))).digest("hex"), file.sha256, file.path);
+    const bytes = fs.readFileSync(new URL(file.path, probeRoot));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), file.sha256, file.path);
+    if (file.sourceSha256) {
+      assert.match(file.normalization, /one leading LF only/);
+      assert.equal(bytes[0], 123, "journal starts with a JSON object, not an empty line");
+      assert.equal(createHash("sha256").update(Buffer.concat([Buffer.from("\n"), bytes])).digest("hex"), file.sourceSha256);
+    }
   }
   for (const attempt of [1, 2]) {
     const { entry, events } = probeSession(attempt), state = {};
@@ -317,25 +323,71 @@ test("recorded PR reply is submitted, resolved and independently read back; bot 
   assert.equal(closed.merged_at, null);
 });
 
-test("recorded Claude permission denial ends with an explicit stop, never a green delivery", () => withFixture(f => {
+// These scenarios reuse recorded startup/tool envelopes. Bare denial was not
+// observed live; its command/result are synthetic and never overwrite the archive.
+const probeWrite = events => events.flatMap(event => event.message?.content ?? [])
+  .find(item => item.type === "tool_use" && item.name === "Bash" &&
+    item.input.command.startsWith("gh api -X POST repos/darkdepot/mono/pulls/244/comments -f body="));
+const deniedProbe = () => {
   const { entry, events } = probeSession(1);
   const denial = events.find(event => event.type === "system" && event.subtype === "permission_denied");
-  assert.equal(denial.decision_reason_type, "mode");
+  const call = events.find(event => event.message?.content?.some(item => item.id === denial.tool_use_id));
   const result = events.find(event => event.type === "result");
+  return { entry, startup: events.slice(0, events.indexOf(call)).filter(event =>
+    event.type.startsWith("mono.") || event.subtype === "init"), call, denial, result };
+};
+const watchProbe = (f, entry, events) => {
+  const log = path.join(f.root, "logs", `${entry.issue}-mono-deliver-a1.jsonl`);
+  put(log, events.map(event => JSON.stringify(event)).join("\n") + "\n");
+  fs.unlinkSync(f.entry.log);
+  put(path.join(f.root, "workers.json"), { [entry.issue]: { ...f.entry, ...entry, log } });
+  const observed = f.watch();
+  assert.doesNotMatch(observed, /non-JSON contamination/);
+  return observed;
+};
+
+test("worker contract distinguishes compound call form from denied bare PR writes", () => {
+  const contract = fs.readFileSync(new URL("../references/worker-contract.md", import.meta.url), "utf8");
+  const rule = contract.split("## Claude PR probe\n")[1].split("\n## ")[0];
+  assert.match(rule, /one bare `gh api`\/Bash call/);
+  assert.match(rule, /Compound `permission_denied`[\s\S]*cd\/&&\/;\/pipes\/redirection/);
+  assert.match(rule, /wrong form; retry same write bare/);
+  assert.match(rule, /Only bare denial: stop «нет права публиковать ответы»; no green/);
+  for (const qualifier of ["no nested contents/edits", "no inserted words", "without capture"]) assert.ok(contract.includes(qualifier));
+});
+
+test("synthetic denied bare gh api write stops with reason, never a green delivery", () => withFixture(f => {
+  const { entry, startup, call, denial, result } = deniedProbe();
+  const command = probeWrite(probeSession(2).events).input.command;
+  assert.match(command, /^gh api -X POST /);
+  assert.doesNotMatch(command, /&&|;|\||>|^cd /);
+  call.message.content = call.message.content.filter(item => item.id === denial.tool_use_id);
+  call.message.content[0].input.command = command;
+  result.permission_denials[0].tool_input.command = command;
+  result.result = "Стоп: нет права публиковать ответы. Отдельный gh api -X POST запрещён; запрос не отправлен.";
+  assert.equal(denial.decision_reason_type, "mode");
   assert.equal(result.is_error, false, "CLI success is not delivery success");
   assert.match(result.result, /нет права публиковать ответы/);
   assert.doesNotMatch(result.result, /Ship: green|mono-ship green certificate/);
   assert.equal(result.permission_denials[0].tool_use_id, denial.tool_use_id);
-  assert.match(result.permission_denials[0].tool_input.command, /^cd .*&& gh api -X POST/);
-  const afterDenial = events.slice(events.indexOf(denial) + 1);
-  assert.equal(afterDenial.flatMap(event => event.message?.content ?? [])
-    .filter(item => item.type === "tool_use" && item.name === "Bash").length, 0);
-  // The real consumer must not promote the successful CLI result to green.
-  const log = path.join(f.root, "logs", `${entry.issue}-mono-deliver-a1.jsonl`);
-  fs.copyFileSync(entry.log, log);
-  fs.unlinkSync(f.entry.log);
-  put(path.join(f.root, "workers.json"), { [entry.issue]: { ...f.entry, ...entry, log } });
-  const observed = f.watch();
+  const observed = watchProbe(f, entry, [...startup, call, denial, result]);
   assert.match(observed, /EVENT:completed-without-report/);
   assert.doesNotMatch(observed, /EVENT:report/);
 }));
+
+test("compound denial alone is a call-form problem; the same bare write succeeds", () => {
+  const { call, denial } = deniedProbe();
+  const denied = call.message.content.find(item => item.id === denial.tool_use_id).input.command;
+  assert.match(denied, /^cd .*&& gh api -X POST/);
+  const { events } = probeSession(2), retry = probeWrite(events);
+  // The second recorded session repeats the exact write, removing only shell
+  // composition. Its observed success refutes the historical no-right conclusion.
+  assert.equal(denied.slice(denied.indexOf("gh api"), denied.indexOf(" > ")), retry.input.command);
+  const response = events.flatMap(event => event.message?.content ?? [])
+    .find(item => item.type === "tool_result" && item.tool_use_id === retry.id);
+  assert.ok(response && !response.is_error);
+  assert.equal(probeJson("attempt-2/session-out/01-line-comment.json").body, "MONO-322 probe: line comment from claude-cli worker");
+  const result = events.find(event => event.type === "result");
+  assert.doesNotMatch(result.result, /нет права публиковать ответы/);
+  assert.equal(probeJson("attempt-2/session-out/04-review-state.json").state, "COMMENTED");
+});
