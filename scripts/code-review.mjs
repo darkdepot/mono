@@ -110,17 +110,34 @@ const SECRET_FIXTURES = new Map([
   ['scripts/review-bench.test.mjs', new Set(['f2d1b92bbaa41c23135e0b0bb089358019be57d40b1e75bf0ab80686ef6b6c11'])],
   ['scripts/delivery-runtime.test.mjs', new Set(['48bdd30a17a3a059408e9740b1ffb22fb2b06e1aa86c91986284bce523afbe40'])],
 ]);
-const ASSIGNMENT_SECRET = /(?:api[_-]?key|secret|password|auth[_-]?token|access[_-]?token)["']?\s*[:=]\s*["']?[A-Za-z0-9+/=_-]{20,}/i;
-const SECRET_PATTERNS = [
-    /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
-    /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b/,
-    /\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/,
-    ASSIGNMENT_SECRET,
-  ];
-export function scanSecrets(diff, { file = null, patch = true } = {}) {
+// Dataset v2 payload contract. Unknown credential families belong to MONO-329.
+const SECRET_FAMILIES = [
+  ['aws', /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/],
+  ['github', /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})\b/],
+  ['openai-anthropic', /\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b/],
+  ['slack', /\bxox[A-Za-z]-[A-Za-z0-9-]{10,}\b/],
+  ['google', /\bAIza[A-Za-z0-9_-]{20,}\b/],
+  ['pem', /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/],
+  ['jwt', /\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*/, value => {
+    try { const header = JSON.parse(Buffer.from(value.split('.')[0], 'base64url').toString('utf8')); return header !== null && typeof header === 'object' && Object.hasOwn(header, 'alg'); }
+    catch { return false; }
+  }],
+  ['bearer', /\bBearer\s+[A-Za-z0-9._~+/=-]+/i],
+];
+function secretKey(key) {
+  const name = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return /(?:secret|token|password|passwd|credential|privatekey|apikey|sessionkey)$/.test(name) || /^(?:aws)?secretaccesskey$/.test(name);
+}
+// Key assignments are withheld regardless of value length or type. No source
+// expression is evaluated; parsed objects also cover nested/non-string values.
+const ASSIGNMENT_KEY = /["']([^"'\r\n]+)["']\s*[:=]\s*(?=\S)|\b((?:api|private|session)[ \t]+(?:key|token)|secret[ \t]+access[ \t]+key|[A-Za-z_$][\w$.-]*)\s*[:=]\s*(?=\S)/gi;
+function secretAssignments(source) {
+  return [...source.matchAll(ASSIGNMENT_KEY)].filter(match => secretKey(match[1] ?? match[2]));
+}
+function scanPayloadText(diff, { file = null, patch = true } = {}) {
   let line = 0, inHunk = false; const matches = [], before = [], after = [];
   const multiline = content => {
-    if ([...content.matchAll(new RegExp(ASSIGNMENT_SECRET, 'gi'))].some(match => match[0].includes('\n')))
+    if (secretAssignments(content).some(match => match[0].includes('\n')))
       matches.push({ file, line: 0, weight: 'P0', reason: 'credential-shaped multiline context; value withheld' });
   };
   const finishHunk = () => { multiline(before.join('\n')); multiline(after.join('\n')); before.length = after.length = 0; };
@@ -131,7 +148,7 @@ export function scanSecrets(diff, { file = null, patch = true } = {}) {
     if (patch && !inHunk && source.startsWith('+++ ') && source.slice(4) !== '/dev/null') file = filename(source.slice(4));
     const hunk = patch && /^@@ .*\+(\d+)/.exec(source); if (hunk) { finishHunk(); inHunk = true; line = Number(hunk[1]); }
     const value = inHunk && /^[+ -]/.test(source) ? source.slice(1) : source;
-    if (SECRET_PATTERNS.some(pattern => pattern.test(value)) && !SECRET_FIXTURES.get(file)?.has(digest(value))) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped context; value withheld' });
+    if ((SECRET_FAMILIES.some(([, pattern, validate]) => validate ? [...value.matchAll(new RegExp(pattern, 'g'))].some(([match]) => validate(match)) : pattern.test(value)) || secretAssignments(value).length > 0) && !SECRET_FIXTURES.get(file)?.has(digest(value))) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped context; value withheld' });
     if (patch && inHunk && /^[+ -]/.test(source)) {
       if (source[0] !== '+') before.push(value);
       if (source[0] !== '-') after.push(value);
@@ -142,18 +159,15 @@ export function scanSecrets(diff, { file = null, patch = true } = {}) {
   else multiline(diff.split('\n').map(value => SECRET_FIXTURES.get(file)?.has(digest(value)) ? '' : value).join('\n'));
   return matches;
 }
+export function scanSecrets(value, options = {}) {
+  const matches = scanPayloadText(value, options);
+  if (matches.length) return matches;
+  const screened = screenModelOutput(value, { input: true, inputFile: options.file, inputPatch: options.patch ?? true });
+  return screened.rejected ? [{ file: options.file ?? null, line: 0, weight: 'P0', reason: 'encoded or undecodable payload; value withheld' }] : [];
+}
 function contextSecrets(value, file = null, patch = false) {
-  if (typeof value === 'string') {
-    const screened = screenModelOutput(value, { input: true, inputFile: file, inputPatch: patch });
-    return screened.rejected ? [{ file, line: 0, weight: 'P0', reason: 'encoded, credential-shaped or undecodable input; value withheld' }] : [];
-  }
-  if (!value || typeof value !== 'object') return [];
-  if (typeof value.file === 'string') file = value.file;
-  return Object.entries(value).flatMap(([key, entry]) => [
-    ...scanSecrets(key, { patch: false }), ...contextSecrets(entry, file, key === 'diff' || key === 'baseDiff'),
-    ...(typeof entry === 'string' && ASSIGNMENT_SECRET.exec(`${key} = ${entry}`)?.index < key.length
-      ? [{ file, line: 0, weight: 'P0', reason: 'credential-shaped field; value withheld' }] : []),
-  ]);
+  const screened = screenModelOutput(value, { input: true, inputFile: file, inputPatch: patch });
+  return screened.rejected ? [{ file, line: 0, weight: 'P0', reason: 'encoded, credential-shaped or undecodable input; value withheld' }] : [];
 }
 function requireSafeContext(value) {
   const secrets = contextSecrets(value);
@@ -253,23 +267,38 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
   const maxBytes = diagnostic ? 262144 : 16 * 1024 * 1024, maxNodes = diagnostic ? 4096 : 131072;
   let bytes = 0, nodes = 0, secretMatches = 0, rejected = false, revision = 0;
   const hide = (matches = 0) => { rejected = true; revision++; secretMatches += matches; return { value: withheld, text: withheld }; };
-  const redact = (source, file) => {
+  const redact = (source, file, patch = inputPatch) => {
     if (input) {
-      const matches = scanSecrets(source, { file, patch: inputPatch });
+      const matches = scanPayloadText(source, { file, patch });
       if (matches.length) { secretMatches += matches.length; rejected = true; revision++; return lineHidden; }
       return source;
     }
-    const actual = scanSecrets(source, { file, patch: false }), all = scanSecrets(source, { patch: false });
+    const actual = scanPayloadText(source, { file, patch: false }), all = scanPayloadText(source, { patch: false });
     secretMatches += all.length; if (all.length) revision++; if (actual.length) rejected = true;
-    const redacted = source.split('\n').map(line => scanSecrets(line, { patch: false }).length ? lineHidden : line).join('\n');
-    const remaining = scanSecrets(redacted, { patch: false }); secretMatches += remaining.length;
+    const redacted = source.split('\n').map(line => scanPayloadText(line, { patch: false }).length ? lineHidden : line).join('\n');
+    const remaining = scanPayloadText(redacted, { patch: false }); secretMatches += remaining.length;
     return source.includes('PRIVATE KEY-----') ? '[private-key answer withheld]' : remaining.length ? '[credential-shaped answer withheld]' : redacted;
   };
-  const visit = (entry, depth = 0, file = null) => {
+  const visit = (entry, depth = 0, file = null, layers = 0, patch = inputPatch) => {
     if (depth > 32 || ++nodes > maxNodes) return hide();
     if (typeof entry === 'string') {
       bytes += Buffer.byteLength(entry); if (bytes > maxBytes) return hide();
       if (markers.has(entry)) return { value: entry, text: entry };
+      if (layers > 8) return hide();
+      const stringRevision = revision, initialSafe = input ? redact(entry, file, patch) : entry;
+      const literalResults = [];
+      for (const match of entry.matchAll(/"(?:[^"\\]|\\[\s\S])*"/g)) {
+        let literal;
+        try { literal = JSON.parse(match[0]); } catch { return hide(); }
+        if (secretKey(literal) && /^\s*[:=]/.test(entry.slice(match.index + match[0].length))) return hide(Math.max(1, scanPayloadText(entry, { file, patch }).length));
+        if (!match[0].includes('\\')) continue;
+        if (layers === 8) return hide();
+        // Keep the original boundary: never splice an unquoted decoded key
+        // into source. Refuse residual escapes rather than guess its pairing.
+        if (literal.includes('\\') && !/^\s*[\[{\"]/.test(literal)) return hide();
+        literalResults.push(visit(literal, depth + 1, file, layers + 1, patch));
+      }
+      if (literalResults.some(child => child.text === withheld)) return hide();
       let parsed, decoded = false;
       try { parsed = JSON.parse(entry.trim(), (_key, child) => {
         if (typeof child === 'number' && (!Number.isFinite(child) || (Number.isInteger(child) && !Number.isSafeInteger(child)))) throw new Error('lossy JSON number');
@@ -279,29 +308,25 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
         const safe = redact(entry, file); return { value: safe, text: safe };
       }
       if (decoded) {
-        const before = revision, child = visit(parsed, depth + 1, file);
+        if (layers === 8) return hide();
+        const before = stringRevision, child = visit(parsed, depth + 1, file, layers + 1, patch);
+        if (!input && revision === before && scanPayloadText(entry, { file, patch: false }).length) return hide(1);
         return { value: revision !== before ? JSON.stringify(child.value) : entry, text: child.text };
       }
       const lines = entry.split('\n');
       if (lines.length > 1 && lines.some(line => /^\s*[\[{\"]/.test(line) && !markers.has(line))) {
         const before = revision;
         // Count mixed multiline assignments even if another line is malformed.
-        const matches = scanSecrets(entry, { patch: false });
-        const parts = lines.map(line => visit(line, depth + 1, file)), rendered = parts.map(part => part.text).join('\n');
+        const matches = scanPayloadText(entry, { patch: false });
+        const parts = lines.map(line => visit(line, depth + 1, file, layers, patch)), rendered = parts.map(part => part.text).join('\n');
         if (parts.some(part => part.text === withheld)) { secretMatches += matches.length; return hide(); }
-        return { value: revision !== before ? redact(rendered, file) : entry, text: redact(rendered, file) };
+        return { value: revision !== before ? redact(rendered, file, patch) : entry, text: redact(rendered, file, patch) };
       }
-      const safe = redact(entry, file);
+      const safe = input ? initialSafe : redact(entry, file);
       if (input) {
-        // Select quoted literals, but let JSON.parse alone interpret escapes.
-        // Revisit the reconstructed text so decoded keys stay beside their values.
-        let invalid = false;
-        const decoded = entry.replace(/"(?:[^"\\]|\\[\s\S])*"/g, literal => {
-          if (!literal.includes('\\')) return literal;
-          try { return JSON.parse(literal); } catch { invalid = true; return ''; }
-        });
-        if (invalid) return hide();
-        if (decoded !== entry) { const child = visit(decoded, depth + 1, file); return { value: rejected ? child.value : safe, text: child.text }; }
+        if (literalResults.length && rejected) return hide();
+        const outsideLiterals = entry.replace(/"(?:[^"\\]|\\[\s\S])*"/g, '""').replace(/^\\ No newline at end of file$/gm, '');
+        if (outsideLiterals.includes('\\')) return hide();
         return { value: safe, text: safe };
       }
       if (/^\s*(?:\{|\[(?![A-Za-z])|")/.test(entry) || entry.includes('\\')) return hide();
@@ -313,24 +338,23 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
     else if (typeof entry.id === 'string' && Object.hasOwn(filesById, entry.id)) file = filesById[entry.id];
     if (Array.isArray(entry)) {
       if (entry.length > maxNodes) return hide();
-      const children = entry.map(item => visit(item, depth + 1, file)), joined = children.map(child => child.text).join('\n');
-      const safe = redact(joined, file);
+      const children = entry.map(item => visit(item, depth + 1, file, layers, patch)), joined = children.map(child => child.text).join('\n');
+      const safe = input ? joined : redact(joined, file);
       return { value: safe === joined ? children.map(child => child.value) : safe, text: safe };
     }
     const entries = Object.entries(entry); if (entries.length > maxNodes) return hide();
     const children = entries.map(([key, content]) => {
-      const keyResult = visit(key, depth + 1, file), child = visit(content, depth + 1, file);
+      const keyResult = visit(key, depth + 1, file, layers, patch), child = visit(content, depth + 1, file, layers, input ? ['diff', 'baseDiff'].includes(key) : patch);
       const name = typeof keyResult.value === 'string' ? keyResult.value : withheld;
-      const assignment = ASSIGNMENT_SECRET.exec(`${name} = ${child.text}`);
-      if (assignment && assignment.index < name.length) { rejected = true; revision++; secretMatches++; child.value = fieldHidden; child.text = fieldHidden; }
+      if (secretKey(name) && !markers.has(content)) { rejected = true; revision++; secretMatches++; child.value = fieldHidden; child.text = fieldHidden; }
       return { name, ...child };
     });
-    const joined = children.map(child => child.text).join('\n'), safe = redact(joined, file);
+    const joined = children.map(child => child.text).join('\n'), safe = input ? joined : redact(joined, file);
     return { value: safe === joined ? Object.fromEntries(children.map(child => [child.name, child.value])) : safe,
       text: safe === joined ? children.map(child => `${child.name}: ${child.text}`).join('\n') : safe };
   };
   const result = visit(value, 0, inputFile);
-  const safeText = redact(result.text, input ? inputFile : null), textBytes = Buffer.from(safeText);
+  const safeText = input ? result.text : redact(result.text, null), textBytes = Buffer.from(safeText);
   const output = { value: safeText === result.text ? result.value : safeText, rejected, interrupted: value?.error?.interrupted === true,
     diagnostic: { text: textBytes.subarray(0, 8188).toString('utf8'), truncated: textBytes.length > 8188, secretMatches } };
   if (strict && rejected) throw new Error('model output withheld by secret screen');

@@ -1650,16 +1650,25 @@ confirmed ones stay report-only on round three; open unresolved findings block.
 Scope/risk flags persist across rounds for confirmed and rejected findings until
 new checker evidence clears them. Before each launch, secret scanning covers the
 whole context: contract, rules, diff context, findings, history and base evidence;
-input uses the same bounded literal JSON decoder as output, including quoted
-JSON embedded in source text. Encoded credentials never reach a role.
-all model output crosses `screenModelOutput` before parsing, retention, another
+payload screening uses the same bounded literal JSON decoder for input and output,
+including JSON embedded in source text. One family table covers AWS AKIA/ASIA,
+GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
+Secret-like keys withhold quoted, nested and non-string values; plain `session`
+alone is allowed. JSON decoding preserves literal/key boundaries and checks each
+layer, up to eight layers. Unresolved escapes, ambiguous pairing and limits fail
+closed. Families absent from the table belong to MONO-329. This screens payloads
+the circle sends or retains: prompt, contract, rules, filenames, history, checker
+evidence, diagnostics and model output. It does not screen role tool reads, files
+changed after screening, or values reconstructed by evaluation (concatenation,
+character arrays, decryption).
+All model output crosses `screenModelOutput` before parsing, retention, another
 role, reporting or evaluation output. The same screen covers successful fields,
 failed answers, metadata, legacy records and derived text; secret-bearing replies
 fail closed. Exact fixture exceptions remain in code; their values are redacted
 from output too. Plain file text never acts as patch framing. Every embedded
 JSON/JSONL string layer is decoded to a fixed point with literal `JSON.parse`
 before line redaction and a final multiline scan. Undecodable or over-limit
-content and lossy JSON numbers are withheld (32 levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
+content and lossy JSON numbers are withheld (8 decoding layers, 32 structural levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
 retained; records/rendering: 131072 nodes, 16 MiB). Interruption stops
 later evaluation calls and remains a scored row.
 Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules

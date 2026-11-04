@@ -759,3 +759,71 @@ test('C2 CLI: recorded boundary fixtures do not depend on the installed native c
  const result=spawnSync(process.execPath,['--test','--test-name-pattern=^D2: Codex uses isolated',path.join(packRoot,'scripts/code-review.test.mjs')],{env,encoding:'utf8'});
  assert.equal(result.status,0,result.stdout+result.stderr);assert.equal(fs.existsSync(canary),false);
 });
+
+test('v2 payload family table: AWS STS and all contracted families are screened in every sink',()=>{
+ const synthetic=[
+  'AKIA'+'A'.repeat(16),'ASIA'+'B'.repeat(16),
+  ...['ghp_','gho_','ghu_','ghs_','ghr_','github_pat_'].map(prefix=>prefix+'c'.repeat(44)),
+  'sk-'+'d'.repeat(24),'sk-ant-'+'e'.repeat(24),'xoxb-'+'f'.repeat(24),'AIza'+'g'.repeat(35),
+  '-----BEGIN '+'ENCRYPTED PRIVATE KEY-----',
+  [Buffer.from(JSON.stringify({alg:'HS256'})).toString('base64url'),'e30','j'.repeat(24)].join('.'),'Bearer '+'k'.repeat(24),
+  [Buffer.from(' {"alg":"none"}').toString('base64url'),'e30',''].join('.'),
+ ];
+ for(const value of synthetic){
+  assert.ok(scanSecrets(value,{patch:false}).length,value.slice(0,8));
+  for(const options of [{input:true},{},{diagnostic:true}]){
+   const screened=screenModelOutput({note:value},options);
+   assert.equal(screened.rejected,true,value.slice(0,8));assert.ok(!JSON.stringify(screened.value).includes(value));
+  }
+ }
+ for(const name of ['aws_secret_access_key','SecretAccessKey','aws_session_token','SessionToken','SeCrEt','authToken','password','passwd','credential','private key','private/key','api-key','sessionKey']){
+  for(const value of ['synthetic',17,false,null,['synthetic'],{nested:'synthetic'}]){
+   const screened=screenModelOutput({[name]:value});assert.equal(screened.rejected,true,name);assert.ok(!JSON.stringify(screened.value).includes('synthetic'));
+  }
+ }
+ for(const source of ['password = fixture','pass_word: fixture','api key = fixture','foo = password = fixture'])assert.ok(scanSecrets(source,{patch:false}).length,source);
+ assert.equal(screenModelOutput({session:'ordinary-session',sessionId:'ordinary-id',secretMatches:0}).rejected,false);
+});
+test('v2 AWS STS finding: pinned blob and contract refuse before any model launch',async t=>{
+ const f=fixture(t),credentials={AccessKeyId:'ASIA'+'B'.repeat(16),SecretAccessKey:'fixture'+'a'.repeat(32),SessionToken:'fixture'+'b'.repeat(32)};
+ for(const source of ['contract','blob']){
+  const request={...f.request};
+  if(source==='contract')request.contract=JSON.stringify(credentials);
+  else {fs.writeFileSync(path.join(f.worktree,'input.mjs'),JSON.stringify(credentials));f.git('add','.');f.git('commit','-qm','synthetic STS');request.head=f.git('rev-parse','HEAD');}
+  const runner=responder(),result=await runReviewRound(request,runner);
+  assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.ok(!JSON.stringify(result).includes(credentials.SecretAccessKey));
+ }
+});
+test('v2 decoder preserves escaped key pairing and fails closed beyond eight layers',()=>{
+ const opaque='synthetic'+'m'.repeat(24);
+ for(const depth of [1,2,3]){
+  let key='pass'+String.raw`\u0077`+'ord';for(let i=1;i<depth;i++)key=key.replaceAll('\\','\\\\');
+  const source=`JSON.parse('{"${key}":"${opaque}"}')`;
+  for(const options of [{input:true},{},{diagnostic:true}]){
+   const screened=screenModelOutput(source,options);assert.equal(screened.rejected,true);assert.ok(!JSON.stringify(screened.value).includes(opaque));
+  }
+ }
+ let over='ordinary';for(let i=0;i<10;i++)over=JSON.stringify(over);
+ for(const source of [over,String.raw`JSON.parse('{"pass\uZZZZord":"synthetic"}')`])assert.equal(screenModelOutput(source,{input:true}).rejected,true);
+ let safe={note:'ordinary'};for(let i=0;i<3;i++)safe=JSON.stringify(safe);
+ assert.equal(screenModelOutput(safe,{input:true}).rejected,false);
+});
+
+test('v2 payload channels share successful/failed screening and encoded pairing checks',async t=>{
+ const f=fixture(t),synthetic='ASIA'+'N'.repeat(16);
+ for(const field of ['prompt','contract','rules','filenames','history','checkerEvidence','diagnostics','reason','summary','findings','quotes']){
+  for(const options of [{input:true},{},{diagnostic:true}]){
+   const screened=screenModelOutput({[field]:synthetic},options);assert.equal(screened.rejected,true,field);assert.ok(!JSON.stringify(screened.value).includes(synthetic));
+  }
+ }
+ const runner=responder({findings:[sample],verdicts:[verdict({reason:synthetic})]});
+ const record=await runReviewRound(f.request,runner);assert.equal(record.outcome,'not-reviewed');assert.ok(!JSON.stringify(record).includes(synthetic));assert.ok(!formatReviewReport(record).includes(synthetic));
+ for(const source of [JSON.stringify({item:{text:JSON.stringify({reason:synthetic})}}),synthetic]){
+  const result=await runReviewRound(f.request,responder({responses:[source,source]}));
+  assert.equal(result.outcome,'not-reviewed');assert.equal(result.failures.filter(item=>item.role==='code-review').length,2);assert.ok(!JSON.stringify(result).includes(synthetic));
+ }
+ const key='pass'+String.raw`\u0077`+'ord',opaque='synthetic'+'z'.repeat(24);
+ for(const source of [`JSON.parse('{"${key}":"${opaque}"}')`,`prefix {"note":"${synthetic}","note":"ordinary"}`]){
+  for(const options of [{input:true},{}]){const screened=screenModelOutput(source,options);assert.equal(screened.rejected,true);assert.ok(!JSON.stringify(screened.value).includes(opaque));assert.ok(!JSON.stringify(screened.value).includes(synthetic));}
+ }
+});

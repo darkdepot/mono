@@ -121,7 +121,15 @@ inputs use the same bounded decoder, including JSON literals embedded in source;
 pinned blobs and all context fields are screened before their role starts. Secret
 replies fail closed, while retained diagnostics redact values. Every JSON/JSONL
 string layer uses literal `JSON.parse` to a fixed point, including Codex
-`item.text`; malformed, lossy-number or over-limit content is withheld. Bounds are 32 levels,
+`item.text`, preserving quoted key/value boundaries. At most eight decoding layers
+are allowed; unresolved escapes/pairing, malformed, lossy-number and over-limit
+content are withheld. The single payload family table includes AWS AKIA/ASIA,
+GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
+Secret-like keys withhold all value types; `session` alone is allowed. This applies
+to prompts, contracts, rules, filenames, history, checker evidence, diagnostics and
+kept model output. Role tool reads, files changed after screening and values
+reconstructed by evaluation are outside payload screening. New credential families
+belong to MONO-329. Structural bounds are 32 levels,
 4096 nodes/256 KiB for role diagnostics (8 KiB retained per attempt), and
 131072 nodes/16 MiB for records and renderers. Mixed line and multiline matches
 are independent; text is rescanned after redaction. Tests cover successful and
