@@ -53,6 +53,22 @@ test('current host state is mandatory and cannot be replaced by certificate fiel
   assert.throws(() => requireQaPassed(f.input), /current task\/head/);
 });
 
+test('waiting and failed diagnostics contain exactly one QA prefix through both gate APIs', t => {
+  const f = fixture(t);
+  const check = (state, reason) => {
+    const result = qaDeliveryState(f.input);
+    assert.equal(result.state, state); assert.match(result.reason, reason);
+    assert.equal(result.reason.match(/QA:/g)?.length, 1);
+    assert.throws(() => requireQaPassed(f.input), error => {
+      assert.match(error.message, new RegExp(state)); assert.match(error.message, reason);
+      assert.equal(error.message.match(/QA:/g)?.length, 1); return true;
+    });
+  };
+  check('waiting', /state.json/);
+  f.state.tasks[f.issue].head = 'bad'; f.saveState();
+  check('failed', /current task\/head/);
+});
+
 test('independent expectations prevent a short certificate from skipping behavior', t => {
   const f = fixture(t); f.saveState(); const saved = f.save();
   saved.cert.kind = 'no-behavior'; saved.cert.reason = 'Only text'; delete saved.cert.items; saved.flush();
@@ -82,6 +98,36 @@ test('final project QA still refuses a build member without a head', t => {
   assert.equal(result.state, 'failed');
   assert.match(result.reason, /project build head missing/);
   merged.head = 'c'.repeat(40); f.saveState();
+  assert.equal(qaDeliveryState(f.input).state, 'passed');
+});
+
+test('merged held chain waits for a new PR but rejects corrupt build heads first', t => {
+  const f = fixture(t), next = 'EXAMPLE-3';
+  f.save(); f.state.tasks[f.issue].project = 'project';
+  const merged = { issue: 'EXAMPLE-2', head: 'c'.repeat(40), statusType: 'completed',
+    mergedAt: '2026-10-02T00:00:00Z', labels: [] };
+  const pending = { issue: next, head: null, statusType: 'unstarted', mergedAt: null, labels: [] };
+  f.state.projects.project = { heldIssues: [f.issue, merged.issue], issues: [
+    { issue: f.issue, head: f.head, statusType: 'completed', mergedAt: '2026-10-01T00:00:00Z', labels: [] },
+    merged, pending
+  ] };
+  for (const missing of [null, undefined]) {
+    pending.head = missing; f.saveState();
+    const result = qaDeliveryState(f.input);
+    assert.equal(result.state, 'waiting');
+    assert.match(result.reason, /PR.*EXAMPLE-3/);
+  }
+  for (const invalid of ['', 'abc']) {
+    pending.head = invalid; f.saveState();
+    assert.equal(qaDeliveryState(f.input).state, 'failed', 'present malformed SHA is not a missing PR');
+  }
+  pending.head = null; delete merged.head; f.saveState();
+  assert.equal(qaDeliveryState(f.input).state, 'failed', 'corrupt merged head takes precedence over waiting for PR');
+  merged.head = 'c'.repeat(40); pending.head = 'd'.repeat(40);
+  f.state.tasks[next] = { project: 'project', head: pending.head }; f.save('task', next, pending.head); f.saveState();
+  assert.equal(qaDeliveryState(f.input).state, 'waiting', 'a new PR still needs its project certificate');
+  const build = f.state.projects.project.issues.map(({ issue, head }) => ({ issue, head }));
+  f.save('project', next, pending.head, build);
   assert.equal(qaDeliveryState(f.input).state, 'passed');
 });
 
@@ -247,6 +293,34 @@ test('all-merged held chain refuses ambiguous latest merge', t => {
   assert.equal(result.state, 'failed');
   assert.match(result.reason, /latest project landing is ambiguous/);
 });
+
+for (const held of [false, true]) {
+  test(`latest merge tie blocks only candidates and held tasks (${held ? 'with' : 'without'} chain)`, t => {
+    const f = fixture(t);
+    const rows = [f.issue, 'EXAMPLE-2', 'EXAMPLE-3', 'EXAMPLE-4'].map((issue, index) => ({
+      issue, head: index ? String(index).repeat(40) : f.head, statusType: 'completed', labels: [],
+      mergedAt: index < 2 ? '2026-10-01T09:00:00Z' : '2026-10-01T11:00:00Z'
+    }));
+    f.state.projects.project = { heldIssues: held ? [rows[1].issue, rows[2].issue] : [], issues: rows };
+    for (const row of rows) {
+      f.state.tasks[row.issue] = { project: 'project', head: row.head }; f.save('task', row.issue, row.head);
+    }
+    f.saveState();
+    for (const [index, row] of rows.entries()) {
+      const input = { ...f.input, issue: row.issue, head: row.head,
+        shipCertificate: `mono-ship green certificate\nShip: green\nIssue(s): ${row.issue}\nHead SHA: ${row.head}\nPR: #1` };
+      if (index >= 2 || (held && index === 1)) {
+        const result = qaDeliveryState(input);
+        assert.equal(result.state, 'failed');
+        assert.match(result.reason, /latest project landing is ambiguous/);
+        assert.throws(() => requireQaPassed(input), /latest project landing is ambiguous/);
+      } else {
+        assert.equal(qaDeliveryState(input).state, 'passed', 'earlier non-held task uses its task certificate');
+        assert.equal(requireQaPassed(input).state, 'passed');
+      }
+    }
+  });
+}
 
 test('scenario × host failures, missing items and unavailable windows hold the unchanged landing gate',t=>{
  const f=fixture(t);f.saveState();const saved=f.save();
