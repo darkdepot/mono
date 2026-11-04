@@ -15,3 +15,4 @@
 - Screen every outgoing context source and redact failed answers, retain confirmed scope/risk flags, stop evaluation after its scored interrupted attempt, and isolate recorded fixtures from the native Codex catalog.
 - Disable host Git diff/textconv helpers on every review/evaluation read, redact mixed multiline secrets before retaining failed answers, and require coverage of gitlink updates despite submodule ignore settings.
 - Strengthen checker R7 exclusions after four live danger removals, retain served-model fallback/usage identities, reclassify unreachable #68 in gold v3 (10/14 eligible, 12/16 nominal), and document all eight reviewer misses with proposed strengthenings. Host recalibration remains release-blocking.
+- Apply the shared Git helper policy inside role environments and neutralize repository discovery; screen encoded input JSON layers through the same bounded decoder as output before any affected role starts.

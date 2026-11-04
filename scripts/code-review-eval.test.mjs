@@ -13,7 +13,7 @@ const dataset=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/c
 test('all host Git reads share the non-executing, colorless wrapper, including raw contract blobs',()=>{
   const source=fs.readFileSync(path.join(packRoot,'scripts/code-review.mjs'),'utf8');
   assert.equal([...source.matchAll(/(?:execFileSync|spawnSync|spawn)\('git',/g)].length,1,'Git invocation bypasses the shared policy');
-  const wrapper=source.slice(source.indexOf('export function reviewGit('),source.indexOf('\nconst git = reviewGit;'));
+  const wrapper=source.slice(source.indexOf('function gitReadPolicy('),source.indexOf('\nconst git = reviewGit;'));
   for(const flag of ['--no-color','--no-ext-diff','--no-textconv','core.hooksPath=/dev/null','core.fsmonitor=false','color.ui=false','color.diff=false'])
    assert.ok(wrapper.includes(flag),`missing ${flag}`);
   const evaluation=fs.readFileSync(path.join(packRoot,'scripts/code-review-eval.mjs'),'utf8');

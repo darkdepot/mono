@@ -13,28 +13,35 @@ const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
 function exact(value, keys) {
   requireValue(object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)), 'response fields differ from schema');
 }
-export function reviewGit(worktree, args, extraEnv = {}, raw = false) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+function readGit(worktree, env, options, args, raw = false) {
+  return execFileSync('git', [...options, ...args], { cwd: worktree, env, encoding: raw ? null : 'utf8', maxBuffer: 32 * 1024 * 1024 });
+}
+function gitReadPolicy(worktree, inherited = process.env) {
+  const env = Object.fromEntries(Object.entries(inherited).filter(([key]) => !key.startsWith('GIT_')));
   Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_GLOBAL: '/dev/null', GIT_GRAFT_FILE: '/dev/null',
-    GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_ATTR_NOSYSTEM: '1' });
-  for (const [key, value] of Object.entries(extraEnv)) {
-    requireValue(/^GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL|DATE)$/.test(key), 'unsupported review Git environment override'); env[key] = value;
-  }
+    GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_ATTR_NOSYSTEM: '1', GIT_PAGER: 'cat' });
   const safeArgs = ['--no-pager', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false',
     '-c', 'color.ui=false', '-c', 'color.diff=false', '-c', 'diff.external=', '-c', 'core.attributesFile=/dev/null',
     '-c', 'core.alternateRefsCommand=', '-c', 'credential.helper=', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=false',
-    '-c', 'log.showSignature=false', '-c', 'advice.graftFileDeprecated=false'];
+    '-c', 'core.pager=cat', '-c', 'log.showSignature=false', '-c', 'advice.graftFileDeprecated=false'];
   const disabled = [];
-  const run = (commandArgs, binary = false) => execFileSync('git', [...safeArgs, ...disabled, ...commandArgs],
-    { cwd: worktree, env, encoding: binary ? null : 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  const run = commandArgs => readGit(worktree, env, [...safeArgs, ...disabled], commandArgs);
   // Read configuration as data before any operation that could perform conversion.
   let keys;
-  try { keys = run(['config', '--null', '--name-only', '--get-regexp', '^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.(command|textconv)|merge\\..*\\.driver)$']); }
+  try { keys = run(['config', '--null', '--name-only', '--get-regexp', '^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.(command|textconv)|merge\\..*\\.driver|credential\\..*\\.helper|pager\\..*)$']); }
   catch (error) { requireValue(error.status === 1, 'cannot inspect review Git helper configuration'); keys = ''; }
   for (const key of new Set(keys.split('\0').filter(Boolean))) {
     requireValue(!key.includes('='), 'unsupported Git helper name; cannot safely disable its configuration');
     disabled.push('-c', `${key}=${key.endsWith('.required') ? 'false' : ''}`);
   }
+  return { env, args: [...safeArgs, ...disabled] };
+}
+export function reviewGit(worktree, args, extraEnv = {}, raw = false) {
+  const policy = gitReadPolicy(worktree), env = policy.env;
+  for (const [key, value] of Object.entries(extraEnv)) {
+    requireValue(/^GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL|DATE)$/.test(key), 'unsupported review Git environment override'); env[key] = value;
+  }
+  const run = (commandArgs, binary = false) => readGit(worktree, env, policy.args, commandArgs, binary);
   const [command, ...rest] = args;
   if (['status', 'diff', 'checkout', 'add'].includes(command)) {
     const entries = run(['ls-files', '-v', '--stage', '-z']).split('\0').filter(Boolean);
@@ -136,7 +143,10 @@ export function scanSecrets(diff, { file = null, patch = true } = {}) {
   return matches;
 }
 function contextSecrets(value, file = null, patch = false) {
-  if (typeof value === 'string') return scanSecrets(value, { file, patch });
+  if (typeof value === 'string') {
+    const screened = screenModelOutput(value, { input: true, inputFile: file, inputPatch: patch });
+    return screened.rejected ? [{ file, line: 0, weight: 'P0', reason: 'encoded, credential-shaped or undecodable input; value withheld' }] : [];
+  }
   if (!value || typeof value !== 'object') return [];
   if (typeof value.file === 'string') file = value.file;
   return Object.entries(value).flatMap(([key, entry]) => [
@@ -166,8 +176,15 @@ export function roleInvocation(role, route, { scratch, worktree, schemaFile }) {
   // Launch from a neutral directory: repository settings/hooks are never executable configuration.
   const names = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'USER', 'LOGNAME', 'SystemRoot', 'PATHEXT', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR'];
   const env = Object.fromEntries(names.filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]]));
-  Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1',
-    GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: '/dev/null', GIT_CONFIG_KEY_1: 'core.fsmonitor', GIT_CONFIG_VALUE_1: 'false' });
+  const policy = gitReadPolicy(worktree, env); Object.assign(env, policy.env);
+  const gitSettings = policy.args.filter((value, index) => policy.args[index - 1] === '-c');
+  env.GIT_CONFIG_COUNT = String(gitSettings.length);
+  gitSettings.forEach((setting, index) => {
+    const split = setting.indexOf('='); env[`GIT_CONFIG_KEY_${index}`] = setting.slice(0, split); env[`GIT_CONFIG_VALUE_${index}`] = setting.slice(split + 1);
+  });
+  // Roles already receive pinned diffs/context and read files directly. Neutralize
+  // Git discovery; even an explicit git-dir retains the helper overrides above.
+  env.GIT_DIR = '/dev/null'; env.GIT_WORK_TREE = '/dev/null';
   const common = { cwd: scratch, env, boundary: {
     requested: { shellPolicy: 'read-only; network denied by sandbox', writes: false, networkTools: false, connectors: false, hooks: false, subagents: false }, observed: null,
     credentialReads: route.engine === 'codex' ? 'not-enforced; same machine read access as worker (owner accepted 2026-11-01)' : 'file tools confined to worktree; credential deny rules',
@@ -230,13 +247,18 @@ export function observeCodexBoundary(value, stderr) {
 }
 // The only model-output policy. Transport payloads, state, diagnostics and all
 // renderers use this before model text can leave transient parsing buffers.
-export function screenModelOutput(value, { diagnostic = false, strict = false, filesById = {} } = {}) {
+export function screenModelOutput(value, { diagnostic = false, strict = false, filesById = {}, input = false, inputFile = null, inputPatch = false } = {}) {
   const withheld = '[unreadable or over-limit model output withheld]', lineHidden = '[credential-shaped line withheld]', fieldHidden = '[credential-shaped field withheld]';
   const markers = new Set([withheld, lineHidden, fieldHidden, '[credential-shaped answer withheld]', '[private-key answer withheld]', '[unreadable transport answer withheld]', '[unreadable or over-limit transport answer withheld]']);
   const maxBytes = diagnostic ? 262144 : 16 * 1024 * 1024, maxNodes = diagnostic ? 4096 : 131072;
   let bytes = 0, nodes = 0, secretMatches = 0, rejected = false, revision = 0;
   const hide = (matches = 0) => { rejected = true; revision++; secretMatches += matches; return { value: withheld, text: withheld }; };
   const redact = (source, file) => {
+    if (input) {
+      const matches = scanSecrets(source, { file, patch: inputPatch });
+      if (matches.length) { secretMatches += matches.length; rejected = true; revision++; return lineHidden; }
+      return source;
+    }
     const actual = scanSecrets(source, { file, patch: false }), all = scanSecrets(source, { patch: false });
     secretMatches += all.length; if (all.length) revision++; if (actual.length) rejected = true;
     const redacted = source.split('\n').map(line => scanSecrets(line, { patch: false }).length ? lineHidden : line).join('\n');
@@ -270,6 +292,18 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
         return { value: revision !== before ? redact(rendered, file) : entry, text: redact(rendered, file) };
       }
       const safe = redact(entry, file);
+      if (input) {
+        // Select quoted literals, but let JSON.parse alone interpret escapes.
+        // Revisit the reconstructed text so decoded keys stay beside their values.
+        let invalid = false;
+        const decoded = entry.replace(/"(?:[^"\\]|\\[\s\S])*"/g, literal => {
+          if (!literal.includes('\\')) return literal;
+          try { return JSON.parse(literal); } catch { invalid = true; return ''; }
+        });
+        if (invalid) return hide();
+        if (decoded !== entry) { const child = visit(decoded, depth + 1, file); return { value: rejected ? child.value : safe, text: child.text }; }
+        return { value: safe, text: safe };
+      }
       if (/^\s*(?:\{|\[(?![A-Za-z])|")/.test(entry) || entry.includes('\\')) return hide();
       return { value: safe, text: safe };
     }
@@ -295,8 +329,8 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
     return { value: safe === joined ? Object.fromEntries(children.map(child => [child.name, child.value])) : safe,
       text: safe === joined ? children.map(child => `${child.name}: ${child.text}`).join('\n') : safe };
   };
-  const result = visit(value);
-  const safeText = redact(result.text, null), textBytes = Buffer.from(safeText);
+  const result = visit(value, 0, inputFile);
+  const safeText = redact(result.text, input ? inputFile : null), textBytes = Buffer.from(safeText);
   const output = { value: safeText === result.text ? result.value : safeText, rejected, interrupted: value?.error?.interrupted === true,
     diagnostic: { text: textBytes.subarray(0, 8188).toString('utf8'), truncated: textBytes.length > 8188, secretMatches } };
   if (strict && rejected) throw new Error('model output withheld by secret screen');
@@ -455,7 +489,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       let content;
       try { content = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
       catch { throw new Error('non-UTF8 blob changes are unsupported; no model launched'); }
-      secrets.push(...scanSecrets(content, { file, patch: false }));
+      secrets.push(...contextSecrets(content, file));
     }
     if (secrets.length) return { ...fail('secret patterns in pinned blobs; no model launched'), secrets };
     const previous = record.rounds.at(-1)?.head;

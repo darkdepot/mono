@@ -205,6 +205,44 @@ test('host Git isolation disables content filters and drivers before every workt
   assert.equal(result.outcome,'clean');assert.equal(runner.calls.length,1);
  });
 });
+test('role Git reads cannot execute repository helpers, including absolute Git with an explicit directory',async t=>{
+ for(const driver of ['clean','process'])for(const role of ['code-review','code-review-checker'])await t.test(`${role}/${driver}`,t=>{
+  const f=fixture(t),marker=path.join(f.worktree,'.git','role-ran'),scratch=fs.mkdtempSync(path.join(os.tmpdir(),'mono-role-git-'));
+  t.after(()=>fs.rmSync(scratch,{recursive:true,force:true}));
+  fs.writeFileSync(path.join(f.worktree,'.gitattributes'),'input.mjs filter=probe diff=probe merge=probe\n');
+  fs.writeFileSync(path.join(f.worktree,'helper.cjs'),`require('node:fs').writeFileSync(${JSON.stringify(marker)},'executed');process.exit(1);\n`);
+  f.git('add','.');f.git('commit','-qm','role helper fixture');
+  const command=`${process.execPath} ${path.join(f.worktree,'helper.cjs')}`;
+  f.git('config',`filter.probe.${driver}`,command);f.git('config','filter.probe.required','true');
+  f.git('config','diff.probe.textconv',command);f.git('config','diff.probe.command',command);f.git('config','merge.probe.driver',command);
+  fs.writeFileSync(path.join(f.worktree,'input.mjs'),'export const changed = 2;\n');
+  const route=resolveReviewRoles({},packRoot)[role],invocation=roleInvocation(role,route,{scratch,worktree:f.worktree,schemaFile:path.join(packRoot,`skills/code-review/${role==='code-review'?'reviewer':'checker'}.schema.json`)});
+  const binary=execFileSync('which',['git'],{encoding:'utf8'}).trim();
+  for(const args of [['-C',f.worktree,'diff','HEAD'],['--git-dir='+path.join(f.worktree,'.git'),'--work-tree='+f.worktree,'diff','HEAD']]){
+   spawnSync(binary,args,{cwd:scratch,env:invocation.env,encoding:'utf8'});
+   assert.equal(fs.existsSync(marker),false,'repository helper ran inside role environment');
+  }
+  spawnSync(binary,['diff','HEAD'],{cwd:f.worktree,encoding:'utf8'});
+  assert.equal(fs.existsSync(marker),true,'negative control must execute the repository helper');
+ });
+});
+test('encoded JSON assignments in pinned blobs and every context source stop before any role',async t=>{
+ const secret='opaqueFixture'+'j'.repeat(24);
+ for(const depth of [1,2,3])for(const source of ['blob','contract','rules','base-evidence'])await t.test(`${source}/${depth}`,async t=>{
+  const f=fixture(t);let encoded=JSON.stringify({password:secret});for(let i=0;i<depth;i++)encoded=JSON.stringify(encoded);
+  const content=`const data = JSON.parse(${encoded});\n`,request={...f.request};
+  if(source==='contract')request.contract+=content;
+  else {
+   const file=source==='rules'?'AGENTS.md':source==='base-evidence'?'neighbor.mjs':'input.mjs';
+   fs.writeFileSync(path.join(f.worktree,file),content);f.git('add','.');f.git('commit','-qm','encoded assignment');
+   if(source!=='blob'){request.base=f.git('rev-parse','HEAD');fs.writeFileSync(path.join(f.worktree,'input.mjs'),'export const changed = 2;\n');f.git('add','.');f.git('commit','-qm','safe edit');}
+   request.head=f.git('rev-parse','HEAD');
+  }
+  const runner=responder({findings:source==='base-evidence'?[{...sample,file:'neighbor.mjs'}]:[]}),result=await runReviewRound(request,runner);
+  assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,source==='base-evidence'?1:0,'encoded credentials reached a role');
+  assert.ok(result.secrets?.length);assert.ok(!JSON.stringify(result).includes(secret));
+ });
+});
 test('host Git isolation refuses helper names that cannot be represented by a config override',async t=>{
  const f=fixture(t),marker=path.join(f.worktree,'.git','host-ran');
  fs.writeFileSync(path.join(f.worktree,'.gitattributes'),'input.mjs filter=probe=hidden\n');
@@ -431,8 +469,8 @@ test('role permissions are separate from writer transport; new pairing names rev
  const neutral=fs.mkdtempSync(path.join(os.tmpdir(),'mono-permissions-'));t.after(()=>fs.rmSync(neutral,{recursive:true,force:true}));
  const roles=resolveReviewRoles({},packRoot);
  process.env.MONO_REVIEW_TEST_CREDENTIAL='fictional-worker-credential';
- const codex=roleInvocation('code-review',roles['code-review'],{scratch:neutral,worktree:'/tmp/product',schemaFile:path.join(packRoot,'skills/code-review/reviewer.schema.json')});
- assert.equal(codex.env.MONO_REVIEW_TEST_CREDENTIAL,undefined);delete process.env.MONO_REVIEW_TEST_CREDENTIAL;assert.equal(codex.cwd,neutral);assert.equal(codex.env.GIT_CONFIG_COUNT,'2');assert.equal(codex.env.GIT_CONFIG_KEY_0,'core.hooksPath');assert.equal(codex.env.GIT_CONFIG_VALUE_0,'/dev/null');assert.equal(codex.env.GIT_CONFIG_KEY_1,'core.fsmonitor');assert.equal(codex.env.GIT_CONFIG_VALUE_1,'false');assert.equal(codex.env.GIT_NO_LAZY_FETCH,'1');
+ const codex=roleInvocation('code-review',roles['code-review'],{scratch:neutral,worktree:os.tmpdir(),schemaFile:path.join(packRoot,'skills/code-review/reviewer.schema.json')});
+ assert.equal(codex.env.MONO_REVIEW_TEST_CREDENTIAL,undefined);delete process.env.MONO_REVIEW_TEST_CREDENTIAL;assert.equal(codex.cwd,neutral);assert.ok(Number(codex.env.GIT_CONFIG_COUNT)>2);assert.equal(codex.env.GIT_DIR,'/dev/null');assert.equal(codex.env.GIT_CONFIG_KEY_0,'core.hooksPath');assert.equal(codex.env.GIT_CONFIG_VALUE_0,'/dev/null');assert.equal(codex.env.GIT_CONFIG_KEY_1,'core.fsmonitor');assert.equal(codex.env.GIT_CONFIG_VALUE_1,'false');assert.equal(codex.env.GIT_NO_LAZY_FETCH,'1');
  assert.ok(codex.args.includes('project_doc_max_bytes=0'));assert.ok(codex.args.includes('read-only'));assert.ok(codex.args.includes('--ignore-user-config'));assert.ok(!codex.args.includes('--add-dir'));assert.ok(codex.args.includes('mcp_servers={}'));
  const claude=roleInvocation('code-review-checker',roles['code-review-checker'],{scratch:neutral,worktree:os.tmpdir(),schemaFile:path.join(packRoot,'skills/code-review/checker.schema.json')});
  assert.equal(claude.args[claude.args.indexOf('--tools')+1],'Read,Glob,Grep');assert.ok(claude.args.includes('--restricted'));assert.ok(claude.args.includes('--safe-mode'));assert.ok(!JSON.stringify(claude.args).includes('GH_TOKEN'));
@@ -496,8 +534,8 @@ test('the role environment prevents an automatic project fsmonitor hook, with a 
  fs.writeFileSync(hook,`#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)},'executed');\n`,{mode:0o700});
  f.git('config','core.fsmonitor',hook);
  const route=resolveReviewRoles({},packRoot)['code-review'];const invocation=roleInvocation('code-review',route,{scratch:f.worktree,worktree:f.worktree,schemaFile:path.join(packRoot,'skills/code-review/reviewer.schema.json')});
- const status=spawnSync('git',['status','--porcelain'],{cwd:f.worktree,env:invocation.env,encoding:'utf8'});assert.equal(status.status,0,status.stderr);assert.equal(fs.existsSync(marker),false);
- const broken={...invocation.env};for(const name of Object.keys(broken))if(name.startsWith('GIT_CONFIG_'))delete broken[name];
+ const status=spawnSync('git',['--git-dir='+path.join(f.worktree,'.git'),'--work-tree='+f.worktree,'status','--porcelain'],{cwd:f.worktree,env:invocation.env,encoding:'utf8'});assert.equal(status.status,0,status.stderr);assert.equal(fs.existsSync(marker),false);
+ const broken={...invocation.env};for(const name of Object.keys(broken))if(name.startsWith('GIT_CONFIG_')||['GIT_DIR','GIT_WORK_TREE'].includes(name))delete broken[name];
  spawnSync('git',['status','--porcelain'],{cwd:f.worktree,env:broken,encoding:'utf8'});assert.equal(fs.existsSync(marker),true,'negative control must exercise the project hook');
 });
 
@@ -513,7 +551,7 @@ test('D1: native Claude auth retains Unix login identity without inheriting work
 test('D2: Codex uses isolated auth-only home and rejects forbidden observed tool surfaces',async t=>{
  const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'mono-isolation-test-'));t.after(()=>fs.rmSync(scratch,{recursive:true,force:true}));
  const route=resolveReviewRoles({},packRoot)['code-review'];
- const invocation=roleInvocation('code-review',route,{scratch,worktree:'/tmp/product',schemaFile:path.join(packRoot,'skills/code-review/reviewer.schema.json')});
+ const invocation=roleInvocation('code-review',route,{scratch,worktree:os.tmpdir(),schemaFile:path.join(packRoot,'skills/code-review/reviewer.schema.json')});
  assert.equal(invocation.env.CODEX_HOME,path.join(scratch,'codex-home'));
  assert.ok(fs.readdirSync(invocation.env.CODEX_HOME).every(name=>['auth.json','tmp'].includes(name)));
  const catalog=JSON.parse(fs.readFileSync(path.join(scratch,'models.json'),'utf8'));assert.ok(catalog.models.every(model=>model.apply_patch_tool_type===null&&model.tool_mode==='direct'&&model.multi_agent_version==='disabled'));

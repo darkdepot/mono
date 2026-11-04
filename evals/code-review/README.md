@@ -117,6 +117,8 @@ multi-fallback and usage-alias controls; these names are data, not model policy.
 `screenModelOutput` is the shared output boundary for successful and failed role
 replies, every field, metadata, history, reports, evaluation progress and scoring.
 No model field is persisted, rendered or forwarded before that screen. Secret
+inputs use the same bounded decoder, including JSON literals embedded in source;
+pinned blobs and all context fields are screened before their role starts. Secret
 replies fail closed, while retained diagnostics redact values. Every JSON/JSONL
 string layer uses literal `JSON.parse` to a fixed point, including Codex
 `item.text`; malformed, lossy-number or over-limit content is withheld. Bounds are 32 levels,
@@ -127,6 +129,10 @@ failed fields, nested encodings, legacy records, evaluation sinks and safe repli
 one policy: hook/fsmonitor and color overrides, configured content filters and
 diff/merge helpers disabled, and diff/show (including raw diffs) forced colorless
 without external diff or textconv. Raw contracts keep exact hash-validated bytes.
+Role environments apply the same helper overrides (including credentials/pagers)
+and neutralize Git repository discovery/worktree; roles read precomputed context
+and files. Regressions exercise clean/process helpers with absolute Git and
+explicit git-dir calls, plus singly/doubly/triply encoded input assignments.
 Before worktree reads, gitlinks and index hints are refused; this also avoids
 entering submodules with independent executable configuration. Both pinned blobs
 of every changed path are scanned regardless of attributes. NUL-containing or

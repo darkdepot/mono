@@ -1650,6 +1650,8 @@ confirmed ones stay report-only on round three; open unresolved findings block.
 Scope/risk flags persist across rounds for confirmed and rejected findings until
 new checker evidence clears them. Before each launch, secret scanning covers the
 whole context: contract, rules, diff context, findings, history and base evidence;
+input uses the same bounded literal JSON decoder as output, including quoted
+JSON embedded in source text. Encoded credentials never reach a role.
 all model output crosses `screenModelOutput` before parsing, retention, another
 role, reporting or evaluation output. The same screen covers successful fields,
 failed answers, metadata, legacy records and derived text; secret-bearing replies
@@ -1666,6 +1668,9 @@ outside the reviewed version.
 The circle and evaluation share one host Git policy: override color, hooks and
 fsmonitor, disable configured content filters and diff/merge helpers before every
 call, and force `--no-color`, no external diff and no textconv on diff/show.
+Roles inherit that helper policy through Git configuration environment overrides,
+including credential helpers and pagers. Their repository discovery/worktree is
+neutralized with `GIT_DIR`/`GIT_WORK_TREE`; they use pinned context and direct file reads.
 Exact contract blobs keep their bytes. Worktree reads refuse gitlinks and index
 hints (`assume-unchanged`, `skip-worktree`) before inspecting files.
 Every changed path is secret-screened from both pinned blobs independently of
