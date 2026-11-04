@@ -20,7 +20,12 @@ if (isMain(import.meta.url)) {
     if (command !== 'prepare') throw new Error(usage);
     allowedFlags(args, ['root', 'config', 'issue', 'head', 'ship-report']);
     if (!args.config) throw new Error(`${usage}\nmissing --config`);
-    const config = readJson(args.config);
+    let config;
+    try { config = readJson(args.config); }
+    catch (error) {
+      if (error.code === 'ENOENT') throw new Error(`QA: config file not found: ${args.config}`);
+      throw error;
+    }
     if (qaRecipeSource(config)) for (const key of ['root', 'issue', 'head', 'ship-report'])
       if (!args[key]) throw new Error(`${usage}\nmissing --${key}`);
     const qa = prepareQa({ ...args, config, shipReport: args['ship-report'] });

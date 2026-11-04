@@ -8,13 +8,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readJsonLines } from './transports/journal.mjs';
 import { traceRows } from './skills-probe.mjs';
-import { completedTrace } from './skills-trace.mjs';
+import { completedTrace, textExchanges, checkEndings } from './skills-trace.mjs';
 import { auditRows } from './skills-audit.mjs';
 import { isWrite, MissingEvidence } from './skills-boundary.mjs';
 import { unwrap } from './skills-proof.mjs';
 import { runScenario } from './skills-run.mjs';
-import { nativeRecords, resultFor } from './skills-record-data.mjs';
-import { windowRole } from './skills-owner.mjs';
+import { nativeRecords, resultFor, callInput } from './skills-record-data.mjs';
+import { windowRole, correctedVersion, isOwnerWindow } from './skills-owner.mjs';
 import { latestApproval, approvalBlocks } from './idea-gate.mjs';
 
 const read=file=>JSON.parse(fs.readFileSync(file,'utf8'));
@@ -167,7 +167,7 @@ function recordWrite(write,type,dump){
 }
 
 function runViolations(traces,request={}){
- const manualRemoval=new Set(),evidence=[],transitions=[],dumpWrites=[];
+ const manualRemoval=new Set(),evidence=[],transitions=[],dumpWrites=[],inputErrors=[];
  for(const {host,trace,endLine} of traces){
   let data;
   try{data=nativeRecords(host,trace);}catch{
@@ -175,8 +175,11 @@ function runViolations(traces,request={}){
     for(const row of rows)try{calls.push(...auditRows(host,[row]).calls.filter(c=>c.name.startsWith('mcp__')));}catch{}
     data={rows,calls,audit:{calls:rows.flatMap(row=>{try{return auditRows(host,[row]).calls;}catch{return [];}})}};
   }
-  if(request.expectedRecords?.some(rule=>rule.forbidden==='start-next-stage'))for(const call of data.audit.calls)
-   if((call.name==='Skill'&&request.nextSkill&&call.input?.skill===request.nextSkill)||(['Agent','Task'].includes(call.name)&&request.nextAgent&&call.input?.subagent_type===request.nextAgent))transitions.push(`${trace}:${call.line}: forbidden start-next-stage`);
+  if(request.expectedRecords?.some(rule=>rule.forbidden==='start-next-stage'))for(const call of data.audit.calls){
+   if(!['Skill','Agent','Task'].includes(call.name))continue;
+   let input;try{input=callInput(host,call);}catch(error){inputErrors.push(`${trace}:${call.line}: ${error.message}`);continue;}
+   if((call.name==='Skill'&&request.nextSkill&&input?.skill===request.nextSkill)||(['Agent','Task'].includes(call.name)&&request.nextAgent&&input?.subagent_type===request.nextAgent))transitions.push(`${trace}:${call.line}: forbidden start-next-stage`);
+  }
   for(const call of data.calls){
    if(request.readOnlyDump&&isWrite(call.name))dumpWrites.push(`${trace}:${call.line}: record dump permits monotest reads only`);
    if(!isWrite(call.name)||call.name.startsWith('mcp__paper__'))continue;
@@ -190,7 +193,7 @@ function runViolations(traces,request={}){
    }
   }
  }
- return evidence.length?{status:'failed',stop:true,manualRemoval:[...manualRemoval],evidence,reason:'MCP write outside monotest: stopped; manual removal only for linked successful record URLs; no deletion attempted'}:transitions.length?{status:'failed',stop:false,manualRemoval:[],evidence:transitions,reason:'forbidden start-next-stage'}:dumpWrites.length?{status:'failed',stop:false,manualRemoval:[],evidence:dumpWrites,reason:'record dump permits monotest reads only'}:null;
+ return evidence.length?{status:'failed',stop:true,manualRemoval:[...manualRemoval],evidence,reason:'MCP write outside monotest: stopped; manual removal only for linked successful record URLs; no deletion attempted'}:transitions.length?{status:'failed',stop:false,manualRemoval:[],evidence:transitions,reason:'forbidden start-next-stage'}:dumpWrites.length?{status:'failed',stop:false,manualRemoval:[],evidence:dumpWrites,reason:'record dump permits monotest reads only'}:inputErrors.length?{status:'unverified',stop:false,manualRemoval:[],evidence:inputErrors,reason:inputErrors.join('; ')}:null;
 }
 
 // Cross-session order comes from native invocation/result timestamps. Claude's
@@ -250,6 +253,7 @@ function approvalCheck(request,write,data,dump){
  if(!createProject&&!markers.some(type=>recordWrite(write,type,dump)))return;
  const packageStart=recordWrite(write,'mono-package: start',dump);
  const binding=request.approvalBindings?.find(b=>b.recordId===idOf(write.value));
+ if(data.expectedReplies) return textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding});
  const candidates=data.audit.calls.filter(c=>['AskUserQuestion','request_user_input_async'].includes(c.name)&&c.line<write.line);
  const decisions=candidates.filter(c=>windowRole(c.input?.questions)===(packageStart?'transition':'approval'));
  const window=binding?candidates.find(c=>c.callId===binding.windowCallId):decisions.at(-1);
@@ -288,26 +292,29 @@ function approvalCheck(request,write,data,dump){
   if(!terminal||binding.shownLine<=window.line||binding.shownLine>=terminal.line)missing('shown version outside approved Codex window turn');
   if(data.rows.findLast(r=>r.line<terminal.line&&ownerText(r))?.line!==binding.shownLine)throw new Error('approval does not bind the last owner-visible text');
  }else if(data.rows.findLast(r=>r.line<window.line&&ownerText(r))?.line!==binding.shownLine)throw new Error('approval does not bind the last owner-visible text');
+ return checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit:window.line});
+}
+function checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit,approvedText=binding.text,approvedProjectText=approvedText,corrected=false}) {
  let shownVersion;
  if(!shownText.includes(binding.text)||binding.shownReadLine!==undefined){
   const before=data.audit.calls.find(c=>c.line===binding.shownReadLine&&!isWrite(c.name));
-  if(!before||before.line>=window.line)missing('shown version not found in owner-visible trace');
+  if(!before||before.line>=shownLimit)missing('shown version not found in owner-visible trace');
   const read=resultFor(request.host,before,data.rows);
-  if(read.resultLine>=window.line||read.resultLine>=binding.shownLine||(binding.documentId&&idOf(read.value)!==binding.documentId)||!text(idOf(read.value))||
+  if(read.resultLine>=shownLimit||read.resultLine>=binding.shownLine||(binding.documentId&&idOf(read.value)!==binding.documentId)||!text(idOf(read.value))||
    (!shownText.includes(binding.text)&&(!text(read.value.url)||!shownText.includes(read.value.url)))||bodyOf(read.value)!==binding.text)missing('shown document link/version not bound to native read');
   shownVersion=read.value;
  }
  if(binding.currentLine===write.line&&/mono-(?:idea|tech):\s*approved/.test(writeBody(write))){
   const info=writeBody(write).includes('mono-idea: approved')?'mono-idea-snapshot':'mono-tech-page';
-  if(!bindsSnapshot(writeBody(write),info,binding.text))throw new Error('outgoing approved version differs from shown content');
+  if(!bindsSnapshot(writeBody(write),info,approvedText))throw new Error('outgoing approved version differs from shown content');
   return; // idea-gate below independently checks the snapshot against persisted current data.
  }
  if(createProject){
-  if(markdown(write.input.description??write.value.description)!==markdown(binding.text))throw new Error('created project differs from shown version');
+  if(markdown(write.input.description??write.value.description)!==markdown(approvedProjectText))throw new Error('created project differs from shown version');
   return;
  }
  const currentCall=data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
- if(!current||!currentCall||binding.currentLine<=reply.line||binding.currentLine>=write.line)missing('fresh version read after reply missing');
+ if(!data.rows.some(r=>r.line===binding.currentLine)||!currentCall||binding.currentLine<=reply.line||binding.currentLine>=write.line)missing('fresh version read after reply missing');
  const observed=resultFor(data.host,currentCall,data.rows);
  const invocation=write.event.type==='event_msg'?write.approvalInvocationLine:write.line;
  if(Number.isInteger(invocation)&&observed.resultLine>=invocation)throw new Error('fresh version read completed after approval write invocation');
@@ -321,31 +328,102 @@ function approvalCheck(request,write,data,dump){
   const {kind,fields}=versionApproval(write);
   const bound=kind==='mono-prd: approved'?fields.document===documentId&&fields.updatedAt===fresh.updatedAt
    :['mono-design: approved','mono-tech: approved'].includes(kind)&&fields.prd===documentId&&fields['prd-updatedAt']===fresh.updatedAt
-    ||kind==='mono-tech: approved'&&fields.spec===documentId&&fields['spec-sha256']===sha256(binding.text);
+    ||kind==='mono-tech: approved'&&fields.spec===documentId&&fields['spec-sha256']===sha256(approvedText);
   if(!bound)throw new Error('written approval does not bind the shown content/version');
  }else if(packageStart){
   const {fields}=versionApproval(write);
-  if(!text(idOf(fresh))||fields.record!==idOf(fresh)||fields.sha256!==sha256(binding.text))throw new Error('written approval does not bind the shown content/version');
- }else if(!writeBody(write).includes(binding.text))throw new Error('written approval does not bind the shown content/version');
- if(shownVersion&&shownVersion.updatedAt!==fresh.updatedAt)throw new Error('version changed after shown approval');
+  if(!text(idOf(fresh))||fields.record!==idOf(fresh)||fields.sha256!==sha256(approvedText))throw new Error('written approval does not bind the shown content/version');
+ }else if(!writeBody(write).includes(approvedText))throw new Error('written approval does not bind the shown content/version');
+ if(shownVersion&&!corrected&&shownVersion.updatedAt!==fresh.updatedAt)throw new Error('version changed after shown approval');
  if(shownVersion&&idOf(shownVersion)!==idOf(fresh))throw new Error('approved document changed');
- if(bodyOf(fresh)!==binding.text)throw new Error('version changed after shown approval');
+ if(bodyOf(fresh)!==approvedText)throw new Error('version changed after shown approval');
  if(binding.documentId&&idOf(fresh)!==binding.documentId)throw new Error('approved document changed');
  const persisted=dump.all.find(row=>idOf(row)===idOf(fresh));
- if(!persisted||bodyOf(persisted)!==binding.text||persisted.updatedAt!==fresh.updatedAt)throw new Error('approved version changed before final read-back');
+ if(!persisted||bodyOf(persisted)!==approvedText||persisted.updatedAt!==fresh.updatedAt)throw new Error('approved version changed before final read-back');
  if(binding.documentId&&!Number.isFinite(date(fresh.updatedAt)))missing('approved document version timestamp missing');
  if(!Number.isInteger(invocation))bindingMissing('approval write invocation not proved by native trace');
 }
 
+function textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding}) {
+ if(!binding)bindingMissing(`shown-version binding missing for ${idOf(write.value)}`);
+ const exchange=data.exchanges.find(e=>e.expected.id===binding.replyId);
+ if(!exchange)throw new Error('text approval has no scenario reply binding');
+ const expected=exchange.expected;
+ const preceding=data.exchanges.filter(e=>e.replyLine<write.line).at(-1);
+ if(exchange!==preceding)throw new Error('approval does not bind the latest actual owner reply');
+ const invocation=write.event.type==='event_msg'?write.approvalInvocationLine:write.line;
+ if(!Number.isInteger(invocation))bindingMissing('approval invocation missing');
+ if(invocation<=exchange.replyLine)throw new Error('approval write before actual owner reply');
+ const latestUser=data.rows.filter(r=>r.line<invocation).findLast(r=>{
+  const proof=data.audit.proof({kind:'text-message',result:r.value});return proof.status==='confirmed'&&proof.role==='user';
+ });
+ if(latestUser?.line!==exchange.replyLine)throw new Error('approval does not bind the latest actual owner reply');
+ if(createProject&&expected.stage!=='idea')throw new Error('only Idea may create the approved project');
+ if(packageStart?!expected.outcome.startNext:!expected.outcome.approval)throw new Error('scenario reply does not authorize this record');
+ if(binding.shownLine!==exchange.line || !text(binding.text))throw new Error('approval does not bind the last owner-visible text');
+ const framing=expected.framing??{before:'',after:'\n'+exchange.question};
+ if(exchange.text!==framing.before+binding.text+framing.after)throw new Error('approval does not bind the complete displayed artifact');
+ const approvedText=correctedVersion(binding.text,expected),body=writeBody(write);
+ let approvedProjectText;
+ if(createProject){
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mono-shown-idea-'));
+  try{
+   const draft=path.join(directory,'approved.md');fs.writeFileSync(draft,approvedText);
+   const run=spawnSync(process.execPath,[path.join(request.packRoot,'scripts/idea-gate.mjs'),'record','--draft',draft,'--out',directory,'--config',request.configFile],{encoding:'utf8'});
+   if(run.status!==0)throw new Error('complete shown Idea cannot generate the project body');
+   approvedProjectText=fs.readFileSync(path.join(directory,'body.md'),'utf8');
+  }finally{fs.rmSync(directory,{recursive:true,force:true});}
+ }
+ const prose=approvalBlocks(body).filter(b=>!b.fenced).map(b=>b.text).join('\n').split(/\r?\n/);
+ if(!createProject) {
+  const quotedReply=expected.by==='orchestrator'&&expected.stage==='idea'?binding.ownerEvidence?.reply:expected.reply;
+  const ownerProse='\n'+prose.join('\n')+'\n';
+  if(ownerProse.split('Владелец: ответил ').length!==2||!ownerProse.includes(`\nВладелец: ответил «${quotedReply}»\n`))throw new Error('verbatim owner reply missing or substituted outside fences');
+  const corrections=prose.filter(line=>line.startsWith('Поправка:'));
+  if(expected.correction?corrections.length!==1||corrections[0]!==`Поправка: ${expected.correction.description}`:corrections.length)throw new Error('record correction differs from named correction');
+  if(recordLines(body).some(line=>/^mono-(?:idea|prd|design|tech): approved(?: |$)|^mono-package: start(?: |$)/.test(line.trim()))) {
+   if(recordWrite(write,'mono-idea: approved',dump)) {
+    if(expected.stage!=='idea')throw new Error('record kind differs from scenario stage');
+    if((expected.by==='orchestrator')!==prose.includes('by=orchestrator'))throw new Error('Idea record authority differs from scenario');
+   }else {
+   const {fields,kind}=versionApproval(write);
+   const stageMarker={idea:'mono-idea: approved',discovery:'mono-prd: approved',design:'mono-design: approved','tech-evaluation':'mono-tech: approved',handoff:'mono-package: start'};
+   if(kind!==stageMarker[expected.stage])throw new Error('record kind differs from scenario stage');
+   if(fields.by!==(expected.by??'owner'))throw new Error('record approval authority differs from scenario');
+   }
+  }
+  if(expected.by==='orchestrator'&&!prose.includes(`Причина: ${expected.reason}`))throw new Error('orchestrator reason missing');
+ }
+ let ownerExchange;
+ if(expected.by==='orchestrator'&&expected.stage==='idea') {
+  const owner=binding.ownerEvidence;
+  if(!owner)throw new Error('Idea requires verbatim owner message, question and actual reply');
+  const source=request.scenarioData.find(d=>d.host===owner.host&&path.resolve(d.trace)===path.resolve(owner.trace));
+  const actual=source?.exchanges?.find(e=>e.line===owner.shownLine&&e.replyLine===owner.replyLine);
+  if(!actual || actual.expected.by==='orchestrator' || !actual.expected.outcome.approval ||
+      actual.text!==owner.text || actual.question!==owner.question || actual.reply!==owner.reply ||
+      actual.text!==exchange.text || actual.question!==exchange.question ||
+      actual.expected.stage!==expected.stage || !isDeepStrictEqual(actual.expected.outcome,expected.outcome) ||
+      !isDeepStrictEqual(actual.expected.correction,expected.correction) || !exchange.reply.includes(owner.reply))throw new Error('Idea relayed owner triple differs from actual conversation');
+  const replyCall={line:exchange.replyLine,event:data.rows.find(r=>r.line===exchange.replyLine)?.value};
+  if(!before(source,actual.replyLine,data,replyCall))throw new Error('Idea owner reply must precede delegated consent');
+  ownerExchange=actual;
+ }
+ checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText:exchange.text,reply:{line:exchange.replyLine},shownLimit:exchange.line,approvedText,approvedProjectText,corrected:Boolean(expected.correction)});
+ // Creating the Idea project is preparatory; only its bound approval record
+ // also satisfies the relayed owner's declared outcome.
+ return !createProject&&!packageStart?[exchange,...(ownerExchange?[ownerExchange]:[])]:[];
+}
+
 export function verifyRecords(request){
  const gateResults=[];
- const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,sent:request.sent},...(request.additionalTraces??[])];
+ const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,stageStartLine:request.stageStartLine,sent:request.sent,expectedReplies:request.expectedReplies},...(request.additionalTraces??[])];
  const dumpTraces=[...(request.dumpTrace?[{host:request.host,trace:request.dumpTrace}]:[]),...(request.dumpAdditionalTraces??[])];
  const traces=[...scenarioTraces,...dumpTraces];
  try{
   const violation=runViolations(traces,request);if(violation)return violation;
   const load=(source,dump)=>{
-   const full=nativeRecords(source.host,source.trace),data=nativeRecords(source.host,source.trace,source.endLine);
+   const full=nativeRecords(source.host,source.trace),data=nativeRecords(source.host,source.trace,!dump&&source.expectedReplies?undefined:source.endLine);
    data.sent=source.sent;
    if(dump&&full.calls.some(c=>isWrite(c.name)))throw new Error('dump attempted an external write');
    if(source.endLine!==undefined&&full.calls.some(c=>c.line>source.endLine&&isWrite(c.name)))throw new Error('write after scenario terminal');
@@ -354,9 +432,45 @@ export function verifyRecords(request){
    if(data.calls.some(c=>c.line>data.terminal.line&&isWrite(c.name)))throw new Error('write after scenario terminal');
    if(data.calls.some(c=>c.line>data.terminal.line))missing('call after successful trace terminal');
    let previous=-Infinity;for(const row of data.rows)if(row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp)||stamp<previous)missing('invalid or reversed native trace time order');previous=stamp;}
+   data.expectedReplies=dump?undefined:source.expectedReplies;
+   if(!dump&&(request.expectedReplies||source.expectedReplies)&&data.audit.calls.some(c=>isOwnerWindow(c.name)))throw new Error('stage called a window in text scenario');
+   if(data.expectedReplies) {
+    data.exchanges=textExchanges(source.host,data.rows,data.expectedReplies,{startLine:source.stageStartLine});
+   }
    return data;
   };
   const scenarios=scenarioTraces.map(source=>load(source,false)),dumps=dumpTraces.map(source=>load(source,true)),data=scenarios[0],writes=[];
+  request={...request,scenarioData:scenarios};
+  checkEndings(scenarios.flatMap(d=>d.exchanges??[]));
+  const stageStarts={idea:['Research'],research:['Discovery'],discovery:['Design','Tech Evaluation','Handoff'],design:['Tech Evaluation','Handoff'],'tech-evaluation':['Handoff'],handoff:['Delivery']};
+  const stageNames={idea:'Idea',research:'Research',discovery:'Discovery',design:'Design','tech-evaluation':'Tech Evaluation',handoff:'Handoff'};
+  const skillPrefix=request.nextSkill?.slice(0,request.nextSkill.lastIndexOf(':')+1);
+  const agentStage=Object.keys(stageNames).find(stage=>request.nextAgent?.endsWith('-'+stage));
+  const agentPrefix=agentStage?request.nextAgent.slice(0,-agentStage.length):null;
+  for(const source of scenarios)if(source.expectedReplies||request.expectedReplies) {
+   const policies=source.expectedReplies??request.expectedReplies;
+   const starts=[];
+   for(const call of source.audit.calls) {
+    const input=source.calls.includes(call)||['Skill','Agent','Task'].includes(call.name)?callInput(source.host,call):call.input;
+    const status=input?.state??input?.status;
+    const invocation=call.event.type==='event_msg'?call.approvalInvocationLine:call.line;
+    const e=source.exchanges?.filter(e=>e.replyLine<(invocation??call.line)).at(-1);
+    // Before any owner reply, the scenario identifies only the current stage;
+    // it cannot authorize a transition. Re-saving that stage is not a start.
+    const currentStage=stageNames[e?.expected.stage??policies[0].stage];
+    const routeTarget=Object.entries(stageNames).find(([stage])=>
+     ((call.name==='Skill'&&skillPrefix&&input?.skill===skillPrefix+stage)||(['Agent','Task'].includes(call.name)&&agentPrefix&&input?.subagent_type===agentPrefix+stage)))?.[1];
+    const next=routeTarget?routeTarget!==currentStage:(call.name==='Skill'&&request.nextSkill&&input?.skill===request.nextSkill)||(['Agent','Task'].includes(call.name)&&request.nextAgent&&input?.subagent_type===request.nextAgent);
+    const target=typeof status==='string'?status:status?.name;
+    const transition=/__(?:save|create)_project$/.test(call.name)&&Object.values(stageStarts).some(stages=>stages.includes(target))&&target!==currentStage;
+    const workStart=recordLines(bodyOf(input)??'').some(line=>line.trim().startsWith('mono-package: start '));
+    if(!next&&!transition&&!workStart)continue;
+    if(!Number.isInteger(invocation))missing('start invocation not proved by native trace');
+    if(!e?.expected.outcome.startNext||((transition||routeTarget)&&!stageStarts[e.expected.stage].includes(transition?target:routeTarget)))throw new Error('start-next-stage without scenario authority');
+    starts.push({invocation,exchange:e});
+   }
+   for(const e of source.exchanges??[])if(e.expected.outcome.startNext&&!starts.some(s=>s.exchange===e))throw new Error('expected start-next-stage missing after actual reply');
+  }
   let seedEndLine=0;
   if(request.seedExpected||request.seedEndLine!==undefined){
    const boundary=data.rows.find(r=>r.line===request.seedEndLine);
@@ -476,8 +590,10 @@ export function verifyRecords(request){
     if(!activeWrites.some(w=>idOf(w.value)===idOf(found[0])))missing(`expected ${rule.type} write absent from trace`);
    }
   }
-  const bindingGaps=[];
-  for(const write of activeWrites)try{approvalCheck({...request,host:write.data.host,sent:write.data.sent},write,write.data,dump);}catch(error){if(!error.bindingOnly)throw error;bindingGaps.push(error.message);}
+  const bindingGaps=[],approvedExchanges=new Set();
+  for(const write of activeWrites)try{
+   for(const exchange of approvalCheck({...request,host:write.data.host,sent:write.data.sent},write,write.data,dump)??[])approvedExchanges.add(exchange);
+  }catch(error){if(!error.bindingOnly)throw error;bindingGaps.push(error.message);}
   const gates=[...(request.gates??[])];
   for(const write of activeWrites){
    const has=type=>recordWrite(write,type,dump);
@@ -513,6 +629,8 @@ export function verifyRecords(request){
    gateResults.push({command:gate.command,exitCode:run.status,result});if(run.status!==0||!result.ok)throw new Error(`idea-gate ${gate.command}: ${result.code}`);
   }
   }finally{fs.rmSync(gateRoot,{recursive:true,force:true});}
+  for(const source of scenarios)for(const exchange of source.exchanges??[])
+   if(exchange.expected.outcome.approval&&!approvedExchanges.has(exchange))throw new Error('expected approval missing actual record bound to shown version');
   return {status:bindingGaps.length?'unverified':'passed',...(bindingGaps.length?{bindingOnly:true,reason:bindingGaps.join('; ')}:{}),stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
  }catch(error){return {status:error instanceof MissingEvidence||error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code)?'unverified':'failed',stop:false,manualRemoval:[],reason:error.message,...(error.bindingOnly?{bindingOnly:true}:{}),gateResults,evidence:[request.trace,request.dumpDir]};}
 }
@@ -537,7 +655,8 @@ export async function collectRecordDump(request,execute=runScenario){
 export async function verifyScenarioRecords({run,runRequest,scenario,project,outputDir,bindingsFile},collect=collectRecordDump){
  const start=Date.now();
  const traces=(run.auditedTraces??[]).filter(trace=>trace!==run.trace).map(trace=>({host:runRequest.host,trace}));
- const rules={expectedRecords:scenario.expectedRecords,nextSkill:scenario.next?`${runRequest.context.skillPrefix}:${scenario.next}`:null,nextAgent:scenario.next?`${runRequest.context.skillPrefix}-${runRequest.context.skillPrefix}-${scenario.next}`:null};
+ const next=runRequest.context.followingStage??scenario.next;
+ const rules={expectedRecords:scenario.expectedRecords,nextSkill:next?`${runRequest.context.skillPrefix}:${next}`:null,nextAgent:next?`${runRequest.context.skillPrefix}-${runRequest.context.skillPrefix}-${next}`:null};
  const violation=runViolations([{host:runRequest.host,trace:run.trace,endLine:run.endLine},...traces],rules);if(violation)return {...violation,durationMs:Date.now()-start};
  const dump=await collect({...runRequest,project,projectName:runRequest.context.projectName,outputDir,recordRules:rules,mcpServers:{monotest:runRequest.mcpServers.monotest}});
  for(const attempt of dump.attempts??[dump])if(attempt.trace){
@@ -546,8 +665,8 @@ export async function verifyScenarioRecords({run,runRequest,scenario,project,out
  }
  if(dump.status!=='passed')return {...dump,status:dump.status==='failed'?'failed':'unverified',durationMs:Date.now()-start};
  const bindings=bindingsFile&&fs.existsSync(bindingsFile)?read(bindingsFile):{};
- const result=verifyRecords({host:runRequest.host,trace:run.trace,endLine:run.endLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
-  approvalBindings:bindings.approvalBindings,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:scenario.next,nextSkill:scenario.next?`${runRequest.context.skillPrefix}:${scenario.next}`:null,nextAgent:scenario.next?`${runRequest.context.skillPrefix}-${runRequest.context.skillPrefix}-${scenario.next}`:null,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')});
+ const result=verifyRecords({host:runRequest.host,trace:run.trace,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
+  expectedReplies:runRequest.scenario?.expectedReplies,approvalBindings:bindings.approvalBindings,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')});
  return {...result,durationMs:Date.now()-start};
 }
 if(process.argv[1]===fileURLToPath(import.meta.url)){

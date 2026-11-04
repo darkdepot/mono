@@ -8,7 +8,7 @@ const missing=reason=>{throw new MissingEvidence(reason);};
 
 // Only native direct input or the driver's literal JSON exec route binds payloads.
 // Arbitrary JavaScript is deliberately not parsed; an unknown route is unverified.
-function callInput(host,call){
+export function callInput(host,call){
  if(host!=='codex'||call.event.payload?.name!=='exec')return call.input;
  const p=call.event.payload,source=p.type==='custom_tool_call'?p.input:p.arguments;
  const prefix=`const r = await tools.${call.name}(`,suffix='); text(r);';

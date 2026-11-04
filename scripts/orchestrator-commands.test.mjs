@@ -328,6 +328,47 @@ test("extract-empty-and-closed-headings: section titles normalize while every he
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 });
 
+test("dispatch-placeholder-scope: inserted Issue fields stay literal and template holes refuse", () => {
+  assert.equal(renderDispatch("Issue: {{issue_body}}", { issue_body: "Use {{field_name}} and {{}} literally." }),
+    "Issue: Use {{field_name}} and {{}} literally.");
+  for (const template of ["{{missing}}", "{{}}", "{{issue_body}} {{missing}}"])
+    assert.throws(() => renderDispatch(template, { issue_body: "Issue text" }), /unfilled dispatch placeholder/u);
+  assert.throws(() => renderDispatch("{{issue_body}}", { issue_body: "" }), /unfilled dispatch placeholder/u);
+});
+
+test("accept-rejected-incomplete-ack: rejection consumes without allowing applied or blocked", async t => {
+  for (const ackGates of [[], [{ gate: "identity", status: "pass", evidence: "checked" }]])
+    await t.test(`${ackGates.length} of 2 gates`, async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-reject-ack-")), issue = "MONO-999";
+      const ackFile = path.join(root, "reports", `${issue}-gate-ack-a1.json`);
+      const recordFile = path.join(root, "consumed", `${issue}-gate-ack-a1.json`);
+      const ack = { issue, phase: "gate", status: "gates-passed", gates: ackGates };
+      const entry = { issue, stage: "mono-deliver", attempt: 1, packVersion: "0.42.0", surfaceRevision: 5,
+        worktree: path.join(root, "worktree"), log: path.join(root, `${issue}-mono-deliver-a1.jsonl`),
+        gates: ["identity", "context"], lifecycle_moves: [] };
+      const args = { root, issue, attempt: "1" };
+      try {
+        atomicJson(path.join(root, "workers.json"), { [issue]: entry }); atomicJson(ackFile, ack);
+        for (const outcome of [undefined, "applied", "blocked"]) {
+          await assert.rejects(acceptAck({ ...args, ...(outcome ? { outcome } : {}) }, () => {}), /ack/u);
+          assert.deepEqual(readJson(ackFile), ack);
+          assert.equal(fs.existsSync(recordFile), false);
+          assert.deepEqual(readJson(path.join(root, "workers.json"))[issue].gates, entry.gates);
+        }
+        const result = spawnSync(process.execPath, [path.join(checkout, "scripts/orchestrator/accept.mjs"),
+          "ack", "--root", root, "--issue", issue, "--attempt", "1", "--outcome", "rejected"], { encoding: "utf8" });
+        pass(result);
+        assert.deepEqual(readJson(recordFile), { issue, attempt: 1, outcome: "rejected", gates: entry.gates, ack, ackDigest: digest(ack), readback: [] });
+        assert.equal(fs.existsSync(ackFile), false);
+        assert.deepEqual(readJson(ackFile.replace(".json", ".rejected.json")), ack);
+        assert.equal(readJson(path.join(root, "workers.json"))[issue].gates, undefined);
+        await acceptAck({ ...args, outcome: "rejected" }, () => {});
+        assert.equal(readJson(recordFile).outcome, "rejected", "recovery is idempotent");
+        await assert.rejects(acceptAck({ ...args, outcome: "applied" }, () => {}), /ack/u);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    });
+});
+
 test("installed command workflow on scratch: refusals, dispatch, ack, sessions, admission and amend", async t => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-command-fixture-"));
   const skills = path.join(scratch, "skills"), root = path.join(scratch, "orchestrator"), repo = path.join(scratch, "repo"), bin = path.join(scratch, "bin"), temp = path.join(scratch, "worker-temp");
@@ -360,7 +401,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       verification: { command: "node", args: ["scripts/verify.mjs"] }, lifecycle_moves: [{ entity: "issue", key: "MONO-999", from: "Backlog", to: "In Progress" }] } } });
     write(path.join(repo, ".gitignore"), ".worktrees/\n.orchestrator/\n"); git("add", "."); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"); git("push", "origin", "main");
     const snapshot = path.join(scratch, "snapshot"), writable = path.join(scratch, "writable.json"); write(writable, [temp]);
-    const body = "# MONO-999 — fixture\n# Что сделать\nImplement commands.\n# Готовность агента\nAFK\n# Покрытие PRD/Spec\nR4, U5\n# Как проверить\n1. node scripts/verify.mjs\n# Ключевые контракты\nNo direct writes.\n# Что не входит\nDeploy.\nРиск: standard\n";
+    const body = "# MONO-999 — fixture\n# Что сделать\nImplement commands. Keep {{field_name}} literal.\n# Готовность агента\nAFK\n# Покрытие PRD/Spec\nR4, U5\n# Как проверить\n1. node scripts/verify.mjs\n# Ключевые контракты\nNo direct writes.\n# Что не входит\nDeploy.\nРиск: standard\n";
     write(path.join(snapshot, "issue-MONO-999.md"), body); write(path.join(snapshot, "approval.md"), "Approved package and start; current project Delivery.");
     write(path.join(snapshot, "project-brief.md"), "# Fixture\nBrief\n"); write(path.join(snapshot, "prd.md"), fixture("cheap-waves-prd.md")); write(path.join(snapshot, "tech-spec.md"), fixture("cheap-waves-spec.md"));
     const command = path.join(runtime, "orchestrator/dispatch.mjs"), options = ["--issue", "MONO-999", "--root", root, "--config", config, "--snapshot", snapshot, "--handshake", "wait", "--worker-writable-roots", writable];
@@ -544,6 +585,22 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
       retry(snapshot, "short");
       assert.deepEqual(names(), ["approval.json", "approval.md", "idea", "issue-MONO-999.md", "issue-context.json", "prd-extract.md", "project-brief.md", "spec-extract.md"]);
     });
+    await t.test("dispatch-afk-leading-token: only leading AFK selects the short profile", async t => {
+      try {
+        for (const [readiness, afk] of [
+          ["HITL (нужно твоё участие: проверка, после неё задача станет AFK)", false],
+          ["Not AFK", false], ["AFK (агент справится без тебя)", true]
+        ]) await t.test(readiness, () => {
+          write(path.join(snapshot, "issue-MONO-999.md"), body.replace("\nAFK\n", `\n${readiness}\n`));
+          const response = run(process.execPath, [command, ...options]);
+          assert.match(response.stderr, /dirty/u, "the scratch start gate refuses code entry");
+          const prepared = readJson(path.join(root, "dispatch/MONO-999-a1/pins.json"));
+          assert.equal(prepared.afk, afk);
+          assert.equal(prepared.profile, afk ? "short" : "full");
+          if (!afk) assert.match(run(process.execPath, [command, ...options, "--profile", "short"]).stderr, /short requires/u);
+        });
+      } finally { write(path.join(snapshot, "issue-MONO-999.md"), body); }
+    });
     fs.unlinkSync(path.join(worktree, "dirty"));
     write(path.join(snapshot, "issue-MONO-999.md"), body.replace("R4, U5", "R99"));
     assert.match(run(process.execPath, [command, ...options]).stderr, /unknown.*R99/u); assert.equal(fs.existsSync(path.join(root, "attempts.json")), false);
@@ -591,8 +648,13 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, 
     assert.equal(launchedPins.reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(launchedPins.reviewDataset)).digest("hex"));
     assert.equal(readJson(launched.gateFile).worktree, worktree); assert.deepEqual(readJson(launched.spawnFile).gates, entry.gates);
     assert.deepEqual(readJson(launched.pins.file).shipBotChecks, ["Greptile Review"]);
-    assert.ok(!fs.readFileSync(launched.dispatchFile, "utf8").includes("{{")); assert.match(fs.readFileSync(path.join(root, "ledger.md"), "utf8"), /\d{4}-\d\d-\d\dT.*Z DISPATCHED MONO-999/u);
+    assert.ok(fs.readFileSync(launched.dispatchFile, "utf8").includes("Keep {{field_name}} literal.")); assert.match(fs.readFileSync(path.join(root, "ledger.md"), "utf8"), /\d{4}-\d\d-\d\dT.*Z DISPATCHED MONO-999/u);
     const rendered = fs.readFileSync(launched.dispatchFile, "utf8");
+    await t.test("dispatch-project-seam: project approval is separate from the five-field lane contract", () => {
+      const seam = JSON.parse(/^- Context seam: (.+)$/mu.exec(rendered)[1]);
+      assert.deepEqual(seam, { package_kind: "project-first", lifecycle_state_entity: "project",
+        behavioral_oracle: null, risk_class: null, approval_status: "absent" });
+    });
     assert.ok(rendered.includes(`--ack '${path.join(root, "reports/MONO-999-gate-ack-a1.json")}'`));
     assert.ok(rendered.includes(`--ack '${path.join(worktree, ".orchestrator/MONO-999-gate-ack-a1.json")}'`), "wait instructions use the actual fallback ack location");
     const collectionSample = JSON.parse(/## Запрос сбора[\s\S]*?```json\n([\s\S]*?)```/u.exec(rendered)[1]);

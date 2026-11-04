@@ -30,12 +30,11 @@ export function renderDispatch(template, values, pilot = false) {
   if (values.landing_paths === undefined) source = source.replace(/<!-- landing:start -->[\s\S]*?<!-- landing:end -->\s*/u, "");
   if (!pilot) source = source.replace(/<!-- review-pilot:start -->[\s\S]*?<!-- review-pilot:end -->\s*/u, "");
   if (values.transport !== "claude-cli") source = source.replace(/<!-- claude-delivery:start -->[\s\S]*?<!-- claude-delivery:end -->\s*/u, "");
-  const rendered = source.replace(/\{\{([^{}]+)\}\}/gu, (_, key) => {
+  const rendered = source.replace(/\{\{([^{}]*)\}\}/gu, (_, key) => {
     if (!Object.hasOwn(values, key) || values[key] === undefined || values[key] === null || String(values[key]).trim() === "")
       throw new Error(`unfilled dispatch placeholder: ${key}`);
     return String(values[key]);
   });
-  if (/\{\{[^{}]*\}\}/u.test(rendered)) throw new Error("unfilled dispatch placeholders remain");
   return rendered;
 }
 
@@ -71,7 +70,7 @@ async function prepareDispatch(args) {
   const risk = args.risk ?? settings.risk ?? /(?:Риск|risk_class)\s*[:=]\s*(tiny|standard|deep|risky)/u.exec(body)?.[1];
   const critical = args.critical ?? settings.critical ?? null;
   if (!RISK_KEYS.slice(0, 4).includes(risk) || (critical !== null && (risk !== "risky" || !critical.trim()))) throw new Error("approved risk/critical required");
-  const afk = /\bAFK\b/u.test(section(body, "Готовность агента", true));
+  const afk = /^\s*AFK\b/u.test(section(body, "Готовность агента", true).split("\n").slice(1).join("\n"));
   const openDecisions = Number(args["open-decisions"] ?? settings.openDecisions);
   if (!Number.isInteger(openDecisions) || openDecisions < 0) throw new Error("--open-decisions must explicitly count unresolved decisions");
   let profile = args.profile ?? (args["full-snapshot"] || !["tiny", "standard"].includes(risk) || critical || !afk || openDecisions ? "full" : "short");
@@ -88,8 +87,8 @@ async function prepareDispatch(args) {
   const verification = args.verification ? readJson(args.verification) : settings.verification;
   if (typeof verification?.command !== "string" || !verification.command.trim() || !Array.isArray(verification.args) || verification.args.some(arg => typeof arg !== "string")) throw new Error("explicit verification command/args required");
   if (!approval.trim()) throw new Error("nonempty approval record required");
-  const seam = lane?.seam ?? { package_kind: "project-first", lifecycle_state_entity: "project", behavioral_oracle: null, risk_class: risk,
-    approval_status: 'approved' };
+  const seam = lane?.seam ?? { package_kind: "project-first", lifecycle_state_entity: "project", behavioral_oracle: null, risk_class: null,
+    approval_status: 'absent' };
   if (issueOnly && (seam.package_kind !== "issue-only" || seam.approval_status !== "approved-fresh" || !lane.marker || !lane.label || !lane.ownerApproval || !lane.config ||
       typeof lane.fingerprint !== "string" || !lane.fingerprint.trim())) throw new Error("complete issue-only snapshot with nonempty fingerprint required");
   const ideaResult = dispatchIdea(args.snapshot, config, issue, lane);

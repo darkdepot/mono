@@ -102,3 +102,44 @@ test('a late child result cannot replace the successful parent terminal event',t
  const rows=sample.events.map(r=>r.event);rows.push({type:'result',subtype:'success'},{type:'result',subtype:'error_during_execution',is_error:true,parent_tool_use_id:'child'});
  assert.equal(checkTrace({host:'claude',trace:write(rows),expectedWindows:[expected]}).status,'passed');
 });
+
+for(const host of ['claude','codex'])test(`${host}: text approval binds a completed final message and the actual reply`,t=>{
+ const write=scratch(t),question='Утверждаем и начинаем Research?',message='Что: версия.\n'+question;
+ const expectedReplies=[{id:'idea',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question,reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true},response:['Утверждение записал.']}];
+ const assistant=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const user=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const terminal=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const rows=[assistant(message),terminal,user('принимаю'),assistant('Утверждение записал.'),terminal];
+ const check=()=>checkTrace({host,trace:write(rows),expectedReplies});
+ assert.equal(check().status,'passed',JSON.stringify(check()));
+ rows[2]=user('другой ответ');assert.equal(check().status,'failed');rows[2]=user('принимаю');
+ rows[0]=assistant('Другой вопрос?');assert.notEqual(check().status,'passed');
+});
+
+for(const host of ['claude','codex'])test(`${host}: text scenarios reject any window attempt and repeated stage endings`,t=>{
+ const write=scratch(t),question='Утверждаем?',expected={id:'idea',stage:'idea',role:'approval',asksStart:false,summary:['Версия'],question,reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:false},response:['Записал.']};
+ const assistant=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const user=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const terminal=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const rows=[assistant('Версия Idea.\n'+question),terminal,user('принимаю'),assistant('Версия Discovery.\n'+question),terminal,user('принимаю'),assistant('Записал.'),terminal];
+ const expectedReplies=[{...expected,response:undefined},{...expected,id:'discovery',stage:'discovery'}];
+ const check=()=>checkTrace({host,trace:write(rows),expectedReplies});
+ assert.match(check().reason,/identical endings/);assert.equal(check().status,'failed');
+ expectedReplies[1].question='Принимаем PRD?';rows[3]=assistant('Версия Discovery.\nПринимаем PRD?');assert.equal(check().status,'passed');
+ for(const name of host==='claude'?['AskUserQuestion']:['request_user_input','request_user_input_async']){
+  const call=host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id:'window',name,input:{questions:[]}}]}}:{type:'response_item',payload:{type:'function_call',name,call_id:'window',arguments:'{"questions":[]}'}};
+  rows.splice(0,0,call);assert.equal(check().status,'failed');assert.match(check().reason,/called a window/);rows.shift();
+ }
+});
+
+for(const host of ['claude','codex'])test(`${host}: late service work and a cut continuation cannot reuse an earlier text offer`,t=>{
+ const write=scratch(t),question='Утверждаем?',expectedReplies=[{id:'idea',stage:'idea',role:'approval',asksStart:false,summary:['Версия'],question,reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:false},response:['Записал.']}];
+ const assistant=text=>host==='claude'?{type:'assistant',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}};
+ const user=text=>host==='claude'?{type:'user',message:{content:[{type:'text',text}]}}:{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+ const terminal=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ const rows=[assistant('Версия\n'+question),terminal,user('принимаю'),assistant('Записал.'),terminal];
+ const check=()=>checkTrace({host,trace:write(rows),expectedReplies});assert.equal(check().status,'passed');
+ rows.push(assistant('Ещё служебная работа.'));assert.equal(check().status,'unverified');rows.pop();
+ rows.splice(1,0,host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id:'service',name:'Read',input:{file_path:'/scratch/example'}}]}}:{type:'response_item',payload:{type:'function_call',name:'exec_command',call_id:'service',arguments:'{"cmd":"pwd"}'}});
+ assert.notEqual(check().status,'passed');
+});

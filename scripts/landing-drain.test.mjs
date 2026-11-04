@@ -706,6 +706,18 @@ test('QA connected standalone preparation uses read-back ship and still requires
   assert.match(malformedWorker.stderr, /invalid phase identity/, 'worker-shaped records still require the full worker contract');
 });
 
+test('QA preparation names a missing config without raw ENOENT', t => {
+  const f = qaFixture(t), config = path.join(f.root, 'missing-config.json');
+  const result = spawnSync(process.execPath, [path.resolve('scripts/orchestrator/qa.mjs'), 'prepare', '--config', config],
+    { env: f.env, encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr.trim().split('\n').length, 1);
+  assert.match(result.stderr, /QA:/);
+  assert.ok(result.stderr.includes(config));
+  assert.doesNotMatch(result.stderr, /ENOENT/);
+});
+
 test('QA preparation names missing required flags without a Node path error', t => {
   const f = qaFixture(t);
   const script = path.resolve('scripts/orchestrator/qa.mjs');

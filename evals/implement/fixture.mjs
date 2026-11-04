@@ -63,7 +63,6 @@ export function createFixture(id) {
   const packageIssues = chained ? 'T0:TRAIN-0,T1:TRAIN-1' : 'T1:TRAIN-1';
   const packageBody = `## Кратко\nУчебные заметки: ${scenario.criteria.join('; ')}.\n\n## Решения\nТолько критерии задачи; новые сервисы, PR и выкладка не входят. Дизайн не требуется; экран использует текстовое правило вкуса.\n\n## Задачи\n${chained ? 'T0: TRAIN-0 — предыдущая задача, влита\n' : ''}T1: TRAIN-1 — ${scenario.criteria.join('; ')}${chained ? '; зависит от T0' : ''}\n`;
   const packageHash = createHash('sha256').update(packageBody).digest('hex');
-  if (!projectless) seam = { ...seam, risk_class: 'standard', approval_status: 'approved' };
   const issue = { id: issueId, key: 'TRAIN-1', body: issueBody, projectId, status: projectless ? 'Backlog' : 'In Progress' };
   const approvalBody = projectless ? `Владелец утвердил TRAIN-1: ${fingerprint}`
     : `mono-package: start project=${projectId} record=${packageId} sha256=${packageHash} issues=${packageIssues} by=owner\napproval_status=approved\nУчебный пакет и задача утверждены; проект в Delivery.`;
