@@ -63,12 +63,14 @@ function validateFinding(finding) {
   return { ...finding, key: findingKey(finding) };
 }
 export function parseReviewer(value) {
+  value = screenModelOutput(value, { strict: true }).value;
   if (typeof value === 'string') { try { value = JSON.parse(value); } catch { throw new Error('unreadable reviewer JSON'); } }
   exact(value, ['completed', 'reviewedFiles', 'findings']);
   requireValue(value.completed === true && Array.isArray(value.reviewedFiles) && value.reviewedFiles.every(text) && Array.isArray(value.findings), 'review incomplete');
   return { ...value, findings: value.findings.map(validateFinding) };
 }
 export function parseChecker(value, findings) {
+  value = screenModelOutput(value, { strict: true }).value;
   if (typeof value === 'string') { try { value = JSON.parse(value); } catch { throw new Error('unreadable checker JSON'); } }
   exact(value, ['completed', 'verdicts']);
   requireValue(value.completed === true && Array.isArray(value.verdicts), 'checker incomplete');
@@ -226,46 +228,72 @@ export function observeCodexBoundary(value, stderr) {
   requireValue(!/mcp[:_ ]|mcp-server|rmcp|https?:\/\//i.test(stderr), 'MCP/network startup observed in role stderr');
   return { tools: value.tools, mcpServers: [], connectors: false, subagents: false, source: 'live model tool-list probe' };
 }
-function failedAnswer(value) {
-  let bytes = 0, nodes = 0;
-  const decode = (entry, depth = 0) => {
-    requireValue(depth <= 32 && ++nodes <= 4096, 'answer decoding limit');
-    if (typeof entry === 'string') {
-      bytes += Buffer.byteLength(entry);
-      requireValue(bytes <= 262144, 'answer decoding limit');
-      const trimmed = entry.trim();
-      let parsed;
-      try { parsed = JSON.parse(trimmed); }
-      catch {
-        const lines = entry.split('\n');
-        // Mixed diagnostic/JSONL streams are decoded line by line. Anything
-        // JSON-bearing that cannot be decoded is never retained as raw text.
-        if (lines.length > 1 && lines.some(line => /^[\s]*[\[{\"]/.test(line))) return lines.map(line => decode(line, depth + 1)).join('\n');
-        requireValue(!/[{}\[\]\\]/.test(entry) && !/^\s*"/.test(entry), 'unreadable answer encoding');
-        return entry;
-      }
-      return decode(parsed, depth + 1);
-    }
-    if (Array.isArray(entry)) return entry.map(item => decode(item, depth + 1)).join('\n');
-    if (object(entry)) return Object.entries(entry).map(([key, content]) => `${decode(key, depth + 1)}: ${decode(content, depth + 1)}`).join('\n');
-    return String(entry ?? '');
+// The only model-output policy. Transport payloads, state, diagnostics and all
+// renderers use this before model text can leave transient parsing buffers.
+export function screenModelOutput(value, { diagnostic = false, strict = false, filesById = {} } = {}) {
+  const withheld = '[unreadable or over-limit model output withheld]', lineHidden = '[credential-shaped line withheld]', fieldHidden = '[credential-shaped field withheld]';
+  const markers = new Set([withheld, lineHidden, fieldHidden, '[credential-shaped answer withheld]', '[private-key answer withheld]', '[unreadable transport answer withheld]', '[unreadable or over-limit transport answer withheld]']);
+  const maxBytes = diagnostic ? 262144 : 16 * 1024 * 1024, maxNodes = diagnostic ? 4096 : 131072;
+  let bytes = 0, nodes = 0, secretMatches = 0, rejected = false, revision = 0;
+  const hide = (matches = 0) => { rejected = true; revision++; secretMatches += matches; return { value: withheld, text: withheld }; };
+  const redact = (source, file) => {
+    const actual = scanSecrets(source, { file, patch: false }), all = scanSecrets(source, { patch: false });
+    secretMatches += all.length; if (all.length) revision++; if (actual.length) rejected = true;
+    const redacted = source.split('\n').map(line => scanSecrets(line, { patch: false }).length ? lineHidden : line).join('\n');
+    const remaining = scanSecrets(redacted, { patch: false }); secretMatches += remaining.length;
+    return source.includes('PRIVATE KEY-----') ? '[private-key answer withheld]' : remaining.length ? '[credential-shaped answer withheld]' : redacted;
   };
-  let raw, secretMatches = 0;
-  try { raw = decode(value); }
-  catch {
-    if (typeof value === 'string' && Buffer.byteLength(value) <= 262144) secretMatches = scanSecrets(value, { patch: false }).length;
-    raw = '[unreadable or over-limit transport answer withheld]';
-  }
-  const lines = raw.split('\n');
-  const redacted = lines.map(line => {
-    const matches = scanSecrets(line, { patch: false });
-    secretMatches += matches.length; return matches.length ? '[credential-shaped line withheld]' : line;
-  }).join('\n');
-  const remaining = scanSecrets(redacted, { patch: false });
-  const safe = raw.includes('PRIVATE KEY-----') ? '[private-key answer withheld]'
-    : remaining.length ? '[credential-shaped answer withheld]' : redacted;
-  secretMatches += remaining.length;
-  return { text: Buffer.from(safe).subarray(0, 8188).toString('utf8'), truncated: Buffer.byteLength(safe) > 8188, secretMatches };
+  const visit = (entry, depth = 0, file = null) => {
+    if (depth > 32 || ++nodes > maxNodes) return hide();
+    if (typeof entry === 'string') {
+      bytes += Buffer.byteLength(entry); if (bytes > maxBytes) return hide();
+      if (markers.has(entry)) return { value: entry, text: entry };
+      let parsed, decoded = false;
+      try { parsed = JSON.parse(entry.trim()); decoded = true; } catch {}
+      if (decoded) {
+        const before = revision, child = visit(parsed, depth + 1, file);
+        return { value: revision !== before ? JSON.stringify(child.value) : entry, text: child.text };
+      }
+      const lines = entry.split('\n');
+      if (lines.length > 1 && lines.some(line => /^\s*[\[{\"]/.test(line) && !markers.has(line))) {
+        const before = revision;
+        // Count mixed multiline assignments even if another line is malformed.
+        const matches = scanSecrets(entry, { patch: false });
+        const parts = lines.map(line => visit(line, depth + 1, file)), rendered = parts.map(part => part.text).join('\n');
+        if (parts.some(part => part.text === withheld)) { secretMatches += matches.length; return hide(); }
+        return { value: revision !== before ? redact(rendered, file) : entry, text: redact(rendered, file) };
+      }
+      const safe = redact(entry, file);
+      if (/^\s*(?:\{|\[(?![A-Za-z])|")/.test(entry) || entry.includes('\\')) return hide();
+      return { value: safe, text: safe };
+    }
+    if (!entry || typeof entry !== 'object') return { value: entry, text: String(entry ?? '') };
+    if (typeof entry.file === 'string') file = entry.file;
+    else if (typeof entry.id === 'string' && Object.hasOwn(filesById, entry.id)) file = filesById[entry.id];
+    if (Array.isArray(entry)) {
+      if (entry.length > maxNodes) return hide();
+      const children = entry.map(item => visit(item, depth + 1, file)), joined = children.map(child => child.text).join('\n');
+      const safe = redact(joined, file);
+      return { value: safe === joined ? children.map(child => child.value) : safe, text: safe };
+    }
+    const entries = Object.entries(entry); if (entries.length > maxNodes) return hide();
+    const children = entries.map(([key, content]) => {
+      const keyResult = visit(key, depth + 1, file), child = visit(content, depth + 1, file);
+      const name = typeof keyResult.value === 'string' ? keyResult.value : withheld;
+      const assignment = ASSIGNMENT_SECRET.exec(`${name} = ${child.text}`);
+      if (assignment && assignment.index < name.length) { rejected = true; revision++; secretMatches++; child.value = fieldHidden; child.text = fieldHidden; }
+      return { name, ...child };
+    });
+    const joined = children.map(child => child.text).join('\n'), safe = redact(joined, file);
+    return { value: safe === joined ? Object.fromEntries(children.map(child => [child.name, child.value])) : safe,
+      text: safe === joined ? children.map(child => `${child.name}: ${child.text}`).join('\n') : safe };
+  };
+  const result = visit(value);
+  const safeText = redact(result.text, null), textBytes = Buffer.from(safeText);
+  const output = { value: safeText === result.text ? result.value : safeText, rejected, interrupted: value?.error?.interrupted === true,
+    diagnostic: { text: textBytes.subarray(0, 8188).toString('utf8'), truncated: textBytes.length > 8188, secretMatches } };
+  if (strict && rejected) throw new Error('model output withheld by secret screen');
+  return output;
 }
 export function subscriptionStatus(engine, result) {
   requireValue(result.status === 0 && !result.error, 'native subscription login not confirmed');
@@ -389,7 +417,7 @@ function promptFor(packRoot, role, context) {
 }
 
 // The only round boundary. Callers persist/sign the returned record; manual mode only prints it.
-export async function runReviewRound(input, { runRole = executeRole } = {}) {
+async function reviewRound(input, { runRole = executeRole } = {}) {
   const { worktree, head, base, contract, risk = 'standard', config = {}, packRoot = runtimePackRoot() } = input;
   const record = structuredClone(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });
   record.rounds ??= []; record.findings ??= []; record.failures ??= [];
@@ -433,18 +461,27 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
       const prompt = promptFor(packRoot, role, { ...context, ...extra });
       for (let attempt = 1; attempt <= 2; attempt++) {
         const started = Date.now();
-        let costRecorded = false, answer;
+        let costRecorded = false, screened;
         try {
-          const result = await runRole({ role, route: roles[role], worktree, packRoot, prompt });
-          answer = result.response;
-          costs.push({ role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, attempt, elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null, boundary: result.boundary ?? null });
-          costRecorded = true;
+          // Both transport outcomes enter the same gate before parsing, costs,
+          // state, another prompt or a caller can observe any model text.
+          const payload = await runRole({ role, route: roles[role], worktree, packRoot, prompt }).then(
+            result => ({ result: { usage: result?.usage, boundary: result?.boundary, elapsedMs: result?.elapsedMs, response: result?.response } }),
+            error => ({ error: { message: error.message, boundary: error.boundary, interrupted: error.interrupted === true, rawAnswer: error.rawAnswer } }));
+          screened = screenModelOutput(payload, { diagnostic: true, filesById: Object.fromEntries((extra.findings ?? []).map(finding => [finding.id, finding.file])) });
+          const result = screened.value?.result, failure = screened.value?.error;
+          if (result) {
+            costs.push({ role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, attempt, elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null, boundary: result.boundary ?? null });
+            costRecorded = true;
+          }
+          requireValue(!screened.rejected, 'model output withheld by secret screen');
+          if (failure) throw new Error(failure.message);
           return parse(result.response);
         } catch (error) {
-          // The transport may fail before usage is returned; do not invent token counts.
-          if (!costRecorded) costs.push({ role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, attempt, elapsedMs: Date.now() - started, usage: null, boundary: error.boundary ?? null, failure: true });
-          record.failures.push({ head, round: number, role, attempt, reason: failedAnswer(error.message).text, answer: failedAnswer(answer ?? error.rawAnswer) });
-          if (attempt === 2 || error.interrupted) throw error;
+          const reason = screenModelOutput(error.message, { diagnostic: true }).diagnostic.text;
+          if (!costRecorded) costs.push({ role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, attempt, elapsedMs: Date.now() - started, usage: null, boundary: screened?.value?.error?.boundary ?? null, failure: true });
+          record.failures.push({ head, round: number, role, attempt, reason, answer: screened?.diagnostic ?? screenModelOutput(undefined, { diagnostic: true }).diagnostic });
+          if (attempt === 2 || screened?.interrupted) throw Object.assign(new Error(reason), { interrupted: !!screened?.interrupted });
         }
       }
     };
@@ -486,13 +523,28 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const round = { number, head, base, scope: context.scope, reviewedFiles: [...covered], findingKeys: checked.map(verdict => verdict.key), outcome, costs };
     return { ...record, schemaVersion: 1, interrupted: false, base, contractDigest, rounds: [...record.rounds, round], findings: current, round, outcome,
       successorKeys: successors.map(finding => finding.key), costs };
-  } catch (error) { return { ...fail(failedAnswer(error.message).text, !!error.interrupted), ...(error.secrets ? { secrets: error.secrets } : {}) }; }
+  } catch (error) { return { ...fail(screenModelOutput(error.message, { diagnostic: true }).diagnostic.text, !!error.interrupted), ...(error.secrets ? { secrets: error.secrets } : {}) }; }
+}
+export async function runReviewRound(input, dependencies = {}) {
+  const history = screenModelOutput(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });
+  requireValue(object(history.value) && ['rounds', 'findings', 'failures'].every(key => Array.isArray(history.value[key] ?? [])), 'stage history withheld by secret screen');
+  const result = history.rejected ? { ...history.value, outcome: 'not-reviewed', round: null, interrupted: false,
+    failures: [...(history.value.failures ?? []), { reason: 'stage history withheld by secret screen' }],
+    ...(history.diagnostic.secretMatches ? { secrets: [{ weight: 'P0', reason: 'credential-shaped history; value withheld' }] } : {}) }
+    : await reviewRound({ ...input, stageRecord: history.value }, dependencies);
+  const screened = screenModelOutput(result);
+  requireValue(object(screened.value), 'review record withheld by secret screen');
+  return screened.rejected ? { ...screened.value, outcome: 'not-reviewed', round: null,
+    failures: [...(screened.value.failures ?? []), { reason: 'review record withheld by secret screen' }] } : screened.value;
 }
 export function formatReviewReport(record) {
+  const screened = screenModelOutput(record);
+  if (screened.rejected || !object(screened.value)) return 'Проверено: проверка не завершена.\nНайдено: небезопасный вывод; значения скрыты.\nОсталось: завершить безопасную проверку.\nИдти дальше пока нельзя.';
+  record = screened.value;
   const open = record.findings.filter(finding => !['closed', 'rejected'].includes(finding.status));
   const statuses = { confirmed: 'подтверждено', rejected: 'отклонено', unresolved: 'не решено', closed: 'исправлено' };
   const origins = { introduced: 'внесено задачей', contract: 'нарушает договор задачи', 'pre-existing': 'было раньше' };
-  return [
+  const rendered = [
     `Проверено: ${record.round ? `${record.round.reviewedFiles.length} файлов, круг ${record.round.number}.` : 'проверка не завершена.'}`,
     ...(record.costs ?? record.round?.costs ?? []).map(cost => `Роль: ${cost.role}; engine=${cost.engine ?? cost.boundary?.engine ?? 'unknown'}; model=${cost.model ?? cost.boundary?.model ?? 'unknown'}; servedModels=${JSON.stringify(cost.boundary?.servedModels ?? (cost.boundary?.servedModel ? [cost.boundary.servedModel] : 'not observed'))}; family=${cost.family ?? cost.boundary?.family ?? 'unknown'}; observed boundary=${JSON.stringify(cost.boundary?.observed ?? 'not observed')}; credentialReads=${cost.boundary?.credentialReads ?? 'not observed'}.`),
     `Найдено: ${record.findings.length} замечаний${record.secrets?.length ? `; ${record.secrets.length} совпадений с шаблоном секрета (значения скрыты)` : ''}.`,
@@ -502,6 +554,7 @@ export function formatReviewReport(record) {
     record.outcome === 'clean' ? 'Можно идти дальше по обычным проверкам задачи.' : 'Идти дальше пока нельзя: нужны исправления или завершённая проверка.',
     'Это ручной отчёт: без допуска ворот, записи в Linear и запуска verify.',
   ].join('\n');
+  return screenModelOutput(rendered).value;
 }
 export async function main(argv) {
   if (argv.includes('--help')) { console.log('Usage: node scripts/code-review.mjs --request <json> [--json]\nRead-only manual report. Request: worktree, head, base, contract, risk?, stageRecord?, config?. No writes, verify or certificate.'); return; }
@@ -509,7 +562,7 @@ export async function main(argv) {
   const request = JSON.parse(fs.readFileSync(argv[1], 'utf8'));
   // The executable pack, never repository/request code, owns prompts and transports.
   const record = await runReviewRound({ ...request, packRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..') });
-  console.log(argv.includes('--json') ? JSON.stringify(record, null, 2) : formatReviewReport(record));
+  console.log(screenModelOutput(argv.includes('--json') ? JSON.stringify(record, null, 2) : formatReviewReport(record)).value);
   process.exitCode = record.outcome === 'clean' ? 0 : record.outcome === 'not-reviewed' ? 2 : 1;
 }
-if (isMain(import.meta.url)) main(process.argv.slice(2)).catch(error => { console.error(error.message); process.exitCode = 2; });
+if (isMain(import.meta.url)) main(process.argv.slice(2)).catch(error => { console.error(screenModelOutput(error.message, { diagnostic: true }).diagnostic.text); process.exitCode = 2; });

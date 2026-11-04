@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runReviewRound, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus } from './code-review.mjs';
+import { runReviewRound, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, screenModelOutput } from './code-review.mjs';
 import { requiredPairings, validateModels } from './runtime.mjs';
 import { scoreCheckerProbes } from './code-review-eval.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -256,6 +256,63 @@ test('failed answers redact multiline assignments even alongside other secrets, 
   }
   assert.ok(scanSecrets(bad,{patch:false}).some(match=>match.reason.includes('multiline')));
  }
+});
+test('shared model screen preserves benign JSON/code and exact fixture exceptions without retaining values',async t=>{
+ const safe={summary:'[P2] Inspect function value(n) { return n; }',quotes:['A safe quote.'],nested:JSON.stringify({note:'Literal JSON diagnostic'})};
+ const screened=screenModelOutput(safe);assert.equal(screened.rejected,false);assert.deepEqual(screened.value,safe);
+ const f=fixture(t),file='evals/code-review/secret-example.txt',fake='token = '+'ghp_'+'0'.repeat(36);
+ const finding={...sample,file,evidence:fake},runner=responder({findings:[finding],responses:[JSON.stringify(review([finding])),JSON.stringify({completed:true,verdicts:[verdict({origin:'pre-existing',reason:fake})]})]});
+ const record=await runReviewRound(f.request,runner);assert.equal(record.outcome,'clean');assert.equal(runner.calls.length,2);
+ assert.ok(!JSON.stringify(record).includes(fake));assert.ok(!formatReviewReport(record).includes(fake));
+ for(const value of [{summary:JSON.stringify({password:'opaqueFixture'+'z'.repeat(24)})},JSON.stringify({reason:'ghp_'+'q'.repeat(36)})]){
+  const screened=screenModelOutput(value);assert.equal(screened.rejected,true);assert.equal(screenModelOutput(screened.value).rejected,false,'sanitized state is safe to persist and read back');
+ }
+});
+test('all model output is screened before successful fields, metadata or derived reports escape',async t=>{
+ const f=fixture(t),secret='opaqueFixture'+'v'.repeat(24),encoded=JSON.stringify(JSON.stringify({password:secret}));
+ const cases=[
+  ...['class','file','anchor','title','trigger','evidence','key'].map(field=>({role:'code-review',field})),
+  ...['id','outcome','weight','dangerCase','origin','reason','dangerReason','mergeKey'].map(field=>({role:'code-review-checker',field})),
+  ...['summary','quotes','findings','arbitraryFutureField'].map(field=>({role:'code-review-checker',field,extra:true})),
+  ...['usage','boundary'].map(field=>({role:'code-review-checker',field,metadata:true})),
+  {role:'code-review',field:'reviewedFiles',inventory:true},{role:'code-review-checker',field:'property-name',property:true},
+ ];
+ for(const item of cases)await t.test(`${item.role}/${item.field}`,async()=>{
+  const prompts=[];
+  const result=await runReviewRound(f.request,{runRole:async request=>{
+   prompts.push(request.prompt);let response=request.role==='code-review'?review([{...sample}]):{completed:true,verdicts:[verdict()]};
+   const result={response,usage:{input_tokens:1},boundary:{servedModels:['safe-model']}};
+   if(request.role===item.role){
+    if(item.inventory)response.reviewedFiles=[encoded];
+    else if(item.property)response['ghp_'+'v'.repeat(36)]=encoded;
+    else if(item.metadata)result[item.field]={summary:encoded,quotes:[encoded]};
+    else if(item.extra)response[item.field]={quotes:[encoded]};
+    else (item.role==='code-review'?response.findings[0]:response.verdicts[0])[item.field]=encoded;
+   }
+   return result;
+  }});
+  assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);
+  assert.ok(!JSON.stringify(result).includes(secret),'model output escaped into returned state');
+  assert.ok(!formatReviewReport(result).includes(secret),'model output escaped into rendered report');
+  assert.ok(prompts.every(prompt=>!prompt.includes(secret)),'model output escaped into another role prompt');
+ });
+});
+test('all model output is screened on failed fields and legacy records before reports or new launches',async t=>{
+ const f=fixture(t),secret='ghp_'+'w'.repeat(36);
+ for(const field of ['message','rawAnswer','boundary'])await t.test(`failed/${field}`,async()=>{
+  const result=await runReviewRound(f.request,{runRole:async()=>{throw Object.assign(new Error(field==='message'?secret:'transport failed'),{[field]:field==='boundary'?{model:secret,summary:secret,quotes:[secret]}:secret});}});
+  assert.equal(result.outcome,'not-reviewed');assert.ok(!JSON.stringify(result).includes(secret));assert.ok(!formatReviewReport(result).includes(secret));
+ });
+ for(const field of ['summary','quotes','findings','costs','failures'])await t.test(`legacy/${field}`,async()=>{
+  const record={rounds:[],findings:[],failures:[],summary:'safe',quotes:[],costs:[],outcome:'clean'};
+  if(field==='findings')record.findings=[{...sample,key,status:'confirmed',weight:'P2',reason:secret}];
+  else if(field==='costs')record.costs=[{role:secret,boundary:{servedModels:[secret]}}];
+  else if(field==='failures')record.failures=[{reason:secret,answer:{text:secret}}];
+  else record[field]=field==='quotes'?[secret]:secret;
+  assert.ok(!formatReviewReport(record).includes(secret),'legacy record bypassed report screening');
+  const runner=responder(),result=await runReviewRound({...f.request,stageRecord:record},runner);
+  assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.ok(!JSON.stringify(result).includes(secret));
+ });
 });
 test('patch multiline assignments stop before any role, on both sides and across context lines',async t=>{
  for(const shape of ['added','removed','context'])await t.test(shape,async t=>{

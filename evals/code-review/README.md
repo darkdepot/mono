@@ -114,12 +114,16 @@ list separately; an init model cannot hide a later fallback. This records identi
 observations, not an inference about final-model ordering from modelUsage keys.
 `round2-model-stream.json` separates the observed refusal fallback from authored
 multi-fallback and usage-alias controls; these names are data, not model policy.
-Failed role answers recursively decode every JSON/JSONL string layer with
-`JSON.parse` before secret scanning, including nested Codex `item.text` and further
-embedded JSON. Both retained attempts are capped at 8 KiB; undecodable content or
-decoding beyond 32 levels, 4096 nodes or 256 KiB is withheld rather than stored raw.
-Mixed line secrets and multiline assignments are screened independently; retained
-answers are rescanned after line redaction. Circle and evaluation Git calls share
+`screenModelOutput` is the shared output boundary for successful and failed role
+replies, every field, metadata, history, reports, evaluation progress and scoring.
+No model field is persisted, rendered or forwarded before that screen. Secret
+replies fail closed, while retained diagnostics redact values. Every JSON/JSONL
+string layer uses literal `JSON.parse` to a fixed point, including Codex
+`item.text`; malformed or over-limit content is withheld. Bounds are 32 levels,
+4096 nodes/256 KiB for role diagnostics (8 KiB retained per attempt), and
+131072 nodes/16 MiB for records and renderers. Mixed line and multiline matches
+are independent; text is rescanned after redaction. Tests cover successful and
+failed fields, nested encodings, legacy records, evaluation sinks and safe replies. Circle and evaluation Git calls share
 one policy: hook/fsmonitor and color overrides, configured content filters and
 diff/merge helpers disabled, and diff/show (including raw diffs) forced colorless
 without external diff or textconv. Raw contracts keep exact hash-validated bytes.

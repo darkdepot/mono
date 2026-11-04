@@ -149,3 +149,16 @@ test('D6: disputed danger is scored without a danger veto, partial consequence a
  assert.equal(scoreCheckerProbes(gold.slice(0,1),verdicts.slice(0,1)).releaseBlocked,false);
  assert.equal(validateReviewDataset(dataset).eligibleLate,10);assert.equal(validateReviewDataset(dataset).eligibleExtended,14);
 });
+
+test('model-derived evaluation scores, calibration, comparisons and progress errors share output screening',async t=>{
+ const secret='ghp_'+'y'.repeat(36),record={outcome:'not-converged',findings:[{key:'a'}],costs:[{summary:secret}],failures:[]};
+ const evaluation={datasetDigest:digest(dataset),runs:[{id:'screened',repeat:1,task:'MONO-81',caseId:'MONO-81',record}]};
+ assert.throws(()=>scoreReviewEvaluation(dataset,evaluation,[]),/model output withheld/);
+ assert.throws(()=>compareReviewEvaluations(evaluation,evaluation),/model output withheld/);
+ const gold={key:'a',outcome:'confirmed',weight:'P2',danger:true,mergeKey:'a'};
+ assert.throws(()=>scoreCheckerProbes([gold],[{...gold,reason:JSON.stringify(JSON.stringify({password:secret}))}]),/model output withheld/);
+ const {clone,bundle}=await evaluationFixture(t),events=[];
+ const result=await runReviewEvaluation({dataset:clone,bundle,runId:'screen-progress',packRoot},{onProgress:event=>{events.push(event);if(event.type==='started')throw Object.assign(Error(secret),{interrupted:true});},runRole:async()=>assert.fail('progress interrupted before launch')});
+ assert.equal(result.interrupted,true);assert.equal(result.runs.length,1);assert.ok(!JSON.stringify({result,events}).includes(secret));
+ await assert.rejects(()=>runReviewEvaluation({dataset:clone,bundle,runId:'screen-plan',packRoot},{onProgress:()=>{throw Error(secret);}}),error=>!error.message.includes(secret));
+});

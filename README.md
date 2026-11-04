@@ -1650,12 +1650,15 @@ confirmed ones stay report-only on round three; open unresolved findings block.
 Scope/risk flags persist across rounds for confirmed and rejected findings until
 new checker evidence clears them. Before each launch, secret scanning covers the
 whole context: contract, rules, diff context, findings, history and base evidence;
-retained failed answers are screened too. Exact file/line fixture exceptions stay
-in code. Plain file text never acts as patch framing. Failed answers decode
-every embedded JSON/JSONL string layer to a fixed point with the literal JSON
-decoder before line redaction and a final multiline scan. Malformed or over-limit
-content is withheld (32 levels, 4096 nodes, 256 KiB decoding budget); retained
-answers are capped. Interruption stops
+all model output crosses `screenModelOutput` before parsing, retention, another
+role, reporting or evaluation output. The same screen covers successful fields,
+failed answers, metadata, legacy records and derived text; secret-bearing replies
+fail closed. Exact fixture exceptions remain in code; their values are redacted
+from output too. Plain file text never acts as patch framing. Every embedded
+JSON/JSONL string layer is decoded to a fixed point with literal `JSON.parse`
+before line redaction and a final multiline scan. Undecodable or over-limit
+content is withheld (32 levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
+retained; records/rendering: 131072 nodes, 16 MiB). Interruption stops
 later evaluation calls and remains a scored row.
 Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules
 come from pinned Git blobs; the host never follows AGENTS.md symlinks into files
