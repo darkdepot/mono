@@ -1204,3 +1204,37 @@ for(const host of ['claude','codex'])for(const scope of ['main','scout'])for(con
   }
  });
 }
+
+for(const order of ['start-before-user','user-before-start'])for(const mode of ['correct','forged-quote','wrong-question','no-reply','early-record'])test(`native Codex approval order: ${order} ${mode}`,async t=>{
+ const {completedTrace,parentTurns}=await import('./skills-audit.mjs');
+ const {probeText,textExchanges}=await import('./skills-probe.mjs'),{checkTrace}=await import('./skills-trace.mjs');
+ const f=textFixture(t,'codex');
+ if(mode==='wrong-question')f.events[0]=f.assistant(f.draft+'\nДругой вопрос?');
+ if(mode==='no-reply')f.events.splice(2,1);
+ if(mode==='early-record'){const write=f.events.splice(5,2);f.events.splice(2,0,...write);}
+ if(mode==='forged-quote'){
+  f.record.body=f.record.body.replace('«принимаю»','«утверждаю»');f.page('comments','comments',[f.record]);
+  f.events[5]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[6]=f.result('write',f.record);
+ }
+ f.check(); // Populate the genuine fresh dump; evaluate our native trace below.
+ const rows=[...f.events,f.terminal].map(e=>structuredClone(e));
+ rows[1].payload.turn_id='offer';rows.at(-1).payload.turn_id='response';
+ const start=id=>({type:'event_msg',payload:{type:'task_started',turn_id:id}});
+ rows.unshift(start('offer'));
+ const user=rows.findIndex(e=>e.payload?.type==='message'&&e.payload.role==='user');
+ const continuation=user<0?3:user+(order==='user-before-start'?1:0);
+ rows.splice(continuation,0,start('response'));
+ f.request.approvalBindings[0].shownLine=rows.findIndex(e=>e.payload?.role==='assistant')+1;
+ f.request.approvalBindings[0].currentLine=rows.findIndex(e=>e.payload?.call_id==='read'&&e.payload.type==='function_call')+1;
+ fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
+ const native=rows.map((value,i)=>({value,line:i+1}));assert.equal(completedTrace('codex',native),true);
+ const result=verifyRecords(f.request);assert.equal(result.status,mode==='correct'?'passed':'failed',JSON.stringify(result));
+ // Only records owns quote/write chronology. Conversation readers still require
+ // the exact actual answer on the shown question, in either native ordering.
+ const conversationStatus=['correct','forged-quote'].includes(mode)?'passed':'failed';
+ for(const check of [probeText,checkTrace])assert.equal(check(f.request).status,conversationStatus,check.name);
+ if(mode==='correct'){
+  const turns=parentTurns('codex',native);assert.equal(turns[0].reply,f.expected.reply);
+  const exchanges=textExchanges('codex',native,f.request.expectedReplies);assert.equal(exchanges[0].reply,f.expected.reply);
+ }
+});

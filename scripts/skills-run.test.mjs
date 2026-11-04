@@ -457,9 +457,9 @@ for(const host of ['claude','codex'])for(const policy of ['discuss','empty','ref
  const result=await runScenario(request);assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.replies.length,1);assert.equal(result.freeReplies.length,0);assert.equal(fs.readdirSync(request.outputDir).filter(p=>p.startsWith('persona-')).length,0);
 });
 
-for(const host of ['claude','codex'])for(const [intent,reply] of Object.entries({agree:'принимаю',correction:'да, только добавь вопрос про Codex',question:'а почему без Design?',continuation:'И ещё о колонке',unclear:'ну не знаю',refuse:'нет',defer:'да, но позже'}))test(`${host}: text driver sends ${intent} at a real turn boundary`,async t=>{
+for(const host of ['claude','codex'])for(const order of host==='codex'?['start-before-user','user-before-start']:['parent-turn'])for(const [intent,reply] of Object.entries({agree:'принимаю',correction:'да, только добавь вопрос про Codex',question:'а почему без Design?',continuation:'И ещё о колонке',unclear:'ну не знаю',refuse:'нет',defer:'да, но позже'}))test(`${host}: text driver sends ${intent} (${order}) at a real turn boundary`,async t=>{
  const request=setup(t,host,'text');
- request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),intent];
+ request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),intent,...(order==='user-before-start'?['--user-before-start']:[])];
  request.scenario={prompt:'Run text',brief:'Колонка Источник.',allowedTools:['*'],expectedReplies:[{id:'decision',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Утверждаем и начинаем Research?',reply,intent,outcome:{approval:['agree','correction','defer'].includes(intent),startNext:['agree','correction'].includes(intent)},response:[intent==='unclear'?'Что смущает?':intent==='correction'?'Добавлен вопрос про Codex.':'Утверждение записал.'],...(intent==='correction'?{correction:{description:'Добавлен вопрос про Codex.',before:'Источник.',after:'Источник. Вопрос про Codex.'}}:{})}]};
  const r=await runScenario(request);assert.equal(r.status,'passed',JSON.stringify(r));assert.equal(r.replies[0].reply,reply);assert.equal(r.replies[0].received,true);
 });

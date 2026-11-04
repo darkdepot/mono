@@ -100,6 +100,7 @@ export function parentTurns(host, rows) {
   let candidate=null,pending=null;
   for (const {value:e,line} of rows) {
     if (e.parent_tool_use_id) continue;
+    const turnStart=host==='codex'?e.type==='event_msg'&&e.payload?.type==='task_started':e.type==='system'&&e.subtype==='init';
     const message=audit.proof({kind:'text-message',result:e});
     if (message.status==='confirmed'&&message.role==='user') {
       if (pending) {pending.reply=message.value;pending.replyLine=line;pending=null;}
@@ -108,7 +109,12 @@ export function parentTurns(host, rows) {
       pending=null;
       const text=host==='claude'&&candidate?.messageId&&candidate.messageId===message.messageId?candidate.text+'\n'+message.value:message.value;
       candidate={line,text,messageId:message.messageId,phase:message.phase};
-    } else if (activityLines.has(line)&&!terminalLines.has(line)) {candidate=null;pending=null;}
+    } else if (activityLines.has(line)&&!terminalLines.has(line)) {
+      candidate=null;
+      // A new native turn can precede replay of the answer to the completed
+      // offer. Session activity is not a replacement for that shown question.
+      if(!turnStart)pending=null;
+    }
     if (terminalLines.has(line)) {
       if (candidate && (host==='claude'||candidate.phase==='final_answer')) {
         pending={...candidate,question:candidate.text.trim().split('\n').at(-1),terminalLine:line};

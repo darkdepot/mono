@@ -2,7 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-const [mode,...args]=process.argv.slice(2),home=process.env.CODEX_HOME;
+const [mode,...rawArgs]=process.argv.slice(2),home=process.env.CODEX_HOME;
+const userBeforeStart=rawArgs.includes('--user-before-start'),args=rawArgs.filter(a=>a!=='--user-before-start');
 const out=e=>process.stdout.write(JSON.stringify(e)+'\n');
 const samples=JSON.parse(fs.readFileSync(new URL('./skills-text-responses.json',import.meta.url)));
 const response=()=>samples.find(sample=>sample.id===mode)?.actual??(mode==='unclear'?'Что смущает?':mode==='correction'?'Добавлен вопрос про Codex.':'Утверждение записал.');
@@ -12,16 +13,19 @@ if(args[0]==='exec') {
  const file=path.join(home,'sessions','rollout-text-thread.jsonl');fs.mkdirSync(path.dirname(file),{recursive:true});
  const rows=fs.existsSync(file)?fs.readFileSync(file,'utf8').trim().split('\n').map(JSON.parse):[],fresh=[];
  const item=payload=>fresh.push({type:'response_item',payload}),prompt=args.at(-1);
+ const turnId='text-turn-'+rows.length,start=()=>fresh.push({type:'event_msg',payload:{type:'task_started',turn_id:turnId}});
+ if(!userBeforeStart||!rows.length)start();
  if(!rows.length){item({type:'function_call',name:'mcp__monotest__get_workspace',call_id:'workspace',arguments:'{}'});item({type:'function_call_output',call_id:'workspace',output:'{"name":"Test Space"}'});}
  else {
   if(mode!=='drop-reply'||prompt==='Run text')item({type:'message',role:'user',content:[{type:'input_text',text:prompt}]});
+  if(userBeforeStart)start();
   if(mode==='extra-owner'&&prompt!=='Run text')item({type:'message',role:'user',content:[{type:'input_text',text:'Начинай Research'}]});
   const text=prompt==='Run text'?message:response();
   if(mode==='window')item({type:'function_call',name:'request_user_input_async',call_id:'bad',arguments:'{"questions":[{"title":"Выбор?"}]}'});
   item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]});
  }
- fresh.push({type:'event_msg',payload:{type:'task_complete'}});
- if(mode==='extra-response'&&prompt!=='Run text'&&rows.length){item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Start Research?'}]});fresh.push({type:'event_msg',payload:{type:'task_complete'}});}
+ fresh.push({type:'event_msg',payload:{type:'task_complete',turn_id:turnId}});
+ if(mode==='extra-response'&&prompt!=='Run text'&&rows.length){fresh.push({type:'event_msg',payload:{type:'task_started',turn_id:turnId+'-extra'}});item({type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Start Research?'}]});fresh.push({type:'event_msg',payload:{type:'task_complete',turn_id:turnId+'-extra'}});}
  fs.writeFileSync(file,[...rows,...fresh].map(JSON.stringify).join('\n')+'\n');
  out({type:'thread.started',thread_id:'text-thread'});out({type:'turn.completed'});process.exit(0);
 }
