@@ -29,6 +29,13 @@ test('color normalization preserves exact pinned contract bytes and rejects a di
  assert.equal(pinnedReviewContract(repo,task),source);
  assert.throws(()=>pinnedReviewContract(repo,{contractSource:{...task.contractSource,sha256:'0'.repeat(64)}}),/contract bytes changed/);
 });
+test('C17: captured Git output preserves the exact BOM-prefixed contract blob',t=>{
+ const repo=fs.mkdtempSync(path.join(os.tmpdir(),'mono-contract-bom-'));t.after(()=>fs.rmSync(repo,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ git('init','-q');const source='\ufeffExact contract bytes.\n';fs.writeFileSync(path.join(repo,'contract.md'),source);git('add','.');
+ const task={contractSource:{blob:git('rev-parse',':contract.md'),sha256:createHash('sha256').update(source).digest('hex')}};
+ assert.equal(pinnedReviewContract(repo,task),source);
+});
 test('C2: gold v3 excludes unreachable separate-command collector scenario with visible denominators',()=>{
  assert.equal(dataset.version,3);const item=dataset.cases.find(item=>item.id==='68');assert.equal(item.eligible,false);assert.equal(item.dangerStatus,'disputed');
  for(const evidence of ['backup-switch.mjs:54-61','collector.mjs:145-149','210'])assert.ok(item.reclassification.evidence.includes(evidence));

@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { digest, resolveRole, runtimePackRoot, isMain } from './runtime.mjs';
 
@@ -13,8 +13,27 @@ const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
 function exact(value, keys) {
   requireValue(object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)), 'response fields differ from schema');
 }
+function screenChildOutput(result, stdoutOptions = {}) {
+  const decode = value => typeof value === 'string' ? value : new TextDecoder('utf-8', { fatal: true }).decode(value ?? Buffer.alloc(0));
+  let stdout, stderr;
+  try { stdout = decode(result.stdout); stderr = decode(result.stderr); }
+  catch { throw new Error('child process output withheld: non-UTF8 stream'); }
+  const out = screenModelOutput(stdout, stdoutOptions), err = screenModelOutput(stderr);
+  const joined = stdout && stderr ? screenModelOutput(`${stdout}\n${stderr}`, stdoutOptions) : null;
+  if (out.rejected || err.rejected || joined?.rejected) throw Object.assign(new Error('child process output withheld by secret screen'), {
+    rawAnswer: '[child process output withheld]',
+    secrets: [{ file: stdoutOptions.inputFile ?? null, line: 0, weight: 'P0', reason: 'credential-shaped or undecodable child output; both streams withheld' }],
+  });
+  return { stdout, stderr, status: result.status, signal: result.signal, error: !!result.error };
+}
 function readGit(worktree, env, options, args, raw = false) {
-  return execFileSync('git', [...options, ...args], { cwd: worktree, env, encoding: raw ? null : 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  const fileArg = ['show', 'cat-file'].includes(args[0]) ? args.find(arg => /^[^:]+:.+/.test(arg)) : null;
+  const captured = spawnSync('git', [...options, ...args], {
+    cwd: worktree, env, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024,
+  });
+  const result = screenChildOutput(captured, { input: true, inputFile: fileArg?.slice(fileArg.indexOf(':') + 1) ?? null, inputPatch: args[0] === 'diff' });
+  if (result.error || result.status !== 0) throw Object.assign(new Error('Git command failed; captured output withheld'), { status: result.status });
+  return raw ? captured.stdout : result.stdout;
 }
 function gitReadPolicy(worktree, inherited = process.env) {
   const env = Object.fromEntries(Object.entries(inherited).filter(([key]) => !key.startsWith('GIT_')));
@@ -29,7 +48,7 @@ function gitReadPolicy(worktree, inherited = process.env) {
   // Read configuration as data before any operation that could perform conversion.
   let keys;
   try { keys = run(['config', '--null', '--name-only', '--get-regexp', '^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.(command|textconv)|merge\\..*\\.driver|credential\\..*\\.helper|pager\\..*)$']); }
-  catch (error) { requireValue(error.status === 1, 'cannot inspect review Git helper configuration'); keys = ''; }
+  catch (error) { if (error.status !== 1) throw error; keys = ''; }
   for (const key of new Set(keys.split('\0').filter(Boolean))) {
     requireValue(!key.includes('='), 'unsupported Git helper name; cannot safely disable its configuration');
     disabled.push('-c', `${key}=${key.endsWith('.required') ? 'false' : ''}`);
@@ -219,8 +238,10 @@ export function roleInvocation(role, route, { scratch, worktree, schemaFile }) {
     env.CODEX_HOME = home;
     // Model metadata can override feature flags. Retain the native model and instructions,
     // but remove tool selectors that would reopen writing, delegation or code-mode tools.
-    const catalogResult = spawnSync('codex', ['debug', 'models', '--bundled'], { cwd: scratch, env, encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
-    requireValue(catalogResult.status === 0, 'installed Codex model catalog unavailable');
+    const catalogResult = screenChildOutput(spawnSync('codex', ['debug', 'models', '--bundled'], {
+      cwd: scratch, env, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, maxBuffer: 16 * 1024 * 1024,
+    }));
+    requireValue(catalogResult.status === 0 && !catalogResult.error, 'installed Codex model catalog unavailable');
     const catalog = JSON.parse(catalogResult.stdout);
     requireValue(catalog.models?.some(model => model.slug === route.model), 'native model missing from installed catalog');
     for (const model of catalog.models) Object.assign(model, { apply_patch_tool_type: null, experimental_supported_tools: [],
@@ -420,12 +441,16 @@ function runInvocation(invocation, prompt, timeoutMs) {
       const timer = setTimeout(() => { exceeded = true; kill(); }, timeoutMs);
       child.stdout.on('data', data => { stdout += data; if (Buffer.byteLength(stdout) > 16 * 1024 * 1024) { exceeded = true; kill(); } });
       child.stderr.on('data', data => { stderr += data; if (Buffer.byteLength(stderr) > 1024 * 1024) { exceeded = true; kill(); } });
-      child.stdin.on('error', error => { if (error.code !== 'EPIPE') reject(error); });
-      child.once('error', error => { cleanup(); reject(error); });
+      child.stdin.on('error', error => { if (error.code !== 'EPIPE') reject(new Error('role process input failed')); });
+      child.once('error', () => { cleanup(); reject(new Error('role process could not start')); });
       child.once('close', code => { cleanup(); kill();
-        if (interrupted) reject(Object.assign(new Error('review interrupted; role process group stopped'), { interrupted: true, rawAnswer: stdout }));
-        else if (code !== 0 || exceeded) reject(Object.assign(new Error(`role failed (${exceeded ? 'timeout/output limit' : code}); no response admitted`), { rawAnswer: stdout }));
-        else resolve({ stdout, stderr }); });
+        try {
+          const result = screenChildOutput({ stdout, stderr });
+          if (interrupted) throw Object.assign(new Error('review interrupted; role process group stopped'), { rawAnswer: result.stdout });
+          if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${exceeded ? 'timeout/output limit' : code}); no response admitted`), { rawAnswer: result.stdout });
+          resolve(result);
+        } catch (error) { error.interrupted = interrupted; reject(error); }
+      });
       child.stdin.end(prompt);
     });
 }
@@ -438,8 +463,8 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
     boundary = invocation.boundary;
     const started = Date.now();
     const authArgs = route.engine === 'codex' ? ['login', 'status'] : ['--safe-mode', '--setting-sources', '', 'auth', 'status', '--json'];
-    invocation.boundary.auth = subscriptionStatus(route.engine, spawnSync(invocation.command, authArgs,
-      { cwd: invocation.cwd, env: invocation.env, encoding: 'utf8', input: '', timeout: 30000, maxBuffer: 64 * 1024 }));
+    invocation.boundary.auth = subscriptionStatus(route.engine, screenChildOutput(spawnSync(invocation.command, authArgs,
+      { cwd: invocation.cwd, env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'], input: '', timeout: 30000, maxBuffer: 64 * 1024 })));
     if (route.engine === 'codex') {
       const probeSchema = path.join(scratch, 'boundary.schema.json');
       fs.writeFileSync(probeSchema, JSON.stringify({ type: 'object', properties: { tools: { type: 'array', items: { type: 'string' } },

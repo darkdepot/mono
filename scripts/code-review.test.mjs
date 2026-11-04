@@ -858,3 +858,43 @@ test('v2 unquoted secret-like names use the same any-separator rule in every pay
  const blobRunner=responder(),blob=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},blobRunner);
  assert.equal(blob.outcome,'not-reviewed');assert.equal(blobRunner.calls.length,0);assert.ok(blob.secrets?.length);
 });
+
+test('C17: successful Git stderr is captured and withheld before the round refuses a secret',t=>{
+ const f=fixture(t),credential='ghp_'+'c'.repeat(36);
+ fs.writeFileSync(path.join(f.worktree,'.gitattributes'),'input.mjs /'+credential+'\n');f.git('add','.');f.git('commit','-qm','invalid synthetic attribute');
+ const request={...f.request,head:f.git('rev-parse','HEAD')};
+ const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};let calls=0;const r=await runReviewRound(${JSON.stringify(request)},{runRole:async()=>{calls++;throw Error('unexpected model');}});console.log(JSON.stringify({record:r,calls}));`;
+ const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',stdio:['ignore','pipe','pipe']});
+ assert.equal(child.status,0);assert.equal(child.stderr.includes(credential),false,'raw Git stderr escaped the circle');
+ const result=JSON.parse(child.stdout);assert.equal(result.record.outcome,'not-reviewed');assert.equal(result.calls,0);
+ assert.ok(result.record.failures.some(item=>/child process output withheld/.test(item.reason)));
+ assert.equal(child.stdout.includes(credential),false);
+});
+
+test('C17: catalog, auth, probe and role stdout/stderr are screened before parsing or retention',async t=>{
+ const f=fixture(t),bin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-child-screen-'));t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));
+ const modeFile=path.join(bin,'mode'),credential='ghp_'+'d'.repeat(36),model=resolveReviewRoles({},packRoot)['code-review'].model;
+ const fake=`#!${process.execPath}
+ const fs=require('node:fs'),[stage,stream,flag]=fs.readFileSync(${JSON.stringify(modeFile)},'utf8').split(':');
+ const secret=flag==='key'?'private/key: synthetic-credential':${JSON.stringify(credential)},emit=value=>console.log(JSON.stringify(value));
+ const hit=name=>stage===name,diagnostic=()=>{if(stream==='stderr')process.stderr.write(secret);};
+ if(process.argv[2]==='debug'){emit({models:[{slug:${JSON.stringify(model)}}],...(hit('catalog')&&stream==='stdout'?{note:secret}:{})});if(hit('catalog'))diagnostic();process.exit(0);}
+ if(process.argv[2]==='login'){console.error('Logged in using ChatGPT');if(hit('auth')){if(stream==='stdout')console.log(secret);else diagnostic();}process.exit(0);}
+ let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',()=>{
+ const name=input.startsWith('Boundary audit')?'probe':'role';
+ const response=name==='probe'?{tools:['exec_command','write_stdin'],mcpServers:[]}:${JSON.stringify(review())};
+ emit({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(response)}});
+ emit({type:'turn.completed',...(hit(name)&&stream==='stdout'?{note:secret}:{})});
+ if(hit(name)){diagnostic();if(flag==='fail')process.exitCode=1;}
+ });`;
+ fs.writeFileSync(path.join(bin,'codex'),fake,{mode:0o700});
+ const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};console.log(JSON.stringify(await runReviewRound(${JSON.stringify(f.request)})));`;
+ for(const mode of ['catalog:stdout','catalog:stderr','auth:stdout','auth:stderr','probe:stdout','probe:stderr','role:stdout','role:stderr','role:stderr:fail','catalog:stderr:key','auth:stdout:key','probe:stderr:key','role:stdout:key'])await t.test(mode,()=>{
+  fs.writeFileSync(modeFile,mode);
+  const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',env:{...process.env,PATH:bin+path.delimiter+process.env.PATH},stdio:['ignore','pipe','pipe']});
+  assert.equal(child.status,0);assert.equal(child.stderr.includes(credential),false);assert.equal(child.stdout.includes(credential),false);
+  assert.equal(child.stderr.includes('synthetic-credential'),false);assert.equal(child.stdout.includes('synthetic-credential'),false);
+  const record=JSON.parse(child.stdout);assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);
+  assert.ok(record.failures.some(item=>/child process output withheld/.test(item.reason)),'process secret was not refused at the shared output boundary');
+ });
+});

@@ -1671,6 +1671,13 @@ before line redaction and a final multiline scan. Undecodable or over-limit
 content and lossy JSON numbers are withheld (8 decoding layers, 32 structural levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
 retained; records/rendering: 131072 nodes, 16 MiB). Interruption stops
 later evaluation calls and remains a scored row.
+Every child process owned by the circle captures both stdout and stderr: Git,
+the native catalog, subscription checks and role launches. Both streams and their
+joined content cross the same family/key screen before parsing, metadata writes,
+diagnostics or forwarding. A hit withholds both streams, including on success,
+failure or interruption; Git errors expose no raw subprocess diagnostics.
+Pinned raw blobs retain their exact bytes after screening, and only Git stdout
+uses the existing path-bound fixture exceptions.
 Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules
 come from pinned Git blobs; the host never follows AGENTS.md symlinks into files
 outside the reviewed version.
