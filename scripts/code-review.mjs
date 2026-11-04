@@ -227,21 +227,36 @@ export function observeCodexBoundary(value, stderr) {
   return { tools: value.tools, mcpServers: [], connectors: false, subagents: false, source: 'live model tool-list probe' };
 }
 function failedAnswer(value) {
-  let unreadable = false;
-  const decodedText = entry => typeof entry === 'string' ? entry : Array.isArray(entry) ? entry.map(decodedText).join('\n')
-    : object(entry) ? Object.entries(entry).map(([key, content]) => `${key}: ${decodedText(content)}`).join('\n') : String(entry ?? '');
-  const decodeLine = line => {
-    if (!/^[\s]*[\[{]/.test(line)) return line;
-    try { return decodedText(JSON.parse(line)); } catch { unreadable = true; return ''; }
+  let bytes = 0, nodes = 0;
+  const decode = (entry, depth = 0) => {
+    requireValue(depth <= 32 && ++nodes <= 4096, 'answer decoding limit');
+    if (typeof entry === 'string') {
+      bytes += Buffer.byteLength(entry);
+      requireValue(bytes <= 262144, 'answer decoding limit');
+      const trimmed = entry.trim();
+      let parsed;
+      try { parsed = JSON.parse(trimmed); }
+      catch {
+        const lines = entry.split('\n');
+        // Mixed diagnostic/JSONL streams are decoded line by line. Anything
+        // JSON-bearing that cannot be decoded is never retained as raw text.
+        if (lines.length > 1 && lines.some(line => /^[\s]*[\[{\"]/.test(line))) return lines.map(line => decode(line, depth + 1)).join('\n');
+        requireValue(!/[{}\[\]\\]/.test(entry) && !/^\s*"/.test(entry), 'unreadable answer encoding');
+        return entry;
+      }
+      return decode(parsed, depth + 1);
+    }
+    if (Array.isArray(entry)) return entry.map(item => decode(item, depth + 1)).join('\n');
+    if (object(entry)) return Object.entries(entry).map(([key, content]) => `${decode(key, depth + 1)}: ${decode(content, depth + 1)}`).join('\n');
+    return String(entry ?? '');
   };
-  let raw;
-  if (typeof value !== 'string') raw = decodedText(value);
-  else {
-    try { raw = decodedText(JSON.parse(value)); }
-    catch { raw = value.split('\n').map(decodeLine).join('\n'); }
+  let raw, secretMatches = 0;
+  try { raw = decode(value); }
+  catch {
+    if (typeof value === 'string' && Buffer.byteLength(value) <= 262144) secretMatches = scanSecrets(value, { patch: false }).length;
+    raw = '[unreadable or over-limit transport answer withheld]';
   }
-  if (unreadable) raw = '[unreadable transport answer withheld]';
-  const lines = raw.split('\n'); let secretMatches = 0;
+  const lines = raw.split('\n');
   const redacted = lines.map(line => {
     const matches = scanSecrets(line, { patch: false });
     secretMatches += matches.length; return matches.length ? '[credential-shaped line withheld]' : line;

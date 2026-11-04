@@ -1652,8 +1652,10 @@ new checker evidence clears them. Before each launch, secret scanning covers the
 whole context: contract, rules, diff context, findings, history and base evidence;
 retained failed answers are screened too. Exact file/line fixture exceptions stay
 in code. Plain file text never acts as patch framing. Failed answers decode
-JSON/JSONL transport fields before line redaction and a final multiline scan.
-Malformed envelopes are withheld; retained answers are capped. Interruption stops
+every embedded JSON/JSONL string layer to a fixed point with the literal JSON
+decoder before line redaction and a final multiline scan. Malformed or over-limit
+content is withheld (32 levels, 4096 nodes, 256 KiB decoding budget); retained
+answers are capped. Interruption stops
 later evaluation calls and remains a scored row.
 Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules
 come from pinned Git blobs; the host never follows AGENTS.md symlinks into files

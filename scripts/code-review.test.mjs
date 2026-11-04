@@ -289,6 +289,39 @@ test('failed transport answers decode JSONL and object fields before redaction, 
  const result=await runReviewRound(f.request,{runRole:async()=>{throw Object.assign(new Error('role failed (1)'),{rawAnswer:safe});}});
  assert.match(result.failures[0].answer.text,/Safe diagnostic for the operator/);
 });
+test('failed answers decode every embedded JSON string layer before retaining either attempt',async t=>{
+ const f=fixture(t),secret='opaqueFixture'+'q'.repeat(24);
+ for(const depth of [1,2,3])await t.test(`encoding layers ${depth}`,async()=>{
+  let text=JSON.stringify({completed:true,findings:[{evidence:`password = "${secret}"`,note:'Safe decoded diagnostic'}]});
+  for(let layer=1;layer<depth;layer++)text=JSON.stringify({item:{text:JSON.stringify({text})}});
+  const rawAnswer=JSON.stringify({type:'thread.started'})+'\n'+JSON.stringify({type:'item.completed',item:{type:'agent_message',text}})+'\n';
+  let attempts=0;
+  const result=await runReviewRound(f.request,{runRole:async()=>{attempts++;throw Object.assign(new Error('transport failed'),{rawAnswer});}});
+  assert.equal(attempts,2);assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);
+  const failures=result.failures.filter(failure=>failure.answer);assert.equal(failures.length,2);
+  for(const {answer} of failures){
+   assert.ok(!answer.text.includes(secret),'embedded JSON secret survived retention');
+   assert.match(answer.text,/Safe decoded diagnostic/);assert.ok(answer.secretMatches>0);
+   assert.equal(scanSecrets(answer.text,{patch:false}).length,0);
+  }
+  assert.ok(!JSON.stringify(result).includes(secret));
+ });
+});
+test('undecodable or over-budget embedded JSON is withheld on both retained attempts',async t=>{
+ const f=fixture(t),secret='opaqueFixture'+'w'.repeat(24);
+ let deep=`password = "${secret}"`;for(let i=0;i<40;i++)deep={text:deep};
+ const inputs=[
+  JSON.stringify({item:{text:'{"password":'+JSON.stringify(secret)}}),
+  JSON.stringify({item:{text:'diagnostic prefix '+JSON.stringify({password:secret})}}),
+  JSON.stringify(deep),JSON.stringify({text:'x'.repeat(300000),password:secret}),
+  JSON.stringify({text:Array(4100).fill('safe'),password:secret}),
+ ];
+ for(const rawAnswer of inputs){
+  const result=await runReviewRound(f.request,{runRole:async()=>{throw Object.assign(new Error('transport failed'),{rawAnswer});}});
+  const failures=result.failures.filter(failure=>failure.answer);assert.equal(failures.length,2);
+  for(const {answer} of failures){assert.match(answer.text,/withheld/);assert.ok(!answer.text.includes(secret));assert.ok(Buffer.byteLength(answer.text)<=8192);}
+ }
+});
 test('ignored populated submodule dirtiness is refused before any role',async t=>{
  for(const ignore of ['all','dirty'])for(const change of ['tracked','untracked','head'])await t.test(`${ignore}/${change}`,async t=>{
   const f=fixture(t),upstream=fixture(t);

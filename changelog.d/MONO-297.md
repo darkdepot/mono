@@ -3,6 +3,7 @@
 - Add pinned historical defect cases, recorded checker responses and reproducible per-run evaluation with dangerous-case calibration. Live host checks remain required before merge.
 
 ### Fixed
+- Decode all embedded failed-answer JSON strings to a fixed point before redaction; withhold undecodable or over-budget content on both attempts.
 - Share host Git isolation between circle and evaluation: disable content filters and drivers on every call, screen pinned blobs independently of attributes, and refuse opaque blobs, gitlinks and index hints before worktree inspection.
 - Normalize color on every host Git read, including raw diffs and exact contract blobs, so repository color settings cannot bypass patch secret scanning.
 - Detect multiline assignments on both patch sides, decode failed JSON/JSONL answers before redaction, and refuse ignored dirty submodules or changed gitlinks before model calls.
