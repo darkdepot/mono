@@ -52,3 +52,5 @@
 - Apply continue:32: reject dangling clean-control symlinks and create exclusively; normalize diff headers only before hunks; preserve the raw MONO-302 fixture with a path-specific whitespace attribute.
 
 - Apply continue:33 after failed host QA: use strict JWT path recognition and distinct aliases; validate pinned anchors on raw local blobs; retain danger across reviewer/checker flags and require a screened-head code quote for dangerous rejections. Retry contradictory merge verdicts once, then preserve separate keys. Add real MONO-302 path and MONO-81 source regressions; old ae2bed26 Ship certificate is revoked.
+
+- Apply continue:34: check every possible JWT header suffix in both path and source screens, accepting noncanonical JSON whitespace and empty signatures; keep the real MONO-302 inventory unchanged and aliases distinct.

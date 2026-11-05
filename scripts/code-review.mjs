@@ -180,17 +180,19 @@ const SECRET_FAMILIES = [
 ];
 export const MAX_SCREEN_VALUE_BYTES = 2 * 1024 * 1024;
 function jwtMatches(source) {
-  // Each segment is decoded at most once; dots delimit overlapping candidates.
-  // Whole-token matching never searches suffixes inside a longer identifier.
   for (const [run] of source.matchAll(/[A-Za-z0-9_.-]+/g)) {
     const segments = run.split('.');
     for (let index = 0; index + 2 < segments.length; index++) {
+      if (!segments[index + 1]) continue;
       const header = segments[index];
-      if (header.length < 12 || !'eICD'.includes(header[0])) continue;
-      try {
-        const value = JSON.parse(Buffer.from(header, 'base64url').toString('utf8'));
-        if (object(value) && Object.hasOwn(value, 'alg')) return true;
-      } catch {}
+      for (let start = 0; start + 4 <= header.length; start++) {
+        // An object header starts with { or JSON whitespace: e, I, C or D in base64url.
+        if (!'eICD'.includes(header[start])) continue;
+        try {
+          const value = JSON.parse(Buffer.from(header.slice(start), 'base64url').toString('utf8'));
+          if (object(value) && Object.hasOwn(value, 'alg')) return true;
+        } catch {}
+      }
     }
   }
   return false;
@@ -206,10 +208,7 @@ function screenPath(value) {
   const original = value, hidden = match => '[credential-shaped path withheld]#' + digest(match);
   const replace = source => {
     for (const [, pattern] of SECRET_FAMILIES) source = source.replace(new RegExp(pattern.source, pattern.flags + 'g'), hidden);
-    // Match an embedded canonical header or a fully decoded header with alg.
-    source = source.replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
-      candidate => jwtMatches(candidate) ? hidden(candidate) : candidate);
-    return source.replace(/[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+    return source.replace(/[A-Za-z0-9_.-]+/g,
       candidate => jwtMatches(candidate) ? hidden(candidate) : candidate);
   };
   value = replace(value);

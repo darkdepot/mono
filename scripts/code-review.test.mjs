@@ -95,6 +95,22 @@ test('C33: path JWT matching is strict and distinct credentials keep distinct al
  const jwt=[Buffer.from(JSON.stringify({alg:'HS256'})).toString('base64url'),'e30','x'.repeat(24)].join('.');
  const value='notes/backup-'+jwt+'.txt',screened=screenModelOutput({file:value});assert.equal(screened.rejected,false);assert.ok(!screened.value.file.includes(jwt));
 });
+test('C34: prefixed noncanonical JWT headers and empty signatures are screened in paths and source',async t=>{
+ const cases=[['whitespace header','{ "alg":"HS256"}','x'.repeat(24)],['alg none / empty signature',' { "alg": "none" }','']];
+ for(const [name,header,signature] of cases)for(const prefix of ['backup-','letters','eICD-backup-','trace.info.backup-']){
+  const jwt=[Buffer.from(header).toString('base64url'),'e30',signature].join('.'),file='notes/'+prefix+jwt+'.txt';
+  await t.test(name+'/'+prefix+'/path',()=>{
+   const safe=screenModelOutput({files:[file],file,path:file,reviewedFiles:[file],symlinks:[file]});
+   assert.equal(safe.rejected,false);assert.ok(!JSON.stringify(safe.value).includes(jwt),'path leaked synthetic JWT');
+   assert.equal(safe.value.files[0],safe.value.file);assert.equal(safe.value.file,safe.value.path);
+  });
+  await t.test(name+'/'+prefix+'/source',()=>{
+   assert.ok(scanSecrets(prefix+jwt,{patch:false}).length,'source JWT suffix was not recognized');
+   const source=screenModelOutput('const note = "'+file+'";',{input:true,inputFile:'input.mjs'});
+   assert.equal(source.rejected,true);assert.ok(!JSON.stringify(source.value).includes(jwt));
+  });
+ }
+});
 test('C33: credential aliases cannot collide with literal filenames or change on rescreening',async t=>{
  const original='notes/backup-'+'ghp_'+'d'.repeat(36)+'.mjs',literal=screenModelOutput({file:original}).value.file;
  const safe=screenModelOutput({files:[original,literal]});assert.equal(new Set(safe.value.files).size,2);assert.deepEqual(screenModelOutput(safe.value).value,safe.value);
