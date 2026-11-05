@@ -190,8 +190,9 @@ const ENV_ASSIGNMENT = new RegExp(String.raw`(?:^|\s)(${KEY_TEXT})=(${VALUE_TEXT
 function secretAssignments(source) {
   const matches = [], comments = [];
   // Quoted text and escaped characters take precedence over comment markers.
-  // Assignment matches inside comments are prose; family tokens remain screened.
-  for (const token of source.matchAll(/"(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*'|\\[^\r\n]|\/\/[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\//g)) {
+  // A marker within an unquoted word (URLs and env values included) cannot
+  // hide later assignments. Only separate comment tokens suppress prose.
+  for (const token of source.matchAll(/"(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*'|\\[^\r\n]|(?<![^\s;{}])(?:\/\/[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\/)/g)) {
     if (/^(?:\/\/|#|\/\*)/.test(token[0])) comments.push([token.index, token.index + token[0].length]);
   }
   let commentIndex = 0;

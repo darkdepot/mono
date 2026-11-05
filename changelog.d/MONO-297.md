@@ -28,3 +28,4 @@
 
 - Resolve MONO-326: one bounded decoder accepts successful JSON decoding and source backslashes; catalog resolution stays transient and outgoing content is screened.
 - Apply approved whole-token family boundaries and credential-shaped assignment values without path/string exemptions; replay the real native catalog, MONO-302 diff, tiny request and all nine r3 checker answers.
+- Keep credentials following unquoted URLs or in-word comment markers visible to screening.

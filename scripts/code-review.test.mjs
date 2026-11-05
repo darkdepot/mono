@@ -1015,6 +1015,19 @@ test('C19: decoded keys cannot overwrite a different key/value binding',async t=
  assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);
 });
 
+test('C19 local P1: URLs and in-word comment markers cannot hide subsequent credentials',()=>{
+ const syntheticValue='opaqueFixture'+'u'.repeat(24);
+ const produced=execFileSync('/bin/sh',['-c','MODE=x#y; printf "%s" "$MODE"'],{encoding:'utf8',stdio:['ignore','pipe','pipe']});
+ assert.equal(produced,'x#y');
+ for(const source of[`curl https://example.test --password ${syntheticValue}`,`MODE=${produced} password=${syntheticValue}`,`MODE=x//y password=${syntheticValue}`,`MODE=x/*y password=${syntheticValue}`]){
+  const answer={completed:true,verdicts:[verdict({reason:source})]};
+  for(const value of[source,answer,JSON.stringify(answer)])for(const options of[{input:true},{},{diagnostic:true}]){
+   const screened=screenModelOutput(value,options);assert.equal(screened.rejected,true,source);assert.ok(!JSON.stringify(screened.value).includes(syntheticValue));
+  }
+  assert.throws(()=>parseChecker(answer,[{...sample,key}]),/withheld/);
+ }
+});
+
 test('C19: safe quoted text cannot suppress decoding of adjacent credential escapes',()=>{
  const opaque='opaqueFixture'+'m'.repeat(24),values=[String.raw`"bad\w \u0067hp_`+'a'.repeat(36)+'"',String.raw`\u0067hp_`+'a'.repeat(36)+' "safe"',String.raw`pass\u0077ord: `+JSON.stringify(opaque)];
  for(const value of values)for(const options of[{input:true},{},{diagnostic:true}]){const result=screenModelOutput(value,options);assert.equal(result.rejected,true);assert.ok(!JSON.stringify(result.value).includes(opaque));}
