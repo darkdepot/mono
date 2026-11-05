@@ -327,7 +327,7 @@ function secretAssignments(source) {
         !(['true', 'false', 'null'].includes(value.value) && !typeScopes.has(parents[index]))) continue;
     const env = !value.quoted && !typed && (flag || (operator.value === '=' && !['const', 'let', 'var'].includes(previous?.value)));
     const envLength = env ? source.slice(value.start).search(/\s|$/) : 0;
-    const end = env ? value.start + envLength : closes.has(valueIndex) ? tokens[closes.get(valueIndex)].end : value.end;
+    const end = closes.has(valueIndex) ? tokens[closes.get(valueIndex)].end : env ? value.start + envLength : value.end;
     const following = tokens[(closes.get(valueIndex) ?? valueIndex) + 1];
     if (!env && !value.quoted && !closes.has(valueIndex) && following &&
         !source.slice(value.end, following.start).includes('\n') &&

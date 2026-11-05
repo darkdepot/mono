@@ -22,6 +22,28 @@ const sample={class:'missing-validation',file:'input.mjs',anchor:'return value',
 const transcripts=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/recorded-responses.json'),'utf8'));
 const dangerControls=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-checker-regressions.json'),'utf8'));
 const key=findingKey(sample);
+test('C24: nested literal spans precede whitespace fallback for every binding form',async t=>{
+ const literal='{ value: "opaque-review-fixture" }';
+ const sources=[
+  ['assignment','let credential; credential = '+literal+';'],
+  ['declaration','const credential = '+literal+';'],
+  ['export','export CREDENTIAL='+literal+';'],
+  ['export declaration','export const credential = '+literal+';'],
+  ['object member','const options = { credential: '+literal+' };'],
+ ];
+ for(const [name,source] of sources)await t.test(name,async t=>{
+  const expected=source.replace(literal,'"[credential-shaped field withheld]"');
+  const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
+  assert.equal(safe.rejected,false);assert.equal(safe.value,expected);
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source+'\n');f.git('add','.');f.git('commit','-qm','nested binding span');
+  const head=f.git('rev-parse','HEAD'),diff=f.git('diff',f.request.base,head);
+  const screened=screenModelOutput(diff,{input:true,inputPatch:true});
+  assert.equal(screened.rejected,false);assert.ok(!screened.value.includes('opaque-review-fixture'));
+  const runner=responder(),record=await runReviewRound({...f.request,head},runner);
+  assert.equal(record.outcome,'clean');assert.equal(runner.calls.length,1);assert.ok(!runner.calls[0].prompt.includes('opaque-review-fixture'));
+  assert.equal(f.git('rev-parse','HEAD'),head);assert.equal(f.git('status','--porcelain'),'');
+ });
+});
 test('C23: roles get a read-only pinned export without repository Git helpers',async t=>{
  const f=fixture(t),tools=fs.mkdtempSync(path.join(os.tmpdir(),'mono-c23-helper-'));t.after(()=>fs.rmSync(tools,{recursive:true,force:true}));
  const marker='C23_FSMONITOR_EXECUTED',hook=path.join(tools,'fsmonitor');
