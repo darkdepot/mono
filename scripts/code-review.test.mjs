@@ -22,6 +22,46 @@ const sample={class:'missing-validation',file:'input.mjs',anchor:'return value',
 const transcripts=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/recorded-responses.json'),'utf8'));
 const dangerControls=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-checker-regressions.json'),'utf8'));
 const key=findingKey(sample);
+test('C22: typed declarations and fields bind their actual initializer while type-only members do not',async t=>{
+ const sources=[
+  'const password: string = "fixtureValue";', 'let password: string = "fixtureValue";',
+  'var password: string = "fixtureValue";', 'export const password: string = "fixtureValue";',
+  'const password: string/* note=x */ = "fixtureValue";',
+  'class Login { readonly password: string = "fixtureValue"; }',
+  'class Login { password?: string = "fixtureValue"; }',
+  'class Login { private token: Token = "fixtureValue"; }',
+  'const login = { password: string = "fixtureValue" };',
+  'const credential: Record<string, {value: string}> = "fixtureValue";',
+ ];
+ for(const source of sources){
+  const safe=screenModelOutput(source,{input:true,inputFile:'input.ts'});
+  assert.equal(safe.rejected,false,source);assert.ok(!safe.value.includes('fixtureValue'),source);
+  assert.equal(safe.value,source.replace('"fixtureValue"','"[credential-shaped field withheld]"'),source);
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source+'\n');f.git('add','.');f.git('commit','-qm','typed binding regression');
+  const runner=responder(),record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+  assert.equal(record.outcome,'clean',source);assert.equal(runner.calls.length,1);assert.ok(!runner.calls[0].prompt.includes('fixtureValue'));
+ }
+ for(const source of ['interface Login { readonly password?: string; private token: Token; }', 'type Login = { password: string, token: Token }', 'const enabled = ready ? form.password : target = "fixtureValue";']){
+  assert.equal(scanSecrets(source,{patch:false}).length,0,source);
+  assert.equal(screenModelOutput(source,{input:true,inputFile:'input.ts'}).value,source);
+ }
+});
+test('C22: literal redaction preserves every byte outside matching escape-aware quotes',async t=>{
+ const literals=[String.raw`"fixture"`, String.raw`"fix\"ture"`, String.raw`"fixture\\"`, String.raw`'fix\'ture'`, '`fixture\\`value`'];
+ for(const literal of literals){
+  const prefix='function calculate(a,b) { const token = ',suffix=String.raw`; const pattern = "\\w+"; return a - b; }`+'\n';
+  const source=prefix+literal+suffix,expected=prefix+'"[credential-shaped field withheld]"'+suffix;
+  for(const patch of [false,true]){
+   const input=patch?'+++ b/input.mjs\n@@ -0,0 +1 @@\n+'+source:source;
+   const wanted=patch?'+++ b/input.mjs\n@@ -0,0 +1 @@\n+'+expected:expected;
+   const safe=screenModelOutput(input,{input:true,inputFile:'input.mjs',inputPatch:patch});
+   assert.equal(safe.rejected,false,literal);assert.equal(safe.value,wanted,literal);
+  }
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source);f.git('add','.');f.git('commit','-qm','literal span regression');
+  const runner=responder(),record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+  assert.equal(record.outcome,'clean');assert.equal(runner.calls.length,1);assert.ok(runner.calls[0].prompt.includes('return a - b;'));
+ }
+});
 test('C21: env and flag values retain trailing equals until whitespace before in-place input redaction',async t=>{
  for(const source of ['export API_KEY=fixtureValue=', '--api-key fixtureValue=', '--api-key=fixtureValue=']){
   assert.equal(screenModelOutput(source).rejected,true,source);

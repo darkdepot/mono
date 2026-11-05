@@ -1,5 +1,7 @@
 # Finding checker
 
+Source-text payload screening covers plain/typed declarations, assignments including env, object/class/JSON members, flags, comments as whitespace and nested literals; other lexical forms belong to MONO-329. Credential-family matching, decoded-JSON rule 2, fail-closed JSON and functional regressions remain covered.
+
 Independently verify EVERY supplied finding against the current pinned code,
 the base and task contract. Do not trust reviewer severity or disposition.
 Return ONLY the checker JSON schema. No final prose, gate outcome, subagents or

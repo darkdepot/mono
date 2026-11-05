@@ -188,7 +188,8 @@ function payloadTokens(source) {
     if (/\s/.test(source[index])) { index++; continue; }
     const start = index, char = source[index];
     const prior = tokens.at(-1);
-    const separate = start === 0 || /[\s;{}]/.test(source[start - 1]) || prior?.binding || (prior?.quoted && secretKey(decodedKey(prior.value) ?? ''));
+    const closedBlock = source.startsWith('/*', index) && source.indexOf('*/', index + 2) >= 0;
+    const separate = closedBlock || start === 0 || /[\s;{}]/.test(source[start - 1]) || prior?.binding || (prior?.quoted && secretKey(decodedKey(prior.value) ?? ''));
     if (separate && (source.startsWith('//', index) || char === '#')) {
       const end = source.indexOf('\n', index); index = end < 0 ? source.length : end; continue;
     }
@@ -210,7 +211,10 @@ function payloadTokens(source) {
     const key = SECRET_NAME_TOKEN.exec(source);
     if (key) { index += key[0].length; tokens.push({ start, end: index, value: key[0], binding: true }); continue; }
     if ('{}[]():=,;'.includes(char)) { index++; tokens.push({ start, end: index, value: char }); continue; }
-    while (index < source.length && !/[\s"'`{}\[\]():=,;]/.test(source[index])) index++;
+    while (index < source.length && !/[\s"'`{}\[\]():=,;]/.test(source[index])) {
+      if (source.startsWith('/*', index) && source.indexOf('*/', index + 2) >= 0) break;
+      index++;
+    }
     tokens.push({ start, end: index, value: source.slice(start, index) });
   }
   return tokens;
@@ -228,26 +232,44 @@ function secretAssignments(source) {
     }
   }
   for (let index = 0; index < tokens.length; index++) {
-    const key = tokens[index], previous = tokens[index - 1], operator = tokens[index + 1];
+    const key = tokens[index], previous = tokens[index - 1];
+    let operator = tokens[index + 1], operatorIndex = index + 1, typed = false;
     const flag = !key.quoted && key.value.startsWith('--');
     const name = decodedKey(flag ? key.value.slice(2) : key.value);
     if (name !== null && !secretKey(name)) continue;
-    let valueIndex, member = false;
+    let valueIndex;
+    const member = !previous || (!previous.quoted && ['{', ',', ';'].includes(previous.value)) || source.slice(previous.end, key.start).includes('\n');
+    const declaration = ['const', 'let', 'var', 'readonly', 'export', 'private', 'public', 'protected', 'static', 'declare', 'abstract', 'override', 'accessor'].includes(previous?.value);
+    if (operator?.value === ':' && !operator.quoted && (member || declaration)) {
+      let angles = 0;
+      for (let cursor = index + 2; cursor < tokens.length; cursor++) {
+        const candidate = tokens[cursor];
+        if (cursor > index + 2 && !angles && source.slice(tokens[cursor - 1].end, candidate.start).includes('\n') && candidate.value !== '=') break;
+        if (!candidate.quoted && candidate.value === '=' && !angles && !['=', '>'].includes(source[candidate.end])) {
+          operator = candidate; operatorIndex = cursor; typed = true; break;
+        }
+        if (!candidate.quoted && !angles && [';', ',', '}', ']', ')'].includes(candidate.value)) break;
+        if (closes.has(cursor)) { cursor = closes.get(cursor); continue; }
+        if (!candidate.quoted) for (const char of candidate.value) {
+          if (char === '<') angles++;
+          else if (char === '>' && angles) angles--;
+        }
+      }
+    }
     if (operator && !operator.quoted && ['=', ':'].includes(operator.value)) {
       if (operator.value === ':') {
-        member = !previous || (!previous.quoted && ['{', ',', ';'].includes(previous.value)) || source.slice(previous.end, key.start).includes('\n');
         if (!member) continue;
       }
       // Equality, arrows and reads/tests bind no value.
       if (operator.value === '=' && ['=', '>'].includes(source[operator.end])) continue;
-      valueIndex = index + 2;
+      valueIndex = operatorIndex + 1;
     } else if (flag && operator && /^\s+$/.test(source.slice(key.end, operator.start))) valueIndex = index + 1;
     else continue;
     const value = tokens[valueIndex];
     if (!value || (!value.quoted && [';', ',', '}', ']', ')'].includes(value.value))) continue;
-    if (member && tokens[parents[index]]?.value === '{' && !value.quoted && /^[A-Za-z_$][\w$]*$/.test(value.value) &&
+    if (operator.value === ':' && member && tokens[parents[index]]?.value === '{' && !value.quoted && /^[A-Za-z_$][\w$]*$/.test(value.value) &&
         !(key.quoted && ['true', 'false', 'null'].includes(value.value))) continue;
-    const env = !value.quoted && (flag || (operator.value === '=' && !['const', 'let', 'var'].includes(previous?.value)));
+    const env = !value.quoted && !typed && (flag || (operator.value === '=' && !['const', 'let', 'var'].includes(previous?.value)));
     const envLength = env ? source.slice(value.start).search(/\s|$/) : 0;
     const end = env ? value.start + envLength : closes.has(valueIndex) ? tokens[closes.get(valueIndex)].end : value.end;
     const following = tokens[(closes.get(valueIndex) ?? valueIndex) + 1];
@@ -307,7 +329,7 @@ function redactPayloadBindings(source, patch) {
   for (const span of spans.sort((a, b) => a.start - b.start || b.end - a.end)) {
     if (span.start < cursor) continue;
     result += source.slice(cursor, span.start) + (span.marker ? JSON.stringify('[credential-shaped field withheld]') : '')
-      + source.slice(span.start, span.end).replace(/[^\n]/g, ' ');
+      + source.slice(span.start, span.end).replace(/[^\n]/g, '');
     cursor = span.end;
   }
   return result + source.slice(cursor);
@@ -529,7 +551,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
         const literalRevision = revision, child = visit(literal, depth + 1, file, layers + 1, patch);
         literalResults.push(child);
         pieces.push(input && (file !== null || patch) && revision !== literalRevision
-          ? JSON.stringify(fieldHidden) + raw.replace(/[^\n]/g, ' ') : raw);
+          ? JSON.stringify(fieldHidden) + raw.replace(/[^\n]/g, '') : raw);
       }
       pieces.push(decodeEscapeLayer(entry.slice(literalEnd)));
       const next = pieces.join('');
@@ -541,7 +563,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       }
       const safe = initialSafe;
       if (revision !== stringRevision && literalResults.length) {
-        if (input && (file !== null || patch) && nextResult) return nextResult;
+        if (input && (file !== null || patch)) return nextResult ?? { value: safe, text: safe };
         const text = literalResults.map(child => child.text).join('\n');
         return { value: text, text };
       }

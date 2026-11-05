@@ -125,7 +125,7 @@ string layer uses literal `JSON.parse` to a fixed point, including Codex
 are allowed; unresolved JSON pairing, lossy-number and over-limit
 content are withheld. Non-JSON brace/bracket prose remains raw text; that prefix alone never withholds a response. Raw non-JSON values containing whitespace are out of scope. The single payload family table includes AWS AKIA/ASIA,
 GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
-Secret-like keys cover all value types; diff/blob payloads redact bound values in place and continue. Only credential-family hits and fail-closed JSON withhold those payloads. Env/flag values retain `=` until whitespace; comments before the binding operator are whitespace; bare type-only object members bind nothing. `session` alone is allowed. This applies
+Secret-like keys cover all value types; diff/blob payloads redact bound values in place and continue. Only credential-family hits and fail-closed JSON withhold those payloads. Env/flag values retain `=` until whitespace; comments before the binding operator are whitespace; bare type-only object members bind nothing. Typed declarations/fields bind their actual initializer; escape-aware literal redaction preserves adjacent code. `session` alone is allowed. This applies
 to prompts, contracts, rules, filenames, history, checker evidence, diagnostics and
 kept model output. Role tool reads, files changed after screening and values
 reconstructed by evaluation are outside payload screening. New credential families

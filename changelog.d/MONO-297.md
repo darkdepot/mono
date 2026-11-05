@@ -31,3 +31,6 @@
 - Keep credentials following unquoted URLs or in-word comment markers visible to screening.
 - Apply dataset v4 structural screening: preserve raw duplicate members before JSON parsing, lex actual key/value bindings without a length floor, scan nested JSON in quoted source, and accept non-JSON brace/bracket prose. Keep fixed placeholders and property reads benign.
 - Apply continue:21: retain complete env/flag values containing `=`, recognize comments before binding operators, skip bare type-only members, and redact rule-2 values in diff/blob payloads without stopping a benign round. Keep family and fail-closed JSON refusals.
+- Apply continue:22: pair typed declaration/field initializers with their keys and preserve adjacent source when replacing escape-aware quoted values.
+
+- Bound source-text payload screening to dataset v5 forms; other lexical forms remain MONO-329.
