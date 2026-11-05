@@ -143,7 +143,7 @@ for (const fileIds of [['sandbox'],['sandbox','sandbox'],['sandbox','main']]) te
  selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
  let calls=0;
  const result=await runSuite(suiteRequest(f,selection,{paper:{fileIds,command:'never-spawn',args:[]},designMemoryFile:path.join(f.dir,'design/memory.md')}),async request=>{
-  calls++;assert(request.seed.prompt.includes('mainFileId'));assert(request.seed.prompt.includes('"mainFileId": "main"'));
+  calls++;assert(request.seed.prompt.includes('mainFileId'));assert(request.seed.prompt.includes(JSON.stringify(path.join(f.dir,'design/memory.md'))),'setup must know the actual memory output path');assert(request.seed.prompt.includes('"mainFileId": "main"'));
   assert(request.seed.prompt.includes('Подготовь только синтетическую память'));
   assert(!request.scenario.prompt.includes('Посей память:'));
   assert(request.scenario.prompt.includes('Подготовленная память:'));

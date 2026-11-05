@@ -141,7 +141,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         }
         const memorySeed=scenario.stage==='design' ? json(catalogFile(catalog.root,scenario.seed)).designMemory : null;
         if(memorySeed?.mainFileRequired && (request.paper.fileIds.length<2 || request.paper.fileIds[0]===request.paper.fileIds[1])) throw new Error('Design main-file scenario requires distinct sandbox and main fileIds');
-        const designMemory=memorySeed ? {...memorySeed,firstLine:`Репозиторий: ${request.cwd}`,fileId:request.paper.fileIds[0],mainFileId:request.paper.fileIds[1]??null} : null;
+        const designMemory=memorySeed ? {...memorySeed,memoryFile:request.designMemoryFile,firstLine:`Репозиторий: ${request.cwd}`,fileId:request.paper.fileIds[0],mainFileId:request.paper.fileIds[1]??null} : null;
         if(seed&&designMemory)seed.designMemory=designMemory;
         const target=catalog.scenarios.get(unit.target);
         if (!target) throw new Error('selected unit target missing');
