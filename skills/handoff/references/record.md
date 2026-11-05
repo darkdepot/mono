@@ -87,7 +87,7 @@ mono-package: recorded project=<uuid проекта> version=<n> previous=<id к
 - Исследование: <uuid документа>, updatedAt <ISO>, тело sha256 <64 hex>
 - PRD: <uuid документа>, updatedAt <ISO>, утверждение <id комментария записи утверждения PRD>
 - Tech Spec: нет | <uuid документа>, updatedAt <ISO>, тело sha256 <64 hex>; утверждение mono-tech <id комментария, если есть>
-- Дизайн: нет | <ссылка>, версия <updatedAt или sha256 прочитанного>; запись mono-design <id>, Paper <ссылка>, images <sha256>
+- Дизайн: нет | <ссылка>, версия <updatedAt или sha256 прочитанного>; запись mono-design <id>, canvas <https-ссылка>, tool paper|wonder, images <sha256>
 - Риск: tiny | standard | deep | risky
 
 ## Сверка
@@ -144,7 +144,7 @@ mono-package: recorded project=<uuid проекта> version=<n> previous=<id к
 По `<корень>/templates/issue.md` и `<корень>/references/contracts/issue.md`:
 - «Прочитать сначала»: проект и PRD чипами, «Исследование» и запись пакета
   ссылками, Tech Spec и дизайн, если есть. UI-задаче строка «Дизайн: запись
-  mono-design <id>, Paper <ссылка>, images <sha256>» или «Дизайн: нет»; пути
+  mono-design <id>, canvas <https-ссылка>, tool paper|wonder, images <sha256>» или «Дизайн: нет»; пути
   к `~/.mono-agent-workflow/design/owner-taste.md`, памяти продукта и папке
   PNG конкретной версии в «Прочитать сначала». Прочитай оба слоя вкуса и
   скопируй применимые правила целиком (причина, верно/неверно, источник, вес)
