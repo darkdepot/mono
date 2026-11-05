@@ -100,15 +100,18 @@ The template is outside `agents/` so the plugin cannot register placeholders.
 Build stage and scout definitions under `~/.claude/agents/` using product/stage-specific
 names, never overriding owner-session `mono:*-scout`. Use only exact tool names
 from current host connections, no server wildcard. Default categories: files,
-terminal, helpers, Linear, Paper for design, web search. No mail, finance, browser,
+terminal, helpers, Linear, Paper and Wonder for design, web search. No mail, finance, browser,
 screen, Desktop sessions or windows without owner action. Host-added tools (e.g.
 `advisor`) are not owner connections and are outside the list. This limits direct
 calls, not isolation; terminal remains for verification and the isolated second model.
 
 Desktop names `mcp__<uuid>__…` differ from CLI `mcp__claude_ai_<Имя>__…`: assemble
 for the orchestrator's host; wrong names mean no access. Map each allowed exact
-name to its category, leave all other connections absent. New connections stay
-excluded until explicitly added. Scouts get their own exact allowlists plus read-only
+name to its category, leave all other connections absent. For Design include the exact available Paper and Wonder tool names, including
+Wonder `get_skills`, `get_design_context`, `take_screenshot` and `get_element_code`;
+the stage selects by owner words, product `design.tool`, then `paper`. Missing
+selected tools stop the stage with an explicit alternative, never a silent switch.
+New connections stay excluded until explicitly added. Scouts get their own exact allowlists plus read-only
 restrictions. Launch prompt supplies their private names; stage uses only those.
 `Agent(type)` does not restrict helpers: stage frontmatter must carry PreToolUse
 matcher `Agent|Task`, invoking the hook with the allowed scout names. It reads
