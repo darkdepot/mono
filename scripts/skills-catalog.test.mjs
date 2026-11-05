@@ -52,10 +52,10 @@ function fixture(t) {
 
 test('Mono catalog has exactly six stage contracts, all host text replies and no stored run identities',()=>{
   const catalog=loadCatalog(path.join(source,'index.json'));
-  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,18);
+  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,19);
   for(const [id,stage] of catalog.stages){
-    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:id==='idea'?4:3);
-    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','question']:id==='idea'?['main','correction','unclear','defer']:['main','correction','unclear']);
+    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:['idea','design'].includes(id)?4:3);
+    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','question']:id==='idea'?['main','correction','unclear','defer']:id==='design'?['main','correction','unclear','continuation']:['main','correction','unclear']);
     assert(!stage.files.includes('templates/qa-output.md'));
     for(const common of ['references/owner-dialog.md','scripts/russian-stages.mjs','scripts/idea-gate.mjs']) assert(stage.files.includes(common));
   }
@@ -134,6 +134,26 @@ test('Design memory seed passes real design gate with repository prefix and arch
  });
  assert.equal(result.status,'passed',JSON.stringify(result));assert(design&&other);
 });
+for (const fileIds of [['sandbox'],['sandbox','sandbox'],['sandbox','main']]) test(`main-file scenario requires an independent allowed main file: ${fileIds.join(',')}`,async t=>{
+ const f=fixture(t);
+ write(path.join(f.catalogDir,'index.json'),fs.readFileSync(path.join(source,'index.json')));
+ write(path.join(f.dir,'skills/design/SKILL.md'),'main-file scenario change\n');f.commit();
+ const selection=f.select(),unit=selection.units.find(u=>u.target==='design/main-file');
+ assert(unit,'new Design scenario selected from committed catalog');selection.units=[unit];selection.hosts=['codex'];
+ selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
+ let calls=0;
+ const result=await runSuite(suiteRequest(f,selection,{paper:{fileIds,command:'never-spawn',args:[]},designMemoryFile:path.join(f.dir,'design/memory.md')}),async request=>{
+  calls++;assert(request.seed.prompt.includes('mainFileId'));assert(request.seed.prompt.includes('"mainFileId": "main"'));
+  assert(request.seed.prompt.includes('Подготовь только синтетическую память'));
+  assert(!request.scenario.prompt.includes('Посей память:'));
+  assert(request.scenario.prompt.includes('Подготовленная память:'));
+  write(request.context.projectFile,JSON.stringify(runProject(request)));return passedStage(request);
+ });
+ const valid=fileIds.length===2&&fileIds[0]!==fileIds[1];
+ assert.equal(calls,valid?1:0);assert.equal(result.status,valid?'passed':'failed',JSON.stringify(result));
+ if(!valid)assert(result.results[0].result.reason.includes('distinct sandbox and main fileIds'));
+});
+
 test('pack revision is checked again after a host and before later stages',async t=>{
  const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();let calls=0;
  const result=await runSuite(suiteRequest(f,f.select()),async request=>{
@@ -240,7 +260,7 @@ test('suite persists expectations before calls and shares one read-back project 
     write(request.context.projectFile,JSON.stringify(request.context.project ?? {id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));
     if(request.mcpServers.paper){
       const guard=json(request.mcpServers.paper.args[1]);assert.deepEqual(guard.fileIds,['test-file']);
-      assert(request.scenario.prompt.includes('test-file'));assert(request.scenario.prompt.includes('как на проде'));
+      assert(request.scenario.prompt.includes('test-file'));assert(/как на проде/i.test(request.scenario.prompt));
     }
     calls.push(request);return passedStage(request);
   });

@@ -42,7 +42,7 @@ export function scenarioPrompt({scenario,host,seed,seedProjectFile,projectName,p
     : seed ? `Посев уже выполнен отдельным ходом. Прочитай указатель ${seedProjectFile}, затем свежий get_project этого проекта monotest. Используй только его; новый проект не создавай. Не переписывай маршрут посева из-за поля followingStage.`
       : `Idea не имеет посева. Новую идею и проект назови ${projectName}; проект создаёт сам этап только после утверждения. Похожие чужие проекты не используй.`;
   const navigation=`В этом этапе после создания или свежего обратного чтения проекта сохрани JSON {id,name,url} ровно в ${projectFile}; id — поле get_project.uuid (полный UUID, не короткий identifier вроде P-MON-40), имя ${projectName}. Файл находится внутри cwd и должен быть записан этим этапом. Это указатель для соседнего этапа, не доказательство проверки записей. Версии документов и комментариев всегда бери из свежего чтения, не из рецепта. Все команды пака из ${packRoot}.`;
-  const design=paper ? `Paper только через предоставленный guard; в каждом вызове явный fileId из списка ${JSON.stringify(paper.fileIds)}. Песочница тестовой задачи — первый файл списка; остальные разрешённые файлы только для опор. Используй существующую страницу «Как на проде» только как образец; новую версию делай на странице тестовой задачи. Продукт и конфиг уже в cwd; память тестового продукта в ${designMemoryFile}. Посей память: ${JSON.stringify(designMemory)}. Не меняй owner-taste или память другого продукта. Guard копирует только названные Paper export файлы в доступный каталог прогона и возвращает новые пути. Выполни обычный шаг архивации утверждённых PNG из этих путей. Архив утверждённых PNG продукта: ${path.join(path.dirname(designMemoryFile),'approved')}. Не используй активный файл владельца.` : '';
+  const design=paper ? `Paper только через предоставленный guard; в каждом вызове явный fileId из списка ${JSON.stringify(paper.fileIds)}. Песочница тестовой задачи — первый файл списка; остальные разрешённые файлы только для опор. Главный файл — mainFileId подготовленной памяти; страницу «Как на проде», если она есть, используй только как выпущенный образец. Новую версию делай на странице тестовой задачи в песочнице. Продукт и конфиг уже в cwd; память тестового продукта в ${designMemoryFile}. ${designMemory?.seedInSetup?'Подготовленная память':'Посей память'}: ${JSON.stringify(designMemory)}. Не меняй owner-taste или память другого продукта. Guard копирует только названные Paper export файлы в доступный каталог прогона и возвращает новые пути. Выполни обычный шаг архивации утверждённых PNG из этих путей. Архив утверждённых PNG продукта: ${path.join(path.dirname(designMemoryFile),'approved')}. Не используй активный файл владельца.` : '';
   return [owner,entry,navigation,design,`Бриф владельца: ${scenario.brief}`,
     `Этап под проверкой: ${scenario.stage}. Следующий этап после завершения (followingStage): ${next ?? 'none'}. Это выход текущего этапа, не маршрут его посева. ${routeHint ?? ''}`,
     `Начни ${skillPrefix}:${scenario.stage}. ${scenario.prompt}`,
@@ -52,7 +52,7 @@ export function scenarioPrompt({scenario,host,seed,seedProjectFile,projectName,p
 }
 
 function seedPrompt({seed,projectName,projectFile,dumpDir,packRoot,brief}){
-  return [`Только посев входа в monotest, без окон и вызова этапов. Создай один свежий проект ${projectName}. Не используй похожие проекты. Все записи только monotest после подтверждения пространства чтением.`,
+  return [`Только посев входа в monotest, без окон и вызова этапов. Создай один свежий проект ${projectName}. Не используй похожие проекты. Все записи Linear только monotest после подтверждения пространства чтением. Подготовка синтетических Paper-страниц, если задана в designMemory.instructions, только через guard в переданных fileId.`,
     `Бриф изменения существующего тестового продукта: ${brief}`,
     `Рецепт посева:\n${JSON.stringify(seed,null,2)}`,
     ...(seed.prdApprovalTemplate?['prdApprovalTemplate публикуй дословно, заменяя только placeholders свежими id/версиями из обратного чтения. Его next — вход этапа под проверкой; менять его нельзя.']:[]),
@@ -139,7 +139,10 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
           paperLog=guardFile+'.jsonl';
           servers.paper={command:process.execPath,args:[catalogFile(catalog.root,catalog.index.paperGuard),guardFile]};
         }
-        const designMemory=scenario.stage==='design' ? json(catalogFile(catalog.root,scenario.seed)).designMemory : null;
+        const memorySeed=scenario.stage==='design' ? json(catalogFile(catalog.root,scenario.seed)).designMemory : null;
+        if(memorySeed?.mainFileRequired && (request.paper.fileIds.length<2 || request.paper.fileIds[0]===request.paper.fileIds[1])) throw new Error('Design main-file scenario requires distinct sandbox and main fileIds');
+        const designMemory=memorySeed ? {...memorySeed,firstLine:`Репозиторий: ${request.cwd}`,fileId:request.paper.fileIds[0],mainFileId:request.paper.fileIds[1]??null} : null;
+        if(seed&&designMemory)seed.designMemory=designMemory;
         const target=catalog.scenarios.get(unit.target);
         if (!target) throw new Error('selected unit target missing');
         const brief=target.brief+` Идентификатор тестового проекта этой правки: ${projectName}. Название колонки всегда «Источник», имя прогона в него не добавляй.`;
@@ -148,7 +151,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
           if(!flow.expectedReplies.some(r=>r.outcome.startNext&&permittedStages(r).includes(destination)))throw new Error('chain has no predefined next-stage permission');
         }
         const prompt=scenarioPrompt({scenario:{...scenario,brief},host,seed,seedProjectFile,projectName,projectFile,project,next,packRoot:request.packRoot,paper:scenario.stage==='design'?request.paper:null,designMemoryFile:request.designMemoryFile,
-          designMemory:designMemory ? {...designMemory,firstLine:`Репозиторий: ${request.cwd}`,fileId:request.paper.fileIds[0]} : null,
+          designMemory,
           productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:catalog.index.routeHints?.[next]});
         runRequest={host,cwd:request.cwd,packRoot:request.packRoot,outputDir,authFile:request.authFile,
           ...(scenario.stage==='design'?{writableRoots:[path.dirname(request.designMemoryFile),path.join(path.dirname(request.designMemoryFile),'approved'),exportRunDir]}:{}),

@@ -162,7 +162,8 @@
       "scenarios": [
         "design/approve/scenario.json",
         "design/correction/scenario.json",
-        "design/empty/scenario.json"
+        "design/empty/scenario.json",
+        "design/main-file/scenario.json"
       ]
     },
     {
