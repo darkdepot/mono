@@ -122,7 +122,7 @@ pinned blobs and all context fields are screened before their role starts. Secre
 replies fail closed, while retained diagnostics redact values. Every JSON/JSONL
 string layer uses literal `JSON.parse` to a fixed point, including Codex
 `item.text`, preserving quoted key/value boundaries. Raw text is screened before parsing so duplicate members and escaped keys cannot disappear. A lexer binds secret-like keys to their actual values and entire nested subtrees without a length floor; property reads/tests bind nothing. At most eight decoding layers
-are allowed; unresolved JSON pairing, lossy-number and over-limit
+are allowed; unresolved JSON pairing and over-limit
 content are withheld. Non-JSON brace/bracket prose remains raw text; that prefix alone never withholds a response. Raw non-JSON values containing whitespace are out of scope. The single payload family table includes AWS AKIA/ASIA,
 GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
 Secret-like keys cover all value types; diff/blob payloads redact bound values in place and continue. Only credential-family hits and fail-closed JSON withhold those payloads. Env/flag values retain `=` until whitespace; comments before the binding operator are whitespace; bare type-only object members bind nothing. Typed declarations/fields bind their actual initializer; escape-aware literal redaction preserves adjacent code. `session` alone is allowed. This applies
@@ -137,10 +137,8 @@ failed fields, nested encodings, legacy records, evaluation sinks and safe repli
 one policy: hook/fsmonitor and color overrides, configured content filters and
 diff/merge helpers disabled, and diff/show (including raw diffs) forced colorless
 without external diff or textconv. Raw contracts keep exact hash-validated bytes.
-Role environments apply the same helper overrides (including credentials/pagers)
-and neutralize Git repository discovery/worktree; roles read precomputed context
-and files. Regressions exercise clean/process helpers with absolute Git and
-explicit git-dir calls, plus singly/doubly/triply encoded input assignments.
+Both roles read precomputed context and a read-only export of every pinned blob, without `.git`; symlinks become target text, export attributes are ignored, and cleanup runs after the circle. Global/system Git config is neutral. Helper environment overrides remain defense in depth, not the boundary. Valid JSON numbers retain their raw numeric text, including unsafe integers. Runtime object true/false/null values bind; type-only members do not. Regressions exercise clean/process helpers with absolute Git and
+explicit git-dir calls with cleared overrides (a negative control executes the original repository helper), plus singly/doubly/triply encoded input assignments.
 Before worktree reads, gitlinks and index hints are refused; this also avoids
 entering submodules with independent executable configuration. Both pinned blobs
 of every changed path are scanned regardless of attributes. NUL-containing or

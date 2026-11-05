@@ -28,12 +28,12 @@ function screenChildOutput(result, stdoutOptions = {}) {
   });
   return { stdout: safeStdout, stderr: safeStderr, status: result.status, signal: result.signal, error: !!result.error };
 }
-function readGit(worktree, env, options, args, raw = false) {
+function readGit(worktree, env, options, args, raw = false, outputFd = null) {
   const fileArg = ['show', 'cat-file'].includes(args[0]) ? args.find(arg => /^[^:]+:.+/.test(arg)) : null;
   const captured = spawnSync('git', [...options, ...args], {
-    cwd: worktree, env, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024,
+    cwd: worktree, env, stdio: ['ignore', outputFd ?? 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024,
   });
-  const result = screenChildOutput(captured, { input: true, inputFile: fileArg?.slice(fileArg.indexOf(':') + 1) ?? null, inputPatch: args[0] === 'diff' && !args.some(arg => ['--raw', '--name-only', '--name-status', '--numstat'].includes(arg)) });
+  const result = screenChildOutput(outputFd === null ? captured : { ...captured, stdout: '' }, { input: true, inputFile: fileArg?.slice(fileArg.indexOf(':') + 1) ?? null, inputPatch: args[0] === 'diff' && !args.some(arg => ['--raw', '--name-only', '--name-status', '--numstat'].includes(arg)) });
   if (result.error || result.status !== 0) throw Object.assign(new Error('Git command failed; captured output withheld'), { status: result.status });
   return raw ? captured.stdout : result.stdout;
 }
@@ -80,6 +80,44 @@ function treeIdentity(worktree) {
     diff: git(worktree, ['diff', '--binary', 'HEAD', '--no-ext-diff', '--no-textconv']),
     untracked: untracked.map(file => [file, fs.lstatSync(path.join(worktree, file)).isSymbolicLink()
       ? fs.readlinkSync(path.join(worktree, file)) : digest(fs.readFileSync(path.join(worktree, file)).toString('base64'))]) });
+}
+// Export pinned blobs directly: archive attributes must not hide or rewrite files.
+// Symlinks become their target text, never links into the host filesystem.
+function exportReviewTree(worktree, head) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-tree-'));
+  const symlinks = [], directories = new Set([root]);
+  try {
+    const policy = gitReadPolicy(worktree);
+    const entries = readGit(worktree, policy.env, policy.args, ['ls-tree', '-r', '-z', '--full-tree', head]).split('\0').filter(Boolean);
+    for (const entry of entries) {
+      const match = /^(100644|100755|120000) blob ([a-f0-9]{40})\t([\s\S]+)$/.exec(entry);
+      requireValue(match, 'unsupported pinned tree entry');
+      const [, mode, oid, name] = match, file = path.resolve(root, name);
+      requireValue(file.startsWith(root + path.sep) && !name.split('/').some(part => part.toLowerCase() === '.git'), 'unsafe pinned tree path');
+      const parent = path.dirname(file);
+      fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+      for (let dir = parent; dir.startsWith(root); dir = path.dirname(dir)) {
+        directories.add(dir); if (dir === root) break;
+      }
+      const fd = fs.openSync(file, 'wx', 0o400);
+      try {
+        // Blob bytes are file-tool input, not model/diagnostic text. Stream them
+        // without decoding or filters; the shared Git reader screens stderr.
+        readGit(worktree, policy.env, policy.args, ['cat-file', 'blob', oid], false, fd);
+      } finally { fs.closeSync(fd); }
+      if (mode === '120000') symlinks.push(name);
+    }
+    for (const dir of [...directories].sort((a, b) => b.length - a.length)) fs.chmodSync(dir, 0o500);
+    return { root, symlinks };
+  } catch (error) { removeReviewTree(root); throw error; }
+}
+function removeReviewTree(root) {
+  if (!fs.existsSync(root)) return;
+  const writable = dir => {
+    fs.chmodSync(dir, 0o700);
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) if (entry.isDirectory()) writable(path.join(dir, entry.name));
+  };
+  writable(root); fs.rmSync(root, { recursive: true, force: true });
 }
 export function findingKey(finding) {
   return digest([finding.class.trim(), finding.file, finding.anchor.trim()]);
@@ -220,12 +258,30 @@ function payloadTokens(source) {
   return tokens;
 }
 function secretAssignments(source) {
-  const tokens = payloadTokens(source), matches = [], closes = new Map(), parents = [], stack = [];
+  const tokens = payloadTokens(source), matches = [], closes = new Map(), parents = [], stack = [], typeScopes = new Map();
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
     parents[index] = stack.at(-1);
     if (token.quoted) continue;
-    if (['{', '[', '('].includes(token.value)) stack.push(index);
+    if (['{', '[', '('].includes(token.value)) {
+      if (token.value === '{') {
+        let start = index - 1;
+        while (start >= 0 && parents[start] === parents[index] && ![';', ',', '}'].includes(tokens[start].value)) start--;
+        const header = tokens.slice(start + 1, index).filter(item => !item.quoted).map(item => item.value);
+        const declaration = header.findIndex((word, offset) => {
+          if (offset && !['export', 'default', 'declare', 'abstract', '=', '('].includes(header[offset - 1])) return false;
+          const name = header[offset + 1];
+          if (word === 'class') return name === undefined || /^[A-Za-z_$]/.test(name);
+          if (word === 'interface') return name !== undefined && /^[A-Za-z_$]/.test(name);
+          return word === 'type' && name !== undefined && /^[A-Za-z_$]/.test(name) && header[offset + 2] === '=';
+        });
+        const kind = declaration < 0 ? null : header[declaration] === 'class' ? 'class' : 'type';
+        const parent = typeScopes.get(parents[index]);
+        if (kind || (!header.includes('=') && (parent === 'type' || (parent === 'class' && header.at(-1) === ':'))))
+          typeScopes.set(index, kind ?? 'type');
+      }
+      stack.push(index);
+    }
     else if (['}', ']', ')'].includes(token.value)) {
       const open = stack.pop();
       if (open !== undefined && '{[('.indexOf(tokens[open].value) === '}])'.indexOf(token.value)) closes.set(open, index);
@@ -268,7 +324,7 @@ function secretAssignments(source) {
     const value = tokens[valueIndex];
     if (!value || (!value.quoted && [';', ',', '}', ']', ')'].includes(value.value))) continue;
     if (operator.value === ':' && member && tokens[parents[index]]?.value === '{' && !value.quoted && /^[A-Za-z_$][\w$]*$/.test(value.value) &&
-        !(key.quoted && ['true', 'false', 'null'].includes(value.value))) continue;
+        !(['true', 'false', 'null'].includes(value.value) && !typeScopes.has(parents[index]))) continue;
     const env = !value.quoted && !typed && (flag || (operator.value === '=' && !['const', 'let', 'var'].includes(previous?.value)));
     const envLength = env ? source.slice(value.start).search(/\s|$/) : 0;
     const end = env ? value.start + envLength : closes.has(valueIndex) ? tokens[closes.get(valueIndex)].end : value.end;
@@ -415,7 +471,7 @@ export function roleInvocation(role, route, { scratch, worktree, schemaFile }) {
     const split = setting.indexOf('='); env[`GIT_CONFIG_KEY_${index}`] = setting.slice(0, split); env[`GIT_CONFIG_VALUE_${index}`] = setting.slice(split + 1);
   });
   // Roles already receive pinned diffs/context and read files directly. Neutralize
-  // Git discovery; even an explicit git-dir retains the helper overrides above.
+  // Git discovery as defense in depth; the pinned export has no .git directory.
   env.GIT_DIR = '/dev/null'; env.GIT_WORK_TREE = '/dev/null';
   const common = { cwd: scratch, env, boundary: {
     requested: { shellPolicy: 'read-only; network denied by sandbox', writes: false, networkTools: false, connectors: false, hooks: false, subagents: false }, observed: null,
@@ -515,19 +571,20 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (markers.has(entry)) return { value: entry, text: entry };
       if (layers > 8) return hide();
       const stringRevision = revision, initialSafe = redact(entry, file, patch);
-      let parsed, decoded = false, lossy = false;
-      try { parsed = JSON.parse(entry.trim(), (_key, child) => {
-        if (typeof child === 'number' && (!Number.isFinite(child) || (Number.isInteger(child) && !Number.isSafeInteger(child)))) { lossy = true; throw new Error('lossy JSON number'); }
-        return child;
-      }); decoded = true; } catch {}
-      if (lossy || (decoded && parsed && typeof parsed === 'object' && ambiguousJsonMembers(entry))) return hide();
-      if (decoded && (parsed === null || !['object', 'string'].includes(typeof parsed))) {
+      let parsed, decoded = false;
+      try { parsed = JSON.parse(entry.trim(), (_key, child, context) =>
+        typeof child === 'number' ? JSON.rawJSON(context.source) : child); decoded = true; } catch {}
+      if (decoded && parsed && typeof parsed === 'object' && !JSON.isRawJSON(parsed) && ambiguousJsonMembers(entry)) return hide();
+      if (decoded && (parsed === null || JSON.isRawJSON(parsed) || !['object', 'string'].includes(typeof parsed))) {
         const safe = redact(entry, file); return { value: safe, text: safe };
       }
       if (decoded) {
         if (layers === 8) return hide();
         const child = visit(parsed, depth + 1, file, layers + 1, patch);
-        return { value: revision !== stringRevision ? JSON.stringify(child.value) : entry, text: child.text };
+        // Validate every decoded node even when source-span redaction below
+        // preserves the original JSON formatting and numeric tokens.
+        if (!(input && (file !== null || patch) && typeof parsed === 'object'))
+          return { value: revision !== stringRevision ? JSON.stringify(child.value) : entry, text: child.text };
       }
       const lines = entry.split('\n').filter(line => line.trim());
       if (lines.length > 1 && lines.every(line => /^\s*[\[{"]/.test(line))) {
@@ -548,10 +605,10 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
         try { const parsed = JSON.parse(literal); nested = parsed !== null && ['object', 'string'].includes(typeof parsed); } catch {}
         if (!raw.includes('\\') && !nested) { pieces.push(raw); continue; }
         if (layers === 8) return hide();
-        const literalRevision = revision, child = visit(literal, depth + 1, file, layers + 1, patch);
+        const literalRevision = revision, child = visit(literal, depth + 1, file ?? (input && patch ? '' : null), layers + 1, false);
         literalResults.push(child);
         pieces.push(input && (file !== null || patch) && revision !== literalRevision
-          ? JSON.stringify(fieldHidden) + raw.replace(/[^\n]/g, '') : raw);
+          ? JSON.stringify(child.value) : raw);
       }
       pieces.push(decodeEscapeLayer(entry.slice(literalEnd)));
       const next = pieces.join('');
@@ -569,7 +626,8 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       }
       return { value: safe, text: safe };
     }
-    if (typeof entry === 'number' && (!Number.isFinite(entry) || (Number.isInteger(entry) && !Number.isSafeInteger(entry)))) return hide();
+    if (JSON.isRawJSON(entry)) return { value: entry, text: entry.rawJSON };
+    if (typeof entry === 'number' && !Number.isFinite(entry)) return hide();
     if (!entry || typeof entry !== 'object') return { value: entry, text: String(entry ?? '') };
     if (typeof entry.file === 'string') file = entry.file;
     else if (typeof entry.id === 'string' && Object.hasOwn(filesById, entry.id)) file = filesById[entry.id];
@@ -733,6 +791,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
   const record = structuredClone(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });
   record.rounds ??= []; record.findings ??= []; record.failures ??= [];
   const costs = [], number = record.rounds.length + 1;
+  let exported;
   const fail = (reason, interrupted = false) => ({ ...record, outcome: 'not-reviewed', round: null, interrupted,
     failures: [...record.failures, { head, round: number, reason, costs, interrupted }], costs });
   try {
@@ -766,7 +825,8 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     const files = number === 2 ? git(worktree, ['diff', '--name-only', '--no-renames', '-z', previous, head, '--']).split('\0').filter(Boolean) : allFiles;
     const scopeDiff = number === 2 ? git(worktree, ['diff', '--no-ext-diff', '--no-textconv', previous, head, '--']) : diff;
     const rules = git(worktree, ['ls-tree', head, '--', 'AGENTS.md']) ? git(worktree, ['show', `${head}:AGENTS.md`]) : '';
-    const context = { worktree, head, base, contract, rules, round: number, scope: number === 2 ? 'fixes-and-open-findings' : 'full', files, diff: scopeDiff };
+    exported = exportReviewTree(worktree, head);
+    const context = { worktree: exported.root, symlinks: exported.symlinks, head, base, contract, rules, round: number, scope: number === 2 ? 'fixes-and-open-findings' : 'full', files, diff: scopeDiff };
     requireSafeContext({ ...context, history: record.findings, failedAnswers: record.failures });
     const call = async (role, extra, parse) => {
       const prompt = promptFor(packRoot, role, { ...context, ...extra });
@@ -776,7 +836,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
         try {
           // Both transport outcomes enter the same gate before parsing, costs,
           // state, another prompt or a caller can observe any model text.
-          const payload = await runRole({ role, route: roles[role], worktree, packRoot, prompt }).then(
+          const payload = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt }).then(
             result => ({ result: { usage: result?.usage, boundary: result?.boundary, elapsedMs: result?.elapsedMs, response: result?.response } }),
             error => ({ error: { message: error.message, boundary: error.boundary, interrupted: error.interrupted === true, rawAnswer: error.rawAnswer } }));
           screened = screenModelOutput(payload, { diagnostic: true, filesById: Object.fromEntries((extra.findings ?? []).map(finding => [finding.id, finding.file])) });
@@ -835,6 +895,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     return { ...record, schemaVersion: 1, interrupted: false, base, contractDigest, rounds: [...record.rounds, round], findings: current, round, outcome,
       successorKeys: successors.map(finding => finding.key), costs };
   } catch (error) { return { ...fail(screenModelOutput(error.message, { diagnostic: true }).diagnostic.text, !!error.interrupted), ...(error.secrets ? { secrets: error.secrets } : {}) }; }
+  finally { if (exported) removeReviewTree(exported.root); }
 }
 export async function runReviewRound(input, dependencies = {}) {
   const history = screenModelOutput(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });

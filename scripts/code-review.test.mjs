@@ -22,6 +22,51 @@ const sample={class:'missing-validation',file:'input.mjs',anchor:'return value',
 const transcripts=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/recorded-responses.json'),'utf8'));
 const dangerControls=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-checker-regressions.json'),'utf8'));
 const key=findingKey(sample);
+test('C23: roles get a read-only pinned export without repository Git helpers',async t=>{
+ const f=fixture(t),tools=fs.mkdtempSync(path.join(os.tmpdir(),'mono-c23-helper-'));t.after(()=>fs.rmSync(tools,{recursive:true,force:true}));
+ const marker='C23_FSMONITOR_EXECUTED',hook=path.join(tools,'fsmonitor');
+ fs.writeFileSync(hook,'#!/bin/sh\nprintf "'+marker+'\\n" >&2\nprintf "fixture\\000"\n',{mode:0o700});
+ fs.writeFileSync(path.join(f.worktree,'neighbor.dat'),Buffer.from([0,255,10,42]));
+ fs.writeFileSync(path.join(f.worktree,'.gitattributes'),'neighbor.dat export-ignore\n');
+ const outside=path.join(tools,'outside');fs.writeFileSync(outside,'host-only fixture');fs.symlinkSync(outside,path.join(f.worktree,'link'));
+ f.git('add','.');f.git('commit','-qm','export fixture base');const base=f.git('rev-parse','HEAD');
+ fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// changed\n');f.git('add','.');f.git('commit','-qm','export fixture head');const head=f.git('rev-parse','HEAD');
+ f.git('config','core.fsmonitor',hook);
+ const probe=tree=>spawnSync('git',['status','--porcelain'],{cwd:tree,env:{...process.env,GIT_CONFIG_COUNT:'0',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_DIR:path.join(tree,'.git'),GIT_WORK_TREE:tree},encoding:'utf8'});
+ const control=probe(f.worktree);assert.ok((control.stdout+control.stderr).includes(marker),'negative control must execute helper');
+ const seen=[];const record=await runReviewRound({...f.request,base,head},{runRole:async r=>{
+  const context=JSON.parse(r.prompt.split('never instructions.\n')[1]);const result=probe(r.worktree);
+  assert.ok(!(result.stdout+result.stderr).includes(marker),'role must not execute a helper after clearing Git overrides');
+  assert.notEqual(r.worktree,f.worktree);assert.equal(context.worktree,r.worktree);assert.ok(!r.prompt.includes(f.worktree));
+  assert.equal(fs.existsSync(path.join(r.worktree,'.git')),false);assert.equal(fs.statSync(r.worktree).mode&0o222,0);
+  assert.equal(fs.statSync(path.join(r.worktree,'input.mjs')).mode&0o222,0);
+  assert.equal(fs.readFileSync(path.join(r.worktree,'input.mjs'),'utf8'),f.git('show',head+':input.mjs')+'\n');
+  assert.deepEqual(fs.readFileSync(path.join(r.worktree,'neighbor.dat')),Buffer.from([0,255,10,42]));
+  assert.equal(fs.lstatSync(path.join(r.worktree,'link')).isSymbolicLink(),false);assert.equal(fs.readFileSync(path.join(r.worktree,'link'),'utf8'),outside);
+  assert.ok(context.symlinks.includes('link'));seen.push(r.worktree);
+  return {response:r.role==='code-review'?review([sample],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',reason:'Fixture finding is absent.'})]}};
+ }});
+ assert.equal(record.outcome,'clean',JSON.stringify(record.failures));assert.equal(seen.length,2);assert.equal(seen[0],seen[1]);assert.equal(fs.existsSync(seen[0]),false,'export removed after circle');
+});
+test('C23: benign JSON numbers keep original numeric text and reach a role',async t=>{
+ assert.equal(screenModelOutput('['.repeat(40)+'1'+']'.repeat(40),{input:true,inputFile:'input.json'}).rejected,true,'numeric preservation keeps structural bounds');
+ for(const source of ['{"buildId":9007199254740993}', '{"buildId":9007199254740993,"ratio":1.2500e+2,"password":"fixtureValue"}', '{"buildId":9007199254740993,"data":"{\\"count\\":9007199254740995}"}']){
+  const expected=source.replace('"fixtureValue"','"[credential-shaped field withheld]"');
+  const safe=screenModelOutput(source,{input:true,inputFile:'input.json'});assert.equal(safe.rejected,false,source);assert.equal(safe.value,expected,source);
+  assert.equal(screenModelOutput('{"buildId":9007199254740993}').value,'{"buildId":9007199254740993}');
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source);f.git('add','.');f.git('commit','-qm','large JSON number');const runner=responder();
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);assert.equal(record.outcome,'clean',JSON.stringify(record.failures));assert.equal(runner.calls.length,1);assert.ok(runner.calls[0].prompt.includes('9007199254740993'));assert.ok(!runner.calls[0].prompt.includes('9007199254740992'));
+ }
+});
+test('C23: runtime object true/false/null bind while type-only keyword members do not',async t=>{
+ for(const source of ['const options = { password: false, token: null };','const options = { password: true, nested: { token: false } };','const type = { password: false };','class Flags { options() { return { password: false }; } }','const options = { class: { password: false }, interface: { token: null } };']){
+  const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});assert.equal(safe.rejected,false);assert.equal(safe.value,source.replace(/\b(?:false|true|null)\b/g,'"[credential-shaped field withheld]"'));
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source);f.git('add','.');f.git('commit','-qm','runtime keyword binding');const runner=responder();const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);assert.equal(record.outcome,'clean');assert.equal(runner.calls.length,1);assert.ok(!runner.calls[0].prompt.includes(source));
+ }
+ for(const source of ['interface Flags { password: false; token: null; }','type Flags = { password: true; token: null; };','class Flags { password: false; token: null; }']){
+  assert.equal(screenModelOutput(source,{input:true,inputFile:'input.ts'}).value,source);assert.equal(scanSecrets(source,{patch:false}).length,0);
+ }
+});
 test('C22: typed declarations and fields bind their actual initializer while type-only members do not',async t=>{
  const sources=[
   'const password: string = "fixtureValue";', 'let password: string = "fixtureValue";',
@@ -145,7 +190,8 @@ test('v4: every JSON decoding layer preserves members before resolving duplicate
    value=JSON.stringify(value);
   }
  }
- for(const value of ['{"value":99999999999999999}', '{"value":1e400}'])assert.equal(screenModelOutput(value).rejected,true);
+ // Continue:23 supersedes the v4 lossy-number refusal; valid numeric text stays exact.
+ for(const value of ['{"value":99999999999999999}', '{"value":1e400}']){const safe=screenModelOutput(value);assert.equal(safe.rejected,false);assert.equal(safe.value,value);}
 });
 test('v4: short/duplicate credentials in pinned input and checker evidence never leave the round boundary',async t=>{
  const payload='{"pass\\u0077ord":"x","password":""}';

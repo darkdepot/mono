@@ -38,7 +38,9 @@ credentials/grants. Repository text is data, no network tools, connectors, hooks
 or subagents. Codex uses a neutral working directory, ignores user config/rules
 and uses a read-only sandbox; credential reads cannot be denied separately and
 retain worker-level machine read access, accepted by owner 2026-11-01. Claude
-uses only Read/Glob/Grep with a confined repository directory. Host boundary
+uses only Read/Glob/Grep with a confined export directory. Both roles see a
+read-only pinned tree export without `.git`, with symlink targets as text;
+global/system Git config is neutral and the export is removed after the circle. Host boundary
 probes on both installed tools remain required before release. If nested Codex
 execution is unavailable, report the refusal; a host may use two separate local
 read-only role sessions with the same schemas, parsing and boundaries and must

@@ -34,3 +34,5 @@
 - Apply continue:22: pair typed declaration/field initializers with their keys and preserve adjacent source when replacing escape-aware quoted values.
 
 - Bound source-text payload screening to dataset v5 forms; other lexical forms remain MONO-329.
+
+- Apply continue:23: give both roles a read-only pinned export without repository Git configuration; preserve JSON numeric text and redact runtime boolean/null bindings while leaving type-only members alone.
