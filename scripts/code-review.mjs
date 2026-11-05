@@ -325,8 +325,12 @@ function secretAssignments(source) {
     if (!value || (!value.quoted && [';', ',', '}', ']', ')'].includes(value.value))) continue;
     if (operator.value === ':' && member && tokens[parents[index]]?.value === '{' && !value.quoted && /^[A-Za-z_$][\w$]*$/.test(value.value) &&
         !(['true', 'false', 'null'].includes(value.value) && !typeScopes.has(parents[index]))) continue;
-    const env = !value.quoted && !typed && (flag || (operator.value === '=' && !['const', 'let', 'var'].includes(previous?.value)));
-    const envLength = env ? source.slice(value.start).search(/\s|$/) : 0;
+    const envLength = source.slice(value.start).search(/\s|$/);
+    const linePrefix = source.slice(source.lastIndexOf('\n', key.start - 1) + 1, key.start);
+    const shellAssignment = parents[index] === undefined &&
+      /^[ \t]*(?:export[ \t]+)?(?:[A-Za-z_][\w]*=[^\s;]+[ \t]+)*$/.test(linePrefix) &&
+      !source.slice(value.start, value.start + envLength).includes(';');
+    const env = !value.quoted && !typed && (flag || (operator.value === '=' && shellAssignment));
     const end = closes.has(valueIndex) ? tokens[closes.get(valueIndex)].end : env ? value.start + envLength : value.end;
     const following = tokens[(closes.get(valueIndex) ?? valueIndex) + 1];
     if (!env && !value.quoted && !closes.has(valueIndex) && following &&

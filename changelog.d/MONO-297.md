@@ -38,3 +38,5 @@
 - Apply continue:23: give both roles a read-only pinned export without repository Git configuration; preserve JSON numeric text and redact runtime boolean/null bindings while leaving type-only members alone.
 
 - Apply continue:24: redact the complete matched nested literal before considering the env/flag whitespace fallback, including plain assignments after separators.
+
+- Apply continue:26: reserve whitespace-delimited spans for shell env lines and flags; preserve adjacent statements when screening numeric source assignments and class fields.

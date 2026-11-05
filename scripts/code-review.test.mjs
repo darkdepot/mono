@@ -22,6 +22,25 @@ const sample={class:'missing-validation',file:'input.mjs',anchor:'return value',
 const transcripts=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/recorded-responses.json'),'utf8'));
 const dangerControls=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-checker-regressions.json'),'utf8'));
 const key=findingKey(sample);
+test('C26: source assignments and class fields retain adjacent code after numeric redaction',async t=>{
+ const sources=[
+  ['assignment','function add(a,b){let token;token=7;return a+b;}','return a+b;'],
+  ['class field','class Options { token=7;next=2; }','next=2;'],
+ ];
+ for(const [name,source,retained] of sources)await t.test(name,async t=>{
+  const expected=source.replace('token=7','token="[credential-shaped field withheld]"');
+  for(const patch of [false,true]){
+   const input=patch?'+++ b/input.mjs\n@@ -0,0 +1 @@\n+'+source+'\n':source;
+   const wanted=patch?'+++ b/input.mjs\n@@ -0,0 +1 @@\n+'+expected+'\n':expected;
+   const safe=screenModelOutput(input,{input:true,inputFile:'input.mjs',inputPatch:patch});
+   assert.equal(safe.rejected,false);assert.equal(safe.value,wanted);
+  }
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source+'\n');f.git('add','.');f.git('commit','-qm','source numeric binding span');
+  const head=f.git('rev-parse','HEAD'),runner=responder(),record=await runReviewRound({...f.request,head},runner);
+  assert.equal(record.outcome,'clean');assert.equal(runner.calls.length,1);assert.ok(runner.calls[0].prompt.includes(retained));
+  assert.equal(f.git('rev-parse','HEAD'),head);assert.equal(f.git('status','--porcelain'),'');
+ });
+});
 test('C24: nested literal spans precede whitespace fallback for every binding form',async t=>{
  const literal='{ value: "opaque-review-fixture" }';
  const sources=[
