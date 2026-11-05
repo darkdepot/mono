@@ -120,6 +120,18 @@ async function evaluationFixture(t){
  const bundle=path.join(scratch,'heads.bundle');git('bundle','create',bundle,'--all');assert.equal(verifyDatasetBundle(clone,bundle).modelCalls,0);
  return {clone,bundle};
 }
+test('C32: a dangling clean-control symlink cannot create a file outside the checkout',t=>{
+ const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'mono-eval-dangling-'));t.after(()=>fs.rmSync(scratch,{recursive:true,force:true}));
+ const repo=path.join(scratch,'checkout');fs.mkdirSync(repo);
+ const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+ git('init','-q');git('config','user.email','fixture@example.test');git('config','user.name','Fixture');
+ const outside=path.join(scratch,'must-not-exist.md'),file='CODE_REVIEW_EVAL_CONTROL.md';
+ fs.symlinkSync(outside,path.join(repo,file));git('add','.');git('commit','-qm','dangling control');
+ let error;try{materializeCleanControl(repo,{file,content:'Synthetic control.\n',base:git('rev-parse','HEAD'),head:'0'.repeat(40)});}catch(value){error=value;}
+ assert.equal(fs.existsSync(outside),false,'clean control followed the dangling symlink');
+ assert.match(error?.message??'',/clean control would overwrite a historical file/);
+ assert.equal(fs.lstatSync(path.join(repo,file)).isSymbolicLink(),true);
+});
 test('host Git isolation also disables smudge and process filters in evaluation checkouts',async t=>{
  for(const driver of ['smudge','process'])await t.test(driver,async t=>{
   const {clone,bundle}=await evaluationFixture(t),dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-eval-host-filter-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));

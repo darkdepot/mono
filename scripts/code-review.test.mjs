@@ -75,6 +75,18 @@ test('C29/v7: credential families embedded in paths are replaced in every outgoi
   for(const message of ['Cannot read '+value,JSON.stringify({reason:'Inspect '+value}),{reason:'Inspect '+value}])assert.ok(!JSON.stringify(screenModelOutput(message).value).includes(token));
  }
 });
+test('C32: screened diffs preserve hunk rows that resemble file headers',async t=>{
+ const f=fixture(t);
+ fs.writeFileSync(path.join(f.worktree,'input.mjs'),'let counter = 0;\n-- counter;\n');f.git('add','.');f.git('commit','-qm','decrement base');const base=f.git('rev-parse','HEAD');
+ fs.writeFileSync(path.join(f.worktree,'input.mjs'),'let counter = 0;\n++ counter;\n');f.git('add','.');f.git('commit','-qm','increment head');const head=f.git('rev-parse','HEAD');
+ let context;const result=await runReviewRound({...f.request,base,head},{runRole:async request=>{context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};}});
+ assert.equal(result.outcome,'clean',JSON.stringify(result.failures));
+ const rows=context.diff.split('\n');
+ assert.ok(rows.includes('--- counter;'),'removed source row was rewritten as a file header');
+ assert.ok(rows.includes('+++ counter;'),'added source row was rewritten as a file header');
+ assert.equal(rows.filter(line=>line==='--- a/input.mjs').length,1);
+ assert.equal(rows.filter(line=>line==='+++ b/input.mjs').length,1);
+});
 test('C29/v7: screened blob diffs preserve file modes and added/deleted paths',async t=>{
  const f=fixture(t);fs.chmodSync(path.join(f.worktree,'input.mjs'),0o755);fs.writeFileSync(path.join(f.worktree,'added.mjs'),'const ordinary = 1;\n');
  fs.writeFileSync(path.join(f.worktree,'removed.mjs'),'ordinary\n');f.git('add','.');f.git('commit','-qm','mode base');const base=f.git('rev-parse','HEAD');

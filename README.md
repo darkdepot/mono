@@ -1696,7 +1696,7 @@ Exact contract blobs keep their bytes. Worktree reads refuse gitlinks and index
 hints (`assume-unchanged`, `skip-worktree`) before inspecting files.
 Every changed path is secret-screened from both pinned blobs independently of
 attributes; NUL-containing and non-UTF8 blobs return `not-reviewed` before any role.
-Outgoing diffs are computed from screened base/head blobs, never from raw hunks alone. An unscreenable blob withholds its whole file and lists it as unreviewed. Paths and inventories replace credential-family substrings without identifier boundaries in every channel.
+Outgoing diffs use screened base/head blobs; only headers before the first hunk are normalized. An unscreenable blob withholds its whole file and lists it as unreviewed. Paths and inventories replace credential-family substrings without identifier boundaries in every channel.
 
 Outcome vocabulary is `clean`, `clean-with-successors`, `not-converged`,
 `not-reviewed`; this first slice emits no successor admission. It reports

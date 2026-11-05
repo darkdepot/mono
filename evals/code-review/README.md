@@ -147,3 +147,5 @@ entering submodules with independent executable configuration. Both pinned blobs
 of every changed path are scanned regardless of attributes. NUL-containing or
 non-UTF8 blobs are refused before roles; patch scanning still reconstructs both
 hunk sides for multiline assignments. Unsupported helper names fail closed.
+
+Clean controls reject existing entries, including dangling symlinks, and create files exclusively. The raw MONO-302 diff fixture keeps its exact whitespace through a path-specific Git attribute.

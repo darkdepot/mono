@@ -33,8 +33,9 @@ function git(cwd, args, extraEnv = {}, raw = false) {
 export function materializeCleanControl(worktree, control) {
   need(control.file === 'CODE_REVIEW_EVAL_CONTROL.md' && nonempty(control.content), 'invalid clean control file');
   git(worktree, ['checkout', '-q', '--detach', control.base]);
-  need(!fs.existsSync(path.join(worktree, control.file)), 'clean control would overwrite a historical file');
-  fs.writeFileSync(path.join(worktree, control.file), control.content);
+  const target = path.join(worktree, control.file);
+  need(!fs.lstatSync(target, { throwIfNoEntry: false }), 'clean control would overwrite a historical file');
+  fs.writeFileSync(target, control.content, { flag: 'wx' });
   git(worktree, ['add', '--force', '--', control.file]);
   const tree = git(worktree, ['write-tree']);
   const head = git(worktree, ['commit-tree', tree, '-p', control.base, '-m', 'Code review clean document control'], {

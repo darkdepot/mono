@@ -770,8 +770,13 @@ function screenedDiff(worktree, base, head, files) {
       fs.writeFileSync(left, before.value); fs.writeFileSync(right, after.value);
       const output = readGit(scratch, policy.env, policy.args, ['diff', '--no-index', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', '--', before.exists ? left : '/dev/null', after.exists ? right : '/dev/null'], false, null, [0, 1]);
       const name = screenPath(file);
-      const body = output.split('\n').filter(line => !line.startsWith('diff --git ') && !line.startsWith('index ') && !/^(?:new file|deleted file|old|new) mode /.test(line)).map(line =>
-        line.startsWith('--- ') ? '--- ' + (before.exists ? 'a/' + name : '/dev/null') : line.startsWith('+++ ') ? '+++ ' + (after.exists ? 'b/' + name : '/dev/null') : line).join('\n');
+      let inHunk = false;
+      const body = output.split('\n').flatMap(line => {
+        if (line.startsWith('@@ ')) inHunk = true;
+        if (inHunk) return [line];
+        if (line.startsWith('diff --git ') || line.startsWith('index ') || /^(?:new file|deleted file|old|new) mode /.test(line)) return [];
+        return [line.startsWith('--- ') ? '--- ' + (before.exists ? 'a/' + name : '/dev/null') : line.startsWith('+++ ') ? '+++ ' + (after.exists ? 'b/' + name : '/dev/null') : line];
+      }).join('\n');
       const modes = !before.exists ? `new file mode ${after.mode}\n` : !after.exists ? `deleted file mode ${before.mode}\n` : before.mode !== after.mode ? `old mode ${before.mode}\nnew mode ${after.mode}\n` : '';
       parts.push(`diff --git ${JSON.stringify('a/' + name)} ${JSON.stringify('b/' + name)}\n` + modes + body);
     }

@@ -48,3 +48,5 @@
 - Apply continue:30 / dataset v8: remove source block-boundary counting; a matched opener conservatively withholds the full file remainder, preserving diff prefixes across hunks and listing partially withheld files in prompts, round records and reports.
 
 - Apply continue:31: treat unclear gold danger as dangerous in checker calibration; count its removal, block release and leave unsafe calibration incomplete.
+
+- Apply continue:32: reject dangling clean-control symlinks and create exclusively; normalize diff headers only before hunks; preserve the raw MONO-302 fixture with a path-specific whitespace attribute.
