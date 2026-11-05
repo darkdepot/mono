@@ -28,14 +28,15 @@ function screenChildOutput(result, stdoutOptions = {}) {
   });
   return { stdout: safeStdout, stderr: safeStderr, status: result.status, signal: result.signal, error: !!result.error };
 }
-function readGit(worktree, env, options, args, raw = false, outputFd = null) {
+function readGit(worktree, env, options, args, raw = false, outputFd = null, allowedStatuses = [0]) {
   const fileArg = ['show', 'cat-file'].includes(args[0]) ? args.find(arg => /^[^:]+:.+/.test(arg)) : null;
   const captured = spawnSync('git', [...options, ...args], {
     cwd: worktree, env, stdio: ['ignore', outputFd ?? 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024,
   });
-  const result = screenChildOutput(outputFd === null ? captured : { ...captured, stdout: '' }, { input: true, inputFile: fileArg?.slice(fileArg.indexOf(':') + 1) ?? null, inputPatch: args[0] === 'diff' && !args.some(arg => ['--raw', '--name-only', '--name-status', '--numstat'].includes(arg)) });
-  if (result.error || result.status !== 0) throw Object.assign(new Error('Git command failed; captured output withheld'), { status: result.status });
-  return raw ? captured.stdout : result.stdout;
+  const metadata = ['ls-files', 'ls-tree', 'status'].includes(args[0]) || (args[0] === 'diff' && args.some(arg => ['--raw', '--name-only', '--name-status', '--numstat'].includes(arg)));
+  const result = screenChildOutput(outputFd === null && raw !== 'blob' ? { ...captured, stdout: metadata ? screenPath(captured.stdout?.toString('utf8') ?? '') : captured.stdout } : { ...captured, stdout: '' }, { input: true, inputFile: fileArg?.slice(fileArg.indexOf(':') + 1) ?? null, inputPatch: args[0] === 'diff' && !args.some(arg => ['--raw', '--name-only', '--name-status', '--numstat'].includes(arg)) });
+  if (result.error || !allowedStatuses.includes(result.status)) throw Object.assign(new Error('Git command failed; captured output withheld'), { status: result.status });
+  return raw ? captured.stdout : metadata ? captured.stdout.toString('utf8') : result.stdout;
 }
 function gitReadPolicy(worktree, inherited = process.env) {
   const env = Object.fromEntries(Object.entries(inherited).filter(([key]) => !key.startsWith('GIT_')));
@@ -195,6 +196,22 @@ function familyMatches(source) {
   if (jwtMatches(source)) matches.push('JWT candidate');
   return matches;
 }
+// Paths are payload metadata, not identifiers: embedded family values match.
+function screenPath(value) {
+  const original = value;
+  const replace = source => {
+    for (const [, pattern] of SECRET_FAMILIES) source = source.replace(new RegExp(pattern.source, pattern.flags + 'g'), '[credential-shaped path withheld]');
+    // Path prefixes can be part of the first base64url run. Conservatively hide
+    // dotted JWT-shaped path tokens instead of trusting an identifier boundary.
+    return source.replace(/[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+      candidate => jwtMatches(candidate) || /[eICD]/.test(candidate.split('.')[0]) ? '[credential-shaped path withheld]' : candidate);
+  };
+  value = replace(value);
+  const decoded = decodedKey(original);
+  if (decoded === null || (decoded !== original && replace(decoded) !== decoded)) return '[credential-shaped path withheld]';
+  return value;
+}
+
 const SECRET_KEY_SUFFIXES = ['secret', 'token', 'password', 'passwd', 'credential', 'privatekey', 'apikey', 'sessiontoken', 'sessionkey', 'secretaccesskey'];
 function secretKey(key) {
   const name = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
@@ -295,16 +312,24 @@ function screenSourceLines(source, patch) {
     for (const row of rows) if (patch && lines[row.index] !== row.text) prefixes.set(row.index, lines[row.index][0]);
     for (let layer = 0; ; layer++) {
       if (familyMatches(rows.map(row => row.text).join('\n')).length) return { value: '[credential-shaped line withheld]', rejected: true, matches: 1 };
-      let depth = 0;
+      let depth = 0, uncertain = false;
       for (const row of rows) {
-        if (!depth && !SOURCE_BINDING.test(row.text)) continue;
+        if (!uncertain && !depth && !SOURCE_BINDING.test(row.text)) continue;
         hidden.add(row.index);
-        // Quotes have no state here; conservative bracket over-withholding is
-        // intentional, and before/after patch sides never share depth.
+        if (uncertain) continue;
+        // Only block-boundary counting has quote state. Binding recognition
+        // remains stateless, so a regex quote cannot hide a following key.
+        let quote = null, escaped = false;
         for (const char of row.text) {
-          if ('{[('.includes(char)) depth++;
+          if (escaped) { escaped = false; continue; }
+          if (quote) {
+            if (char === '\\') escaped = true;
+            else if (char === quote) quote = null;
+          } else if ('"\'`'.includes(char)) quote = char;
+          else if ('{[('.includes(char)) depth++;
           else if ('}])'.includes(char)) depth = Math.max(0, depth - 1);
         }
+        if (quote) uncertain = true;
       }
       const next = rows.map(row => ({ index: row.index, text: decodeEscapeLayer(row.text) }));
       if (next.length === rows.length && next.every((row, index) => row.text === rows[index].text)) break;
@@ -362,10 +387,6 @@ export function scanSecrets(value, options = {}) {
   }
   const screened = screenModelOutput(value, { input: true, inputFile: options.file, inputPatch: options.patch ?? true });
   return screened.rejected ? [{ file: options.file ?? null, line: 0, weight: 'P0', reason: 'credential-family or undecodable payload; value withheld' }] : [];
-}
-function contextSecrets(value, file = null, patch = false) {
-  const screened = screenModelOutput(value, { input: true, inputFile: file, inputPatch: patch });
-  return screened.rejected ? [{ file, line: 0, weight: 'P0', reason: 'encoded, credential-shaped or undecodable input; value withheld' }] : [];
 }
 function requireSafeContext(value) {
   const screened = screenModelOutput(value, { input: true });
@@ -485,19 +506,33 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
     if (result.value !== source) revision++;
     return result.value;
   };
-  const visit = (entry, depth = 0, file = null, layers = 0, patch = inputPatch) => {
+  const visit = (entry, depth = 0, file = null, layers = 0, patch = inputPatch, pathValue = false) => {
     if (depth > 32 || ++nodes > maxNodes) return hide();
     if (typeof entry === 'string') {
       if (entry.length > MAX_SCREEN_VALUE_BYTES) return hide();
       const size = Buffer.byteLength(entry); bytes += size;
       if (size > MAX_SCREEN_VALUE_BYTES || bytes > maxBytes) return hide();
+      if (pathValue) { const safe = screenPath(entry); if (safe !== entry) revision++; return { value: safe, text: safe }; }
       if (markers.has(entry)) return { value: entry, text: entry };
       if (layers > 8) return hide();
+      if (patch) {
+        let inHunk = false;
+        entry = entry.split('\n').map(line => {
+          if (line.startsWith('diff --git ')) inHunk = false;
+          if (/^@@ /.test(line)) inHunk = true;
+          return !inHunk && /^(?:diff --git |--- |\+\+\+ |rename (?:from|to) )/.test(line) ? screenPath(line) : line;
+        }).join('\n');
+      }
       const stringRevision = revision;
       // Check raw credential families before parsing can discard any member.
       if (scanPayloadText(entry, { file, patch, bindings: false }).length) {
         rejected = true; revision++; secretMatches++; return { value: lineHidden, text: lineHidden };
       }
+      // A path can also occur in prose, a diff header, or an echoed tool error.
+      // Preserve surrounding bytes while applying the same unbounded table.
+      const pathText = entry.replace(/[^\s"'<>`]+/g, token =>
+        token.includes('/') || /\.[A-Za-z0-9]{1,12}[,:;)}\]]*$/.test(token) ? screenPath(token) : token);
+      if (pathText !== entry) { entry = pathText; revision++; }
       let parsed, decoded = false;
       try { parsed = JSON.parse(entry.trim(), (_key, child, context) =>
         typeof child === 'number' ? JSON.rawJSON(context.source) : child); decoded = true; } catch {}
@@ -559,13 +594,13 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
     else if (typeof entry.id === 'string' && Object.hasOwn(filesById, entry.id)) file = filesById[entry.id];
     if (Array.isArray(entry)) {
       if (entry.length > maxNodes) return hide();
-      const children = entry.map(item => visit(item, depth + 1, file, layers, patch)), joined = children.map(child => child.text).join('\n');
+      const children = entry.map(item => visit(item, depth + 1, file, layers, patch, pathValue)), joined = children.map(child => child.text).join('\n');
       const safe = input ? joined : redact(joined, file);
       return { value: safe === joined ? children.map(child => child.value) : safe, text: safe };
     }
     const entries = Object.entries(entry); if (entries.length > maxNodes) return hide();
     const children = entries.map(([key, content]) => {
-      const keyResult = visit(key, depth + 1, file, layers, patch), child = visit(content, depth + 1, file, layers, input ? ['diff', 'baseDiff'].includes(key) : patch);
+      const keyResult = visit(key, depth + 1, file, layers, patch), child = visit(content, depth + 1, file, layers, input ? ['diff', 'baseDiff'].includes(key) : patch, ['file', 'files', 'path', 'paths', 'worktree', 'reviewedFiles', 'focusFiles', 'symlinks', 'unreviewedFiles'].includes(key));
       const name = typeof keyResult.value === 'string' ? decodedKey(keyResult.value) : null;
       if (name === null) return { name: withheld, ...hide() };
       if (secretKey(name) && credentialValue(content) && !markers.has(content)) {
@@ -711,6 +746,41 @@ function promptFor(packRoot, role, context) {
     + JSON.stringify(safe.context);
 }
 
+// Produce payload diffs only from full, screened blobs; hunk context cannot
+// expose a value whose binding sits outside that context.
+function screenedDiff(worktree, base, head, files) {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-screened-diff-'));
+  const withheld = [], parts = [];
+  try {
+    const policy = gitReadPolicy(worktree);
+    for (const file of files) {
+      const sides = [];
+      for (const revision of [base, head]) {
+        const treeEntry = git(worktree, ['ls-tree', revision, '--', file]);
+        const exists = !!treeEntry, mode = treeEntry.slice(0, 6);
+        if (!exists) { sides.push({ exists, value: '' }); continue; }
+        try {
+          const bytes = readGit(worktree, policy.env, policy.args, ['cat-file', 'blob', `${revision}:${file}`], 'blob');
+          requireValue(!bytes.includes(0), 'unreadable blob');
+          const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+          const safe = screenModelOutput(content, { input: true, inputFile: file });
+          requireValue(!safe.rejected && typeof safe.value === 'string', 'blob withheld');
+          sides.push({ exists, mode, value: safe.value });
+        } catch { withheld.push(screenPath(file)); break; }
+      }
+      if (sides.length !== 2) continue;
+      const [before, after] = sides, left = path.join(scratch, 'before'), right = path.join(scratch, 'after');
+      fs.writeFileSync(left, before.value); fs.writeFileSync(right, after.value);
+      const output = readGit(scratch, policy.env, policy.args, ['diff', '--no-index', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', '--', before.exists ? left : '/dev/null', after.exists ? right : '/dev/null'], false, null, [0, 1]);
+      const name = screenPath(file);
+      const body = output.split('\n').filter(line => !line.startsWith('diff --git ') && !line.startsWith('index ') && !/^(?:new file|deleted file|old|new) mode /.test(line)).map(line =>
+        line.startsWith('--- ') ? '--- ' + (before.exists ? 'a/' + name : '/dev/null') : line.startsWith('+++ ') ? '+++ ' + (after.exists ? 'b/' + name : '/dev/null') : line).join('\n');
+      const modes = !before.exists ? `new file mode ${after.mode}\n` : !after.exists ? `deleted file mode ${before.mode}\n` : before.mode !== after.mode ? `old mode ${before.mode}\nnew mode ${after.mode}\n` : '';
+      parts.push(`diff --git ${JSON.stringify('a/' + name)} ${JSON.stringify('b/' + name)}\n` + modes + body);
+    }
+    return { diff: parts.join(''), withheld: [...new Set(withheld)] };
+  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+}
 // The only round boundary. Callers persist/sign the returned record; manual mode only prints it.
 async function reviewRound(input, { runRole = executeRole } = {}) {
   const { worktree, head, base, contract, risk = 'standard', config = {}, packRoot = runtimePackRoot() } = input;
@@ -731,25 +801,19 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     const identity = treeIdentity(worktree);
     const roles = resolveReviewRoles(config, packRoot);
     assertReadableWorktree(worktree);
-    const diff = git(worktree, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', base, head, '--']);
     requireValue(!git(worktree, ['diff', '--raw', '--no-renames', base, head, '--']).split('\n')
       .some(row => /^:(?:160000 \d{6}|\d{6} 160000) /.test(row)), 'gitlink changes are unsupported; review the submodule separately');
-    const secrets = scanSecrets(diff);
-    if (secrets.length) return { ...fail('secret patterns in diff; no model launched'), secrets };
-    const allFiles = git(worktree, ['diff', '--name-only', '--no-renames', '-z', base, head, '--']).split('\0').filter(Boolean);
-    for (const revision of [base, head]) for (const file of allFiles) {
-      if (!git(worktree, ['ls-tree', revision, '--', file])) continue;
-      const bytes = git(worktree, ['cat-file', 'blob', `${revision}:${file}`], {}, true);
-      requireValue(!bytes.includes(0), 'opaque blob changes are unsupported; no model launched');
-      let content;
-      try { content = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
-      catch { throw new Error('non-UTF8 blob changes are unsupported; no model launched'); }
-      secrets.push(...contextSecrets(content, file));
-    }
-    if (secrets.length) return { ...fail('secret patterns in pinned blobs; no model launched'), secrets };
-    const previous = record.rounds.at(-1)?.head;
-    const files = number === 2 ? git(worktree, ['diff', '--name-only', '--no-renames', '-z', previous, head, '--']).split('\0').filter(Boolean) : allFiles;
-    const scopeDiff = number === 2 ? git(worktree, ['diff', '--no-ext-diff', '--no-textconv', previous, head, '--']) : diff;
+    const rawFiles = git(worktree, ['diff', '--name-only', '--no-renames', '-z', base, head, '--']).split('\0').filter(Boolean);
+    const paths = new Map(rawFiles.map(file => [screenPath(file), file]));
+    requireValue(paths.size === rawFiles.length, 'screened paths collide; files not reviewed');
+    const allFiles = [...paths.keys()], full = screenedDiff(worktree, base, head, rawFiles);
+    if (full.withheld.length) return { ...fail('pinned blobs withheld; files not reviewed'), unreviewedFiles: full.withheld,
+      secrets: full.withheld.map(file => ({ file, line: 0, weight: 'P0', reason: 'unreadable or credential-shaped blob; file withheld' })) };
+    const diff = full.diff, previous = record.rounds.at(-1)?.head;
+    const scopeFiles = number === 2 ? git(worktree, ['diff', '--name-only', '--no-renames', '-z', previous, head, '--']).split('\0').filter(Boolean) : rawFiles;
+    const files = scopeFiles.map(screenPath), scoped = number === 2 ? screenedDiff(worktree, previous, head, scopeFiles) : full;
+    if (scoped.withheld.length) return { ...fail('scope blobs withheld; files not reviewed'), unreviewedFiles: scoped.withheld };
+    const scopeDiff = scoped.diff;
     const rules = git(worktree, ['ls-tree', head, '--', 'AGENTS.md']) ? git(worktree, ['show', `${head}:AGENTS.md`]) : '';
     exported = exportReviewTree(worktree, head);
     const context = { worktree: exported.root, symlinks: exported.symlinks, head, base, contract, rules, round: number, scope: number === 2 ? 'fixes-and-open-findings' : 'full', files, diff: scopeDiff };
@@ -793,7 +857,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     requireValue(missing().length === 0, 'incomplete changed-file coverage after focused pass');
     const findings = [...new Map([...open, ...found].map(finding => [finding.key, finding])).values()];
     const baseEvidence = [...new Set(findings.map(finding => finding.file))].map(file => ({ file,
-      content: git(worktree, ['ls-tree', base, '--', file]) ? git(worktree, ['show', `${base}:${file}`]) : null }));
+      content: git(worktree, ['ls-tree', base, '--', paths.get(file) ?? file]) ? git(worktree, ['show', `${base}:${paths.get(file) ?? file}`]) : null }));
     const checked = findings.length ? (await call('code-review-checker', { findings: findings.map(({ key, ...finding }, index) => ({ ...finding, id: `F${index + 1}` })),
       history: record.findings.filter(item => findings.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${findings.findIndex(f => f.key === key) + 1}` })), baseDiff: diff, baseEvidence }, value => parseChecker(value, findings))).verdicts : [];
     requireValue(treeIdentity(worktree) === identity, 'HEAD/tree changed during review; result discarded');
@@ -803,7 +867,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       if (old && ['closed', 'rejected'].includes(old.status) && !verdict.newEvidence) continue;
       let afterFirstRound = old?.afterFirstRound ?? false;
       if (!old && previous) {
-        const changed = git(worktree, ['diff', '--unified=2', record.rounds[0].head, head, '--', finding.file]);
+        const changed = git(worktree, ['diff', '--unified=2', record.rounds[0].head, head, '--', paths.get(finding.file) ?? finding.file]);
         afterFirstRound = [...changed.matchAll(/^@@ .*\+(\d+)(?:,(\d+))? @@/gm)].some(match => finding.line >= Number(match[1]) && finding.line < Number(match[1]) + Number(match[2] ?? 1));
       }
       merged.set(verdict.key, { ...finding, ...verdict, status: verdict.closed ? 'closed' : verdict.outcome,
