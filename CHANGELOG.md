@@ -6,6 +6,111 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-11-05
+
+<!-- fragment: MONO-281 sha256:b8320d0bfd0e9b9f69047157e7dcf356eab67e699fb9c7fca7b8c29b6ec508f8 -->
+### Fixed
+
+- QA instructions isolate given-version history, require report read-back, define synthetic stand seeding and exact copy/container evidence, and cover complete state transitions. Recipes document the observed Maestro fallback for simulator taps.
+
+<!-- fragment: MONO-286 sha256:7f392141fc651211e68368c06763e866e21c79905fd5936c479efc9e9879bbbd -->
+### Fixed
+
+- QA gates wait for missing project PRs while rejecting corrupt heads, limit ambiguous latest-merge failures to tied or held tasks, and report a single `QA:` prefix. Deploy preparation names missing config files without raw filesystem errors.
+
+<!-- fragment: MONO-302 sha256:9e88b32bec660d147b355964c6bd03a881dea2e8363a5501333e03495dcf2246 -->
+Исправлены контракт снимка задачи проекта, подстановка текста с двойными фигурными скобками, распознавание ведущего AFK и отклонение неполного подтверждения gates-passed. Каждый случай закреплён регрессионными тестами.
+
+<!-- fragment: MONO-304 sha256:dfe61398720aafb3a31c646ff5b5a3cd9f8fa2b8e05a20cd468d01595c252a00 -->
+## MONO-304
+
+- В репозитории Mono включён путь задач без проекта: одна небольшая задача на один PR идёт через `mono:issue` с утверждением владельца.
+
+<!-- fragment: MONO-308 sha256:f97db2112b2f293963c146eef1eab33c5f21b73585ba6e986e124e13e70e335d -->
+- Проверка этапов получила opt-in `expectedReplies`: текстовые ответы владельца с заранее заданным исходом, привязку к последнему завершённому ходу, дословному ответу и согласованной версии, проверки поправок, делегирования, запрета окон и разных концовок. Старые сценарии с окнами сохранены до T2.
+
+Текстовые сценарии заранее задают допустимый полный ответ этапа после последней реплики владельца; лишние вопросы, предложения старта и завершённые ходы больше не пропускаются.
+
+Поправки сохраняют replacement-токены буквально; Claude probe передаёт границу начала этапа и не принимает подготовительные ходы за разговор этапа.
+
+Привязка утверждения проверяет всю показанную версию, исключая только дословное обрамление из заранее заданного сценария; согласованная подмена binding и записи фрагментом больше не проходит.
+
+Переходы этапов через поддерживаемый literal Codex exec проверяют декодированные аргументы так же, как прямые вызовы. Scout-сессии сохраняют полный аудит, а ожидания диалога получают только из собственного сценария.
+
+В цепочке нескольких этапов каждый переход проверяется по этапу и разрешению предыдущего фактического ответа владельца; согласие на более ранний старт не разрешает последующий отложенный переход.
+
+Literal Codex exec передаёт аргументы Skill, Agent и Task во все проверки старта. Ожидаемое утверждение требует настоящей записи, проверенной по полной показанной версии и ответу; одного обещания этапа недостаточно.
+
+Подстрочный якорь вопроса больше не отклоняет правильное утверждение: framing по умолчанию использует фактическую строку вопроса, сохраняя полную проверку показанного текста и явного literal framing.
+
+Основные и scout-сессии используют одно правило завершённости нативного хода: прежний успех не закрывает новый хвост. Матрица обоих хостов сохраняет допустимые завершённые tool-only ходы скаутов и проверяет текстовые ходы отдельно.
+
+Старт нового нативного хода сохраняет ожидающий ответ на показанную версию. Правильное согласие и четыре вида подмены проверяются в обоих порядках task_started/ответа с настоящими turn_id; драйвер использует эти порядки для всех видов ответов.
+
+Режим с настоящими turn_id сохраняется после закрытия хода, поэтому терминал без ID не закрывает новое продолжение. Raw reasoning учитывается как активность; четыре отрицательных случая основного разговора и скаута стали постоянными проверками.
+
+<!-- fragment: MONO-309 sha256:ef778f1e5048026d123597129303cfc69279440380b4c474c04c2464d84e6730 -->
+# MONO-309
+
+Этапы Idea, Research, Discovery, Design, Tech Evaluation и Handoff заканчивают
+ход полным итогом, позицией и вопросом в чате. Согласие словами записывается
+дословно с согласованной версией; названная мелкая поправка не требует второго
+показа. Старт и передача оркестратору требуют соответствующего согласия.
+
+Каталог и активный драйвер используют ответы словами T1. Старые записи и
+оконные следы совместимы; оконный транспорт доступен только историческим
+тестовым фикстурам. Явно изменён контракт проекта и его SHA-256. Пины наличия
+request_user_input/async и заголовка «Правила окна» заменены общим правилом:
+этапы не вызывают окна, что проверяется нативными текстовыми сценариями.
+Выпуск и живой прогон двух приложений остаются MONO-310.
+
+U7: краткий итог связан с нативным документом по id и SHA-256 тела до показа и
+после ответа. Роль/исход/якоря и обязательная рубрика допускают естественные
+формулировки и отвергают подмену смысла. Поправка меняет только названный фрагмент.
+Старт перехватывает тестовый драйвер: нужны заранее заданное разрешение и нативное
+действие этапа после ответа; в делегированном этапе следующего старта нет.
+Исторические оконные декодеры вынесены из активных scripts/skills-*.mjs в фикстуры.
+
+Исправлены чтения документов по slug и ложный отказ на упоминание отложенного
+этапа. Поправка Handoff остаётся в проверке задачи, не меняя требования. Драйвер
+не начинает следующий этап до passed рубрики, даже при полученном сигнале старта.
+
+Цепочка проверки возобновляется после проверки сохранённых нативных доказательств
+с тем же rubricDigest, без повторного запуска этапа или сбора дампа. Изменённые
+доказательства, failed и unverified блокируют переход. Поправка сценария Design
+меняет только картинку: колонка шире, источник остаётся после имени прогона.
+
+Поправка Idea сверяется с полным согласованным снимком той же реплики владельца,
+а тело созданного проекта — отдельно с его первыми тремя разделами. Отсутствующий
+снимок, чужой обмен, неверный порядок записей и посторонние изменения отвергаются.
+
+Убраны оставшиеся подписи и списки ответов из брифа оркестратора, правила нарезки
+Handoff и примеров Discovery/Handoff. Проверка AC1 читает всю область действующих
+skills и templates вместе с общими правилами разговора, а не только шесть этапов.
+
+<!-- fragment: MONO-310 sha256:34c8a4e242a8570e0ecba281e8dec7a6fc57e1f187aaa742309ec9a6c46199c7 -->
+### Release 0.43.0
+
+- Breaking pre-1.0 change: stage approvals and transitions use final chat results
+  and spoken consent instead of choice windows. Machine record formats and
+  surface revision 5 remain unchanged; clicked and spoken records remain valid
+  in both directions. Rollback to 0.42.x restores windows.
+- Assemble the task fragments and align VERSION and both plugin manifests at
+  0.43.0. Document session warnings/checks before installation, fresh stage
+  sessions afterward, released tip/tag/cache proof and rollback.
+- Claude Code: passed pre-release by the orchestrator on 05.11.2026 from
+  28f5de4, with no installation. Codex app and Desktop: post-install orchestrator
+  check before Done; installation/version proof and owner acceptance remain
+  deploy-stage items. A post-install window or lost consent holds closeout for
+  a hotfix or rollback. Known residuals: MONO-340, MONO-328 and MONO-312.
+
+<!-- fragment: MONO-322 sha256:f3fabca1200b27da6e9d63e5a5758744d74ce5471b125e11f7a40899071dd90a -->
+### Changed
+
+- Recorded the managed Claude PR publication probe: existing permissions support published replies, thread resolution and bot comments. Added raw GitHub fixtures and replay checks, including a stop on a denied bare write and retry after a compound-call denial; transport permissions remain unchanged.
+- Classified the exact archived journal and launch-capture paths as probe data for model-policy validation, while retaining checks on neighboring documentation and executable code.
+- Removed instruction-sentence pins: archive/version structure and recorded-command behavior remain checked, while instruction meaning and qualifiers are reviewed as prose.
+
 ## [0.42.0] - 2026-11-03
 
 <!-- fragment: MONO-287 sha256:678a8049198cb8162340fbff219af81d6f49dd6e982406a8144fdb2ecc3aa590 -->
