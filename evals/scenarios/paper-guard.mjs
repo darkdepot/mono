@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Probe-derived stdio relay. The caller supplies the test file; no active-file fallback.
+// Probe-derived stdio relay. The caller supplies the test files; no active-file fallback.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,8 +11,8 @@ const forbidden = new Set(['create_file','create_folder','archive_resources','un
 export function scopedTool(tool) {
   return tool.name === 'get_guide' || (!forbidden.has(tool.name) && Object.hasOwn(tool.inputSchema?.properties ?? {}, 'fileId'));
 }
-export function paperCallAllowed(fileId, tools, name, args) {
-  return typeof fileId === 'string' && fileId.trim() && tools.has(name) && !forbidden.has(name) && args?.fileId === fileId;
+export function paperCallAllowed(fileIds, tools, name, args) {
+  return Array.isArray(fileIds) && fileIds.length > 0 && fileIds.every(id => typeof id === 'string' && id.trim()) && tools.has(name) && !forbidden.has(name) && fileIds.includes(args?.fileId);
 }
 
 function copyExports(result, request, log) {
@@ -69,8 +69,8 @@ function copyExports(result, request, log) {
 }
 
 export function relayPaper(request) {
-  if (typeof request.fileId !== 'string' || !request.fileId.trim() || typeof request.command !== 'string' || !request.command.trim() ||
-      !Array.isArray(request.args) || request.args.some(v => typeof v !== 'string') || typeof request.log !== 'string') throw new Error('explicit fileId, command, args and log required');
+  if (!Array.isArray(request.fileIds) || !request.fileIds.length || request.fileIds.some(id => typeof id !== 'string' || !id.trim()) || typeof request.command !== 'string' || !request.command.trim() ||
+      !Array.isArray(request.args) || request.args.some(v => typeof v !== 'string') || typeof request.log !== 'string') throw new Error('explicit nonempty fileIds, command, args and log required');
   const child = spawn(request.command,request.args,{stdio:['pipe','pipe','inherit']});
   const tools = new Map(), pending = new Map();
   const log = value => fs.appendFileSync(request.log,JSON.stringify(value)+'\n');
@@ -79,8 +79,8 @@ export function relayPaper(request) {
   const client = msg => {
     if (msg.method === 'tools/call') {
       const {name,arguments:args} = msg.params ?? {};
-      if (!paperCallAllowed(request.fileId,tools,name,args)) {
-        log({kind:'blocked',tool:name,fileId:args?.fileId ?? null}); blocked(msg.id,'known scoped tool and exact request fileId required'); return;
+      if (!paperCallAllowed(request.fileIds,tools,name,args)) {
+        log({kind:'blocked',tool:name,fileId:args?.fileId ?? null}); blocked(msg.id,'known scoped tool and allowed request fileId required'); return;
       }
       log({kind:'forwarded',tool:name,fileId:args.fileId});
       if (name === 'get_guide') {
