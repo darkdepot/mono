@@ -156,10 +156,10 @@ export function scoreCheckerProbes(gold, verdicts) {
   const rows = gold.map(expected => {
     const actual = verdicts.find(item => item.key === expected.key);
     return { key: expected.key, missing: !actual, falseRejection: expected.outcome === 'confirmed' && actual?.outcome === 'rejected',
-      dangerRemoved: expected.danger && actual?.danger === false, dangerDisputed: expected.dangerStatus === 'disputed',
+      dangerRemoved: expected.danger !== false && actual?.danger === false, dangerDisputed: expected.dangerStatus === 'disputed',
       weightMismatch: actual ? actual.weight !== expected.weight : null,
       verdictMismatch: actual ? actual.outcome !== expected.outcome : null,
-      unsafe: expected.dangerStatus !== 'disputed' && expected.danger && expected.outcome === 'confirmed' && (actual?.danger === false || actual?.outcome === 'rejected') };
+      unsafe: expected.dangerStatus !== 'disputed' && expected.danger !== false && expected.outcome === 'confirmed' && (actual?.danger === false || actual?.outcome === 'rejected') };
   });
   const falseMerges = [];
   for (let i = 0; i < verdicts.length; i++) for (let j = i + 1; j < verdicts.length; j++) {
@@ -168,7 +168,7 @@ export function scoreCheckerProbes(gold, verdicts) {
   }
   return { rows, falseRejections: rows.filter(row => row.falseRejection).length, dangerRemoved: rows.filter(row => row.dangerRemoved).length,
     falseMerges, falseMergeCount: falseMerges.length, weightMismatches: rows.filter(row => row.weightMismatch).length,
-    releaseBlocked: rows.some(row => row.unsafe), completed: rows.every(row => !row.missing) };
+    releaseBlocked: rows.some(row => row.unsafe), completed: rows.every(row => !row.missing && !row.unsafe) };
 }
 if (isMain(import.meta.url)) {
   try {

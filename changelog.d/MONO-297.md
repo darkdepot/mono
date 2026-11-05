@@ -46,3 +46,5 @@
 - Apply continue:29 / dataset v7: construct outgoing diffs from screened base/head blobs, list unscreenable files as unreviewed, ignore quoted block delimiters and withhold the remainder on unclear quotes, and redact credential-family substrings in paths without identifier boundaries.
 
 - Apply continue:30 / dataset v8: remove source block-boundary counting; a matched opener conservatively withholds the full file remainder, preserving diff prefixes across hunks and listing partially withheld files in prompts, round records and reports.
+
+- Apply continue:31: treat unclear gold danger as dangerous in checker calibration; count its removal, block release and leave unsafe calibration incomplete.

@@ -90,6 +90,9 @@ removed danger, incorrect severity and merging distinct causes independently.
 An undisputed known real dangerous case rejected or stripped of danger blocks release until
 the cause is fixed and rechecked. A reviewer miss is an enhancement with cause
 analysis, not a release veto. Unreviewed probes stay missing, never pass.
+Gold `danger: null` is dangerous until explicitly false, as in the round. Removing
+it counts as removed danger; an unsafe calibration sets `releaseBlocked: true`
+and `completed: false`, even when every probe has an answer.
 
 Before merge the host owns: live write/network/credential/config/hook refusal
 tests on both tools; manual invocation from both systems (or explicitly recorded

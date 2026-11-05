@@ -81,6 +81,22 @@ test('checker calibration blocks dangerous false rejections/removal, and counts 
  assert.equal(scoreCheckerProbes(gold,[]).completed,false);assert.throws(()=>scoreCheckerProbes([],[]),/gold/);assert.throws(()=>scoreCheckerProbes(gold,[{key:'unknown'}]),/unknown/);
  assert.equal(scoreCheckerProbes(gold,gold).releaseBlocked,false);
 });
+test('C31: checker calibration keeps unclear gold danger dangerous until explicitly false',()=>{
+ const gold={key:'uncertain-probe',outcome:'confirmed',danger:null,weight:'P2',mergeKey:'synthetic-cause'};
+ for(const outcome of ['confirmed','rejected']){
+  const result=scoreCheckerProbes([gold],[{...gold,outcome,danger:false}]);
+  assert.equal(result.dangerRemoved,1);
+  assert.equal(result.rows[0].dangerRemoved,true);
+  assert.equal(result.rows[0].unsafe,true);
+  assert.equal(result.releaseBlocked,true);
+  assert.equal(result.completed,false);
+ }
+ const retained=scoreCheckerProbes([gold],[gold]);
+ assert.equal(retained.dangerRemoved,0);assert.equal(retained.releaseBlocked,false);assert.equal(retained.completed,true);
+ const safe={...gold,danger:false};
+ const safeResult=scoreCheckerProbes([safe],[safe]);
+ assert.equal(safeResult.dangerRemoved,0);assert.equal(safeResult.releaseBlocked,false);assert.equal(safeResult.completed,true);
+});
 test('historical checker replies retain disagreements and independent batches, not declared new-role passes',()=>{
  const archive=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/historical-checker.json'),'utf8'));
  assert.equal(archive.batches.length,6);assert.equal(archive.batches.filter(batch=>batch.source==='checker').flatMap(batch=>batch.responses).length,60);

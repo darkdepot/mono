@@ -1761,6 +1761,7 @@ It also runs the recorded code-review round and evaluation fixtures:
 These prove parsing, coverage, secret refusal and result calculation; host
 isolation and live model quality remain host checks, as described in the
 [review dataset](evals/code-review/README.md).
+Checker calibration treats unclear gold danger as dangerous; removing it blocks release and leaves calibration incomplete.
 
 Design approval regressions cover legacy `paper=`, new `canvas`/`tool`, mixed or
 incomplete fields and a damaged latest record through the shared reader and the
