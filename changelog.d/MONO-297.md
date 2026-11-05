@@ -40,3 +40,5 @@
 - Apply continue:24: redact the complete matched nested literal before considering the env/flag whitespace fallback, including plain assignments after separators.
 
 - Apply continue:26: reserve whitespace-delimited spans for shell env lines and flags; preserve adjacent statements when screening numeric source assignments and class fields.
+
+- Apply continue:28 / dataset v6: replace lexical source-binding spans with stateless whole-line/bracket-block screening, map decoded hits to original lines without rewriting escapes, and remove dead lexical-binding code. This supersedes v4–continue:26 source-span rules; JSON pairing/fail-closed checks, credential families and real-byte launch/parser regressions remain.

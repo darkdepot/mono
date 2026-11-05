@@ -15,10 +15,11 @@ not successful live role runs or a new calibration measurement.
 - `checker-r3.json`: nine reconstructed r3 answers and their exact finding fields,
   using the same field selection as the host replay. No changed reasons or merge keys.
 
-The tests require a completed round and 9/9 accepted answers. Continue:19's
-approved lexical rules treat `risk-repeat-stratification`, the quoted test title
-containing `token:` and native prose containing `credential:` as benign. Their
-bytes stay unchanged. Credential probes still run independently through the same
-screen, with no path, filename or exact-string exemptions. Model responses in
-these regressions are recorded fixtures; the orchestrator must still repeat live
-manual checks from both host systems before merge.
+The tests require a completed round and 9/9 accepted answers. Dataset v6's
+stateless source line rule supersedes the earlier lexical-span expectations:
+a matched line/block may be hidden, but must not prevent launch or parsing.
+Unmatched source bytes, including regex escapes, stay exact. The native catalog,
+MONO-302 diff, tiny request and nine checker answers retain their pinned bytes.
+Credential probes run through the same screen without path or string exemptions.
+Model responses here are recorded fixtures; the orchestrator must still repeat
+live manual checks from both host systems before merge.

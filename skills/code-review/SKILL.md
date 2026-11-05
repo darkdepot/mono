@@ -45,3 +45,5 @@ probes on both installed tools remain required before release. If nested Codex
 execution is unavailable, report the refusal; a host may use two separate local
 read-only role sessions with the same schemas, parsing and boundaries and must
 report the actual families. Never silently substitute a tool or model.
+
+Payload screen: source diffs/blobs and non-JSON tool output use stateless secret-key lines and bracketed blocks; decoded hits hide original lines without rewriting escapes. JSON keeps key/value rule 2 and fail-closed decoding; credential families apply everywhere. Other source forms (templates, computed keys, concatenation, heredocs, unbracketed split values) remain MONO-329.
