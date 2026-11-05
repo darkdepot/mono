@@ -7,6 +7,25 @@ import { spawnSync } from 'node:child_process';
 import * as runtime from './runtime.mjs';
 
 const risks = ['tiny', 'standard', 'deep', 'risky', 'riskyCritical'];
+test('design config accepts paper/wonder or omitted tool and rejects unsupported values clearly', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-design-config-'));
+  try {
+    const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
+    fs.mkdirSync(path.join(root, '.agents'));
+    for (const [design, valid] of [
+      [undefined, true], [{}, true], [{ tool: 'paper' }, true], [{ tool: 'wonder' }, true],
+      [{ tool: 'figma' }, false], [{ tool: null }, false], [{ tool: 1 }, false],
+      [null, false], [[], false], ['wonder', false],
+    ]) {
+      config.design = design;
+      fs.writeFileSync(path.join(root, '.agents/mono-workflow.config.json'), JSON.stringify(config));
+      const result = spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
+      assert.equal(result.status, valid ? 0 : 1, `${JSON.stringify(design)}: ${result.stderr}`);
+      if (!valid) assert.match(result.stderr, /design/);
+      if (design && Object.hasOwn(design, 'tool') && !valid) assert.match(result.stderr, /design.tool.*paper.*wonder/);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 test('ideaGate validates optional cutoff and four custom heading names', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-idea-config-'));
   try {

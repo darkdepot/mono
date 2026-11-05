@@ -246,6 +246,14 @@ function validateConfig(config, failures) {
       failures.push(`Project config deployApproval must be one of: ${allowed.join(", ")}`);
     }
   }
+  if ("design" in config) {
+    const design = config.design;
+    if (!design || typeof design !== "object" || Array.isArray(design)) {
+      failures.push("Project config design must be an object");
+    } else if ("tool" in design && !["paper", "wonder"].includes(design.tool)) {
+      failures.push("Project config design.tool must be one of: paper, wonder (omitted defaults to paper)");
+    }
+  }
   if ("issueOnlyLane" in config) {
     const lane = config.issueOnlyLane;
     if (typeof lane !== "object" || lane === null || typeof lane.enabled !== "boolean") {

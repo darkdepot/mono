@@ -51,6 +51,31 @@ test('enabled design binds PRD approval and immutable PNG version using shell di
   check('tech','pass');
 }));
 
+for (const tool of ['paper', 'wonder']) test(`canvas approval with tool=${tool} keeps design and route valid`, () => fixture(({ change, check }) => {
+  change('comments-1.json', p => { p.comments[1].body = p.comments[1].body.replace('paper=https://app.paper.design/file/demo', `canvas=https://example.test/design tool=${tool}`); });
+  assert.equal(check('design', 'pass').recordId, '44444444-4444-4444-4444-444444444444');
+  assert.deepEqual(check('route', 'pass').requiredRecords, ['design', 'tech']);
+  check('tech', 'pass');
+}));
+
+for (const fields of [
+  'paper=https://example.test/old canvas=https://example.test/new tool=paper',
+  'paper=https://example.test/old canvas=https://example.test/new',
+  'paper=https://example.test/old tool=paper',
+  'canvas=https://example.test/new', 'tool=paper',
+  'canvas=https://example.test/new tool=figma',
+  'canvas=http://example.test/new tool=wonder',
+  'canvas=https://example.test/new tool=paper tool=wonder',
+]) test(`newest malformed design never falls back: ${fields}`, () => fixture(({ change, check }) => {
+  change('comments-1.json', p => {
+    const latest = structuredClone(p.comments[1]);
+    latest.id = '55555555-5555-5555-5555-555555555555'; latest.createdAt = latest.updatedAt = '2026-10-22T01:00:00.000Z';
+    latest.body = latest.body.replace('paper=https://app.paper.design/file/demo', fields);
+    p.comments.unshift(latest);
+  });
+  for (const command of ['design', 'route', 'tech']) assert.equal(check(command, 'bad-record').stage, 'mono:design');
+}));
+
 test('enabled design reports absent record and changed PRD independently', () => fixture(({ change, check }) => {
   change('prd.json', d => { d.updatedAt='2026-10-22T01:00:00.000Z'; });
   check('design','stale-prd');

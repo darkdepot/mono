@@ -1,0 +1,1 @@
+- Design approvals now write `canvas` and `tool=paper|wonder`; one shared reader keeps legacy Paper approvals valid and rejects mixed or incomplete records without falling back from a damaged latest approval. Product config validates optional `design.tool` (`paper` by default, or `wonder`). Immutable PNG archives and pinned contracts are unchanged.

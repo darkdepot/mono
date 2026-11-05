@@ -17,7 +17,7 @@ import { nativeRecords, resultFor, callInput } from './skills-record-data.mjs';
 import { correctedVersion, isOwnerWindow, anchored, checkAnchors } from './skills-owner.mjs';
 import { checkRubric, rubricDigest } from './skills-rubric.mjs';
 import { stageDriverTool, permittedStages } from './skills-stage-driver.mjs';
-import { latestApproval, approvalBlocks } from './idea-gate.mjs';
+import { latestApproval, latestDesignApproval, approvalBlocks } from './idea-gate.mjs';
 
 const read=file=>JSON.parse(fs.readFileSync(file,'utf8'));
 const rawRead=file=>{try{return unwrap(read(file));}catch(error){missing(error.code==='ENOENT'?`incomplete dump: missing ${path.basename(file)}`:`error MCP dump: ${file}`);}};
@@ -236,12 +236,13 @@ const sha256=value=>createHash('sha256').update(value).digest('hex');
 function versionApproval(write){
  const body=writeBody(write),schemas=[
   ['mono-prd: approved',['project','document','updatedAt','by'],['next','design']],
-  ['mono-design: approved',['project','prd','prd-updatedAt','paper','images','next','by'],[]],
+  ['mono-design: approved'],
   ['mono-tech: approved',['project','prd','prd-updatedAt','spec','spec-sha256','page-sha256','by'],['design']],
   ['mono-package: start',['project','record','sha256','issues','by'],['research']]
  ];
  const records=schemas.flatMap(([kind,required,optional])=>{
-  const record=latestApproval([{...write.value,body}],kind,required,optional);return record?[{kind,...record}]:[];
+  const comments=[{...write.value,body}];
+  const record=kind==='mono-design: approved'?latestDesignApproval(comments):latestApproval(comments,kind,required,optional);return record?[{kind,...record}]:[];
  });
  if(records.length!==1)throw new Error('written approval does not bind the shown content/version');
  return records[0];
