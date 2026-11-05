@@ -22,6 +22,51 @@ const sample={class:'missing-validation',file:'input.mjs',anchor:'return value',
 const transcripts=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/recorded-responses.json'),'utf8'));
 const dangerControls=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-checker-regressions.json'),'utf8'));
 const key=findingKey(sample);
+test('v4: raw duplicate members, escaped keys and every bound value are screened before parsing',()=>{
+ const inputs=['{"password":"x","password":""}', '{"pass\\u0077ord":"x","password":""}',
+  'const password = "x";', 'export API_KEY=x', '--token x', '--session-key=7',
+  '{credential: {value:"x"}}', '{password:1}', '{password:false}', '{password:null}',
+  '{"password":"x","password":"safe"}', 'const password = ["x"];', 'password="x'];
+ for(const source of inputs){
+  assert.equal(screenModelOutput(source).rejected,true,source);
+  assert.ok(scanSecrets(source,{patch:false}).length,source);
+  assert.ok(!screenModelOutput(source).diagnostic.text.includes('"x"'),source);
+ }
+});
+test('v4: key reads and non-JSON brace prose remain usable role responses',async t=>{
+ const benign=['if (form.password) render("Settings")', '{"enabled":true} is returned for the disabled case.',
+  '[settings] render the saved configuration', 'The credential: field describes the login form.',
+  'test("token: label in a test title", () => render())', 'const tokenCount = 3;',
+  'const enabled = /\\w+/.test(input);'];
+ for(const source of benign)assert.equal(screenModelOutput(source).rejected,false,source);
+ const f=fixture(t),runner=responder({findings:[sample],verdicts:[verdict({reason:benign[1]})]});
+ const result=await runReviewRound(f.request,runner);
+ assert.equal(result.outcome,'not-converged');assert.equal(result.rounds.length,1);assert.equal(runner.calls.length,2);
+});
+test('v4: every JSON decoding layer preserves members before resolving duplicate or escaped bindings',()=>{
+ for(const raw of ['{"completed":false,"completed":true}', '{"complet\\u0065d":false,"completed":true}',
+  '{"outer":{"password":"x","password":""}}', '{"password":{"value":"x"},"password":{}}']){
+  let value=raw;
+  for(let layer=0;layer<4;layer++){
+   for(const options of [{input:true},{},{diagnostic:true}])assert.equal(screenModelOutput(value,options).rejected,true,raw);
+   value=JSON.stringify(value);
+  }
+ }
+ for(const value of ['{"value":99999999999999999}', '{"value":1e400}'])assert.equal(screenModelOutput(value).rejected,true);
+});
+test('v4: short/duplicate credentials in pinned input and checker evidence never leave the round boundary',async t=>{
+ const payload='{"pass\\u0077ord":"x","password":""}';
+ for(const channel of ['contract','blob','checker']){
+  const f=fixture(t),request={...f.request};
+  if(channel==='contract')request.contract=payload;
+  if(channel==='blob'){fs.writeFileSync(path.join(f.worktree,'input.mjs'),payload);f.git('add','.');f.git('commit','-qm','duplicate input');request.head=f.git('rev-parse','HEAD');}
+  const runner=responder({findings:[sample],verdicts:[verdict({reason:payload})]});
+  const result=await runReviewRound(request,runner);
+  assert.equal(result.outcome,'not-reviewed',channel);assert.equal(result.rounds.length,0,channel);
+  assert.equal(runner.calls.length,channel==='checker'?3:0,channel);
+  assert.ok(!JSON.stringify(result).includes('"x"'),channel);
+ }
+});
 const verdict=(extra={})=>({id:'F1',outcome:'confirmed',weight:'P2',danger:false,dangerCase:null,dangerReason:'This diagnostic-only path has no data, security or gate effects.',origin:'introduced',mergeKey:key,outOfContract:false,riskRaised:false,reason:'Negative values pass through the changed public function.',closed:false,newEvidence:false,...extra});
 const review=(findings=[],reviewedFiles=['input.mjs'])=>({...transcripts.clean,findings,reviewedFiles});
 function fixture(t) {
@@ -1001,11 +1046,13 @@ test('C19: r4 tiny request reaches role launch with the actual Codex 0.159.2 cat
  finally{process.env.PATH=prior;}
 });
 
-test('C19: prose, placeholders and short key values are benign; actual assignment values are caught',()=>{
- const benign=['task-'+'sk-'+'x'.repeat(24),'risk-repeat-stratification','desk-'+'sk-'+'x'.repeat(24),'dispatch-afk-leading-token: only leading AFK selects the short profile','- Changing a password or other authentication credential: Ask the user to take over',String.raw`/\w+/`, 'token: <placeholder-value>', 'password=${VARIABLE}', 'credential: ************', 'secret=""', 'api-key=short', '# password=opaque-value-long', '// token=opaque-value-long', '// note; token=abcdefgh', '# note; password=abcdefgh', 'const name = 1; // note; token=abcdefgh', '/* note; token=abcdefgh */'];
+test('C19/v4: prose and fixed placeholders stay benign; short and non-string assignments are caught',()=>{
+ const benign=['task-'+'sk-'+'x'.repeat(24),'risk-repeat-stratification','desk-'+'sk-'+'x'.repeat(24),'dispatch-afk-leading-token: only leading AFK selects the short profile','- Changing a password or other authentication credential: Ask the user to take over',String.raw`/\w+/`, 'token: <placeholder-value>', 'password=${VARIABLE}', 'credential: ************', 'secret=""', '# password=opaque-value-long', '// token=opaque-value-long', '// note; token=abcdefgh', '# note; password=abcdefgh', 'const name = 1; // note; token=abcdefgh', '/* note; token=abcdefgh */'];
  for(const value of benign)for(const input of[true,false])assert.equal(screenModelOutput(value,{input}).rejected,false,value);
  for(const name of['token','password','api-key','session_token','foo-barPassword','ключPassword'])for(const value of[`export ${name}=opaque-value-long`,`MODE=test ${name}=opaque-value-long`,`ERROR: ${name}=opaque-value-long`,`${name}: opaque-value-long`,`--${name} opaque-value-long`,`--${name}=opaque-value-long`,JSON.stringify({[name]:'opaque-value-long'})])assert.equal(screenModelOutput(value,{input:true}).rejected,true,value);
- for(const value of[17,false,null,'', '<placeholder>', '${VARIABLE}', '***'])assert.equal(screenModelOutput({password:value}).rejected,false);
+ for(const value of['', '<placeholder>', '${VARIABLE}', '***'])assert.equal(screenModelOutput({password:value}).rejected,false);
+ for(const value of[17,false,null,'short'])assert.equal(screenModelOutput({password:value}).rejected,true);
+ assert.equal(screenModelOutput('api-key=short').rejected,true);
 });
 
 test('C19: decoded keys cannot overwrite a different key/value binding',async t=>{

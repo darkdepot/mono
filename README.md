@@ -1661,7 +1661,7 @@ payload screening uses the same bounded literal JSON decoder for input and outpu
 including JSON embedded in source text. Unterminated literals never restart at escaped quotes; a successful decode or an ordinary source backslash is not ambiguous. One family table covers AWS AKIA/ASIA,
 GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
 JWT scanning visits each base64url segment once, retaining overlapping dotted candidates with linear decoding work. Family prefixes and bodies match whole tokens: boundaries are outside `[A-Za-z0-9_-]`, so `task-…`, `risk-…` and `desk-…` identifiers do not become credentials.
-Secret-like keys match assignment/key-value positions (JSON/YAML/INI/env/CLI flags), with case, separators and camelCase normalized. Values must be credential-shaped: at least eight characters, no whitespace, and neither empty nor a `<…>`, `${…}` or `***` placeholder. Nested/numeric values follow the same shape rule; prose and comments do not create keys. Plain `session` alone is allowed. JSON decoding preserves literal/key boundaries and checks each layer, up to eight layers. No fixpoint within limits or disagreeing key/value pairing fails closed. Families absent from the table belong to MONO-329. This screens payloads
+An escape-aware lexer pairs secret-like keys with their actual assignments, declarations, object/JSON members and CLI flag values, with case, separators and camelCase normalized. Bound values and whole nested subtrees are screened without a length floor, including numeric, boolean and null values. Empty strings and fixed `<…>`, `${…}` or `***` placeholders stay harmless. Reads/tests bind nothing; prose and comments do not create keys. Raw non-JSON values containing whitespace are outside this contract. Plain `session` alone is allowed. JSON decoding preserves literal/key boundaries and checks each layer, up to eight layers. No fixpoint within limits or disagreeing key/value pairing fails closed. Families absent from the table belong to MONO-329. This screens payloads
 the circle sends or retains: prompt, contract, rules, filenames, history, checker
 evidence, diagnostics and model output. It does not screen role tool reads, files
 changed after screening, or values reconstructed by evaluation (concatenation,
@@ -1669,10 +1669,10 @@ character arrays, decryption).
 All model output crosses `screenModelOutput` before parsing, retention, another
 role, reporting or evaluation output. The same screen covers successful fields,
 failed answers, metadata, legacy records and derived text; secret-bearing replies
-fail closed. There are no path, filename or exact-string screening exemptions, including synthetic credential fixtures. Plain file text never acts as patch framing. Every embedded
+fail closed. There are no path, filename or exact-string screening exemptions, including synthetic credential fixtures. Plain file text never acts as patch framing. Raw text is screened before parsing, preserving duplicate JSON members and decoding escaped keys before any member can be lost. Every embedded
 JSON/JSONL string layer is decoded to a fixed point with literal `JSON.parse`
-before line redaction and a final multiline scan. Undecodable or over-limit
-content and lossy JSON numbers are withheld (2 MiB per string/key or screened text, checked before parsing and matching; 8 decoding layers, 32 structural levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
+before line redaction and a final multiline scan. Non-JSON text beginning with `{` or `[` remains raw text; that prefix alone never withholds a valid checker reason. Over-limit decoding, disagreeing key/value pairing
+and lossy JSON numbers are withheld (2 MiB per string/key or screened text, checked before parsing and matching; 8 decoding layers, 32 structural levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
 retained; records/rendering: 131072 nodes, 16 MiB). Interruption stops
 later evaluation calls and remains a scored row.
 Every child process owned by the circle captures both stdout and stderr: Git,

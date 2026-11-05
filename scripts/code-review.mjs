@@ -122,7 +122,7 @@ export function parseChecker(value, findings) {
   return { ...value, verdicts: value.verdicts.map(({ id, ...verdict }) => ({ ...verdict, key: expected.get(id).key })) };
 }
 
-// Dataset v3 payload contract; lexical boundaries from continue:19. Unknown credential families belong to MONO-329.
+// Dataset v4 payload contract. Unknown credential families belong to MONO-329.
 const SECRET_FAMILIES = [
   ['aws', /(?:AKIA|ASIA)[0-9A-Z]{16}/],
   ['github', /(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})/],
@@ -174,42 +174,98 @@ function decodedKey(value) {
 function credentialValue(value, depth = 0) {
   if (depth > 32) return true;
   if (value && typeof value === 'object') return Object.values(value).some(child => credentialValue(child, depth + 1));
-  if (value === null || typeof value === 'boolean') return false;
-  const source = String(value);
-  return source.length >= 8 && !/\s/.test(source) && !/^(?:<.*>|\$\{.*\}|\*+)$/.test(source);
+  if (typeof value !== 'string') return true;
+  return value.length > 0 && !/^(?:<[^>]*>|\$\{[^}]*\}|\*+|\[(?:credential-shaped|unreadable|private-key)[^\]]*withheld\])$/.test(value);
 }
-// Restrict keys to assignment positions. Spaces inside a key are permitted,
-// but prose cannot contribute an arbitrary prefix before its final word.
-const KEY_PREFIX = String.raw`[^\s"'{}:=,;]*`;
-const KEY_TEXT = '(?:' + SECRET_KEY_SUFFIXES.map(name => KEY_PREFIX + [...name].join('[^A-Za-z0-9]*')).join('|') + ')';
-const QUOTED_TEXT = String.raw`"(?:[^"\\]|\\[\s\S])*"|'[^'\n]*'`;
-const VALUE_TEXT = String.raw`${QUOTED_TEXT}|\$\{[^}\n]*\}|<[^>\n]*>|[^\s,;}]+`;
-const ASSIGNMENT = new RegExp(String.raw`(?:^|[\n{,;=])[ \t]*(?:export[ \t]+)?(${QUOTED_TEXT}|${KEY_TEXT})[ \t]*[:=][ \t\r\n]*(${VALUE_TEXT})`, 'gi');
-const FLAG_ASSIGNMENT = new RegExp(String.raw`(?:^|\s)--(${KEY_TEXT})(?:[ \t]+|=)(${VALUE_TEXT})`, 'gi');
-const ENV_ASSIGNMENT = new RegExp(String.raw`(?:^|\s)(${KEY_TEXT})=(${VALUE_TEXT})`, 'gi');
-function secretAssignments(source) {
-  const matches = [], comments = [];
-  // Quoted text and escaped characters take precedence over comment markers.
-  // A marker within an unquoted word (URLs and env values included) cannot
-  // hide later assignments. Only separate comment tokens suppress prose.
-  for (const token of source.matchAll(/"(?:[^"\\\r\n]|\\[^\r\n])*"|'(?:[^'\\\r\n]|\\[^\r\n])*'|\\[^\r\n]|(?<![^\s;{}])(?:\/\/[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\/)/g)) {
-    if (/^(?:\/\/|#|\/\*)/.test(token[0])) comments.push([token.index, token.index + token[0].length]);
+// Keep source spans and duplicate members: JSON.parse alone would erase an
+// earlier credential. Quoted tokens are indivisible until their decoding layer.
+const SECRET_NAME_TOKEN = new RegExp('(?:[^\\s"\'{}:=,;]*)(?:' + [...SECRET_KEY_SUFFIXES].sort((a, b) => b.length - a.length).map(name => [...name].join('[^A-Za-z0-9]*')).join('|') + ')(?=\\s*[:=])', 'iy');
+function payloadTokens(source) {
+  const tokens = [];
+  for (let index = 0; index < source.length;) {
+    if (/\s/.test(source[index])) { index++; continue; }
+    const start = index, char = source[index];
+    const separate = start === 0 || /[\s;{}]/.test(source[start - 1]);
+    if (separate && (source.startsWith('//', index) || char === '#')) {
+      const end = source.indexOf('\n', index); index = end < 0 ? source.length : end; continue;
+    }
+    if (separate && source.startsWith('/*', index)) {
+      const end = source.indexOf('*/', index + 2); index = end < 0 ? source.length : end + 2; continue;
+    }
+    if ('"\'`'.includes(char)) {
+      index++; let closed = false;
+      while (index < source.length) {
+        if (source[index] === '\\') { index += 2; continue; }
+        if (source[index++] === char) { closed = true; break; }
+      }
+      index = Math.min(index, source.length);
+      const raw = source.slice(start, index); let value = raw.slice(1, closed ? -1 : undefined);
+      if (char === '"') { try { value = JSON.parse(raw); } catch {} }
+      tokens.push({ start, end: index, value, quoted: true }); continue;
+    }
+    SECRET_NAME_TOKEN.lastIndex = index;
+    const key = SECRET_NAME_TOKEN.exec(source);
+    if (key) { index += key[0].length; tokens.push({ start, end: index, value: key[0] }); continue; }
+    if ('{}[]():=,;'.includes(char)) { index++; tokens.push({ start, end: index, value: char }); continue; }
+    while (index < source.length && !/[\s"'`{}\[\]():=,;]/.test(source[index])) index++;
+    tokens.push({ start, end: index, value: source.slice(start, index) });
   }
-  let commentIndex = 0;
-  for (const pattern of [ASSIGNMENT, FLAG_ASSIGNMENT, ENV_ASSIGNMENT]) {
-    commentIndex = 0;
-    for (const match of source.matchAll(pattern)) {
-      while (comments[commentIndex]?.[1] <= match.index) commentIndex++;
-      if (comments[commentIndex]?.[0] <= match.index) continue;
-      const scalar = raw => {
-        if (raw.startsWith('"')) { try { return JSON.parse(raw); } catch { return raw; } }
-        return raw.startsWith("'") ? raw.slice(1, -1) : raw;
-      };
-      const name = decodedKey(scalar(match[1])), value = scalar(match[2]);
-      if (name === null || (secretKey(name) && credentialValue(value))) matches.push(match);
+  return tokens;
+}
+function secretAssignments(source) {
+  const tokens = payloadTokens(source), matches = [], closes = new Map(), stack = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token.quoted) continue;
+    if (['{', '[', '('].includes(token.value)) stack.push(index);
+    else if (['}', ']', ')'].includes(token.value)) {
+      const open = stack.pop();
+      if (open !== undefined && '{[('.indexOf(tokens[open].value) === '}])'.indexOf(token.value)) closes.set(open, index);
     }
   }
+  for (let index = 0; index < tokens.length; index++) {
+    const key = tokens[index], previous = tokens[index - 1], operator = tokens[index + 1];
+    const flag = !key.quoted && key.value.startsWith('--');
+    const name = decodedKey(flag ? key.value.slice(2) : key.value);
+    if (name !== null && !secretKey(name)) continue;
+    let valueIndex;
+    if (operator && !operator.quoted && ['=', ':'].includes(operator.value)) {
+      if (operator.value === ':') {
+        const member = !previous || (!previous.quoted && ['{', ',', ';'].includes(previous.value)) || source.slice(previous.end, key.start).includes('\n');
+        if (!member) continue;
+      }
+      // Equality, arrows and reads/tests bind no value.
+      if (operator.value === '=' && ['=', '>'].includes(source[operator.end])) continue;
+      valueIndex = index + 2;
+    } else if (flag && operator && /^\s+$/.test(source.slice(key.end, operator.start))) valueIndex = index + 1;
+    else continue;
+    const value = tokens[valueIndex];
+    if (!value || (!value.quoted && [';', ',', '}', ']', ')'].includes(value.value))) continue;
+    const end = closes.has(valueIndex) ? tokens[closes.get(valueIndex)].end : value.end;
+    const following = tokens[(closes.get(valueIndex) ?? valueIndex) + 1];
+    if (!value.quoted && !closes.has(valueIndex) && following &&
+        !source.slice(value.end, following.start).includes('\n') &&
+        !following.quoted && ![';', ',', '}', ']', ')'].includes(following.value) &&
+        !following.value.startsWith('--') && tokens[valueIndex + 2]?.value !== '=') continue;
+    const raw = source.slice(value.start, end);
+    if (name === null || credentialValue(value.quoted ? value.value : raw)) matches.push({ 0: source.slice(key.start, end), index: key.start });
+  }
   return matches;
+}
+function ambiguousJsonMembers(source) {
+  const tokens = payloadTokens(source), stack = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index], frame = stack.at(-1);
+    if (!token.quoted) {
+      if (['{', '['].includes(token.value)) stack.push({ type: token.value, keys: new Set() });
+      else if (['}', ']'].includes(token.value)) stack.pop();
+    } else if (frame?.type === '{' && ['{', ','].includes(tokens[index - 1]?.value) && tokens[index + 1]?.value === ':') {
+      const key = decodedKey(token.value);
+      if (key === null || frame.keys.has(key)) return true;
+      frame.keys.add(key);
+    }
+  }
+  return false;
 }
 function scanPayloadText(diff, { file = null, patch = true } = {}) {
   if (diff.length > MAX_SCREEN_VALUE_BYTES || Buffer.byteLength(diff) > MAX_SCREEN_VALUE_BYTES) return [{ file, line: 0, weight: 'P0', reason: 'over-limit payload withheld' }];
@@ -371,12 +427,13 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (size > MAX_SCREEN_VALUE_BYTES || bytes > maxBytes) return hide();
       if (markers.has(entry)) return { value: entry, text: entry };
       if (layers > 8) return hide();
-      const stringRevision = revision, initialSafe = input ? redact(entry, file, patch) : entry;
-      let parsed, decoded = false;
+      const stringRevision = revision, initialSafe = redact(entry, file, patch);
+      let parsed, decoded = false, lossy = false;
       try { parsed = JSON.parse(entry.trim(), (_key, child) => {
-        if (typeof child === 'number' && (!Number.isFinite(child) || (Number.isInteger(child) && !Number.isSafeInteger(child)))) throw new Error('lossy JSON number');
+        if (typeof child === 'number' && (!Number.isFinite(child) || (Number.isInteger(child) && !Number.isSafeInteger(child)))) { lossy = true; throw new Error('lossy JSON number'); }
         return child;
       }); decoded = true; } catch {}
+      if (lossy || (decoded && parsed && typeof parsed === 'object' && ambiguousJsonMembers(entry))) return hide();
       if (decoded && (parsed === null || !['object', 'string'].includes(typeof parsed))) {
         const safe = redact(entry, file); return { value: safe, text: safe };
       }
@@ -390,16 +447,19 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
         const children = lines.map(line => visit(line, depth + 1, file, layers, patch));
         return { value: revision !== stringRevision ? children.map(child => child.value) : entry, text: children.map(child => child.text).join('\n') };
       }
-      let literalEnd = 0, startsWithLiteral = false; const literalResults = [], pieces = [];
+      if (/^\s*"/.test(entry) && !/^\s*"(?:[^"\\\r\n]|\\[^\r\n])*"/.test(entry)) return hide();
+      let literalEnd = 0; const literalResults = [], pieces = [];
       // Failed literals cannot restart at escaped quotes. Keep each decoded
       // literal separate: decoding cannot rebind its key to another value.
-      for (const match of entry.matchAll(/(?<!\\)"(?:[^"\\\r\n]|\\[^\r\n])*"/g)) {
-        pieces.push(decodeEscapeLayer(entry.slice(literalEnd, match.index)), match[0]);
-        literalEnd = match.index + match[0].length;
-        if (match.index === entry.search(/\S/)) startsWithLiteral = true;
+      for (const token of payloadTokens(entry).filter(token => token.quoted)) {
+        const raw = entry.slice(token.start, token.end);
+        pieces.push(decodeEscapeLayer(entry.slice(literalEnd, token.start)), raw);
+        literalEnd = token.end;
         let literal;
-        try { literal = JSON.parse(match[0]); } catch { literal = decodeEscapeLayer(match[0].slice(1, -1)); }
-        if (!match[0].includes('\\')) continue;
+        try { literal = JSON.parse(raw); } catch { literal = decodeEscapeLayer(token.value); }
+        let nested = false;
+        try { const parsed = JSON.parse(literal); nested = parsed !== null && ['object', 'string'].includes(typeof parsed); } catch {}
+        if (!raw.includes('\\') && !nested) continue;
         if (layers === 8) return hide();
         literalResults.push(visit(literal, depth + 1, file, layers + 1, patch));
       }
@@ -409,8 +469,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
         if (layers === 8) return hide();
         literalResults.push(visit(next, depth + 1, file, layers + 1, patch));
       }
-      if (/^\s*(?:\{|\[(?![A-Za-z]))/.test(entry) || (/^\s*"/.test(entry) && !startsWithLiteral)) return hide();
-      const safe = input ? initialSafe : redact(entry, file);
+      const safe = initialSafe;
       if (revision !== stringRevision && literalResults.length) {
         const text = literalResults.map(child => child.text).join('\n');
         return { value: text, text };
