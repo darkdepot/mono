@@ -159,8 +159,13 @@ Live QA gate:
   released changes not covered by this update retain the old checked boundary
   and stale mark; Design refreshes the whole section next time. Record the new
   release commit separately in its release evidence; a partial update never
-  certifies uninspected neighbors. A missing section is left stale for Design
-  to assemble, not rebuilt wholesale during this targeted deploy step.
+  certifies uninspected neighbors. On a section's first release (design memory
+  says «нет выпущенной основы»), create its main-file page from the verified
+  shipped screens and states under the same sync/read-back rules. Record its
+  first checked release boundary only after checking the whole new section;
+  proposed screens stay in the sandbox. For a previously released section with
+  a missing page, leave it stale for Design to assemble rather than rebuild it
+  wholesale during this targeted deploy step.
   With the tool disconnected, tell the owner and write
   «раздел устарел после выпуска <дата>» for every affected section, preserving
   the previous checked commit/page and naming this release/version/evidence.
