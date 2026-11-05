@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { probeClaude as readProbe } from './skills-probe.mjs';
+import { probeClaude as readProbe } from './test-fixtures/legacy-window-probe.mjs';
 
 // These legacy probe fixtures deliberately check only current-turn text.
 // Complete execution and delivery are covered by the shared equality table.
@@ -53,7 +53,7 @@ for(const host of ['claude','codex'])for(const position of ['before-response','a
  assert.equal(turns.filter(turn=>!turn.text).length,1);
  if(position==='preparation')for(const check of [probeText,checkTrace])assert.equal(check({...request,stageStartLine:2}).status,'unverified');
 });
-const cli = file => spawnSync(process.execPath, ['scripts/skills-probe.mjs', file, '--excerpt'], { encoding: 'utf8' });
+const cli = file => spawnSync(process.execPath, ['scripts/test-fixtures/legacy-window-probe.mjs', file, '--excerpt'], { encoding: 'utf8' });
 
 test('recorded v0.38.1 defect fails at the original window line; fixed control passes', () => {
   const bad = probeClaude(fixture('claude', 'trace-defect-v0.38.1-approval'));

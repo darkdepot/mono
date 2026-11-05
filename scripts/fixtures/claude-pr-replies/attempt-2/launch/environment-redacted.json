@@ -1,0 +1,17 @@
+{
+  "HOME": "/Users/sasha",
+  "USER": "sasha",
+  "LOGNAME": "sasha",
+  "PATH": "/opt/homebrew/opt/libpq/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/Users/sasha/.local/bin:/Users/sasha/.orbstack/bin:/Users/sasha/.maestro/bin:/Users/sasha/Library/pnpm",
+  "SHELL": "/bin/zsh",
+  "TMPDIR": "/private/tmp/m322-probe",
+  "CLAUDE_CODE_TMPDIR": "/private/tmp/m322-probe",
+  "BASH_MAX_TIMEOUT_MS": "2400000",
+  "BASH_DEFAULT_TIMEOUT_MS": "2400000",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+  "CLAUDE_CODE_DISABLE_CLAUDE_AI_MCP": "1",
+  "GH_TOKEN": "[REDACTED]",
+  "GH_CONFIG_DIR": "/private/tmp/m322-probe/mono-gh-W4XIQI",
+  "MONO_ATTEMPT": "e0501717-1481-42eb-bc0e-34b0f6f8c01d",
+  "MONO_WORKER_JOURNAL_IDENTITY": "{\"issue\":\"MONO-322\",\"attempt\":2,\"thread_id\":\"0d27c36a-33f7-4373-902b-7b385ae4c835\"}"
+}

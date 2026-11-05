@@ -4,28 +4,26 @@
 
 ## AFK Contract
 
-Use dispatch Issue/branch/worktree. No branch changes, sub-workers, session
-management, other-Issue edits or orchestrator state access (workers.json/ledger.md/
+Dispatch Issue/branch/worktree only; no branch changes/sub-workers/session
+management/other-Issue edits/orchestrator state (workers.json/ledger.md/
 control.json/dispatch/consumed/logs/other reports). Read-only: own
 consumed/<KEY>-gate-ack-a<N>.json and pinned own snapshot/design.json and
-snapshot/design/*.png. No secrets/.orchestrator commits or
-user questions: mailbox recommendation, stop. Other registry/dispatch reads: gates only.
-Report before stops; passed pause ack only. Sequenced stops park; standalone
-keeps statuses.
+snapshot/design/*.png. No secrets/.orchestrator commits/questions: mailbox recommendation, stop.
+Other registry/dispatch reads: gates only. Report before stops except passed pause
+ack. Sequenced stops park; standalone keeps statuses.
 
 ## Orchestration Mode Precedence
 
-Snapshot replaces Linear/resolver; skill owns rules, dispatch facts. Queue after
-gates; confirm before dependent work except the code-report case below. Disclose
-lag; no judging unapplied state/inferred/skipped checks. Missing inputs block.
-Standalone parks needs-decision; interactive keeps direct access/approval/handshake.
+Snapshot replaces Linear/resolver; skill rules/dispatch facts. Queue post-gates;
+confirm before dependencies except code-report. Disclose lag; no unapplied/inferred/
+skipped proof. Missing inputs block. Standalone needs-decision; interactive
+keeps access/approval/handshake.
 
 ## Pack identity gate invocation
 
-Before work/resume: all present dispatch identity pins, exit 0 and
-pack-state: identity verified, else block. [Compatibility](install.md#compatibility).
-Use the dispatched pack root, never the checkout; single-quote paths/pins.
-Append `--source-commit` when the dispatch supplies `sourceCommit`.
+Before work/resume: all dispatch identity pins; exit 0 + pack-state: identity verified,
+else block. [Compatibility](install.md#compatibility). Dispatched pack, never checkout;
+single-quoted paths/pins; `--source-commit` if supplied.
 
 ```bash
 node '<pack-root>/scripts/verify-pack-state.mjs' identity \
@@ -36,16 +34,16 @@ node '<pack-root>/scripts/verify-pack-state.mjs' identity \
 ## Pre-applied files
 
 At start match `git show <sha>` blobs to dispatch commit/files/sha256 and Issue
-manifest; never edit them. Findings park `blocked` with exact replacement bytes;
-artifact owner repairs Tech Spec/record or renews issue-only Issue, then NEW dispatch.
-Amendment/resume cannot apply a repaired manifest.
+manifest; never edit. Findings: `blocked`, exact replacement bytes; artifact owner
+repairs Tech Spec/record or renews issue-only Issue, then NEW dispatch.
+No repaired manifest via amendment/resume.
 
 ## Two-Phase Dispatch Handshake
 
-Initial moves only, including Issue activation in Delivery Project. Pre-move
-snapshot is correct. Before ack verify implement entry/approval/seam/lane pre-start delivery check.
-On gate completion/blocker/stop write reports/<ISSUE-KEY>-gate-ack-a<N>.json;
-denial: same name in <worktree>/.orchestrator, never both.
+Initial moves only (also Issue activation in Delivery Project); pre-move snapshot valid.
+Before ack: implement entry/approval/seam/lane pre-start delivery check.
+Gate completion/blocker/stop: reports/<ISSUE-KEY>-gate-ack-a<N>.json;
+denied: <worktree>/.orchestrator, same name, never both.
 
 ```json
 {
@@ -57,7 +55,7 @@ denial: same name in <worktree>/.orchestrator, never both.
 ```
 
 Unique/nonempty gate names. gates-passed: exact set/all pass; blocked: nonempty
-subset/one blocked. Blocked ack before report (missing blocked; adverse needs-human),
+subset/one blocked. Blocked ack precedes report (missing blocked; adverse needs-human),
 no move. Passed: no code/move/queue/report. Codex wait-ack expires at ack mtime +
 ackWaitSec → write-unconfirmed. Applied read-backs amend state; delivery check,
 no identity rerun. Resume: Codex exits; desktop/fallback retains session; all move
@@ -72,20 +70,27 @@ disclosure; deadlines/queues unchanged.
 
 ## Sandbox ladder
 
-Workspace-write/network: worktree, derived worktree/common Git directories,
-<root>/reports (--add-dir spawn; writable_roots resume). codex 0.153.4 guards
-explicit linked-worktree metadata. Set capsule.writable_roots at launch/resume.
-Orchestrator root/confirmations/registry/control/consumed/logs: read-only.
-No early PR/push/unrelated network; standalone implement: no network unless
-excepted; preflight network/.git, ship push. Exact hidden grants. Disabled
-sandbox logs in orchestrator ledger; denied mailbox uses same uncommitted JSON
-fallback.
+Workspace-write/network: worktree, derived/common Git dirs, <root>/reports
+(--add-dir spawn; writable_roots resume); copy grants to capsule.writable_roots.
+codex 0.153.4 guards linked-worktree metadata. Orchestrator
+root/confirmations/registry/control/consumed/logs: read-only.
+No early PR/push/unrelated network. Standalone implement network by exception;
+preflight network/.git, ship push. Exact hidden grants. Log disabled sandbox in
+orchestrator ledger. Denied mailbox: same uncommitted JSON fallback.
+
+## Claude PR probe
+
+Claude Code 2.1.316/pack 0.42.0: COMMENTED reply/resolve/PR comment/bot mention OK;
+#244 closed/unmerged; same rights. `scripts/fixtures/claude-pr-replies/`.
+PR writes one bare `gh api`/Bash call. Compound `permission_denied`
+(cd/&&/;/pipes/redirection): wrong form; retry same write bare.
+Only bare denial: stop «нет права публиковать ответы»; no green.
 
 ## Context seam
 
 Before lifecycle/scope gates: snapshot Issue/marker/config/verified label/
 authenticated approval/emit-fingerprint. Whole-body SHA-256; no inferred oracle/
-lane/sixth field. Keep parent/marker/label/approval provenance for fallback.
+lane/sixth field. Retain parent/marker/label/approval provenance for fallback.
 Project-first: approved Project/PRD/Spec-record-or-exception/Issue; candidate is not proof.
 Apply `references/issue-only-lane.md` Context Contract/Resolver/fallback/candidate/
 freeze/exit: `approval_status=approved-fresh`, matching fingerprints/owner, eligible
@@ -105,8 +110,8 @@ fresh check. Legacy package/start or bundled approval can authorize code;
 
 ## Delivery and pre-ship gates
 
-Readiness-only; no findings/writes/repair/install. PASS inspected/unblocked; FAIL
-violation; BLOCKED unavailable. Return mode/meaning/boundary/unblock;
+Readiness-only: no findings/writes/repair/install. PASS inspected/unblocked;
+FAIL violation; BLOCKED unavailable. Return mode/meaning/boundary/unblock;
 failure: FAIL - Linear <mode> not ready.
 Delivery: Delivery Project/current PRD/Spec-record-or-exception/approved Issues/start/
 coherent risk-review; docs alone fail. Issue-only pre-activation: oracle/marker/
@@ -119,33 +124,33 @@ premature code/Delivery/missing review; no fail-closed package creation.
 
 ## Review contract
 
-Read package/config/branch/PR only; no writes. Outcomes: ready/advisory-ready/needs-fixes/blocked. Apply artifact/
-execution quality, coherence/feasibility/one-PR/durable AFK-HITL, applicable UI/
-security/data/ship/deep-risky architecture. Valid lane needs no Project/docs.
+Read-only package/config/branch/PR: ready/advisory-ready/needs-fixes/blocked.
+Check artifact/execution quality, coherence/feasibility/one PR/durable AFK-HITL,
+applicable UI/security/data/ship/deep-risky architecture. Valid lane: no Project/docs.
 Return verdict/meaning/mode/risk/gate-reason/inspected/boundary/next; findings
 (blocking/proposed-fix/decision/fyi): artifact/evidence/impact/recommendation/owner.
-Missing context/disposition blocks; repairs: handoff/issue renewal/ship drift.
+Missing context/disposition blocks; repair→handoff/issue renewal/ship drift.
 
 ## Execution and artifact handling
 
 Apply `references/execution-quality.md`/`references/artifact-quality.md`.
-Intake: paths → snapshot/reviews → decisions → configured roots → gstack; no broad
-scans, absent roots unavailable. Approved Linear outranks scratch; only compatible
-stale choices carry. Missing/conflicting scope/proof/risk/slicing stops writes;
+Intake: paths→snapshot/reviews→decisions→configured roots→gstack; no broad
+scans; absent roots unavailable. Approved Linear > scratch; compatible stale
+choices only. Missing/conflicting scope/proof/risk/slicing stops writes;
 no stale certificates/local bodies. Translate roles. Nonempty notes:
-read/unavailable/stale_or_ignored/conflicts/decisions_carried_forward/confidence_boundary,
+read/unavailable/stale_or_ignored/conflicts/decisions_carried_forward/confidence_boundary:
 one Russian sentence.
 
 ## Certificate recovery
 
-Latest marker-bearing Linear comment/resource only: quote markers there.
+Markers: latest marker-bearing Linear comment/resource only.
 Apply `references/human-friendly-output.md` Machine Blocks In Linear Comments;
 report/chat omit human lead.
 
 ## Delivery Reports and Capsule
 
-Dispatch: green/parked terminal; ready/implemented-needs-preflight intermediate.
-Stops park, no respawn; standalone retains statuses/certificates.
+Dispatch: green/parked terminal; ready/implemented-needs-preflight interim.
+Stops park; no respawn; standalone keeps statuses/certificates.
 reports/<ISSUE-KEY>-phase-<code|preflight|ship>.json or denied-write .orchestrator,
 never both. Final fields + phase/increasing positive sequence/kind
 (phase|confirmation-request)/head/phase_result. Capsule phase/head match;
@@ -159,13 +164,13 @@ Wait rejects dispatch-derived capsule.writable_roots paths; binds report digest/
 sequence/verified results. Reconcile writes/collection receipts; apply missing only, fsync
 consumed/<ISSUE-KEY>-a<N>/ results; confirm whole queue. Unknown/conflict/read-error
 or partial/stale/foreign confirmation blocks. Reconcile lost replies/comments.
-Resume dispatch/capsule/actual branch; preserve done/foreign changes; never reset/
+Resume dispatch/capsule/branch; keep done/foreign changes; no reset/
 repeat applied moves/writes. Timeout
 orchestration.delivery.confirmationTimeoutSec (default 1800 seconds) parks
 write-unconfirmed (запись не подтверждена).
 
-Only generated implemented-needs-preflight comments defer waiting; other/unknown
-writes and empty queues wait. publish generates full code-exit comments; stops wait,
+Only generated implemented-needs-preflight comments defer waiting; all other
+writes/empty queues wait. publish generates full code-exit comments; stops wait,
 no start-comment queue. Preflight carries pending code comments;
 revisions use new IDs and mark old comments stale, pending or applied. Immutable sequence snapshots beside phase reports bind capsule.deferred_reports
 sequence/reportDigest; predecessor checks verify fingerprints/carried/replacing comments.
@@ -191,7 +196,7 @@ readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify se
 head/merge-base receipt before judgment; no string substitutes.
 Orchestrator rechecks preflight before ship. Ship-fix amendment: next ship-gate
 attempt, new head/stateFile; preserve old state/task attempt. No gate-attempt cap;
-existing window/review thresholds/declines/class stops/caps unchanged.
+window/review thresholds/declines/class stops/caps unchanged.
 
 ## Implementation exit evidence
 
@@ -199,15 +204,14 @@ Code exits (blocked/needs-human too): criteria, summary (2–3 product-language 
 not_built/not_verified arrays (possibly empty); phase_result string.
 After admission capture-criteria freezes Issue snapshot/standalone start-read
 «Готово, когда:» into <root>/reports/<KEY>-criteria-a<N>.json, never report fields.
-Immutable; publication checks each item in order before writes: no omission/addition/
-rewording/reorder, whitespace normalization only. Standalone:
+Immutable: compare items before writes; no omission/addition/rewording/reorder;
+whitespace normalization only. Standalone:
 uncommitted .orchestrator. «Как проверить» separately in verification_items.
 criteria: criterion, done:boolean, outcome:confirmed|unverified|broken,
 proof (before edits), result (observed), head (40 hex), worktree_fingerprint (64 hex).
-confirmed: done:true, command exit 0 on recorded delivered head/fingerprint after
-last relevant edit, including dirty edits. Failed-run subtests cannot confirm; narrow passing runs can. Fingerprint only by
+confirmed: done:true, exit 0 on delivered head/fingerprint after last edit (dirty too). Failed-run subtests never confirm; narrow passes can. Fingerprint only by
 `node <pack-root>/scripts/worktree-fingerprint.mjs --worktree <worktree> --delivery-root <delivery-root>`;
-Command in proof; SHA-256: `git diff --binary HEAD`, sorted
+Proof command; SHA-256: `git diff --binary HEAD`, sorted
 `git ls-files --others --exclude-standard` path/NUL/value/NUL:
 file=SHA-256(content) hex, nested repo dir=gitlink:<full HEAD SHA|none if unborn>
 (no nested contents/edits); both omit only in-tree delivery-root
@@ -216,11 +220,11 @@ report/log: delivery-root.
 not_built:[{what,reason}]; not_verified:[{what,why,risk}], one per unverified
 criterion, what=criterion. unverified/done:true built/untested; done:false unfinished;
 broken never becomes unverified. Screen visibility without browser: unverified,
-even with passing HTML tests. Summary: «экран в браузере не проверен».
-Tiny text-only: verbatim «поведение не меняется» (no inserted words) in pre-edit evidence and summary line 2 with reason/check boundary; summary exactly 3 lines: result / exception / Preflight handoff; evidence excluded.
+even with HTML tests passing. Summary: «экран в браузере не проверен».
+Tiny text-only: verbatim «поведение не меняется» (no inserted words) in pre-edit evidence and summary line 2, with reason/check boundary; summary exactly 3 lines: result / exception / Preflight handoff; evidence excluded.
 Issue comment: summary → «Не проверено» → «Найдена поломка» → evidence
 (criteria, significant-state table before edits, exclusions, decisions).
-Breakage/unfinished/no progress: blocked, saved state. implemented-needs-preflight:
+Breakage/unfinished/no progress: blocked; save state. implemented-needs-preflight:
 all done:true/no broken; publication rejects incomplete success.
 
 Empty criteria without capture only for pre-capture refusals:
@@ -271,7 +275,7 @@ denied: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON.
 
 Parked reasons: blocked, needs-decision, needs-human, drift-candidate, timed-out,
 scope-drift-needs-handoff, write-unconfirmed, evidence-limit (предел доказательств).
-Decisions: exact question/recommendation. Orchestrator records/reads back parks in Linear this turn.
+Decisions: exact question/recommendation. Orchestrator records/reads back parks in Linear now.
 
 Issue «Как проверить»: verbatim/in order in verification_items;
 pass | deferred | not-run, no unrun pass; deferred owner and judgment/state. Repeat pins; standalone dispatched status, sequenced intermediate.

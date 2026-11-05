@@ -1,0 +1,1644 @@
+{
+  "design/approve/scenario.json": {
+    "schemaVersion": 1,
+    "id": "approve",
+    "stage": "design",
+    "kind": "main",
+    "seed": "seeds/prd-design.json",
+    "next": "handoff",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Для проверки Design используется готовый тестовый макет этой таблицы в Paper и посеянная память.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "design-approve",
+            "stage": "design",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Этот макет принимаем?",
+            "asksStart": false,
+            "reply": "утверждаю",
+            "intent": "agree",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Утверждение записал, дизайн закончил."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "design-approve",
+            "stage": "design",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Этот макет принимаем?",
+            "asksStart": false,
+            "reply": "утверждаю",
+            "intent": "agree",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Утверждение записал, дизайн закончил."
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-design",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "design/correction/scenario.json": {
+    "schemaVersion": 1,
+    "id": "correction",
+    "stage": "design",
+    "kind": "correction",
+    "seed": "seeds/prd-design.json",
+    "next": "handoff",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Для проверки Design используется готовый тестовый макет этой таблицы в Paper и посеянная память.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "design-revise",
+            "stage": "design",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Этот макет принимаем?",
+            "asksStart": false,
+            "reply": "Измени показанный результат: источник поставь перед именем прогона, затем покажи новую версию.",
+            "intent": "continuation",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            }
+          },
+          {
+            "id": "design-correction",
+            "stage": "design",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Этот макет принимаем?",
+            "asksStart": false,
+            "reply": "утверждаю",
+            "intent": "agree",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Утверждение записал, дизайн закончил."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "design-revise",
+            "stage": "design",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Этот макет принимаем?",
+            "asksStart": false,
+            "reply": "Измени показанный результат: источник поставь перед именем прогона, затем покажи новую версию.",
+            "intent": "continuation",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            }
+          },
+          {
+            "id": "design-correction",
+            "stage": "design",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Этот макет принимаем?",
+            "asksStart": false,
+            "reply": "утверждаю",
+            "intent": "agree",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Утверждение записал, дизайн закончил."
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-design",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "design/empty/scenario.json": {
+    "schemaVersion": 1,
+    "id": "empty",
+    "stage": "design",
+    "kind": "unclear",
+    "seed": "seeds/prd-design.json",
+    "next": "handoff",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Для проверки Design используется готовый тестовый макет этой таблицы в Paper и посеянная память.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "design-empty",
+            "stage": "design",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Этот макет принимаем?",
+            "asksStart": false,
+            "reply": "ну не знаю",
+            "intent": "unclear",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Что смущает?"
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "design-empty",
+            "stage": "design",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Этот макет принимаем?",
+            "asksStart": false,
+            "reply": "ну не знаю",
+            "intent": "unclear",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Что смущает?"
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "forbidden": "mono-design: approved"
+      },
+      {
+        "forbidden": "start-next-stage"
+      }
+    ]
+  },
+  "discovery/approve/scenario.json": {
+    "schemaVersion": 1,
+    "id": "approve",
+    "stage": "discovery",
+    "kind": "main",
+    "seed": "seeds/research.json",
+    "next": "design",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "discovery-approve",
+            "stage": "discovery",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Согласен с таким результатом?",
+            "asksStart": false,
+            "reply": "согласен",
+            "intent": "agree",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "PRD утвердил."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "discovery-approve",
+            "stage": "discovery",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Согласен с таким результатом?",
+            "asksStart": false,
+            "reply": "согласен",
+            "intent": "agree",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "PRD утвердил."
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-prd: approved",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "discovery/correction/scenario.json": {
+    "schemaVersion": 1,
+    "id": "correction",
+    "stage": "discovery",
+    "kind": "correction",
+    "seed": "seeds/research.json",
+    "next": "design",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Граница результата в показанном тексте: «Фильтр и сортировку не добавляем.».",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "discovery-correction",
+            "stage": "discovery",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Согласен с таким результатом?",
+            "asksStart": false,
+            "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
+            "intent": "correction",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Экспорт добавлен к исключениям. PRD утвердил."
+            ],
+            "correction": {
+              "description": "Экспорт добавлен к исключениям.",
+              "before": "Фильтр и сортировку не добавляем.",
+              "after": "Фильтр, сортировку и экспорт не добавляем."
+            }
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "discovery-correction",
+            "stage": "discovery",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Согласен с таким результатом?",
+            "asksStart": false,
+            "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
+            "intent": "correction",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Экспорт добавлен к исключениям. PRD утвердил."
+            ],
+            "correction": {
+              "description": "Экспорт добавлен к исключениям.",
+              "before": "Фильтр и сортировку не добавляем.",
+              "after": "Фильтр, сортировку и экспорт не добавляем."
+            }
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-prd: approved",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "discovery/empty/scenario.json": {
+    "schemaVersion": 1,
+    "id": "empty",
+    "stage": "discovery",
+    "kind": "unclear",
+    "seed": "seeds/research.json",
+    "next": "design",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "discovery-empty",
+            "stage": "discovery",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Согласен с таким результатом?",
+            "asksStart": false,
+            "reply": "ну не знаю",
+            "intent": "unclear",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Что смущает?"
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "discovery-empty",
+            "stage": "discovery",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Согласен с таким результатом?",
+            "asksStart": false,
+            "reply": "ну не знаю",
+            "intent": "unclear",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Что смущает?"
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "forbidden": "mono-prd: approved"
+      },
+      {
+        "forbidden": "start-next-stage"
+      }
+    ]
+  },
+  "handoff/approve/scenario.json": {
+    "schemaVersion": 1,
+    "id": "approve",
+    "stage": "handoff",
+    "kind": "main",
+    "seed": "seeds/prd-handoff.json",
+    "next": null,
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "handoff-approve",
+            "stage": "handoff",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем работу по этому пакету?",
+            "asksStart": true,
+            "reply": "да, начинаем работу",
+            "intent": "agree",
+            "outcome": {
+              "approval": false,
+              "startNext": true
+            },
+            "response": [
+              "Старт записал, начинаю работу."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "handoff-approve",
+            "stage": "handoff",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем работу по этому пакету?",
+            "asksStart": true,
+            "reply": "да, начинаем работу",
+            "intent": "agree",
+            "outcome": {
+              "approval": false,
+              "startNext": true
+            },
+            "response": [
+              "Старт записал, начинаю работу."
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-package: start",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "handoff/correction/scenario.json": {
+    "schemaVersion": 1,
+    "id": "correction",
+    "stage": "handoff",
+    "kind": "correction",
+    "seed": "seeds/prd-handoff.json",
+    "next": null,
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "handoff-revise",
+            "stage": "handoff",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем работу по этому пакету?",
+            "asksStart": true,
+            "reply": "Измени показанный результат: источник поставь перед именем прогона, затем покажи новую версию.",
+            "intent": "continuation",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            }
+          },
+          {
+            "id": "handoff-correction",
+            "stage": "handoff",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем работу по этому пакету?",
+            "asksStart": true,
+            "reply": "да, начинаем работу",
+            "intent": "agree",
+            "outcome": {
+              "approval": false,
+              "startNext": true
+            },
+            "response": [
+              "Старт записал, начинаю работу."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "handoff-revise",
+            "stage": "handoff",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем работу по этому пакету?",
+            "asksStart": true,
+            "reply": "Измени показанный результат: источник поставь перед именем прогона, затем покажи новую версию.",
+            "intent": "continuation",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            }
+          },
+          {
+            "id": "handoff-correction",
+            "stage": "handoff",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем работу по этому пакету?",
+            "asksStart": true,
+            "reply": "да, начинаем работу",
+            "intent": "agree",
+            "outcome": {
+              "approval": false,
+              "startNext": true
+            },
+            "response": [
+              "Старт записал, начинаю работу."
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-package: start",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "handoff/empty/scenario.json": {
+    "schemaVersion": 1,
+    "id": "empty",
+    "stage": "handoff",
+    "kind": "unclear",
+    "seed": "seeds/prd-handoff.json",
+    "next": null,
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "handoff-empty",
+            "stage": "handoff",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем работу по этому пакету?",
+            "asksStart": true,
+            "reply": "ну не знаю",
+            "intent": "unclear",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Что смущает?"
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "handoff-empty",
+            "stage": "handoff",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем работу по этому пакету?",
+            "asksStart": true,
+            "reply": "ну не знаю",
+            "intent": "unclear",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Что смущает?"
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "forbidden": "mono-package: start"
+      },
+      {
+        "forbidden": "start-next-stage"
+      }
+    ]
+  },
+  "idea/approve/scenario.json": {
+    "schemaVersion": 1,
+    "id": "approve",
+    "stage": "idea",
+    "kind": "main",
+    "seed": null,
+    "next": "research",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "idea-approve",
+            "stage": "idea",
+            "role": "approval",
+            "summary": [
+              "Что",
+              "Зачем",
+              "Образ результата",
+              "Неизвестные"
+            ],
+            "question": "Принимаем эту идею?",
+            "asksStart": false,
+            "reply": "принимаю",
+            "intent": "agree",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Утверждение записал."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "idea-approve",
+            "stage": "idea",
+            "role": "approval",
+            "summary": [
+              "Что",
+              "Зачем",
+              "Образ результата",
+              "Неизвестные"
+            ],
+            "question": "Принимаем эту идею?",
+            "asksStart": false,
+            "reply": "принимаю",
+            "intent": "agree",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Утверждение записал."
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-idea",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "idea/correction/scenario.json": {
+    "schemaVersion": 1,
+    "id": "correction",
+    "stage": "idea",
+    "kind": "correction",
+    "seed": null,
+    "next": "research",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Граница результата в показанном тексте: «Фильтр и сортировку не добавляем.».",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "idea-correction",
+            "stage": "idea",
+            "role": "approval",
+            "summary": [
+              "Что",
+              "Зачем",
+              "Образ результата",
+              "Неизвестные"
+            ],
+            "question": "Принимаем эту идею?",
+            "asksStart": false,
+            "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
+            "intent": "correction",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Экспорт добавлен к исключениям. Утверждение записал."
+            ],
+            "correction": {
+              "description": "Экспорт добавлен к исключениям.",
+              "before": "Фильтр и сортировку не добавляем.",
+              "after": "Фильтр, сортировку и экспорт не добавляем."
+            }
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "idea-correction",
+            "stage": "idea",
+            "role": "approval",
+            "summary": [
+              "Что",
+              "Зачем",
+              "Образ результата",
+              "Неизвестные"
+            ],
+            "question": "Принимаем эту идею?",
+            "asksStart": false,
+            "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
+            "intent": "correction",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Экспорт добавлен к исключениям. Утверждение записал."
+            ],
+            "correction": {
+              "description": "Экспорт добавлен к исключениям.",
+              "before": "Фильтр и сортировку не добавляем.",
+              "after": "Фильтр, сортировку и экспорт не добавляем."
+            }
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-idea",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "idea/defer/scenario.json": {
+    "schemaVersion": 1,
+    "id": "defer",
+    "stage": "idea",
+    "kind": "defer",
+    "seed": null,
+    "next": "research",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "idea-defer",
+            "stage": "idea",
+            "role": "approval",
+            "summary": [
+              "Что",
+              "Зачем",
+              "Образ результата",
+              "Неизвестные"
+            ],
+            "question": "Принимаем эту идею и начинаем Research?",
+            "asksStart": true,
+            "reply": "да, но позже",
+            "intent": "defer",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Утверждение записал, Research начнём позже."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "idea-defer",
+            "stage": "idea",
+            "role": "approval",
+            "summary": [
+              "Что",
+              "Зачем",
+              "Образ результата",
+              "Неизвестные"
+            ],
+            "question": "Принимаем эту идею и начинаем Research?",
+            "asksStart": true,
+            "reply": "да, но позже",
+            "intent": "defer",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Утверждение записал, Research начнём позже."
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-idea",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "idea/empty/scenario.json": {
+    "schemaVersion": 1,
+    "id": "empty",
+    "stage": "idea",
+    "kind": "unclear",
+    "seed": null,
+    "next": "research",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "idea-empty",
+            "stage": "idea",
+            "role": "approval",
+            "summary": [
+              "Что",
+              "Зачем",
+              "Образ результата",
+              "Неизвестные"
+            ],
+            "question": "Принимаем эту идею?",
+            "asksStart": false,
+            "reply": "ну не знаю",
+            "intent": "unclear",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Что смущает?"
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "idea-empty",
+            "stage": "idea",
+            "role": "approval",
+            "summary": [
+              "Что",
+              "Зачем",
+              "Образ результата",
+              "Неизвестные"
+            ],
+            "question": "Принимаем эту идею?",
+            "asksStart": false,
+            "reply": "ну не знаю",
+            "intent": "unclear",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Что смущает?"
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "forbidden": "project:create"
+      },
+      {
+        "forbidden": "mono-idea: approved"
+      },
+      {
+        "forbidden": "start-next-stage"
+      }
+    ]
+  },
+  "index.json": {
+    "schemaVersion": 1,
+    "sharedFiles": [
+      "references/owner-dialog.md",
+      "scripts/russian-stages.mjs",
+      "scripts/idea-gate.mjs",
+      "templates/project.md",
+      "templates/prd.md",
+      "templates/tech-spec.md",
+      "templates/issue.md",
+      "templates/stage-task.md",
+      "templates/stage-agent.md",
+      "templates/stage-helper-hook.mjs"
+    ],
+    "stages": [
+      {
+        "id": "idea",
+        "name": "Idea",
+        "minimum": 3,
+        "files": [
+          "skills/idea/",
+          "references/owner-dialog.md",
+          "scripts/russian-stages.mjs",
+          "scripts/idea-gate.mjs",
+          "templates/project.md",
+          "templates/prd.md",
+          "templates/tech-spec.md",
+          "templates/issue.md",
+          "templates/stage-task.md",
+          "templates/stage-agent.md",
+          "templates/stage-helper-hook.mjs",
+          "references/contracts/project.md",
+          "skills/research/references/plan.md",
+          "skills/research/references/find-on-web.md",
+          "agents/linear-scout.md",
+          "agents/code-scout.md",
+          "agents/web-scout.md"
+        ],
+        "neighbors": [
+          "research"
+        ],
+        "main": "approve",
+        "chain": [
+          "idea",
+          "research"
+        ],
+        "scenarios": [
+          "idea/approve/scenario.json",
+          "idea/correction/scenario.json",
+          "idea/empty/scenario.json",
+          "idea/defer/scenario.json"
+        ]
+      },
+      {
+        "id": "research",
+        "name": "Research",
+        "minimum": 2,
+        "files": [
+          "skills/research/",
+          "references/owner-dialog.md",
+          "scripts/russian-stages.mjs",
+          "scripts/idea-gate.mjs",
+          "templates/project.md",
+          "templates/prd.md",
+          "templates/tech-spec.md",
+          "templates/issue.md",
+          "templates/stage-task.md",
+          "templates/stage-agent.md",
+          "templates/stage-helper-hook.mjs",
+          "references/contracts/project.md",
+          "references/lifecycle.md",
+          "references/model-policy.md",
+          "agents/linear-scout.md",
+          "agents/code-scout.md",
+          "agents/web-scout.md"
+        ],
+        "neighbors": [
+          "idea",
+          "discovery"
+        ],
+        "main": "approve",
+        "chain": [
+          "idea",
+          "research",
+          "discovery"
+        ],
+        "scenarios": [
+          "research/approve/scenario.json",
+          "research/discuss/scenario.json"
+        ]
+      },
+      {
+        "id": "discovery",
+        "name": "Discovery",
+        "minimum": 3,
+        "files": [
+          "skills/discovery/",
+          "references/owner-dialog.md",
+          "scripts/russian-stages.mjs",
+          "scripts/idea-gate.mjs",
+          "templates/project.md",
+          "templates/prd.md",
+          "templates/tech-spec.md",
+          "templates/issue.md",
+          "templates/stage-task.md",
+          "templates/stage-agent.md",
+          "templates/stage-helper-hook.mjs",
+          "references/contracts/prd.md",
+          "references/lifecycle.md",
+          "references/model-policy.md",
+          "agents/linear-scout.md",
+          "agents/code-scout.md",
+          "agents/web-scout.md"
+        ],
+        "neighbors": [
+          "research",
+          "design",
+          "tech-evaluation",
+          "handoff"
+        ],
+        "main": "approve",
+        "chain": [
+          "research",
+          "discovery",
+          "design"
+        ],
+        "scenarios": [
+          "discovery/approve/scenario.json",
+          "discovery/correction/scenario.json",
+          "discovery/empty/scenario.json"
+        ]
+      },
+      {
+        "id": "design",
+        "name": "Design",
+        "minimum": 3,
+        "files": [
+          "skills/design/",
+          "references/owner-dialog.md",
+          "scripts/russian-stages.mjs",
+          "scripts/idea-gate.mjs",
+          "templates/project.md",
+          "templates/prd.md",
+          "templates/tech-spec.md",
+          "templates/issue.md",
+          "templates/stage-task.md",
+          "templates/stage-agent.md",
+          "templates/stage-helper-hook.mjs",
+          "references/contracts/prd.md",
+          "references/lifecycle.md"
+        ],
+        "neighbors": [
+          "discovery",
+          "tech-evaluation",
+          "handoff"
+        ],
+        "main": "approve",
+        "chain": [
+          "discovery",
+          "design",
+          "handoff"
+        ],
+        "scenarios": [
+          "design/approve/scenario.json",
+          "design/correction/scenario.json",
+          "design/empty/scenario.json"
+        ]
+      },
+      {
+        "id": "tech-evaluation",
+        "name": "Tech Evaluation",
+        "minimum": 3,
+        "files": [
+          "skills/tech-evaluation/",
+          "references/owner-dialog.md",
+          "scripts/russian-stages.mjs",
+          "scripts/idea-gate.mjs",
+          "templates/project.md",
+          "templates/prd.md",
+          "templates/tech-spec.md",
+          "templates/issue.md",
+          "templates/stage-task.md",
+          "templates/stage-agent.md",
+          "templates/stage-helper-hook.mjs",
+          "references/contracts/tech-spec.md",
+          "references/lifecycle.md",
+          "references/model-policy.md",
+          "references/repair-machine.md",
+          "agents/linear-scout.md",
+          "agents/code-scout.md",
+          "agents/web-scout.md"
+        ],
+        "neighbors": [
+          "discovery",
+          "design",
+          "handoff"
+        ],
+        "main": "approve",
+        "chain": [
+          "discovery",
+          "tech-evaluation",
+          "handoff"
+        ],
+        "scenarios": [
+          "tech-evaluation/approve/scenario.json",
+          "tech-evaluation/correction/scenario.json",
+          "tech-evaluation/empty/scenario.json"
+        ],
+        "chainSeed": "seeds/research-cli.json"
+      },
+      {
+        "id": "handoff",
+        "name": "Handoff",
+        "minimum": 3,
+        "files": [
+          "skills/handoff/",
+          "references/owner-dialog.md",
+          "scripts/russian-stages.mjs",
+          "scripts/idea-gate.mjs",
+          "templates/project.md",
+          "templates/prd.md",
+          "templates/tech-spec.md",
+          "templates/issue.md",
+          "templates/stage-task.md",
+          "templates/stage-agent.md",
+          "templates/stage-helper-hook.mjs",
+          "references/contracts/project.md",
+          "references/contracts/prd.md",
+          "references/contracts/issue.md",
+          "references/contracts/tech-spec.md",
+          "references/lifecycle.md",
+          "references/model-policy.md",
+          "references/repair-machine.md",
+          "references/artifact-intake.md",
+          "references/landing.md",
+          "agents/code-scout.md"
+        ],
+        "neighbors": [
+          "discovery",
+          "design",
+          "tech-evaluation"
+        ],
+        "main": "approve",
+        "chain": [
+          "tech-evaluation",
+          "handoff"
+        ],
+        "scenarios": [
+          "handoff/approve/scenario.json",
+          "handoff/correction/scenario.json",
+          "handoff/empty/scenario.json"
+        ]
+      }
+    ],
+    "productName": "Mono",
+    "skillPrefix": "mono",
+    "paperGuard": "paper-guard.mjs",
+    "routeHints": {
+      "design": "PRD: design=needed, размер «мелочь»: правка на месте готового экрана с посеянными эталонами.",
+      "tech-evaluation": "PRD: design=not-needed, размер «обычное»: меняется вывод CLI, графический интерфейс не затронут.",
+      "handoff": "После завершения передай утверждённый выход в Handoff; обязательные записи не пропускай."
+    }
+  },
+  "research/approve/scenario.json": {
+    "schemaVersion": 1,
+    "id": "approve",
+    "stage": "research",
+    "kind": "main",
+    "seed": "seeds/idea.json",
+    "next": "discovery",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "research-approve",
+            "stage": "research",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем Discovery?",
+            "asksStart": true,
+            "reply": "да, начинаем",
+            "intent": "agree",
+            "outcome": {
+              "approval": false,
+              "startNext": true
+            },
+            "response": [
+              "Начинаю Discovery."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "research-approve",
+            "stage": "research",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем Discovery?",
+            "asksStart": true,
+            "reply": "да, начинаем",
+            "intent": "agree",
+            "outcome": {
+              "approval": false,
+              "startNext": true
+            },
+            "response": [
+              "Начинаю Discovery."
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-research",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "research/discuss/scenario.json": {
+    "schemaVersion": 1,
+    "id": "discuss",
+    "stage": "research",
+    "kind": "question",
+    "seed": "seeds/idea.json",
+    "next": "discovery",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "research-discuss",
+            "stage": "research",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем Discovery?",
+            "asksStart": true,
+            "reply": "Почему сейчас стоит переходить в Discovery?",
+            "intent": "question",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Исследование закрыло неизвестные; в Discovery выберем решение."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "research-discuss",
+            "stage": "research",
+            "role": "transition",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Начинаем Discovery?",
+            "asksStart": true,
+            "reply": "Почему сейчас стоит переходить в Discovery?",
+            "intent": "question",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Исследование закрыло неизвестные; в Discovery выберем решение."
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "forbidden": "start-next-stage"
+      }
+    ]
+  },
+  "tech-evaluation/approve/scenario.json": {
+    "schemaVersion": 1,
+    "id": "approve",
+    "stage": "tech-evaluation",
+    "kind": "main",
+    "seed": "seeds/prd-tech.json",
+    "next": "handoff",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "tech-evaluation-approve",
+            "stage": "tech-evaluation",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Такое техническое решение подходит?",
+            "asksStart": false,
+            "reply": "поехали",
+            "intent": "agree",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Tech Spec и утверждение записал."
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "tech-evaluation-approve",
+            "stage": "tech-evaluation",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Такое техническое решение подходит?",
+            "asksStart": false,
+            "reply": "поехали",
+            "intent": "agree",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Tech Spec и утверждение записал."
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-tech",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "tech-evaluation/correction/scenario.json": {
+    "schemaVersion": 1,
+    "id": "correction",
+    "stage": "tech-evaluation",
+    "kind": "correction",
+    "seed": "seeds/prd-tech.json",
+    "next": "handoff",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт. Граница результата в показанном тексте: «Фильтр и сортировку не добавляем.».",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "tech-evaluation-correction",
+            "stage": "tech-evaluation",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Такое техническое решение подходит?",
+            "asksStart": false,
+            "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
+            "intent": "correction",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Экспорт добавлен к исключениям. Tech Spec и утверждение записал."
+            ],
+            "correction": {
+              "description": "Экспорт добавлен к исключениям.",
+              "before": "Фильтр и сортировку не добавляем.",
+              "after": "Фильтр, сортировку и экспорт не добавляем."
+            }
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "tech-evaluation-correction",
+            "stage": "tech-evaluation",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Такое техническое решение подходит?",
+            "asksStart": false,
+            "reply": "Да, только добавь к исключениям экспорт; остальное принимаю.",
+            "intent": "correction",
+            "outcome": {
+              "approval": true,
+              "startNext": false
+            },
+            "response": [
+              "Экспорт добавлен к исключениям. Tech Spec и утверждение записал."
+            ],
+            "correction": {
+              "description": "Экспорт добавлен к исключениям.",
+              "before": "Фильтр и сортировку не добавляем.",
+              "after": "Фильтр, сортировку и экспорт не добавляем."
+            }
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "type": "mono-tech",
+        "version": "fresh-read-after-shown-version",
+        "count": 1
+      }
+    ]
+  },
+  "tech-evaluation/empty/scenario.json": {
+    "schemaVersion": 1,
+    "id": "empty",
+    "stage": "tech-evaluation",
+    "kind": "unclear",
+    "seed": "seeds/prd-tech.json",
+    "next": "handoff",
+    "prompt": "Бриф полный; вопросов о пользователе, текущем и желаемом результате нет. Следуй правилам этапа проверяемой версии.",
+    "brief": "Это сценарий Mono для существующего тестового продукта: внутренняя таблица тестовых прогонов приложения записи. В cwd уже есть cli/runs.mjs, cli/runs.json и cli/runs.test.mjs; назначение описано в конце README. Добавь в эту таблицу колонку «Источник» из поля source после имени прогона. Пустое значение, null и отсутствующий source показываются прочерком. Сейчас источник в строке не виден; после правки он читается сразу. Фильтр и сортировка не нужны. Это изменение существующего кода, не новый продукт.",
+    "hosts": {
+      "claude": {
+        "expectedReplies": [
+          {
+            "id": "tech-evaluation-empty",
+            "stage": "tech-evaluation",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Такое техническое решение подходит?",
+            "asksStart": false,
+            "reply": "ну не знаю",
+            "intent": "unclear",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Что смущает?"
+            ]
+          }
+        ]
+      },
+      "codex": {
+        "expectedReplies": [
+          {
+            "id": "tech-evaluation-empty",
+            "stage": "tech-evaluation",
+            "role": "approval",
+            "summary": [
+              "Источник"
+            ],
+            "question": "Такое техническое решение подходит?",
+            "asksStart": false,
+            "reply": "ну не знаю",
+            "intent": "unclear",
+            "outcome": {
+              "approval": false,
+              "startNext": false
+            },
+            "response": [
+              "Что смущает?"
+            ]
+          }
+        ]
+      }
+    },
+    "expectedRecords": [
+      {
+        "type": "project",
+        "scope": "current-run",
+        "freshReadRequired": true
+      },
+      {
+        "forbidden": "mono-tech: approved"
+      },
+      {
+        "forbidden": "start-next-stage"
+      }
+    ]
+  }
+}

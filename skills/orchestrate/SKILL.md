@@ -15,7 +15,7 @@ decisions to the user.
 Run pre-delivery stages through the same stage skills in Claude Code agents;
 answer as delegated owner. Each stage writes/read-backs its own Linear records,
 returns its selected transition; the orchestrator launches the next stage.
-Idea always needs the owner's press. Delegation is the latest Idea record's
+Idea always needs the owner's verbatim reply. Delegation is the latest Idea record's
 outside-fence mark (or a pre-version explicit owner decision); otherwise owner
 starts Research/work. Delivery workers keep implement/preflight/ship ownership.
 
@@ -136,26 +136,27 @@ Workflow states:
      session; until then do not launch. Codex delegated stages do not run: tell owner
      they run in Claude Code. No silent widening of tools or server wildcards.
    - One Project chain at a time: stage agents ask the same questions and show the
-     same result as to owner; answer with label and reason on that version.
-     Idea in your session: follow references/owner-dialog.md — finish service
-     work; question carries the decision/recommendation and option tradeoffs;
-     host-specific window/description order; relay only owner's press. Idea shown-version
-     files and notes are written by shell after the press, before Linear writes.
+     same result as to owner; answer in words with a reason on that version.
+     Idea in your session: show the stage description verbatim as your final
+     message, per references/owner-dialog.md — finish service
+     work; the question carries your position and the decision at stake;
+     final-message result and contextual question; relay the exact shown text, actual
+     question and verbatim owner reply. Idea files are written by shell from that
+     conversation before Linear writes, with only the named small correction.
      Only a delegated Project allows autonomous Research/work start. First exemplars and
      new taste rules stay with owner. Their words reopen approvals.
    - Maintain `.claude/session-views/<этап>-<ключ проекта>-<круг>.md` in product cwd,
-     append by shell before the owner summary or after the window response,
-     never between summary and window; Idea description/notes after the press.
+     append by shell before the final owner summary/question or after the owner reply; Idea description/notes from the shown message and actual owner reply.
      `git check-ignore` first; if needed add
      `.claude/session-views/` to product `.git/info/exclude`, never `.gitignore`.
      Link conversation in each stage result; no child Desktop delegation session.
    - `stale`/`legacy-migrate` Idea stops autonomous Research/work despite delegation.
-     Carry it to owner; require their Idea button, confirmed record and fresh check.
+     Carry it to owner; require their Idea agreement in words, confirmed record and fresh check.
      Never approve that snapshot through your reply or work-start comment.
    - Before every `by=orchestrator` record run the foreground read-only different-
      family countercheck in `references/orchestration.md`, including exact text,
      version and reason. Verdict/model/version outside fences in the same comment;
-     changed text/reason needs recheck. Objection goes to «Ещё обсудить»; repeated
+     changed text/reason needs recheck. Explain the objection in words without approval; repeated
      objection may be overridden with explicit reason; no answer after one retry
      means no approval, other Projects continue.
    - Send each stage's R1 result to owner with «Утвердил сам, потому что…»;

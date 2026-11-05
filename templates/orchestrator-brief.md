@@ -11,19 +11,17 @@ project config (`languages.linear`).
 Что решаем: <одно предложение в терминах продукта, не реализации>
 Почему сейчас: <что именно блокируется этим решением>
 Что уже доказано: <тесты, autoreview, CI, сертификаты — что применимо>
-Рекомендация: <вариант> — <одна строка почему>
+Рекомендация: <подход> — <одна строка почему>
+<Чем подходы отличаются для тебя и продукта; сильнейший довод против совета>
 
-Варианты:
-1. <вариант A> — <что изменится для тебя и продукта> — рекомендую, <одна причина>
-2. <вариант B> — <что изменится для тебя и продукта>
-3. <свой ответ>
+<Один вопрос под это решение, ответ на который владелец даст словами>
 ```
 
-Handoff summary: its shape belongs to `mono:handoff` in orchestrator mode. Work
-starts only by the owner («Начать работу» or «начинаем»); the summary never
-holds other waves, and the orchestrator never starts work itself. A brief for
-more than three Issues offers «Разбить проект» (recommended when it fits) and
-«Разрешить больше задач».
+Handoff summary belongs to `mono:handoff`. Ask about starting in plain text per
+`references/owner-dialog.md`; only the owner's answer authorizes ordinary work.
+The summary never holds other waves. If more than three Issues are needed,
+explain the tradeoff, recommend splitting the project when it fits, and ask
+whether to narrow this project or allow the larger Issue set. No answer labels.
 
 ## Эталоны первого продукта
 
@@ -35,9 +33,10 @@ more than three Issues offers «Разбить проект» (recommended when 
 
 ## Целостность брифа (Brief Integrity)
 
-These rules bind every Decision Brief that offers
-numbered or lettered options — with or without a board or prototype
-(a plain Handoff summary included). Wave-1 precedent: a
+These rules bind every Decision Brief comparing numbered or lettered approaches,
+with or without a board or prototype. IDs identify the subject, not answer labels.
+Stage endings still ask one text question per `references/owner-dialog.md`.
+Wave-1 precedent: a
 brief numbered 7 questions against a 5-section board; the owner's
 «2) B» decoded to one option under brief numbering and to a different
 one under board numbering — a possibly inverted product decision — and

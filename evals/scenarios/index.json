@@ -47,7 +47,8 @@
       "scenarios": [
         "idea/approve/scenario.json",
         "idea/correction/scenario.json",
-        "idea/empty/scenario.json"
+        "idea/empty/scenario.json",
+        "idea/defer/scenario.json"
       ]
     },
     {
@@ -156,8 +157,7 @@
       "main": "approve",
       "chain": [
         "discovery",
-        "design",
-        "handoff"
+        "design"
       ],
       "scenarios": [
         "design/approve/scenario.json",

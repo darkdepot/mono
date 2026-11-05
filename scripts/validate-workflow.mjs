@@ -483,17 +483,13 @@ function validateStageDelegation() {
   console.log("PASS stage delegation: isolated invocations, template and helper-hook fixtures");
 }
 
-function validateStageWindowRules() {
-  // Agent-only order is reviewed; skeleton pins only commands, fields and paths.
-  const dialogue = read("references/owner-dialog.md");
-  for (const token of ["request_user_input", "request_user_input_async"]) {
-    requireMachineToken(token);
-    if (!dialogue.includes(token)) fail(`stage window dialogue missing ${token}`);
-  }
+function validateStageDialogueRules() {
+  // Former host-tool presence pins are retired. References route every stage to
+  // one dialogue owner; native text fixtures enforce the no-window invariant.
   for (const stage of ["idea", "research", "discovery", "design", "tech-evaluation", "handoff", "orchestrate"]) {
     requireMachineToken("owner-dialog.md");
     if (!read(`skills/${stage}/SKILL.md`).includes("owner-dialog.md"))
-      fail(`stage window rules missing dialogue reference: ${stage}`);
+      fail(`stage dialogue reference missing: ${stage}`);
   }
 }
 
@@ -734,7 +730,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "f6fa575508db99969947ef3bf5a1935daa69e73c2d9f15fdc543c364dbe69771",
+      contractFingerprint: "fba6b0944535e2256e00bf12b4a26f8c26706f64eec2c204735331520b68bd12",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/research/SKILL.md",
@@ -5267,7 +5263,8 @@ function modelActiveFiles(base) {
     for (const entry of fs.readdirSync(path.join(base, relative), { withFileTypes: true })) {
       const child = path.posix.join(relative, entry.name);
       if (entry.isDirectory()) walk(child);
-      else if (entry.isFile() && !/^scripts\/fixtures\/idea-gate\/probe\/(?:claude-code|codex)\/(?:get_project\.json|list_comments(?:\.limit4)?\.page-[1-3]\.json|calls\.json|README\.md|MANIFEST\.sha256)$/.test(child)) files.push(child);
+      else if (entry.isFile() && !/^scripts\/fixtures\/idea-gate\/probe\/(?:claude-code|codex)\/(?:get_project\.json|list_comments(?:\.limit4)?\.page-[1-3]\.json|calls\.json|README\.md|MANIFEST\.sha256)$/.test(child) &&
+        !/^scripts\/fixtures\/claude-pr-replies\/(?:attempt-1\/MONO-322-mono-deliver-a1\.jsonl|attempt-2\/MONO-322-mono-deliver-a2\.jsonl|attempt-[12]\/launch\/(?:entry|invocation|settings|startup-check)\.json)$/.test(child)) files.push(child);
     }
   }
   for (const directory of ["skills", "references", "templates", "scripts"]) walk(directory);
@@ -5593,7 +5590,19 @@ function validateModelPolicyFixtures() {
     for (const [name] of NORMATIVE_MODEL_SECTIONS) {
       negative(`normative reference ${name}`, () => change(name, (text) => text.replace(/\[role:autoreview\]\([^)]+\)/g, "reviewer")), `${name}: role binding must be autoreview`);
     }
-    for (const name of ["README.md", "references/execution-quality.md", "templates/orchestrator-brief.md", "scripts/verify.mjs"]) {
+    change("scripts/fixtures/claude-pr-replies/attempt-1/launch/entry.json", text =>
+      JSON.stringify({ ...JSON.parse(text), model: fabricated("claude", "archived") }));
+    check(); restore(); check();
+    console.log("PASS model-policy archived Claude probe is data, not launch policy");
+    const probeNeighbor = "scripts/fixtures/claude-pr-replies/active.mjs";
+    try {
+      fs.writeFileSync(file(probeNeighbor), `const model = "${fabricated("claude", "neighbor")}";\n`);
+      expectCommandFailure("archived probe executable neighbor", check, `${probeNeighbor}: executable model id outside policy`);
+    } finally { fs.rmSync(file(probeNeighbor), { force: true }); }
+    check();
+    console.log("PASS model-policy executable neighbor stays checked");
+    for (const name of ["README.md", "references/execution-quality.md", "templates/orchestrator-brief.md", "scripts/verify.mjs",
+      "scripts/fixtures/claude-pr-replies/README.md", "scripts/claude-delivery.test.mjs"]) {
       negative(`active detector ${name}`, () => change(name, (text) => text + `\n${fabricated("claude", "stale")}\n`), `${name}: executable model id outside policy`);
     }
     change("README.md", (text) => text + `\n${[...MODEL_ENUM_ALLOWLIST].join(" ")}\n`);
@@ -6036,7 +6045,6 @@ const STRING_PINS = [
 ];
 const REQUIRED_HEADINGS = [
   ["references/qa-skills.md", "Драйверы"],
-  ["references/qa-skills.md", "Правила окна"],
   ["references/qa-skills.md", "Рубрика разговора"],
   ["references/orchestration.md", "Independent QA before merge"],
   ["references/orchestration.md", "Current host inputs"],
@@ -6304,8 +6312,8 @@ const MACHINE_TOKENS = new Set([
   "scripts/orchestrator/qa.mjs", "qa/state.json", "heldIssues", "finalIssue",
   "<!-- mono-qa product: Mono Agent Workflow -->",
   "head", "phase_result",
-  // Window tools and shared dialogue path; step order is reviewed.
-  "request_user_input", "request_user_input_async", "owner-dialog.md",
+  // Shared dialogue path; no-window behavior is covered by native text fixtures.
+  "owner-dialog.md",
   // MONO-239: invocation flags, template fields/placeholders and dialogue skeleton.
   "--ignore-user-config", "--strict-mcp-config", "--disable apps", "-s read-only", "codex exec", "claude -p",
   "tools", "hooks", "PreToolUse", "Agent|Task", "command", "type",
@@ -7288,7 +7296,7 @@ if (process.argv.includes("--model-policy-only") || process.argv.includes("--mod
 failures.push(...checkPlugin(root));
 validatePluginAgents();
 validateStageDelegation();
-validateStageWindowRules();
+validateStageDialogueRules();
 validateLandingSurface();
 validateDocumentSkeleton();
 validateCheckModeDeclaration();
