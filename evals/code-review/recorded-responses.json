@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "provenance": "Authored deterministic response controls, not live model measurements.",
+  "provenance": "Authored deterministic response controls, not live model measurements. The diagnostic finding is explicitly non-dangerous; C33 tests remove the label to exercise unknown legacy findings.",
   "clean": {
     "completed": true,
     "reviewedFiles": [
@@ -21,7 +21,8 @@
         "line": 1,
         "title": "Invalid input is accepted",
         "trigger": "value is negative",
-        "evidence": "input.mjs returns value without validation"
+        "evidence": "input.mjs returns value without validation",
+        "danger": false
       }
     ]
   },

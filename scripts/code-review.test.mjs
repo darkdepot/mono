@@ -18,7 +18,8 @@ before(()=>{
  process.env.PATH=catalogBin+path.delimiter+originalPath;
 });
 after(()=>{process.env.PATH=originalPath;fs.rmSync(catalogBin,{recursive:true,force:true});});
-const sample={class:'missing-validation',file:'input.mjs',anchor:'return value',line:1,title:'Invalid input is accepted',trigger:'value is negative',evidence:'input.mjs returns value without validation'};
+// Authored control-flow fixture, not live danger gold. C33 removes this label to test legacy unknowns.
+const sample={danger:false,class:'missing-validation',file:'input.mjs',anchor:'return value',line:1,title:'Invalid input is accepted',trigger:'value is negative',evidence:'input.mjs returns value without validation'};
 const transcripts=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/recorded-responses.json'),'utf8'));
 const dangerControls=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-checker-regressions.json'),'utf8'));
 const key=findingKey(sample);
@@ -74,6 +75,72 @@ test('C29/v7: credential families embedded in paths are replaced in every outgoi
   assert.equal(safe.rejected,false);assert.ok(!JSON.stringify(safe.value).includes(token));
   for(const message of ['Cannot read '+value,JSON.stringify({reason:'Inspect '+value}),{reason:'Inspect '+value}])assert.ok(!JSON.stringify(screenModelOutput(message).value).includes(token));
  }
+});
+test('C33: the real MONO-302 changed-path inventory reaches both roles without filename collisions',async t=>{
+ const frozen=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/screen-regressions/qa-r5-historical.json'),'utf8'))['MONO-302'];
+ assert.equal(frozen.base,'8226fca80635dedf0c97d86979b529275976b565');assert.equal(frozen.head,'ca16110b9ef28817a1506621511ea6725dbc5f94');
+ const f=fixture(t);for(const file of frozen.files){fs.mkdirSync(path.dirname(path.join(f.worktree,file)),{recursive:true});fs.writeFileSync(path.join(f.worktree,file),'export const value = 0;\n');}
+ f.git('add','.');f.git('commit','-qm','MONO302 actual paths base');const base=f.git('rev-parse','HEAD');
+ for(const file of frozen.files)fs.writeFileSync(path.join(f.worktree,file),'export const value = 1;\n');
+ f.git('add','.');f.git('commit','-qm','MONO302 actual paths head');const head=f.git('rev-parse','HEAD');assert.deepEqual(f.git('diff','--name-only',base,head).split('\n'),frozen.files);
+ const calls=[],finding={...sample,file:'scripts/orchestrator-commands.test.mjs',danger:false};
+ const result=await runReviewRound({...f.request,base,head},{runRole:async request=>{const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);calls.push(request.role);assert.deepEqual(context.files,frozen.files);return {response:request.role==='code-review'?review([finding],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',codeQuote:'export const value = 1;'})]}};}});
+ assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.deepEqual(calls,['code-review','code-review-checker']);
+});
+test('C33: path JWT matching is strict and distinct credentials keep distinct aliases',()=>{
+ const ordinary=['scripts/orchestrator-commands.test.mjs','scripts/implement-evals.test.mjs','scripts/review-bench.test.mjs','scripts/eyJordinaryName.test.mjs'];
+ assert.deepEqual(screenModelOutput({files:ordinary}).value.files,ordinary);
+ const credentials=['ghp_'+'a'.repeat(36),'ghp_'+'b'.repeat(36)],files=credentials.map(value=>'scripts/backup-'+value+'.mjs');
+ const safe=screenModelOutput({files});assert.equal(safe.rejected,false);assert.equal(new Set(safe.value.files).size,2);for(const value of credentials)assert.ok(!JSON.stringify(safe).includes(value));
+ const jwt=[Buffer.from(JSON.stringify({alg:'HS256'})).toString('base64url'),'e30','x'.repeat(24)].join('.');
+ const value='notes/backup-'+jwt+'.txt',screened=screenModelOutput({file:value});assert.equal(screened.rejected,false);assert.ok(!screened.value.file.includes(jwt));
+});
+test('C33: credential aliases cannot collide with literal filenames or change on rescreening',async t=>{
+ const original='notes/backup-'+'ghp_'+'d'.repeat(36)+'.mjs',literal=screenModelOutput({file:original}).value.file;
+ const safe=screenModelOutput({files:[original,literal]});assert.equal(new Set(safe.value.files).size,2);assert.deepEqual(screenModelOutput(safe.value).value,safe.value);
+ const f=fixture(t);for(const file of [original,literal]){fs.mkdirSync(path.dirname(path.join(f.worktree,file)),{recursive:true});fs.writeFileSync(path.join(f.worktree,file),'const ordinary = 1;\n');}
+ f.git('add','.');f.git('commit','-qm','literal path alias collision');let context;
+ const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};}});
+ assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(new Set(context.files).size,3);for(const file of context.files)assert.ok(context.diff.includes(file));assert.ok(!JSON.stringify(result).includes('ghp_'+'d'.repeat(36)));
+});
+test('C33: earlier reviewer danger survives another pass and a later round',async t=>{
+ const f=fixture(t);let pass=0;
+ const first=await runReviewRound({...f.request,risk:'risky'},{runRole:async request=>({response:request.role==='code-review'?review([{...sample,danger:++pass===1}]):{completed:true,verdicts:[verdict()]}})});
+ assert.equal(pass,2);assert.equal(first.findings[0].danger,true);
+ const second=await runReviewRound({...f.request,stageRecord:first},responder({findings:[sample]}));assert.equal(second.findings[0].danger,true);assert.equal(second.outcome,'not-converged');
+});
+test('C33: reviewer/checker danger is a fail-safe union, including unmarked findings',async t=>{
+ for(const [reviewerDanger,checkerDanger,expected] of [[true,false,true],[false,true,true],[null,false,true],[undefined,false,true],[false,false,false]])await t.test(String(reviewerDanger)+'/'+checkerDanger,async t=>{
+  const finding={...sample};if(reviewerDanger===undefined)delete finding.danger;else finding.danger=reviewerDanger;
+  const result=await runReviewRound(fixture(t).request,responder({findings:[finding],verdicts:[verdict({danger:checkerDanger,dangerCase:checkerDanger?'security':null,dangerReason:'Synthetic diagnostic route.'})]}));
+  assert.equal(result.outcome,'not-converged',JSON.stringify(result.failures));assert.equal(result.findings[0].danger,expected);if(expected)assert.notEqual(result.findings[0].dangerCase,null);
+ });
+});
+test('C33: dangerous or unmarked rejection requires a literal quote from the screened head file',async t=>{
+ for(const danger of [true,undefined])for(const codeQuote of [undefined,'return 0;','return n;'])await t.test(String(danger)+'/'+String(codeQuote),async t=>{
+  const finding={...sample};if(danger===undefined)delete finding.danger;else finding.danger=danger;
+  const answer={outcome:'rejected'};if(codeQuote!==undefined)answer.codeQuote=codeQuote;
+  const result=await runReviewRound(fixture(t).request,responder({findings:[finding],verdicts:[verdict(answer)]}));
+  assert.equal(result.outcome,codeQuote==='return n;'?'clean':'not-converged',JSON.stringify(result.failures));assert.equal(result.findings[0].status,codeQuote==='return n;'?'rejected':'confirmed');assert.equal(result.findings[0].danger,true);
+ });
+});
+test('C33: a quote hidden by the source screen cannot reject an unmarked finding',async t=>{
+ const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),'const credential = {\n value: 1\n};\nexport function value(n) { return n; }\n');f.git('add','.');f.git('commit','-qm','screened head quote');
+ const finding={...sample};delete finding.danger;
+ for(const codeQuote of ['return n;','[credential-shaped line withheld]']){
+ const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},responder({findings:[finding],verdicts:[verdict({outcome:'rejected',codeQuote})]}));
+ assert.equal(result.outcome,'not-converged',JSON.stringify(result.failures));assert.equal(result.findings[0].status,'confirmed');}
+});
+test('C33: dangerous closure needs the same screened-head quote as rejection',async t=>{
+ for(const codeQuote of ['', 'return n;'])await t.test(codeQuote||'missing',async t=>{
+  const result=await runReviewRound(fixture(t).request,responder({findings:[{...sample,danger:true}],verdicts:[verdict({outcome:'rejected',closed:true,codeQuote})]}));
+  assert.equal(result.findings[0].status,codeQuote?'closed':'confirmed');assert.equal(result.findings[0].closed,!!codeQuote);assert.equal(result.findings[0].danger,true);
+ });
+});
+test('C33: contradictory merge verdicts retry once then retain separate findings',async t=>{
+ const other={...sample,anchor:'second mechanism',title:'Second diagnostic defect'},runner=responder({findings:[sample,other],verdicts:[verdict({weight:'P1'}),verdict({id:'F2',weight:'P2'})]});
+ const result=await runReviewRound(fixture(t).request,runner);
+ assert.equal(result.outcome,'not-converged',JSON.stringify(result.failures));assert.equal(result.rounds.length,1);assert.equal(runner.calls.filter(call=>call.role==='code-review-checker').length,2);assert.equal(result.findings.length,2);assert.equal(new Set(result.findings.map(finding=>finding.mergeKey)).size,2);assert.ok(result.failures.some(failure=>failure.reason.includes('contradictory merge verdicts')));
 });
 test('C32: screened diffs preserve hunk rows that resemble file headers',async t=>{
  const f=fixture(t);
@@ -396,7 +463,7 @@ test('v4: short/duplicate credentials in pinned input and checker evidence never
   assert.ok(!JSON.stringify(result).includes('"x"'),channel);
  }
 });
-const verdict=(extra={})=>({id:'F1',outcome:'confirmed',weight:'P2',danger:false,dangerCase:null,dangerReason:'This diagnostic-only path has no data, security or gate effects.',origin:'introduced',mergeKey:key,outOfContract:false,riskRaised:false,reason:'Negative values pass through the changed public function.',closed:false,newEvidence:false,...extra});
+const verdict=(extra={})=>({id:'F1',outcome:'confirmed',weight:'P2',danger:false,dangerCase:null,dangerReason:'This diagnostic-only path has no data, security or gate effects.',origin:'introduced',mergeKey:key,outOfContract:false,riskRaised:false,reason:'Negative values pass through the changed public function.',closed:false,newEvidence:false,codeQuote:'',...extra});
 const review=(findings=[],reviewedFiles=['input.mjs'])=>({...transcripts.clean,findings,reviewedFiles});
 function fixture(t) {
  const worktree=fs.mkdtempSync(path.join(os.tmpdir(),'mono-circle-test-')); t.after(()=>fs.rmSync(worktree,{recursive:true,force:true}));

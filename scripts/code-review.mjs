@@ -124,10 +124,11 @@ export function findingKey(finding) {
   return digest([finding.class.trim(), finding.file, finding.anchor.trim()]);
 }
 function validateFinding(finding) {
-  exact(finding, ['class', 'file', 'anchor', 'line', 'title', 'trigger', 'evidence']);
+  exact(finding, ['class', 'file', 'anchor', 'line', 'title', 'trigger', 'evidence', ...(Object.hasOwn(finding, 'danger') ? ['danger'] : [])]);
+  requireValue(!Object.hasOwn(finding, 'danger') || [true, false, null].includes(finding.danger), 'invalid reviewer danger');
   requireValue(['class', 'file', 'anchor', 'title', 'trigger', 'evidence'].every(key => text(finding[key])), 'finding needs code evidence and a breaking input');
   requireValue(!path.isAbsolute(finding.file) && !finding.file.split('/').includes('..') && Number.isSafeInteger(finding.line) && finding.line > 0, 'invalid finding location');
-  return { ...finding, key: findingKey(finding) };
+  return { ...finding, danger: finding.danger ?? null, key: findingKey(finding) };
 }
 export function parseReviewer(value) {
   value = screenModelOutput(value, { strict: true }).value;
@@ -136,14 +137,15 @@ export function parseReviewer(value) {
   requireValue(value.completed === true && Array.isArray(value.reviewedFiles) && value.reviewedFiles.every(text) && Array.isArray(value.findings), 'review incomplete');
   return { ...value, findings: value.findings.map(validateFinding) };
 }
-export function parseChecker(value, findings) {
+export function parseChecker(value, findings, { separateContradictoryMerges = false } = {}) {
   value = screenModelOutput(value, { strict: true }).value;
   if (typeof value === 'string') { try { value = JSON.parse(value); } catch { throw new Error('unreadable checker JSON'); } }
   exact(value, ['completed', 'verdicts']);
   requireValue(value.completed === true && Array.isArray(value.verdicts), 'checker incomplete');
   const expected = new Map(findings.map((finding, index) => [`F${index + 1}`, finding])), seen = new Set();
   for (const verdict of value.verdicts) {
-    exact(verdict, ['id', 'outcome', 'weight', 'danger', 'dangerCase', 'dangerReason', 'origin', 'mergeKey', 'outOfContract', 'riskRaised', 'reason', 'closed', 'newEvidence']);
+    exact(verdict, ['id', 'outcome', 'weight', 'danger', 'dangerCase', 'dangerReason', 'origin', 'mergeKey', 'outOfContract', 'riskRaised', 'reason', 'closed', 'newEvidence', ...(Object.hasOwn(verdict, 'codeQuote') ? ['codeQuote'] : [])]);
+    requireValue(!Object.hasOwn(verdict, 'codeQuote') || typeof verdict.codeQuote === 'string', 'invalid checker code quote');
     requireValue(expected.has(verdict.id) && !seen.has(verdict.id), 'unknown or repeated checker id'); seen.add(verdict.id);
     requireValue(['confirmed', 'rejected', 'unresolved'].includes(verdict.outcome) && /^P[0-3]$/.test(verdict.weight), 'invalid checker outcome/weight');
     requireValue([true, false, null].includes(verdict.danger) && (verdict.dangerCase === null || DANGER_CASES.includes(verdict.dangerCase)), 'invalid danger');
@@ -155,12 +157,15 @@ export function parseChecker(value, findings) {
   }
   requireValue(seen.size === expected.size, 'finding without checker response');
   const groups = new Map();
+  let contradictory = false;
   for (const verdict of value.verdicts) {
     const prior = groups.get(verdict.mergeKey);
-    requireValue(!prior || ['outcome', 'weight', 'danger', 'dangerCase', 'origin', 'closed', 'outOfContract', 'riskRaised'].every(key => prior[key] === verdict[key]), 'contradictory merge verdicts');
+    contradictory ||= !!prior && !['outcome', 'weight', 'danger', 'dangerCase', 'origin', 'closed', 'outOfContract', 'riskRaised'].every(key => prior[key] === verdict[key]);
     groups.set(verdict.mergeKey, verdict);
   }
-  return { ...value, verdicts: value.verdicts.map(({ id, ...verdict }) => ({ ...verdict, key: expected.get(id).key })) };
+  requireValue(!contradictory || separateContradictoryMerges, 'contradictory merge verdicts');
+  return { ...value, mergesSeparated: contradictory, verdicts: value.verdicts.map(({ id, ...verdict }) => ({ ...verdict, codeQuote: verdict.codeQuote ?? '',
+    ...(contradictory ? { mergeKey: expected.get(id).key } : {}), key: expected.get(id).key })) };
 }
 
 // Dataset v4 payload contract. Unknown credential families belong to MONO-329.
@@ -198,18 +203,28 @@ function familyMatches(source) {
 }
 // Paths are payload metadata, not identifiers: embedded family values match.
 function screenPath(value) {
-  const original = value;
+  const original = value, hidden = match => '[credential-shaped path withheld]#' + digest(match);
   const replace = source => {
-    for (const [, pattern] of SECRET_FAMILIES) source = source.replace(new RegExp(pattern.source, pattern.flags + 'g'), '[credential-shaped path withheld]');
-    // Path prefixes can be part of the first base64url run. Conservatively hide
-    // dotted JWT-shaped path tokens instead of trusting an identifier boundary.
+    for (const [, pattern] of SECRET_FAMILIES) source = source.replace(new RegExp(pattern.source, pattern.flags + 'g'), hidden);
+    // Match an embedded canonical header or a fully decoded header with alg.
+    source = source.replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
+      candidate => jwtMatches(candidate) ? hidden(candidate) : candidate);
     return source.replace(/[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
-      candidate => jwtMatches(candidate) || /[eICD]/.test(candidate.split('.')[0]) ? '[credential-shaped path withheld]' : candidate);
+      candidate => jwtMatches(candidate) ? hidden(candidate) : candidate);
   };
   value = replace(value);
   const decoded = decodedKey(original);
-  if (decoded === null || (decoded !== original && replace(decoded) !== decoded)) return '[credential-shaped path withheld]';
+  if (decoded === null || (decoded !== original && replace(decoded) !== decoded)) return hidden(original);
   return value;
+}
+function pathScreen() {
+  const aliases = new Map(), originals = new Map();
+  return original => {
+    if (aliases.has(original)) return aliases.get(original);
+    const base = screenPath(original); let alias = base;
+    for (let index = 1; originals.has(alias); index++) alias = base + '[' + index + ']';
+    aliases.set(original, alias); originals.set(alias, original); return alias;
+  };
 }
 
 const SECRET_KEY_SUFFIXES = ['secret', 'token', 'password', 'passwd', 'credential', 'privatekey', 'apikey', 'sessiontoken', 'sessionkey', 'secretaccesskey'];
@@ -486,6 +501,7 @@ export function observeCodexBoundary(value, stderr) {
 // The only model-output policy. Transport payloads, state, diagnostics and all
 // renderers use this before model text can leave transient parsing buffers.
 export function screenModelOutput(value, { diagnostic = false, strict = false, filesById = {}, input = false, inputFile = null, inputPatch = false } = {}) {
+  const safePath = pathScreen();
   const withheld = '[unreadable or over-limit model output withheld]', lineHidden = '[credential-shaped line withheld]', fieldHidden = '[credential-shaped field withheld]';
   const markers = new Set([withheld, lineHidden, fieldHidden, '[credential-shaped answer withheld]', '[private-key answer withheld]', '[unreadable transport answer withheld]', '[unreadable or over-limit transport answer withheld]']);
   const maxBytes = diagnostic ? 262144 : 16 * 1024 * 1024, maxNodes = diagnostic ? 4096 : 131072;
@@ -508,7 +524,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (entry.length > MAX_SCREEN_VALUE_BYTES) return hide();
       const size = Buffer.byteLength(entry); bytes += size;
       if (size > MAX_SCREEN_VALUE_BYTES || bytes > maxBytes) return hide();
-      if (pathValue) { const safe = screenPath(entry); if (safe !== entry) revision++; return { value: safe, text: safe }; }
+      if (pathValue) { const safe = safePath(entry); if (safe !== entry) revision++; return { value: safe, text: safe }; }
       if (markers.has(entry)) return { value: entry, text: entry };
       if (layers > 8) return hide();
       if (patch) {
@@ -516,7 +532,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
         entry = entry.split('\n').map(line => {
           if (line.startsWith('diff --git ')) inHunk = false;
           if (/^@@ /.test(line)) inHunk = true;
-          return !inHunk && /^(?:diff --git |--- |\+\+\+ |rename (?:from|to) )/.test(line) ? screenPath(line) : line;
+          return !inHunk && /^(?:diff --git |--- |\+\+\+ |rename (?:from|to) )/.test(line) ? safePath(line) : line;
         }).join('\n');
       }
       const stringRevision = revision;
@@ -527,7 +543,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       // A path can also occur in prose, a diff header, or an echoed tool error.
       // Preserve surrounding bytes while applying the same unbounded table.
       const pathText = entry.replace(/[^\s"'<>`]+/g, token =>
-        token.includes('/') || /\.[A-Za-z0-9]{1,12}[,:;)}\]]*$/.test(token) ? screenPath(token) : token);
+        token.includes('/') || /\.[A-Za-z0-9]{1,12}[,:;)}\]]*$/.test(token) ? safePath(token) : token);
       if (pathText !== entry) { entry = pathText; revision++; }
       let parsed, decoded = false;
       try { parsed = JSON.parse(entry.trim(), (_key, child, context) =>
@@ -744,13 +760,13 @@ function promptFor(packRoot, role, context) {
 
 // Produce payload diffs only from full, screened blobs; hunk context cannot
 // expose a value whose binding sits outside that context.
-function screenedDiff(worktree, base, head, files) {
+function screenedDiff(worktree, base, head, files, pathFor = screenPath) {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-screened-diff-'));
   const withheld = [], partiallyWithheld = new Set(), parts = [];
   try {
     const policy = gitReadPolicy(worktree);
     for (const file of files) {
-      const sides = [];
+      const name = pathFor(file), sides = [];
       for (const revision of [base, head]) {
         const treeEntry = git(worktree, ['ls-tree', revision, '--', file]);
         const exists = !!treeEntry, mode = treeEntry.slice(0, 6);
@@ -761,15 +777,14 @@ function screenedDiff(worktree, base, head, files) {
           const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
           const safe = screenModelOutput(content, { input: true, inputFile: file });
           requireValue(!safe.rejected && typeof safe.value === 'string', 'blob withheld');
-          if (safe.partiallyWithheld) partiallyWithheld.add(screenPath(file));
+          if (safe.partiallyWithheld) partiallyWithheld.add(name);
           sides.push({ exists, mode, value: safe.value });
-        } catch { withheld.push(screenPath(file)); break; }
+        } catch { withheld.push(name); break; }
       }
       if (sides.length !== 2) continue;
       const [before, after] = sides, left = path.join(scratch, 'before'), right = path.join(scratch, 'after');
       fs.writeFileSync(left, before.value); fs.writeFileSync(right, after.value);
       const output = readGit(scratch, policy.env, policy.args, ['diff', '--no-index', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', '--', before.exists ? left : '/dev/null', after.exists ? right : '/dev/null'], false, null, [0, 1]);
-      const name = screenPath(file);
       let inHunk = false;
       const body = output.split('\n').flatMap(line => {
         if (line.startsWith('@@ ')) inHunk = true;
@@ -806,20 +821,21 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     requireValue(!git(worktree, ['diff', '--raw', '--no-renames', base, head, '--']).split('\n')
       .some(row => /^:(?:160000 \d{6}|\d{6} 160000) /.test(row)), 'gitlink changes are unsupported; review the submodule separately');
     const rawFiles = git(worktree, ['diff', '--name-only', '--no-renames', '-z', base, head, '--']).split('\0').filter(Boolean);
-    const paths = new Map(rawFiles.map(file => [screenPath(file), file]));
+    const pathFor = pathScreen(), paths = new Map(rawFiles.map(file => [pathFor(file), file]));
     requireValue(paths.size === rawFiles.length, 'screened paths collide; files not reviewed');
-    const allFiles = [...paths.keys()], full = screenedDiff(worktree, base, head, rawFiles);
+    const full = screenedDiff(worktree, base, head, rawFiles, pathFor);
     if (full.withheld.length) return { ...fail('pinned blobs withheld; files not reviewed'), unreviewedFiles: full.withheld,
       secrets: full.withheld.map(file => ({ file, line: 0, weight: 'P0', reason: 'unreadable or credential-shaped blob; file withheld' })) };
     const diff = full.diff, previous = record.rounds.at(-1)?.head;
     const scopeFiles = number === 2 ? git(worktree, ['diff', '--name-only', '--no-renames', '-z', previous, head, '--']).split('\0').filter(Boolean) : rawFiles;
-    const files = scopeFiles.map(screenPath), scoped = number === 2 ? screenedDiff(worktree, previous, head, scopeFiles) : full;
+    for (const file of scopeFiles) paths.set(pathFor(file), file);
+    const files = scopeFiles.map(pathFor), scoped = number === 2 ? screenedDiff(worktree, previous, head, scopeFiles, pathFor) : full;
     if (scoped.withheld.length) return { ...fail('scope blobs withheld; files not reviewed'), unreviewedFiles: scoped.withheld };
     const scopeDiff = scoped.diff;
     partiallyWithheldFiles.push(...new Set([...full.partiallyWithheld, ...scoped.partiallyWithheld]));
     const rules = git(worktree, ['ls-tree', head, '--', 'AGENTS.md']) ? git(worktree, ['show', `${head}:AGENTS.md`]) : '';
     exported = exportReviewTree(worktree, head);
-    const context = { worktree: exported.root, symlinks: exported.symlinks, head, base, contract, rules, round: number, scope: number === 2 ? 'fixes-and-open-findings' : 'full', files, diff: scopeDiff, partiallyWithheldFiles };
+    const context = { worktree: exported.root, symlinks: exported.symlinks.map(pathFor), head, base, contract, rules, round: number, scope: number === 2 ? 'fixes-and-open-findings' : 'full', files, diff: scopeDiff, partiallyWithheldFiles };
     requireSafeContext({ ...context, history: record.findings, failedAnswers: record.failures });
     const call = async (role, extra, parse) => {
       const prompt = promptFor(packRoot, role, { ...context, ...extra });
@@ -840,7 +856,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
           }
           requireValue(!screened.rejected, 'model output withheld by secret screen');
           if (failure) throw new Error(failure.message);
-          return parse(result.response);
+          return parse(result.response, attempt);
         } catch (error) {
           const reason = screenModelOutput(error.message, { diagnostic: true }).diagnostic.text;
           if (!costRecorded) costs.push({ role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, attempt, elapsedMs: Date.now() - started, usage: null, boundary: screened?.value?.error?.boundary ?? null, failure: true });
@@ -858,18 +874,37 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     const missing = () => files.filter(file => !covered.has(file));
     if (missing().length) absorb(await call('code-review', { openFindings: open, pass: 'coverage', focusFiles: missing() }, parseReviewer));
     requireValue(missing().length === 0, 'incomplete changed-file coverage after focused pass');
-    const findings = [...new Map([...open, ...found].map(finding => [finding.key, finding])).values()];
-    const baseEvidence = [...new Set(findings.map(finding => finding.file))].map(file => {
+    const byKey = new Map();
+    for (const finding of [...open, ...found]) {
+      const prior = byKey.get(finding.key);
+      byKey.set(finding.key, { ...finding, reviewerDanger: Object.hasOwn(finding, 'reviewerDanger') ? finding.reviewerDanger : finding.danger ?? null,
+        danger: prior ? prior.danger !== false || finding.danger !== false : finding.danger ?? null });
+    }
+    const findings = [...byKey.values()];
+    const evidenceAt = revision => [...new Set(findings.map(finding => finding.file))].map(file => {
       const raw = paths.get(file) ?? file;
-      if (!git(worktree, ['ls-tree', base, '--', raw])) return { file, content: null };
-      const bytes = git(worktree, ['cat-file', 'blob', `${base}:${raw}`], {}, true);
+      if (!git(worktree, ['ls-tree', revision, '--', raw])) return { file, content: null };
+      const bytes = git(worktree, ['cat-file', 'blob', `${revision}:${raw}`], {}, 'blob');
       const safe = screenModelOutput(new TextDecoder('utf-8', { fatal: true }).decode(bytes), { input: true, inputFile: raw });
-      requireValue(!safe.rejected, 'base evidence withheld');
+      if (safe.rejected) throw Object.assign(new Error('pinned evidence withheld'), {
+        secrets: [{ file, line: 0, weight: 'P0', reason: 'credential-family or undecodable pinned evidence; value withheld' }],
+      });
       if (safe.partiallyWithheld && !partiallyWithheldFiles.includes(file)) partiallyWithheldFiles.push(file);
       return { file, content: safe.value };
     });
-    const checked = findings.length ? (await call('code-review-checker', { findings: findings.map(({ key, ...finding }, index) => ({ ...finding, id: `F${index + 1}` })),
-      history: record.findings.filter(item => findings.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${findings.findIndex(f => f.key === key) + 1}` })), baseDiff: diff, baseEvidence }, value => parseChecker(value, findings))).verdicts : [];
+    const baseEvidence = evidenceAt(base), headEvidence = evidenceAt(head);
+    const checker = findings.length ? await call('code-review-checker', { findings: findings.map(({ key, ...finding }, index) => ({ ...finding, id: `F${index + 1}` })),
+      history: record.findings.filter(item => findings.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${findings.findIndex(f => f.key === key) + 1}` })), baseDiff: diff, baseEvidence, headEvidence },
+      (value, attempt) => parseChecker(value, findings, { separateContradictoryMerges: attempt === 2 })) : { verdicts: [], mergesSeparated: false };
+    const checked = checker.verdicts.map(verdict => {
+      const finding = byKey.get(verdict.key), danger = finding.danger !== false || verdict.danger !== false;
+      const quote = verdict.codeQuote, content = headEvidence.find(item => item.file === finding.file)?.content;
+      const provenRejection = text(quote) && !quote.includes('[credential-shaped') && typeof content === 'string' && content.includes(quote);
+      const retained = danger && verdict.outcome === 'rejected' && !provenRejection;
+      return { ...verdict, checkerDanger: verdict.danger, danger, dangerCase: danger ? verdict.dangerCase ?? 'unknown' : null,
+        dangerReason: danger && verdict.danger === false ? 'Сохранена ранее отмеченная или неясная опасность. ' + verdict.dangerReason : verdict.dangerReason,
+        ...(retained ? { outcome: 'confirmed', closed: false, rejectionUnproven: true, reason: 'Отклонение не подтверждено цитатой из проверенной версии файла. ' + verdict.reason } : {}) };
+    });
     requireValue(treeIdentity(worktree) === identity, 'HEAD/tree changed during review; result discarded');
     const merged = new Map(record.findings.map(finding => [finding.key, finding]));
     for (const verdict of checked) {
@@ -891,7 +926,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     // Successor creation/signing belongs to T3. A round reports the obligation; it cannot manufacture permission.
     const successors = active.filter(finding => (finding.origin === 'pre-existing' && finding.danger) || (number === 3 && blocking.includes(finding) && !finding.danger));
     const outcome = blocking.length || current.some(finding => finding.outOfContract || finding.riskRaised) || successors.length ? 'not-converged' : 'clean';
-    const round = { number, head, base, scope: context.scope, reviewedFiles: [...covered], partiallyWithheldFiles, findingKeys: checked.map(verdict => verdict.key), outcome, costs };
+    const round = { number, head, base, scope: context.scope, checkerMergesSeparated: checker.mergesSeparated, reviewedFiles: [...covered], partiallyWithheldFiles, findingKeys: checked.map(verdict => verdict.key), outcome, costs };
     return { ...record, schemaVersion: 1, interrupted: false, base, contractDigest, rounds: [...record.rounds, round], findings: current, round, outcome,
       successorKeys: successors.map(finding => finding.key), partiallyWithheldFiles, costs };
   } catch (error) { return { ...fail(screenModelOutput(error.message, { diagnostic: true }).diagnostic.text, !!error.interrupted), ...(error.secrets ? { secrets: error.secrets } : {}) }; }

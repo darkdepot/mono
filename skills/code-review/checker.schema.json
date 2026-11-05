@@ -80,6 +80,9 @@
           },
           "newEvidence": {
             "type": "boolean"
+          },
+          "codeQuote": {
+            "type": "string"
           }
         },
         "required": [
@@ -95,7 +98,8 @@
           "riskRaised",
           "reason",
           "closed",
-          "newEvidence"
+          "newEvidence",
+          "codeQuote"
         ],
         "additionalProperties": false
       }

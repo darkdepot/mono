@@ -124,11 +124,7 @@ inputs use the same bounded decoder, including JSON literals embedded in source;
 pinned blobs and all context fields are screened before their role starts. Secret
 replies fail closed, while retained diagnostics redact values. Every JSON/JSONL
 string layer uses literal `JSON.parse` to a fixed point, including Codex
-`item.text`, preserving quoted key/value boundaries. Raw text is screened before parsing so duplicate members and escaped keys cannot disappear. A lexer binds secret-like keys to their actual values and entire nested subtrees without a length floor; property reads/tests bind nothing. At most eight decoding layers
-are allowed; unresolved JSON pairing and over-limit
-content are withheld. Non-JSON brace/bracket prose remains raw text; that prefix alone never withholds a response. Raw non-JSON values containing whitespace are out of scope. The single payload family table includes AWS AKIA/ASIA,
-GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
-Secret-like keys cover all value types; diff/blob payloads redact bound values in place and continue. Only credential-family hits and fail-closed JSON withhold those payloads. Env/flag values retain `=` until whitespace; comments before the binding operator are whitespace; bare type-only object members bind nothing. Typed declarations/fields bind their actual initializer; escape-aware literal redaction preserves adjacent code. `session` alone is allowed. This applies
+`item.text`, preserving quoted key/value boundaries. Raw text is screened before parsing so duplicate JSON members and escaped keys cannot disappear. Non-JSON source uses dataset v8 stateless matching: matched lines are withheld, and a matched opener withholds the file remainder. Decoding only maps hits back to original lines. Other lexical forms and harmless excess withholding belong to MONO-329. JSON retains member binding and nested-subtree screening without a length floor; property reads bind nothing. At most eight decoding layers are allowed; unresolved JSON pairing and over-limit content are withheld. The family table includes AWS AKIA/ASIA, GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values. Paths use strict JWT recognition and distinct aliases. `session` alone is allowed. This applies
 to prompts, contracts, rules, filenames, history, checker evidence, diagnostics and
 kept model output. Role tool reads, files changed after screening and values
 reconstructed by evaluation are outside payload screening. New credential families
@@ -149,3 +145,7 @@ non-UTF8 blobs are refused before roles; patch scanning still reconstructs both
 hunk sides for multiline assignments. Unsupported helper names fail closed.
 
 Clean controls reject existing entries, including dangling symlinks, and create files exclusively. The raw MONO-302 diff fixture keeps its exact whitespace through a path-specific Git attribute.
+
+Dataset validation and anchor checks read exact local Git blobs; payload screening applies when content goes to a model. `screen-regressions/qa-r5-historical.json` pins the actual MONO-302 changed paths and raw MONO-81 test source, including cases20/24 anchors.
+
+Circle danger is the union of reviewer/checker danger, with unknown or absent labels treated as dangerous. A dangerous/unmarked rejection needs codeQuote present in the screened current-head file; otherwise code retains confirmed. A contradictory merge batch retries once, then retains separate finding keys. This guard does not turn archived raw checker replies into a live calibration pass; the host still needs explicit per-finding gold and independent adjudication.

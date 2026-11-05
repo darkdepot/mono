@@ -102,17 +102,17 @@ test('historical checker replies retain disagreements and independent batches, n
  assert.equal(archive.batches.length,6);assert.equal(archive.batches.filter(batch=>batch.source==='checker').flatMap(batch=>batch.responses).length,60);
  assert.match(archive.provenance,/no measurement/i);assert.ok(archive.batches.some(batch=>batch.responses.some(reply=>reply.outcome==='rejected')));
 });
-async function evaluationFixture(t){
+async function evaluationFixture(t,{sourceFile='scripts/input.mjs',source='after\n',anchor='after',anchors={}}={}){
  const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'mono-eval-control-'));t.after(()=>fs.rmSync(scratch,{recursive:true,force:true}));
  const repo=path.join(scratch,'source');fs.mkdirSync(repo);
  const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  git('init','-q');git('config','user.email','fixture@example.test');git('config','user.name','Fixture');
- fs.mkdirSync(path.join(repo,'scripts'));fs.writeFileSync(path.join(repo,'contract.md'),'Frozen contract.\n');fs.writeFileSync(path.join(repo,'scripts/input.mjs'),'before\n');git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
- fs.writeFileSync(path.join(repo,'scripts/input.mjs'),'after\n');git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
+ fs.mkdirSync(path.join(repo,'scripts'));fs.writeFileSync(path.join(repo,'contract.md'),'Frozen contract.\n');fs.writeFileSync(path.join(repo,sourceFile),'before\n');git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
+ fs.writeFileSync(path.join(repo,sourceFile),source);git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
  const clone=structuredClone(dataset);for(const task of clone.tasks){task.base=base;task.head=head;task.contract='Review this fixture.';task.contractSource={file:'contract.md',blob:git('rev-parse','HEAD:contract.md'),sha256:'e89cccb393b3c86034ca185f91b4e0d287316774fb7c825088ce48144547a6125'};git('tag',`dataset/${task.id}-head`);}
  // The hash is independently computed from the actual contract bytes, not the implementation's object digest.
  const {createHash}=await import('node:crypto');for(const task of clone.tasks)task.contractSource.sha256=createHash('sha256').update('Frozen contract.\n').digest('hex');
- for(const item of clone.cases){item.file='scripts/input.mjs';item.anchor='after';}
+ for(const item of clone.cases){item.file=sourceFile;item.anchor=anchors[item.id]??anchor;}
  git('checkout','-q','--detach',base);
  const content='# Clean control\n\nDocumentation only.\n';fs.writeFileSync(path.join(repo,'CODE_REVIEW_EVAL_CONTROL.md'),content);git('add','.');const cleanTree=git('write-tree');
  const cleanHead=execFileSync('git',['commit-tree',cleanTree,'-p',base,'-m','Code review clean document control'],{cwd:repo,encoding:'utf8',env:{...process.env,GIT_AUTHOR_NAME:'Evaluation Fixture',GIT_AUTHOR_EMAIL:'fixture@example.test',GIT_AUTHOR_DATE:'2026-11-01T00:00:00Z',GIT_COMMITTER_NAME:'Evaluation Fixture',GIT_COMMITTER_EMAIL:'fixture@example.test',GIT_COMMITTER_DATE:'2026-11-01T00:00:00Z'}}).trim();
@@ -131,6 +131,13 @@ test('C32: a dangling clean-control symlink cannot create a file outside the che
  assert.equal(fs.existsSync(outside),false,'clean control followed the dangling symlink');
  assert.match(error?.message??'',/clean control would overwrite a historical file/);
  assert.equal(fs.lstatSync(path.join(repo,file)).isSymbolicLink(),true);
+});
+test('C33: MONO-81 cases 20 and 24 validate against exact local blobs, not model payloads',async t=>{
+ const frozen=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/screen-regressions/qa-r5-historical.json'),'utf8'))['MONO-81'];
+ assert.equal(createHash('sha256').update(frozen.source).digest('hex'),frozen.sha256);
+ const {clone,bundle}=await evaluationFixture(t,{sourceFile:frozen.file,source:frozen.source,anchor:'import',anchors:frozen.anchors});
+ for(const id of ['20','24']){const item=clone.cases.find(item=>item.id===id);assert.equal(item.file,'scripts/review-bench.test.mjs');assert.ok(frozen.source.includes(item.anchor));}
+ assert.equal(verifyDatasetBundle(clone,bundle).modelCalls,0);
 });
 test('host Git isolation also disables smudge and process filters in evaluation checkouts',async t=>{
  for(const driver of ['smudge','process'])await t.test(driver,async t=>{

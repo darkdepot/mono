@@ -56,16 +56,16 @@ export function verifyDatasetBundle(dataset, bundle) {
     for (const task of dataset.tasks) {
       need(git(scratch, ['rev-parse', `${task.head}^{commit}`]) === task.head && git(scratch, ['merge-base', task.base, task.head]) === task.base, `unavailable base/head ${task.id}`);
       need(git(scratch, ['rev-parse', `${task.head}:${task.contractSource.file}`]) === task.contractSource.blob, `contract blob changed ${task.id}`);
-      const source = git(scratch, ['cat-file', 'blob', task.contractSource.blob], {}, true);
+      const source = git(scratch, ['cat-file', 'blob', task.contractSource.blob], {}, 'blob');
       need(createHash('sha256').update(source).digest('hex') === task.contractSource.sha256, `contract bytes changed ${task.id}`);
-      for (const item of dataset.cases.filter(item => item.task === task.id)) need(git(scratch, ['show', `${task.head}:${item.file}`]).includes(item.anchor), `code anchor missing ${item.id}`);
+      for (const item of dataset.cases.filter(item => item.task === task.id)) need(git(scratch, ['cat-file', 'blob', `${task.head}:${item.file}`], {}, 'blob').includes(Buffer.from(item.anchor)), `code anchor missing ${item.id}`);
     }
     for (const control of dataset.cleanControls) materializeCleanControl(scratch, control);
     return { ...validateReviewDataset(dataset), bundle: 'verified', modelCalls: 0 };
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 export function pinnedReviewContract(worktree, task) {
-  const source = git(worktree, ['cat-file', 'blob', task.contractSource.blob], {}, true);
+  const source = git(worktree, ['cat-file', 'blob', task.contractSource.blob], {}, 'blob');
   need(createHash('sha256').update(source).digest('hex') === task.contractSource.sha256, 'contract bytes changed');
   return source.toString('utf8');
 }
