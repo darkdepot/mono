@@ -22,10 +22,63 @@ const sample={class:'missing-validation',file:'input.mjs',anchor:'return value',
 const transcripts=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/recorded-responses.json'),'utf8'));
 const dangerControls=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-checker-regressions.json'),'utf8'));
 const key=findingKey(sample);
+test('C21: env and flag values retain trailing equals until whitespace before in-place input redaction',async t=>{
+ for(const source of ['export API_KEY=fixtureValue=', '--api-key fixtureValue=', '--api-key=fixtureValue=']){
+  assert.equal(screenModelOutput(source).rejected,true,source);
+  const screened=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
+  assert.equal(screened.rejected,false,source);assert.ok(!screened.value.includes('fixtureValue'));
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source+'\n');f.git('add','.');f.git('commit','-qm','equals regression');
+  const runner=responder(),record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+  assert.equal(record.outcome,'clean',source);assert.equal(runner.calls.length,1);
+  assert.ok(!runner.calls[0].prompt.includes('fixtureValue'));
+ }
+});
+test('C21: block and line comments between binding name and operator are whitespace',async t=>{
+ for(const source of ['const password/*note*/="fixtureValue";', 'const password//note\n="fixtureValue";', 'const password/* note */ = "fixtureValue";']){
+  assert.equal(screenModelOutput(source).rejected,true,source);
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source+'\n');f.git('add','.');f.git('commit','-qm','comment regression');
+  const runner=responder(),record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+  assert.equal(record.outcome,'clean',source);assert.equal(runner.calls.length,1);
+  assert.ok(!runner.calls[0].prompt.includes('fixtureValue'));
+ }
+});
+test('C21: bare type-only members match nothing and never prevent role launch',async t=>{
+ for(const source of ['interface LoginForm { password: string; }', 'type LoginForm = { token: TokenType; credential: unknown; };']){
+  assert.equal(screenModelOutput(source).rejected,false,source);assert.equal(scanSecrets(source,{patch:false}).length,0);
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source+'\n');f.git('add','.');f.git('commit','-qm','type regression');
+  const runner=responder(),record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+  assert.equal(record.outcome,'clean',source);assert.equal(runner.calls.length,1);
+ }
+});
+test('C21: diff/blob rule-2 values redact in place, while families and ambiguous JSON still withhold',async t=>{
+ for(const source of ['const password = "fixtureValue";\n', 'const credential = {value:"fixtureValue", nested:["secondValue"]};\n', 'password =\n"fixtureValue"\n']){
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source);f.git('add','.');f.git('commit','-qm','redaction regression');
+  const head=f.git('rev-parse','HEAD'),diff=f.git('diff',f.request.base,head);
+  assert.equal(scanSecrets(diff).length,0);
+  const screened=screenModelOutput(diff,{input:true,inputPatch:true});assert.equal(screened.rejected,false);
+  assert.ok(!screened.value.includes('fixtureValue'));assert.ok(!screened.value.includes('secondValue'));
+  const runner=responder(),before=f.git('status','--porcelain=v1'),record=await runReviewRound({...f.request,head},runner);
+  assert.equal(record.outcome,'clean');assert.equal(runner.calls.length,1);
+  assert.ok(!runner.calls[0].prompt.includes('fixtureValue'));assert.ok(!runner.calls[0].prompt.includes('secondValue'));
+  assert.equal(f.git('status','--porcelain=v1'),before);assert.equal(f.git('rev-parse','HEAD'),head);
+ }
+ const encoded=JSON.stringify(JSON.stringify({password:'fixtureValue'}));
+ const source=`const data = JSON.parse(${encoded});\nconst retained = 42;\n`;
+ for(const patch of [false,true]){
+  const input=patch?`+++ b/input.mjs\n@@ -0,0 +1,2 @@\n+${source.trimEnd().replaceAll('\n','\n+')}\n`:source;
+  const screened=screenModelOutput(input,{input:true,inputFile:'input.mjs',inputPatch:patch});
+  assert.equal(screened.rejected,false);assert.ok(!screened.value.includes('fixtureValue'));
+  assert.ok(screened.value.includes('const data = JSON.parse('));assert.ok(screened.value.includes('const retained = 42;'));
+  assert.equal(screened.value.split('\n').length,input.split('\n').length);
+ }
+ for(const source of ['password="'+'ghp_'+'h'.repeat(36)+'"', '{"password":"fixtureValue","password":""}']){
+  assert.equal(screenModelOutput(source,{input:true,inputFile:'input.mjs'}).rejected,true);
+ }
+});
 test('v4: raw duplicate members, escaped keys and every bound value are screened before parsing',()=>{
  const inputs=['{"password":"x","password":""}', '{"pass\\u0077ord":"x","password":""}',
   'const password = "x";', 'export API_KEY=x', '--token x', '--session-key=7',
-  '{credential: {value:"x"}}', '{password:1}', '{password:false}', '{password:null}',
+  '{credential: {value:"x"}}', '{password:1}', '{"password":false}', '{"password":null}',
   '{"password":"x","password":"safe"}', 'const password = ["x"];', 'password="x'];
  for(const source of inputs){
   assert.equal(screenModelOutput(source).rejected,true,source);
@@ -228,7 +281,7 @@ test('host Git reads never execute external diff or textconv helpers, including 
   }
  });
 });
-test('forced Git color cannot hide multiline patch secrets before model launch',async t=>{
+test('forced Git color cannot hide multiline patch redaction before model launch',async t=>{
  for(const setting of ['color.diff','color.ui'])await t.test(setting,async t=>{
   const f=fixture(t),secret='opaqueFixture'+'c'.repeat(24);
   fs.writeFileSync(path.join(f.worktree,'input.mjs'),`password =\n"${secret}"\n`);
@@ -236,8 +289,8 @@ test('forced Git color cannot hide multiline patch secrets before model launch',
   f.git('config',setting,'always');
   const colored=f.git('diff',f.request.base,head);assert.match(colored,/\u001b\[/);
   const runner=responder(),result=await runReviewRound({...f.request,head},runner);
-  assert.equal(runner.calls.length,0);assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);
-  assert.ok(result.secrets.length);assert.ok(!JSON.stringify(result).includes(secret));
+  assert.equal(runner.calls.length,1);assert.equal(result.outcome,'clean');assert.equal(result.rounds.length,1);
+  assert.ok(runner.calls.every(call=>!call.prompt.includes(secret)));assert.ok(!JSON.stringify(result).includes(secret));
  });
 });
 test('host Git isolation disables content filters and drivers before every worktree read',async t=>{
@@ -279,7 +332,7 @@ test('role Git reads cannot execute repository helpers, including absolute Git w
   assert.equal(fs.existsSync(marker),true,'negative control must execute the repository helper');
  });
 });
-test('encoded JSON assignments in pinned blobs and every context source stop before any role',async t=>{
+test('encoded JSON assignments redact in pinned files and withhold unbound context',async t=>{
  const secret='opaqueFixture'+'j'.repeat(24);
  for(const depth of [1,2,3])for(const source of ['blob','contract','rules','base-evidence'])await t.test(`${source}/${depth}`,async t=>{
   const f=fixture(t);let encoded=JSON.stringify({password:secret});for(let i=0;i<depth;i++)encoded=JSON.stringify(encoded);
@@ -292,8 +345,9 @@ test('encoded JSON assignments in pinned blobs and every context source stop bef
    request.head=f.git('rev-parse','HEAD');
   }
   const runner=responder({findings:source==='base-evidence'?[{...sample,file:'neighbor.mjs'}]:[]}),result=await runReviewRound(request,runner);
-  assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,source==='base-evidence'?1:0,'encoded credentials reached a role');
-  assert.ok(result.secrets?.length);assert.ok(!JSON.stringify(result).includes(secret));
+  assert.equal(result.outcome,source==='contract'?'not-reviewed':source==='base-evidence'?'not-converged':'clean');
+  assert.equal(runner.calls.length,source==='contract'?0:source==='base-evidence'?2:1);
+  assert.ok(runner.calls.every(call=>!call.prompt.includes(secret)));assert.ok(!JSON.stringify(result).includes(secret));
  });
 });
 test('host Git isolation refuses helper names that cannot be represented by a config override',async t=>{
@@ -316,8 +370,8 @@ test('host Git isolation screens both pinned blobs even when attributes hide the
   fs.writeFileSync(path.join(f.worktree,'input.mjs'),side==='added'?credential:safe);f.git('add','.');f.git('commit','-qm','after hidden diff');const head=f.git('rev-parse','HEAD');
   assert.ok(!f.git('diff',base,head).includes(secret),'positive control must suppress the text');
   const runner=responder(),result=await runReviewRound({...f.request,base,head},runner);
-  assert.equal(runner.calls.length,0);assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);
-  assert.ok(result.secrets.length);assert.ok(!JSON.stringify(result).includes(secret));
+  assert.equal(runner.calls.length,1);assert.equal(result.outcome,'clean');assert.equal(result.rounds.length,1);
+  assert.ok(runner.calls.every(call=>!call.prompt.includes(secret)));assert.ok(!JSON.stringify(result).includes(secret));
  });
 });
 test('host Git isolation refuses opaque blob bytes before a role can read them',async t=>{
@@ -416,7 +470,7 @@ test('all model output is screened on failed fields and legacy records before re
   assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.ok(!JSON.stringify(result).includes(secret));
  });
 });
-test('patch multiline assignments stop before any role, on both sides and across context lines',async t=>{
+test('patch multiline assignments redact before roles, on both sides and across context lines',async t=>{
  for(const shape of ['added','removed','context'])await t.test(shape,async t=>{
   const f=fixture(t),secret='opaqueFixture'+'x'.repeat(24);
   const before=shape==='added'?'export const safe = 1;\n':`password =\n"${shape==='context'?'short':secret}"\n`;
@@ -424,8 +478,8 @@ test('patch multiline assignments stop before any role, on both sides and across
   fs.writeFileSync(path.join(f.worktree,'input.mjs'),shape==='removed'?'export const safe = 2;\n':`password =\n"${secret}"\n`);
   f.git('add','.');f.git('commit','-qm','assignment change');const head=f.git('rev-parse','HEAD'),runner=responder();
   const result=await runReviewRound({...f.request,base,head},runner);
-  assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.equal(result.rounds.length,0);
-  assert.ok(result.secrets.length);assert.ok(!JSON.stringify(result).includes(secret));
+  assert.equal(result.outcome,'clean');assert.equal(runner.calls.length,1);assert.equal(result.rounds.length,1);
+  assert.ok(runner.calls.every(call=>!call.prompt.includes(secret)));assert.ok(!JSON.stringify(result).includes(secret));
  });
 });
 test('failed transport answers decode JSONL and object fields before redaction, withholding malformed envelopes',async t=>{
@@ -554,8 +608,15 @@ test('CLI schemas retain the exact response fields accepted by the round parser'
 test('historical synthetic decoys follow the same rule regardless of path',()=>{
  const lines=[['scripts/review-bench.test.mjs',"  return {...f,log,plan,good,routes:[good],env:{BENCH_CREDENTIAL:secret,UNRELATED_SECRET:'"+['ambient','must','not','reach','helper'].join('-')+"'},secret};"],
  ['scripts/delivery-runtime.test.mjs','      const row = { pid: 900022, procStart: fixtureStart }, secret = "'+['UNRELATED','SECRET','DECOY','146'].join('_')+'";']];
- for(const [file,line] of lines){const diff=`+++ b/${file}\n@@ -0,0 +1 @@\n+${line}`;assert.ok(scanSecrets(diff).length);assert.equal(scanSecrets(diff.replace('+++ b/'+file,'+++ b/other.test.mjs')).length,1);assert.equal(scanSecrets(diff+'x').length,1);
-  const deleted=`--- a/${file}\n+++ /dev/null\n@@ -1 +0,0 @@\n-${line}`;assert.ok(scanSecrets(deleted).length);assert.equal(scanSecrets(deleted.replace('--- a/'+file,'--- a/other.test.mjs')).length,1);}
+ for(const [file,line] of lines){
+  const diff=`+++ b/${file}\n@@ -0,0 +1 @@\n+${line}`,deleted=`--- a/${file}\n+++ /dev/null\n@@ -1 +0,0 @@\n-${line}`;
+  for(const patch of [diff,diff.replace('+++ b/'+file,'+++ b/other.test.mjs'),diff+'x',deleted,deleted.replace('--- a/'+file,'--- a/other.test.mjs')]){
+   assert.equal(scanSecrets(patch).length,0);
+   const screened=screenModelOutput(patch,{input:true,inputPatch:true});assert.equal(screened.rejected,false);
+   assert.match(screened.value,/credential-shaped field withheld/);
+   assert.ok(!screened.value.includes('ambient-must-not-reach-helper'));assert.ok(!screened.value.includes('UNRELATED_SECRET_DECOY_146'));
+  }
+ }
 });
 
 test('role auth refuses API keys, unknown identity and incomplete subscription evidence',()=>{
@@ -924,7 +985,8 @@ test('v2 unquoted secret-like names use the same any-separator rule in every pay
  assert.equal(record.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.ok(record.secrets?.length);
  fs.writeFileSync(path.join(f.worktree,'input.mjs'),yaml);f.git('add','.');f.git('commit','-qm','synthetic unquoted key');
  const blobRunner=responder(),blob=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},blobRunner);
- assert.equal(blob.outcome,'not-reviewed');assert.equal(blobRunner.calls.length,0);assert.ok(blob.secrets?.length);
+ assert.equal(blob.outcome,'clean');assert.equal(blobRunner.calls.length,1);
+ assert.ok(blobRunner.calls.every(call=>!call.prompt.includes(credential)));assert.ok(!JSON.stringify(blob).includes(credential));
 });
 
 test('C17: successful Git stderr is captured and withheld before the round refuses a secret',t=>{
