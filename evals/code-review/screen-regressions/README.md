@@ -15,7 +15,7 @@ not successful live role runs or a new calibration measurement.
 - `checker-r3.json`: nine reconstructed r3 answers and their exact finding fields,
   using the same field selection as the host replay. No changed reasons or merge keys.
 
-The tests require a completed round and 9/9 accepted answers. Dataset v7 keeps v6's
+The tests require a completed round and 9/9 accepted answers. Dataset v8 keeps v6's
 stateless source line rule supersedes the earlier lexical-span expectations:
 a matched line/block may be hidden, but must not prevent launch or parsing.
 Unmatched source bytes, including regex escapes, stay exact. The native catalog,
@@ -25,3 +25,5 @@ Model responses here are recorded fixtures; the orchestrator must still repeat
 live manual checks from both host systems before merge.
 
 Collection-10 regressions cover full-blob redaction beyond hunk context, quoted block delimiters (uncertain quotes withhold the remainder), and embedded credential-family filenames across inventory, prompt and report channels.
+
+Collection-11 regression keeps the exact regex closer source and checks remainder withholding across later hunks, both patch sides and both roles. V8 replaces prior block-end/suffix-preservation expectations: same-line openers conservatively withhold the remainder without interpreting closers. Other files, prefix bytes, JSON decoding and role launch/parser controls remain checked.

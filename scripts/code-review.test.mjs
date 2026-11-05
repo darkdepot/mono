@@ -22,6 +22,23 @@ const sample={class:'missing-validation',file:'input.mjs',anchor:'return value',
 const transcripts=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/recorded-responses.json'),'utf8'));
 const dangerControls=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/round2-checker-regressions.json'),'utf8'));
 const key=findingKey(sample);
+test('C30/v8: a matched opener withholds the file remainder across regexes, hunks and both roles',async t=>{
+ const source='const credential = {\n delimiter: /}/,\n value: "opaqueCredentialValue"\n};\nconst tail = "tailFixture";';
+ const blob=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
+ assert.equal(blob.rejected,false);assert.ok(!blob.value.includes('opaqueCredentialValue'));assert.ok(!blob.value.includes('tailFixture'));assert.equal(blob.partiallyWithheld,true);
+ const patch='diff --git a/input.mjs b/input.mjs\n--- a/input.mjs\n+++ b/input.mjs\n@@ -1,2 +1,3 @@\n-const credential = {\n+const harmless = {};\n delimiter: /}/,\n@@ -20,1 +21,1 @@\n-value: "previousFixture"\n+value: "opaqueCredentialValue"\n const tail = "tailFixture";\ndiff --git a/neighbor.mjs b/neighbor.mjs\n--- a/neighbor.mjs\n+++ b/neighbor.mjs\n@@ -1 +1 @@\n-const before = 1;\n+const after = 2;\n';
+ const diff=screenModelOutput(patch,{input:true,inputPatch:true});assert.equal(diff.rejected,false);assert.equal(diff.partiallyWithheld,true);
+ for(const value of ['previousFixture','opaqueCredentialValue','tailFixture','+const harmless'])assert.ok(!diff.value.includes(value),value);
+ for(const value of ['-[credential-shaped line withheld]','+[credential-shaped line withheld]',' [credential-shaped line withheld]','+const after = 2;'])assert.ok(diff.value.includes(value),value);
+ const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source);fs.writeFileSync(path.join(f.worktree,'neighbor.mjs'),'const after = 2;\n');f.git('add','.');f.git('commit','-qm','v8 remainder');const head=f.git('rev-parse','HEAD'),calls=[];
+ const result=await runReviewRound({...f.request,head},{runRole:async request=>{
+  calls.push(request);const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);
+  assert.deepEqual(context.partiallyWithheldFiles,['input.mjs']);assert.ok(!request.prompt.includes('opaqueCredentialValue'));assert.ok(!request.prompt.includes('tailFixture'));
+  return {response:request.role==='code-review'?review([sample],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',reason:'No defect in this synthetic path.'})]}};
+ }});
+ assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(calls.length,2);assert.deepEqual(result.round.partiallyWithheldFiles,['input.mjs']);assert.deepEqual(result.partiallyWithheldFiles,['input.mjs']);assert.match(formatReviewReport(result),/Частично скрыто: input.mjs/);assert.equal(f.git('status','--porcelain'),'');
+ const failed=await runReviewRound({...f.request,head},responder({responses:['malformed','malformed']}));assert.equal(failed.outcome,'not-reviewed');assert.deepEqual(failed.partiallyWithheldFiles,['input.mjs']);
+});
 test('C29/v7: outgoing diffs use screened full blobs on both sides and in checker context',async t=>{
  const f=fixture(t),source=value=>'const options = {\n credential: {\n'+Array.from({length:9},(_,i)=>`  field${i}: ${i},\n`).join('')+`  value: "${value}"\n }\n};\n`;
  fs.writeFileSync(path.join(f.worktree,'input.mjs'),source('previousContextFixture'));f.git('add','.');f.git('commit','-qm','context base');const base=f.git('rev-parse','HEAD');
@@ -35,7 +52,7 @@ test('C29/v7: outgoing diffs use screened full blobs on both sides and in checke
 test('C29/v7: quoted closing brackets cannot end blocks and unclear quotes hide the remainder',()=>{
  for(const delimiter of ['"}"',"']'",'"escaped\\\"}brace"']){
   const source=`credential = {\n delimiter: ${delimiter},\n value: "opaqueQuotedFixture"\n}\nconst retained = 1;`;
-  const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});assert.equal(safe.rejected,false);assert.ok(!safe.value.includes('opaqueQuotedFixture'));if(!delimiter.includes('\\'))assert.ok(safe.value.endsWith('const retained = 1;'));
+  const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});assert.equal(safe.rejected,false);assert.ok(!safe.value.includes('opaqueQuotedFixture'));assert.ok(!safe.value.includes('const retained = 1;'));assert.equal(safe.partiallyWithheld,true);
  }
  for(const quote of ['"',"'",'`']){
   const source=`credential = {\n value: ${quote}unclearFixture\n}\nconst after = "remainderFixture";`;
@@ -91,16 +108,16 @@ test('C28/v6: source reads and unrelated escapes stay byte exact, including deco
   for(const patch of [false,true]){
    const input=patch?'+++ b/input.mjs\n@@ -0,0 +1,2 @@\n+'+source+'\n+'+suffix:source+'\n'+suffix;
    const expected=patch?'+++ b/input.mjs\n@@ -0,0 +1,2 @@\n+[credential-shaped line withheld]\n+'+suffix:'[credential-shaped line withheld]\n'+suffix;
-   const safe=screenModelOutput(input,{input:true,inputFile:'input.mjs',inputPatch:patch});assert.equal(safe.rejected,false);assert.equal(safe.value,expected);
+   const safe=screenModelOutput(input,{input:true,inputFile:'input.mjs',inputPatch:patch});assert.equal(safe.rejected,false);const remainder=patch?'+++ b/input.mjs\n@@ -0,0 +1,2 @@\n+[credential-shaped line withheld]\n+[credential-shaped line withheld]\n':'[credential-shaped line withheld]\n[credential-shaped line withheld]\n[credential-shaped line withheld]';assert.equal(safe.value,safe.partiallyWithheld?remainder:expected);
   }
  }
 });
-test('C28/v6: diff before/after block depths are independent and raw blobs cannot spoof framing',()=>{
+test('C28/v6 retained under v8: patch prefixes survive remainder withholding and raw blobs cannot spoof framing',()=>{
  const source='+++ b/input.mjs\n@@ -1,3 +1,3 @@\n-credential = {\n+const unrelated = {};\n value: "blockFixture"\n };\n+const retained = 3;\n';
  const safe=screenModelOutput(source,{input:true,inputPatch:true});
- assert.ok(!safe.value.includes('blockFixture'));assert.ok(safe.value.includes('+const unrelated = {};'));assert.ok(safe.value.includes('+const retained = 3;'));
+ assert.ok(!safe.value.includes('blockFixture'));assert.ok(!safe.value.includes('+const unrelated = {};'));assert.ok(!safe.value.includes('+const retained = 3;'));assert.ok(safe.value.includes('+[credential-shaped line withheld]'));assert.equal(safe.partiallyWithheld,true);
  const blob='diff --git a/x b/x\ncredential = {\nvalue: "blockFixture"\n}\nconst retained = 3;';
- const screened=screenModelOutput(blob,{input:true,inputFile:'input.mjs'});assert.ok(!screened.value.includes('blockFixture'));assert.ok(screened.value.endsWith('const retained = 3;'));
+ const screened=screenModelOutput(blob,{input:true,inputFile:'input.mjs'});assert.ok(!screened.value.includes('blockFixture'));assert.ok(screened.value.startsWith('diff --git a/x b/x\n'));assert.ok(!screened.value.includes('const retained = 3;'));assert.equal(screened.partiallyWithheld,true);
 });
 test('C28/v6: redacted source reaches both roles and a valid JSON checker answer still parses',async t=>{
  const f=fixture(t),source=String.raw`const re = /\n/;`+'\n'+`const quote = /'/; const password = "opaqueValue";\n`;
@@ -313,7 +330,7 @@ test('C21/v6: source lines redact, while families and ambiguous JSON still withh
   const input=patch?`+++ b/input.mjs\n@@ -0,0 +1,2 @@\n+${source.trimEnd().replaceAll('\n','\n+')}\n`:source;
   const screened=screenModelOutput(input,{input:true,inputFile:'input.mjs',inputPatch:patch});
   assert.equal(screened.rejected,false);assert.ok(!screened.value.includes('fixtureValue'));
-  assert.ok(screened.value.includes('credential-shaped line withheld'));assert.ok(screened.value.includes('const retained = 42;'));
+  assert.ok(screened.value.includes('credential-shaped line withheld'));assert.equal(screened.value.includes('const retained = 42;'),!screened.partiallyWithheld);
   assert.equal(screened.value.split('\n').length,input.split('\n').length);
  }
  for(const source of ['password="'+'ghp_'+'h'.repeat(36)+'"', '{"password":"fixtureValue","password":""}']){

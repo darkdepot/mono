@@ -44,3 +44,5 @@
 - Apply continue:28 / dataset v6: replace lexical source-binding spans with stateless whole-line/bracket-block screening, map decoded hits to original lines without rewriting escapes, and remove dead lexical-binding code. This supersedes v4–continue:26 source-span rules; JSON pairing/fail-closed checks, credential families and real-byte launch/parser regressions remain.
 
 - Apply continue:29 / dataset v7: construct outgoing diffs from screened base/head blobs, list unscreenable files as unreviewed, ignore quoted block delimiters and withhold the remainder on unclear quotes, and redact credential-family substrings in paths without identifier boundaries.
+
+- Apply continue:30 / dataset v8: remove source block-boundary counting; a matched opener conservatively withholds the full file remainder, preserving diff prefixes across hunks and listing partially withheld files in prompts, round records and reports.
