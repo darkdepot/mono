@@ -512,6 +512,23 @@ export function latestApproval(comments, marker, required, optional = []) {
   return { comment, fields, fenced, record };
 }
 
+export function latestDesignApproval(comments) {
+  const approval = latestApproval(comments, 'mono-design: approved',
+    ['project', 'prd', 'prd-updatedAt', 'images', 'next', 'by'], ['paper', 'canvas', 'tool']);
+  if (!approval) return null;
+  const d = approval.fields;
+  if (Object.hasOwn(d, 'paper')) {
+    if (Object.hasOwn(d, 'canvas') || Object.hasOwn(d, 'tool')) fail('bad-record');
+    d.canvas = d.paper;
+    d.tool = 'paper';
+    delete d.paper;
+  } else if (!Object.hasOwn(d, 'canvas') || !Object.hasOwn(d, 'tool')) fail('bad-record');
+  if (!uuid(d.project) || !uuid(d.prd) || !Number.isFinite(date(d['prd-updatedAt'])) ||
+      !/^[a-f0-9]{64}$/.test(d.images) || !['tech-evaluation', 'handoff'].includes(d.next) ||
+      !/^https:\/\/[^\s]+$/.test(d.canvas) || !['paper', 'wonder'].includes(d.tool)) fail('bad-record');
+  return approval;
+}
+
 function approvalChain(root, config) {
   let projectId = null, stage = null;
   try {
@@ -537,14 +554,8 @@ function approvalChain(root, config) {
       }
     }
     stage = 'mono:design';
-    const design = latestApproval(records.comments, 'mono-design: approved',
-      ['project', 'prd', 'prd-updatedAt', 'paper', 'images', 'next', 'by']);
-    if (design) {
-      const d = design.fields;
-      if (!DESIGN_ROUTE_ENABLED || d.project !== projectId || !uuid(d.prd) ||
-          !Number.isFinite(date(d['prd-updatedAt'])) || !/^[a-f0-9]{64}$/.test(d.images) ||
-          !['tech-evaluation', 'handoff'].includes(d.next) || !/^https:\/\/[^\s]+$/.test(d.paper)) fail('bad-record');
-    }
+    const design = latestDesignApproval(records.comments);
+    if (design && (!DESIGN_ROUTE_ENABLED || design.fields.project !== projectId)) fail('bad-record');
     stage = 'mono:tech-evaluation';
     const tech = latestApproval(records.comments, 'mono-tech: approved',
       ['project', 'prd', 'prd-updatedAt', 'spec', 'spec-sha256', 'page-sha256', 'by'], ['design']);

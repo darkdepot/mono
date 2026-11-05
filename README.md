@@ -167,7 +167,11 @@ Discovery без второй остановки.
 «Утверждено» нет. Перенос узлов для разовой уборки старых страниц ещё не проверен:
 проба при первой работе дизайна с Paper.
 
-Утверждение связывает Paper с неизменяемой папкой PNG и версией PRD.
+Утверждение связывает `canvas` (HTTPS-ссылку на макет), `tool=paper|wonder`,
+неизменяемую папку PNG и версию PRD. Старое `paper=` без новых полей читается
+как `canvas` с `tool=paper`. Смесь видов, неполная пара `canvas`/`tool` и
+неизвестный инструмент дают `bad-record`; повреждённая последняя запись
+не заменяется более ранней. Шаги работы в Wonder добавляются отдельно.
 UI-задача получает строку дизайна и пути к памяти/картинкам, применимые правила
 обоих слоёв текстом в снимке контекста. Задачи без макета, включая без проекта,
 применяют правила. Диспатч кладёт PNG конкретной записи в снимок задачи вне
@@ -1373,6 +1377,11 @@ its own orchestrator's responsibility.
 
 ## Project Config
 
+Optional `design.tool` selects `paper` or `wonder`; omitted `design` or `tool`
+means `paper`. For example: `"design": {"tool": "wonder"}`. The config checker
+rejects unsupported tools with a `design.tool` error. Design approval records
+use `canvas=<https>` and `tool=paper|wonder`; the PNG archive stays unchanged.
+
 Optional `qa` defines the independent tester's copy recipe and enables the
 current-head QA merge gate after green ship. `workflows.qa` remains
 an optional workflow string and `qaAuth` an access policy, neither is a recipe.
@@ -1660,6 +1669,11 @@ node scripts/verify.mjs
 ```
 
 The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures.
+Design approval regressions cover legacy `paper=`, new `canvas`/`tool`, mixed or
+incomplete fields and a damaged latest record through the shared reader and the
+`design`/`route` commands. Run them with
+`node --test scripts/idea-gate.test.mjs scripts/design-gate.test.mjs scripts/skills-records.test.mjs scripts/project-config.test.mjs`;
+config cases accept Wonder and omitted defaults and reject unsupported tools.
 It also runs the [skills host probe regression](evals/scenarios/probe/README.md):
 recorded window replies from both hosts and the Claude text-before-window defect/control.
 Run it alone with `node --test scripts/skills-probe.test.mjs`. These local samples

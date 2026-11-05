@@ -64,13 +64,18 @@ FAIL, его PASS для этого входа не требуется. Отде
    внутри значений; ниже список PNG, ссылка на согласие и причина повторного входа:
 
 ```text
-mono-design: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> paper=<ссылка> images=<sha256> next=tech-evaluation|handoff by=owner|orchestrator
+mono-design: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> canvas=<https-ссылка> tool=paper|wonder images=<sha256> next=tech-evaluation|handoff by=owner|orchestrator
 ```
 
 `next=` по «Размер» утверждённого PRD: «обычное» и «проект» → `tech-evaluation`,
 «мелочь» → `handoff`. Глубина работы дизайнера это поле не меняет. Действует
 последняя запись по `createdAt`; повреждённую новую нельзя заменить старой.
 Отдельной записи «дизайн не требуется» нет.
+
+`canvas` — ссылка на страницу задачи в инструменте `tool`. Старый вид с
+`paper=<https-ссылка>` без `canvas`/`tool` читается как `canvas` с `tool=paper`.
+Смесь двух видов, неполная пара `canvas`/`tool` и неизвестный `tool` дают
+`bad-record`. Новую запись всегда пиши с `canvas` и `tool`.
 
 5. Прочитай комментарий обратно байт в байт. Сохрани все свежие ответы Linear
    без переделки: `project.json`, `comments-N.json`, `comments-N.request.json`,
@@ -84,7 +89,8 @@ mono-design: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> paper=<�
 
 До старта: дизайнер сверяет новый PRD, предыдущие картинки и комментарии Paper.
 Маршрут тот же, экраны не меняются: сам зафиксируй причину, новая запись с новым
-`prd-updatedAt` и теми же `paper` и `images`, без показа. В журнале прежнее
+`prd-updatedAt` и теми же `canvas` и `images`, без показа. Старое `paper`
+сравнивай как `canvas` с `tool=paper`. В журнале прежнее
 утверждение и вызвавший этап. Не меняй прежние PNG. Экраны меняются: новый круг
 с показом и утверждением; сними «✓» в имени вместе с иконкой, старые узлы
 и PNG сохрани. Сменился маршрут PRD: записи этапов ниже не действуют,
