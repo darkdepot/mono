@@ -49,7 +49,7 @@ Rules:
 - Do not use raw document URLs in the body when Linear chips can represent those entities.
 - Include an implementation-critical context snapshot.
 - For UI work, Read first includes a design line: exact mono-design record id,
-  Paper link and images hash, or no mockup; plus owner-taste, product-memory and
+  canvas HTTPS link, tool (paper|wonder) and images hash, or no mockup; plus owner-taste, product-memory and
   immutable PNG-version paths under `~/.mono-agent-workflow/design/`. Copy
   applicable owner/product taste rules as text into `Снимок контекста` (including
   reason, correct/incorrect examples, source and weight), even without mockups or

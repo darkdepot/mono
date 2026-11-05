@@ -132,13 +132,16 @@ The active record formats are:
 
 ```text
 mono-prd: approved project=<uuid> document=<uuid PRD> updatedAt=<ISO> design=needed|not-needed next=<stage> by=owner|orchestrator
-mono-design: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> paper=<URL> images=<sha256> next=tech-evaluation|handoff by=owner|orchestrator
+mono-design: approved project=<uuid> prd=<uuid PRD> prd-updatedAt=<ISO> canvas=<https-ссылка> tool=paper|wonder images=<sha256> next=tech-evaluation|handoff by=owner|orchestrator
 ```
 
 Discovery writes the design reason below its record. `design=needed` only pairs
 with `next=design`; `design=not-needed` only with `next=tech-evaluation|handoff`,
 or no `next` if the former approval lacked it. Unknown fields, values or other
 combinations are `bad-record`. No separate “design not required” record.
+Design reads legacy `paper=<https>` alone as `canvas` with `tool=paper`.
+Mixed legacy/new fields, an incomplete `canvas`/`tool` pair, or a tool other
+than `paper|wonder` are `bad-record`; a damaged latest record never falls back.
 Next follows the last approval in the chain: PRD → Design when required →
 Tech Evaluation when named → Handoff. Tech Evaluation entry requires its
 predecessor to name `next=tech-evaluation`. Handoff and work start require a valid

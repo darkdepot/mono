@@ -1095,6 +1095,27 @@ for(const delegated of [false,true])test(`text PRD binds updatedAt and native re
  if(delegated){f.request.expectedReplies[0].by='owner';assert.equal(f.check().status,'failed');}
 });
 
+for(const fields of ['paper=https://example.test/design','canvas=https://example.test/design tool=paper','canvas=https://example.test/design tool=wonder','canvas=https://example.test/design tool=figma','paper=https://example.test/old canvas=https://example.test/design tool=paper'])test(`design version binding shares the approval reader: ${fields}`,t=>{
+ const f=textPrdFixture(t),valid=!fields.includes('figma')&&!fields.includes('/old');
+ const transform=value=>{
+  if(typeof value==='string'){
+   try{return JSON.stringify(transform(JSON.parse(value)));}catch{}
+   return value.replace(/mono-prd: approved project=(\S+) document=(\S+) updatedAt=(\S+) [^\n]+/g,(_,project,prd,stamp)=>`mono-design: approved project=${project} prd=${prd} prd-updatedAt=${stamp} ${fields} images=${'a'.repeat(64)} next=handoff by=owner`);
+  }
+  if(Array.isArray(value))return value.map(transform);
+  return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,transform(v)])):value;
+ };
+ for(const file of [f.request.trace,f.request.dumpTrace])fs.writeFileSync(file,fs.readFileSync(file,'utf8').trim().split('\n').map(row=>JSON.stringify(transform(JSON.parse(row)))).join('\n')+'\n');
+ const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(transform(JSON.parse(fs.readFileSync(file)))));}};walk(f.request.dumpDir);
+ f.request.expectedRecords=[{type:'mono-design: approved',count:1}];f.request.gates=[];f.request.expectedReplies[0].stage='design';
+ const result=f.check();
+ // This fixture intentionally lacks the PRD approval/PNG archive. A valid
+ // version binding reaches the real design gate, which still refuses closure.
+ assert.equal(result.status,'failed',JSON.stringify(result));
+ assert.equal(result.gateResults.length,valid?1:0,JSON.stringify(result));
+ if(valid){assert.equal(result.gateResults[0].command,'design');assert.equal(result.gateResults[0].result.ok,false);}
+});
+
 for(const host of ['claude','codex'])test(`${host}: Research authorizes only Discovery start, never an approval`,t=>{
  const f=textFixture(t,host),question='Начнём Discovery?';
  Object.assign(f.expected,{stage:'research',role:'transition',question,outcome:{approval:false,startNext:true},response:['Начинаю Discovery.']});

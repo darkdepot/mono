@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { IDEA_GATE_DEFAULT_SINCE, ideaFingerprint, checkIdea } from './idea-gate.mjs';
+import { IDEA_GATE_DEFAULT_SINCE, ideaFingerprint, checkIdea, latestDesignApproval } from './idea-gate.mjs';
 import { digest } from './runtime.mjs';
 
 const fixture = name => {
@@ -27,6 +27,28 @@ test('fingerprint hashes canonical UTF-8 bytes and normalizes the live Linear ro
 
 const projectId = '59c079b6-fc26-40a6-ba19-9467674fa637';
 const otherId = '11111111-1111-1111-1111-111111111111';
+test('shared design reader normalizes legacy fields and rejects the newest damaged approval', () => {
+  const legacy = JSON.parse(fs.readFileSync(new URL('./fixtures/design-gate/valid/comments-1.json', import.meta.url))).comments[1];
+  const parsed = latestDesignApproval([legacy]);
+  assert.equal(parsed.fields.canvas, 'https://app.paper.design/file/demo');
+  assert.equal(parsed.fields.tool, 'paper');
+  assert.equal(Object.hasOwn(parsed.fields, 'paper'), false);
+  for (const tool of ['paper', 'wonder']) {
+    const current = { ...legacy, body: legacy.body.replace('paper=', 'canvas=').replace(' images=', ` tool=${tool} images=`) };
+    assert.deepEqual(latestDesignApproval([current]).fields, { ...parsed.fields, tool });
+    for (const [from, to] of [
+      [`tool=${tool}`, 'tool=figma'], [`tool=${tool} `, ''],
+      ['canvas=https://app.paper.design/file/demo ', ''],
+      ['canvas=', 'paper=https://example.test/old canvas='],
+      ['canvas=https:', 'canvas=http:'], ['images=', 'unknown=x images='],
+      ['images=', 'tool=paper images='], ['approved', 'broken'],
+      ['prd-updatedAt=2026-10-21T01:00:00.000Z', 'prd-updatedAt=broken'],
+    ]) {
+      const broken = { ...current, createdAt: '2026-10-23T01:00:00Z', body: current.body.replace(from, to) };
+      assert.throws(() => latestDesignApproval([legacy, broken]), error => error.code === 'bad-record', broken.body);
+    }
+  }
+});
 const hash = text => crypto.createHash('sha256').update(text).digest('hex');
 const record = (snapshot = idea(), id = 'idea-1', createdAt = '2026-10-17T01:00:00Z', project = projectId) => ({
   id, createdAt,
