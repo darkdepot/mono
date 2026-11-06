@@ -197,9 +197,10 @@ function jwtMatches(source) {
   }
   return false;
 }
+// Families and JWT match substrings in every channel, regardless of adjacent bytes.
 function familyMatches(source) {
   const matches = SECRET_FAMILIES.flatMap(([, pattern]) => [...source.matchAll(
-    new RegExp('(?<![A-Za-z0-9_-])(?:' + pattern.source + ')(?![A-Za-z0-9_-])', pattern.flags + 'g'))].map(([match]) => match));
+    new RegExp(pattern.source, pattern.flags + 'g'))].map(([match]) => match));
   if (jwtMatches(source)) matches.push('JWT candidate');
   return matches;
 }

@@ -111,6 +111,28 @@ test('C34: prefixed noncanonical JWT headers and empty signatures are screened i
   });
  }
 });
+test('C37: credential families and JWT match substrings in every screen without neighbor boundaries',async t=>{
+ const jwt=header=>[Buffer.from(header).toString('base64url'),'e30',''].join('.');
+ const values=[['AWS','AKIA'+'A'.repeat(16)],['GitHub','ghp_'+'f'.repeat(36)],['GitHub PAT','github_pat_'+'g'.repeat(40)],
+  ['OpenAI','sk-proj-'+'h'.repeat(24)],['Anthropic','sk-ant-'+'j'.repeat(24)],['Slack','xoxb-'+'k'.repeat(20)],
+  ['Google','AIza'+'m'.repeat(24)],['PEM','-----BEGIN PRIVATE KEY-----'],['Bearer','Bearer '+'n'.repeat(24)],
+  ['JWT',jwt('{"alg":"HS256"}')+'s'.repeat(24)],['JWT whitespace/none',jwt(' { "alg": "none" }')]];
+ const positions=[['hyphen','-',''],['underscore','_',''],['letter','a',''],['digit','7',''],['dot','.',''],['inside word','before','after']];
+ for(const [family,value] of values)for(const [position,prefix,suffix] of positions)await t.test(family+'/'+position,()=>{
+  const payload='Access value: '+prefix+value+suffix;
+  assert.ok(scanSecrets(payload,{patch:false}).length,'plain family substring was not recognized');
+  const file='notes/'+prefix+value+suffix+'.txt';
+  const channels=[
+   [payload,{input:true}],['const note = "'+payload+'";',{input:true,inputFile:'input.mjs'}],
+   ['diff --git a/note.txt b/note.txt\n--- a/note.txt\n+++ b/note.txt\n@@ -1 +1 @@\n-before\n+'+payload+'\n',{input:true,inputPatch:true}],
+   [JSON.stringify({note:payload}),{input:true,inputFile:'input.json'}],[{note:payload},{input:true}],
+   [JSON.stringify({data:JSON.stringify({note:payload})}),{input:true}],
+   [payload,{}],[{reason:payload},{}],[{stdout:payload,stderr:payload},{diagnostic:true}],
+   [{files:[file],file,path:file,reviewedFiles:[file],symlinks:[file]},{}],
+  ];
+  for(const [input,options] of channels){const safe=screenModelOutput(input,options);assert.ok(!JSON.stringify(safe).includes(value),'screen leaked synthetic '+family+' at '+position);}
+ });
+});
 test('C36: only the closed lowercase placeholder form survives secret-key screening in every channel',async t=>{
  const hidden=['<Xy9!pass>','<correct horse battery staple>','<a1B2c3D4e5F6g7H8>','${VARIABLE}','***','<'+'a'.repeat(32)+'>'];
  const visible=['<redacted>','<your-token>','<secret>','<token>','<password>','<placeholder>','<'+'a'.repeat(31)+'>'];
@@ -1479,11 +1501,11 @@ test('C18/v6: odd source quotes remain usable without rescanning each escaped qu
  for(const input of [true,false]){const start=performance.now(),result=screenModelOutput(value,{input});assert.equal(result.rejected,false);assert.equal(result.value,value);assert.ok(performance.now()-start<750,'escaped-literal screen exceeded 750ms');}
 });
 
-test('C19: whole-token boundaries distinguish credentials from longer identifiers',()=>{
+test('C19/C37: credential substrings remain screened inside longer identifiers',()=>{
  const values=['AKIA'+'A'.repeat(16),'ASIA'+'B'.repeat(16),'ghp_'+'c'.repeat(36),'sk-'+'d'.repeat(24),'sk-ant-'+'e'.repeat(24),'xoxb-'+'f'.repeat(24),'AIza'+'g'.repeat(35)];
  for(const token of values){
   for(const prefix of ['', '(', '/', '.'])assert.ok(scanSecrets(prefix+token,{patch:false}).length,token.slice(0,8));
-  for(const prefix of ['notes_','notes','task-','risk-','desk-'])assert.equal(scanSecrets(prefix+token,{patch:false}).length,0,token.slice(0,8));
+  for(const prefix of ['notes_','notes','task-','risk-','desk-'])assert.ok(scanSecrets(prefix+token,{patch:false}).length,token.slice(0,8));
  }
 });
 test('C18 local: a supported credential in a changed filename never reaches either role',async t=>{
@@ -1501,9 +1523,16 @@ test('C19 MONO-326: successful JSON decoding and ordinary source backslashes are
  assert.equal(parseChecker({completed:true,verdicts:[verdict({reason:String.raw`Use \"\w+\" in the matcher.`})]},[{...sample,key}]).verdicts.length,1);
  for(const value of [String.raw`Use "\w+" and "\p{L}" in the matcher.`,String.raw`/\w+\s/.test(value)`,String.raw`const text = \`line\nnext\`;`,JSON.stringify({reason:'a\nb "quoted" '+String.raw`/\w+/`}),{reason:String.raw`Use /\w+/ and \n in source`}])for(const options of [{input:true},{},{diagnostic:true}])assert.equal(screenModelOutput(value,options).rejected,false);
 });
-test('C19: all nine reconstructed real r3 checker answers remain valid',()=>{
+test('C19/C37: all nine unchanged real r3 answers retain explicit substring-screen outcomes',()=>{
  const entries=JSON.parse(fs.readFileSync(path.join(realScreenFixture,'checker-r3.json'),'utf8'));assert.equal(entries.length,9);
- for(const entry of entries)for(const answer of [entry.answer,JSON.stringify(entry.answer)])assert.equal(parseChecker(answer,entry.findings).verdicts.length,entry.findings.length,entry.run);
+ // C37 accepts extra withholding in model output; never exempt or rewrite these fixtures.
+ const held=new Set(['cand-20261103:MONO-81:2','cand-20261103:MONO-81:3']);
+ assert.equal(entries.filter(entry=>held.has(entry.run)).length,2);
+ for(const entry of entries)for(const answer of [entry.answer,JSON.stringify(entry.answer)]){
+  assert.equal(screenModelOutput(answer).rejected,held.has(entry.run),entry.run);
+  if(held.has(entry.run))assert.throws(()=>parseChecker(answer,entry.findings),/model output withheld by secret screen/,entry.run);
+  else assert.equal(parseChecker(answer,entry.findings).verdicts.length,entry.findings.length,entry.run);
+ }
 });
 test('C19: actual MONO-302 diff bytes and contract reach a completed review round',async t=>{
  const data=JSON.parse(fs.readFileSync(path.join(realScreenFixture,'requests.json'),'utf8')),diff=fs.readFileSync(path.join(realScreenFixture,'MONO-302.diff'),'utf8');
@@ -1531,9 +1560,11 @@ test('C19: r4 tiny request reaches role launch with the actual Codex 0.159.2 cat
  finally{process.env.PATH=prior;}
 });
 
-test('C19/v4: prose and fixed placeholders stay benign; short and non-string assignments are caught',()=>{
- const benign=['task-'+'sk-'+'x'.repeat(24),'risk-repeat-stratification','desk-'+'sk-'+'x'.repeat(24),'dispatch-afk-leading-token: only leading AFK selects the short profile','- Changing a password or other authentication credential: Ask the user to take over',String.raw`/\w+/`, 'token: <placeholder-value>', 'password=${VARIABLE}', 'credential: ************', 'secret=""', '# password=opaque-value-long', '// token=opaque-value-long', '// note; token=abcdefgh', '# note; password=abcdefgh', 'const name = 1; // note; token=abcdefgh', '/* note; token=abcdefgh */'];
+test('C19/C37: benign prose and placeholders stay usable while family substrings are withheld',()=>{
+ const benign=['dispatch-afk-leading-token: only leading AFK selects the short profile','- Changing a password or other authentication credential: Ask the user to take over',String.raw`/\w+/`, 'token: <placeholder-value>', 'password=${VARIABLE}', 'credential: ************', 'secret=""', '# password=opaque-value-long', '// token=opaque-value-long', '// note; token=abcdefgh', '# note; password=abcdefgh', 'const name = 1; // note; token=abcdefgh', '/* note; token=abcdefgh */'];
  for(const value of benign)for(const input of[true,false])assert.equal(screenModelOutput(value,{input}).rejected,false,value);
+ // C37 replaces the old whole-token exemptions with accepted extra withholding.
+ for(const value of ['task-'+'sk-'+'x'.repeat(24),'risk-repeat-stratification','desk-'+'sk-'+'x'.repeat(24)])for(const input of[true,false]){const safe=screenModelOutput(value,{input});assert.equal(safe.rejected,true,value);assert.ok(!JSON.stringify(safe).includes(value));}
  for(const name of['token','password','api-key','session_token','foo-barPassword','ключPassword'])for(const value of[`export ${name}=opaque-value-long`,`MODE=test ${name}=opaque-value-long`,`ERROR: ${name}=opaque-value-long`,`${name}: opaque-value-long`,`--${name} opaque-value-long`,`--${name}=opaque-value-long`,JSON.stringify({[name]:'opaque-value-long'})]){const safe=screenModelOutput(value,{input:true});assert.equal(safe.rejected,value.startsWith('{'),value);assert.ok(!JSON.stringify(safe.value).includes('opaque-value-long'));}
  for(const value of['', '<placeholder>'])assert.equal(screenModelOutput({password:value}).rejected,false);
  // C36 closes the prior broad template/star exemptions.
