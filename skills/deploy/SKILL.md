@@ -33,6 +33,7 @@ Read when — load the file only when its condition is true for this run:
 - `skills/check/SKILL.md` — when `mono:check post-ship` is run or reported from this stage.
 - `references/execution-quality.md` — when this run performs live verification against the Issue's acceptance IDs.
 - `references/artifact-rules.md` — when this run must decide where a Linear record belongs or which stage owns it.
+- `skills/design/references/memory.md` — when shipped screens have product design memory; apply only the main-file/service-record rules, never add taste rules from Deploy.
 
 Every "Read when" entry is a real requirement once its condition holds: the tier exists to defer a read, never to make it optional.
 
@@ -142,6 +143,40 @@ Live QA gate:
   showing completed work to the owner. Already-started projects with an approved
   legacy UX-checkpoint prototype retain that comparison. Functional smoke still
   follows its required checks and explicit permitted not-run reasons.
+- After verifying the delivered version and capturing the shipped screens above,
+  sync the product's main design file (one product file, not the task sandbox).
+  Obtain its tool/link and section pages from design memory; the task's tool does
+  not relocate it. This step never changes the deploy verdict or its required
+  functional/visual QA result. With the main-file tool connected, replace only
+  screens and states affected by this Issue using the verified live captures;
+  preserve neighboring screens and states. Compare with the exact approved PNGs,
+  record differences (or no approved mockup), update date/released version and
+  release evidence, then read back the changed page and service records. Do not
+  copy the approved proposal into the main file as if it shipped.
+  Advance a section's checked main-branch commit to the verified release commit
+  only when its whole contents remain accurate: inspect intervening released
+  screen changes. An existing stale mark, missing previous commit or unrelated
+  released changes not covered by this update retain the old checked boundary
+  and stale mark; Design refreshes the whole section next time. Record the new
+  release commit separately in its release evidence; a partial update never
+  certifies uninspected neighbors. On a section's first release (design memory
+  says «нет выпущенной основы»), create its main-file page from the verified
+  shipped screens and states under the same sync/read-back rules. Record its
+  first checked release boundary only after checking the whole new section;
+  proposed screens stay in the sandbox. For a previously released section with
+  a missing page, leave it stale for Design to assemble rather than rebuild it
+  wholesale during this targeted deploy step.
+  With the tool disconnected, tell the owner and write
+  «раздел устарел после выпуска <дата>» for every affected section, preserving
+  the previous checked commit/page and naming this release/version/evidence.
+  Failed update/read-back likewise retains or writes the stale mark and reports
+  the reason. If memory cannot be written, disclose the failed stale record in
+  closeout with section/release/reason and the next Design action; never claim
+  the file is current. These are service records without separate consent;
+  owner/product taste rules still require the designer and explicit consent.
+  Include the sync result or stale reason in closeout for the owner. The live
+  path is qualified by the first task after this pack release; scenario-stand
+  Design tests do not prove this Deploy step.
 - On defect file/dispatch immediate out-of-queue hotfix Issue with acting-user `assignee: "me"` at creation; preserve existing assignments. Hotfix doesn't itself block original Done, but original still needs its own green live pass; hotfix gets live QA on shipment. Consult original preflight route: standard-reviewed defect triggers standard re-tier review under `references/autoreview-routing.md`.
 - Confirm on clean session/reload/transient state before classifying defect. Known flaky failure outside diff becomes separate tiny Issue, not gate failure.
 - Verify non-web artifacts where consumers use them. For a skill pack, select the live pass by its machine installation state, regardless of which product's orchestrator closes the deploy:
