@@ -152,7 +152,11 @@ function recordLines(body){
  return approvalBlocks(body).filter(block=>!['mono-idea-snapshot','mono-tech-page'].includes(block.info))
   .flatMap(block=>(block.fenced?block.content:block.text).split(/\r?\n/));
 }
-function recordCount(body,type){
+function recordCount(body,type,project){
+ if(type==='mono-brief')return approvalBlocks(body).filter(block=>{
+  if(block.info!=='mono-brief')return false;
+  try{return JSON.parse(block.content).project===project;}catch{return false;}
+ }).length;
  if(type==='mono-research')return approvalBlocks(body).filter(block=>block.info==='mono-research').length;
  const markers=['mono-idea: approved','mono-prd: approved','mono-design: approved','mono-tech: approved','mono-package: start'];
  type=markers.find(marker=>marker.split(':')[0]===type)??type;
@@ -160,8 +164,8 @@ function recordCount(body,type){
   .filter(line=>{line=type.startsWith('mono-idea')?line:line.trim();return (type.includes(':')&&line===type)||line.startsWith(type+(type.includes(':')?' ':': '));}).length;
 }
 function expectedRecords(dump,type,body=row=>bodyOf(row)){
- const rows=type==='mono-research'?dump.documents:dump.projectComments;
- return rows.flatMap(row=>Array.from({length:recordCount(body(row),type)},()=>row));
+ const rows=['mono-research','mono-brief'].includes(type)?dump.documents:dump.projectComments;
+ return rows.flatMap(row=>Array.from({length:recordCount(body(row),type,dump.project?.uuid)},()=>row));
 }
 
 function recordWrite(write,type,dump){

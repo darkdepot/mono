@@ -38,9 +38,9 @@ Handoff still consumes existing `mono-tech` on that old path.
 Route validation precedes all exemptions, then every required Design and Tech
 approval must pass its command. Package repairs stay with `mono:handoff`.
 
-## PC-002 — Concise product brief
+## PC-002 — Concise project description
 
-Create or update the Project overview as a concise product brief.
+Create or update the Project overview as a concise project description.
 
 ## PC-003 — Linear-facing language
 
@@ -71,7 +71,7 @@ comments, and the handoff package.
 
 ## PC-008 — Active document set
 
-For this MVP, the only active Project document types are PRD, Tech Spec, and
+The active Project document types are Brief («Бриф»), PRD, Tech Spec, and
 Research («Исследование»). The package record is a Project comment, not a
 document: one current version holds input versions, shared decisions, «Решил
 сам», the reconciliation result and the execution Issue graph.
@@ -100,9 +100,11 @@ Project body.
 
 ## PC-013 — Idea state
 
-In Idea, keep only the three-section strengthened brief defined in PC-005;
-PRD, Tech Spec, and execution Issues must not exist yet. Preserve any former scope
-sections in the approval comment notes before replacing the body. The approved
+In Idea, keep the three-section concise description defined in PC-005 and a
+Project Brief document following `references/brief.md`; PRD, Tech Spec, and
+execution Issues must not exist yet. Before replacing the body, preserve the
+replaced text verbatim in the Brief’s «Отброшено», with its source and reason.
+The approval comment retains the approved snapshot and a Brief link instead of notes. The approved
 Project stays in Idea until the owner starts Research, or the orchestrator starts
 it for a delegated Project (PC-019); Idea approval always remains with the owner.
 

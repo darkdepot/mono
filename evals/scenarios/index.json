@@ -34,7 +34,8 @@
         "skills/research/references/find-on-web.md",
         "agents/linear-scout.md",
         "agents/code-scout.md",
-        "agents/web-scout.md"
+        "agents/web-scout.md",
+        "references/brief.md"
       ],
       "neighbors": [
         "research"

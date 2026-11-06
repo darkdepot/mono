@@ -38,7 +38,7 @@ Apply conditionally:
 Project:
 
 - Lifecycle status matches current stage.
-- Active docs are PRD, Tech Spec (only when it exists), and Research («Исследование»); the package record is a Project comment.
+- Active docs are Brief («Бриф»), PRD, Tech Spec (only when it exists), and Research («Исследование»); the package record is a Project comment.
 - Active Issues represent current approved execution plan.
 - No stale PR chips or raw PR URLs remain.
 

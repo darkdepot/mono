@@ -1523,3 +1523,25 @@ for(const host of ['claude','codex'])test(`continue3 ${host}: annotate saved nat
  const resumed=await verifyTextScenarioRecords({...input,resumeEvidence:prepared.reviewEvidence,bindingsFile},noCollect);
  assert.equal(resumed.status,'passed',JSON.stringify(resumed));assert.equal(resumed.rubricDigest,prepared.rubricDigest);
 });
+
+test('mono-brief record counting uses a project-bound code block, not title or quoted old text', t => {
+ const f=textFixture(t,'claude','defer');f.request.expectedRecords.push({type:'mono-brief',count:1});
+ f.events.splice(7,0,{},{});
+ const marker='```mono-brief\n'+JSON.stringify({project:projectId})+'\n```';
+ const old='```mono-brief\n{"project":"old-project"}\n```\n````';
+ const content='## Суть сейчас\nКолонка источника.\n\n## Отброшено\n07.11.2026, Idea: заменили описание, уточнили результат, https://linear.app/monotest/project/test\n\n`````text\n'+old+'\n`````\n\n'+marker;
+ const doc={id:'brief',projectId,title:'Changed title is allowed',content};
+ const set=(value,stored=value)=>{
+  f.events[7]=f.call('brief-write','mcp__monotest__save_document',{projectId,title:doc.title,content:value});
+  f.events[8]=f.result('brief-write',{...doc,content:value});
+  f.page('documents','documents',[{id:'doc'},{id:doc.id}]);f.save('documents/brief.json',{...doc,content:stored});
+ };
+ set(content);assert.equal(f.check().status,'passed',f.check().reason);
+ const wrapped=content.replace('https://linear.app/monotest/project/test','[https://linear.app/monotest/project/test](<https://linear.app/monotest/project/test>)');
+ set(content,wrapped);assert.equal(f.check().status,'passed',f.check().reason);
+ set(content);f.page('documents','documents',[{id:'doc'},{id:'brief'},{id:'second'}]);f.save('documents/second.json',{...doc,id:'second'});
+ assert.equal(f.check().status,'failed');assert.match(f.check().reason,/observed 2/);
+ for(const invalid of ['## Бриф\nNo code marker',content.replace(JSON.stringify({project:projectId}),'not json'),content.replace(JSON.stringify({project:projectId}),JSON.stringify({project:'other'}))]){
+  set(invalid);assert.equal(f.check().status,'failed');assert.match(f.check().reason,/observed 0/);
+ }
+});
