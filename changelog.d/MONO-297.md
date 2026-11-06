@@ -55,3 +55,4 @@
 
 - Apply continue:34: check every possible JWT header suffix in both path and source screens, accepting noncanonical JSON whitespace and empty signatures; keep the real MONO-302 inventory unchanged and aliases distinct.
 - Close dangerous findings with Git-verified deletion evidence and keep screened path aliases stable across rounds and literal-name collisions.
+- Limit secret-key placeholder exemptions to complete lowercase angle-bracket words of at most 33 characters, shared by JSON and source-line screening.

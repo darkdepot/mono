@@ -111,6 +111,27 @@ test('C34: prefixed noncanonical JWT headers and empty signatures are screened i
   });
  }
 });
+test('C36: only the closed lowercase placeholder form survives secret-key screening in every channel',async t=>{
+ const hidden=['<Xy9!pass>','<correct horse battery staple>','<a1B2c3D4e5F6g7H8>','${VARIABLE}','***','<'+'a'.repeat(32)+'>'];
+ const visible=['<redacted>','<your-token>','<secret>','<token>','<password>','<placeholder>','<'+'a'.repeat(31)+'>'];
+ for(const [values,allowed] of [[hidden,false],[visible,true]])for(const value of values)await t.test(value,()=>{
+  const object={data:{password:value}},json=JSON.stringify(object),nested=JSON.stringify({payload:json});
+  for(const input of [object,json,nested])for(const options of [{},{input:true},{diagnostic:true}]){
+   const safe=screenModelOutput(input,options);
+   if(allowed){assert.equal(safe.rejected,false);assert.deepEqual(safe.value,input);}else assert.ok(!JSON.stringify(safe.value).includes(value),JSON.stringify({value,safe}));
+  }
+  for(const source of ['const password = "'+value+'";','password='+value,'--password '+value]){
+   const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
+   assert.equal(safe.rejected,false);
+   if(allowed)assert.equal(safe.value,source);else assert.ok(!safe.value.includes(value),JSON.stringify({value,safe}));
+  }
+ });
+});
+test('C36: placeholder exemptions cannot hide a second binding or a nonempty subtree',()=>{
+ for(const source of ['password="<redacted>"; token="opaqueFixture";','password="<redacted>" + opaqueFixture;'])assert.ok(!screenModelOutput(source,{input:true,inputFile:'input.mjs'}).value.includes('opaqueFixture'));
+ for(const value of [{nested:'<redacted>'},['<redacted>'],false,null])assert.equal(screenModelOutput({password:value}).rejected,true);
+ const safe=screenModelOutput({password:'<Xy9!pass>'});assert.equal(safe.rejected,true);assert.deepEqual(screenModelOutput(safe.value).value,safe.value);
+});
 test('C35: pinned deletion closes dangerous and unmarked findings from base or previous head',async t=>{
  for(const fromBase of [true,false])for(const danger of [true,undefined])await t.test(String(fromBase)+'/'+String(danger),async t=>{
   const f=fixture(t),file=fromBase?'input.mjs':'added.mjs';
@@ -1514,7 +1535,9 @@ test('C19/v4: prose and fixed placeholders stay benign; short and non-string ass
  const benign=['task-'+'sk-'+'x'.repeat(24),'risk-repeat-stratification','desk-'+'sk-'+'x'.repeat(24),'dispatch-afk-leading-token: only leading AFK selects the short profile','- Changing a password or other authentication credential: Ask the user to take over',String.raw`/\w+/`, 'token: <placeholder-value>', 'password=${VARIABLE}', 'credential: ************', 'secret=""', '# password=opaque-value-long', '// token=opaque-value-long', '// note; token=abcdefgh', '# note; password=abcdefgh', 'const name = 1; // note; token=abcdefgh', '/* note; token=abcdefgh */'];
  for(const value of benign)for(const input of[true,false])assert.equal(screenModelOutput(value,{input}).rejected,false,value);
  for(const name of['token','password','api-key','session_token','foo-barPassword','ключPassword'])for(const value of[`export ${name}=opaque-value-long`,`MODE=test ${name}=opaque-value-long`,`ERROR: ${name}=opaque-value-long`,`${name}: opaque-value-long`,`--${name} opaque-value-long`,`--${name}=opaque-value-long`,JSON.stringify({[name]:'opaque-value-long'})]){const safe=screenModelOutput(value,{input:true});assert.equal(safe.rejected,value.startsWith('{'),value);assert.ok(!JSON.stringify(safe.value).includes('opaque-value-long'));}
- for(const value of['', '<placeholder>', '${VARIABLE}', '***'])assert.equal(screenModelOutput({password:value}).rejected,false);
+ for(const value of['', '<placeholder>'])assert.equal(screenModelOutput({password:value}).rejected,false);
+ // C36 closes the prior broad template/star exemptions.
+ for(const value of['${VARIABLE}', '***'])assert.equal(screenModelOutput({password:value}).rejected,true);
  for(const value of[17,false,null,'short'])assert.equal(screenModelOutput({password:value}).rejected,true);
  assert.equal(screenModelOutput('api-key=short').value,'[credential-shaped line withheld]');
 });

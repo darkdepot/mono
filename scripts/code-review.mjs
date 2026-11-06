@@ -245,11 +245,11 @@ function decodedKey(value) {
   }
   return decodeEscapeLayer(value) === value ? value : null;
 }
-function credentialValue(value, depth = 0) {
-  if (depth > 32) return true;
-  if (value && typeof value === 'object') return Object.values(value).some(child => credentialValue(child, depth + 1));
+function credentialValue(value) {
   if (typeof value !== 'string') return true;
-  return value.length > 0 && !/^(?:<[^>]*>|\$\{[^}]*\}|\*+|\[(?:credential-shaped|unreadable|private-key)[^\]]*withheld\])$/.test(value);
+  // The named placeholders are a subset of this closed form. Use the stricter
+  // 33-character total limit when it differs from the pattern's upper bound.
+  return value.length > 0 && !(value.length <= 33 && /^<[a-z][a-z0-9_-]{0,31}>$/.test(value));
 }
 // This tokenizer is only for JSON members and embedded JSON decoding. Source
 // bindings are screened independently, by line, without lexical state.
@@ -305,7 +305,16 @@ function redactJsonBindings(source, screenString) {
 const SOURCE_KEY = '(?:[\\p{L}\\p{N}_$-]*)(?:' + [...SECRET_KEY_SUFFIXES].sort((a, b) => b.length - a.length)
   .map(name => [...name].join('[^A-Za-z0-9]*')).join('|') + ')(?![\\p{L}\\p{N}_$-])';
 const SOURCE_SPACE = '(?:\\s|/\\*[\\s\\S]*?\\*/)*';
-const SOURCE_BINDING = new RegExp('(?<![\\p{L}\\p{N}_$-])(?:' + SOURCE_KEY + '["\']?\\??' + SOURCE_SPACE + '[:=]|--' + SOURCE_KEY + '(?:' + SOURCE_SPACE + '=|[ \\t]+\\S))', 'iu');
+const SOURCE_BINDING = new RegExp('(?<![\\p{L}\\p{N}_$-])(?:' + SOURCE_KEY + '["\']?\\??' + SOURCE_SPACE + '[:=]|--' + SOURCE_KEY + '(?:' + SOURCE_SPACE + '=|[ \\t]+(?=\\S)))', 'iu');
+function sourceCredential(line) {
+  return [...line.matchAll(new RegExp(SOURCE_BINDING.source, 'giu'))].some(match => {
+    const rest = line.slice(match.index + match[0].length).trim();
+    // Only a complete scalar at the end of this line can exempt a binding.
+    // Anything else keeps the stateless line/remainder withholding policy.
+    const literal = /^(?:(["'])([^"']*)\1|([^\s"',;\]}]+))\s*[;,\]}]*\s*$/.exec(rest);
+    return credentialValue(literal ? literal[2] ?? literal[3] : rest || null);
+  });
+}
 function sourceViews(source, patch) {
   const lines = source.split('\n'), views = [], headers = [];
   let before = [], after = [], inHunk = false;
@@ -330,7 +339,7 @@ function screenSourceLines(source, patch) {
     for (let layer = 0; ; layer++) {
       if (familyMatches(rows.map(row => row.text).join('\n')).length) return { value: '[credential-shaped line withheld]', rejected: true, matches: 1 };
       for (const row of rows) {
-        if (!SOURCE_BINDING.test(row.text)) continue;
+        if (!sourceCredential(row.text)) continue;
         hidden.add(row.index);
         // No closing-boundary interpretation: any opener conservatively
         // withholds the remainder, including harmless same-line literals.
@@ -382,7 +391,7 @@ function scanPayloadText(diff, { file = null, patch = true, bindings = true } = 
     if (patch && !inHunk && source.startsWith('+++ ') && source.slice(4) !== '/dev/null') file = filename(source.slice(4));
     const hunk = patch && /^@@ .*\+(\d+)/.exec(source); if (hunk) { finishHunk(); inHunk = true; line = Number(hunk[1]); }
     const value = inHunk && /^[+ -]/.test(source) ? source.slice(1) : source;
-    if ((familyMatches(value).length > 0 || (bindings && SOURCE_BINDING.test(value)))) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped context; value withheld' });
+    if ((familyMatches(value).length > 0 || (bindings && sourceCredential(value)))) matches.push({ file, line, weight: 'P0', reason: 'credential-shaped context; value withheld' });
     if (patch && inHunk && /^[+ -]/.test(source)) {
       if (source[0] !== '+') before.push(value);
       if (source[0] !== '-') after.push(value);
