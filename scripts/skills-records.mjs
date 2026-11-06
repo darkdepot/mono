@@ -56,9 +56,10 @@ function markdown(value){
    // Keep the paragraph break after a list; only extra empty lines collapse.
    while(result.at(-1)===''&&result.at(-2)==='')result.pop();
   }
-  // Inline code is opaque too; unrecognized formatting stays unequal.
+  // Inline code is opaque too; destinations with whitespace or parenthesis
+  // syntax stay literal rather than risk changing the link's parse.
   const list=literal?line:line.replace(/^([ ]{0,3})- /,'$1* ');
-  result.push(literal||line.includes('`')?list:list.replace(/\[([^\]\n]+)\]\(<([^<>\n]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1'));
+  result.push(literal||line.includes('`')?list:list.replace(/\[([^\]\n]+)\]\(<([^<>\s()]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1'));
   heading=!literal&&/^#{1,6} /.test(line);
   if(!block)for(const tick of line.matchAll(/`+/g)){
    if(inline===null)inline=tick[0].length;
@@ -609,6 +610,21 @@ export function verifyRecords(request){
     if(write.name==='mcp__monotest__save_document'&&Object.hasOwn(input,'patch')){
      if(Object.hasOwn(input,'content')||!Array.isArray(input.patch)||!input.patch.length)missing(`invalid document patch for ${id}`);
      let content=finalFields.content;
+     const priorReads=[],previous=versions[index-1];
+     for(const source of scenarios)for(const call of source.calls.filter(c=>c.name==='mcp__monotest__get_document')){
+      let read;
+      try{read={...resultFor(source.host,call,source.rows),data:source};}
+      catch(error){if(error instanceof MissingEvidence)continue;throw error;}
+      if(idOf(read.value)!==id||typeof read.value.content!=='string'||elided(read.value.content)||!before(source,read.resultLine,write.data,write))continue;
+      if(previous&&!before(previous.data,previous.resultLine,source,read))continue;
+      priorReads.push(read);
+     }
+     if(priorReads.length){
+      const latest=priorReads.find(read=>priorReads.every(other=>other===read||before(other.data,other.resultLine,read.data,read)));
+      if(!latest)missing(`document patch prior read ordering across traces is not established for ${id}`);
+      if(typeof content==='string')compareField('content',content,latest.value.content,id);
+      content=latest.value.content;
+     }
      if(typeof content!=='string'||elided(content))missing(`document patch lacks full prior content for ${id}`);
      for(const edit of input.patch){
       if(edit?.op!=='replace'||typeof edit.old_string!=='string'||!edit.old_string||typeof edit.new_string!=='string'||edit.replace_all===true)missing(`unsupported document patch for ${id}`);

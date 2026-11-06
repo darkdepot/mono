@@ -1558,6 +1558,65 @@ for(const host of ['claude','codex'])for(const state of ['missing','ambiguous'])
  const result=f.check();assert.notEqual(result.status,'passed');assert.match(result.reason,/patch.*(?:missing|ambiguous|exactly once)/);
 });
 
+for(const host of ['claude','codex'])test(`MONO-357 ${host}: wrapper normalization keeps link titles and unsafe destinations distinct`,t=>{
+ const f=textFixture(t,host,'defer'),doc={id:'brief',projectId,title:'Brief'};
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);
+ const check=(content,stored)=>{
+  f.events.splice(7,f.events.length-8,f.call('brief','mcp__monotest__save_document',{projectId,title:doc.title,content}),f.result('brief',{...doc,content}));
+  f.save('documents/brief.json',{...doc,content:stored});return f.check();
+ };
+ for(const target of ['README.md','cli/runs.mjs#source','mailto:owner@example.com','custom:relative','https://example.com/a']){
+  const result=check(`[source](${target})`,`[source](<${target}>)`);assert.equal(result.status,'passed',result.reason);
+ }
+ for(const target of ['README.md "v1"','README file.md','README.md\t"v1"','file(name','file)name']){
+  const result=check(`[source](${target})`,`[source](<${target}>)`);assert.equal(result.status,'failed',`unsafe destination ${JSON.stringify(target)} was treated as equivalent`);assert.match(result.reason,/mismatch/);
+ }
+});
+
+function patchFirstFixture(t,host){
+ const f=textFixture(t,host,'defer'),doc={id:'brief',projectId,title:'Brief',content:'Expected link.\nKeep this paragraph.'},final={id:'brief',projectId,title:'Brief',content:'Approval link.\nKeep this paragraph.'};
+ const patch={id:'brief',patch:[{op:'replace',old_string:'Expected link.',new_string:'Approval link.'}]};
+ const truncated={...doc,content:'Brief… (truncated, use `get_document` for full description)'};
+ f.events.splice(7,0,f.call('patch','mcp__monotest__save_document',patch),f.result('patch',truncated));
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ return {...f,doc,final};
+}
+for(const host of ['claude','codex'])test(`MONO-357 ${host}: first patch uses latest full successful native document read`,t=>{
+ const f=patchFirstFixture(t,host);
+ f.events.splice(7,0,f.call('older','mcp__monotest__get_document',{id:'brief'}),f.result('older',{...f.doc,content:'Old content.'}),f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',f.doc));
+ assert.equal(f.check().status,'passed',f.check().reason);
+ f.save('documents/brief.json',{...f.final,content:'Approval link.\nChanged paragraph.'});assert.equal(f.check().status,'failed');
+});
+for(const host of ['claude','codex'])test(`MONO-357 ${host}: patch ignores native reads preceding the latest content write`,t=>{
+ const f=patchFirstFixture(t,host);
+ f.events.splice(7,0,f.call('stale','mcp__monotest__get_document',{id:'brief'}),f.result('stale',{...f.doc,content:'Stale content.'}),f.call('full','mcp__monotest__save_document',{id:'brief',content:f.doc.content}),f.result('full',f.doc));
+ assert.equal(f.check().status,'passed',f.check().reason);
+});
+for(const host of ['claude','codex'])test(`MONO-357 ${host}: unsuccessful read does not replace earlier full native content`,t=>{
+ const f=patchFirstFixture(t,host);
+ f.events.splice(7,0,f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',f.doc),f.call('failed','mcp__monotest__get_document',{id:'brief'}),f.result('failed',{isError:true,content:[{type:'text',text:'read failed'}]}));
+ assert.equal(f.check().status,'passed',f.check().reason);
+});
+for(const host of ['claude','codex'])for(const state of ['missing','foreign','elided','failed','late-result'])test(`MONO-357 ${host}: first patch rejects ${state} native read`,t=>{
+ const f=patchFirstFixture(t,host);
+ if(state!=='missing'){
+  const value=state==='foreign'?{...f.doc,id:'other-document'}:state==='elided'?{...f.doc,content:'Brief… (truncated, use `get_document` for full description)'}:state==='failed'?{isError:true,content:[{type:'text',text:'read failed'}]}:f.doc;
+  f.events.splice(7,0,f.call('prior','mcp__monotest__get_document',{id:state==='foreign'?'other-document':'brief'}));
+  f.events.splice(state==='late-result'?9:8,0,f.result('prior',value));
+ }
+ const result=f.check();assert.notEqual(result.status,'passed');assert.match(result.reason,/patch.*prior content/);
+});
+for(const host of ['claude','codex'])for(const state of ['ordered','no-time','overlap'])test(`MONO-357 ${host}: first patch requires trace order for ${state} native reads`,t=>{
+ const f=patchFirstFixture(t,host),trace=path.join(f.dir,'prior-read.jsonl');
+ const rows=[f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',f.doc),f.terminal];
+ fs.writeFileSync(trace,(state==='no-time'?rows:timed(rows,'2026-11-02T03:59:59Z')).map(JSON.stringify).join('\n')+'\n');
+ f.request.additionalTraces=[{host,trace}];
+ if(state==='overlap'){
+  const other=path.join(f.dir,'overlapping-read.jsonl');fs.writeFileSync(other,timed([f.call('overlap','mcp__monotest__get_document',{id:'brief'}),f.result('overlap',f.doc),f.terminal],'2026-11-02T03:59:59.005Z').map(JSON.stringify).join('\n')+'\n');f.request.additionalTraces.push({host,trace:other});
+ }
+ const result=f.check();assert.equal(result.status,state==='ordered'?'passed':'unverified',result.reason??'unexpected pass');
+});
+
 for(const state of ['unknown prior content','unsupported operation'])test(`MONO-357 patch ${state} stays unverified`,t=>{
  const f=textFixture(t,'codex','defer'),doc={id:'brief',projectId,title:'Brief',content:'Expected link.'};
  if(state==='unsupported operation')f.events.splice(7,0,f.call('brief','mcp__monotest__save_document',{projectId,title:doc.title,content:doc.content}),f.result('brief',doc));
