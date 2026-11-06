@@ -19,13 +19,16 @@ function screenChildOutput(result, stdoutOptions = {}) {
   try { stdout = decode(result.stdout); stderr = decode(result.stderr); }
   catch { throw new Error('child process output withheld: non-UTF8 stream'); }
   const out = screenModelOutput(stdout, stdoutOptions), err = screenModelOutput(stderr);
-  const safeStdout = typeof out.value === 'string' ? out.value : JSON.stringify(out.value);
-  const safeStderr = typeof err.value === 'string' ? err.value : JSON.stringify(err.value);
+  let safeStdout = typeof out.value === 'string' ? out.value : JSON.stringify(out.value);
+  let safeStderr = typeof err.value === 'string' ? err.value : JSON.stringify(err.value);
   const joined = stdout && stderr ? screenModelOutput(`${safeStdout}\n${safeStderr}`, stdoutOptions) : null;
-  if ([out, err, joined].some(screened => screened?.rejected) || joined?.diagnostic.secretMatches > 0) throw Object.assign(new Error('child process output withheld by secret screen'), {
+  if ([out, err, joined].some(screened => screened?.fatal)) throw Object.assign(new Error('child process output withheld by secret screen'), {
     rawAnswer: '[child process output withheld]',
     secrets: [{ file: stdoutOptions.inputFile ?? null, line: 0, weight: 'P0', reason: 'credential-shaped or undecodable child output; both streams withheld' }],
   });
+  if (joined?.diagnostic.secretMatches > 0) {
+    safeStdout = withheldLines(stdout, stdoutOptions.inputPatch); safeStderr = withheldLines(stderr);
+  }
   return { stdout: safeStdout, stderr: safeStderr, status: result.status, signal: result.signal, error: !!result.error };
 }
 function readGit(worktree, env, options, args, raw = false, outputFd = null, allowedStatuses = [0]) {
@@ -180,6 +183,7 @@ const SECRET_FAMILIES = [
 ];
 export const MAX_SCREEN_VALUE_BYTES = 2 * 1024 * 1024;
 function jwtMatches(source) {
+  let work = 0;
   for (const [run] of source.matchAll(/[A-Za-z0-9_.-]+/g)) {
     const segments = run.split('.');
     for (let index = 0; index + 2 < segments.length; index++) {
@@ -188,6 +192,8 @@ function jwtMatches(source) {
       for (let start = 0; start + 4 <= header.length; start++) {
         // An object header starts with { or JSON whitespace: e, I, C or D in base64url.
         if (!'eICD'.includes(header[start])) continue;
+        // Exhausted analysis is opaque, never evidence of a safe token.
+        if ((work += header.length - start) > MAX_SCREEN_VALUE_BYTES * 8) return true;
         try {
           const value = JSON.parse(Buffer.from(header.slice(start), 'base64url').toString('utf8'));
           if (object(value) && Object.hasOwn(value, 'alg')) return true;
@@ -204,8 +210,61 @@ function familyMatches(source) {
   if (jwtMatches(source)) matches.push('JWT candidate');
   return matches;
 }
+function encodedAnalysis(maxBytes, maxNodes) {
+// Decoders produce analysis views only. The emitted value always comes from
+  // original bytes or a marker; no decoded data or decoder error is rendered.
+  const analysisCache = new Map();
+  let decoderBytes = 0, decoderNodes = 0;
+  const analyze = (source, level = 0) => {
+    if (analysisCache.has(source)) return analysisCache.get(source);
+    if (level > 8 || ++decoderNodes > maxNodes || (decoderBytes += Buffer.byteLength(source)) > maxBytes * 4)
+      return { dirty: true, opaque: true, keySecret: false };
+    const result = { dirty: familyMatches(source).length > 0 || source.split('\n').some(sourceCredential), opaque: false, decodedDirty: false, bound: source.split('\n').some(sourceCredential), keySecret: secretKey(source) };
+    // Reserve before recursion: repeated representations cannot cycle or multiply work.
+    analysisCache.set(source, result);
+    const children = new Set();
+    const add = decoded => { if (decoded !== source && decoded.length) children.add(decoded); };
+    add(decodeEscapeLayer(source));
+    if (/%[0-9a-f]{2}/i.test(source)) {
+      try { add(decodeURIComponent(source)); } catch {}
+      for (const [fragment] of source.matchAll(/(?:%[0-9a-f]{2}|[A-Za-z0-9_.~!()*'-])+/gi)) {
+        if (!fragment.includes('%')) continue;
+        try { add(decodeURIComponent(fragment)); } catch { result.dirty = result.opaque = true; }
+      }
+    }
+    // Four alignments cover an encoded fragment inside a longer base64 run.
+    // Replacement decoding is analysis-only and retains ASCII fragments even
+    // when surrounding decoded bytes are not UTF-8.
+    for (const [fragment] of source.matchAll(/[A-Za-z0-9+/_-]{4,}={0,2}/g)) {
+      for (let offset = 0; offset < Math.min(4, fragment.length - 3); offset++) {
+        decoderBytes += fragment.length - offset;
+        if (decoderBytes > maxBytes * 4) { result.dirty = result.opaque = true; break; }
+        add(Buffer.from(fragment.slice(offset), 'base64').toString('utf8'));
+      }
+      if (result.opaque) break;
+    }
+    const tokens = jsonTokens(source);
+    for (let index = 0; index < tokens.length; index++) {
+      const token = tokens[index];
+      if (!token.quoted) continue;
+      if (token.closed) add(token.value);
+      if (tokens[index + 1]?.value !== ':') continue;
+      const key = analyze(token.value, level + 1), first = tokens[index + 2];
+      // Inspect every original key before JSON.parse can discard duplicates.
+      if (key.keySecret && first && credentialValue(first.quoted ? first.value : null)) result.dirty = result.bound = true;
+      if (key.opaque) result.dirty = result.opaque = true;
+    }
+    for (const child of children) {
+      const inspected = analyze(child, level + 1);
+      result.dirty ||= inspected.dirty; result.decodedDirty ||= inspected.dirty; result.bound ||= inspected.bound; result.opaque ||= inspected.opaque;
+      result.keySecret ||= inspected.keySecret;
+    }
+    return result;
+  };
+  return analyze;
+}
 // Paths are payload metadata, not identifiers: embedded family values match.
-function screenPath(value) {
+function screenPath(value, analyze = encodedAnalysis(16 * 1024 * 1024, 131072)) {
   const original = value, hidden = match => '[credential-shaped path withheld]#' + digest(match);
   const replace = source => {
     for (const [, pattern] of SECRET_FAMILIES) source = source.replace(new RegExp(pattern.source, pattern.flags + 'g'), hidden);
@@ -213,6 +272,7 @@ function screenPath(value) {
       candidate => jwtMatches(candidate) ? hidden(candidate) : candidate);
   };
   value = replace(value);
+  if (analyze(value).dirty) return hidden(original);
   const decoded = decodedKey(original);
   if (decoded === null || (decoded !== original && replace(decoded) !== decoded)) return hidden(original);
   return value;
@@ -268,7 +328,7 @@ function jsonTokens(source) {
       index = Math.min(index, source.length);
       const raw = source.slice(start, index); let value = raw.slice(1, closed ? -1 : undefined);
       if (char === '"') { try { value = JSON.parse(raw); } catch {} }
-      tokens.push({ start, end: index, value, quoted: true }); continue;
+      tokens.push({ start, end: index, value, quoted: true, closed }); continue;
     }
     if ('{}[]:,'.includes(char)) index++;
     else while (index < source.length && !/[\s"'{}\[\]:,]/.test(source[index])) index++;
@@ -276,7 +336,7 @@ function jsonTokens(source) {
   }
   return tokens;
 }
-function redactJsonBindings(source, screenString) {
+function redactJsonBindings(source, screenString, secretName = key => secretKey(decodedKey(key) ?? '')) {
   const tokens = jsonTokens(source), stack = [], closes = new Map(), spans = [];
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
@@ -290,7 +350,7 @@ function redactJsonBindings(source, screenString) {
       const child = screenString(key.value);
       if (child !== key.value) spans.push({ start: key.start, end: key.end, replacement: JSON.stringify(child) });
     }
-    if (!key.quoted || tokens[index + 1]?.value !== ':' || !secretKey(decodedKey(key.value) ?? '')) continue;
+    if (!key.quoted || tokens[index + 1]?.value !== ':' || !secretName(key.value)) continue;
     const first = tokens[index + 2], last = tokens[closes.get(index + 2) ?? index + 2];
     const value = JSON.parse(source.slice(first.start, last.end));
     if (credentialValue(value)) spans.push({ start: first.start, end: last.end });
@@ -332,13 +392,16 @@ function sourceViews(source, patch) {
   flush(); if (headers.length) views.push(headers);
   return views;
 }
+function withheldLines(source, patch = false) {
+  return source.split('\n').map(line => line ? (patch && /^[+ -]/.test(line) ? line[0] : '') + '[credential-shaped line withheld]' : '').join('\n');
+}
 function screenSourceLines(source, patch) {
   const hidden = new Set(), remainders = new Set(), prefixes = new Map(), lines = source.split('\n');
   for (const view of sourceViews(source, patch)) {
     let rows = view;
     for (const row of rows) if (patch && lines[row.index] !== row.text) prefixes.set(row.index, lines[row.index][0]);
     for (let layer = 0; ; layer++) {
-      if (familyMatches(rows.map(row => row.text).join('\n')).length) return { value: '[credential-shaped line withheld]', rejected: true, matches: 1 };
+      if (familyMatches(rows.map(row => row.text).join('\n')).length) return { value: withheldLines(source, patch), rejected: true, matches: 1 };
       for (const row of rows) {
         if (!sourceCredential(row.text)) continue;
         hidden.add(row.index);
@@ -413,7 +476,7 @@ export function scanSecrets(value, options = {}) {
 }
 function requireSafeContext(value) {
   const screened = screenModelOutput(value, { input: true });
-  if (screened.rejected) throw Object.assign(new Error('secret patterns in role context; no model launched'), {
+  if (screened.fatal) throw Object.assign(new Error('unscreenable role context; no model launched'), {
     secrets: [{ file: null, line: 0, weight: 'P0', reason: 'credential-family or undecodable context; value withheld' }],
   });
   return screened.value;
@@ -513,16 +576,16 @@ export function observeCodexBoundary(value, stderr) {
 // The only model-output policy. Transport payloads, state, diagnostics and all
 // renderers use this before model text can leave transient parsing buffers.
 export function screenModelOutput(value, { diagnostic = false, strict = false, filesById = {}, input = false, inputFile = null, inputPatch = false } = {}) {
-  const safePath = pathScreen();
   const withheld = '[unreadable or over-limit model output withheld]', lineHidden = '[credential-shaped line withheld]', fieldHidden = '[credential-shaped field withheld]';
   const markers = new Set([withheld, lineHidden, fieldHidden, '[credential-shaped answer withheld]', '[private-key answer withheld]', '[unreadable transport answer withheld]', '[unreadable or over-limit transport answer withheld]']);
   const maxBytes = diagnostic ? 262144 : 16 * 1024 * 1024, maxNodes = diagnostic ? 4096 : 131072;
-  let bytes = 0, nodes = 0, secretMatches = 0, rejected = false, revision = 0, partiallyWithheld = false;
-  const hide = (matches = 0) => { rejected = true; revision++; secretMatches += matches; return { value: withheld, text: withheld }; };
+  const analyze = encodedAnalysis(maxBytes, maxNodes), safePath = pathScreen();
+  let bytes = 0, nodes = 0, secretMatches = 0, rejected = false, fatal = false, revision = 0, partiallyWithheld = false;
+  const hide = (matches = 0) => { fatal = true; rejected = true; revision++; secretMatches += matches; return { value: withheld, text: withheld }; };
   const redact = (source, file, patch = inputPatch, json = false) => {
     if (json) {
       const matches = scanPayloadText(source, { file, patch: false, bindings: false });
-      if (matches.length) { secretMatches += matches.length; rejected = true; revision++; return lineHidden; }
+      if (matches.length) { secretMatches += matches.length; rejected = true; revision++; return withheldLines(source, patch); }
       return source;
     }
     const result = screenSourceLines(source, patch);
@@ -530,38 +593,35 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
     if (result.value !== source) revision++;
     return result.value;
   };
+  const opaque = (source = null, patch = false) => {
+    rejected = true; revision++;
+    const safe = source === null ? withheld : withheldLines(source, patch);
+    return { value: safe, text: safe };
+  };
   const visit = (entry, depth = 0, file = null, layers = 0, patch = inputPatch, pathValue = false) => {
     if (depth > 32 || ++nodes > maxNodes) return hide();
     if (typeof entry === 'string') {
+      const original = entry;
+      const processString = () => {
       if (entry.length > MAX_SCREEN_VALUE_BYTES) return hide();
       const size = Buffer.byteLength(entry); bytes += size;
       if (size > MAX_SCREEN_VALUE_BYTES || bytes > maxBytes) return hide();
-      if (pathValue) { const safe = safePath(entry); if (safe !== entry) revision++; return { value: safe, text: safe }; }
       if (markers.has(entry)) return { value: entry, text: entry };
       if (layers > 8) return hide();
-      if (patch) {
-        let inHunk = false;
-        entry = entry.split('\n').map(line => {
-          if (line.startsWith('diff --git ')) inHunk = false;
-          if (/^@@ /.test(line)) inHunk = true;
-          return !inHunk && /^(?:diff --git |--- |\+\+\+ |rename (?:from|to) )/.test(line) ? safePath(line) : line;
-        }).join('\n');
-      }
       const stringRevision = revision;
+      const analysis = analyze(entry);
+      if (analysis.opaque) return opaque(entry, patch);
+
       // Check raw credential families before parsing can discard any member.
       if (scanPayloadText(entry, { file, patch, bindings: false }).length) {
-        rejected = true; revision++; secretMatches++; return { value: lineHidden, text: lineHidden };
+        const pathOnly = pathValue && !analysis.opaque && !analysis.decodedDirty && !analysis.bound;
+        rejected ||= !pathValue; revision++; secretMatches++; const safe = pathOnly ? entry : withheldLines(entry, patch); return { value: safe, text: safe };
       }
-      // A path can also occur in prose, a diff header, or an echoed tool error.
-      // Preserve surrounding bytes while applying the same unbounded table.
-      const pathText = entry.replace(/[^\s"'<>`]+/g, token =>
-        token.includes('/') || /\.[A-Za-z0-9]{1,12}[,:;)}\]]*$/.test(token) ? safePath(token) : token);
-      if (pathText !== entry) { entry = pathText; revision++; }
       let parsed, decoded = false;
       try { parsed = JSON.parse(entry.trim(), (_key, child, context) =>
         typeof child === 'number' ? JSON.rawJSON(context.source) : child); decoded = true; } catch {}
       const initialSafe = redact(entry, file, patch, decoded);
-      if (decoded && parsed && typeof parsed === 'object' && !JSON.isRawJSON(parsed) && ambiguousJsonMembers(entry)) return hide();
+      if (decoded && parsed && typeof parsed === 'object' && !JSON.isRawJSON(parsed) && ambiguousJsonMembers(entry)) return opaque(entry, patch);
       if (decoded && (parsed === null || JSON.isRawJSON(parsed) || !['object', 'string'].includes(typeof parsed))) {
         const safe = initialSafe; return { value: safe, text: safe };
       }
@@ -571,7 +631,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
         // Validate every decoded node even when source-span redaction below
         // preserves the original JSON formatting and numeric tokens.
         if (input && (file !== null || patch) && typeof parsed === 'object') {
-          const safe = redactJsonBindings(initialSafe, value => visit(value, depth + 1, file, layers + 1, false).value);
+          const safe = redactJsonBindings(initialSafe, value => visit(value, depth + 1, file, layers + 1, false).value, name => analyze(name).keySecret);
           if (safe !== entry) revision++;
           return { value: safe, text: safe };
         }
@@ -607,9 +667,41 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
           for (let line = first; line <= last; line++) hidden.add(line);
         }
       }
+      for (const [index, line] of entry.split('\n').entries()) {
+        if (analyze(line).dirty) hidden.add(index);
+      }
       const safe = initialSafe.split('\n').map((line, index) => hidden.has(index)
         ? (patch && /^[+ -]/.test(line) ? line[0] : '') + lineHidden : line).join('\n');
+      if (analysis.dirty && safe === entry) {
+        revision++; secretMatches++; partiallyWithheld ||= file !== null;
+        const masked = withheldLines(entry, patch); return { value: masked, text: masked };
+      }
+      if (safe !== entry) { revision++; secretMatches++; }
       return { value: safe, text: safe };
+      };
+      const result = processString();
+      if (pathValue && typeof result.value === 'string') {
+        const screenedPath = safePath(original);
+        const safe = screenedPath !== original ? screenedPath : result.value;
+        if (safe !== result.value) revision++;
+        return { value: safe, text: safe };
+      }
+      const finishPaths = source => {
+        if (patch) {
+          let inHunk = false;
+          source = source.split('\n').map(line => {
+            if (line.startsWith('diff --git ')) inHunk = false;
+            if (/^@@ /.test(line)) inHunk = true;
+            return !inHunk && /^(?:diff --git |--- |\+\+\+ |rename (?:from|to) )/.test(line) ? safePath(line) : line;
+          }).join('\n');
+        }
+        return source.replace(/[^\s"'<>`]+/g, token =>
+          token.includes('/') || /\.[A-Za-z0-9]{1,12}[,:;)}\]]*$/.test(token) ? safePath(token) : token);
+      };
+      const safe = typeof result.value === 'string' ? finishPaths(result.value) : result.value;
+      const safeText = finishPaths(result.text);
+      if (safe !== result.value || safeText !== result.text) revision++;
+      return { value: safe, text: safeText };
     }
     if (JSON.isRawJSON(entry)) return { value: entry, text: entry.rawJSON };
     if (typeof entry === 'number' && !Number.isFinite(entry)) return hide();
@@ -627,7 +719,8 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       const keyResult = visit(key, depth + 1, file, layers, patch), child = visit(content, depth + 1, file, layers, input ? ['diff', 'baseDiff'].includes(key) : patch, ['file', 'files', 'path', 'paths', 'worktree', 'reviewedFiles', 'focusFiles', 'symlinks', 'unreviewedFiles', 'partiallyWithheldFiles'].includes(key));
       const name = typeof keyResult.value === 'string' ? decodedKey(keyResult.value) : null;
       if (name === null) return { name: withheld, ...hide() };
-      if (secretKey(name) && credentialValue(content) && !markers.has(content)) {
+      if (analyze(key).opaque) return { name: withheld, ...opaque() };
+      if ((secretKey(name) || analyze(key).keySecret) && credentialValue(content) && !markers.has(content)) {
         if (!(input && (file !== null || patch))) rejected = true;
         revision++; secretMatches++; child.value = fieldHidden; child.text = fieldHidden;
       }
@@ -641,7 +734,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
   let result = visit(value, 0, inputFile);
   if (safePath.collided) result = hide();
   const safeText = result.text, textBytes = Buffer.from(safeText);
-  const output = { value: safeText === result.text ? result.value : safeText, rejected, partiallyWithheld, interrupted: value?.error?.interrupted === true,
+  const output = { value: safeText === result.text ? result.value : safeText, rejected, fatal, partiallyWithheld, interrupted: value?.error?.interrupted === true,
     diagnostic: { text: textBytes.subarray(0, 8188).toString('utf8'), truncated: textBytes.length > 8188, secretMatches } };
   if (strict && rejected) throw new Error('model output withheld by secret screen');
   return output;
@@ -789,7 +882,7 @@ function screenedDiff(worktree, base, head, files, pathFor = screenPath) {
           requireValue(!bytes.includes(0), 'unreadable blob');
           const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
           const safe = screenModelOutput(content, { input: true, inputFile: file });
-          requireValue(!safe.rejected && typeof safe.value === 'string', 'blob withheld');
+          requireValue(!safe.fatal && typeof safe.value === 'string', 'blob withheld');
           if (safe.partiallyWithheld) partiallyWithheld.add(name);
           sides.push({ exists, mode, value: safe.value });
         } catch { withheld.push(name); break; }
@@ -904,7 +997,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       if (!existsAt(revision, raw)) return { file, content: null };
       const bytes = git(worktree, ['cat-file', 'blob', `${revision}:${raw}`], {}, 'blob');
       const safe = screenModelOutput(new TextDecoder('utf-8', { fatal: true }).decode(bytes), { input: true, inputFile: raw });
-      if (safe.rejected) throw Object.assign(new Error('pinned evidence withheld'), {
+      if (safe.fatal) throw Object.assign(new Error('pinned evidence withheld'), {
         secrets: [{ file, line: 0, weight: 'P0', reason: 'credential-family or undecodable pinned evidence; value withheld' }],
       });
       if (safe.partiallyWithheld && !partiallyWithheldFiles.includes(file)) partiallyWithheldFiles.push(file);

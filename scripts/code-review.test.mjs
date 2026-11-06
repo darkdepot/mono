@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runReviewRound, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, screenModelOutput, MAX_SCREEN_VALUE_BYTES } from './code-review.mjs';
+import { runReviewRound, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, screenModelOutput, reviewGit, MAX_SCREEN_VALUE_BYTES } from './code-review.mjs';
 import { requiredPairings, validateModels } from './runtime.mjs';
 import { scoreCheckerProbes } from './code-review-eval.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -561,7 +561,7 @@ test('v4: short/duplicate credentials in pinned input and checker evidence never
   const runner=responder({findings:[sample],verdicts:[verdict({reason:payload})]});
   const result=await runReviewRound(request,runner);
   assert.equal(result.outcome,'not-reviewed',channel);assert.equal(result.rounds.length,0,channel);
-  assert.equal(runner.calls.length,channel==='checker'?3:0,channel);
+  assert.equal(runner.calls.length,3,channel);assert.ok(runner.calls.every(call=>!call.prompt.includes(payload)),channel);
   assert.ok(!JSON.stringify(result).includes('"x"'),channel);
  }
 });
@@ -777,7 +777,7 @@ test('role Git reads cannot execute repository helpers, including absolute Git w
   assert.equal(fs.existsSync(marker),true,'negative control must execute the repository helper');
  });
 });
-test('encoded JSON assignments redact in pinned files and withhold unbound context',async t=>{
+test('C39: encoded JSON assignments redact in files and context without refusing a safe round',async t=>{
  const secret='opaqueFixture'+'j'.repeat(24);
  for(const depth of [1,2,3])for(const source of ['blob','contract','rules','base-evidence'])await t.test(`${source}/${depth}`,async t=>{
   const f=fixture(t);let encoded=JSON.stringify({password:secret});for(let i=0;i<depth;i++)encoded=JSON.stringify(encoded);
@@ -790,8 +790,8 @@ test('encoded JSON assignments redact in pinned files and withhold unbound conte
    request.head=f.git('rev-parse','HEAD');
   }
   const runner=responder({findings:source==='base-evidence'?[{...sample,file:'neighbor.mjs'}]:[]}),result=await runReviewRound(request,runner);
-  assert.equal(result.outcome,source==='contract'?'not-reviewed':source==='base-evidence'?'not-converged':'clean');
-  assert.equal(runner.calls.length,source==='contract'?0:source==='base-evidence'?2:1);
+  assert.equal(result.outcome,source==='base-evidence'?'not-converged':'clean');
+  assert.equal(runner.calls.length,source==='base-evidence'?2:1);
   assert.ok(runner.calls.every(call=>!call.prompt.includes(secret)));assert.ok(!JSON.stringify(result).includes(secret));
  });
 });
@@ -1007,9 +1007,9 @@ test('gitlink coverage cannot be hidden by repository or submodule ignore settin
  const covered=await runReviewRound({...f.request,base,head},responder({responses:[review([],['module'])]}));
  assert.equal(covered.outcome,'not-reviewed');assert.equal(covered.rounds.length,0);
 });
-test('secrets stop before launch in every path, including removed and fixture secrets',async t=>{
+test('C39: safe credential redaction reaches launch without leaking, including removed and fixture secrets',async t=>{
  const secret='ghp_'+'a'.repeat(36);const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),`token = ${secret}\n`);f.git('add','.');f.git('commit','-qm','secret');
- const runner=responder(),result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.ok(!JSON.stringify(result).includes(secret));
+ const runner=responder(),result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);assert.equal(result.outcome,'clean');assert.equal(runner.calls.length,1);assert.ok(runner.calls.every(call=>!call.prompt.includes(secret)));assert.ok(!JSON.stringify(result).includes(secret));
  const fake='token = '+'ghp_'+'0'.repeat(36);const diff=`+++ b/evals/code-review/secret-example.txt\n@@ -0,0 +1 @@\n+${fake}`;
  assert.equal(scanSecrets(diff).length,1);assert.equal(scanSecrets(diff.replace('secret-example.txt','other.txt')).length,1);assert.equal(scanSecrets(diff.replace('+'+fake,'-'+fake).replace('secret-example.txt','other.txt')).length,1);
 });
@@ -1247,7 +1247,7 @@ test('R5: closing task defects in round three converges with old non-dangerous f
  assert.match(formatReviewReport(record),/было раньше/);
 });
 
-test('C2 secrets: every outgoing context source is screened before its role starts',async t=>{
+test('C39: every context source is redacted before launch; unsafe history stays fail-closed',async t=>{
  const secret='ghp_'+'q'.repeat(36);
  for(const source of ['contract','rules','history','failed-answer','diff-context','base-evidence']){
   await t.test(source,async t=>{
@@ -1273,9 +1273,10 @@ test('C2 secrets: every outgoing context source is screened before its role star
     fs.writeFileSync(path.join(f.worktree,'input.mjs'),`// ${secret}\nexport function value(n) { return n; }\n`);f.git('add','.');f.git('commit','-qm','near edit');request.head=f.git('rev-parse','HEAD');}
   }
   const runner=responder({findings:source==='base-evidence'?[{...sample,file:'neighbor.mjs'}]:[]}),record=await runReviewRound(request,runner);
-  assert.equal(record.outcome,'not-reviewed',source);assert.equal(record.rounds.length,0,source);
-  assert.equal(runner.calls.length,source==='base-evidence'?1:0,source);
-  assert.ok(record.secrets?.length,source);assert.ok(!JSON.stringify(record.secrets).includes(secret),source);
+  const unsafeHistory=['history','failed-answer'].includes(source);
+  assert.equal(record.outcome,unsafeHistory?'not-reviewed':source==='base-evidence'?'not-converged':'clean',source);assert.equal(record.rounds.length,unsafeHistory?0:1,source);
+  assert.equal(runner.calls.length,unsafeHistory?0:source==='base-evidence'?2:1,source);
+  assert.ok(runner.calls.every(call=>!call.prompt.includes(secret)),source);assert.ok(!JSON.stringify(record).includes(secret),source);
   });
  }
 });
@@ -1297,7 +1298,7 @@ test('C19 secrets: raw fixture blobs are screened without a path exemption or pa
  f.git('add','.');f.git('commit','-qm','fixture base');const base=f.git('rev-parse','HEAD');
  fs.appendFileSync(path.join(f.worktree,file),'documentation change\n');f.git('add','.');f.git('commit','-qm','fixture head');
  const finding={...sample,file},runner=responder({findings:[finding],responses:[review([finding],[file]),{completed:true,verdicts:[verdict({origin:'pre-existing'})]}]});
- const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},runner);assert.equal(record.outcome,'not-reviewed');assert.equal(runner.calls.length,0);
+ const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},runner);assert.equal(record.outcome,'clean');assert.equal(runner.calls.length,2);assert.ok(runner.calls.every(call=>!call.prompt.includes(fake)));
 });
 
 test('C2 flags: confirmed scope/risk cannot disappear without new evidence in later rounds',async t=>{
@@ -1356,14 +1357,14 @@ test('v2 payload family table: AWS STS and all contracted families are screened 
  for(const source of ['password = fixture-value','pass_word: fixture-value','api key = fixture-value','foo = password = fixture-value'])assert.ok(scanSecrets(source,{patch:false}).length,source);
  assert.equal(screenModelOutput({session:'ordinary-session',sessionId:'ordinary-id',secretMatches:0}).rejected,false);
 });
-test('v2 AWS STS finding: pinned blob and contract refuse before any model launch',async t=>{
+test('C39: AWS STS blob and contract redact before model launch',async t=>{
  const f=fixture(t),credentials={AccessKeyId:'ASIA'+'B'.repeat(16),SecretAccessKey:'fixture'+'a'.repeat(32),SessionToken:'fixture'+'b'.repeat(32)};
  for(const source of ['contract','blob']){
   const request={...f.request};
   if(source==='contract')request.contract=JSON.stringify(credentials);
   else {fs.writeFileSync(path.join(f.worktree,'input.mjs'),JSON.stringify(credentials));f.git('add','.');f.git('commit','-qm','synthetic STS');request.head=f.git('rev-parse','HEAD');}
   const runner=responder(),result=await runReviewRound(request,runner);
-  assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.ok(!JSON.stringify(result).includes(credentials.SecretAccessKey));
+  assert.equal(result.outcome,'clean');assert.equal(runner.calls.length,1);assert.ok(runner.calls.every(call=>!call.prompt.includes(credentials.SecretAccessKey)&&!call.prompt.includes(credentials.AccessKeyId)));assert.ok(!JSON.stringify(result).includes(credentials.SecretAccessKey));
  }
 });
 test('v2 decoder preserves escaped key pairing and fails closed beyond eight layers',()=>{
@@ -1411,10 +1412,10 @@ test('v2 family table must cover multiline payload and patch sides',async t=>{
  assert.ok(scanSecrets(value,{patch:false}).length);
  for(const sign of ['+','-'])assert.ok(scanSecrets('+++ b/input.txt\n@@ -1,2 +1,2 @@\n'+sign+'Bearer\n'+sign+' '+credential).length);
  const runner=responder(),record=await runReviewRound({...f.request,contract:value},runner);
- assert.equal(record.outcome,'not-reviewed');assert.equal(runner.calls.length,0);
+ assert.equal(record.outcome,'clean');assert.equal(runner.calls.length,1);assert.ok(runner.calls.every(call=>!call.prompt.includes(credential)));
  fs.writeFileSync(path.join(f.worktree,'input.mjs'),value);f.git('add','.');f.git('commit','-qm','synthetic multiline payload');
  const blobRunner=responder(),blobRecord=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},blobRunner);
- assert.equal(blobRecord.outcome,'not-reviewed');assert.equal(blobRunner.calls.length,0);
+ assert.equal(blobRecord.outcome,'clean');assert.equal(blobRunner.calls.length,1);assert.ok(blobRunner.calls.every(call=>!call.prompt.includes(credential)));
 });
 
 test('v2 unquoted secret-like names use the same any-separator rule in every payload screen',async t=>{
@@ -1434,15 +1435,14 @@ test('v2 unquoted secret-like names use the same any-separator rule in every pay
  assert.ok(blobRunner.calls.every(call=>!call.prompt.includes(credential)));assert.ok(!JSON.stringify(blob).includes(credential));
 });
 
-test('C17: successful Git stderr is captured and withheld before the round refuses a secret',t=>{
+test('C39: successful Git stderr is redacted without cancelling an ordinary round',t=>{
  const f=fixture(t),credential='ghp_'+'c'.repeat(36);
  fs.writeFileSync(path.join(f.worktree,'.gitattributes'),'input.mjs /'+credential+'\n');f.git('add','.');f.git('commit','-qm','invalid synthetic attribute');
  const request={...f.request,head:f.git('rev-parse','HEAD')};
- const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};let calls=0;const r=await runReviewRound(${JSON.stringify(request)},{runRole:async()=>{calls++;throw Error('unexpected model');}});console.log(JSON.stringify({record:r,calls}));`;
+ const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};let calls=0;const r=await runReviewRound(${JSON.stringify(request)},{runRole:async()=>{calls++;return {response:${JSON.stringify(review([],['input.mjs','.gitattributes']))}};}});console.log(JSON.stringify({record:r,calls}));`;
  const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',stdio:['ignore','pipe','pipe']});
  assert.equal(child.status,0);assert.equal(child.stderr.includes(credential),false,'raw Git stderr escaped the circle');
- const result=JSON.parse(child.stdout);assert.equal(result.record.outcome,'not-reviewed');assert.equal(result.calls,0);
- assert.ok(result.record.failures.some(item=>/child process output withheld/.test(item.reason)));
+ const result=JSON.parse(child.stdout);assert.equal(result.record.outcome,'clean');assert.equal(result.calls,1);
  assert.equal(child.stdout.includes(credential),false);
 });
 
@@ -1469,8 +1469,8 @@ test('C17/C19: outgoing child bytes are screened; unused catalog stderr is never
   const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',env:{...process.env,PATH:bin+path.delimiter+process.env.PATH},stdio:['ignore','pipe','pipe']});
   assert.equal(child.status,0);assert.equal(child.stderr.includes(credential),false);assert.equal(child.stdout.includes(credential),false);
   assert.equal(child.stderr.includes('synthetic-credential'),false);assert.equal(child.stdout.includes('synthetic-credential'),false);
-  const record=JSON.parse(child.stdout);if(mode.startsWith('catalog:stderr')||mode.endsWith(':key')){assert.equal(record.outcome,'clean');assert.equal(record.rounds.length,1);}
-  else{assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.ok(record.failures.some(item=>/withheld/.test(item.reason)),'outgoing process secret was not refused');}
+  const record=JSON.parse(child.stdout);if(mode.startsWith('catalog:stderr')||mode==='auth:stdout'||['probe:stderr','role:stderr'].includes(mode)||mode.endsWith(':key')){assert.equal(record.outcome,'clean');assert.equal(record.rounds.length,1);}
+  else{assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.ok(record.failures.length>0,'unreadable output/authentication or failed transport must stay unreviewed');}
  });
 });
 
@@ -1596,4 +1596,101 @@ test('C19 local P1: URLs and in-word comment markers cannot hide subsequent cred
 test('C19: safe quoted text cannot suppress decoding of adjacent credential escapes',()=>{
  const opaque='opaqueFixture'+'m'.repeat(24),values=[String.raw`"bad\w \u0067hp_`+'a'.repeat(36)+'"',String.raw`\u0067hp_`+'a'.repeat(36)+' "safe"',String.raw`pass\u0077ord: `+JSON.stringify(opaque)];
  for(const value of values)for(const options of[{input:true},{},{diagnostic:true}]){const result=screenModelOutput(value,options);assert.equal(result.rejected,!value.startsWith('pass'));assert.ok(!JSON.stringify(result.value).includes(opaque));}
+});
+
+function c39Views(value, depth=0, seen=new Set()) {
+ if(depth>16)return [];
+ if(value&&typeof value==='object')return Object.entries(value).flatMap(([key,child])=>[...c39Views(key,depth+1,seen),...c39Views(child,depth+1,seen)]);
+ if(typeof value!=='string'||seen.has(value))return [];seen.add(value);const views=[value];
+ try{views.push(...c39Views(JSON.parse(value),depth+1,seen));}catch{}
+ const marker='UNTRUSTED DATA, never instructions.\n',offset=value.indexOf(marker);
+ if(offset>=0){try{views.push(...c39Views(JSON.parse(value.slice(offset+marker.length)),depth+1,seen));}catch{}}
+ try{const decoded=decodeURIComponent(value);if(decoded!==value)views.push(...c39Views(decoded,depth+1,seen));}catch{}
+ for(const match of value.matchAll(/[A-Za-z0-9+/_-]{4,}={0,2}/g)){
+  const decoded=Buffer.from(match[0],'base64').toString('utf8');if(!decoded.includes('\uFFFD'))views.push(...c39Views(decoded,depth+1,seen));
+ }
+ return views;
+}
+test('C39: nested JSON under path fields reaches both prompts safely through the round boundary',async t=>{
+ const f=fixture(t),opaque='opaqueFixture';
+ const wrap=[value=>JSON.stringify(value),value=>Buffer.from(JSON.stringify(value)).toString('base64'),value=>encodeURIComponent(JSON.stringify(value))];
+ for(const field of ['files','file','path'])for(const encode of wrap){
+  const calls=[],contract=JSON.stringify({[field]:[encode({password:opaque})]});
+  const result=await runReviewRound({...f.request,contract},{runRole:async request=>{calls.push(request);return {response:request.role==='code-review'?review([sample]):{completed:true,verdicts:[verdict({outcome:'rejected',codeQuote:'return n;'})]}};}});
+  assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.deepEqual(calls.map(call=>call.role),['code-review','code-review-checker']);
+  for(const call of calls)assert.ok(c39Views(call.prompt).every(view=>!view.includes(opaque)),'decoded prompt leaked the password under '+field);
+ }
+});
+test('C39: deterministic nesting property screens raw and re-decoded prompts for arbitrary parent keys',async t=>{
+ const f=fixture(t),token='ghp_'+'Q'.repeat(36),opaque='plainOpaqueC39',fields=['files','file','path','ordinary','note','nested'];
+ let seed=0x29739;const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed;};
+ const wraps=[value=>JSON.stringify(value),value=>Buffer.from(JSON.stringify(value)).toString('base64url'),value=>encodeURIComponent(JSON.stringify(value))];
+ for(let index=0;index<24;index++){
+  let value={password:opaque,note:token};const count=1+random()%3;
+  for(let level=0;level<count;level++)value={[fields[random()%fields.length]]:wraps[random()%wraps.length](value)};
+  const runner=responder({findings:[sample],verdicts:[verdict({outcome:'rejected',codeQuote:'return n;'})]});
+  const result=await runReviewRound({...f.request,contract:JSON.stringify(value)},runner);
+  assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(runner.calls.length,2);
+  for(const call of runner.calls)for(const view of c39Views(call.prompt)){assert.ok(!view.includes(token),'family token after decode');assert.ok(!view.includes(opaque),'non-prefixed password after decode');}
+ }
+});
+test('C39: encoded keys, duplicate members and embedded fragments share the same screen',()=>{
+ const opaque='plainOpaqueC39',b64=value=>Buffer.from(value).toString('base64');
+ const values=[JSON.stringify({[b64('password')]:opaque}),JSON.stringify({[encodeURIComponent('pass word')]:opaque}),'{"password":"'+opaque+'","password":"<redacted>"}',
+  'log: '+b64(JSON.stringify({password:opaque})),JSON.stringify({files:JSON.stringify({path:JSON.stringify({password:opaque})})})];
+ for(const input of values){const safe=screenModelOutput(input,{input:true});for(const view of c39Views(safe.value))assert.ok(!view.includes(opaque),'decoded fragment leaked');}
+});
+test('C39: safe redaction continues while decoder bounds never forward the opaque fragment',async t=>{
+ const f=fixture(t);let nested={password:'plainOpaqueC39'};for(let i=0;i<14;i++)nested={path:Buffer.from(JSON.stringify(nested)).toString('base64')};
+ const safe=screenModelOutput(nested,{input:true});assert.ok(c39Views(safe.value).every(value=>!value.includes('plainOpaqueC39')));
+ const runner=responder();const result=await runReviewRound({...f.request,contract:JSON.stringify({password:'plainOpaqueC39',files:['input.mjs']})},runner);
+ assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(runner.calls.length,1);assert.ok(!runner.calls[0].prompt.includes('plainOpaqueC39'));
+});
+
+test('C39: path metadata cannot bypass encoded keys or combine a visible family with an encoded secret',()=>{
+ const opaque='plainOpaqueC39',key=Buffer.from('password').toString('base64'),token='ghp_'+'R'.repeat(36);
+ const values=[JSON.stringify({[key]:opaque}),JSON.stringify({note:token,path:Buffer.from(JSON.stringify({password:opaque})).toString('base64')})];
+ for(const value of values)for(const input of [value,{path:value},{files:[value]}])for(const options of [{input:true},{input:true,inputFile:'input.json'}]){
+  const safe=screenModelOutput(input,options);for(const view of c39Views(safe.value)){assert.ok(!view.includes(opaque));assert.ok(!view.includes(token));}
+ }
+});
+test('C39: cumulative JWT decoding work withholds an opaque header instead of passing raw bytes',()=>{
+ const value='e'.repeat(8192)+'.b.c',start=performance.now();const safe=screenModelOutput(value,{input:true});
+ assert.ok(!safe.value.includes(value));assert.ok(performance.now()-start<750,'JWT analysis exceeded its bounded work budget');
+});
+test('C39: encoded credential paths use one stable original-path mapping in files, diff and checker evidence',async t=>{
+ const f=fixture(t),token='ghp_'+'E'.repeat(36),original='notes/'+Buffer.from(token).toString('base64url')+'.mjs';
+ fs.mkdirSync(path.join(f.worktree,'notes'));fs.writeFileSync(path.join(f.worktree,original),'export const value = 1;\n');f.git('add','.');f.git('commit','-qm','encoded credential path');
+ const head=f.git('rev-parse','HEAD'),calls=[];let alias;
+ const result=await runReviewRound({...f.request,head},{runRole:async request=>{
+  const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);calls.push(request);
+  alias??=context.files.find(file=>file!=='input.mjs');assert.ok(alias.includes('[credential-shaped path withheld]'));assert.ok(!c39Views(request.prompt).some(view=>view.includes(token)));
+  if(request.role==='code-review'){assert.ok(context.diff.includes(alias));return {response:review([{...sample,file:alias}],context.files)};}
+  assert.equal(context.headEvidence[0].file,alias);assert.equal(context.headEvidence[0].content,'export const value = 1;\n');
+  return {response:{completed:true,verdicts:[verdict({outcome:'rejected',codeQuote:'export const value = 1;'})]}};
+ }});
+ assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(calls.length,2);
+});
+test('C39: redaction preserves original source coordinates, including credential-family hits',()=>{
+ const token='ghp_'+'L'.repeat(36),source='const before = 1;\nconst note = "'+token+'";\nconst after = 2;\n';
+ for(const [value,options] of [[source,{input:true,inputFile:'input.mjs'}],['@@ -1,3 +1,3 @@\n '+source.split('\n').join('\n+'),{input:true,inputPatch:true}]]){
+  const safe=screenModelOutput(value,options);assert.equal(safe.value.split('\n').length,value.split('\n').length);assert.ok(!safe.value.includes(token));assert.equal(safe.fatal,false);
+ }
+});
+
+test('C39: opaque decoder-bound fragments retain source line coordinates',()=>{
+ let encoded=JSON.stringify({password:'opaqueBoundC39'});for(let i=0;i<12;i++)encoded=Buffer.from(encoded).toString('base64');
+ const source='before\n'+encoded+'\nafter\n',safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
+ assert.equal(safe.fatal,false);assert.equal(safe.value.split('\n').length,source.split('\n').length);assert.ok(!safe.value.includes(encoded));
+});
+
+test('C39: a family visible only in joined subprocess streams redacts both outputs',t=>{
+ const f=fixture(t),bin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-c39-joined-'));t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));
+ fs.writeFileSync(path.join(bin,'git'),`#!${process.execPath}\nif(process.argv.includes('config'))process.exit(1);process.stdout.write('Bearer');process.stderr.write(' '+ 's'.repeat(30));\n`,{mode:0o700});
+ const prior=process.env.PATH;process.env.PATH=bin+path.delimiter+prior;
+ try{const value=reviewGit(f.worktree,['version']);assert.ok(!value.includes('Bearer'));assert.match(value,/withheld/);}finally{process.env.PATH=prior;}
+});
+test('C39: a detected binding spanning source lines cannot survive an absent per-line mapping',()=>{
+ const source='const cfg = {\n"password"\n:\n"opaqueFragmentC39"\n};\n',safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
+ assert.ok(!safe.value.includes('opaqueFragmentC39'));assert.equal(safe.value.split('\n').length,source.split('\n').length);assert.equal(safe.fatal,false);
 });

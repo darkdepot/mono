@@ -58,3 +58,5 @@
 - Limit secret-key placeholder exemptions to complete lowercase angle-bracket words of at most 33 characters, shared by JSON and source-line screening.
 
 - Continue:37: credential families и JWT ищутся подстрокой во всех каналах без границ соседних символов; прежние заглушки, стабильные алиасы и читаемые пути MONO-302 сохранены.
+
+- Continue:39: все значения промпта проходят общий экран до обработки пути; рекурсивные JSON/base64/URL-представления, ключи и фрагменты проверяются с пределом работы, безопасное скрытие не отменяет обычный круг.
