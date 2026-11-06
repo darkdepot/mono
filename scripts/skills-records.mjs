@@ -58,7 +58,7 @@ function markdown(value){
   }
   // Inline code is opaque too; unrecognized formatting stays unequal.
   const list=literal?line:line.replace(/^([ ]{0,3})- /,'$1* ');
-  result.push(literal||line.includes('`')?list:list.replace(/\[([^\]\n]+)\]\(<(https?:\/\/[^>\s]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1'));
+  result.push(literal||line.includes('`')?list:list.replace(/\[([^\]\n]+)\]\(<([^<>\n]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1'));
   heading=!literal&&/^#{1,6} /.test(line);
   if(!block)for(const tick of line.matchAll(/`+/g)){
    if(inline===null)inline=tick[0].length;
@@ -606,6 +606,18 @@ export function verifyRecords(request){
    const finalFields={};
    for(const [index,write] of versions.entries()){
     const value=write.value,input={...write.input},next=versions[index+1];
+    if(write.name==='mcp__monotest__save_document'&&Object.hasOwn(input,'patch')){
+     if(Object.hasOwn(input,'content')||!Array.isArray(input.patch)||!input.patch.length)missing(`invalid document patch for ${id}`);
+     let content=finalFields.content;
+     if(typeof content!=='string'||elided(content))missing(`document patch lacks full prior content for ${id}`);
+     for(const edit of input.patch){
+      if(edit?.op!=='replace'||typeof edit.old_string!=='string'||!edit.old_string||typeof edit.new_string!=='string'||edit.replace_all===true)missing(`unsupported document patch for ${id}`);
+      const start=content.indexOf(edit.old_string);
+      if(start<0||content.indexOf(edit.old_string,start+1)>=0)throw new Error(`document patch old_string must match exactly once for ${id}`);
+      content=content.slice(0,start)+edit.new_string+content.slice(start+edit.old_string.length);
+     }
+     input.content=content;
+    }
     if(Object.hasOwn(input,'state')){if(Object.hasOwn(input,'status'))compareField('status',input.state,input.status,id);input.status=input.state;}
     for(const field of fields){
      if(Object.hasOwn(input,field)){
@@ -624,7 +636,7 @@ export function verifyRecords(request){
        if(!confirmation)missing(`intermediate ${id}.${field} has no linked value or read before the next write`);
       }
       if(confirmation&&Object.hasOwn(confirmation,field)&&!elided(confirmation[field]))compareField(field,input[field],confirmation[field],id);
-      finalFields[field]=input[field];
+      finalFields[field]=confirmation&&Object.hasOwn(confirmation,field)&&!elided(confirmation[field])?confirmation[field]:input[field];
      }
      if(Object.hasOwn(value,field)&&!elided(value[field])&&!(field==='status'&&Object.hasOwn(input,field)))finalFields[field]=value[field];
     }

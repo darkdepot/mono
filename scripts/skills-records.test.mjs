@@ -1524,6 +1524,49 @@ for(const host of ['claude','codex'])test(`continue3 ${host}: annotate saved nat
  assert.equal(resumed.status,'passed',JSON.stringify(resumed));assert.equal(resumed.rubricDigest,prepared.rubricDigest);
 });
 
+for(const host of ['claude','codex'])test(`MONO-357 ${host}: relative link wrappers preserve targets and opaque code`,t=>{
+ const f=textFixture(t,host,'defer'),content='[README](README.md) and [code](cli/runs.mjs#source)\n\n```text\n[raw](<README.md>)\n```';
+ const doc={id:'brief',projectId,title:'Brief',content};
+ f.events.splice(7,0,f.call('brief','mcp__monotest__save_document',{projectId,title:doc.title,content}),f.result('brief',doc));
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);
+ const stored=content.replace('[README](README.md)','[README](<README.md>)').replace('[code](cli/runs.mjs#source)','[code](<cli/runs.mjs#source>)');
+ f.save('documents/brief.json',{...doc,content:stored});
+ assert.equal(f.check().status,'passed',f.check().reason);
+ f.save('documents/brief.json',{...doc,content:stored.replace('<cli/runs.mjs#source>','<cli/other.mjs#source>')});
+ assert.equal(f.check().status,'failed');
+ f.save('documents/brief.json',{...doc,content:stored.replace('[raw](<README.md>)','[raw](README.md)')});
+ assert.equal(f.check().status,'failed');
+});
+
+for(const host of ['claude','codex'])test(`MONO-357 ${host}: content write followed by patch uses the full native intermediate read`,t=>{
+ const f=textFixture(t,host,'defer'),content='[README](README.md)\nСсылка согласия ожидается.\nДругая ссылка ожидается.';
+ const stored=content.replace('(README.md)','(<README.md>)'),doc={id:'brief',projectId,title:'Brief'},truncated={...doc,content:'Brief… (truncated, use `get_document` for full description)'};
+ const patch=[{op:'replace',old_string:'[README](<README.md>)\nСсылка согласия ожидается.',new_string:'[README](README.md)\n[Согласие](https://linear.app/monotest/project/test#comment-r1)'},{op:'replace',old_string:'Другая ссылка ожидается.',new_string:'Literal $& replacement.'}];
+ const final='[README](<README.md>)\n[Согласие](<https://linear.app/monotest/project/test#comment-r1>)\nLiteral $& replacement.';
+ f.events.splice(7,0,f.call('brief','mcp__monotest__save_document',{projectId,title:doc.title,content}),f.result('brief',truncated),f.call('brief-read','mcp__monotest__get_document',{id:'brief'}),f.result('brief-read',{...doc,content:stored}),f.call('patch','mcp__monotest__save_document',{id:'brief',patch}),f.result('patch',truncated));
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',{...doc,content:final});
+ assert.equal(f.check().status,'passed',f.check().reason);
+ f.save('documents/brief.json',{...doc,content:stored});assert.equal(f.check().status,'failed');
+ f.save('documents/brief.json',{...doc,content:final});f.events[12]=f.result('patch',{...doc,content:'incorrect patch result'});assert.equal(f.check().status,'failed');
+});
+
+for(const host of ['claude','codex'])for(const state of ['missing','ambiguous'])test(`MONO-357 ${host}: patch ${state} old_string fails closed`,t=>{
+ const f=textFixture(t,host,'defer'),content=state==='missing'?'No placeholder.':'Expected link. Expected link.',doc={id:'brief',projectId,title:'Brief',content};
+ const final={...doc,content:'Claims success.'};
+ f.events.splice(7,0,f.call('brief','mcp__monotest__save_document',{projectId,title:doc.title,content}),f.result('brief',doc),f.call('patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'Expected link.',new_string:final.content}]}),f.result('patch',final));
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ const result=f.check();assert.notEqual(result.status,'passed');assert.match(result.reason,/patch.*(?:missing|ambiguous|exactly once)/);
+});
+
+for(const state of ['unknown prior content','unsupported operation'])test(`MONO-357 patch ${state} stays unverified`,t=>{
+ const f=textFixture(t,'codex','defer'),doc={id:'brief',projectId,title:'Brief',content:'Expected link.'};
+ if(state==='unsupported operation')f.events.splice(7,0,f.call('brief','mcp__monotest__save_document',{projectId,title:doc.title,content:doc.content}),f.result('brief',doc));
+ const patch=state==='unsupported operation'?[{op:'append',text:'New link.'}]:[{op:'replace',old_string:doc.content,new_string:'New link.'}];
+ f.events.splice(f.events.length-1,0,f.call('patch','mcp__monotest__save_document',{id:'brief',patch}),f.result('patch',{...doc,content:'New link.'}));
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',{...doc,content:'New link.'});
+ const result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/patch.*(?:prior content|unsupported)|unsupported.*patch/);
+});
+
 test('mono-brief record counting uses a project-bound code block, not title or quoted old text', t => {
  const f=textFixture(t,'claude','defer');f.request.expectedRecords.push({type:'mono-brief',count:1});
  f.events.splice(7,0,{},{});

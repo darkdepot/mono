@@ -7325,9 +7325,19 @@ if (process.argv.includes("--document-skeleton-only") || process.argv.includes("
   console.log("Document skeleton validation passed."); process.exit(0);
 }
 
+function validateRecordReadbackFixtures() {
+  try {
+    runNode(["--test", "--test-name-pattern=MONO-357", "scripts/skills-records.test.mjs"]);
+    console.log("PASS records fixtures: relative link wrappers, content then patch, invalid patch anchors");
+  } catch (error) {
+    fail(`Records read-back fixtures failed: ${error.message}\n${error.stdout || ""}\n${error.stderr || ""}`);
+  }
+}
+
 // Partial modes above intentionally do not load the scenario corpus.
 try { loadCatalog(path.join(root, 'evals/scenarios/index.json')); }
 catch (error) { failures.push(error.message); }
+validateRecordReadbackFixtures();
 
 validateSkills();
 validateReadFirstTierContract();
