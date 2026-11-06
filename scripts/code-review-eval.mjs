@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { runReviewRound, reviewGit, screenModelOutput } from './code-review.mjs';
+import { runReviewRound, reviewGit, screenModelOutput, reviewContractDigest } from './code-review.mjs';
 import { digest, isMain, runtimePackRoot } from './runtime.mjs';
 
 const need = (ok, reason) => { if (!ok) throw new Error(`review evaluation: ${reason}`); };
@@ -90,7 +90,7 @@ export async function runReviewEvaluation({ dataset, bundle, config = {}, runId,
         if (task.file) materializeCleanControl(scratch, task);
         else git(scratch, ['checkout', '-q', '--detach', task.head]);
         const contract = task.file ? task.contract : pinnedReviewContract(scratch, task);
-        row.contractDigest = digest(contract);
+        row.contractDigest = reviewContractDigest(contract, { worktree: packRoot, base: task.base });
         await progress({ type: 'started', ...row });
         const record = await runReviewRound({ worktree: scratch, head: task.head, base: task.base, contract, risk: 'risky', config, packRoot }, dependencies);
         runs.push({ ...row, record });

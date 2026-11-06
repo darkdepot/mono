@@ -102,16 +102,16 @@ test('historical checker replies retain disagreements and independent batches, n
  assert.equal(archive.batches.length,6);assert.equal(archive.batches.filter(batch=>batch.source==='checker').flatMap(batch=>batch.responses).length,60);
  assert.match(archive.provenance,/no measurement/i);assert.ok(archive.batches.some(batch=>batch.responses.some(reply=>reply.outcome==='rejected')));
 });
-async function evaluationFixture(t,{sourceFile='scripts/input.mjs',source='after\n',anchor='after',anchors={}}={}){
+async function evaluationFixture(t,{sourceFile='scripts/input.mjs',source='after\n',anchor='after',anchors={},contract='Frozen contract.\n'}={}){
  const scratch=fs.mkdtempSync(path.join(os.tmpdir(),'mono-eval-control-'));t.after(()=>fs.rmSync(scratch,{recursive:true,force:true}));
  const repo=path.join(scratch,'source');fs.mkdirSync(repo);
  const git=(...args)=>execFileSync('git',args,{cwd:repo,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
  git('init','-q');git('config','user.email','fixture@example.test');git('config','user.name','Fixture');
- fs.mkdirSync(path.join(repo,'scripts'));fs.writeFileSync(path.join(repo,'contract.md'),'Frozen contract.\n');fs.writeFileSync(path.join(repo,sourceFile),'before\n');git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
+ fs.mkdirSync(path.join(repo,'scripts'));fs.writeFileSync(path.join(repo,'contract.md'),contract);fs.writeFileSync(path.join(repo,sourceFile),'before\n');git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
  fs.writeFileSync(path.join(repo,sourceFile),source);git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
  const clone=structuredClone(dataset);for(const task of clone.tasks){task.base=base;task.head=head;task.contract='Review this fixture.';task.contractSource={file:'contract.md',blob:git('rev-parse','HEAD:contract.md'),sha256:'e89cccb393b3c86034ca185f91b4e0d287316774fb7c825088ce48144547a6125'};git('tag',`dataset/${task.id}-head`);}
  // The hash is independently computed from the actual contract bytes, not the implementation's object digest.
- const {createHash}=await import('node:crypto');for(const task of clone.tasks)task.contractSource.sha256=createHash('sha256').update('Frozen contract.\n').digest('hex');
+ const {createHash}=await import('node:crypto');for(const task of clone.tasks)task.contractSource.sha256=createHash('sha256').update(contract).digest('hex');
  for(const item of clone.cases){item.file=sourceFile;item.anchor=anchors[item.id]??anchor;}
  git('checkout','-q','--detach',base);
  const content='# Clean control\n\nDocumentation only.\n';fs.writeFileSync(path.join(repo,'CODE_REVIEW_EVAL_CONTROL.md'),content);git('add','.');const cleanTree=git('write-tree');
@@ -203,4 +203,16 @@ test('model-derived evaluation scores, calibration, comparisons and progress err
  const result=await runReviewEvaluation({dataset:clone,bundle,runId:'screen-progress',packRoot},{onProgress:event=>{events.push(event);if(event.type==='started')throw Object.assign(Error(secret),{interrupted:true});},runRole:async()=>assert.fail('progress interrupted before launch')});
  assert.equal(result.interrupted,true);assert.equal(result.runs.length,1);assert.ok(!JSON.stringify({result,events}).includes(secret));
  await assert.rejects(()=>runReviewEvaluation({dataset:clone,bundle,runId:'screen-plan',packRoot},{onProgress:()=>{throw Error(secret);}}),error=>!error.message.includes(secret));
+});
+
+test('C40: evaluation progress and reports use keyed contract identities, stable across runs',async t=>{
+ const secret='evalOpaqueC40',contract=JSON.stringify({password:secret}),{clone,bundle}=await evaluationFixture(t,{contract});
+ const captures=[];
+ const run=async runId=>runReviewEvaluation({dataset:clone,bundle,runId,packRoot},{onProgress:event=>captures.push(event),runRole:async request=>{
+  assert.ok(!request.prompt.includes(secret));throw Object.assign(Error('interrupted recorded fixture'),{interrupted:true});
+ }});
+ const first=await run('first'),second=await run('second');
+ assert.equal(first.runs.length,1);assert.equal(second.runs.length,1);assert.equal(first.runs[0].contractDigest,second.runs[0].contractDigest);
+ for(const value of [secret,JSON.stringify(secret),contract,JSON.stringify(contract)])assert.ok(!JSON.stringify({first,second,captures}).includes(createHash('sha256').update(value).digest('hex')));
+ assert.ok(!JSON.stringify({first,second,captures}).includes(secret));
 });
