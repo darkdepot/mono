@@ -111,9 +111,52 @@ test('C34: prefixed noncanonical JWT headers and empty signatures are screened i
   });
  }
 });
+test('C35: pinned deletion closes dangerous and unmarked findings from base or previous head',async t=>{
+ for(const fromBase of [true,false])for(const danger of [true,undefined])await t.test(String(fromBase)+'/'+String(danger),async t=>{
+  const f=fixture(t),file=fromBase?'input.mjs':'added.mjs';
+  if(!fromBase){fs.writeFileSync(path.join(f.worktree,file),'export const ordinary = 1;\n');f.git('add','.');f.git('commit','-qm','introduce affected file');}
+  const finding={...sample,file};if(danger===undefined)delete finding.danger;else finding.danger=danger;
+  const first=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([finding],context.files):{completed:true,verdicts:[verdict()]}};
+  }});assert.equal(first.outcome,'not-converged',JSON.stringify(first.failures));
+  fs.unlinkSync(path.join(f.worktree,file));f.git('add','.');f.git('commit','-qm','delete affected file');const head=f.git('rev-parse','HEAD');
+  const result=await runReviewRound({...f.request,head,stageRecord:first},{runRole:async request=>{
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',closed:true,reason:'The affected file was deleted.'})]}};
+  }});
+  assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(result.findings[0].status,'closed');assert.equal(result.findings[0].danger,true);
+  assert.deepEqual(result.findings[0].deletionEvidence,{before:fromBase?f.request.base:first.round.head,head});
+ });
+});
+test('C35: a never-existing file is not verified deletion evidence',async t=>{
+ const result=await runReviewRound(fixture(t).request,responder({findings:[{...sample,file:'absent.mjs',danger:true}],verdicts:[verdict({outcome:'rejected',closed:true})]}));
+ assert.equal(result.outcome,'not-converged');assert.equal(result.findings[0].status,'confirmed');
+});
+test('C35: credential path aliases retain their evidence through a literal-alias revert',async t=>{
+ const f=fixture(t),original='notes/backup-'+'ghp_'+'d'.repeat(36)+'.mjs',literal=screenModelOutput({file:original}).value.file;
+ for(const file of [original,literal]){fs.mkdirSync(path.dirname(path.join(f.worktree,file)),{recursive:true});fs.writeFileSync(path.join(f.worktree,file),'export const ordinary = 0;\n');}
+ f.git('add','.');f.git('commit','-qm','alias base');const base=f.git('rev-parse','HEAD');
+ for(const file of [original,literal])fs.writeFileSync(path.join(f.worktree,file),file===original?'export const originalFile = 1;\n':'export const literalFile = 1;\n');
+ f.git('add','.');f.git('commit','-qm','both aliases changed');let alias;
+ const first=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+  const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);
+  if(request.role==='code-review'){
+   const section=context.diff.split('diff --git ').find(part=>part.includes('originalFile'));alias=context.files.find(file=>section.startsWith(JSON.stringify('a/'+file)+' '));
+   assert.ok(alias);return {response:review([{...sample,file:alias,danger:true}],context.files)};
+  }
+  return {response:{completed:true,verdicts:[verdict()]}};
+ }});assert.equal(first.outcome,'not-converged',JSON.stringify(first.failures));
+ fs.writeFileSync(path.join(f.worktree,literal),'export const ordinary = 0;\n');f.git('add','.');f.git('commit','-qm','revert literal alias');
+ const second=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD'),stageRecord:first},{runRole:async request=>{
+  const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);
+  if(request.role==='code-review')return {response:review([],context.files)};
+  assert.equal(context.headEvidence.find(item=>item.file===alias).content,'export const originalFile = 1;\n');
+  return {response:{completed:true,verdicts:[verdict({outcome:'rejected',closed:true,codeQuote:'export const originalFile = 1;'})]}};
+ }});
+ assert.equal(second.outcome,'clean',JSON.stringify(second.failures));assert.equal(second.findings[0].file,alias);assert.equal(second.findings[0].status,'closed');
+});
 test('C33: credential aliases cannot collide with literal filenames or change on rescreening',async t=>{
  const original='notes/backup-'+'ghp_'+'d'.repeat(36)+'.mjs',literal=screenModelOutput({file:original}).value.file;
- const safe=screenModelOutput({files:[original,literal]});assert.equal(new Set(safe.value.files).size,2);assert.deepEqual(screenModelOutput(safe.value).value,safe.value);
+ const safe=screenModelOutput({files:[original,literal]});assert.equal(safe.rejected,true,'ambiguous serialized paths must fail closed');assert.deepEqual(screenModelOutput({file:literal}).value,{file:literal});
  const f=fixture(t);for(const file of [original,literal]){fs.mkdirSync(path.dirname(path.join(f.worktree,file)),{recursive:true});fs.writeFileSync(path.join(f.worktree,file),'const ordinary = 1;\n');}
  f.git('add','.');f.git('commit','-qm','literal path alias collision');let context;
  const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};}});

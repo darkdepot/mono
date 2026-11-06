@@ -54,3 +54,4 @@
 - Apply continue:33 after failed host QA: use strict JWT path recognition and distinct aliases; validate pinned anchors on raw local blobs; retain danger across reviewer/checker flags and require a screened-head code quote for dangerous rejections. Retry contradictory merge verdicts once, then preserve separate keys. Add real MONO-302 path and MONO-81 source regressions; old ae2bed26 Ship certificate is revoked.
 
 - Apply continue:34: check every possible JWT header suffix in both path and source screens, accepting noncanonical JSON whitespace and empty signatures; keep the real MONO-302 inventory unchanged and aliases distinct.
+- Close dangerous findings with Git-verified deletion evidence and keep screened path aliases stable across rounds and literal-name collisions.

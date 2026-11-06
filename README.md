@@ -1658,7 +1658,7 @@ only its evidence closes or reopens a key. Checker wire IDs are F1..Fn; code map
 them back to stable keys. Each failed answer is secret-scanned and capped at 8 KiB. It assigns P0-P3, R7 danger/case,
 origin relative to task base, merge key and scope/risk flags. Code adds whether
 the location changed after round one (±2 context lines), costs and failures.
-Danger is the fail-safe union of reviewer and checker flags; unknown/unmarked danger stays dangerous. A dangerous or unmarked rejection needs an exact codeQuote present in its screened head file; otherwise it stays confirmed. Contradictory merge verdicts get one batch retry, then keep separate keys. Visible damage, recognizable placeholders or downstream fail-closed
+Danger is the fail-safe union of reviewer and checker flags; unknown/unmarked danger stays dangerous. A dangerous or unmarked rejection needs an exact codeQuote present in its screened head file or Git-verified deletion from the pinned base/previous head; otherwise it stays confirmed. Contradictory merge verdicts get one batch retry, then keep separate keys. Visible damage, recognizable placeholders or downstream fail-closed
 checks do not excuse false gate refusals, altered evidence or missing readiness.
 Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
 confirmed ones stay report-only on round three; open unresolved findings block.
@@ -1695,7 +1695,7 @@ Exact contract blobs keep their bytes. Worktree reads refuse gitlinks and index
 hints (`assume-unchanged`, `skip-worktree`) before inspecting files.
 Every changed path is secret-screened from both pinned blobs independently of
 attributes; NUL-containing and non-UTF8 blobs return `not-reviewed` before any role.
-Outgoing diffs use screened base/head blobs; only headers before the first hunk are normalized. An unscreenable blob withholds its whole file and lists it as unreviewed. Paths and inventories replace credential-family substrings without identifier boundaries in every channel. JWT paths require three base64url segments with a decoded algorithm header; ordinary dotted filenames remain unchanged. Distinct paths retain distinct aliases, including literal placeholder collisions.
+Outgoing diffs use screened base/head blobs; only headers before the first hunk are normalized. An unscreenable blob withholds its whole file and lists it as unreviewed. Paths and inventories replace credential-family substrings without identifier boundaries in every channel. JWT paths require three base64url segments with a decoded algorithm header; ordinary dotted filenames remain unchanged. Aliases use screened text plus a domain-keyed digest of the full original path, stay stable across rounds and distinguish raw literal placeholder names. Any remaining collision fails closed.
 
 Outcome vocabulary is `clean`, `clean-with-successors`, `not-converged`,
 `not-reviewed`; this first slice emits no successor admission. It reports

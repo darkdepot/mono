@@ -216,14 +216,17 @@ function screenPath(value) {
   if (decoded === null || (decoded !== original && replace(decoded) !== decoded)) return hidden(original);
   return value;
 }
-function pathScreen() {
-  const aliases = new Map(), originals = new Map();
-  return original => {
-    if (aliases.has(original)) return aliases.get(original);
-    const base = screenPath(original); let alias = base;
-    for (let index = 1; originals.has(alias); index++) alias = base + '[' + index + ']';
-    aliases.set(original, alias); originals.set(alias, original); return alias;
+function pathScreen({ raw = false } = {}) {
+  const originals = new Map();
+  const screen = original => {
+    const base = screenPath(original);
+    // Git names are raw, even when they literally spell a serialized alias.
+    const alias = base !== original || (raw && original.includes('[credential-shaped path withheld]'))
+      ? base + '#path-' + digest(['review-path', original]) : base;
+    if (originals.has(alias) && originals.get(alias) !== original) screen.collided = true;
+    originals.set(alias, original); return alias;
   };
+  return screen;
 }
 
 const SECRET_KEY_SUFFIXES = ['secret', 'token', 'password', 'passwd', 'credential', 'privatekey', 'apikey', 'sessiontoken', 'sessionkey', 'secretaccesskey'];
@@ -625,7 +628,8 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
     return { value: safe === joined ? Object.fromEntries(children.map(child => [child.name, child.value])) : safe,
       text: safe === joined ? children.map(child => `${child.name}: ${child.text}`).join('\n') : safe };
   };
-  const result = visit(value, 0, inputFile);
+  let result = visit(value, 0, inputFile);
+  if (safePath.collided) result = hide();
   const safeText = result.text, textBytes = Buffer.from(safeText);
   const output = { value: safeText === result.text ? result.value : safeText, rejected, partiallyWithheld, interrupted: value?.error?.interrupted === true,
     diagnostic: { text: textBytes.subarray(0, 8188).toString('utf8'), truncated: textBytes.length > 8188, secretMatches } };
@@ -820,12 +824,15 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     requireValue(!git(worktree, ['diff', '--raw', '--no-renames', base, head, '--']).split('\n')
       .some(row => /^:(?:160000 \d{6}|\d{6} 160000) /.test(row)), 'gitlink changes are unsupported; review the submodule separately');
     const rawFiles = git(worktree, ['diff', '--name-only', '--no-renames', '-z', base, head, '--']).split('\0').filter(Boolean);
-    const pathFor = pathScreen(), paths = new Map(rawFiles.map(file => [pathFor(file), file]));
-    requireValue(paths.size === rawFiles.length, 'screened paths collide; files not reviewed');
+    const previous = record.rounds.at(-1)?.head, pathFor = pathScreen({ raw: true }), paths = new Map();
+    for (const revision of new Set([base, head, previous].filter(Boolean))) {
+      for (const file of git(worktree, ['ls-tree', '-r', '--name-only', '-z', revision]).split('\0').filter(Boolean)) paths.set(pathFor(file), file);
+    }
+    requireValue(!pathFor.collided, 'screened paths collide; files not reviewed');
     const full = screenedDiff(worktree, base, head, rawFiles, pathFor);
     if (full.withheld.length) return { ...fail('pinned blobs withheld; files not reviewed'), unreviewedFiles: full.withheld,
       secrets: full.withheld.map(file => ({ file, line: 0, weight: 'P0', reason: 'unreadable or credential-shaped blob; file withheld' })) };
-    const diff = full.diff, previous = record.rounds.at(-1)?.head;
+    const diff = full.diff;
     const scopeFiles = number === 2 ? git(worktree, ['diff', '--name-only', '--no-renames', '-z', previous, head, '--']).split('\0').filter(Boolean) : rawFiles;
     for (const file of scopeFiles) paths.set(pathFor(file), file);
     const files = scopeFiles.map(pathFor), scoped = number === 2 ? screenedDiff(worktree, previous, head, scopeFiles, pathFor) : full;
@@ -880,9 +887,11 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
         danger: prior ? prior.danger !== false || finding.danger !== false : finding.danger ?? null });
     }
     const findings = [...byKey.values()];
+    const existsAt = (revision, raw) => git(worktree, ['ls-tree', '-z', revision, '--', raw]).split('\0')
+      .some(row => row.slice(row.indexOf('\t') + 1) === raw && row.includes(' blob '));
     const evidenceAt = revision => [...new Set(findings.map(finding => finding.file))].map(file => {
       const raw = paths.get(file) ?? file;
-      if (!git(worktree, ['ls-tree', revision, '--', raw])) return { file, content: null };
+      if (!existsAt(revision, raw)) return { file, content: null };
       const bytes = git(worktree, ['cat-file', 'blob', `${revision}:${raw}`], {}, 'blob');
       const safe = screenModelOutput(new TextDecoder('utf-8', { fatal: true }).decode(bytes), { input: true, inputFile: raw });
       if (safe.rejected) throw Object.assign(new Error('pinned evidence withheld'), {
@@ -892,17 +901,23 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       return { file, content: safe.value };
     });
     const baseEvidence = evidenceAt(base), headEvidence = evidenceAt(head);
+    for (const item of headEvidence.filter(item => item.content === null)) {
+      const raw = paths.get(item.file) ?? item.file;
+      const before = [base, previous].find(revision => revision && existsAt(revision, raw));
+      if (before) item.deletionEvidence = { before, head };
+    }
     const checker = findings.length ? await call('code-review-checker', { findings: findings.map(({ key, ...finding }, index) => ({ ...finding, id: `F${index + 1}` })),
       history: record.findings.filter(item => findings.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${findings.findIndex(f => f.key === key) + 1}` })), baseDiff: diff, baseEvidence, headEvidence },
       (value, attempt) => parseChecker(value, findings, { separateContradictoryMerges: attempt === 2 })) : { verdicts: [], mergesSeparated: false };
     const checked = checker.verdicts.map(verdict => {
       const finding = byKey.get(verdict.key), danger = finding.danger !== false || verdict.danger !== false;
-      const quote = verdict.codeQuote, content = headEvidence.find(item => item.file === finding.file)?.content;
-      const provenRejection = text(quote) && !quote.includes('[credential-shaped') && typeof content === 'string' && content.includes(quote);
+      const quote = verdict.codeQuote, evidence = headEvidence.find(item => item.file === finding.file), content = evidence?.content;
+      const deletionEvidence = evidence?.deletionEvidence;
+      const provenRejection = !!deletionEvidence || text(quote) && !quote.includes('[credential-shaped') && typeof content === 'string' && content.includes(quote);
       const retained = danger && verdict.outcome === 'rejected' && !provenRejection;
-      return { ...verdict, checkerDanger: verdict.danger, danger, dangerCase: danger ? verdict.dangerCase ?? 'unknown' : null,
+      return { ...verdict, ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, danger, dangerCase: danger ? verdict.dangerCase ?? 'unknown' : null,
         dangerReason: danger && verdict.danger === false ? 'Сохранена ранее отмеченная или неясная опасность. ' + verdict.dangerReason : verdict.dangerReason,
-        ...(retained ? { outcome: 'confirmed', closed: false, rejectionUnproven: true, reason: 'Отклонение не подтверждено цитатой из проверенной версии файла. ' + verdict.reason } : {}) };
+        ...(retained ? { outcome: 'confirmed', closed: false, rejectionUnproven: true, reason: 'Отклонение не подтверждено цитатой или удалением файла. ' + verdict.reason } : {}) };
     });
     requireValue(treeIdentity(worktree) === identity, 'HEAD/tree changed during review; result discarded');
     const merged = new Map(record.findings.map(finding => [finding.key, finding]));
