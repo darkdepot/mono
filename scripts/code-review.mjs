@@ -133,7 +133,7 @@ function treeIdentity(worktree) {
 // Symlinks become their target text, never links into the host filesystem.
 function exportReviewTree(worktree, head) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-tree-'));
-  const symlinks = [], directories = new Set([root]);
+  const symlinks = [], withheld = [], partiallyWithheld = [], directories = new Set([root]);
   try {
     const policy = gitReadPolicy(worktree);
     const entries = readGit(worktree, policy.env, policy.args, ['ls-tree', '-r', '-z', '--full-tree', head]).split('\0').filter(Boolean);
@@ -152,19 +152,24 @@ function exportReviewTree(worktree, head) {
         // File tools receive the same screened source as diffs and evidence;
         // otherwise echoing a raw matched line can withhold the whole role stream.
         readGit(worktree, policy.env, policy.args, ['cat-file', 'blob', oid], false, fd);
-        let safe = '[unreadable or over-limit model output withheld]';
+        let safe = '[unreadable or over-limit model output withheld]', screened;
         if (fs.fstatSync(fd).size <= MAX_SCREEN_VALUE_BYTES) {
           let content;
           try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(file)); } catch {}
-          if (content !== undefined) safe = screenModelOutput(content, { input: true, inputFile: name }).value;
+          if (content !== undefined) {
+            screened = screenModelOutput(content, { input: true, inputFile: name });
+            safe = screened.value;
+          }
         }
+        if (!screened || screened.fullyWithheld) withheld.push(name);
+        else if (screened.partiallyWithheld) partiallyWithheld.push(name);
         fs.ftruncateSync(fd, 0);
         requireValue(fs.writeSync(fd, safe, 0, 'utf8') === Buffer.byteLength(safe), 'screened export incomplete');
       } finally { fs.closeSync(fd); }
       if (mode === '120000') symlinks.push(name);
     }
     for (const dir of [...directories].sort((a, b) => b.length - a.length)) fs.chmodSync(dir, 0o500);
-    return { root, symlinks };
+    return { root, symlinks, withheld, partiallyWithheld };
   } catch (error) { removeReviewTree(root); throw error; }
 }
 function removeReviewTree(root) {
@@ -489,7 +494,8 @@ function screenSourceLines(source, patch, bindings = true) {
     remainder ||= remainders.has(index);
     if (remainder && (!patch || (inHunk && /^[+ -]/.test(line)))) hidden.add(index);
   }
-  return { value: lines.map((line, index) => hidden.has(index) ? (prefixes.get(index) ?? '') + '[credential-shaped line withheld]' : line).join('\n'), rejected: false, familyMatched, matches: hidden.size, partiallyWithheld: remainders.size > 0 };
+  const value = lines.map((line, index) => hidden.has(index) ? (prefixes.get(index) ?? '') + '[credential-shaped line withheld]' : line).join('\n');
+  return { value, rejected: false, familyMatched, matches: hidden.size, partiallyWithheld: hidden.size > 0 && visibleInput(value) };
 }
 function ambiguousJsonMembers(source) {
   const tokens = jsonTokens(source), stack = [];
@@ -1030,9 +1036,10 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     scoped.withheld.forEach(file => unreviewedFiles.add(file));
     if (scoped.fatal.length) return fail('scope blobs unscreenable; files not reviewed');
     const scopeDiff = scoped.diff;
-    partiallyWithheldFiles.push(...new Set([...full.partiallyWithheld, ...scoped.partiallyWithheld]));
     const rules = git(worktree, ['ls-tree', head, '--', 'AGENTS.md']) ? git(worktree, ['show', `${head}:AGENTS.md`]) : '';
     exported = exportReviewTree(worktree, head);
+    exported.withheld.forEach(file => unreviewedFiles.add(pathFor(file)));
+    partiallyWithheldFiles.push(...new Set([...full.partiallyWithheld, ...scoped.partiallyWithheld, ...exported.partiallyWithheld.map(pathFor)]));
     const context = { worktree: exported.root, symlinks: exported.symlinks.map(pathFor), head, base, contract, rules, round: number, scope: number === 2 ? 'fixes-and-open-findings' : 'full', files, diff: scopeDiff, partiallyWithheldFiles };
     const unchecked = name => unreviewedInputs.add(name);
     requireSafeContext({ ...context, history: record.findings, failedAnswers: record.failures }, unchecked);
@@ -1173,7 +1180,7 @@ export function formatReviewReport(record) {
   const rendered = [
     `Проверено: ${record.round ? `${record.round.reviewedFiles.length} файлов, круг ${record.round.number}.` : 'проверка не завершена.'}`,
     ...(record.costs ?? record.round?.costs ?? []).map(cost => `Роль: ${cost.role}; engine=${cost.engine ?? cost.boundary?.engine ?? 'unknown'}; model=${cost.model ?? cost.boundary?.model ?? 'unknown'}; servedModels=${JSON.stringify(cost.boundary?.servedModels ?? (cost.boundary?.servedModel ? [cost.boundary.servedModel] : 'not observed'))}; family=${cost.family ?? cost.boundary?.family ?? 'unknown'}; observed boundary=${JSON.stringify(cost.boundary?.observed ?? 'not observed')}; credentialReads=${cost.boundary?.credentialReads ?? 'not observed'}.`),
-    ...((record.partiallyWithheldFiles ?? []).length ? [`Частично скрыто: ${record.partiallyWithheldFiles.join(', ')}; остаток файла удержан экраном.`] : []),
+    ...((record.partiallyWithheldFiles ?? []).length ? [`Частично скрыто: ${record.partiallyWithheldFiles.join(', ')}; совпавшие строки или остаток файла удержаны экраном.`] : []),
     ...((record.unreviewedFiles ?? []).length ? [`Не проверено: файлы ${record.unreviewedFiles.join(', ')}; содержимое полностью скрыто.`] : []),
     ...((record.unreviewedInputs ?? []).length ? [`Не проверено: ${record.unreviewedInputs.join(', ')}; содержимое полностью скрыто.`] : []),
     `Найдено: ${record.findings.length} замечаний${record.secrets?.length ? `; ${record.secrets.length} совпадений с шаблоном секрета (значения скрыты)` : ''}.`,

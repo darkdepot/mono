@@ -31,6 +31,46 @@ function assertUnchecked(record) {
 }
 
 const hostR6=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/host-r6-regressions.json'),'utf8'));
+test('C46: fully withheld unchanged exports are named unchecked in both role prompts and cannot return clean',async t=>{
+ const shapes=[['over-limit','// '+'a'.repeat(MAX_SCREEN_VALUE_BYTES)+'\nexport const hidden = 1;\n'],['non-UTF8',Buffer.from([0xff,0x0a])],['fully hidden','const password = "opaqueFixture";\n']];
+ for(const [name,source] of shapes)await t.test(name,async t=>{
+  const f=fixture(t),file='dep.mjs';fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','dependency base');const base=f.git('rev-parse','HEAD');
+  fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// changed caller\n');f.git('add','.');f.git('commit','-qm','caller head');let calls=0;
+  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.unreviewedFiles,[file]);assert.deepEqual(c.partiallyWithheldFiles,[]);assert.match(fs.readFileSync(path.join(request.worktree,file),'utf8'),/withheld/);calls++;
+   return {response:request.role==='code-review'?review([sample]):{completed:true,verdicts:[verdict()]}};
+  }});
+  assert.equal(calls,2);assertUnchecked(result);assert.deepEqual(result.unreviewedFiles,[file]);assert.equal(result.round.outcome,'not-reviewed');assert.match(formatReviewReport(result),/Не проверено: файлы dep.mjs/);assert.equal(f.git('status','--porcelain'),'');
+ });
+});
+test('C46: exported unchecked filenames use the existing stage aliases without exposing credential text',async t=>{
+ const f=fixture(t),token='ghp_'+'v'.repeat(36),file='dep-'+token+'.mjs';fs.writeFileSync(path.join(f.worktree,file),Buffer.from([0xff]));f.git('add','.');f.git('commit','-qm','dependency base');const base=f.git('rev-parse','HEAD');fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// caller\n');f.git('add','.');f.git('commit','-qm','head');
+ const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+  const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.equal(c.unreviewedFiles.length,1);assert.match(c.unreviewedFiles[0],/credential-shaped path withheld/);assert.ok(!request.prompt.includes(token));return {response:review()};
+ }});
+ assertUnchecked(result);assert.equal(result.unreviewedFiles.length,1);assert.ok(!JSON.stringify(result).includes(token));
+});
+test('C46: every source line mask with readable neighbors is partial, while wholly hidden sources are not',()=>{
+ const token='ghp_'+'v'.repeat(36),jwt=Buffer.from('{"alg":"HS256"}').toString('base64url')+'.'+Buffer.from('{"sub":"fixture"}').toString('base64url')+'.'+'a'.repeat(32);
+ const shapes=['// '+token,'// '+jwt,'-----BEGIN PRIVATE KEY-----\nopaqueFixture\n-----END PRIVATE KEY-----','password = "opaqueFixture";','const password = {\n opaqueFixture\n};'];
+ for(const hidden of shapes){
+  const source='// visible before\n'+hidden+'\n';const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});assert.equal(safe.rejected,false);assert.equal(safe.fullyWithheld,false);assert.equal(safe.partiallyWithheld,true);assert.ok(safe.value.includes('// visible before'));assert.match(safe.value,/credential-shaped line withheld/);
+  const patch='diff --git a/input.mjs b/input.mjs\n--- a/input.mjs\n+++ b/input.mjs\n@@ -0,0 +1,9 @@\n'+source.split('\n').map(line=>'+'+line).join('\n');const diff=screenModelOutput(patch,{input:true,inputPatch:true});assert.equal(diff.partiallyWithheld,true);assert.ok(diff.value.includes('+[credential-shaped line withheld]'));
+  const full=screenModelOutput(hidden+'\n',{input:true,inputFile:'input.mjs'});assert.equal(full.fullyWithheld,true);assert.equal(full.partiallyWithheld,false);
+ }
+ const clear=screenModelOutput('// public only\n',{input:true,inputFile:'input.mjs'});assert.equal(clear.partiallyWithheld,false);assert.equal(clear.value,'// public only\n');
+});
+test('C46: changed and unchanged partial exports warn reviewer, checker, saved round and owner without hiding neighboring code',async t=>{
+ for(const changed of [true,false])await t.test(changed?'changed file':'unchanged dependency',async t=>{
+  const f=fixture(t),file=changed?'input.mjs':'dep.mjs',source='// Bearer values.\nexport const visible = 1;\n';fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','partial base');const base=f.git('rev-parse','HEAD');
+  fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// reviewed addition\n');f.git('add','.');f.git('commit','-qm','partial head');let calls=0;
+  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.partiallyWithheldFiles,[file]);assert.deepEqual(c.unreviewedFiles,[]);const exported=fs.readFileSync(path.join(request.worktree,file),'utf8');assert.ok(exported.includes('export const visible = 1;'));assert.ok(!exported.includes('Bearer values.'));calls++;
+   return {response:request.role==='code-review'?review([sample]):{completed:true,verdicts:[verdict({outcome:'rejected'})]}};
+  }});
+  assert.equal(calls,2);assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.deepEqual(result.partiallyWithheldFiles,[file]);assert.deepEqual(result.round.partiallyWithheldFiles,[file]);assert.match(formatReviewReport(result),new RegExp('Частично скрыто: '+file));assert.equal(f.git('status','--porcelain'),'');
+ });
+});
 test('C45: executable BOM additions and removals remain visible in diff hunks and checker evidence',async t=>{
  for(const adding of [true,false])await t.test(adding?'add BOM':'remove BOM',async t=>{
   const f=fixture(t),file='run.sh',source='#!/bin/sh\nprintf "ok\\n"\n',before=(adding?'':'\ufeff')+source,after=(adding?'\ufeff':'')+source;
@@ -256,7 +296,7 @@ test('C42: invalid percent UTF-8 cannot hide an adjacent encoded credential fami
 test('C30/v8: a matched opener withholds the file remainder across regexes, hunks and both roles',async t=>{
  const source='const credential = {\n delimiter: /}/,\n value: "opaqueCredentialValue"\n};\nconst tail = "tailFixture";';
  const blob=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
- assert.equal(blob.rejected,false);assert.ok(!blob.value.includes('opaqueCredentialValue'));assert.ok(!blob.value.includes('tailFixture'));assert.equal(blob.partiallyWithheld,true);
+ assert.equal(blob.rejected,false);assert.ok(!blob.value.includes('opaqueCredentialValue'));assert.ok(!blob.value.includes('tailFixture'));assert.equal(blob.fullyWithheld,true);assert.equal(blob.partiallyWithheld,false);
  const patch='diff --git a/input.mjs b/input.mjs\n--- a/input.mjs\n+++ b/input.mjs\n@@ -1,2 +1,3 @@\n-const credential = {\n+const harmless = {};\n delimiter: /}/,\n@@ -20,1 +21,1 @@\n-value: "previousFixture"\n+value: "opaqueCredentialValue"\n const tail = "tailFixture";\ndiff --git a/neighbor.mjs b/neighbor.mjs\n--- a/neighbor.mjs\n+++ b/neighbor.mjs\n@@ -1 +1 @@\n-const before = 1;\n+const after = 2;\n';
  const diff=screenModelOutput(patch,{input:true,inputPatch:true});assert.equal(diff.rejected,false);assert.equal(diff.partiallyWithheld,true);
  for(const value of ['previousFixture','opaqueCredentialValue','tailFixture','+const harmless'])assert.ok(!diff.value.includes(value),value);
@@ -283,7 +323,7 @@ test('C29/v7: outgoing diffs use screened full blobs on both sides and in checke
 test('C29/v7: quoted closing brackets cannot end blocks and unclear quotes hide the remainder',()=>{
  for(const delimiter of ['"}"',"']'",'"escaped\\\"}brace"']){
   const source=`credential = {\n delimiter: ${delimiter},\n value: "opaqueQuotedFixture"\n}\nconst retained = 1;`;
-  const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});assert.equal(safe.rejected,false);assert.ok(!safe.value.includes('opaqueQuotedFixture'));assert.ok(!safe.value.includes('const retained = 1;'));assert.equal(safe.partiallyWithheld,true);
+  const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});assert.equal(safe.rejected,false);assert.ok(!safe.value.includes('opaqueQuotedFixture'));assert.ok(!safe.value.includes('const retained = 1;'));assert.equal(safe.fullyWithheld,true);assert.equal(safe.partiallyWithheld,false);
  }
  for(const quote of ['"',"'",'`']){
   const source=`credential = {\n value: ${quote}unclearFixture\n}\nconst after = "remainderFixture";`;
@@ -514,12 +554,12 @@ test('C28/v6: source reads and unrelated escapes stay byte exact, including deco
  for(const source of ['tokenizer = x','tokens = x','passwordField = x','if(form.password)','user.token.length',String.raw`const re = /\n/;`]){
   assert.equal(screenModelOutput(source,{input:true,inputFile:'input.mjs'}).value,source);
  }
- for(const source of [String.raw`const data = "pass\u0077ord=fixtureValue";`,String.raw`const data = {"pass\nword":"fixtureValue"};`,String.raw`const data = "{\"password\":\"fixtureValue\"}";`]){
+ for(const [source,withRemainder] of [[String.raw`const data = "pass\u0077ord=fixtureValue";`,false],[String.raw`const data = {"pass\nword":"fixtureValue"};`,true],[String.raw`const data = "{\"password\":\"fixtureValue\"}";`,true]]){
   const suffix=String.raw`const re = /\n/;`+'\n';
   for(const patch of [false,true]){
    const input=patch?'+++ b/input.mjs\n@@ -0,0 +1,2 @@\n+'+source+'\n+'+suffix:source+'\n'+suffix;
    const expected=patch?'+++ b/input.mjs\n@@ -0,0 +1,2 @@\n+[credential-shaped line withheld]\n+'+suffix:'[credential-shaped line withheld]\n'+suffix;
-   const safe=screenModelOutput(input,{input:true,inputFile:'input.mjs',inputPatch:patch});assert.equal(safe.rejected,false);const remainder=patch?'+++ b/input.mjs\n@@ -0,0 +1,2 @@\n+[credential-shaped line withheld]\n+[credential-shaped line withheld]\n':'[credential-shaped line withheld]\n[credential-shaped line withheld]\n[credential-shaped line withheld]';assert.equal(safe.value,safe.partiallyWithheld?remainder:expected);
+   const safe=screenModelOutput(input,{input:true,inputFile:'input.mjs',inputPatch:patch});assert.equal(safe.rejected,false);const remainder=patch?'+++ b/input.mjs\n@@ -0,0 +1,2 @@\n+[credential-shaped line withheld]\n+[credential-shaped line withheld]\n':'[credential-shaped line withheld]\n[credential-shaped line withheld]\n[credential-shaped line withheld]';assert.equal(safe.value,withRemainder?remainder:expected);assert.equal(safe.partiallyWithheld,!withRemainder||patch);
   }
  }
 });
@@ -634,7 +674,7 @@ test('C23: roles get a read-only pinned export without repository Git helpers',a
   assert.ok(context.symlinks.includes('link'));seen.push(r.worktree);
   return {response:r.role==='code-review'?review([sample],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',reason:'Fixture finding is absent.'})]}};
  }});
- assert.equal(record.outcome,'clean',JSON.stringify(record.failures));assert.equal(seen.length,2);assert.equal(seen[0],seen[1]);assert.equal(fs.existsSync(seen[0]),false,'export removed after circle');
+ assertUnchecked(record);assert.deepEqual(record.unreviewedFiles,['neighbor.dat']);assert.equal(seen.length,2);assert.equal(seen[0],seen[1]);assert.equal(fs.existsSync(seen[0]),false,'export removed after circle');
 });
 test('C23: benign JSON numbers keep original numeric text and reach a role',async t=>{
  assert.equal(screenModelOutput('['.repeat(40)+'1'+']'.repeat(40),{input:true,inputFile:'input.json'}).rejected,true,'numeric preservation keeps structural bounds');
@@ -741,7 +781,7 @@ test('C21/v6: source lines redact, while families and ambiguous JSON still withh
   const input=patch?`+++ b/input.mjs\n@@ -0,0 +1,2 @@\n+${source.trimEnd().replaceAll('\n','\n+')}\n`:source;
   const screened=screenModelOutput(input,{input:true,inputFile:'input.mjs',inputPatch:patch});
   assert.equal(screened.rejected,false);assert.ok(!screened.value.includes('fixtureValue'));
-  assert.ok(screened.value.includes('credential-shaped line withheld'));assert.equal(screened.value.includes('const retained = 42;'),!screened.partiallyWithheld);
+  assert.ok(screened.value.includes('credential-shaped line withheld'));assert.ok(!screened.value.includes('const retained = 42;'));assert.equal(screened.partiallyWithheld,patch);
   assert.equal(screened.value.split('\n').length,input.split('\n').length);
  }
  for(const source of ['password="'+'ghp_'+'h'.repeat(36)+'"', '{"password":"fixtureValue","password":""}']){

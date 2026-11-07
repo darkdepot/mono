@@ -74,3 +74,5 @@
 - Continue:44: retain dangerous or unmarked checker rejections as unresolved/open even with a matching quote or deleted file; both-explicit-false rejections still close. Recorded host r6 dangerous probes guard the release condition. Family substrings now hide only matched source lines and preserve diff prefixes; README, kebab titles and the complete pinned MONO-146 file remain reviewable, with existing opener and unscreenable-blob safeguards.
 
 - Preserve UTF-8 BOM bytes in the existing strict child-output, diff and checker-evidence decoders; executable shebang regressions cover adding/removing the BOM and retain invalid-UTF-8 refusal.
+
+- Continue:47: name unreadable, over-limit and wholly hidden exported files as unchecked even outside the diff; retain `not-reviewed` when such input is lost. Report line-level masks with readable neighbors as partial coverage in role prompts, saved rounds and the owner report, including unchanged exported files; screening bytes and role permissions stay unchanged.
