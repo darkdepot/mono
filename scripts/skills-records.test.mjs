@@ -1647,6 +1647,12 @@ test('MONO-357 patch-first requires a uniquely bound native prior read even with
  f.events.find(e=>e.payload?.call_id==='outer-prior').payload.input='text(await tools.mcp__monotest__get_document({id:"brief"}));';
  const result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/patch.*prior content/);
 });
+test('MONO-357 conservative patch-first leaves a historical unbound native read unverified',t=>{
+ const f=nativePatchFirstFixture(t,'latest');
+ // The class stop accepts false unverified; do not add another promotion path.
+ f.events.find(e=>e.payload?.call_id==='outer-older').payload.input='text(await tools.mcp__monotest__get_document({id:"brief"}));';
+ const result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/patch.*uniquely bound prior content/);
+});
 for(const host of ['claude','codex'])test(`MONO-357 ${host}: first patch uses latest full successful native document read`,t=>{
  const f=patchFirstFixture(t,host);
  f.events.splice(7,0,f.call('older','mcp__monotest__get_document',{id:'brief'}),f.result('older',{...f.doc,content:'Old content.'}),f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',f.doc));
