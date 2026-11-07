@@ -230,8 +230,23 @@ function traceTime(data,line,start=false){
  if(row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp))missing('invalid native trace time');return stamp;}
  return start?captureInterval(data)?.start:captureInterval(data)?.end;
 }
+function uniquelyBoundNativeStart(data,call){
+ if(call.event.type!=='event_msg')return true;
+ if(!Number.isInteger(call.approvalInvocationLine))return false;
+ // Opaque or aliased outer calls can own a completion too. Only restrict the
+ // already-proved start; never infer ownership by parsing another JS spelling.
+ const open=data.rows.filter(row=>{
+  const p=row.value.payload;
+  if(row.line>=call.line||row.value.type!=='response_item'||!['function_call','custom_tool_call'].includes(p?.type))return false;
+  const outputs=text(p.call_id)?data.rows.filter(result=>result.line>row.line&&result.value.type==='response_item'&&['function_call_output','custom_tool_call_output'].includes(result.value.payload?.type)&&result.value.payload.call_id===p.call_id):[];
+  return outputs.length!==1||outputs[0].line>call.line;
+ });
+ if(open.length!==1||open[0].line!==call.approvalInvocationLine)return false;
+ const id=open[0].value.payload.call_id;
+ return text(id)&&data.rows.filter(row=>row.line>open[0].line&&row.value.type==='response_item'&&['function_call_output','custom_tool_call_output'].includes(row.value.payload?.type)&&row.value.payload.call_id===id).length===1;
+}
 function before(left,line,right,call){
- const startLine=call.event.type==='event_msg'?(call.approvalInvocationLine??call.invocationLine):call.line;
+ const startLine=call.event.type==='event_msg'?(uniquelyBoundNativeStart(right,call)?call.approvalInvocationLine:call.invocationLine):call.line;
  if(fs.realpathSync(left.trace)===fs.realpathSync(right.trace)&&Number.isInteger(startLine))return line<startLine;
  const end=traceTime(left,line),start=traceTime(right,startLine,true);
  return Number.isFinite(end)&&Number.isFinite(start)&&end<start;
@@ -616,6 +631,7 @@ export function verifyRecords(request){
       try{read={...resultFor(source.host,call,source.rows),data:source};}
       catch(error){if(error instanceof MissingEvidence)continue;throw error;}
       if(idOf(read.value)!==id||typeof read.value.content!=='string'||elided(read.value.content)||!before(source,read.resultLine,write.data,write))continue;
+      if(index===0&&!uniquelyBoundNativeStart(source,read))missing(`document patch lacks uniquely bound prior content for ${id}`);
       if(previous&&!before(previous.data,previous.resultLine,source,read))continue;
       priorReads.push(read);
      }

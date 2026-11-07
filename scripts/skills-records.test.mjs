@@ -1617,6 +1617,36 @@ for(const state of ['missing','foreign','elided','late','overlapping','unbound-r
 for(const state of ['missing-anchor','ambiguous-anchor'])test(`MONO-357 native MCP completion patch-first refuses ${state}`,t=>{
  const result=nativePatchFirstFixture(t,state).check();assert.notEqual(result.status,'passed');assert.match(result.reason,/patch.*exactly once/);
 });
+for(const state of ['open-unbound','missing-output','closed-unbound'])test(`MONO-357 mixed native patch ownership: ${state}`,t=>{
+ const f=nativePatchFirstFixture(t),patch={id:'brief',patch:[{op:'replace',old_string:'Expected link.',new_string:'Approval link.'}]};
+ const competing=nativeMcpEvents('competing','save_document',state==='closed-unbound'?{id:'brief',content:f.doc.content}:patch,state==='closed-unbound'?f.doc:{...f.doc,content:'Brief… (truncated, use `get_document` for full description)'},false);
+ if(state==='closed-unbound')f.events.splice(8,0,...competing);
+ else f.events.splice(8,0,competing[0]);
+ if(state==='open-unbound')f.events.splice(f.events.length-1,0,competing[2]);
+ const result=f.check(),write=nativeRecords('codex',f.request.trace).calls.find(c=>c.callId==='patch');
+ const ambiguous=['open-unbound','missing-output'].includes(state);
+ assert.equal(result.status,ambiguous?'unverified':'passed',result.reason);
+ assert.equal(Number.isInteger(write.approvalInvocationLine),!ambiguous,'unknown open owner cannot supply a proved invocation');
+});
+test('MONO-357 mixed native latest-read ownership stays unverified',t=>{
+ const f=nativePatchFirstFixture(t,'latest'),competing=nativeMcpEvents('competing','get_document',{id:'brief'},f.doc,false);
+ // Insert after the older read completed, before the later literal read starts.
+ f.events.splice(11,0,competing[0]);f.events.splice(f.events.length-1,0,competing[2]);
+ const result=f.check(),read=nativeRecords('codex',f.request.trace).calls.find(c=>c.callId==='prior');
+ assert.equal(result.status,'unverified');assert.equal(read.approvalInvocationLine,undefined);
+});
+test('MONO-357 patch-first rejects an overlapping native consumer hidden behind an alias',t=>{
+ const f=nativePatchFirstFixture(t),patch={id:'brief',patch:[{op:'replace',old_string:'Expected link.',new_string:'Approval link.'}]};
+ const competing=nativeMcpEvents('alias','save_document',patch,{...f.doc,content:'Brief… (truncated, use `get_document` for full description)'},false);
+ competing[0].payload.input=`const save = tools.mcp__monotest__save_document; const r = await save(${JSON.stringify(patch)}); text(r);`;
+ f.events.splice(8,0,competing[0]);f.events.splice(f.events.length-1,0,competing[2]);
+ const result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/patch.*prior content/);
+});
+test('MONO-357 patch-first requires a uniquely bound native prior read even without another read',t=>{
+ const f=nativePatchFirstFixture(t);
+ f.events.find(e=>e.payload?.call_id==='outer-prior').payload.input='text(await tools.mcp__monotest__get_document({id:"brief"}));';
+ const result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/patch.*prior content/);
+});
 for(const host of ['claude','codex'])test(`MONO-357 ${host}: first patch uses latest full successful native document read`,t=>{
  const f=patchFirstFixture(t,host);
  f.events.splice(7,0,f.call('older','mcp__monotest__get_document',{id:'brief'}),f.result('older',{...f.doc,content:'Old content.'}),f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',f.doc));
