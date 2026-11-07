@@ -231,7 +231,7 @@ function traceTime(data,line,start=false){
  return start?captureInterval(data)?.start:captureInterval(data)?.end;
 }
 function before(left,line,right,call){
- const startLine=call.event.type==='event_msg'?call.invocationLine:call.line;
+ const startLine=call.event.type==='event_msg'?(call.approvalInvocationLine??call.invocationLine):call.line;
  if(fs.realpathSync(left.trace)===fs.realpathSync(right.trace)&&Number.isInteger(startLine))return line<startLine;
  const end=traceTime(left,line),start=traceTime(right,startLine,true);
  return Number.isFinite(end)&&Number.isFinite(start)&&end<start;

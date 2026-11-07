@@ -1581,6 +1581,42 @@ function patchFirstFixture(t,host){
  f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
  return {...f,doc,final};
 }
+function nativeMcpEvents(id,tool,input,value,bound=true){
+ return [
+  {type:'response_item',payload:{type:'custom_tool_call',name:'exec',call_id:'outer-'+id,input:bound?`const r = await tools.mcp__monotest__${tool}(${JSON.stringify(input)}); text(r);`:`text(await tools.mcp__monotest__${tool}(${JSON.stringify(input)}));`}},
+  {type:'event_msg',payload:{type:'item_completed',item:{type:'McpToolCall',id,server:'monotest',tool,arguments:input,status:'completed',result:value}}},
+  {type:'response_item',payload:{type:'custom_tool_call_output',call_id:'outer-'+id,output:JSON.stringify(value)}}
+ ];
+}
+function nativePatchFirstFixture(t,state='sequential'){
+ const f=patchFirstFixture(t,'codex'),patch={id:'brief',patch:[{op:'replace',old_string:'Expected link.',new_string:'Approval link.'}]};
+ const prior=(id='prior',value=f.doc,bound=true)=>nativeMcpEvents(id,'get_document',{id:value.id},value,bound);
+ let reads=prior();
+ if(state==='latest')reads=[...prior('older',{...f.doc,content:'Stale content.'}),...reads];
+ if(state==='missing')reads=[];
+ if(state==='foreign')reads=prior('prior',{...f.doc,id:'other-document'});
+ if(state==='elided')reads=prior('prior',{...f.doc,content:'Brief… (truncated, use `get_document` for full description)'});
+ if(state==='unbound-read')reads=[...prior('older'),...prior('prior',f.doc,false)];
+ if(state==='overlapping'){
+  const a=prior('first'),b=prior('second');reads=[a[0],b[0],a[1],b[1],a[2],b[2]];
+ }
+ if(['missing-anchor','ambiguous-anchor'].includes(state))reads=prior('prior',{...f.doc,content:state==='missing-anchor'?'No placeholder.':'Expected link. Expected link.'});
+ const write=nativeMcpEvents('patch','save_document',patch,{...f.doc,content:'Brief… (truncated, use `get_document` for full description)'},state!=='unbound-patch');
+ const rows=state==='late'?[write[0],...reads,write[1],write[2]]:[...reads,...write];
+ f.events.splice(7,2,...rows);f.events.unshift({type:'session_meta',payload:{id:'native-patch-session'}});
+ for(const binding of f.request.approvalBindings){binding.shownLine++;binding.currentLine++;}
+ return f;
+}
+for(const state of ['sequential','latest'])test(`MONO-357 native MCP completion patch-first accepts ${state} read order`,t=>{
+ const f=nativePatchFirstFixture(t,state),result=f.check();assert.equal(result.status,'passed',result.reason);
+ f.save('documents/brief.json',{...f.final,content:'Approval link.\nChanged paragraph.'});assert.equal(f.check().status,'failed');
+});
+for(const state of ['missing','foreign','elided','late','overlapping','unbound-read','unbound-patch'])test(`MONO-357 native MCP completion patch-first rejects ${state} read order`,t=>{
+ const result=nativePatchFirstFixture(t,state).check();assert.equal(result.status,'unverified');assert.match(result.reason,/patch.*(?:prior content|read ordering)/);
+});
+for(const state of ['missing-anchor','ambiguous-anchor'])test(`MONO-357 native MCP completion patch-first refuses ${state}`,t=>{
+ const result=nativePatchFirstFixture(t,state).check();assert.notEqual(result.status,'passed');assert.match(result.reason,/patch.*exactly once/);
+});
 for(const host of ['claude','codex'])test(`MONO-357 ${host}: first patch uses latest full successful native document read`,t=>{
  const f=patchFirstFixture(t,host);
  f.events.splice(7,0,f.call('older','mcp__monotest__get_document',{id:'brief'}),f.result('older',{...f.doc,content:'Old content.'}),f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',f.doc));
