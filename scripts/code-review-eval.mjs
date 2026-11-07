@@ -90,7 +90,7 @@ export async function runReviewEvaluation({ dataset, bundle, config = {}, runId,
         if (task.file) materializeCleanControl(scratch, task);
         else git(scratch, ['checkout', '-q', '--detach', task.head]);
         const contract = task.file ? task.contract : pinnedReviewContract(scratch, task);
-        row.contractDigest = reviewContractDigest(contract, { worktree: packRoot, base: task.base });
+        row.contractDigest = reviewContractDigest(contract, { head: task.head, base: task.base, inputs: { dataset, task } });
         await progress({ type: 'started', ...row });
         const record = await runReviewRound({ worktree: scratch, head: task.head, base: task.base, contract, risk: 'risky', config, packRoot }, dependencies);
         runs.push({ ...row, record });

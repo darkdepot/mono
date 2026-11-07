@@ -1720,7 +1720,7 @@ only its evidence closes or reopens a key. Checker wire IDs are F1..Fn; code map
 them back to stable keys. Each failed answer is secret-scanned and capped at 8 KiB. It assigns P0-P3, R7 danger/case,
 origin relative to task base, merge key and scope/risk flags. Code adds whether
 the location changed after round one (±2 context lines), costs and failures.
-Danger is the fail-safe union of reviewer and checker flags; unknown/unmarked danger stays dangerous. A dangerous or unmarked rejection needs an exact codeQuote present in its screened head file or Git-verified deletion from the pinned base/previous head; otherwise it stays confirmed. Contradictory merge verdicts get one batch retry, then keep separate keys. Visible damage, recognizable placeholders or downstream fail-closed
+Danger is the fail-safe union of saved, reviewer and checker flags; unknown/unmarked danger stays dangerous. A previously dangerous key retains its danger and original origin even after closure and reopening. A dangerous or unmarked rejection needs an exact codeQuote present in its screened head file or Git-verified deletion from the pinned base/previous head; otherwise it stays confirmed. Contradictory merge verdicts get one batch retry, then keep separate keys. Visible damage, recognizable placeholders or downstream fail-closed
 checks do not excuse false gate refusals, altered evidence or missing readiness.
 Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
 confirmed ones stay report-only on round three; open unresolved findings block.

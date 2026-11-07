@@ -6,7 +6,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { digest, resolveRole, runtimePackRoot, isMain } from './runtime.mjs';
+import { canonical, digest, resolveRole, runtimePackRoot, isMain } from './runtime.mjs';
 
 export const DANGER_CASES = ['data', 'security', 'gate-bypass', 'gate-stall', 'silent-result', 'readiness', 'unknown'];
 const text = value => typeof value === 'string' && value.trim().length > 0;
@@ -22,7 +22,7 @@ function pathAlias(value) {
   return aliases.get(identity);
 }
 function reviewKey(input) {
-  const identity = JSON.stringify([fs.realpathSync(input.worktree), input.base]);
+  const identity = JSON.stringify(input === 'evaluation-comparison' ? input : [fs.realpathSync(input.worktree), input.base]);
   if (reviewKeys.has(identity)) return reviewKeys.get(identity);
   const directory = path.join(os.tmpdir(), 'mono-review-local-state');
   try { fs.mkdirSync(directory, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
@@ -48,7 +48,10 @@ function reviewKey(input) {
   } finally { fs.closeSync(fd); }
 }
 export function reviewContractDigest(contract, identity) {
-  return createHmac('sha256', reviewKey(identity)).update(JSON.stringify(contract)).digest('hex');
+  requireValue(/^[a-f0-9]{40}$/.test(identity.head) && /^[a-f0-9]{40}$/.test(identity.base) &&
+    text(contract) && object(identity.inputs), 'head, base, contract and comparison inputs required');
+  return createHmac('sha256', reviewKey('evaluation-comparison'))
+    .update(canonical([identity.head, identity.base, contract, identity.inputs])).digest('hex');
 }
 function exact(value, keys) {
   requireValue(object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)), 'response fields differ from schema');
@@ -1048,11 +1051,11 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     const missing = () => files.filter(file => !unreviewedFiles.has(file) && !covered.has(file));
     if (missing().length) absorb(await call('code-review', { openFindings: open, pass: 'coverage', focusFiles: missing() }, parseReviewer));
     requireValue(missing().length === 0, 'incomplete changed-file coverage after focused pass');
-    const byKey = new Map();
+    const merged = new Map(record.findings.map(finding => [finding.key, finding])), byKey = new Map();
     for (const finding of [...open, ...found]) {
-      const prior = byKey.get(finding.key);
+      const prior = byKey.get(finding.key), saved = merged.get(finding.key);
       byKey.set(finding.key, { ...finding, reviewerDanger: Object.hasOwn(finding, 'reviewerDanger') ? finding.reviewerDanger : finding.danger ?? null,
-        danger: prior ? prior.danger !== false || finding.danger !== false : finding.danger ?? null });
+        danger: saved && saved.danger !== false ? true : prior ? prior.danger !== false || finding.danger !== false : finding.danger ?? null });
     }
     const findings = [...byKey.values()];
     const existsAt = (revision, raw) => git(worktree, ['ls-tree', '-z', revision, '--', raw]).split('\0')
@@ -1079,17 +1082,18 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       history: record.findings.filter(item => findings.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${findings.findIndex(f => f.key === key) + 1}` })), baseDiff: diff, baseEvidence, headEvidence },
       (value, attempt) => parseChecker(value, findings, { separateContradictoryMerges: attempt === 2 })) : { verdicts: [], mergesSeparated: false };
     const checked = checker.verdicts.map(verdict => {
-      const finding = byKey.get(verdict.key), danger = finding.danger !== false || verdict.danger !== false;
+      const finding = byKey.get(verdict.key), saved = merged.get(verdict.key), danger = finding.danger !== false || verdict.danger !== false;
       const quote = verdict.codeQuote, evidence = headEvidence.find(item => item.file === finding.file), content = evidence?.content;
       const deletionEvidence = evidence?.deletionEvidence;
       const provenRejection = !!deletionEvidence || text(quote) && !quote.includes('[credential-shaped') && typeof content === 'string' && content.includes(quote);
       const retained = danger && verdict.outcome === 'rejected' && !provenRejection;
-      return { ...verdict, ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, danger, dangerCase: danger ? verdict.dangerCase ?? 'unknown' : null,
+      return { ...verdict, ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, danger,
+        origin: saved && saved.danger !== false ? saved.origin : verdict.origin,
+        dangerCase: danger ? verdict.dangerCase ?? saved?.dangerCase ?? 'unknown' : null,
         dangerReason: danger && verdict.danger === false ? 'Сохранена ранее отмеченная или неясная опасность. ' + verdict.dangerReason : verdict.dangerReason,
         ...(retained ? { outcome: 'confirmed', closed: false, rejectionUnproven: true, reason: 'Отклонение не подтверждено цитатой или удалением файла. ' + verdict.reason } : {}) };
     });
     requireValue(treeIdentity(worktree) === identity, 'HEAD/tree changed during review; result discarded');
-    const merged = new Map(record.findings.map(finding => [finding.key, finding]));
     for (const verdict of checked) {
       const finding = findings.find(item => item.key === verdict.key), old = merged.get(verdict.key);
       if (old && ['closed', 'rejected'].includes(old.status) && !verdict.newEvidence) continue;

@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateReviewDataset, verifyDatasetBundle, pinnedReviewContract, materializeCleanControl, runReviewEvaluation, scoreReviewEvaluation, scoreCheckerProbes, compareReviewEvaluations } from './code-review-eval.mjs';
 import { createHash } from 'node:crypto';
+import { reviewContractDigest } from './code-review.mjs';
 import { digest } from './runtime.mjs';
 const packRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const dataset=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/cases.json'),'utf8'));
@@ -205,6 +206,29 @@ test('model-derived evaluation scores, calibration, comparisons and progress err
  await assert.rejects(()=>runReviewEvaluation({dataset:clone,bundle,runId:'screen-plan',packRoot},{onProgress:()=>{throw Error(secret);}}),error=>!error.message.includes(secret));
 });
 
+test('C43: private evaluation identities compare identical inputs across separate pack directories',async t=>{
+ const {clone,bundle}=await evaluationFixture(t),copies=fs.mkdtempSync(path.join(os.tmpdir(),'mono-eval-comparison-'));t.after(()=>fs.rmSync(copies,{recursive:true,force:true}));
+ const packs=['candidate','incumbent'].map(name=>{const dir=path.join(copies,name);fs.mkdirSync(dir);return dir;});
+ const run=async(root,runId,inputs=clone)=>runReviewEvaluation({dataset:inputs,bundle,runId,packRoot:root},{onProgress:event=>{if(event.type==='started')throw Object.assign(Error('comparison fixture captured before role launch'),{interrupted:true});}});
+ const first=await run(packs[0],'candidate');
+ const source=`import {runReviewEvaluation} from ${JSON.stringify(new URL('./code-review-eval.mjs',import.meta.url).href)};const result=await runReviewEvaluation(${JSON.stringify({dataset:clone,bundle,runId:'incumbent',packRoot:packs[1]})},{onProgress:event=>{if(event.type==='started')throw Object.assign(Error('comparison fixture captured before role launch'),{interrupted:true});}});console.log(JSON.stringify(result));`;
+ const second=JSON.parse(execFileSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8'}));
+ assert.equal(first.runs.length,1);assert.equal(second.runs.length,1);
+ assert.equal(first.runs[0].contractDigest,second.runs[0].contractDigest,'checkout paths must not change private comparison identity');
+ assert.equal(compareReviewEvaluations(first,second).length,1);
+ for(const field of ['head','base','contractDigest'])assert.throws(()=>compareReviewEvaluations(first,{...second,runs:[{...second.runs[0],[field]:'different'}]}),/inputs differ/);
+ const changed=structuredClone(clone);changed.matchingRule+=' Different comparison input.';
+ const different=await run(packs[1],'different',changed);assert.notEqual(first.runs[0].contractDigest,different.runs[0].contractDigest,'dataset inputs must participate in the private identity');
+ assert.throws(()=>compareReviewEvaluations(first,{...different,datasetDigest:first.datasetDigest}),/inputs differ/);
+ const identity={head:first.runs[0].head,base:first.runs[0].base,inputs:{task:'fixed',dataset:'fixed'}},contract='Exact comparison contract.';
+ const original=reviewContractDigest(contract,identity);
+ assert.equal(original,reviewContractDigest(contract,{...identity,inputs:{dataset:'fixed',task:'fixed'}}),'JSON key order is not a changed input');
+ for(const [value,input] of [[contract+' Changed.',identity],[contract,{...identity,head:'0'.repeat(40)}],[contract,{...identity,base:'0'.repeat(40)}],[contract,{...identity,inputs:{task:'changed'}}]]){
+  const changedDigest=reviewContractDigest(value,input);assert.notEqual(original,changedDigest);
+  const rows=d=>({datasetDigest:'same',runs:[{id:d,caseId:'fixed',repeat:1,head:identity.head,base:identity.base,contractDigest:d}]});
+  assert.throws(()=>compareReviewEvaluations(rows(original),rows(changedDigest)),/inputs differ/);
+ }
+});
 test('C40: evaluation progress and reports use keyed contract identities, stable across runs',async t=>{
  const secret='evalOpaqueC40',contract=JSON.stringify({password:secret}),{clone,bundle}=await evaluationFixture(t,{contract});
  const captures=[];

@@ -70,7 +70,10 @@ costs remain in the row, not silently dropped. The CLI emits JSONL plan/started/
 interruption evidence outside the repository so an interrupted call stays in
 the denominator. The final complete event contains the whole evaluation. The host compares incumbent results on exactly
 the same head/base/contract and repeats, not the old summary percentages. `compareReviewEvaluations` rejects changed
-head/base/contract or repeat denominators before pairing incumbent rows.
+head/base/contract or repeat denominators before pairing incumbent rows. A shared
+owner-only local comparison key signs the canonical head, base, exact contract,
+dataset and task inputs; checkout and pack paths never enter that identity.
+Identical inputs compare across directories and processes; changed inputs refuse.
 `scoreReviewEvaluation(dataset,evaluation,adjudications)` requires independent
 `{runId,key,match,caseId,judge,evidence}` annotations for strict/partial matches;
 novel/false-positive annotations omit caseId. It reports each run, ungraded

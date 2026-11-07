@@ -68,3 +68,5 @@
 - Continue:41 follow-up: isolate temporary Git metadata aliases from stage inventory replay; C41 checks restored file content, continued dangerous blocking and evidence-based closure after a process restart and earlier path addition.
 
 - Continue:41 percent-decoding follow-up: retain benign malformed UTF-8 escapes in source, tool output and checker reasons; use a replacement-decoded analysis view to keep adjacent encoded credential families detectable. Keep original output bytes or markers and existing decoder-limit refusals.
+
+- Continue:42: retain a finding's saved danger and original origin after closure and reopening; compare evaluation inputs with a shared private identity over head, base, contract, dataset and task, independent of checkout paths.

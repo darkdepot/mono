@@ -95,6 +95,21 @@ test('C41: replayed inventories preserve content and danger after a restart and 
   if(checked.outcome==='confirmed'){assert.equal(restored.result.findings[0].danger,true);assert.equal(restored.result.findings[0].status,'confirmed');}
  }
 });
+test('C43: reopening a closed or rejected dangerous finding preserves its danger and original origin',async t=>{
+ for(const [closed,origin] of [[true,'introduced'],[false,'contract']])await t.test(closed?'closed':'rejected',async t=>{
+  const f=fixture(t),dangerous={...sample,danger:true};
+  const first=await runReviewRound(f.request,responder({findings:[dangerous],verdicts:[verdict({danger:true,dangerCase:'silent-result',dangerReason:'Negative input silently breaks the result contract.',origin})]}));
+  const second=await runReviewRound({...f.request,stageRecord:first},responder({verdicts:[verdict({outcome:'rejected',closed,codeQuote:'export function value(n) { return n; }'})]}));
+  assert.equal(second.findings[0].status,closed?'closed':'rejected');assert.equal(second.findings[0].danger,true);
+  for(const outcome of ['confirmed','rejected']){
+   const third=await runReviewRound({...f.request,stageRecord:second},responder({findings:[sample],verdicts:[verdict({outcome,newEvidence:true,origin:'pre-existing'})]}));
+   assert.equal(third.findings[0].danger,true,'saved danger cannot be removed when the same key returns');
+   assert.equal(third.findings[0].origin,origin,'saved dangerous provenance cannot be changed by reopening');
+   assert.equal(third.findings[0].status,'confirmed','an unproven rejection still needs dangerous-rejection evidence');
+   assert.equal(third.outcome,'not-converged');assert.equal(third.rounds.length,3);
+  }
+ });
+});
 test('C42: benign malformed percent UTF-8 stays visible in source, diff and checker reasons',async t=>{
  const source='export const malformed = "%FF";',patch='diff --git a/input.mjs b/input.mjs\n--- a/input.mjs\n+++ b/input.mjs\n@@ -1 +1 @@\n-export const malformed = \"ordinary\";\n+'+source+'\n';
  for(const value of [source,patch])for(const options of [{input:true,inputFile:'input.mjs'},{input:true,inputPatch:true},{},{diagnostic:true}]){
