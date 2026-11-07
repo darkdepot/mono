@@ -31,6 +31,34 @@ function assertUnchecked(record) {
 }
 
 const hostR6=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/host-r6-regressions.json'),'utf8'));
+test('C49: rejected base and head diff sides are independently marked unchecked and replaced before role input',async t=>{
+ const file='dependency.json',rejected=JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n',accepted=JSON.stringify({public:1,nested:'ordinary'})+'\n',marker='[unreadable or over-limit model output withheld]';
+ assert.equal(screenModelOutput(rejected,{input:true,inputFile:file}).rejected,true);
+ assert.equal(screenModelOutput(rejected,{input:true,inputFile:file}).fatal,false);
+ assert.equal(screenModelOutput(rejected,{input:true,inputFile:file}).fullyWithheld,false);
+ assert.equal(screenModelOutput(accepted,{input:true,inputFile:file}).rejected,false);
+ for(const [name,before,after] of [['rejected base / clean head',rejected,accepted],['clean base / rejected head',accepted,rejected],['both rejected',rejected,rejected.replace('"public":1','"public":2')],['both accepted',accepted,accepted.replace('"public":1','"public":2')]])await t.test(name,async t=>{
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),before);f.git('add','.');f.git('commit','-qm','diff base');const base=f.git('rev-parse','HEAD');fs.writeFileSync(path.join(f.worktree,file),after);f.git('add','.');f.git('commit','-qm','diff head');let calls=0;
+  const baseRejected=name==='rejected base / clean head'||name==='both rejected',headRejected=name==='clean base / rejected head'||name==='both rejected';
+  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);calls++;
+   // A readable head cannot mask missing accounting of the rejected base.
+   assert.equal(fs.readFileSync(path.join(request.worktree,file),'utf8'),headRejected?marker:after);
+   assert.deepEqual(c.unreviewedFiles,baseRejected||headRejected?[file]:[]);
+   assert.deepEqual(c.partiallyWithheldFiles,[]);
+   if(baseRejected&&!headRejected)assert.ok(c.diff.includes('-'+marker),'rejected base must be a whole marker in the hunk');
+   if(headRejected&&!baseRejected)assert.ok(c.diff.includes('+'+marker),'rejected head must be a whole marker in the hunk');
+   if(baseRejected&&headRejected)assert.ok(!c.diff.includes('"public"'),'both rejected sides must be replaced even when their markers are identical');
+   if(!baseRejected&&!headRejected)assert.ok(c.diff.includes('-'+before.trim())&&c.diff.includes('+'+after.trim()),'accepted sides retain their actual diff');
+   assert.ok(!c.diff.includes('[credential-shaped line withheld]'),'a partial value is not an acceptable replacement for a rejected side');
+   return {response:review([],c.files)};
+  }});
+  assert.equal(calls,1,JSON.stringify(result.failures));assert.equal(result.round.outcome,baseRejected||headRejected?'not-reviewed':'clean');
+  if(baseRejected||headRejected){assertUnchecked(result);assert.deepEqual(result.unreviewedFiles,[file]);assert.match(formatReviewReport(result),/Не проверено: файлы dependency.json/);}else assert.equal(result.outcome,'clean');
+  assert.equal(f.git('status','--porcelain'),'');
+ });
+});
+
 test('C48: fatal or rejected unchanged exports contain only the safe marker and are named unchecked for both roles',async t=>{
  const cases=[['fatal','['.repeat(40)+'1'+']'.repeat(40)+'\n'],['rejected',JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n']];
  for(const [name,source] of cases)await t.test(name,async t=>{

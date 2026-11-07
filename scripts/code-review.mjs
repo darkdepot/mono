@@ -978,9 +978,9 @@ function screenedDiff(worktree, base, head, files, pathFor = screenPath) {
           const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
           const safe = screenModelOutput(content, { input: true, inputFile: file });
           requireValue(!safe.fatal && typeof safe.value === 'string', 'blob withheld');
-          if (safe.fullyWithheld) withheld.push(name);
-          if (safe.partiallyWithheld && !safe.fullyWithheld) partiallyWithheld.add(name);
-          sides.push({ exists, mode, value: safe.value });
+          if (safe.fullyWithheld || safe.rejected) withheld.push(name);
+          if (safe.partiallyWithheld && !safe.fullyWithheld && !safe.rejected) partiallyWithheld.add(name);
+          sides.push({ exists, mode, value: safe.rejected ? '[unreadable or over-limit model output withheld]' : safe.value });
         } catch { withheld.push(name); fatal.push(name); break; }
       }
       if (sides.length !== 2) continue;
