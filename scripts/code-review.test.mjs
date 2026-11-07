@@ -30,6 +30,83 @@ function assertUnchecked(record) {
  assert.match(formatReviewReport(record),/Не проверено:/);
 }
 
+const hostR6=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/host-r6-regressions.json'),'utf8'));
+test('C44: host r6 dangerous probe rejections stay disputed even with an exact current-head quote',async t=>{
+ for(const probe of hostR6.probes)await t.test(probe.runId,async t=>{
+  const f=fixture(t),file=probe.finding.file,source='\n'.repeat(probe.finding.line-1)+probe.checker.codeQuote+'\n';
+  fs.mkdirSync(path.dirname(path.join(f.worktree,file)),{recursive:true});fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','probe base');const base=f.git('rev-parse','HEAD');
+  fs.appendFileSync(path.join(f.worktree,file),'// reviewed head\n');f.git('add','.');f.git('commit','-qm','probe head');
+  let checked=false;
+  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   if(request.role==='code-review')return {response:review([probe.finding],[file])};
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.headEvidence.find(item=>item.file===file).content.includes(probe.checker.codeQuote));checked=true;
+   return {response:{completed:true,verdicts:[probe.checker]}};
+  }});
+  assert.equal(checked,true);assert.equal(result.outcome,'not-converged',JSON.stringify(result.failures));
+  assert.equal(result.findings[0].status,'unresolved');assert.equal(result.findings[0].closed,false);assert.equal(result.findings[0].danger,true);
+  assert.equal(result.findings[0].rejectionUnproven,true);assert.equal(result.findings[0].codeQuote,probe.checker.codeQuote);
+ });
+});
+test('C44: either role true or unknown danger prevents rejection; both false still close normally',async t=>{
+ for(const [reviewerDanger,checkerDanger] of [[true,false],[null,false],[false,true],[false,null],[false,false]])for(const closed of [false,true])await t.test(`${reviewerDanger}/${checkerDanger}/${closed}`,async t=>{
+  const result=await runReviewRound(fixture(t).request,responder({findings:[{...sample,danger:reviewerDanger}],verdicts:[verdict({outcome:'rejected',closed,danger:checkerDanger,dangerCase:checkerDanger===false?null:'unknown',codeQuote:'return n;'})]}));
+  const dangerous=reviewerDanger!==false||checkerDanger!==false;
+  assert.equal(result.outcome,dangerous?'not-converged':'clean');assert.equal(result.findings[0].danger,dangerous);
+  assert.equal(result.findings[0].status,dangerous?'unresolved':closed?'closed':'rejected');assert.equal(result.findings[0].closed,!dangerous&&closed);
+ });
+});
+const sourceR6=[
+ {name:'README prose',file:'README.md',source:'# Pack\n\nThe family table includes JWT and Bearer values.\n\nOther text.\n',hidden:2},
+ {name:'kebab title',file:'scripts/a.test.mjs',source:"import test from 'node:test';\ntest('backup-control-caller-other-task-collector-prefix-and-unrelated', () => {});\n// ordinary tail\n",hidden:1},
+ {name:'pinned MONO-146 file',file:hostR6['MONO-146'].file,source:hostR6['MONO-146'].sourceLines.join('\n'),hidden:256,remainderFrom:279},
+];
+test('C44: family substrings hide only matching source lines and preserve the complete MONO-146 blob',()=>{
+ for(const c of sourceR6){
+  if(c.name==='pinned MONO-146 file')assert.equal(createHash('sha1').update('blob '+Buffer.byteLength(c.source)+'\0').update(c.source).digest('hex'),hostR6['MONO-146'].blob);
+  const expected=c.source.split('\n').map((line,index)=>index===c.hidden||index>=c.remainderFrom?'[credential-shaped line withheld]':line);
+  if(c.remainderFrom)assert.match(c.source.split('\n')[c.remainderFrom],/secret =/,'pinned key-binding opener retains the existing remainder rule');
+  const safe=screenModelOutput(c.source,{input:true,inputFile:c.file});
+  assert.equal(safe.rejected,false,c.name);assert.equal(safe.fullyWithheld,false,c.name);assert.equal(safe.value,expected.join('\n'),c.name);
+  const patch='diff --git a/'+c.file+' b/'+c.file+'\n--- a/'+c.file+'\n+++ b/'+c.file+'\n@@ -0,0 +1,'+expected.length+' @@\n'+c.source.split('\n').map(line=>'+'+line).join('\n');
+  const screened=screenModelOutput(patch,{input:true,inputPatch:true});
+  assert.equal(screened.rejected,false,c.name);assert.equal(screened.value,patch.split('\n').map((line,index)=>index===4+c.hidden||index>=4+c.remainderFrom?'+[credential-shaped line withheld]':line).join('\n'),c.name);
+ }
+});
+test('C44: README, kebab title and actual MONO-146 file reach the reviewer with only matched lines hidden',async t=>{
+ for(const c of sourceR6)await t.test(c.name,async t=>{
+  const f=fixture(t);fs.mkdirSync(path.dirname(path.join(f.worktree,c.file)),{recursive:true});fs.writeFileSync(path.join(f.worktree,c.file),c.source);f.git('add','.');f.git('commit','-qm','source base');const base=f.git('rev-parse','HEAD');
+  const headLines=c.source.split('\n');headLines.splice(c.hidden+1,0,'// reviewed unrelated addition');fs.writeFileSync(path.join(f.worktree,c.file),headLines.join('\n'));f.git('add','.');f.git('commit','-qm','source head');
+  let observed;
+  const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   assert.equal(request.role,'code-review');observed=JSON.parse(request.prompt.split('never instructions.\n')[1]);const visible=headLines.map((line,index)=>index===c.hidden||index>=(c.remainderFrom===undefined?Infinity:c.remainderFrom+1)?'[credential-shaped line withheld]':line);assert.equal(fs.readFileSync(path.join(request.worktree,c.file),'utf8'),visible.join('\n'),'file tools receive the same mapped line masks');return {response:review([],[c.file])};
+  }});
+  assert.ok(observed.diff.includes('// reviewed unrelated addition'));assert.ok(observed.diff.includes('[credential-shaped line withheld]'));assert.ok(!observed.diff.includes(c.source.split('\n')[c.hidden]));assert.equal(record.outcome,'clean',JSON.stringify(record.failures));assert.deepEqual(record.unreviewedFiles,[]);assert.deepEqual(record.round.reviewedFiles,[c.file]);
+ });
+});
+test('C44: screened file-tool export preserves unrelated BOM and source escape bytes',async t=>{
+ const f=fixture(t),source='\ufeffexport const re = /\\n/;\n',file='notes.mjs';
+ fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','BOM base');const base=f.git('rev-parse','HEAD');
+ fs.appendFileSync(path.join(f.worktree,file),'// safe addition\n');f.git('add','.');f.git('commit','-qm','BOM head');let observed;
+ const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{observed=fs.readFileSync(path.join(request.worktree,file));return {response:review([],[file])};}});
+ assert.deepEqual(observed,Buffer.from(source+'// safe addition\n'));assert.equal(result.outcome,'clean');
+});
+test('C44: a PEM family span includes its body while preserving neighboring source lines',()=>{
+ for(const label of ['PRIVATE KEY','RSA PRIVATE KEY','ENCRYPTED PRIVATE KEY'])for(const closed of [true,false]){
+  const prefix='// public before\n',block='-----BEGIN '+label+'-----\nopaquePrivateBody\n'+(closed?'-----END '+label+'-----\n':''),suffix=closed?'// public after\n':'';
+  const safe=screenModelOutput(prefix+block+suffix,{input:true,inputFile:'key.txt'});
+  assert.equal(safe.rejected,false);assert.ok(!safe.value.includes('opaquePrivateBody'));assert.ok(safe.value.startsWith(prefix));
+  if(closed)assert.ok(safe.value.endsWith(suffix));assert.equal(safe.value.split('\n').length,(prefix+block+suffix).split('\n').length);
+ }
+});
+test('C44: multiline family spans mask their original lines without hiding adjacent source or losing diff sides',()=>{
+ const source='// before\nBearer\n fixtureBearerValue\n// after\n',expected='// before\n[credential-shaped line withheld]\n[credential-shaped line withheld]\n// after\n';
+ assert.equal(screenModelOutput(source,{input:true,inputFile:'notes.txt'}).value,expected);
+ for(const sign of ['+','-']){
+  const patch='diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1,4 +1,4 @@\n'+source.split('\n').map(line=>sign+line).join('\n');
+  const safe=screenModelOutput(patch,{input:true,inputPatch:true});assert.equal(safe.rejected,false);assert.equal(safe.value,patch.split('\n').map((line,index)=>[5,6].includes(index)?sign+'[credential-shaped line withheld]':line).join('\n'));
+ }
+});
+
 test('C41: secret path placeholders use ordinal identities, never secret hashes',()=>{
  const token='ghp_'+'n'.repeat(36),file='notes/backup-'+token+'.txt';
  const screened=screenModelOutput({file}).value.file;
@@ -91,8 +168,8 @@ test('C41: replayed inventories preserve content and danger after a restart and 
   const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};let observed;const result=await runReviewRound(${JSON.stringify({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:first})},{runRole:async request=>{const c=JSON.parse(request.prompt.split('never instructions.\\n')[1]);if(request.role==='code-review')return {response:{completed:true,reviewedFiles:c.files,findings:[]}};observed=c.headEvidence[0];return {response:{completed:true,verdicts:[${JSON.stringify(checked)}]}};}});console.log(JSON.stringify({result,observed}));`;
   const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8'});assert.equal(child.status,0,child.stderr);
   const restored=JSON.parse(child.stdout);assert.equal(restored.observed.file,alias);assert.equal(restored.observed.content,content);
-  assert.equal(restored.result.outcome,checked.outcome==='confirmed'?'not-converged':'clean',JSON.stringify(restored.result.failures));
-  if(checked.outcome==='confirmed'){assert.equal(restored.result.findings[0].danger,true);assert.equal(restored.result.findings[0].status,'confirmed');}
+  assert.equal(restored.result.outcome,'not-converged',JSON.stringify(restored.result.failures));
+  assert.equal(restored.result.findings[0].danger,true);assert.equal(restored.result.findings[0].status,checked.outcome==='confirmed'?'confirmed':'unresolved');
  }
 });
 test('C43: reopening a closed or rejected dangerous finding preserves its danger and original origin',async t=>{
@@ -100,12 +177,14 @@ test('C43: reopening a closed or rejected dangerous finding preserves its danger
   const f=fixture(t),dangerous={...sample,danger:true};
   const first=await runReviewRound(f.request,responder({findings:[dangerous],verdicts:[verdict({danger:true,dangerCase:'silent-result',dangerReason:'Negative input silently breaks the result contract.',origin})]}));
   const second=await runReviewRound({...f.request,stageRecord:first},responder({verdicts:[verdict({outcome:'rejected',closed,codeQuote:'export function value(n) { return n; }'})]}));
-  assert.equal(second.findings[0].status,closed?'closed':'rejected');assert.equal(second.findings[0].danger,true);
+  assert.equal(second.findings[0].status,'unresolved');assert.equal(second.findings[0].closed,false);assert.equal(second.findings[0].danger,true);
+  // Replay a historical pre-C44 closure/rejection to preserve C43's legacy reopening boundary.
+  const legacy={...second,findings:second.findings.map(item=>({...item,status:closed?'closed':'rejected',outcome:'rejected',closed}))};
   for(const outcome of ['confirmed','rejected']){
-   const third=await runReviewRound({...f.request,stageRecord:second},responder({findings:[sample],verdicts:[verdict({outcome,newEvidence:true,origin:'pre-existing'})]}));
+   const third=await runReviewRound({...f.request,stageRecord:legacy},responder({findings:[sample],verdicts:[verdict({outcome,newEvidence:true,origin:'pre-existing'})]}));
    assert.equal(third.findings[0].danger,true,'saved danger cannot be removed when the same key returns');
    assert.equal(third.findings[0].origin,origin,'saved dangerous provenance cannot be changed by reopening');
-   assert.equal(third.findings[0].status,'confirmed','an unproven rejection still needs dangerous-rejection evidence');
+   assert.equal(third.findings[0].status,outcome==='confirmed'?'confirmed':'unresolved','dangerous rejection stays disputed even after a legacy closure');
    assert.equal(third.outcome,'not-converged');assert.equal(third.rounds.length,3);
   }
  });
@@ -227,7 +306,7 @@ test('C34: prefixed noncanonical JWT headers and empty signatures are screened i
   await t.test(name+'/'+prefix+'/source',()=>{
    assert.ok(scanSecrets(prefix+jwt,{patch:false}).length,'source JWT suffix was not recognized');
    const source=screenModelOutput('const note = "'+file+'";',{input:true,inputFile:'input.mjs'});
-   assert.equal(source.rejected,true);assert.ok(!JSON.stringify(source.value).includes(jwt));
+   assert.equal(source.rejected,false);assert.equal(source.fullyWithheld,true);assert.ok(!JSON.stringify(source.value).includes(jwt));
   });
  }
 });
@@ -274,7 +353,7 @@ test('C36: placeholder exemptions cannot hide a second binding or a nonempty sub
  for(const value of [{nested:'<redacted>'},['<redacted>'],false,null])assert.equal(screenModelOutput({password:value}).rejected,true);
  const safe=screenModelOutput({password:'<Xy9!pass>'});assert.equal(safe.rejected,true);assert.deepEqual(screenModelOutput(safe.value).value,safe.value);
 });
-test('C35: pinned deletion closes dangerous and unmarked findings from base or previous head',async t=>{
+test('C35/C44: pinned deletion is recorded but cannot close dangerous or unmarked findings',async t=>{
  for(const fromBase of [true,false])for(const danger of [true,undefined])await t.test(String(fromBase)+'/'+String(danger),async t=>{
   const f=fixture(t),file=fromBase?'input.mjs':'added.mjs';
   if(!fromBase){fs.writeFileSync(path.join(f.worktree,file),'export const ordinary = 1;\n');f.git('add','.');f.git('commit','-qm','introduce affected file');}
@@ -286,13 +365,13 @@ test('C35: pinned deletion closes dangerous and unmarked findings from base or p
   const result=await runReviewRound({...f.request,head,stageRecord:first},{runRole:async request=>{
    const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',closed:true,reason:'The affected file was deleted.'})]}};
   }});
-  assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(result.findings[0].status,'closed');assert.equal(result.findings[0].danger,true);
+  assert.equal(result.outcome,'not-converged',JSON.stringify(result.failures));assert.equal(result.findings[0].status,'unresolved');assert.equal(result.findings[0].closed,false);assert.equal(result.findings[0].danger,true);
   assert.deepEqual(result.findings[0].deletionEvidence,{before:fromBase?f.request.base:first.round.head,head});
  });
 });
 test('C35: a never-existing file is not verified deletion evidence',async t=>{
  const result=await runReviewRound(fixture(t).request,responder({findings:[{...sample,file:'absent.mjs',danger:true}],verdicts:[verdict({outcome:'rejected',closed:true})]}));
- assert.equal(result.outcome,'not-converged');assert.equal(result.findings[0].status,'confirmed');
+ assert.equal(result.outcome,'not-converged');assert.equal(result.findings[0].status,'unresolved');
 });
 test('C35: credential path aliases retain their evidence through a literal-alias revert',async t=>{
  const f=fixture(t),original='notes/backup-'+'ghp_'+'d'.repeat(36)+'.mjs',literal=screenModelOutput({file:original}).value.file;
@@ -315,7 +394,7 @@ test('C35: credential path aliases retain their evidence through a literal-alias
   assert.equal(context.headEvidence.find(item=>item.file===alias).content,'export const originalFile = 1;\n');
   return {response:{completed:true,verdicts:[verdict({outcome:'rejected',closed:true,codeQuote:'export const originalFile = 1;'})]}};
  }});
- assert.equal(second.outcome,'clean',JSON.stringify(second.failures));assert.equal(second.findings[0].file,alias);assert.equal(second.findings[0].status,'closed');
+ assert.equal(second.outcome,'not-converged',JSON.stringify(second.failures));assert.equal(second.findings[0].file,alias);assert.equal(second.findings[0].status,'unresolved');
 });
 test('C33: credential aliases cannot collide with literal filenames or change on rescreening',async t=>{
  const original='notes/backup-'+'ghp_'+'d'.repeat(36)+'.mjs',literal=screenModelOutput({file:original}).value.file;
@@ -338,12 +417,12 @@ test('C33: reviewer/checker danger is a fail-safe union, including unmarked find
   assert.equal(result.outcome,'not-converged',JSON.stringify(result.failures));assert.equal(result.findings[0].danger,expected);if(expected)assert.notEqual(result.findings[0].dangerCase,null);
  });
 });
-test('C33: dangerous or unmarked rejection requires a literal quote from the screened head file',async t=>{
+test('C33/C44: dangerous or unmarked rejection remains disputed regardless of a screened-head quote',async t=>{
  for(const danger of [true,undefined])for(const codeQuote of [undefined,'return 0;','return n;'])await t.test(String(danger)+'/'+String(codeQuote),async t=>{
   const finding={...sample};if(danger===undefined)delete finding.danger;else finding.danger=danger;
   const answer={outcome:'rejected'};if(codeQuote!==undefined)answer.codeQuote=codeQuote;
   const result=await runReviewRound(fixture(t).request,responder({findings:[finding],verdicts:[verdict(answer)]}));
-  assert.equal(result.outcome,codeQuote==='return n;'?'clean':'not-converged',JSON.stringify(result.failures));assert.equal(result.findings[0].status,codeQuote==='return n;'?'rejected':'confirmed');assert.equal(result.findings[0].danger,true);
+  assert.equal(result.outcome,'not-converged',JSON.stringify(result.failures));assert.equal(result.findings[0].status,'unresolved');assert.equal(result.findings[0].danger,true);
  });
 });
 test('C33: a quote hidden by the source screen cannot reject an unmarked finding',async t=>{
@@ -351,12 +430,12 @@ test('C33: a quote hidden by the source screen cannot reject an unmarked finding
  const finding={...sample};delete finding.danger;
  for(const codeQuote of ['return n;','[credential-shaped line withheld]']){
  const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},responder({findings:[finding],verdicts:[verdict({outcome:'rejected',codeQuote})]}));
- assertUnchecked(result);assert.equal(result.findings[0].status,'confirmed');}
+ assertUnchecked(result);assert.equal(result.findings[0].status,'unresolved');}
 });
-test('C33: dangerous closure needs the same screened-head quote as rejection',async t=>{
+test('C33/C44: a screened-head quote cannot authorize dangerous closure',async t=>{
  for(const codeQuote of ['', 'return n;'])await t.test(codeQuote||'missing',async t=>{
   const result=await runReviewRound(fixture(t).request,responder({findings:[{...sample,danger:true}],verdicts:[verdict({outcome:'rejected',closed:true,codeQuote})]}));
-  assert.equal(result.findings[0].status,codeQuote?'closed':'confirmed');assert.equal(result.findings[0].closed,!!codeQuote);assert.equal(result.findings[0].danger,true);
+  assert.equal(result.findings[0].status,'unresolved');assert.equal(result.findings[0].closed,false);assert.equal(result.findings[0].danger,true);
  });
 });
 test('C33: contradictory merge verdicts retry once then retain separate findings',async t=>{
@@ -519,7 +598,7 @@ test('C23: roles get a read-only pinned export without repository Git helpers',a
   assert.equal(fs.existsSync(path.join(r.worktree,'.git')),false);assert.equal(fs.statSync(r.worktree).mode&0o222,0);
   assert.equal(fs.statSync(path.join(r.worktree,'input.mjs')).mode&0o222,0);
   assert.equal(fs.readFileSync(path.join(r.worktree,'input.mjs'),'utf8'),f.git('show',head+':input.mjs')+'\n');
-  assert.deepEqual(fs.readFileSync(path.join(r.worktree,'neighbor.dat')),Buffer.from([0,255,10,42]));
+  assert.equal(fs.readFileSync(path.join(r.worktree,'neighbor.dat'),'utf8'),'[unreadable or over-limit model output withheld]','unscreenable blob is withheld; readable pinned source stays exact');
   assert.equal(fs.lstatSync(path.join(r.worktree,'link')).isSymbolicLink(),false);assert.equal(fs.readFileSync(path.join(r.worktree,'link'),'utf8'),outside);
   assert.ok(context.symlinks.includes('link'));seen.push(r.worktree);
   return {response:r.role==='code-review'?review([sample],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',reason:'Fixture finding is absent.'})]}};
@@ -635,7 +714,8 @@ test('C21/v6: source lines redact, while families and ambiguous JSON still withh
   assert.equal(screened.value.split('\n').length,input.split('\n').length);
  }
  for(const source of ['password="'+'ghp_'+'h'.repeat(36)+'"', '{"password":"fixtureValue","password":""}']){
-  assert.equal(screenModelOutput(source,{input:true,inputFile:'input.mjs'}).rejected,true);
+  const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
+  assert.equal(safe.rejected,source.startsWith('{'));assert.equal(safe.fullyWithheld,true);assert.ok(!safe.value.includes('ghp_'+'h'.repeat(36)));
  }
 });
 test('v4: raw duplicate members, escaped keys and every bound value are screened before parsing',()=>{
@@ -1394,7 +1474,8 @@ test('C39: every context source is redacted before launch; unsafe history stays 
   }
   const runner=responder({findings:source==='base-evidence'?[{...sample,file:'neighbor.mjs'}]:[]}),record=await runReviewRound(request,runner);
   const unsafeHistory=['history','failed-answer'].includes(source);
-  assert.equal(record.outcome,'not-reviewed',source);if(!unsafeHistory)assertUnchecked(record);assert.equal(record.rounds.length,unsafeHistory?0:1,source);
+  const partial=['diff-context','base-evidence'].includes(source);
+  assert.equal(record.outcome,partial?(source==='base-evidence'?'not-converged':'clean'):'not-reviewed',source);if(!unsafeHistory&&!partial)assertUnchecked(record);if(partial)assert.deepEqual(record.unreviewedFiles,[]);assert.equal(record.rounds.length,unsafeHistory?0:1,source);
   assert.equal(runner.calls.length,unsafeHistory?0:source==='base-evidence'?2:1,source);
   assert.ok(runner.calls.every(call=>!call.prompt.includes(secret)),source);assert.ok(!JSON.stringify(record).includes(secret),source);
   });
@@ -1418,7 +1499,7 @@ test('C19 secrets: raw fixture blobs are screened without a path exemption or pa
  f.git('add','.');f.git('commit','-qm','fixture base');const base=f.git('rev-parse','HEAD');
  fs.appendFileSync(path.join(f.worktree,file),'documentation change\n');f.git('add','.');f.git('commit','-qm','fixture head');
  const finding={...sample,file},runner=responder({findings:[finding],responses:[review([finding],[file]),{completed:true,verdicts:[verdict({origin:'pre-existing'})]}]});
- const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},runner);assertUnchecked(record);assert.equal(runner.calls.length,2);assert.ok(runner.calls.every(call=>!call.prompt.includes(fake)));
+ const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},runner);assert.equal(record.outcome,'clean',JSON.stringify(record.failures));assert.deepEqual(record.unreviewedFiles,[]);assert.equal(runner.calls.length,2);assert.ok(runner.calls.every(call=>!call.prompt.includes(fake)));assert.ok(runner.calls[0].prompt.includes('credential-shaped line withheld'));
 });
 
 test('C2 flags: confirmed scope/risk cannot disappear without new evidence in later rounds',async t=>{

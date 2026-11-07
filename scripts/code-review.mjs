@@ -149,9 +149,17 @@ function exportReviewTree(worktree, head) {
       }
       const fd = fs.openSync(file, 'wx', 0o400);
       try {
-        // Blob bytes are file-tool input, not model/diagnostic text. Stream them
-        // without decoding or filters; the shared Git reader screens stderr.
+        // File tools receive the same screened source as diffs and evidence;
+        // otherwise echoing a raw matched line can withhold the whole role stream.
         readGit(worktree, policy.env, policy.args, ['cat-file', 'blob', oid], false, fd);
+        let safe = '[unreadable or over-limit model output withheld]';
+        if (fs.fstatSync(fd).size <= MAX_SCREEN_VALUE_BYTES) {
+          let content;
+          try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(file)); } catch {}
+          if (content !== undefined) safe = screenModelOutput(content, { input: true, inputFile: name }).value;
+        }
+        fs.ftruncateSync(fd, 0);
+        requireValue(fs.writeSync(fd, safe, 0, 'utf8') === Buffer.byteLength(safe), 'screened export incomplete');
       } finally { fs.closeSync(fd); }
       if (mode === '120000') symlinks.push(name);
     }
@@ -222,7 +230,7 @@ const SECRET_FAMILIES = [
   ['openai-anthropic', /sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}/],
   ['slack', /xox[A-Za-z]-[A-Za-z0-9-]{10,}/],
   ['google', /AIza[A-Za-z0-9_-]{20,}/],
-  ['pem', /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/],
+  ['pem', /-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|$)/],
   ['bearer', /Bearer\s+[A-Za-z0-9._~+/=-]+/i],
 ];
 export const MAX_SCREEN_VALUE_BYTES = 2 * 1024 * 1024;
@@ -441,15 +449,27 @@ function sourceViews(source, patch) {
 function withheldLines(source, patch = false) {
   return source.split('\n').map(line => line ? (patch && /^[+ -]/.test(line) ? line[0] : '') + '[credential-shaped line withheld]' : '').join('\n');
 }
-function screenSourceLines(source, patch) {
+function screenSourceLines(source, patch, bindings = true) {
   const hidden = new Set(), remainders = new Set(), prefixes = new Map(), lines = source.split('\n');
+  let familyMatched = false;
   for (const view of sourceViews(source, patch)) {
     let rows = view;
     for (const row of rows) if (patch && lines[row.index] !== row.text) prefixes.set(row.index, lines[row.index][0]);
     for (let layer = 0; ; layer++) {
-      if (familyMatches(rows.map(row => row.text).join('\n')).length) return { value: withheldLines(source, patch), rejected: true, matches: 1 };
+      const view = rows.map(row => row.text).join('\n');
+      for (const [, pattern] of SECRET_FAMILIES) {
+        let row = 0, offset = 0;
+        for (const match of view.matchAll(new RegExp(pattern.source, pattern.flags + 'g'))) {
+          familyMatched = true;
+          while (row < rows.length && offset + rows[row].text.length < match.index) offset += rows[row++].text.length + 1;
+          for (let index = row, start = offset; index < rows.length && start < match.index + match[0].length; index++) {
+            hidden.add(rows[index].index); start += rows[index].text.length + 1;
+          }
+        }
+      }
       for (const row of rows) {
-        if (!sourceCredential(row.text)) continue;
+        if (jwtMatches(row.text)) { hidden.add(row.index); familyMatched = true; }
+        if (!bindings || !sourceCredential(row.text)) continue;
         hidden.add(row.index);
         // No closing-boundary interpretation: any opener conservatively
         // withholds the remainder, including harmless same-line literals.
@@ -469,7 +489,7 @@ function screenSourceLines(source, patch) {
     remainder ||= remainders.has(index);
     if (remainder && (!patch || (inHunk && /^[+ -]/.test(line)))) hidden.add(index);
   }
-  return { value: lines.map((line, index) => hidden.has(index) ? (prefixes.get(index) ?? '') + '[credential-shaped line withheld]' : line).join('\n'), rejected: false, matches: hidden.size, partiallyWithheld: remainders.size > 0 };
+  return { value: lines.map((line, index) => hidden.has(index) ? (prefixes.get(index) ?? '') + '[credential-shaped line withheld]' : line).join('\n'), rejected: false, familyMatched, matches: hidden.size, partiallyWithheld: remainders.size > 0 };
 }
 function ambiguousJsonMembers(source) {
   const tokens = jsonTokens(source), stack = [];
@@ -517,6 +537,8 @@ export function scanSecrets(value, options = {}) {
     const matches = scanPayloadText(value, options);
     if (matches.length) return matches;
   }
+  const families = scanPayloadText(value, { ...options, bindings: false });
+  if (families.length) return families;
   const screened = screenModelOutput(value, { input: true, inputFile: options.file, inputPatch: options.patch ?? true });
   return screened.rejected ? [{ file: options.file ?? null, line: 0, weight: 'P0', reason: 'credential-family or undecodable payload; value withheld' }] : [];
 }
@@ -647,13 +669,13 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
   let bytes = 0, nodes = 0, secretMatches = 0, rejected = false, fatal = false, revision = 0, partiallyWithheld = false;
   const hide = (matches = 0) => { fatal = true; rejected = true; revision++; secretMatches += matches; return { value: withheld, text: withheld }; };
   const redact = (source, file, patch = inputPatch, json = false) => {
-    if (json) {
+    if (json && !(input && (file !== null || patch))) {
       const matches = scanPayloadText(source, { file, patch: false, bindings: false });
       if (matches.length) { secretMatches += matches.length; rejected = true; revision++; return withheldLines(source, patch); }
       return source;
     }
-    const result = screenSourceLines(source, patch);
-    secretMatches += result.matches; rejected ||= result.rejected; partiallyWithheld ||= !!result.partiallyWithheld;
+    const result = screenSourceLines(source, patch, !json);
+    secretMatches += result.matches; rejected ||= result.rejected || (result.familyMatched && !(input && (file !== null || patch))); partiallyWithheld ||= !!result.partiallyWithheld;
     if (result.value !== source) revision++;
     return result.value;
   };
@@ -677,7 +699,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (analysis.opaque) return opaque(entry, patch);
 
       // Check raw credential families before parsing can discard any member.
-      if (scanPayloadText(entry, { file, patch, bindings: false }).length) {
+      if (!(input && (file !== null || patch)) && scanPayloadText(entry, { file, patch, bindings: false }).length) {
         const pathOnly = pathValue && !analysis.opaque && !analysis.decodedDirty && !analysis.bound;
         rejected ||= !pathValue; revision++; secretMatches++; const safe = pathOnly ? entry : withheldLines(entry, patch); return { value: safe, text: safe };
       }
@@ -1083,15 +1105,14 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       (value, attempt) => parseChecker(value, findings, { separateContradictoryMerges: attempt === 2 })) : { verdicts: [], mergesSeparated: false };
     const checked = checker.verdicts.map(verdict => {
       const finding = byKey.get(verdict.key), saved = merged.get(verdict.key), danger = finding.danger !== false || verdict.danger !== false;
-      const quote = verdict.codeQuote, evidence = headEvidence.find(item => item.file === finding.file), content = evidence?.content;
+      const evidence = headEvidence.find(item => item.file === finding.file);
       const deletionEvidence = evidence?.deletionEvidence;
-      const provenRejection = !!deletionEvidence || text(quote) && !quote.includes('[credential-shaped') && typeof content === 'string' && content.includes(quote);
-      const retained = danger && verdict.outcome === 'rejected' && !provenRejection;
+      const retained = danger && verdict.outcome === 'rejected';
       return { ...verdict, ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, danger,
         origin: saved && saved.danger !== false ? saved.origin : verdict.origin,
         dangerCase: danger ? verdict.dangerCase ?? saved?.dangerCase ?? 'unknown' : null,
         dangerReason: danger && verdict.danger === false ? 'Сохранена ранее отмеченная или неясная опасность. ' + verdict.dangerReason : verdict.dangerReason,
-        ...(retained ? { outcome: 'confirmed', closed: false, rejectionUnproven: true, reason: 'Отклонение не подтверждено цитатой или удалением файла. ' + verdict.reason } : {}) };
+        ...(retained ? { outcome: 'unresolved', closed: false, rejectionUnproven: true, reason: 'Отклонение опасной или неразмеченной находки оспаривается; находка остаётся открытой. ' + verdict.reason } : {}) };
     });
     requireValue(treeIdentity(worktree) === identity, 'HEAD/tree changed during review; result discarded');
     for (const verdict of checked) {
