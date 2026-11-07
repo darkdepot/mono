@@ -154,10 +154,12 @@ function recordLines(body){
   .flatMap(block=>(block.fenced?block.content:block.text).split(/\r?\n/));
 }
 function recordCount(body,type,project){
- if(type==='mono-brief')return approvalBlocks(body).filter(block=>{
-  if(block.info!=='mono-brief')return false;
-  try{return JSON.parse(block.content).project===project;}catch{return false;}
- }).length;
+ if(type==='mono-brief'){
+  const blocks=approvalBlocks(body).filter(block=>block.fenced||block.text.trim());
+  const markers=blocks.filter(block=>block.info==='mono-brief');
+  if(markers.length!==1||blocks.at(-1)!==markers[0])return 0;
+  try{return JSON.parse(markers[0].content).project===project?1:0;}catch{return 0;}
+ }
  if(type==='mono-research')return approvalBlocks(body).filter(block=>block.info==='mono-research').length;
  const markers=['mono-idea: approved','mono-prd: approved','mono-design: approved','mono-tech: approved','mono-package: start'];
  type=markers.find(marker=>marker.split(':')[0]===type)??type;

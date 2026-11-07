@@ -1698,6 +1698,32 @@ for(const state of ['unknown prior content','unsupported operation'])test(`MONO-
  const result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/patch.*(?:prior content|unsupported)|unsupported.*patch/);
 });
 
+function briefBindingFixture(t,host){
+ const f=textFixture(t,host,'defer');f.request.expectedRecords.push({type:'mono-brief',count:1});
+ const marker='```mono-brief\n'+JSON.stringify({project:projectId})+'\n```';
+ const content='## Суть сейчас\n[source](README.md)\n\n## Отброшено\n\n`````text\n```mono-brief\n{"project":"old-project"}\n```\n`````\n\n'+marker;
+ const doc={id:'brief',projectId,title:'Any title',content};
+ f.events.splice(7,0,{},{});
+ const set=(value,stored=value)=>{
+  f.events[7]=f.call('brief-write','mcp__monotest__save_document',{projectId,title:doc.title,content:value});
+  f.events[8]=f.result('brief-write',{...doc,content:value});
+  f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',{...doc,content:stored});
+ };
+ return {...f,content,marker,set};
+}
+for(const host of ['claude','codex'])test(`MONO-357 ${host}: terminal Brief binding survives Linear round-trip and old-text quotes`,t=>{
+ const f=briefBindingFixture(t,host);f.set(f.content);assert.equal(f.check().status,'passed');
+ const crlf=f.content.replaceAll('\n','\r\n')+'\r\n \t\r\n';
+ f.set(crlf,crlf.replace('[source](README.md)','[source](<README.md>)'));
+ assert.equal(f.check().status,'passed',f.check().reason);
+});
+for(const host of ['claude','codex'])for(const state of ['trailing-text','foreign-final','duplicate-own'])test(`MONO-357 ${host}: Brief binding rejects ${state}`,t=>{
+ const f=briefBindingFixture(t,host);
+ const tail=state==='trailing-text'?'Text after the marker.':state==='duplicate-own'?f.marker:'```mono-brief\n{"project":"other-project"}\n```';
+ f.set(f.content+'\n\n'+tail);
+ const result=f.check();assert.equal(result.status,'failed');assert.match(result.reason,/observed (?:0|2)/);
+});
+
 test('mono-brief record counting uses a project-bound code block, not title or quoted old text', t => {
  const f=textFixture(t,'claude','defer');f.request.expectedRecords.push({type:'mono-brief',count:1});
  f.events.splice(7,0,{},{});
