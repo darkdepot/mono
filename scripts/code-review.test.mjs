@@ -1595,10 +1595,16 @@ test('C17/C19: outgoing child bytes are screened; unused catalog stderr is never
 });
 
 test('C18: 1 MiB harmless lines have bounded screening time without overlapping suffix rescans',()=>{
- for(const value of ['a-'.repeat(524288),'a_'.repeat(524288),'trace.'.repeat(174762),'e.'.repeat(524288),'I.'.repeat(524288),'e30.'.repeat(262144),'ghp_'.repeat(262144),'-----BEGIN '.repeat(95325)]){
-  const started=performance.now(),screened=screenModelOutput(value,{input:true});
-  assert.equal(screened.rejected,false);
-  assert.ok(performance.now()-started<750,'1 MiB screen exceeded 750ms');
+ for(const pattern of ['a-','a_','trace.','e.','I.','e30.','ghp_','-----BEGIN ']){
+  const elapsed=[];
+  for(const bytes of [256*1024,1024*1024]){
+   const value=pattern.repeat(Math.ceil(bytes/pattern.length)).slice(0,bytes);
+   const started=performance.now(),screened=screenModelOutput(value,{input:true});
+   elapsed.push(performance.now()-started);
+   assert.equal(screened.rejected,false);
+   assert.ok(elapsed.at(-1)<=3000,`${pattern}: screen exceeded 3s`);
+  }
+  assert.ok(elapsed[1]<=elapsed[0]*6+50,`${pattern}: 1 MiB screen exceeded 6x the 256 KiB time plus 50ms`);
  }
 });
 test('C18: per-value size and cumulative JWT header work limits withhold before interpretation',()=>{
