@@ -363,7 +363,7 @@ function gitHas(repo, spec) {
 const BACKTICKED_PATH = /`((?:[\w.-]+\/)+[\w.-]+|[\w.-]+\.(?:md|markdown|jsonc?|ya?ml|toml|ini|cfg|conf|txt|csv|xml|html?|css|scss|[cm]?js|jsx|[cm]?ts|tsx|py|go|rs|rb|php|java|kt|swift|[ch]|[ch]pp|sh|sql|lock))(?::\d+(?:-\d+)?)?`/gi;
 const PATH_LIKE = new RegExp(`https?:\\/\\/[^/\\s]+\\/[^/\\s]+\\/[^/\\s]+\\/(?:-\\/)?(?:blob|tree)\\/|${BACKTICKED_PATH.source}`, 'i');
 
-// Advisory only: notes stay outside the fingerprint and may carry the old project text verbatim,
+// Advisory only: the brief draft stays outside the fingerprint and may quote old project text,
 // so findings are reported for the agent to fix in its own fact lines and never block the record.
 // A blob/tree link is checked on the branch it names (local or origin/, slashes in the branch
 // allowed), because the link opens that branch, not the working tree; backticked paths are
@@ -406,7 +406,7 @@ export function lintNotes(notes, repo = repositoryRoot()) {
 function recordIdea(options, config) {
   if (!options['--draft'] || !options['--out'] || !options['--config']) fail('read-failed');
   const draft = fs.readFileSync(options['--draft'], 'utf8'), headings = configuredHeadings(config);
-  const notes = options['--notes'] ? fs.readFileSync(options['--notes'], 'utf8') : '';
+  const briefDraft = options['--brief-draft'] ? fs.readFileSync(options['--brief-draft'], 'utf8') : '';
   const found = sections(draft, headings, true, true), fingerprint = ideaFingerprint(draft, headings);
   const body = KEYS.slice(0, 3).map(key => {
     const content = [...found[key]];
@@ -415,21 +415,22 @@ function recordIdea(options, config) {
   }).join('\n\n') + '\n';
   let comment;
   if (options['--project']) {
-    if (!uuid(options['--project'])) fail('read-failed');
+    const brief = options['--brief'];
+    if (!uuid(options['--project']) || !/^https:\/\/[^\s<>()`]+$/u.test(brief ?? '') || !new URL(brief).hostname) fail('read-failed');
     const runs = [...draft.matchAll(/`+/g)].map(match => match[0].length);
     const fence = '`'.repeat(Math.max(3, ...runs.map(length => length + 1)));
     comment = `\`\`\`text\nmono-idea: approved project=${options['--project']} sha256=${fingerprint}\n\`\`\`\n\n` +
-      `${fence}mono-idea-snapshot\n${draft}\n${fence}\n\n## Заметки для Research и Handoff\n\n${notes}`;
+      `${fence}mono-idea-snapshot\n${draft}\n${fence}\n\nБриф: ${options['--brief']}`;
     comment = comment.replace(/[\r\n]+$/, '');
-    // Notes are outside the fingerprint, but cannot introduce another record.
+    // The brief link is outside the unchanged approval fingerprint.
     approvedRecord({ id: 'record', body: comment }, options['--project'], headings);
   }
   fs.mkdirSync(options['--out'], { recursive: true });
   fs.writeFileSync(path.join(options['--out'], 'body.md'), body);
   if (comment !== undefined) fs.writeFileSync(path.join(options['--out'], 'comment.md'), comment);
-  const repo = options['--notes'] ? repositoryRoot() : null;
-  const warnings = options['--notes'] ? lintNotes(notes, repo) : [];
-  const unchecked = Boolean(options['--notes']) && !repo && PATH_LIKE.test(notes);
+  const repo = options['--brief-draft'] ? repositoryRoot() : null;
+  const warnings = options['--brief-draft'] ? lintNotes(briefDraft, repo) : [];
+  const unchecked = Boolean(options['--brief-draft']) && !repo && PATH_LIKE.test(briefDraft);
   console.log(JSON.stringify({ body: path.join(options['--out'], 'body.md'),
     ...(comment !== undefined ? { comment: path.join(options['--out'], 'comment.md') } : {}), fingerprint,
     ...(warnings.length ? { warnings } : {}), ...(unchecked ? { paths: 'unchecked' } : {}) }));
@@ -692,7 +693,7 @@ function authoringMain(argv) {
   const command = argv.shift(), options = {};
   let result;
   try {
-    const allowed = { record: ['--project', '--draft', '--notes', '--config', '--out'],
+    const allowed = { record: ['--project', '--draft', '--brief', '--brief-draft', '--config', '--out'],
       verify: ['--project', '--dump', '--expect', '--config'], helper: ['--host', '--config'] }[command];
     while (argv.length) {
       const key = argv.shift();
@@ -866,7 +867,7 @@ function researchDraftMain(argv) {
 
 function main(argv) {
   if (argv.length === 1 && argv[0] === '--help') {
-    console.log(`Usage: idea-gate.mjs record --draft APPROVED --config CONFIG --out DIR [--project UUID] [--notes NOTES]
+    console.log(`Usage: idea-gate.mjs record --draft APPROVED --config CONFIG --out DIR [--project UUID --brief URL] [--brief-draft FILE]
        idea-gate.mjs verify --project UUID --dump DIR --expect COMMENT --config CONFIG
        idea-gate.mjs helper --host claude-code|codex [--config CONFIG]
        idea-gate.mjs check --mode fresh --dump DIR --config CONFIG
@@ -887,9 +888,10 @@ Only the fields the script reads are needed: project uuid, createdAt, status.nam
 per page comments, hasNextPage, cursor; per comment id, createdAt, updatedAt and body.
 verify accepts comments without body (they cannot match --expect); check --dump needs every body.
 record refuses unrecognized sections or text outside the four sections before writing files.
-record --notes (with or without --project) adds advisory "warnings" for long dashes and
+With --project, --brief requires an HTTPS document URL; the comment links the Brief instead of notes.
+record --brief-draft (with or without --project) adds advisory "warnings" for long dashes and
 repository paths that do not exist: blob/tree links on the branch they name (local or origin/),
-backticked paths in the checkout holding the current directory. Outside a checkout, notes with
+backticked paths in the checkout holding the current directory. Outside a checkout, drafts with
 such paths add "paths":"unchecked".
 research-draft prints {ok, measures, findings} for a Research document draft or its read-back:
 reader limits in words, fact codes outside evidence lines, dates without a year, long dashes,

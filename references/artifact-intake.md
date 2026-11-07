@@ -87,7 +87,7 @@ Chat final (one Russian sentence, e.g.):
 Never paste local artifact bodies directly into Linear. Translate inspected
 evidence into the right durable shape:
 
-- Project: concise product brief and lifecycle container.
+- Project: concise project description and lifecycle container.
 - PRD: WHAT, operator workflow, requirements, acceptance, and boundaries.
 - Tech Spec: HOW, contracts, failure modes, validation, rollout, rollback.
 - Issue: one-PR execution contract with context snapshot and proof plan.

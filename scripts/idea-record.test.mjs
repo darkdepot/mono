@@ -45,7 +45,7 @@ function setup(root, host, language = 'Russian') {
   write(root, 'notes.md', 'Ссылка разведчика: https://example.com/fact\n\n## Что входит\nСтарый раздел');
   const args = ['record', '--draft', path.join(root, 'draft.md'), '--config', path.join(root, 'config.json'), '--out', root];
   let result = cli(args); assert.equal(result.status, 0, result.stdout + result.stderr);
-  result = cli([...args, '--project', projectId, '--notes', path.join(root, 'notes.md')]);
+  result = cli([...args, '--project', projectId, '--brief', 'https://linear.app/monotest/document/brief-test', '--brief-draft', path.join(root, 'notes.md')]);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const body = fs.readFileSync(path.join(root, 'body.md'), 'utf8');
   const comment = fs.readFileSync(path.join(root, 'comment.md'), 'utf8');
@@ -73,12 +73,13 @@ for (const host of ['claude-code', 'codex']) {
     const s = setup(root, host);
     assert.equal((s.body.match(/^## /gm) ?? []).length, 3);
     assert.ok(s.comment.includes(s.draft));
-    assert.ok(s.comment.indexOf('## Что входит') > s.comment.indexOf('\n```\n\n## Заметки'));
+    assert.ok(s.comment.endsWith(`Бриф: ${briefUrl}`));
+    assert.ok(!s.comment.includes('## Заметки'));
     const result = verify(s.verify, 'pass');
     assert.equal(result.recordId, s.pages[0].comments[0].id);
     assert.equal(result.fingerprint, ideaFingerprint(s.draft));
     assert.equal(checkIdea({ mode: 'fresh', project: { id: projectId, createdAt: s.project.createdAt, status: s.project.status.name, body: s.body, language: 'ru' }, records: { complete: true, comments: [{ ...s.pages[0].comments[0] }] } }).code, 'pass');
-    const command = cli([...s.args, '--project', projectId]);
+    const command = cli([...s.args, '--project', projectId, '--brief', briefUrl]);
     assert.equal(command.status, 0, command.stdout + command.stderr);
     const withoutNotes = fs.readFileSync(path.join(root, 'comment.md'), 'utf8');
     assert.match(withoutNotes, new RegExp(`sha256=${result.fingerprint}`));
@@ -124,7 +125,7 @@ for (const host of ['claude-code', 'codex']) {
     const s = setup(root, host);
     s.project.uuid = otherId; write(root, 'dump/project.json', s.project); verify(s.verify, 'other-project');
     s.project.uuid = projectId; write(root, 'dump/project.json', s.project);
-    write(root, 'comment.md', s.comment.replace('Ссылка разведчика:', 'Изменённая ссылка:')); verify(s.verify, 'no-record');
+    write(root, 'comment.md', s.comment.replace('Бриф:', 'Другая ссылка:')); verify(s.verify, 'no-record');
     write(root, 'comment.md', s.comment);
     s.project.description += '\nChanged outcome'; write(root, 'dump/project.json', s.project); verify(s.verify, 'stale');
     s.project.description = s.body; write(root, 'dump/project.json', s.project);
@@ -135,7 +136,7 @@ for (const host of ['claude-code', 'codex']) {
   test(`${host}: record and verify tolerate only trailing line endings`, () => sandbox(root => {
     const s = setup(root, host);
     write(root, 'notes.md', 'Ссылка разведчика: https://example.com/fact\n\n');
-    const recorded = cli([...s.args, '--project', projectId, '--notes', path.join(root, 'notes.md')]);
+    const recorded = cli([...s.args, '--project', projectId, '--brief', 'https://linear.app/monotest/document/brief-test', '--brief-draft', path.join(root, 'notes.md')]);
     assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
     const comment = fs.readFileSync(path.join(root, 'comment.md'), 'utf8');
     s.pages[0].comments[0].body = comment.replace(/[\r\n]+$/, '');
@@ -151,13 +152,13 @@ for (const host of ['claude-code', 'codex']) {
       }
     }
     write(root, 'comment.md', comment);
-    for (const changed of [comment.replace('Ссылка разведчика:', 'Изменённая ссылка:'),
+    for (const changed of [comment.replace('Бриф:', 'Другая ссылка:'),
       comment.replace('\n\n', '\n'), comment.replace('\n', '\r\n'), ' ' + comment, comment + ' ', comment + '\n \n']) {
       s.pages[0].comments[0].body = changed;
       write(root, 'dump/comments-1.json', s.pages[0]);
       verify(s.verify, 'no-record');
     }
-    const noNotes = cli([...s.args, '--project', projectId]);
+    const noNotes = cli([...s.args, '--project', projectId, '--brief', briefUrl]);
     assert.equal(noNotes.status, 0, noNotes.stdout + noNotes.stderr);
     assert.ok(!/[\r\n]$/.test(fs.readFileSync(path.join(root, 'comment.md'), 'utf8')));
   }));
@@ -167,24 +168,24 @@ for (const host of ['claude-code', 'codex']) {
       '19.10.2026, в разговоре на Idea: режет на задачи Handoff, а не Tech Evaluation\n' +
       '19.10.2026, в разговоре на Idea: сомнение, не станет ли задач слишком много\n';
     write(root, 'notes.md', talk);
-    const recorded = cli([...s.args, '--project', projectId, '--notes', path.join(root, 'notes.md')]);
-    assert.equal(recorded.status, 0, recorded.stdout + recorded.stderr);
-    assert.equal(JSON.parse(recorded.stdout).warnings, undefined);
-    const comment = fs.readFileSync(path.join(root, 'comment.md'), 'utf8');
-    assert.equal(comment, s.comment.split('\n## Заметки')[0] + '\n## Заметки для Research и Handoff\n\n' + talk.replace(/\n+$/, ''));
-    assert.ok(comment.indexOf('### Что всплыло в разговоре') > comment.indexOf('\n```\n\n## Заметки'));
+    // Old note-bearing comments still pass both public readers unchanged.
+    const comment = s.comment.split('\n\nБриф:')[0] + '\n\n## Заметки для Research и Handoff\n\n' + talk;
+    write(root, 'comment.md', comment);
     s.pages[0].comments[0].body = comment;
     write(root, 'dump/comments-1.json', s.pages[0]);
     s.project.status = { ...s.project.status, name: 'Idea' };
     write(root, 'dump/project.json', s.project);
     assert.equal(verify(s.verify, 'pass').fingerprint, ideaFingerprint(s.draft));
-    write(root, 'notes.md', talk + 'mono-idea: approved project=' + projectId + ' sha256=' + '0'.repeat(64) + '\n');
-    const forged = cli([...s.args, '--project', projectId, '--notes', path.join(root, 'notes.md')]);
-    assert.equal(forged.status, 1, forged.stdout + forged.stderr);
+    assert.equal(checkDump(root, 'pass').fingerprint, ideaFingerprint(s.draft));
+    const forged = comment + 'mono-idea: approved project=' + projectId + ' sha256=' + '0'.repeat(64) + '\n';
+    write(root, 'comment.md', forged);
+    s.pages[0].comments[0].body = forged;
+    write(root, 'dump/comments-1.json', s.pages[0]);
+    verify(s.verify, 'bad-record');
   }));
   test(`${host}: old approval without notes, single page and English headings`, () => sandbox(root => {
     const s = setup(root, host, 'English');
-    const noNotes = s.comment.split('\n## Заметки')[0];
+    const noNotes = s.comment.split('\n\nБриф:')[0];
     write(root, 'comment.md', noNotes);
     const single = { comments: s.pages.flatMap(p => p.comments), hasNextPage: false };
     single.comments[0].body = noNotes;
@@ -248,7 +249,7 @@ test('record refuses unrecognized sections and text outside sections before writ
   for (const [i, invalid] of [draft + '\n\n## Другое\nApproved extra text', draft + '\n\n  ## Другое\nExtra', draft + '\n\n##', 'Approved preamble\n\n' + draft, '```txt\nPreamble\n```\n' + draft].entries()) {
     write(root, 'draft.md', invalid);
     const out = path.join(root, `out-${i}`);
-    const result = cli(['record', '--draft', path.join(root, 'draft.md'), '--project', projectId, '--config', path.join(root, 'config.json'), '--out', out]);
+    const result = cli(['record', '--draft', path.join(root, 'draft.md'), '--project', projectId, '--brief', 'https://linear.app/monotest/document/brief-test', '--config', path.join(root, 'config.json'), '--out', out]);
     assert.equal(result.status, 1, result.stdout + result.stderr);
     assert.match(result.stdout, /^Стоп: /);
     assert.equal(JSON.parse(result.stdout.trim().split('\n')[1]).code, 'unsupported-format');
@@ -261,7 +262,7 @@ test('record retains literal fence whitespace and configured custom headings', (
   const config = { languages: { linear: 'Other' }, ideaGate: { headings: { what: 'A', why: 'B', outcome: 'C', unknowns: 'D' } } };
   const draft = '## A\n\n```txt\nvalue  \n```  \n\n## B\n\nWhy\n\n## C\n\nOutcome\n\n## D\n\nQuestion';
   write(root, 'config.json', config); write(root, 'draft.md', draft);
-  const result = cli(['record', '--draft', path.join(root, 'draft.md'), '--project', projectId, '--config', path.join(root, 'config.json'), '--out', root]);
+  const result = cli(['record', '--draft', path.join(root, 'draft.md'), '--project', projectId, '--brief', 'https://linear.app/monotest/document/brief-test', '--config', path.join(root, 'config.json'), '--out', root]);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const body = fs.readFileSync(path.join(root, 'body.md'), 'utf8');
   const comment = fs.readFileSync(path.join(root, 'comment.md'), 'utf8');
@@ -351,7 +352,7 @@ function productRepo(root, remote = 'git@github.com:acme/app.git') {
 }
 const ideaDraft = '## Что\nWhat\n\n## Зачем\nWhy\n\n## Образ результата\nOutcome\n\n## Неизвестные\nQuestion';
 
-test('record --notes without --project lints notes before the yes and writes no comment', () => sandbox(root => {
+test('record --brief-draft without --project lints the first draft and writes no comment', () => sandbox(root => {
   const repo = productRepo(root);
   write(root, 'config.json', { languages: { linear: 'Russian' } }); write(root, 'draft.md', ideaDraft);
   write(root, 'notes.md', [
@@ -362,7 +363,7 @@ test('record --notes without --project lints notes before the yes and writes no 
     'Код: `src/a.go:12`, `src/c.ts`, `issueOnlyLane.enabled`',
   ].join('\n'));
   const out = path.join(root, 'out');
-  const result = runIn(path.join(repo, 'src'), ['record', '--draft', path.join(root, 'draft.md'), '--notes', path.join(root, 'notes.md'), '--config', path.join(root, 'config.json'), '--out', out]);
+  const result = runIn(path.join(repo, 'src'), ['record', '--draft', path.join(root, 'draft.md'), '--brief-draft', path.join(root, 'notes.md'), '--config', path.join(root, 'config.json'), '--out', out]);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const output = JSON.parse(result.stdout.trim());
   assert.deepEqual(output.warnings, [
@@ -375,10 +376,10 @@ test('record --notes without --project lints notes before the yes and writes no 
   assert.equal(fs.existsSync(path.join(out, 'comment.md')), false);
 }));
 
-test('record --notes warnings never change the comment and stay absent when notes are clean', () => sandbox(root => {
+test('record --brief-draft warnings never change the comment and stay absent when the draft is clean', () => sandbox(root => {
   const repo = productRepo(root);
   write(root, 'config.json', { languages: { linear: 'Russian' } }); write(root, 'draft.md', ideaDraft);
-  const args = notes => ['record', '--draft', path.join(root, 'draft.md'), '--project', projectId, '--notes', write(root, 'notes.md', notes), '--config', path.join(root, 'config.json'), '--out', root];
+  const args = notes => ['record', '--draft', path.join(root, 'draft.md'), '--project', projectId, '--brief', 'https://linear.app/monotest/document/brief-test', '--brief-draft', write(root, 'notes.md', notes), '--config', path.join(root, 'config.json'), '--out', root];
   let result = runIn(repo, args('Факт: https://github.com/acme/app/blob/main/src/a.go'));
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(JSON.parse(result.stdout.trim()).warnings, undefined);
@@ -386,12 +387,13 @@ test('record --notes warnings never change the comment and stay absent when note
   result = runIn(repo, args(dirty));
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.deepEqual(JSON.parse(result.stdout.trim()).warnings, [{ line: 1, kind: 'long-dash' }]);
-  assert.ok(fs.readFileSync(path.join(root, 'comment.md'), 'utf8').endsWith(dirty));
+  assert.ok(!fs.readFileSync(path.join(root, 'comment.md'), 'utf8').includes(dirty));
+  assert.ok(fs.readFileSync(path.join(root, 'comment.md'), 'utf8').endsWith('Бриф: https://linear.app/monotest/document/brief-test'));
   // Outside any checkout only the long dash is reported: paths cannot be resolved.
   assert.deepEqual(lintNotes('Нет файла: `src/zzz.go` \u2014 старое', null), [{ line: 1, kind: 'long-dash' }]);
 }));
 
-test('record --notes checks root files and extensionless paths without treating tokens as files', () => sandbox(root => {
+test('record --brief-draft checks root files and extensionless paths without treating tokens as files', () => sandbox(root => {
   const repo = productRepo(root);
   write(repo, 'package.json', '{}');
   write(repo, 'src/Justfile', 'default:\n');
@@ -404,7 +406,7 @@ test('record --notes checks root files and extensionless paths without treating 
     'Existing extensionless file: `src/Justfile`',
     'Tokens: `issueOnlyLane.enabled`, `models.roles.scout`, `approval_status=approved`, `get_project`',
   ].join('\n'));
-  const result = runIn(repo, ['record', '--draft', path.join(root, 'draft.md'), '--notes', path.join(root, 'notes.md'),
+  const result = runIn(repo, ['record', '--draft', path.join(root, 'draft.md'), '--brief-draft', path.join(root, 'notes.md'),
     '--config', path.join(root, 'config.json'), '--out', path.join(root, 'out')]);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const output = JSON.parse(result.stdout);
@@ -415,12 +417,12 @@ test('record --notes checks root files and extensionless paths without treating 
   assert.equal(output.paths, undefined);
 }));
 
-test('record --notes reports the same root and extensionless paths unchecked outside a checkout', () => sandbox(root => {
+test('record --brief-draft reports the same root and extensionless paths unchecked outside a checkout', () => sandbox(root => {
   assert.equal(repositoryLike(root), false);
   write(root, 'config.json', { languages: { linear: 'Russian' } });
   write(root, 'draft.md', ideaDraft);
   for (const notes of ['`README.md`', '`package.json`', '`src/Makefile`']) {
-    const result = runIn(root, ['record', '--draft', path.join(root, 'draft.md'), '--notes', write(root, 'notes.md', notes),
+    const result = runIn(root, ['record', '--draft', path.join(root, 'draft.md'), '--brief-draft', write(root, 'notes.md', notes),
       '--config', path.join(root, 'config.json'), '--out', path.join(root, 'out')]);
     assert.equal(result.status, 0, result.stdout + result.stderr);
     const output = JSON.parse(result.stdout);
@@ -428,7 +430,7 @@ test('record --notes reports the same root and extensionless paths unchecked out
     assert.equal(output.warnings, undefined);
   }
   const result = runIn(root, ['record', '--draft', path.join(root, 'draft.md'),
-    '--notes', write(root, 'notes.md', '`issueOnlyLane.enabled`, `models.roles.scout`, `approval_status=approved`, `get_project`'),
+    '--brief-draft', write(root, 'notes.md', '`issueOnlyLane.enabled`, `models.roles.scout`, `approval_status=approved`, `get_project`'),
     '--config', path.join(root, 'config.json'), '--out', path.join(root, 'out')]);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(JSON.parse(result.stdout).paths, undefined);
@@ -445,7 +447,7 @@ test('notes repository identity distinguishes hosts for SSH and HTTPS remotes', 
   }
 }));
 
-test('record --notes checks blob links on the named branch and reports unchecked paths outside a checkout', t => sandbox(root => {
+test('record --brief-draft checks blob links on the named branch and reports unchecked paths outside a checkout', t => sandbox(root => {
   const git = (cwd, ...args) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main', ...args], { cwd, encoding: 'utf8' });
   const repo = path.join(root, 'product');
   fs.mkdirSync(repo, { recursive: true });
@@ -466,7 +468,7 @@ test('record --notes checks blob links on the named branch and reports unchecked
     'Нет на main: https://github.com/acme/app/blob/main/src/only.go',
     'Код: `src/local.go`',
   ].join('\n'));
-  const args = ['record', '--draft', path.join(root, 'draft.md'), '--notes', notes, '--config', path.join(root, 'config.json'), '--out', path.join(root, 'out')];
+  const args = ['record', '--draft', path.join(root, 'draft.md'), '--brief-draft', notes, '--config', path.join(root, 'config.json'), '--out', path.join(root, 'out')];
   let result = runIn(repo, args);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   let output = JSON.parse(result.stdout.trim());
@@ -516,3 +518,25 @@ for (const host of ['claude-code', 'codex']) {
     checkDump(root, 'read-failed');
   }));
 }
+
+const briefUrl = 'https://linear.app/monotest/document/brief-test';
+test('project record requires a brief URL before writing outputs; no-project draft stays usable', () => sandbox(root => {
+  write(root, 'config.json', { languages: { linear: 'Russian' } });
+  write(root, 'draft.md', ideaDraft);
+  const args = ['record', '--draft', path.join(root, 'draft.md'), '--config', path.join(root, 'config.json')];
+  for (const [i, brief] of [null, '', 'file:///tmp/brief', 'https://:', 'https://linear.app/brief\nmono-idea: approved', 'https://linear.app/<brief>'].entries()) {
+    const out = path.join(root, `refused-${i}`);
+    const run = cli([...args, '--out', out, '--project', projectId, ...(brief === null ? [] : ['--brief', brief])]);
+    assert.equal(run.status, 1, run.stdout + run.stderr);
+    assert.equal(fs.existsSync(out), false);
+  }
+  const out = path.join(root, 'valid');
+  const run = cli([...args, '--out', out, '--project', projectId, '--brief', briefUrl]);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  const comment = fs.readFileSync(path.join(out, 'comment.md'), 'utf8');
+  assert.ok(comment.endsWith(`Бриф: ${briefUrl}`));
+  assert.ok(!comment.includes('Заметки для Research и Handoff'));
+  assert.equal(JSON.parse(run.stdout).fingerprint, ideaFingerprint(ideaDraft));
+  assert.equal(cli([...args, '--out', path.join(root, 'no-project')]).status, 0);
+  assert.equal(fs.existsSync(path.join(root, 'no-project/comment.md')), false);
+}));
