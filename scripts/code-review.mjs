@@ -57,7 +57,7 @@ function exact(value, keys) {
   requireValue(object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)), 'response fields differ from schema');
 }
 function screenChildOutput(result, stdoutOptions = {}) {
-  const decode = value => typeof value === 'string' ? value : new TextDecoder('utf-8', { fatal: true }).decode(value ?? Buffer.alloc(0));
+  const decode = value => typeof value === 'string' ? value : new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(value ?? Buffer.alloc(0));
   let stdout, stderr;
   try { stdout = decode(result.stdout); stderr = decode(result.stderr); }
   catch { throw new Error('child process output withheld: non-UTF8 stream'); }
@@ -966,7 +966,7 @@ function screenedDiff(worktree, base, head, files, pathFor = screenPath) {
         try {
           const bytes = readGit(worktree, policy.env, policy.args, ['cat-file', 'blob', `${revision}:${file}`], 'blob');
           requireValue(!bytes.includes(0), 'unreadable blob');
-          const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+          const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
           const safe = screenModelOutput(content, { input: true, inputFile: file });
           requireValue(!safe.fatal && typeof safe.value === 'string', 'blob withheld');
           if (safe.fullyWithheld) withheld.push(name);
@@ -1086,7 +1086,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       const raw = paths.get(file) ?? file;
       if (!existsAt(revision, raw)) return { file, content: null };
       const bytes = git(worktree, ['cat-file', 'blob', `${revision}:${raw}`], {}, 'blob');
-      const safe = screenModelOutput(new TextDecoder('utf-8', { fatal: true }).decode(bytes), { input: true, inputFile: raw });
+      const safe = screenModelOutput(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes), { input: true, inputFile: raw });
       if (safe.fatal) throw Object.assign(new Error('pinned evidence withheld'), {
         secrets: [{ file, line: 0, weight: 'P0', reason: 'credential-family or undecodable pinned evidence; value withheld' }],
       });

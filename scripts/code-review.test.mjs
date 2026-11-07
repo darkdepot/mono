@@ -31,6 +31,37 @@ function assertUnchecked(record) {
 }
 
 const hostR6=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/host-r6-regressions.json'),'utf8'));
+test('C45: executable BOM additions and removals remain visible in diff hunks and checker evidence',async t=>{
+ for(const adding of [true,false])await t.test(adding?'add BOM':'remove BOM',async t=>{
+  const f=fixture(t),file='run.sh',source='#!/bin/sh\nprintf "ok\\n"\n',before=(adding?'':'\ufeff')+source,after=(adding?'\ufeff':'')+source;
+  fs.writeFileSync(path.join(f.worktree,file),before,{mode:0o755});f.git('add','.');f.git('commit','-qm','executable base');const base=f.git('rev-parse','HEAD');
+  const execute=()=>{
+   const result=spawnSync('python3',['-c','import subprocess,sys,json\ntry:\n r=subprocess.run([sys.argv[1]],capture_output=True); print(json.dumps({"exit":r.returncode}))\nexcept OSError as e: print(json.dumps({"errno":e.errno}))',path.join(f.worktree,file)],{encoding:'utf8'});
+   assert.equal(result.status,0,result.stderr);return JSON.parse(result.stdout);
+  };
+  assert.deepEqual(execute(),adding?{exit:0}:{errno:8});
+  fs.writeFileSync(path.join(f.worktree,file),after);f.git('add','.');f.git('commit','-qm','executable head');const head=f.git('rev-parse','HEAD');
+  assert.deepEqual(execute(),adding?{errno:8}:{exit:0});assert.match(f.git('ls-tree','HEAD',file),/^100755 /);
+  let checked=false;
+  const result=await runReviewRound({...f.request,base,head,contract:'Preserve the executable script header.'},{runRole:async request=>{
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);
+   if(request.role==='code-review'){
+    assert.match(c.diff,/@@/);assert.ok(c.diff.includes((adding?'+':'-')+'\ufeff#!/bin/sh'),'runtime-significant BOM survives the hunk');
+    return {response:review([{...sample,class:'executable-bom',file,anchor:'#!/bin/sh',evidence:'The executable shebang changes its leading BOM.',danger:true}],[file])};
+   }
+   assert.equal(c.baseEvidence.find(item=>item.file===file).content,before);assert.equal(c.headEvidence.find(item=>item.file===file).content,after);checked=true;
+   return {response:{completed:true,verdicts:[verdict({danger:true,dangerCase:'silent-result',dangerReason:'A runtime-significant executable header changed.',reason:'The changed BOM must be reviewed as code evidence.'})]}};
+  }});
+  assert.equal(checked,true);assert.equal(result.outcome,'not-converged',JSON.stringify(result.failures));assert.equal(result.findings[0].danger,true);
+  assert.match(formatReviewReport(result),/Идти дальше пока нельзя/);
+ });
+});
+test('C45: the existing Git child-output decoder preserves BOM bytes and still rejects invalid UTF8',t=>{
+ const f=fixture(t),source='\ufeff#!/bin/sh\nprintf "ok\\n"\n',file='run.sh';fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','BOM blob');const head=f.git('rev-parse','HEAD');
+ assert.equal(reviewGit(f.worktree,['cat-file','blob',head+':'+file]),source);
+ fs.writeFileSync(path.join(f.worktree,file),Buffer.from([0xff,0x0a]));f.git('add','.');f.git('commit','-qm','invalid UTF8');
+ assert.throws(()=>reviewGit(f.worktree,['cat-file','blob',f.git('rev-parse','HEAD')+':'+file]),/non-UTF8/);
+});
 test('C44: host r6 dangerous probe rejections stay disputed even with an exact current-head quote',async t=>{
  for(const probe of hostR6.probes)await t.test(probe.runId,async t=>{
   const f=fixture(t),file=probe.finding.file,source='\n'.repeat(probe.finding.line-1)+probe.checker.codeQuote+'\n';

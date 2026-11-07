@@ -72,3 +72,5 @@
 - Continue:42: retain a finding's saved danger and original origin after closure and reopening; compare evaluation inputs with a shared private identity over head, base, contract, dataset and task, independent of checkout paths.
 
 - Continue:44: retain dangerous or unmarked checker rejections as unresolved/open even with a matching quote or deleted file; both-explicit-false rejections still close. Recorded host r6 dangerous probes guard the release condition. Family substrings now hide only matched source lines and preserve diff prefixes; README, kebab titles and the complete pinned MONO-146 file remain reviewable, with existing opener and unscreenable-blob safeguards.
+
+- Preserve UTF-8 BOM bytes in the existing strict child-output, diff and checker-evidence decoders; executable shebang regressions cover adding/removing the BOM and retain invalid-UTF-8 refusal.
