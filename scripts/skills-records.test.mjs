@@ -1723,6 +1723,17 @@ for(const host of ['claude','codex'])for(const state of ['trailing-text','foreig
  f.set(f.content+'\n\n'+tail);
  const result=f.check();assert.equal(result.status,'failed');assert.match(result.reason,/observed (?:0|2)/);
 });
+for(const host of ['claude','codex'])test(`MONO-357 ${host}: terminal Brief accepts one pretty JSON project member`,t=>{
+ const f=briefBindingFixture(t,host);
+ f.set(f.content.replace(f.marker,'```mono-brief\n'+JSON.stringify({project:projectId},null,2)+'\n```'));
+ assert.equal(f.check().status,'passed',f.check().reason);
+});
+for(const host of ['claude','codex'])for(const state of ['conflicting-members','repeated-own-member','spaced-key'])test(`MONO-357 ${host}: conservative Brief binding rejects ${state}`,t=>{
+ const f=briefBindingFixture(t,host),own=JSON.stringify(projectId);
+ const json=state==='conflicting-members'?`{"project":"other-project","project":${own}}`:state==='repeated-own-member'?`{"project":${own},"project":${own}}`:`{"pro ject":${own}}`;
+ f.set(f.content.replace(f.marker,'```mono-brief\n'+json+'\n```'));
+ const result=f.check();assert.equal(result.status,'failed');assert.match(result.reason,/observed 0/);
+});
 
 test('mono-brief record counting uses a project-bound code block, not title or quoted old text', t => {
  const f=textFixture(t,'claude','defer');f.request.expectedRecords.push({type:'mono-brief',count:1});

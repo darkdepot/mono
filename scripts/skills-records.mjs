@@ -158,7 +158,9 @@ function recordCount(body,type,project){
   const blocks=approvalBlocks(body).filter(block=>block.fenced||block.text.trim());
   const markers=blocks.filter(block=>block.info==='mono-brief');
   if(markers.length!==1||blocks.at(-1)!==markers[0])return 0;
-  try{return JSON.parse(markers[0].content).project===project?1:0;}catch{return 0;}
+  // JSON.parse loses duplicate members; accept only the literal single binding.
+  const content=markers[0].content;
+  try{return JSON.parse(content).project===project&&content.replace(/[ \t\r\n]/g,'')===JSON.stringify({project})?1:0;}catch{return 0;}
  }
  if(type==='mono-research')return approvalBlocks(body).filter(block=>block.info==='mono-research').length;
  const markers=['mono-idea: approved','mono-prd: approved','mono-design: approved','mono-tech: approved','mono-package: start'];
