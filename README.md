@@ -658,7 +658,7 @@ raw idea → recorded owner approval → Project in Idea → owner or delegated 
 → mono:deploy → verification → Linear closeout and project update
 ```
 
-1. **Capture.** `mono:idea` shows the complete four-section brief, position and contextual question as its final message. The owner agrees in words. Only the named small correction is added; record and verify before any authorized Research start. Orchestrated Idea requires the exact shown text, question and verbatim owner reply.
+1. **Capture.** `mono:idea` shows the complete four-section description, position and contextual question as its final message. The owner agrees in words. Only the named small correction is added; record and verify before any authorized Research start. Orchestrated Idea requires the exact shown text, question and verbatim owner reply.
 2. **Research.** `mono:research` checks Idea before moving to Discovery, gathers facts and reads back the document and stage log, verifies and closes its task before the final result. It asks only about starting Discovery, never about approving the Research document.
 3. **Discover.** `mono:discovery` studies the product and Research, asks unknown meaning questions one at a time in text, compares outcomes and prepares the PRD before its final summary, position and question. Record the corrected document version, design route and exact reply before closing and checking the stage.
 4. **Design.** `mono:design` uses product memory and exemplars and shows checked mockup images before its final text summary, position and approval question. An image correction needs a new show. Record immutable PNGs, verify and return to the parent; Design does not start the next stage.
@@ -724,27 +724,45 @@ A returned Project with unchanged What / Why / Target outcome keeps its body,
 package and status: show all four sections, deriving Unknowns from description
 and scout facts, then record and verify. If the owner corrects those three
 sections, a Project without an approved package writes the approved body and
-preserves the old text in notes; Idea never moves status. With an
+preserves the replaced text verbatim in the Brief’s «Отброшено»; Idea never moves status. With an
 approved package, stop before recording and route the correction through
 `mono:handoff` artifact repair, then return to Idea recording and verification.
-Without the three sections, run the normal stage with the owner. Notes carry
-one-line known facts with source links for Research.
+Without the three sections, run the normal stage with the owner. Idea creates or
+updates a separate Project Brief from the conversation and scout facts; it reuses
+the document identified by its project-bound `mono-brief` block, including on return.
 
 ### Artifacts and truth
 
 `idea-gate.mjs record --draft APPROVED --config CONFIG --out DIR` готовит
 `body.md`: три раздела Idea с заголовками второго уровня. С `--project UUID`
-и необязательным `--notes NOTES` он также создаёт `comment.md`: прежняя строка
-утверждения, точный четырёхраздельный снимок и заметки вне отпечатка (с блоком «Что всплыло в разговоре»). Handoff добавляет
-разделы границ работы в тело проекта. Лишний раздел `##` или текст вне четырёх
-разделов в черновике дают «Стоп» (`unsupported-format`) до записи файлов.
-`comment.md` записывается без завершающих переводов строки. `--notes` можно
-передать и без `--project`, до утверждения: тогда появляется только `body.md`. В обоих
-случаях ответ получает необязательный `warnings`: строки заметок с длинным тире
-и пути, которых нет: ссылка `…/blob/<ветка>/<путь>` проверяется на этой ветке
-(локальной или `origin/`, только чтение git), путь в обратных кавычках в checkout, где
-запущена команда; ссылки на другие репозитории и на коммиты не проверяются. Вне
-checkout заметки с путями дают `"paths":"unchecked"`. Предупреждения не блокируют запись.
+обязательна `--brief URL`: команда создаёт `comment.md` с прежней строкой
+утверждения, точным четырёхраздельным снимком и строкой «Бриф: <ссылка>» вместо
+блока заметок. Отпечаток и проверка записи Idea не меняются: старая запись с
+заметками проходит `verify` и `check --mode fresh`. Комментарий без завершающих
+переводов строки; лишний `##` или текст вне четырёх разделов дают
+`unsupported-format` до записи файлов.
+
+Idea после проекта и до комментария создаёт или обновляет документ
+«Бриф: <проект>» по [справке брифа](references/brief.md), читаемой только по условию.
+Пять разделов: «Суть сейчас» на один экран, «Как это видит владелец», «Решения и
+повороты», «Что знаем», «Отброшено»; пустые опускаются. Поиск по последнему блоку
+`mono-brief` с UUID проекта, один документ на проект. Заменяемое тело дословно
+уходит в «Отброшено» внутри забора длиннее всех серий обратных кавычек в нём.
+После публикации комментария Idea сразу добавляет его ссылку к своей строке
+решения и читает бриф обратно; сбои переиспользуют документ и комментарий.
+Этапы после Idea пока работают по прежнему входу, их подключает T2.
+
+Сверка QA восстанавливает правки брифа через `save_document` patch. Для
+`op: replace` без `replace_all` исходная строка должна встретиться ровно один раз;
+с `replace_all: true` заменяются все совпадения, но нужно хотя бы одно. Привязка
+полного чтения и последний блок `mono-brief` проверяются как прежде.
+
+`--brief-draft FILE` передаёт черновик с первых вызовов, в том числе без проекта:
+он даёт прежние предупреждения о длинных тире и несуществующих путях, но не
+копируется в комментарий. Ссылка `…/blob/<ветка>/<путь>` проверяется на этой ветке
+(локальной или `origin/`, только чтение git), путь в обратных кавычках в checkout,
+где запущена команда; чужие репозитории и коммиты не проверяются. Вне checkout
+черновик с путями даёт `"paths":"unchecked"`. Предупреждения не блокируют запись.
 
 `idea-gate.mjs verify --project UUID --dump DIR --expect COMMENT --config CONFIG`
 читает ответы Linear как есть: `project.json`, `comments-1.json`, `comments-2.json`…

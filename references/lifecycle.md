@@ -17,11 +17,13 @@ and recovery steps live only in `skills/idea/references/record.md`. After «Го
 status stays Idea, confirmed by read-back, then `mono:check idea` must pass. A Project returned
 with the three idea sections unchanged keeps its body, package and status;
 Unknowns may be new. Without those sections, write the approved body and preserve
-old text in notes; Idea never changes the status. Owner corrections to What / Why /
+old text verbatim in the Brief’s «Отброшено»; Idea never changes the status. Owner corrections to What / Why /
 Target outcome follow that body-write path without an approved package. With an
 approved package, stop before recording and route the correction through
 `mono:handoff` artifact repair, then return to Idea recording and verification.
-Unknowns stay in the record. No Research document, PRD, Tech Spec, Issue, implementation
+Idea creates or updates the Project Brief before its approval comment and adds
+the approval link to the Idea decision row immediately after publication and reads
+it back; recovery lives in `skills/idea/references/record.md`. Unknowns stay in the record. No Research document, PRD, Tech Spec, Issue, implementation
 plan, ExecPlan or code is created here. A refusal returns to Idea.
 
 The next stage is Research (`mono:research`). The description itself is the summary,

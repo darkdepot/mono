@@ -62,7 +62,11 @@ test('Mono catalog has exactly six stage contracts, all host text replies and no
   for(const scenario of catalog.scenarios.values()){
     assert(scenario.brief.includes('Mono'));assert(scenario.expectedRecords.length);
     assert(scenario.brief.includes('cli/runs.mjs') && scenario.brief.includes('source'),'brief describes the existing neutral test product');
-    if(scenario.stage==='idea')assert.equal(scenario.seed,null);
+    if(scenario.stage==='idea'){
+      assert.equal(scenario.seed,null);
+      assert(catalog.stages.get('idea').files.includes('references/brief.md'));
+      assert(scenario.expectedRecords.some(rule=>scenario.kind==='unclear'?rule.forbidden==='mono-brief':rule.type==='mono-brief'&&rule.count===1),'Idea scenarios require the Brief after approval and forbid it without consent');
+    }
     for(const host of ['claude','codex']){
       assert(scenario.hosts[host].expectedReplies.length);
       assert(scenario.hosts[host].expectedReplies.every(r=>['approval','transition','clarification'].includes(r.role)),'roles are predetermined');

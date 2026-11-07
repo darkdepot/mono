@@ -151,6 +151,10 @@
       "type": "mono-idea",
       "version": "fresh-read-after-shown-version",
       "count": 1
+    },
+    {
+      "type": "mono-brief",
+      "count": 1
     }
   ]
 }
