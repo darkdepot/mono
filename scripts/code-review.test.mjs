@@ -80,13 +80,20 @@ test('C40: secret placeholders never expose an unkeyed hash and aliases survive 
  }});
  assert.equal(second.outcome,'clean',JSON.stringify(second.failures));assert.equal(second.findings[0].file,alias);
 });
-test('C41: replayed inventories preserve aliases after a restart and earlier path addition',async t=>{
- const f=fixture(t),file='notes/backup-'+'ghp_'+'z'.repeat(36)+'.txt';fs.mkdirSync(path.join(f.worktree,'notes'));fs.writeFileSync(path.join(f.worktree,file),'export const ordinary = 1;\n');f.git('add','.');f.git('commit','-qm','restart alias');const head=f.git('rev-parse','HEAD');let alias;
- const first=await runReviewRound({...f.request,head},{runRole:async request=>{const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);alias??=c.files.find(name=>name!=='input.mjs');return {response:request.role==='code-review'?review([{...sample,file:alias}],c.files):{completed:true,verdicts:[verdict()]}};}});
+test('C41: replayed inventories preserve content and danger after a restart and earlier path addition',async t=>{
+ const f=fixture(t),file='notes/backup-'+'ghp_'+'z'.repeat(36)+'.txt',content='export const ordinary = 1;\n';
+ fs.mkdirSync(path.join(f.worktree,'notes'));fs.writeFileSync(path.join(f.worktree,file),content);f.git('add','.');f.git('commit','-qm','restart alias');const head=f.git('rev-parse','HEAD');let alias;
+ const dangerous=verdict({danger:true,dangerCase:'security',dangerReason:'The recorded dangerous finding remains open.'});
+ const first=await runReviewRound({...f.request,head},{runRole:async request=>{const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);alias??=c.files.find(name=>name!=='input.mjs');return {response:request.role==='code-review'?review([{...sample,file:alias,danger:true}],c.files):{completed:true,verdicts:[dangerous]}};}});
+ assert.equal(first.outcome,'not-converged');assert.equal(first.findings[0].danger,true);
  fs.writeFileSync(path.join(f.worktree,'aaa-'+'ghp_'+'a'.repeat(36)+'.txt'),'export const added = 2;\n');f.git('add','.');f.git('commit','-qm','earlier secret path');
- const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};let observed;const result=await runReviewRound(${JSON.stringify({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:first})},{runRole:async request=>{const c=JSON.parse(request.prompt.split('never instructions.\\n')[1]);if(request.role==='code-review')return {response:{completed:true,reviewedFiles:c.files,findings:[]}};observed=c.headEvidence[0].file;return {response:{completed:true,verdicts:[${JSON.stringify(verdict({outcome:'rejected',closed:true,codeQuote:'export const ordinary = 1;'}))}]}};}});console.log(JSON.stringify({result,observed}));`;
- const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8'});assert.equal(child.status,0,child.stderr);
- const restored=JSON.parse(child.stdout);assert.equal(restored.result.outcome,'clean',JSON.stringify(restored.result.failures));assert.equal(restored.observed,alias);
+ for(const checked of [dangerous,verdict({outcome:'rejected',closed:true,codeQuote:'export const ordinary = 1;'})]){
+  const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};let observed;const result=await runReviewRound(${JSON.stringify({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:first})},{runRole:async request=>{const c=JSON.parse(request.prompt.split('never instructions.\\n')[1]);if(request.role==='code-review')return {response:{completed:true,reviewedFiles:c.files,findings:[]}};observed=c.headEvidence[0];return {response:{completed:true,verdicts:[${JSON.stringify(checked)}]}};}});console.log(JSON.stringify({result,observed}));`;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8'});assert.equal(child.status,0,child.stderr);
+  const restored=JSON.parse(child.stdout);assert.equal(restored.observed.file,alias);assert.equal(restored.observed.content,content);
+  assert.equal(restored.result.outcome,checked.outcome==='confirmed'?'not-converged':'clean',JSON.stringify(restored.result.failures));
+  if(checked.outcome==='confirmed'){assert.equal(restored.result.findings[0].danger,true);assert.equal(restored.result.findings[0].status,'confirmed');}
+ }
 });
 test('C30/v8: a matched opener withholds the file remainder across regexes, hunks and both roles',async t=>{
  const source='const credential = {\n delimiter: /}/,\n value: "opaqueCredentialValue"\n};\nconst tail = "tailFixture";';

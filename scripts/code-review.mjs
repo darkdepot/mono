@@ -77,7 +77,8 @@ function readGit(worktree, env, options, args, raw = false, outputFd = null, all
     cwd: worktree, env, stdio: ['ignore', outputFd ?? 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024,
   });
   const metadata = ['ls-files', 'ls-tree', 'status'].includes(args[0]) || (args[0] === 'diff' && args.some(arg => ['--raw', '--name-only', '--name-status', '--numstat'].includes(arg)));
-  const result = screenChildOutput(outputFd === null && raw !== 'blob' ? { ...captured, stdout: metadata ? screenPath(captured.stdout?.toString('utf8') ?? '') : captured.stdout } : { ...captured, stdout: '' }, { input: true, inputFile: fileArg?.slice(fileArg.indexOf(':') + 1) ?? null, inputPatch: args[0] === 'diff' && !args.some(arg => ['--raw', '--name-only', '--name-status', '--numstat'].includes(arg)) });
+  const screen = () => screenChildOutput(outputFd === null && raw !== 'blob' ? { ...captured, stdout: metadata ? screenPath(captured.stdout?.toString('utf8') ?? '') : captured.stdout } : { ...captured, stdout: '' }, { input: true, inputFile: fileArg?.slice(fileArg.indexOf(':') + 1) ?? null, inputPatch: args[0] === 'diff' && !args.some(arg => ['--raw', '--name-only', '--name-status', '--numstat'].includes(arg)) });
+  const result = metadata ? activePathAliases.run(new Map(), screen) : screen();
   if (result.error || !allowedStatuses.includes(result.status)) throw Object.assign(new Error('Git command failed; captured output withheld'), { status: result.status });
   return raw ? captured.stdout : metadata ? captured.stdout.toString('utf8') : result.stdout;
 }
