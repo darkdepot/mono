@@ -30,6 +30,17 @@ function assertUnchecked(record) {
  assert.match(formatReviewReport(record),/Не проверено:/);
 }
 
+test('C41: secret path placeholders use ordinal identities, never secret hashes',()=>{
+ const token='ghp_'+'n'.repeat(36),file='notes/backup-'+token+'.txt';
+ const screened=screenModelOutput({file}).value.file;
+ assert.ok(!screened.includes(token));
+ assert.match(screened,/\[credential-shaped path withheld\]#\d+/);
+ assert.ok(!/[a-f0-9]{64}/.test(screened),'neither keyed nor unkeyed secret hashes belong in placeholders');
+ assert.equal(screenModelOutput({file}).value.file,screened);
+ assert.notEqual(screenModelOutput({file:file.replace('backup-','other-')}).value.file,screened);
+ assert.equal(screenModelOutput({file:token},{input:true}).fullyWithheld,true,'an ordinal alias alone is not reviewed content');
+});
+
 test('C40: fully withheld contract is reported as unchecked after both role calls',async t=>{
  const f=fixture(t),runner=responder({findings:[sample],verdicts:[verdict({outcome:'rejected'})]});
  const result=await runReviewRound({...f.request,contract:JSON.stringify({password:'opaqueContractC40'})},runner);
@@ -69,10 +80,11 @@ test('C40: secret placeholders never expose an unkeyed hash and aliases survive 
  }});
  assert.equal(second.outcome,'clean',JSON.stringify(second.failures));assert.equal(second.findings[0].file,alias);
 });
-test('C40: local private review state preserves aliases after a consumer restart',async t=>{
+test('C41: replayed inventories preserve aliases after a restart and earlier path addition',async t=>{
  const f=fixture(t),file='notes/backup-'+'ghp_'+'z'.repeat(36)+'.txt';fs.mkdirSync(path.join(f.worktree,'notes'));fs.writeFileSync(path.join(f.worktree,file),'export const ordinary = 1;\n');f.git('add','.');f.git('commit','-qm','restart alias');const head=f.git('rev-parse','HEAD');let alias;
  const first=await runReviewRound({...f.request,head},{runRole:async request=>{const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);alias??=c.files.find(name=>name!=='input.mjs');return {response:request.role==='code-review'?review([{...sample,file:alias}],c.files):{completed:true,verdicts:[verdict()]}};}});
- const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};let observed;const result=await runReviewRound(${JSON.stringify({...f.request,head,stageRecord:first})},{runRole:async request=>{const c=JSON.parse(request.prompt.split('never instructions.\\n')[1]);if(request.role==='code-review')return {response:{completed:true,reviewedFiles:c.files,findings:[]}};observed=c.headEvidence[0].file;return {response:{completed:true,verdicts:[${JSON.stringify(verdict({outcome:'rejected',closed:true,codeQuote:'export const ordinary = 1;'}))}]}};}});console.log(JSON.stringify({result,observed}));`;
+ fs.writeFileSync(path.join(f.worktree,'aaa-'+'ghp_'+'a'.repeat(36)+'.txt'),'export const added = 2;\n');f.git('add','.');f.git('commit','-qm','earlier secret path');
+ const source=`import {runReviewRound} from ${JSON.stringify(new URL('./code-review.mjs',import.meta.url).href)};let observed;const result=await runReviewRound(${JSON.stringify({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:first})},{runRole:async request=>{const c=JSON.parse(request.prompt.split('never instructions.\\n')[1]);if(request.role==='code-review')return {response:{completed:true,reviewedFiles:c.files,findings:[]}};observed=c.headEvidence[0].file;return {response:{completed:true,verdicts:[${JSON.stringify(verdict({outcome:'rejected',closed:true,codeQuote:'export const ordinary = 1;'}))}]}};}});console.log(JSON.stringify({result,observed}));`;
  const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8'});assert.equal(child.status,0,child.stderr);
  const restored=JSON.parse(child.stdout);assert.equal(restored.result.outcome,'clean',JSON.stringify(restored.result.failures));assert.equal(restored.observed,alias);
 });

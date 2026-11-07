@@ -15,6 +15,12 @@ const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
 // Private local review state, separate from prompts and serialized stage records.
 const reviewKeys = new Map(), activeReviewKey = new AsyncLocalStorage(), standaloneKey = randomBytes(32);
 const privateDigest = value => createHmac('sha256', activeReviewKey.getStore() ?? standaloneKey).update(JSON.stringify(value)).digest('hex');
+const activePathAliases = new AsyncLocalStorage(), standalonePathAliases = new Map();
+function pathAlias(value) {
+  const aliases = activePathAliases.getStore() ?? standalonePathAliases, identity = JSON.stringify(value);
+  if (!aliases.has(identity)) aliases.set(identity, String(aliases.size + 1));
+  return aliases.get(identity);
+}
 function reviewKey(input) {
   const identity = JSON.stringify([fs.realpathSync(input.worktree), input.base]);
   if (reviewKeys.has(identity)) return reviewKeys.get(identity);
@@ -299,7 +305,7 @@ function encodedAnalysis(maxBytes, maxNodes) {
 }
 // Paths are payload metadata, not identifiers: embedded family values match.
 function screenPath(value, analyze = encodedAnalysis(16 * 1024 * 1024, 131072)) {
-  const original = value, hidden = match => '[credential-shaped path withheld]#' + privateDigest(match);
+  const original = value, hidden = match => '[credential-shaped path withheld]#' + pathAlias(match);
   const replace = source => {
     for (const [, pattern] of SECRET_FAMILIES) source = source.replace(new RegExp(pattern.source, pattern.flags + 'g'), hidden);
     return source.replace(/[A-Za-z0-9_.-]+/g,
@@ -317,7 +323,7 @@ function pathScreen({ raw = false } = {}) {
     const base = screenPath(original);
     // Git names are raw, even when they literally spell a serialized alias.
     const alias = base !== original || (raw && original.includes('[credential-shaped path withheld]'))
-      ? base + '#path-' + privateDigest(['review-path', original]) : base;
+      ? base + '#path-' + pathAlias(['review-path', original]) : base;
     if (originals.has(alias) && originals.get(alias) !== original) screen.collided = true;
     originals.set(alias, original); return alias;
   };
@@ -508,7 +514,7 @@ export function scanSecrets(value, options = {}) {
   const screened = screenModelOutput(value, { input: true, inputFile: options.file, inputPatch: options.patch ?? true });
   return screened.rejected ? [{ file: options.file ?? null, line: 0, weight: 'P0', reason: 'credential-family or undecodable payload; value withheld' }] : [];
 }
-const withheldMarker = /\[(?:credential-shaped (?:line|field|answer|path)|private-key answer|unreadable(?: or over-limit)? (?:model output|transport answer)) withheld\](?:#[a-f0-9]{64}(?:#path-[a-f0-9]{64})?)?/;
+const withheldMarker = /\[(?:credential-shaped (?:line|field|answer|path)|private-key answer|unreadable(?: or over-limit)? (?:model output|transport answer)) withheld\](?:#(?:[a-f0-9]{64}|[1-9][0-9]*)(?:#path-(?:[a-f0-9]{64}|[1-9][0-9]*))?)?/;
 function visibleInput(value, depth = 0) {
   if (depth > 32) return false;
   if (typeof value === 'string') {
@@ -981,7 +987,8 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       .some(row => /^:(?:160000 \d{6}|\d{6} 160000) /.test(row)), 'gitlink changes are unsupported; review the submodule separately');
     const rawFiles = git(worktree, ['diff', '--name-only', '--no-renames', '-z', base, head, '--']).split('\0').filter(Boolean);
     const previous = record.rounds.at(-1)?.head, pathFor = pathScreen({ raw: true }), paths = new Map();
-    for (const revision of new Set([base, head, previous].filter(Boolean))) {
+    // Replay inventories in stage order so new paths cannot renumber old aliases.
+    for (const revision of new Set([base, ...record.rounds.map(round => round.head), head])) {
       for (const file of git(worktree, ['ls-tree', '-r', '--name-only', '-z', revision]).split('\0').filter(Boolean)) paths.set(pathFor(file), file);
     }
     requireValue(!pathFor.collided, 'screened paths collide; files not reviewed');
@@ -1114,7 +1121,7 @@ export async function runReviewRound(input, dependencies = {}) {
       return { ...history, outcome: 'not-reviewed', round: null, costs: [], failures: [...(history?.failures ?? []), { reason: 'private review state unavailable' }] };
     }
   }
-  return activeReviewKey.run(key, () => screenedReviewRound(input, dependencies));
+  return activeReviewKey.run(key, () => activePathAliases.run(new Map(), () => screenedReviewRound(input, dependencies)));
 }
 async function screenedReviewRound(input, dependencies) {
   const history = screenModelOutput(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });

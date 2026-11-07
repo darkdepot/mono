@@ -62,3 +62,5 @@
 - Continue:39: все значения промпта проходят общий экран до обработки пути; рекурсивные JSON/base64/URL-представления, ключи и фрагменты проверяются с пределом работы, безопасное скрытие не отменяет обычный круг.
 
 - Continue:40: полностью скрытые входы перечисляются как непроверенные и не допускают clean; частичное скрытие сохраняет обычную проверку. Заглушки и алиасы используют HMAC со случайным ключом в закрытом локальном состоянии ревью вместо открытого хеша секрета.
+
+- Continue:41: remove secret-derived hashes from path placeholders; ordinal aliases replay pinned inventories in stage order and survive new paths and consumer restarts. Keep the owner-accepted exotic-encoding boundary (d-003, MONO-329); plain-form leaks and unchecked inputs still block.
