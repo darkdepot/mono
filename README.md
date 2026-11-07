@@ -33,7 +33,7 @@ PRD без `next=`: Handoff проверяет действующую техоц
 
 Оркестратор собирает определения этапа и разведчиков в `~/.claude/agents/`
 под текущий хост: только точные имена файловых, терминальных, вспомогательных,
-Linear, дизайн-Paper и поисковых инструментов. Никаких звёздочек по серверу.
+Linear, дизайн-Paper/Wonder и поисковых инструментов. Никаких звёздочек по серверу.
 [Шаблон](templates/stage-agent.md) вне `agents/`, рядом
 [хук](templates/stage-helper-hook.mjs) PreToolUse `Agent|Task`, допускающий только
 имена разведчиков этапа. Определения и путь хука сверяются при старте и перед
@@ -132,11 +132,15 @@ Discovery без второй остановки.
 проверяет `design`/`tech`. Неверные поля и сочетания — `bad-record`, не отсутствие.
 
 Дизайнер с памятью: подтверждённые эталоны в два кольца, правила владельца и
-продукта, экраны с прода. Для Design должен быть открыт Paper. Фича проходит
+продукта, экраны с прода. Design работает в Paper и Wonder: слово владельца
+для задачи → `design.tool` продукта → `paper` по умолчанию. Нужный инструмент
+не подключён — стоп с причиной и предложение второго словами; без молчаливой замены. Фича проходит
 референсы, 2–3 направления разной раскладки, сценарии и состояния; правка на месте — одно решение и показ.
-Проверка по картинке до показа. Комментарий Paper становится общим правилом,
-правилом продукта или разовой правкой, память пишет дизайнер с согласия
-владельца. PRD меняет Discovery одним касанием с утверждением макета.
+Проверка по картинке до показа. Замечания — полными ветками Paper или
+сообщениями в сессии Wonder; общее правило, правило продукта или разовая правка.
+Память вкуса пишет дизайнер только с согласия владельца. Общий порядок отделён
+от условно читаемых справок [Paper](skills/design/references/paper.md) и
+[Wonder](skills/design/references/wonder.md). PRD меняет Discovery одним касанием с утверждением макета.
 
 Владелец после Discovery соглашается с показанным PRD и стартом Design: свежая сессия дизайнера получает
 задание с PRD, исследованием, памятью и размером. В делегированном проекте эти этапы идут агентами оркестратора;
@@ -159,7 +163,13 @@ Discovery без второй остановки.
 конец хода агента возвращает результат оркестратору, отметки нет. Дизайн не
 запускает Tech Evaluation или Handoff и не спрашивает о старте следующего этапа.
 
-В Paper одна страница задачи, первая в списке; порядок задаётся полным списком
+У продукта песочница в каждом используемом инструменте; прежний файл со
+страницами задач становится песочницей без уборки. Ссылки по инструментам этап
+пишет в память продукта служебными строками без отдельного согласия. Одна
+страница на задачу со всеми кругами. Смена словом в обе стороны: снимки текущей
+версии, перерисовка следующей на странице задачи в новой песочнице, в журнале
+что перенеслось и что нет; прежние версии сохраняются. После утверждения это
+новый круг и новое утверждение. В Paper страница задачи первая в списке; порядок задаётся полным списком
 одним вызовом и читается обратно. Отказ: свежий список и один повтор, затем
 честный итог, если страница не первая. Имя и иконка обновляются вместе, «✓»
 появляется при утверждении и снимается на новом круге. Новые версии с подписью
@@ -167,11 +177,42 @@ Discovery без второй остановки.
 «Утверждено» нет. Перенос узлов для разовой уборки старых страниц ещё не проверен:
 проба при первой работе дизайна с Paper.
 
+Главный файл один на продукт, отдельно от песочниц: создаётся в `design.tool`
+(без настройки Paper) и остаётся там до слова владельца о переносе по снимкам
+по разделам. Страница — весь раздел с экранами и состояниями, как на проде;
+ссылка, дата, версия и проверенный коммит основной ветки живут в памяти продукта.
+Задача в любом инструменте берёт опоры со снимков страниц. До рисунка отсутствующая
+страница уже выпущенного раздела собирается целиком: Wonder из кода проверенного выпуска, Paper по снимкам
+живого продукта той версии. Актуальность сверяется между коммитом раздела и
+проверенным коммитом выпуска из доказательства доставки; невыпущенные слияния
+не основание обновлять опору. Изменения экранов между этими границами или отметка
+«устарел» требуют обновить весь раздел до рисунка, включая соседние состояния.
+Раздел ещё не выпускался — только песочница задачи и служебная строка «нет
+выпущенной основы», без страницы и выдуманного коммита. Сверка только с выпущенными
+соседями, если они есть; итог — «раздел ещё не выпущен, сверять не с чем».
+Страницу заводит Live QA Deploy после первого выпуска по экранам, как на проде.
+
+До показа агент снимает страницу раздела и сверяет соседние экраны и состояния;
+расхождения входят в итог. Главный инструмент недоступен — «не сверено» с причиной,
+показ продолжается. Утверждение главный файл не меняет. После выпуска Live QA
+Deploy заменяет только затронутые экраны по живому продукту, записывает дату,
+версию и отличия от утверждённых PNG. Непроверенные соседние изменения не дают
+продвинуть проверенный коммит или снять старую отметку. Нет инструмента либо
+обновление не удалось — сообщение и «раздел устарел после выпуска <дата>»;
+итог выпуска сохраняется. Служебные строки пишутся без согласия, правила вкуса
+по-прежнему только дизайнером с согласия. Живой Deploy-путь проверит первая
+задача после выпуска; сценарии Design его не покрывают.
+
 Утверждение связывает `canvas` (HTTPS-ссылку на макет), `tool=paper|wonder`,
 неизменяемую папку PNG и версию PRD. Старое `paper=` без новых полей читается
 как `canvas` с `tool=paper`. Смесь видов, неполная пара `canvas`/`tool` и
 неизвестный инструмент дают `bad-record`; повреждённая последняя запись
-не заменяется более ранней. Шаги работы в Wonder добавляются отдельно.
+не заменяется более ранней. В Wonder `take_screenshot` в режиме `full` на каждый
+артборд; клиентский PNG либо отрисовка `get_element_code` с контекстом, шрифтами
+и заливкой корня. Агент сравнивает отрисовку со снимком Wonder: расхождение
+блокирует утверждение. Большие экраны по секциям. Встроенный чат ведёт этап
+только при видимых Mono и Linear; до живой пробы основной путь — сессия этапа.
+Целый экран, Codex и чат ждут первой задачи после выпуска.
 UI-задача получает строку дизайна и пути к памяти/картинкам, применимые правила
 обоих слоёв текстом в снимке контекста. Задачи без макета, включая без проекта,
 применяют правила. Диспатч кладёт PNG конкретной записи в снимок задачи вне
@@ -241,6 +282,23 @@ ship-сертификат и не требует регистрации испо
 локальные файлы ship. Наблюдатели читают единый конфиг хоста, а не копию исполнителя. Пак подключается терминальным рецептом;
 примеры вымышленного продукта в справочнике подключением не являются.
 Проверка после выкладки сохраняется.
+
+## Обновление до 0.44.0
+
+Breaking change до 1.0: Design работает в Paper и Wonder, новые утверждения
+пишутся с `canvas`/`tool`; прежний пак эти записи не прочтёт. Старые `paper=`
+читаются новой версией. Выпуск MONO-318–MONO-320 устанавливается одной волной
+после этой задачи, откат только вперёд. Настройка `design.tool` необязательна,
+без неё Paper. Главный файл, сверка и обновление по выпускам работают в обоих
+инструментах; его инструмент не меняется со сменой инструмента задачи.
+
+Установку, тег и сверку обоих кэшей выполняет оркестратор выпуска по
+[правилам установки](references/install.md#release-0440) и Landing; этот PR
+их не выполняет. До установки — живые сценарии Design в Paper, включая
+`main-file`, на хосте оркестратора. Локальные фикстуры их не заменяют.
+Первая задача после выпуска проверит весь путь Wonder со снимками в Codex
+и чатом, а также Live QA Deploy с обновлением главного файла. Эти живые
+проверки не объявляются выполненными по чтению справок.
 
 ## Обновление до 0.43.0
 
@@ -1128,6 +1186,10 @@ require comparable completed waves under the cost protocol.
 
 ## Plugin Installation
 
+For Design, connect the selected Paper or Wonder tools in the stage session;
+see [Design tool setup](references/install.md#design-tools-mono-319). Rebuild
+stage-agent allowlists and start fresh sessions after changes.
+
 ### Users without an orchestrator
 
 Use this setup on a user machine where no Mono orchestrator runs tasks. Both
@@ -1595,7 +1657,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | [mono:idea](skills/idea/SKILL.md) | Idea intake and recorded owner approval; Research starts by owner or delegated orchestrator |
 | [mono:research](skills/research/SKILL.md) | Facts before a solution, Research document and next-step advice without owner questions |
 | [mono:discovery](skills/discovery/SKILL.md) | Solution found with the owner in conversation, explicit choice and version-approved PRD; same stage for owner or delegated orchestrator |
-| [mono:design](skills/design/SKILL.md) | Designer stage after PRD routing, consented taste memory and immutable Paper/PNG approval; orchestrator chooses with reasons |
+| [mono:design](skills/design/SKILL.md) | Designer stage after PRD routing, consented taste memory and immutable Paper/Wonder PNG approval; orchestrator chooses with reasons |
 | [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) | One checked technical solution, one version-approved plain-language page, then a short Tech Spec; same stage for owner or delegated orchestrator |
 | [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
 | [mono:handoff](skills/handoff/SKILL.md) | Team lead: reconciles approved inputs, slices (one Issue by default), one reviewed package record, Ready; work starts by owner or delegated orchestrator; repair by the record |
@@ -1767,6 +1829,10 @@ incomplete fields and a damaged latest record through the shared reader and the
 `design`/`route` commands. Run them with
 `node --test scripts/idea-gate.test.mjs scripts/design-gate.test.mjs scripts/skills-records.test.mjs scripts/project-config.test.mjs`;
 config cases accept Wonder and omitted defaults and reject unsupported tools.
+Paper guard regressions use a real stdio relay fixture for two allowed test files,
+missing/foreign IDs and forbidden actions: `node --test scripts/skills-catalog.test.mjs`.
+The live Design approve/correction/empty and main-file scenarios run on the orchestrator host,
+not in a delivery worker; local fixtures do not certify live stage behavior.
 It also runs the [skills host probe regression](evals/scenarios/probe/README.md):
 recorded window replies from both hosts and the Claude text-before-window defect/control.
 Run it alone with `node --test scripts/skills-probe.test.mjs`. These local samples
@@ -1805,7 +1871,8 @@ release/acceptance still select the full catalog. Mono's own config is activated
 only after 0.42.0 is installed. The expected items are frozen before the first host call;
 removed scenarios are refused. Main paths use short chains in one fresh monotest
 project, other neighbors use their own seeds. Design requires a request-supplied
-Paper file id and the neutral pre-execution guard. These data files are not part
+Paper file list (`paper.fileIds`, sandbox first) and the neutral pre-execution guard.
+Wonder is outside this harness; its first acceptance is a live task after release. These data files are not part
 of normal required reading. Project manifests use `get_project.uuid` as `id`;
 invalid or required missing manifests fail that stage, leave later chain stages unverified,
 and preserve the suite result while other units continue. Seed prompts request

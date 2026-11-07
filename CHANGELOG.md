@@ -6,6 +6,31 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-11-06
+
+<!-- fragment: MONO-318 sha256:399fff2c4417e9c203f0c39ac70e143bfe0937245bde7f1a9ed52831b9fde362 -->
+- Design approvals now write `canvas` and `tool=paper|wonder`; one shared reader keeps legacy Paper approvals valid and rejects mixed or incomplete records without falling back from a damaged latest approval. Product config validates optional `design.tool` (`paper` by default, or `wonder`). Immutable PNG archives and pinned contracts are unchanged.
+
+<!-- fragment: MONO-319 sha256:b4116cb72e453e406992a4cb64fe323e8c3434baa16063695f36744589828ccb -->
+## MONO-319
+
+Этап Design получил общий порядок и отдельные справки Paper и Wonder: выбор
+по слову владельца или настройке, песочницы, смена по снимкам, замечания и
+утверждение PNG с проверкой отрисовки. Память вкуса по-прежнему требует согласия.
+Охрана стенда Paper принимает явный список тестовых файлов; живая приёмка Wonder
+остаётся за первой задачей после выпуска.
+
+<!-- fragment: MONO-320 sha256:9b0c6af4c9bc7098a9c8b839c8026dda172388638198a754bbc91496bb9cc5fc -->
+### Added
+
+- Главный файл продукта со страницами разделов, выпущенной версией и проверенным коммитом. Design берёт опоры по снимкам, собирает недостающий раздел и обновляет устаревший целиком до рисунка; до показа сверяет соседние экраны и состояния.
+- Live QA Deploy обновляет только выпущенные экраны задачи и пишет отличия от утверждённых PNG; без инструмента оставляет отметку устаревания и сообщает владельцу, сохраняя вердикт выпуска.
+- Сценарий Design в Paper проверяет актуальный, отсутствующий и устаревший разделы; запуск на хосте оркестратора. Wonder и живой шаг Deploy ждут первой задачи после выпуска.
+
+### Breaking before 1.0
+
+- Волна 0.44.0 выпускает MONO-318–MONO-320 вместе. Прежний пак не читает новые утверждения `canvas`/`tool`; откат только вперёд. Установка принадлежит оркестратору выпуска.
+
 ## [0.43.0] - 2026-11-05
 
 <!-- fragment: MONO-281 sha256:b8320d0bfd0e9b9f69047157e7dcf356eab67e699fb9c7fca7b8c29b6ec508f8 -->

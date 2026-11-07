@@ -17,6 +17,29 @@ not a runnable catalog path. Release/version changes and live Claude Desktop /
 Codex app acceptance belong to MONO-310. Historical release sections below
 report the behavior of those releases, not current stage instructions.
 
+## Design tools (MONO-319)
+
+Connect Paper and/or Wonder to the session that runs `mono:design`; verify the
+selected tool is visible after starting a fresh session. Owner words for this
+task override product `design.tool`, otherwise the default is `paper`. Missing
+selected tool stops with a reason and a spoken offer of the alternative.
+Rebuild stage-agent exact allowlists for available tools of both instruments;
+restart the orchestrator session before launching the updated definitions.
+
+The stage reads only the selected instrument's reference, uses its sandbox file
+and a page per task, and stores sandbox links as service lines in product design
+memory. Switching either way redraws from screenshots and preserves old versions;
+a switch after approval needs a new round and approval. Wonder feedback arrives
+in the stage session with consent before taste rules are stored. Its built-in
+chat may lead the stage only when Mono and Linear are visible there.
+
+Wonder PNGs come from the client-saved full screenshot or a locally rendered
+artboard with its context tokens, file fonts and root fill. The agent compares
+the rendering with the Wonder screenshot; mismatch stops approval. Whole screens,
+Codex file capture and built-in chat remain for the first live task after release.
+The scenario harness stays on Paper; `paper.fileIds` explicitly lists allowed test
+files, sandbox first. Do not use an owner file or add Wonder to this harness.
+
 ## Source Of Truth
 
 Install from the GitHub marketplace repository `darkdepot/mono`, never a local
@@ -206,6 +229,29 @@ sandbox.
 
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
 equal `VERSION`; only release tasks change them. Try unreleased code per README.
+
+### Release 0.44.0
+
+Волна MONO-318–MONO-320: выбор Paper/Wonder, новые записи `canvas`/`tool`,
+главный файл продукта и актуальность по выпускам. Breaking change до 1.0:
+прежняя версия не читает новые записи; откат только вперёд. Без `design.tool`
+остаётся Paper, старое `paper=` читается новой версией. Surface revision 5
+сохранена, закреплённые контракты не менялись.
+
+Установка только после этой выпускной задачи одной волной по Landing:
+проверенный tip, остановленные/посаженные worker-попытки, halt по всем заменяемым
+каталогам и продуктам, тег `v0.44.0` на tip, версии обоих плагинов **0.44.0**,
+полная сверка кэшей с деревом тега, затем close. Исполнитель не устанавливает
+пак. Уже идущие сессии этапов завершаются либо сохраняются до обновления;
+после установки новые сессии читают новый пак, старые правила не продолжаются.
+
+Живой стенд Paper на версии PR проверяет approve/correction/empty/main-file
+до приёмки оркестратором; его прохождение не выводится из локальных тестов.
+Wonder, полноэкранный PNG в Codex, встроенный чат и шаг Live QA Deploy с
+главным файлом проверит первая настоящая задача после выпуска по PRD/Spec.
+Результаты и границы фиксирует оркестратор; выпускной PR не заявляет эти пути
+проверенными. После выпуска главный файл остаётся в прежнем инструменте до
+прямого слова владельца о переносе, утверждение макета его не обновляет.
 
 ### Release 0.43.0
 

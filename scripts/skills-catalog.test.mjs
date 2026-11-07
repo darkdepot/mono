@@ -52,10 +52,10 @@ function fixture(t) {
 
 test('Mono catalog has exactly six stage contracts, all host text replies and no stored run identities',()=>{
   const catalog=loadCatalog(path.join(source,'index.json'));
-  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,18);
+  assert.deepEqual([...catalog.stages.keys()],Object.keys(neighbors));assert.equal(catalog.scenarios.size,19);
   for(const [id,stage] of catalog.stages){
-    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:id==='idea'?4:3);
-    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','question']:id==='idea'?['main','correction','unclear','defer']:['main','correction','unclear']);
+    assert.deepEqual(stage.neighbors,neighbors[id]);assert.equal(stage.scenarios.length,id==='research'?2:['idea','design'].includes(id)?4:3);
+    assert.deepEqual(stage.scenarios.map(p=>catalog.scenarios.get(`${id}/${p.split('/')[1]}`).kind),id==='research'?['main','question']:id==='idea'?['main','correction','unclear','defer']:id==='design'?['main','correction','unclear','continuation']:['main','correction','unclear']);
     assert(!stage.files.includes('templates/qa-output.md'));
     for(const common of ['references/owner-dialog.md','scripts/russian-stages.mjs','scripts/idea-gate.mjs']) assert(stage.files.includes(common));
   }
@@ -120,20 +120,40 @@ test('Design memory seed passes real design gate with repository prefix and arch
   assert.equal(JSON.parse(checked.stdout.trim().split('\n')[1]).code,expected,checked.stdout+checked.stderr);
   assert.equal(checked.status,expected==='pass'?0:1,checked.stdout+checked.stderr);
  };
- const result=await runSuite(suiteRequest(f,f.select(),{paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:memory}),async request=>{
+ const result=await runSuite(suiteRequest(f,f.select(),{paper:{fileIds:['fixture','second-fixture'],command:'paper',args:['mcp']},designMemoryFile:memory}),async request=>{
   if(request.context.entryStage==='design'){
-   design++;const guard=json(request.mcpServers.paper.args[1]);assert.deepEqual(request.writableRoots,[path.dirname(memory),archive,guard.exportRunDir]);assert(fs.statSync(guard.exportRunDir).isDirectory());assert(!request.scenario.prompt.includes('собирает оркестратор'));assert(!request.scenario.prompt.includes('не переноси'));assert(request.scenario.prompt.includes('обычный шаг архивации'));
+   design++;const guard=json(request.mcpServers.paper.args[1]);assert.deepEqual(guard.fileIds,['fixture','second-fixture']);assert(request.scenario.prompt.includes('["fixture","second-fixture"]'));assert.deepEqual(request.writableRoots,[path.dirname(memory),archive,guard.exportRunDir]);assert(fs.statSync(guard.exportRunDir).isDirectory());assert(!request.scenario.prompt.includes('собирает оркестратор'));assert(!request.scenario.prompt.includes('не переноси'));assert(request.scenario.prompt.includes('обычный шаг архивации'));
    assert(request.scenario.expectedReplies.every(r=>r.stage==='design'&&!r.asksStart));
    fs.cpSync(path.join(dump,'approved'),path.join(archive,'11111111-1111-1111-1111-111111111111'),{recursive:true});
    checkMemory(request.cwd,'stale-images');
    const seeded=JSON.parse(request.scenario.prompt.match(/Посей память: (.+?)\. Не меняй owner-taste/)[1]);
-   checkMemory(seeded.firstLine,'pass');
+   assert.equal(seeded.fileId,'fixture');checkMemory(seeded.firstLine,'pass');
    checkMemory(json(path.join(f.catalogDir,'seeds/prd-design.json')).designMemory.firstLine.replace('<absolute-test-product-cwd>',request.cwd),'pass');
   }else{other++;assert(!request.writableRoots?.length);}
   write(request.context.projectFile,JSON.stringify(runProject(request)));return passedStage(request);
  });
  assert.equal(result.status,'passed',JSON.stringify(result));assert(design&&other);
 });
+for (const fileIds of [['sandbox'],['sandbox','sandbox'],['sandbox','main']]) test(`main-file scenario requires an independent allowed main file: ${fileIds.join(',')}`,async t=>{
+ const f=fixture(t);
+ write(path.join(f.catalogDir,'index.json'),fs.readFileSync(path.join(source,'index.json')));
+ write(path.join(f.dir,'skills/design/SKILL.md'),'main-file scenario change\n');f.commit();
+ const selection=f.select(),unit=selection.units.find(u=>u.target==='design/main-file');
+ assert(unit,'new Design scenario selected from committed catalog');selection.units=[unit];selection.hosts=['codex'];
+ selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
+ let calls=0;
+ const result=await runSuite(suiteRequest(f,selection,{paper:{fileIds,command:'never-spawn',args:[]},designMemoryFile:path.join(f.dir,'design/memory.md')}),async request=>{
+  calls++;assert(request.seed.prompt.includes('mainFileId'));assert(request.seed.prompt.includes(JSON.stringify(path.join(f.dir,'design/memory.md'))),'setup must know the actual memory output path');assert(request.seed.prompt.includes('"mainFileId": "main"'));
+  assert(request.seed.prompt.includes('Подготовь только синтетическую память'));
+  assert(!request.scenario.prompt.includes('Посей память:'));
+  assert(request.scenario.prompt.includes('Подготовленная память:'));
+  write(request.context.projectFile,JSON.stringify(runProject(request)));return passedStage(request);
+ });
+ const valid=fileIds.length===2&&fileIds[0]!==fileIds[1];
+ assert.equal(calls,valid?1:0);assert.equal(result.status,valid?'passed':'failed',JSON.stringify(result));
+ if(!valid)assert(result.results[0].result.reason.includes('distinct sandbox and main fileIds'));
+});
+
 test('pack revision is checked again after a host and before later stages',async t=>{
  const f=fixture(t);write(path.join(f.dir,'skills/idea/SKILL.md'),'changed\n');f.commit();let calls=0;
  const result=await runSuite(suiteRequest(f,f.select()),async request=>{
@@ -146,7 +166,7 @@ test('seed route is isolated from the following stage before any real stage runs
   const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());let checked=0;
   await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-route',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,
-    mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')},async request=>{
+    mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileIds:['fixture'],command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')},async request=>{
       assert(!request.scenario.prompt.includes('Маршрут этого касания: next='),'following stage is not this touch route');
       assert(request.scenario.brief.includes('cli/runs.mjs'));assert(request.scenario.brief.includes('source'));
       if(request.seed){
@@ -227,7 +247,7 @@ test('suite persists expectations before calls and shares one read-back project 
   const selection=f.select(), selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,selection);
   const outputDir=path.join(f.dir,'run'), cwd=path.join(f.dir,'workspace'), calls=[];fs.mkdirSync(cwd);
   const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'fixture',outputDir,cwd,packRoot:f.dir,
-    mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'test-file',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'test-memory.md')},async request=>{
+    mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileIds:['test-file'],command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'test-memory.md')},async request=>{
     assert.deepEqual(json(path.join(outputDir,'expected-items.json')),selection.expectedItems);
     assert.equal(request.idleMs,20000);assert.equal(request.timeoutMs,1800000);assert(request.maxTurns>request.scenario.expectedReplies.length);
     assert.equal(request.workspaceProof.equals,'Mono Test');assert(request.scenario.prompt.includes('имитированным владельцем'));
@@ -239,8 +259,8 @@ test('suite persists expectations before calls and shares one read-back project 
     if(request.context.project)assert.equal(request.context.project.name,request.context.projectName);
     write(request.context.projectFile,JSON.stringify(request.context.project ?? {id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));
     if(request.mcpServers.paper){
-      const guard=json(request.mcpServers.paper.args[1]);assert.equal(guard.fileId,'test-file');
-      assert(request.scenario.prompt.includes('test-file'));assert(request.scenario.prompt.includes('как на проде'));
+      const guard=json(request.mcpServers.paper.args[1]);assert.deepEqual(guard.fileIds,['test-file']);
+      assert(request.scenario.prompt.includes('test-file'));assert(/как на проде/i.test(request.scenario.prompt));
     }
     calls.push(request);return passedStage(request);
   });
@@ -339,7 +359,7 @@ test('an incomplete seed stays unverified and leaves its remaining chain unverif
   assert(result.items.every(i=>i.status==='unverified'),'no incomplete chain item becomes green or a violation');
 });
 
-test('suite rejects changed catalog and missing Paper id before the first host',async t=>{
+test('suite rejects changed catalog and missing Paper file list before the first host',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/discovery/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());
   const request={selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'reject',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir};
@@ -385,7 +405,7 @@ test('bad manifests and host errors fail only their chain and always persist the
 test('stage and seed prompts request get_project.uuid and seed only its available recipe',async t=>{
   const f=fixture(t);write(path.join(f.dir,'skills/tech-evaluation/SKILL.md'),'changed\n');f.commit();
   const selectionFile=path.join(f.dir,'selection.json');saveSelection(selectionFile,f.select());const calls=[];
-  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-data',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')},async request=>{
+  const result=await runSuite({selectionFile,indexFile:path.join(f.catalogDir,'index.json'),runId:'seed-data',outputDir:path.join(f.dir,'run'),cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'https://example.test/mcp'}},paper:{fileIds:['fixture'],command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')},async request=>{
     calls.push(request);write(request.context.projectFile,JSON.stringify(request.context.project??{id:'00000000-0000-4000-8000-000000000001',name:request.context.projectName,url:'https://linear.app/monotest/project/fixture'}));return passedStage(request);
   });
   assert.equal(result.status,'passed');
@@ -411,7 +431,7 @@ test('Paper guard rejects missing/foreign file ids and forbidden actions before 
     if(m.method==='tools/list')result={tools:[{name:'get_basic_info',inputSchema:{properties:{fileId:{type:'string'}},required:[]}},{name:'archive_resources',inputSchema:{properties:{fileId:{type:'string'}}}},{name:'list_resources',inputSchema:{properties:{}}},{name:'get_guide',inputSchema:{properties:{topic:{type:'string'}},required:['topic'],additionalProperties:false}}]};
     if(m.method==='tools/call'){fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(m)+'\\n');result={content:[{type:'text',text:'ok'}]};if(m.params.name==='get_guide'&&Object.hasOwn(m.params.arguments,'fileId'))result.isError=true;}
     if(m.id!==undefined)console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));});`);
-  const request=path.join(dir,'request.json');write(request,JSON.stringify({fileId:'test-file',command:process.execPath,args:[fake],log:path.join(dir,'guard.log')}));
+  const request=path.join(dir,'request.json');write(request,JSON.stringify({fileIds:['test-file','second-test-file'],command:process.execPath,args:[fake],log:path.join(dir,'guard.log')}));
   const child=spawn(process.execPath,[path.join(source,'paper-guard.mjs'),request],{stdio:['pipe','pipe','pipe']});
   t.after(()=>child.kill('SIGTERM'));
   const lines=readline.createInterface({input:child.stdout})[Symbol.asyncIterator]();
@@ -422,15 +442,27 @@ test('Paper guard rejects missing/foreign file ids and forbidden actions before 
   };
   await call('initialize',{});const listed=await call('tools/list',{});
   assert.deepEqual(listed.result.tools.map(t=>t.name),['get_basic_info','get_guide']);assert(listed.result.tools.every(t=>t.inputSchema.required.includes('fileId')));assert(listed.result.tools[1].inputSchema.properties.fileId);
-  for(const args of [{},{fileId:'foreign-file'}])assert((await call('tools/call',{name:'get_basic_info',arguments:args})).result.isError);
+  for(const args of [{},{fileId:'foreign-file'},{fileId:['test-file']},{fileId:'test-file '}])assert((await call('tools/call',{name:'get_basic_info',arguments:args})).result.isError);
   assert((await call('tools/call',{name:'archive_resources',arguments:{fileId:'test-file'}})).result.isError);
+  assert((await call('tools/call',{name:'unknown_tool',arguments:{fileId:'test-file'}})).result.isError);
   assert((await call('resources/read',{uri:'foreign'})).result.isError);
   assert(!(await call('tools/call',{name:'get_basic_info',arguments:{fileId:'test-file'}})).result.isError);
+  assert(!(await call('tools/call',{name:'get_basic_info',arguments:{fileId:'second-test-file'}})).result.isError);
   assert((await call('tools/call',{name:'get_guide',arguments:{topic:'paper-mcp-instructions'}})).result.isError);
   assert(!(await call('tools/call',{name:'get_guide',arguments:{fileId:'test-file',topic:'paper-mcp-instructions'}})).result.isError);
   child.stdin.end();await new Promise((resolve,reject)=>{child.on('close',code=>code===0?resolve():reject(new Error(`guard exit ${code}`)));child.on('error',reject);});
-  const forwarded=fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);assert.equal(forwarded.length,2);assert.equal(forwarded[0].params.arguments.fileId,'test-file');assert.deepEqual(forwarded[1].params.arguments,{topic:'paper-mcp-instructions'});
+  const forwarded=fs.readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);assert.equal(forwarded.length,3);assert.equal(forwarded[0].params.arguments.fileId,'test-file');assert.equal(forwarded[1].params.arguments.fileId,'second-test-file');assert.deepEqual(forwarded[2].params.arguments,{topic:'paper-mcp-instructions'});
 });
+
+for(const fileIds of [undefined,[],[''],['test-file',null],'test-file'])test(`Paper guard refuses invalid file list before starting MCP: ${JSON.stringify(fileIds)}`,t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-paper-list-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const sentinel=path.join(dir,'spawned'),fake=path.join(dir,'fake.mjs');
+ write(fake,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(sentinel)},'spawned');`);
+ const request=path.join(dir,'request.json');write(request,JSON.stringify({fileIds,command:process.execPath,args:[fake],log:path.join(dir,'guard.log')}));
+ const result=spawnSync(process.execPath,[path.join(source,'paper-guard.mjs'),request],{encoding:'utf8'});
+ assert.equal(result.status,1);assert.match(result.stderr,/nonempty fileIds/);assert(!fs.existsSync(sentinel));
+});
+
 
 
 test('continue5 missing manifest paths never become an instruction to write undefined',()=>{
@@ -458,7 +490,7 @@ for(const [file,stages] of [['agents/linear-scout.md',['idea','research','discov
 test('continue5 Design preparation failures keep completed items and continue other units',async t=>{
  const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed');f.commit();
  const blocker=path.join(f.dir,'memory-blocker');write(blocker,'not a directory');
- const request=suiteRequest(f,f.select(),{paper:{fileId:'fixture',command:'paper',args:[]},designMemoryFile:path.join(blocker,'memory.md')});
+ const request=suiteRequest(f,f.select(),{paper:{fileIds:['fixture'],command:'paper',args:[]},designMemoryFile:path.join(blocker,'memory.md')});
  const calls=[];const result=await runSuite(request,async r=>{calls.push(r);write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);});
  assert.equal(result.status,'failed');assert.deepEqual(json(path.join(request.outputDir,'suite-result.json')),result);
  assert(result.items.some(i=>i.scenario==='discovery/approve'&&i.status==='passed'));
@@ -475,7 +507,7 @@ for(const mode of ['inside','inside-text','inside-lines','inside-uri','outside',
  const link=path.join(exportDir,'link.png');fs.symlinkSync(foreign,link);
  const files=mode.startsWith('inside')||mode.startsWith('delete-')||mode.startsWith('copy-')?[mode==='inside-uri'?pathToFileURL(good).href:good]:mode==='outside'?[foreign]:mode==='symlink'?[link]:[good,foreign];
  const fake=path.join(dir,'fake.mjs');write(fake,`import readline from 'node:readline';readline.createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);const result=m.method==='tools/list'?{tools:[{name:'export',inputSchema:{properties:{fileId:{type:'string'}}}}]}:{structuredContent:{files:${JSON.stringify(files)}},content:[{type:'text',text:${JSON.stringify(mode==='inside-text'?'Exported: `'+good+'`':mode==='inside-lines'?good+'\n'+good:JSON.stringify({files}))}}]};console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));});`);
- const config=path.join(dir,'guard.json');write(config,JSON.stringify({fileId:'test',command:process.execPath,args:[fake],log:path.join(dir,'guard.log'),exportDir,exportRunDir}));
+ const config=path.join(dir,'guard.json');write(config,JSON.stringify({fileIds:['test'],command:process.execPath,args:[fake],log:path.join(dir,'guard.log'),exportDir,exportRunDir}));
  const preload=path.join(dir,'faults.mjs');
  write(preload,`import fs from 'node:fs';const unlink=fs.unlinkSync,copy=fs.copyFileSync;const source=fs.realpathSync(${JSON.stringify(good)}),mode=${JSON.stringify(mode)};
  fs.unlinkSync=function(file){if(file===source&&mode.startsWith('delete-'))throw Object.assign(new Error('simulated '+mode),{code:mode.slice(7)});return unlink.apply(this,arguments);};
@@ -498,7 +530,7 @@ for(const mode of ['inside','inside-text','inside-lines','inside-uri','outside',
 for(const outcome of ['passed','throw'])test(`continue6 suite reports guard export leftovers after Design ${outcome}`,async t=>{
  const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed');f.commit();
  const leftover=path.join(f.dir,'Downloads/retained.png');let calls=0;
- const request=suiteRequest(f,f.select(),{paper:{fileId:'fixture',command:'paper',args:[]},designMemoryFile:path.join(f.dir,'design/memory.md')});
+ const request=suiteRequest(f,f.select(),{paper:{fileIds:['fixture'],command:'paper',args:[]},designMemoryFile:path.join(f.dir,'design/memory.md')});
  const result=await runSuite(request,async run=>{
   if(run.context.entryStage==='design'){
    calls++;const guard=json(run.mcpServers.paper.args[1]);
@@ -576,7 +608,7 @@ for(const condition of ['binding-only','binding-everywhere','failed','other-unve
  const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
  const selection=f.select(),unit=selection.units.find(u=>u.id==='design-approve');assert(unit.scenarios.includes('design/approve'));assert(unit.scenarios.includes('handoff/approve'));
  selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
- const request=suiteRequest(f,selection,{paper:{fileId:'fixture',command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')}),calls=[];
+ const request=suiteRequest(f,selection,{paper:{fileIds:['fixture'],command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory.md')}),calls=[];
  const result=await runSuiteWithRecords(request,async r=>{
   calls.push(r.context.entryStage);write(r.context.projectFile,JSON.stringify(runProject(r)));
   return condition==='failed-stage'?{...passedStage(r),status:'failed',reason:'real stage failed'}:condition==='unverified-stage'?{...passedStage(r),status:'unverified',reason:'host proof unavailable'}:passedStage(r);
@@ -589,7 +621,7 @@ for(const mode of ['unverified','passed','invalid-id','invalid-name','invalid-ur
  const f=fixture(t);write(path.join(f.dir,'skills/design/SKILL.md'),'changed\n');f.commit();
  const selection=f.select(),unit=selection.units.find(u=>u.id==='design-approve');selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=selection.expectedItems.filter(i=>i.unit===unit.id&&i.host==='codex');
  const calls=[],reads=[];let seedProject;
- const result=await runSuiteWithRecords(suiteRequest(f,selection,{paper:{fileId:'fixture',command:'never-spawn',args:[]},designMemoryFile:path.join(f.dir,'memory.md')}),async r=>{
+ const result=await runSuiteWithRecords(suiteRequest(f,selection,{paper:{fileIds:['fixture'],command:'never-spawn',args:[]},designMemoryFile:path.join(f.dir,'memory.md')}),async r=>{
   calls.push(r);
   if(calls.length===1){
    seedProject=runProject(r);
@@ -630,7 +662,7 @@ for(const mode of ['binding-only','bad-write','missing-page'])test(`live3 actual
  }
  if(mode==='missing-page')fs.unlinkSync(path.join(recordRequest.dumpDir,'comments-1.json'));
  const calls=[];let checked;
- const result=await runSuiteWithRecords(suiteRequest(f,selection,{runId:'m290c-a',paper:{fileId:'offline-boundary',command:'never-spawn',args:[]},designMemoryFile:path.join(f.dir,'memory.md')}),async r=>{
+ const result=await runSuiteWithRecords(suiteRequest(f,selection,{runId:'m290c-a',paper:{fileIds:['offline-boundary'],command:'never-spawn',args:[]},designMemoryFile:path.join(f.dir,'memory.md')}),async r=>{
   calls.push(r.context.entryStage);
   if(r.context.entryStage==='design')return {status:'unverified',reason:'Offline boundary: real Design evidence does not exist yet'};
   assert.equal(r.context.projectName,recordRequest.project.name);write(r.context.projectFile,JSON.stringify(recordRequest.project));
