@@ -137,7 +137,7 @@ test('dispatch pins the plugin script folder and refuses resume when that folder
   let pid;
   try {
     for (const folder of [pack, repo, root, helper, bin, temp]) fs.mkdirSync(folder, { recursive: true });
-    for (const folder of ['scripts', 'references', 'templates', 'skills']) fs.cpSync(path.join(checkout, folder), path.join(pack, folder), { recursive: true });
+    for (const folder of ['scripts', 'references', 'templates', 'skills', 'evals/code-review']) fs.cpSync(path.join(checkout, folder), path.join(pack, folder), { recursive: true });
     fs.copyFileSync(path.join(checkout, 'VERSION'), path.join(pack, 'VERSION'));
     write(path.join(bin, 'codex'), '#!/usr/bin/env node\nconsole.log(JSON.stringify({type:"thread.started",thread_id:"fixture"}));setInterval(()=>{},1000);\n');
     write(path.join(bin, 'ps'), '#!/usr/bin/env node\nconsole.log("fixture-start");\n');

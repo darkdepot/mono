@@ -1,0 +1,68 @@
+{
+  "type": "object",
+  "properties": {
+    "completed": {
+      "type": "boolean",
+      "const": true
+    },
+    "reviewedFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "class": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "anchor": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "danger": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "class",
+          "file",
+          "anchor",
+          "line",
+          "title",
+          "trigger",
+          "evidence",
+          "danger"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "completed",
+    "reviewedFiles",
+    "findings"
+  ],
+  "additionalProperties": false
+}

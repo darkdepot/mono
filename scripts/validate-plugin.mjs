@@ -28,7 +28,7 @@ export function checkPlugin(root) {
   if (fs.existsSync(path.join(root, 'plugin.json'))) failures.push('root plugin.json is forbidden');
   for (const skill of fs.readdirSync(path.join(root, 'skills'), { withFileTypes: true }).filter(entry => entry.isDirectory())) {
     const file = `skills/${skill.name}/SKILL.md`, text = fs.readFileSync(path.join(root, file), 'utf8');
-    const paths = new Set([...text.matchAll(/(?<![\w/.-])((?:<(?:корень|pack-root)>\/)?(?:skills|references|templates|scripts)\/[\w./-]+\.(?:md|mjs|json))(?![\w.-])/g)].map(match => match[1]));
+    const paths = new Set([...text.matchAll(/(?<![\w/.-])((?:<(?:корень|pack-root)>\/)?(?:skills|references|templates|scripts|evals)\/[\w./-]+\.(?:md|mjs|json))(?![\w.-])/g)].map(match => match[1]));
     for (const named of paths) {
       const resolved = resolveSkillPath(root, file, named);
       if (!resolved.startsWith(path.resolve(root) + path.sep) || !fs.existsSync(resolved) || !fs.statSync(resolved).isFile())

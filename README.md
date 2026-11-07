@@ -1661,6 +1661,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) | One checked technical solution, one version-approved plain-language page, then a short Tech Spec; same stage for owner or delegated orchestrator |
 | [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
 | [mono:handoff](skills/handoff/SKILL.md) | Team lead: reconciles approved inputs, slices (one Issue by default), one reviewed package record, Ready; work starts by owner or delegated orchestrator; repair by the record |
+| [mono:code-review](skills/code-review/SKILL.md) | Manual code report with an independent checker; delivery still uses Preflight |
 | [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |
 | [mono:check](skills/check/SKILL.md) | Readiness-only transition assessment |
 | [mono:deliver](skills/deliver/SKILL.md) | One delivery context sequencing its three phase owners |
@@ -1697,6 +1698,91 @@ Keep gates and responsibilities intact in both interactive and orchestrated deli
 
 Treat Markdown as agent instructions. Protect executable behavior with fixtures, artifact contracts with their bounded fingerprints and consumer checks, and document shape with skeleton checks. Do not encode agent-only rules twice or pin sentences. Every pack change begins with a Linear Issue; README freshness is mandatory even when the optional documentation workflow is unavailable.
 
+## Manual code review pilot
+
+`mono:code-review` reports checked code, verified findings, remaining work and
+whether ordinary checks can continue. It leaves the tree and Linear untouched.
+Use `node scripts/code-review.mjs --request <temporary.json>` with
+`{worktree,head,base,contract,risk,config}`; head/base are full immutable commits,
+the tree must be clean, config is the parsed product config. Human report is the
+default; `--json` prints the returned record. It neither runs verify nor signs or
+issues a delivery certificate. Preflight, autoreview and Ship remain unchanged.
+
+`runReviewRound(input,{runRole?})` in `scripts/code-review.mjs` is the sole circle
+boundary for the host and manual command. Input includes the task contract and
+optional `stageRecord`; output has schemaVersion, base, contractDigest, rounds,
+findings, failures, the current round and the code-computed outcome. Callers own
+persistence/signing. Technical failure returns no round and is retried once.
+Changed-file coverage gets one focused pass. Risky/1000-line first rounds add an
+ordinary second pass, combined by stable class/file/code-anchor key. The checker
+sees every open finding, original base content, current files and prior decisions;
+only its evidence closes or reopens a key. Checker wire IDs are F1..Fn; code maps
+them back to stable keys. Each failed answer is secret-scanned and capped at 8 KiB. It assigns P0-P3, R7 danger/case,
+origin relative to task base, merge key and scope/risk flags. Code adds whether
+the location changed after round one (±2 context lines), costs and failures.
+Danger is the fail-safe union of saved, reviewer and checker flags; unknown/unmarked danger stays dangerous. A previously dangerous key retains its danger and original origin even after closure and reopening. A dangerous or unmarked rejection needs an exact codeQuote present in its screened head file or Git-verified deletion from the pinned base/previous head; otherwise it stays confirmed. Contradictory merge verdicts get one batch retry, then keep separate keys. Visible damage, recognizable placeholders or downstream fail-closed
+checks do not excuse false gate refusals, altered evidence or missing readiness.
+Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
+confirmed ones stay report-only on round three; open unresolved findings block.
+Scope/risk flags persist across rounds for confirmed and rejected findings until
+new checker evidence clears them. Before each launch, secret scanning covers the
+whole context: contract, rules, diff context, findings, history and base evidence;
+payload screening uses the same bounded literal JSON decoder for input and output,
+including JSON embedded in source text; a successful decode or an ordinary source backslash is not ambiguous. One family table covers AWS AKIA/ASIA,
+GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
+JWT scanning checks every possible header suffix of at least four base64url characters in overlapping three-segment candidates, including prefixed headers, JSON whitespace and empty signatures. Every screen matches credential families and JWT as substrings anywhere, without lookaround or word boundaries on adjacent characters. This covers paths, source lines, ordinary text, JSON bindings and model output; harmless extra withholding is accepted under d-001/d-002 and remains MONO-329. The closed placeholder list and stable path aliases remain.
+Dataset v8 screens source text (diffs, blobs and non-JSON tool output) by stateless lines. A whole-word secret-like key, normalized for case, separators and camelCase, followed by quotes, optional `?`/type annotation, comments and `=`/`:`, or a `--key` flag value, hides the entire original line. A matched opener hides the entire file remainder: closing brackets, regexes, comments and quotes never end withholding. To avoid parsing boundaries, any `{`, `[` or `(` on the matched line conservatively starts this mode, even a same-line literal. Diff prefixes and line counts are preserved, across subsequent hunks and both patch sides until the next file. Partially withheld files are listed in prompts, round records and the owner report. Whole-line/block over-withholding is accepted. Reads such as `if(form.password)` and different identifiers such as `tokenizer`, `tokens` and `passwordField` remain unchanged. Decoding is only a screening view: a decoded hit maps to its original line, never rewrites unrelated source escapes such as `/\n/`. Template literals, computed/string-built keys, concatenation, heredocs and unbracketed values split across lines remain MONO-329.
+JSON keeps key/value pairing, numeric text (including unsafe JavaScript integers), duplicate-member checks, escaped-key decoding and nested JSON screening. Rule-2 JSON values may be replaced in place; empty strings and only whole lowercase `<word>` placeholders matching `^<[a-z][a-z0-9_-]{0,31}>$` with a stricter 33-character total maximum remain harmless. This includes `<redacted>`, `<secret>`, `<token>`, `<password>`, `<placeholder>` and `<your-token>`. Mixed-case, spaced, template and star values are screened. JSON bindings and complete scalar source-line bindings share this predicate; ambiguous source forms keep stateless line/remainder withholding. No fixpoint within eight layers or disagreeing JSON key/value pairing fails closed. Families absent from the table belong to MONO-329. This screens payloads
+the circle sends or retains: prompt, contract, rules, filenames, history, checker
+evidence, diagnostics and model output. It does not screen role tool reads, files
+changed after screening, or values reconstructed by evaluation (concatenation,
+character arrays, decryption).
+All model output crosses `screenModelOutput` before parsing, retention, another
+role, reporting or evaluation output. The same screen covers successful fields,
+failed answers, metadata, legacy records and derived text. One screen analyzes raw and recursively decoded JSON/escape, base64 and URL views, including keys, embedded fragments and duplicate members, before path handling. Secret-like bindings and boundary-free family/JWT matches hide original bytes; decoded text is never emitted. Failed URI percent decoding adds a replacement UTF-8 analysis view that still exposes ASCII credentials, without classifying benign malformed bytes as opaque. Partial redaction continues the review. Fully withheld contracts, files or payloads are named as unchecked and force `not-reviewed`, even after both roles answer; only unscreenable input or an alias collision refuses launch. Path placeholders and aliases use ordinal identifiers, never a keyed or unkeyed hash of a secret. Replaying the base and all recorded round inventories in stage order keeps aliases stable across rounds and process restarts, including after new paths are added. Temporary Git metadata screening uses its own alias namespace so it cannot renumber recorded findings. The contract integrity key stays in separate owner-only local state under the host temporary directory. Output schema validation remains fail-closed. There are no path, filename or exact-string screening exemptions, including synthetic credential fixtures. Plain file text never acts as patch framing. Raw text is screened before parsing, preserving duplicate JSON members and decoding escaped keys before any member can be lost. Embedded JSON strings retain native `JSON.parse` semantics; raw-text decoding maps matches to original lines without emitting the decoded view. Non-JSON text beginning with `{` or `[` remains raw text; that prefix alone never withholds a valid checker reason. Over-limit decoding, disagreeing key/value pairing
+are withheld (2 MiB per string/key or screened text, checked before parsing and matching; 8 decoding layers, 32 structural levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
+retained; records/rendering: 131072 nodes, 16 MiB). Interruption stops
+later evaluation calls and remains a scored row.
+Circle-owned text subprocesses capture stdout and stderr: Git reads,
+the native catalog, subscription checks and role launches. Both streams and their joined content cross the same family/key screen before diagnostics, metadata writes or forwarding. Pinned export blobs stream directly into private files without decoding or logging; their stderr is screened. The native catalog is consumed transiently without withholding and its unused stderr is discarded; its derived outgoing catalog is screened before it is written for the role. Safe redaction continues on both streams; unscreenable input withholds them on success,
+failure or interruption; Git errors expose no raw subprocess diagnostics. Source-text rule-2 matches hide entire original lines/blocks, while JSON blob values redact in place; both preserve patch prefixes and line counts; fully withheld inputs force `not-reviewed`. Raw blob buffers for pinned identity and exact contract hashes retain their bytes without printing or logging. Prompt diff/blob text is redacted; role file tools read the byte-exact pinned export, outside payload screening. There are no path-specific redaction exemptions.
+Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules
+come from pinned Git blobs; the host never follows AGENTS.md symlinks into files
+outside the reviewed version.
+The circle and evaluation share one host Git policy: override color, hooks and
+fsmonitor, disable configured content filters and diff/merge helpers before every
+call, and force `--no-color`, no external diff and no textconv on diff/show.
+Both roles read one temporary, read-only export of every pinned HEAD blob, with no `.git` directory. Export attributes cannot hide or rewrite files; symlinks become their target text and are listed in context. The export is removed after the circle. Neutral global/system Git config and helper overrides remain defense in depth; mutable environment overrides are not the repository-config boundary.
+Exact contract blobs keep their bytes. Worktree reads refuse gitlinks and index
+hints (`assume-unchanged`, `skip-worktree`) before inspecting files.
+Every changed path is secret-screened from both pinned blobs independently of
+attributes; NUL-containing and non-UTF8 blobs return `not-reviewed` before any role.
+Outgoing diffs use screened base/head blobs; only headers before the first hunk are normalized. An unscreenable blob withholds its whole file and lists it as unreviewed. Paths and inventories replace credential-family substrings without identifier boundaries in every channel. JWT paths require three base64url segments with a decoded algorithm header; ordinary dotted filenames remain unchanged. Aliases use screened text plus a domain-keyed digest of the full original path, stay stable across rounds and distinguish raw literal placeholder names. Any remaining collision fails closed.
+
+Outcome vocabulary is `clean`, `clean-with-successors`, `not-converged`,
+`not-reviewed`; this first slice emits no successor admission. It reports
+successorKeys and keeps their obligations not-converged until the later stage
+owner implements confirmed successor IDs. No model selects a stage outcome.
+
+Roles [code-review](references/model-policy.md#roles) and
+[code-review-checker](references/model-policy.md#roles) resolve separately with
+native subscription auth and different known families. New circle pairing
+records use `requiredPairings(config,{reviewerRole:'code-review'})`; existing
+role-less records still refer to autoreview. New records bind the full checker
+route in `reviewer.checker`; either role change requires renewed acceptance.
+New circle launches also check changed producer routes against that pair.
+Pair acceptance cannot waive the
+new roles' family boundary. Each launch has its own read-only permissions and a
+neutral working directory, with user/project configuration, hooks and connectors
+excluded. Codex gets a temporary auth-only CODEX_HOME and a native catalog with
+write/delegation tool selectors removed. Each launch probes its live tool list;
+unknown tools or MCP startup fail closed. Claude retains USER/LOGNAME for native
+login and reports its startup tool list; a tree under a denied credential directory
+is refused before any model call. Human reports name each engine, requested model,
+all observed served models (init, fallback events and modelUsage), family
+and observed boundary, including unknown observations. The [dataset instructions](evals/code-review/README.md) state the
+credential-read limitation and required live boundary tests.
+
 ## Validation
 
 The recorded [Claude PR publication probe](references/worker-contract.md#claude-pr-probe)
@@ -1731,6 +1817,13 @@ node scripts/verify.mjs
 ```
 
 The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures.
+It also runs the recorded code-review round and evaluation fixtures:
+`node --test scripts/code-review.test.mjs scripts/code-review-eval.test.mjs`.
+These prove parsing, coverage, secret refusal and result calculation; host
+isolation and live model quality remain host checks, as described in the
+[review dataset](evals/code-review/README.md).
+Checker calibration treats unclear gold danger as dangerous; removing it blocks release and leaves calibration incomplete.
+
 Design approval regressions cover legacy `paper=`, new `canvas`/`tool`, mixed or
 incomplete fields and a damaged latest record through the shared reader and the
 `design`/`route` commands. Run them with

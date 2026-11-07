@@ -1,0 +1,193 @@
+diff --git a/changelog.d/MONO-302.md b/changelog.d/MONO-302.md
+new file mode 100644
+index 0000000..cf0eb45
+--- /dev/null
++++ b/changelog.d/MONO-302.md
+@@ -0,0 +1 @@
++Исправлены контракт снимка задачи проекта, подстановка текста с двойными фигурными скобками, распознавание ведущего AFK и отклонение неполного подтверждения gates-passed. Каждый случай закреплён регрессионными тестами.
+diff --git a/evals/implement/fixture.mjs b/evals/implement/fixture.mjs
+index ed81dea..5ab3845 100644
+--- a/evals/implement/fixture.mjs
++++ b/evals/implement/fixture.mjs
+@@ -63,7 +63,6 @@ export function createFixture(id) {
+   const packageIssues = chained ? 'T0:TRAIN-0,T1:TRAIN-1' : 'T1:TRAIN-1';
+   const packageBody = `## Кратко\nУчебные заметки: ${scenario.criteria.join('; ')}.\n\n## Решения\nТолько критерии задачи; новые сервисы, PR и выкладка не входят. Дизайн не требуется; экран использует текстовое правило вкуса.\n\n## Задачи\n${chained ? 'T0: TRAIN-0 — предыдущая задача, влита\n' : ''}T1: TRAIN-1 — ${scenario.criteria.join('; ')}${chained ? '; зависит от T0' : ''}\n`;
+   const packageHash = createHash('sha256').update(packageBody).digest('hex');
+-  if (!projectless) seam = { ...seam, risk_class: 'standard', approval_status: 'approved' };
+   const issue = { id: issueId, key: 'TRAIN-1', body: issueBody, projectId, status: projectless ? 'Backlog' : 'In Progress' };
+   const approvalBody = projectless ? `Владелец утвердил TRAIN-1: ${fingerprint}`
+     : `mono-package: start project=${projectId} record=${packageId} sha256=${packageHash} issues=${packageIssues} by=owner\napproval_status=approved\nУчебный пакет и задача утверждены; проект в Delivery.`;
+diff --git a/scripts/implement-evals.test.mjs b/scripts/implement-evals.test.mjs
+index 84197a9..42e3086 100644
+--- a/scripts/implement-evals.test.mjs
++++ b/scripts/implement-evals.test.mjs
+@@ -34,7 +34,7 @@ test('implement teaching fixture creates isolated Git repos with real green and
+       const context = JSON.parse(fs.readFileSync(path.join(repo,'fixture-context.json')));
+       if (id !== 'projectless') {
+         assert.deepEqual(context.seam, { package_kind: 'project-first', lifecycle_state_entity: 'project',
+-          behavioral_oracle: null, risk_class: 'standard', approval_status: 'approved' });
++          behavioral_oracle: null, risk_class: null, approval_status: 'absent' });
+         assert.equal(context.approval.status, 'approved', 'package approval is separate from resolver seam');
+       }
+       if (id === 'projectless') {
+diff --git a/scripts/orchestrator-commands.test.mjs b/scripts/orchestrator-commands.test.mjs
+index 3f30fc1..9440521 100644
+--- a/scripts/orchestrator-commands.test.mjs
++++ b/scripts/orchestrator-commands.test.mjs
+@@ -328,6 +328,47 @@ test("extract-empty-and-closed-headings: section titles normalize while every he
+   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
+ });
+ 
++test("dispatch-placeholder-scope: inserted Issue fields stay literal and template holes refuse", () => {
++  assert.equal(renderDispatch("Issue: {{issue_body}}", { issue_body: "Use {{field_name}} and {{}} literally." }),
++    "Issue: Use {{field_name}} and {{}} literally.");
++  for (const template of ["{{missing}}", "{{}}", "{{issue_body}} {{missing}}"])
++    assert.throws(() => renderDispatch(template, { issue_body: "Issue text" }), /unfilled dispatch placeholder/u);
++  assert.throws(() => renderDispatch("{{issue_body}}", { issue_body: "" }), /unfilled dispatch placeholder/u);
++});
++
++test("accept-rejected-incomplete-ack: rejection consumes without allowing applied or blocked", async t => {
++  for (const ackGates of [[], [{ gate: "identity", status: "pass", evidence: "checked" }]])
++    await t.test(`${ackGates.length} of 2 gates`, async () => {
++      const root = fs.mkdtempSync(path.join(os.tmpdir(), "mono-reject-ack-")), issue = "MONO-999";
++      const ackFile = path.join(root, "reports", `${issue}-gate-ack-a1.json`);
++      const recordFile = path.join(root, "consumed", `${issue}-gate-ack-a1.json`);
++      const ack = { issue, phase: "gate", status: "gates-passed", gates: ackGates };
++      const entry = { issue, stage: "mono-deliver", attempt: 1, packVersion: "0.42.0", surfaceRevision: 5,
++        worktree: path.join(root, "worktree"), log: path.join(root, `${issue}-mono-deliver-a1.jsonl`),
++        gates: ["identity", "context"], lifecycle_moves: [] };
++      const args = { root, issue, attempt: "1" };
++      try {
++        atomicJson(path.join(root, "workers.json"), { [issue]: entry }); atomicJson(ackFile, ack);
++        for (const outcome of [undefined, "applied", "blocked"]) {
++          await assert.rejects(acceptAck({ ...args, ...(outcome ? { outcome } : {}) }, () => {}), /ack/u);
++          assert.deepEqual(readJson(ackFile), ack);
++          assert.equal(fs.existsSync(recordFile), false);
++          assert.deepEqual(readJson(path.join(root, "workers.json"))[issue].gates, entry.gates);
++        }
++        const result = spawnSync(process.execPath, [path.join(checkout, "scripts/orchestrator/accept.mjs"),
++          "ack", "--root", root, "--issue", issue, "--attempt", "1", "--outcome", "rejected"], { encoding: "utf8" });
++        pass(result);
++        assert.deepEqual(readJson(recordFile), { issue, attempt: 1, outcome: "rejected", gates: entry.gates, ack, ackDigest: digest(ack), readback: [] });
++        assert.equal(fs.existsSync(ackFile), false);
++        assert.deepEqual(readJson(ackFile.replace(".json", ".rejected.json")), ack);
++        assert.equal(readJson(path.join(root, "workers.json"))[issue].gates, undefined);
++        await acceptAck({ ...args, outcome: "rejected" }, () => {});
++        assert.equal(readJson(recordFile).outcome, "rejected", "recovery is idempotent");
++        await assert.rejects(acceptAck({ ...args, outcome: "applied" }, () => {}), /ack/u);
++      } finally { fs.rmSync(root, { recursive: true, force: true }); }
++    });
++});
++
+ test("installed command workflow on scratch: refusals, dispatch, ack, sessions, admission and amend", async t => {
+   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-command-fixture-"));
+   const skills = path.join(scratch, "skills"), root = path.join(scratch, "orchestrator"), repo = path.join(scratch, "repo"), bin = path.join(scratch, "bin"), temp = path.join(scratch, "worker-temp");
+@@ -360,7 +401,7 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions,
+       verification: { command: "node", args: ["scripts/verify.mjs"] }, lifecycle_moves: [{ entity: "issue", key: "MONO-999", from: "Backlog", to: "In Progress" }] } } });
+     write(path.join(repo, ".gitignore"), ".worktrees/\n.orchestrator/\n"); git("add", "."); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"); git("push", "origin", "main");
+     const snapshot = path.join(scratch, "snapshot"), writable = path.join(scratch, "writable.json"); write(writable, [temp]);
+-    const body = "# MONO-999 — fixture\n# Что сделать\nImplement commands.\n# Готовность агента\nAFK\n# Покрытие PRD/Spec\nR4, U5\n# Как проверить\n1. node scripts/verify.mjs\n# Ключевые контракты\nNo direct writes.\n# Что не входит\nDeploy.\nРиск: standard\n";
++    const body = "# MONO-999 — fixture\n# Что сделать\nImplement commands. Keep {{field_name}} literal.\n# Готовность агента\nAFK\n# Покрытие PRD/Spec\nR4, U5\n# Как проверить\n1. node scripts/verify.mjs\n# Ключевые контракты\nNo direct writes.\n# Что не входит\nDeploy.\nРиск: standard\n";
+     write(path.join(snapshot, "issue-MONO-999.md"), body); write(path.join(snapshot, "approval.md"), "Approved package and start; current project Delivery.");
+     write(path.join(snapshot, "project-brief.md"), "# Fixture\nBrief\n"); write(path.join(snapshot, "prd.md"), fixture("cheap-waves-prd.md")); write(path.join(snapshot, "tech-spec.md"), fixture("cheap-waves-spec.md"));
+     const command = path.join(runtime, "orchestrator/dispatch.mjs"), options = ["--issue", "MONO-999", "--root", root, "--config", config, "--snapshot", snapshot, "--handshake", "wait", "--worker-writable-roots", writable];
+@@ -544,6 +585,22 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions,
+       retry(snapshot, "short");
+       assert.deepEqual(names(), ["approval.json", "approval.md", "idea", "issue-MONO-999.md", "issue-context.json", "prd-extract.md", "project-brief.md", "spec-extract.md"]);
+     });
++    await t.test("dispatch-afk-leading-token: only leading AFK selects the short profile", async t => {
++      try {
++        for (const [readiness, afk] of [
++          ["HITL (нужно твоё участие: проверка, после неё задача станет AFK)", false],
++          ["Not AFK", false], ["AFK (агент справится без тебя)", true]
++        ]) await t.test(readiness, () => {
++          write(path.join(snapshot, "issue-MONO-999.md"), body.replace("\nAFK\n", `\n${readiness}\n`));
++          const response = run(process.execPath, [command, ...options]);
++          assert.match(response.stderr, /dirty/u, "the scratch start gate refuses code entry");
++          const prepared = readJson(path.join(root, "dispatch/MONO-999-a1/pins.json"));
++          assert.equal(prepared.afk, afk);
++          assert.equal(prepared.profile, afk ? "short" : "full");
++          if (!afk) assert.match(run(process.execPath, [command, ...options, "--profile", "short"]).stderr, /short requires/u);
++        });
++      } finally { write(path.join(snapshot, "issue-MONO-999.md"), body); }
++    });
+     fs.unlinkSync(path.join(worktree, "dirty"));
+     write(path.join(snapshot, "issue-MONO-999.md"), body.replace("R4, U5", "R99"));
+     assert.match(run(process.execPath, [command, ...options]).stderr, /unknown.*R99/u); assert.equal(fs.existsSync(path.join(root, "attempts.json")), false);
+@@ -591,8 +648,13 @@ test("installed command workflow on scratch: refusals, dispatch, ack, sessions,
+     assert.equal(launchedPins.reviewDatasetDigest, createHash("sha256").update(fs.readFileSync(launchedPins.reviewDataset)).digest("hex"));
+     assert.equal(readJson(launched.gateFile).worktree, worktree); assert.deepEqual(readJson(launched.spawnFile).gates, entry.gates);
+     assert.deepEqual(readJson(launched.pins.file).shipBotChecks, ["Greptile Review"]);
+-    assert.ok(!fs.readFileSync(launched.dispatchFile, "utf8").includes("{{")); assert.match(fs.readFileSync(path.join(root, "ledger.md"), "utf8"), /\d{4}-\d\d-\d\dT.*Z DISPATCHED MONO-999/u);
++    assert.ok(fs.readFileSync(launched.dispatchFile, "utf8").includes("Keep {{field_name}} literal.")); assert.match(fs.readFileSync(path.join(root, "ledger.md"), "utf8"), /\d{4}-\d\d-\d\dT.*Z DISPATCHED MONO-999/u);
+     const rendered = fs.readFileSync(launched.dispatchFile, "utf8");
++    await t.test("dispatch-project-seam: project approval is separate from the five-field lane contract", () => {
++      const seam = JSON.parse(/^- Context seam: (.+)$/mu.exec(rendered)[1]);
++      assert.deepEqual(seam, { package_kind: "project-first", lifecycle_state_entity: "project",
++        behavioral_oracle: null, risk_class: null, approval_status: "absent" });
++    });
+     assert.ok(rendered.includes(`--ack '${path.join(root, "reports/MONO-999-gate-ack-a1.json")}'`));
+     assert.ok(rendered.includes(`--ack '${path.join(worktree, ".orchestrator/MONO-999-gate-ack-a1.json")}'`), "wait instructions use the actual fallback ack location");
+     const collectionSample = JSON.parse(/## Запрос сбора[\s\S]*?```json\n([\s\S]*?)```/u.exec(rendered)[1]);
+diff --git a/scripts/orchestrator/accept.mjs b/scripts/orchestrator/accept.mjs
+index bcedf6a..3c6acc2 100755
+--- a/scripts/orchestrator/accept.mjs
++++ b/scripts/orchestrator/accept.mjs
+@@ -26,13 +26,14 @@ function validatedAck(root, issue, attempt, outcome) {
+   if (candidates.some(name => fs.statSync(name).mtimeMs > Date.now())) throw new Error("future-dated ack");
+   const ack = candidates.length ? readJson(candidates[0]) : prior.ack;
+   const gates = prior?.gates ?? entry.gates;
+-  if (ack.issue !== issue || ack.phase !== "gate" || !Array.isArray(gates) || !gates.length || new Set(gates).size !== gates.length ||
++  if (ack.issue !== issue || ack.phase !== "gate") throw new Error("ack identity mismatch");
++  if (outcome !== "rejected" && (!Array.isArray(gates) || !gates.length || new Set(gates).size !== gates.length ||
+       !Array.isArray(ack.gates) || !ack.gates.length || new Set(ack.gates.map(gate => gate.gate)).size !== ack.gates.length ||
+-      ack.gates.some(gate => !gates.includes(gate.gate) || !["pass", "blocked"].includes(gate.status) || !gate.evidence?.trim())) throw new Error("invalid ack identity/gate coverage");
+-  const passed = ack.status === "gates-passed" && ack.gates.length === gates.length && ack.gates.every(gate => gate.status === "pass");
+-  const blocked = ack.status === "blocked" && ack.gates.some(gate => gate.status === "blocked");
++      ack.gates.some(gate => !gates.includes(gate.gate) || !["pass", "blocked"].includes(gate.status) || !gate.evidence?.trim()))) throw new Error("invalid ack identity/gate coverage");
++  const passed = ack.status === "gates-passed" && ack.gates?.length === gates?.length && ack.gates?.every(gate => gate.status === "pass");
++  const blocked = ack.status === "blocked" && ack.gates?.some(gate => gate.status === "blocked");
+   outcome ??= passed ? "applied" : "blocked";
+-  if (!["applied", "blocked", "rejected"].includes(outcome) || (!passed && !blocked) || (outcome === "applied" && !passed) || (outcome === "blocked" && !blocked)) throw new Error("ack outcome mismatch");
++  if (!["applied", "blocked", "rejected"].includes(outcome) || (outcome !== "rejected" && ((!passed && !blocked) || (outcome === "applied" && !passed) || (outcome === "blocked" && !blocked)))) throw new Error("ack outcome mismatch");
+   if (!Array.isArray(entry.lifecycle_moves)) throw new Error("registry lifecycle moves missing");
+   if (prior && (prior.issue !== issue || prior.attempt !== attempt || prior.outcome !== outcome || prior.ackDigest !== digest(ack) ||
+       canonical(prior.ack) !== canonical(ack) || (outcome === "applied" && (!Array.isArray(prior.readback) || prior.readback.length !== entry.lifecycle_moves.length ||
+diff --git a/scripts/orchestrator/dispatch.mjs b/scripts/orchestrator/dispatch.mjs
+index 85c4131..1f693cc 100755
+--- a/scripts/orchestrator/dispatch.mjs
++++ b/scripts/orchestrator/dispatch.mjs
+@@ -30,12 +30,11 @@ export function renderDispatch(template, values, pilot = false) {
+   if (values.landing_paths === undefined) source = source.replace(/<!-- landing:start -->[\s\S]*?<!-- landing:end -->\s*/u, "");
+   if (!pilot) source = source.replace(/<!-- review-pilot:start -->[\s\S]*?<!-- review-pilot:end -->\s*/u, "");
+   if (values.transport !== "claude-cli") source = source.replace(/<!-- claude-delivery:start -->[\s\S]*?<!-- claude-delivery:end -->\s*/u, "");
+-  const rendered = source.replace(/\{\{([^{}]+)\}\}/gu, (_, key) => {
++  const rendered = source.replace(/\{\{([^{}]*)\}\}/gu, (_, key) => {
+     if (!Object.hasOwn(values, key) || values[key] === undefined || values[key] === null || String(values[key]).trim() === "")
+       throw new Error(`unfilled dispatch placeholder: ${key}`);
+     return String(values[key]);
+   });
+-  if (/\{\{[^{}]*\}\}/u.test(rendered)) throw new Error("unfilled dispatch placeholders remain");
+   return rendered;
+ }
+ 
+@@ -71,7 +70,7 @@ async function prepareDispatch(args) {
+   const risk = args.risk ?? settings.risk ?? /(?:Риск|risk_class)\s*[:=]\s*(tiny|standard|deep|risky)/u.exec(body)?.[1];
+   const critical = args.critical ?? settings.critical ?? null;
+   if (!RISK_KEYS.slice(0, 4).includes(risk) || (critical !== null && (risk !== "risky" || !critical.trim()))) throw new Error("approved risk/critical required");
+-  const afk = /\bAFK\b/u.test(section(body, "Готовность агента", true));
++  const afk = /^\s*AFK\b/u.test(section(body, "Готовность агента", true).split("\n").slice(1).join("\n"));
+   const openDecisions = Number(args["open-decisions"] ?? settings.openDecisions);
+   if (!Number.isInteger(openDecisions) || openDecisions < 0) throw new Error("--open-decisions must explicitly count unresolved decisions");
+   let profile = args.profile ?? (args["full-snapshot"] || !["tiny", "standard"].includes(risk) || critical || !afk || openDecisions ? "full" : "short");
+@@ -88,8 +87,8 @@ async function prepareDispatch(args) {
+   const verification = args.verification ? readJson(args.verification) : settings.verification;
+   if (typeof verification?.command !== "string" || !verification.command.trim() || !Array.isArray(verification.args) || verification.args.some(arg => typeof arg !== "string")) throw new Error("explicit verification command/args required");
+   if (!approval.trim()) throw new Error("nonempty approval record required");
+-  const seam = lane?.seam ?? { package_kind: "project-first", lifecycle_state_entity: "project", behavioral_oracle: null, risk_class: risk,
+-    approval_status: 'approved' };
++  const seam = lane?.seam ?? { package_kind: "project-first", lifecycle_state_entity: "project", behavioral_oracle: null, risk_class: null,
++    approval_status: 'absent' };
+   if (issueOnly && (seam.package_kind !== "issue-only" || seam.approval_status !== "approved-fresh" || !lane.marker || !lane.label || !lane.ownerApproval || !lane.config ||
+       typeof lane.fingerprint !== "string" || !lane.fingerprint.trim())) throw new Error("complete issue-only snapshot with nonempty fingerprint required");
+   const ideaResult = dispatchIdea(args.snapshot, config, issue, lane);
