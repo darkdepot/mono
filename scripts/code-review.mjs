@@ -12,6 +12,8 @@ export const DANGER_CASES = ['data', 'security', 'gate-bypass', 'gate-stall', 's
 const text = value => typeof value === 'string' && value.trim().length > 0;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
+const maximumDanger = (...values) => values.includes(true) ? true : values.some(value => value !== false) ? null : false;
+const savedDanger = finding => Object.hasOwn(finding, 'dangerMaximum') ? finding.dangerMaximum : finding.danger ?? null;
 // Private local review state, separate from prompts and serialized stage records.
 const reviewKeys = new Map(), activeReviewKey = new AsyncLocalStorage(), standaloneKey = randomBytes(32);
 const privateDigest = value => createHmac('sha256', activeReviewKey.getStore() ?? standaloneKey).update(JSON.stringify(value)).digest('hex');
@@ -1071,7 +1073,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
         }
       }
     };
-    const open = record.findings.filter(finding => !['closed', 'rejected'].includes(finding.status) || finding.outOfContract || finding.riskRaised);
+    const open = record.findings.filter(finding => !['closed', 'rejected'].includes(finding.status) || savedDanger(finding) !== false || finding.outOfContract || finding.riskRaised);
     const found = [], covered = new Set();
     const absorb = result => { result.reviewedFiles.forEach(file => covered.add(file)); found.push(...result.findings); };
     absorb(await call('code-review', { openFindings: open, pass: 'all-defects' }, parseReviewer));
@@ -1083,8 +1085,9 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     const merged = new Map(record.findings.map(finding => [finding.key, finding])), byKey = new Map();
     for (const finding of [...open, ...found]) {
       const prior = byKey.get(finding.key), saved = merged.get(finding.key);
+      const dangerMaximum = maximumDanger(...[saved, prior].filter(Boolean).map(savedDanger), savedDanger(finding));
       byKey.set(finding.key, { ...finding, reviewerDanger: Object.hasOwn(finding, 'reviewerDanger') ? finding.reviewerDanger : finding.danger ?? null,
-        danger: saved && saved.danger !== false ? true : prior ? prior.danger !== false || finding.danger !== false : finding.danger ?? null });
+        dangerMaximum, danger: dangerMaximum !== false });
     }
     const findings = [...byKey.values()];
     const existsAt = (revision, raw) => git(worktree, ['ls-tree', '-z', revision, '--', raw]).split('\0')
@@ -1111,12 +1114,13 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       history: record.findings.filter(item => findings.some(f => f.key === item.key)).map(({ key, ...item }) => ({ ...item, id: `F${findings.findIndex(f => f.key === key) + 1}` })), baseDiff: diff, baseEvidence, headEvidence },
       (value, attempt) => parseChecker(value, findings, { separateContradictoryMerges: attempt === 2 })) : { verdicts: [], mergesSeparated: false };
     const checked = checker.verdicts.map(verdict => {
-      const finding = byKey.get(verdict.key), saved = merged.get(verdict.key), danger = finding.danger !== false || verdict.danger !== false;
+      const finding = byKey.get(verdict.key), saved = merged.get(verdict.key);
+      const dangerMaximum = maximumDanger(finding.dangerMaximum, verdict.danger), danger = dangerMaximum !== false;
       const evidence = headEvidence.find(item => item.file === finding.file);
       const deletionEvidence = evidence?.deletionEvidence;
       const retained = danger && verdict.outcome === 'rejected';
-      return { ...verdict, ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, danger,
-        origin: saved && saved.danger !== false ? saved.origin : verdict.origin,
+      return { ...verdict, ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, dangerMaximum, danger,
+        origin: saved && savedDanger(saved) !== false ? saved.origin : verdict.origin,
         dangerCase: danger ? verdict.dangerCase ?? saved?.dangerCase ?? 'unknown' : null,
         dangerReason: danger && verdict.danger === false ? 'Сохранена ранее отмеченная или неясная опасность. ' + verdict.dangerReason : verdict.dangerReason,
         ...(retained ? { outcome: 'unresolved', closed: false, rejectionUnproven: true, reason: 'Отклонение опасной или неразмеченной находки оспаривается; находка остаётся открытой. ' + verdict.reason } : {}) };
@@ -1124,7 +1128,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     requireValue(treeIdentity(worktree) === identity, 'HEAD/tree changed during review; result discarded');
     for (const verdict of checked) {
       const finding = findings.find(item => item.key === verdict.key), old = merged.get(verdict.key);
-      if (old && ['closed', 'rejected'].includes(old.status) && !verdict.newEvidence) continue;
+      if (old && ['closed', 'rejected'].includes(old.status) && !verdict.newEvidence && verdict.dangerMaximum === false && verdict.outcome !== 'unresolved') continue;
       let afterFirstRound = old?.afterFirstRound ?? false;
       if (!old && previous) {
         const changed = git(worktree, ['diff', '--unified=2', record.rounds[0].head, head, '--', paths.get(finding.file) ?? finding.file]);

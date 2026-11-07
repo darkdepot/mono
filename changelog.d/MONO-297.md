@@ -76,3 +76,4 @@
 - Preserve UTF-8 BOM bytes in the existing strict child-output, diff and checker-evidence decoders; executable shebang regressions cover adding/removing the BOM and retain invalid-UTF-8 refusal.
 
 - Continue:47: name unreadable, over-limit and wholly hidden exported files as unchecked even outside the diff; retain `not-reviewed` when such input is lost. Report line-level masks with readable neighbors as partial coverage in role prompts, saved rounds and the owner report, including unchanged exported files; screening bytes and role permissions stay unchanged.
+- Continue:48: compute the per-key maximum danger before reopening decisions, retain fresh unresolved verdicts without newEvidence, and recheck legacy dangerous closures. Safe-only rejection still closes normally; serialized history preserves true > unknown > false, dangerous origin and all earlier safeguards. C47 covers the collection P1 and both host r6 probes.

@@ -102,6 +102,55 @@ test('C45: the existing Git child-output decoder preserves BOM bytes and still r
  fs.writeFileSync(path.join(f.worktree,file),Buffer.from([0xff,0x0a]));f.git('add','.');f.git('commit','-qm','invalid UTF8');
  assert.throws(()=>reviewGit(f.worktree,['cat-file','blob',f.git('rev-parse','HEAD')+':'+file]),/non-UTF8/);
 });
+test('C47: a safe rejection cannot discard later dangerous or unresolved verdicts without newEvidence',async t=>{
+ for(const closed of [false,true])for(const outcome of ['confirmed','unresolved','rejected'])for(const [reviewerDanger,checkerDanger] of [[true,false],[null,false],[false,true],[false,null],[false,false]]){
+  if(reviewerDanger===false&&checkerDanger===false&&outcome!=='unresolved')continue;
+  await t.test(`${closed}/${outcome}/${reviewerDanger}/${checkerDanger}`,async t=>{
+   const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({outcome:'rejected',closed})]}));
+   assert.equal(first.outcome,'clean');
+   const second=await runReviewRound({...f.request,stageRecord:JSON.parse(JSON.stringify(first))},responder({findings:[{...sample,danger:reviewerDanger}],verdicts:[verdict({outcome,danger:checkerDanger,dangerCase:checkerDanger===false?null:'unknown',newEvidence:false})]}));
+   assert.equal(second.outcome,'not-converged',JSON.stringify(second.failures));
+   assert.equal(second.findings[0].status,outcome==='rejected'?'unresolved':outcome);assert.equal(second.findings[0].closed,false);
+   assert.equal(second.findings[0].danger,reviewerDanger!==false||checkerDanger!==false);
+   assert.match(formatReviewReport(second),/Идти дальше пока нельзя/);
+  });
+ }
+});
+test('C47: maximum danger survives serialized rounds, weaker later flags and original-origin changes',async t=>{
+ for(const [initial,later,maximum] of [[null,false,null],[null,true,true],[true,null,true],[true,false,true]])await t.test(`${initial}/${later}`,async t=>{
+  const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[{...sample,danger:initial}],verdicts:[verdict({danger:false,origin:'contract'})]}));
+  assert.equal(first.outcome,'not-converged');assert.equal(first.findings[0].dangerMaximum,initial);
+  const second=await runReviewRound({...f.request,stageRecord:JSON.parse(JSON.stringify(first))},responder({findings:[{...sample,danger:later}],verdicts:[verdict({danger:false,origin:'pre-existing',outcome:'rejected',closed:true})]}));
+  assert.equal(second.outcome,'not-converged');assert.equal(second.findings[0].dangerMaximum,maximum);assert.equal(second.findings[0].danger,true);assert.equal(second.findings[0].origin,'contract');assert.equal(second.findings[0].status,'unresolved');
+  const third=await runReviewRound({...f.request,stageRecord:JSON.parse(JSON.stringify(second))},responder({verdicts:[verdict({outcome:'rejected',closed:true})]}));
+  assert.equal(third.outcome,'not-converged');assert.equal(third.findings[0].dangerMaximum,maximum);assert.equal(third.findings[0].status,'unresolved');assert.deepEqual(third.successorKeys,[]);
+ });
+});
+test('C47: dangerous legacy closures are rechecked even without reviewer rediscovery',async t=>{
+ const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[{...sample,danger:true}],verdicts:[verdict({danger:true,dangerCase:'security'})]}));
+ const legacy=JSON.parse(JSON.stringify(first));delete legacy.findings[0].dangerMaximum;Object.assign(legacy.findings[0],{status:'rejected',outcome:'rejected',closed:true});
+ const runner=responder({verdicts:[verdict({outcome:'rejected',closed:true})]}),next=await runReviewRound({...f.request,stageRecord:legacy},runner);
+ assert.equal(runner.calls.length,2,'legacy dangerous key still needs a checker answer');assert.equal(next.outcome,'not-converged');assert.equal(next.findings[0].danger,true);assert.equal(next.findings[0].status,'unresolved');
+});
+test('C47: all reviewer passes contribute to the maximum before a checker rejection',async t=>{
+ for(const danger of [true,null])await t.test(String(danger),async t=>{
+  const f=fixture(t);let pass=0;
+  const result=await runReviewRound({...f.request,risk:'risky'},{runRole:async request=>({response:request.role==='code-review'?review([{...sample,danger:pass++===0?danger:false}]):{completed:true,verdicts:[verdict({outcome:'rejected'})]}})});
+  assert.equal(pass,2);assert.equal(result.outcome,'not-converged');assert.equal(result.findings[0].dangerMaximum,danger);assert.equal(result.findings[0].status,'unresolved');
+ });
+});
+test('C47: host r6 probes stay disputed after a previous safe rejection of the same key',async t=>{
+ for(const probe of hostR6.probes)await t.test(probe.runId,async t=>{
+  const f=fixture(t),file=probe.finding.file,source='\n'.repeat(probe.finding.line-1)+probe.checker.codeQuote+'\n';
+  fs.mkdirSync(path.dirname(path.join(f.worktree,file)),{recursive:true});fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','probe base');const base=f.git('rev-parse','HEAD');
+  fs.appendFileSync(path.join(f.worktree,file),'// reviewed head\n');f.git('add','.');f.git('commit','-qm','probe head');const request={...f.request,base,head:f.git('rev-parse','HEAD')};
+  const first=await runReviewRound(request,responder({findings:[{...probe.finding,danger:false}],responses:[review([{...probe.finding,danger:false}],[file]),{completed:true,verdicts:[{...probe.checker,danger:false,dangerCase:null,closed:true}]}]}));
+  assert.equal(first.outcome,'clean');
+  const next=await runReviewRound({...request,stageRecord:first},responder({responses:[review([probe.finding],[file]),{completed:true,verdicts:[{...probe.checker,newEvidence:false}]}]}));
+  assert.equal(next.outcome,'not-converged',JSON.stringify(next.failures));assert.equal(next.findings[0].status,'unresolved');assert.equal(next.findings[0].danger,true);assert.equal(next.findings[0].codeQuote,probe.checker.codeQuote);
+ });
+});
+
 test('C44: host r6 dangerous probe rejections stay disputed even with an exact current-head quote',async t=>{
  for(const probe of hostR6.probes)await t.test(probe.runId,async t=>{
   const f=fixture(t),file=probe.finding.file,source='\n'.repeat(probe.finding.line-1)+probe.checker.codeQuote+'\n';
