@@ -108,6 +108,11 @@
     },
     {
       "forbidden": "start-next-stage"
+    },
+    {
+      "type": "mono-brief",
+      "scope": "project",
+      "count": 1
     }
   ]
 }

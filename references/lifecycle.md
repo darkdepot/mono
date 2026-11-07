@@ -150,6 +150,18 @@ predecessor to name `next=tech-evaluation`. Handoff and work start require a val
 record at every named stage; missing/stale design returns to Design, never skips.
 An existing tech record is still consumed on the old path, even without `next`.
 
+### Project Brief at stage entry
+
+Research, Discovery, Design, Tech Evaluation and Handoff (including repair) read
+the project Brief first, through the `Бриф:` URL in the Idea approval record.
+No such line means the preserved old path, regardless of project date; Research
+uses `Что всплыло` in that record, or the description and Unknowns if absent.
+A URL requires its actual document with the terminal `mono-brief` block bound to
+this project; missing/unreadable/wrong binding is FAIL → Idea, never a substitute
+Brief or silent fallback. Format and consent rules live in `references/brief.md`,
+read conditionally before writes. Research's private `brief.md` is a research
+frame; the file handed to Design is the designer's assignment. Machine paths stay.
+
 ### Designer and approval
 
 `skills/design/SKILL.md` owns the designer, two-layer memory, Paper approval and
@@ -182,7 +194,7 @@ writes its record with the new `prd-updatedAt` in the same touch. Only the first
 succeeded: retry the second under the same approval. Designer never edits PRD.
 Owner-led Discovery asks about approving the shown PRD and starting Design; Desktop opens a fresh
 session via `mcp__ccd_session__start_session` using
-`$TMPDIR/mono-design/<project>/brief.md`; Codex/terminal use that brief with
+`$TMPDIR/mono-design/<project>/brief.md`; Codex/terminal use that assignment with
 `mono:design`. Design ends after checked recording, without a
 question about starting the next stage. Return: round marker to the waiting Claude Code parent;
 manual in Codex; agent turn end under delegation. Parent verifies the record

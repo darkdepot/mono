@@ -10,7 +10,7 @@ import { validateReplies, isOwnerWindow } from './skills-owner.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Full rule source, including final-message order. A rule edit requires checker/rubric review.
-export const OWNER_DIALOG_SHA256 = '9b07cb3b2cdede5df62cc26f125676f5d533a5588ac849f49a4887d3755c5be3';
+export const OWNER_DIALOG_SHA256 = 'f2c3870c84841dbbdeeab2e257025bb0daefd459f7f4f11aafe11a9308c90499';
 export const visible = visibleText;
 export { completedTrace, codexTerminals } from './skills-audit.mjs';
 export { textExchanges, checkEndings } from './skills-probe.mjs';

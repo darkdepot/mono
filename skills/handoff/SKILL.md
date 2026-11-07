@@ -15,10 +15,11 @@ description: >-
 PRD и Tech Spec не меняй.
 
 Справки в `references/`, `<корень>` это `../..`.
-Прочитай сразу:
+Прочитай сразу: прочитай бриф проекта.
 - `references/run.md`;
 - `references/examples.md`.
 Прочитай, когда:
+- `<корень>/references/brief.md`: перед записью брифа;
 - `<корень>/references/owner-dialog.md`: до показа итога, для любого владельца;
 - `references/find-in-code.md`: перед разведчиком;
 - `<корень>/references/contracts/prd.md`: перед сверкой;

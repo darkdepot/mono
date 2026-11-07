@@ -690,9 +690,10 @@ export function verifyRecords(request){
    }else if(rule.type==='project'){
     if(!dump.project)missing('project required');
    }else{
-    const found=expectedRecords(dump,rule.type).filter(row=>!seedIds.has(idOf(row))||activeWrites.some(w=>idOf(w.value)===idOf(row)));
+    const existingBrief=rule.type==='mono-brief'&&rule.scope==='project';
+    const found=expectedRecords(dump,rule.type).filter(row=>existingBrief||!seedIds.has(idOf(row))||activeWrites.some(w=>idOf(w.value)===idOf(row)));
     if(found.length!==(rule.count??1))throw new Error(`expected ${rule.type}: ${rule.count??1}, observed ${found.length}`);
-    if(!activeWrites.some(w=>idOf(w.value)===idOf(found[0])))missing(`expected ${rule.type} write absent from trace`);
+    if(!existingBrief&&!activeWrites.some(w=>idOf(w.value)===idOf(found[0])))missing(`expected ${rule.type} write absent from trace`);
    }
   }
   const bindingGaps=[],approvedExchanges=new Set();

@@ -1800,3 +1800,18 @@ test('mono-brief record counting uses a project-bound code block, not title or q
   set(invalid);assert.equal(f.check().status,'failed');assert.match(f.check().reason,/observed 0/);
  }
 });
+
+for(const host of ['claude','codex'])test(`project Brief presence accepts a fresh native read without a stage write: ${host}`,t=>{
+ const f=fixture(t),doc={id:'brief',projectId,title:'Бриф',content:'## Суть сейчас\nИсточник после имени.\n\n```mono-brief\n'+JSON.stringify({project:projectId})+'\n```'};
+ f.request.host=host;f.events.splice(0);f.request.expectedRecords=[{type:'mono-brief',scope:'project',count:1}];
+ f.page('comments','comments',[]);f.page('documents','documents',[{id:doc.id}]);f.save('documents/brief.json',doc);
+ const check=()=>{f.check();return verifyTextRecords(f.request);};
+ const result=check();assert.equal(result.status,'passed',result.reason);
+ if(host==='claude')f.events.push({type:'assistant',message:{content:[{type:'tool_use',id:'seed',name:'mcp__monotest__save_document',input:{projectId,title:doc.title,content:doc.content}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'seed',content:JSON.stringify(doc)}]}},{type:'result',subtype:'success'});
+ else f.events.push({type:'response_item',payload:{type:'function_call',call_id:'seed',name:'mcp__monotest__save_document',arguments:JSON.stringify({projectId,title:doc.title,content:doc.content})}},{type:'response_item',payload:{type:'function_call_output',call_id:'seed',output:JSON.stringify(doc)}},{type:'event_msg',payload:{type:'task_complete'}});
+ Object.assign(f.request,{seedExpected:true,seedEndLine:3,seedProjectId:projectId});assert.equal(check().status,'passed','a seed write is not a required stage write');
+ for(const content of ['no marker',doc.content.replace(projectId,'00000000-0000-4000-8000-000000000002')]){
+  f.save('documents/brief.json',{...doc,content});f.check();const bad=verifyTextRecords(f.request);assert.equal(bad.status,'failed');assert.match(bad.reason,/expected mono-brief: 1, observed 0/);
+ }
+ f.save('documents/brief.json',doc);f.request.expectedRecords=[{type:'mono-brief',count:1}];f.check();assert.notEqual(verifyTextRecords(f.request).status,'passed','write-required expectations remain strict');
+});

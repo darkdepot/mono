@@ -659,11 +659,11 @@ raw idea → recorded owner approval → Project in Idea → owner or delegated 
 ```
 
 1. **Capture.** `mono:idea` shows the complete four-section description, position and contextual question as its final message. The owner agrees in words. Only the named small correction is added; record and verify before any authorized Research start. Orchestrated Idea requires the exact shown text, question and verbatim owner reply.
-2. **Research.** `mono:research` checks Idea before moving to Discovery, gathers facts and reads back the document and stage log, verifies and closes its task before the final result. It asks only about starting Discovery, never about approving the Research document.
-3. **Discover.** `mono:discovery` studies the product and Research, asks unknown meaning questions one at a time in text, compares outcomes and prepares the PRD before its final summary, position and question. Record the corrected document version, design route and exact reply before closing and checking the stage.
-4. **Design.** `mono:design` uses product memory and exemplars and shows checked mockup images before its final text summary, position and approval question. An image correction needs a new show. Record immutable PNGs, verify and return to the parent; Design does not start the next stage.
-5. **Evaluate.** `mono:tech-evaluation` checks the solution and shows its page, position and contextual question as its final message. Approval records the corrected Tech Spec and exact owner words; Handoff starts only when authorized.
-6. **Package.** `mono:handoff` reconciles approved inputs, reviews and records the package and execution Issues, checks each and sets Ready before its final summary, position and start question. Work starts only on agreement to that question or explicit owner words; delegation needs an explicit request.
+2. **Research.** `mono:research` checks Idea and reads the project Brief before moving to Discovery, gathers facts, then adds up to three sourced findings to the Brief without approval. It reads back the document and stage log, verifies and closes its task before the final result. It asks only about starting Discovery, never about approving the Research document.
+3. **Discover.** `mono:discovery` starts from the project Brief and studies the product and Research, asks unknown meaning questions one at a time in text, compares outcomes and prepares the PRD before its final summary, position and question. Record the corrected document version, design route and exact reply before closing and checking the stage.
+4. **Design.** `mono:design` reads the project Brief and uses product memory and exemplars and shows checked mockup images before its final text summary, position and approval question. An image correction needs a new show. Record immutable PNGs, verify and return to the parent; Design does not start the next stage.
+5. **Evaluate.** `mono:tech-evaluation` reads the project Brief and checks the solution and shows its page, position and contextual question as its final message. Approval records the corrected Tech Spec and exact owner words; Handoff starts only when authorized.
+6. **Package.** `mono:handoff` reconciles the Brief with approved inputs before recording, reviews and records the package and execution Issues, checks each and sets Ready before its final summary, position and start question. Work starts only on agreement to that question or explicit owner words; delegation needs an explicit request.
 7. **Start.** `mono:implement` verifies pack identity, the approved package, start authorization, and the five-field context seam. For an orchestrated lifecycle move, the worker emits a gate acknowledgement before the orchestrator applies and reads back the move. In codex-cli `handshake: wait`, it waits in place for verified consumption and checks delivery on those read-backs; `resume` (default) retains exit and same-thread resume. Expiry parks `write-unconfirmed`. Product `stallSec`/`ackWaitSec` and watcher startup validation keep the wait within the existing monitoring window.
 8. **Implement and prepare.** `mono:deliver` sequences `mono:implement`, `mono:preflight`, and `mono:ship` in one context. Implement exactly one approved Issue. Record every verification item verbatim, perform targeted checks, select the explicit risk-based autoreview route, and obtain clean independent review or `accepted-with-declines` with orchestrator-approved evidence. Commit a ready branch and record its certificate. `profile: short` is limited to tiny/standard, `critical: null`, `afk: true` and `openDecisions: 0`: targeted checks, commit and orchestrator collection remain mandatory; the prior local review is optional. The collector auto-confirms empty and collection queues, including carried confirmed writes. New connector writes in a collection queue require present observations in the active report session before collection. Start facts live in the code report; the Russian ready-certificate comment retains its machine block. Codex full and final deep/risky work retain the local loop. Managed Claude Code uses external committed-head collection only, with no in-worker helper pass; its ready certificate names that review route and stop/resume startup. Preserve phase ownership.
 9. **Ship to green.** Synchronize accepted drift before the PR, create or update the PR through the configured ship workflow, and confirm its Linear status/link. Complete required pre-ship review and readiness checks, and the configured documentation workflow before green. Resolve review feedback and wait for current-head checks and bot evidence. Emit the green certificate only after all ship conditions and write confirmations pass.
@@ -750,7 +750,22 @@ Idea после проекта и до комментария создаёт и�
 уходит в «Отброшено» внутри забора длиннее всех серий обратных кавычек в нём.
 После публикации комментария Idea сразу добавляет его ссылку к своей строке
 решения и читает бриф обратно; сбои переиспользуют документ и комментарий.
-Этапы после Idea пока работают по прежнему входу, их подключает T2.
+Research, Discovery, Design, Tech Evaluation и Handoff читают бриф на входе.
+Строка «Бриф:» записи Idea указывает документ: без неё проект идёт по прежнему
+пути; ссылка без документа с блоком этого проекта даёт FAIL к Idea в проверках
+Discovery, Design, Tech и Handoff. Research строит рамку по брифу, без него по
+«Что всплыло», затем по описанию и неизвестным. Его частный `brief.md` это рамка
+исследования; одноимённый файл для Design это задание дизайнеру.
+
+После исследования Research без утверждения дописывает до трёх находок со
+ссылкой. Discovery, Design, Tech Evaluation и Handoff отражают утверждённое
+решение, поворот и устаревшее со ссылкой на согласие; без согласия новая мысль
+остаётся в «Открыто». Новые мысли владельца пересказываются, ответы оркестратора
+в этот раздел не идут. Каждая запись читается обратно. До записи пакета Handoff,
+включая ремонт, приводит бриф к последнему утверждённому PRD или пакету, называет
+пропущенный этап и снятое расхождение в итоге; возражение ведёт в Discovery или
+ремонт без отдельной остановки. Каждый этап называет конкретную опору и отмечает
+переспрос уже сказанного. Ship и реализация бриф не ведут.
 
 Сверка QA восстанавливает правки брифа через `save_document` patch. Для
 `op: replace` без `replace_all` исходная строка должна встретиться ровно один раз;
@@ -1756,6 +1771,14 @@ incomplete fields and a damaged latest record through the shared reader and the
 config cases accept Wonder and omitted defaults and reject unsupported tools.
 Paper guard regressions use a real stdio relay fixture for two allowed test files,
 missing/foreign IDs and forbidden actions: `node --test scripts/skills-catalog.test.mjs`.
+All post-Idea scenarios require the project-bound Brief, including a seeded Brief
+that a stage only reads (`scope: project`). Empty/unclear scenarios compare the
+native baseline and every write: no unapproved change to the current essence,
+decisions or exclusions; a proposal belongs in Open questions. Approve/correction
+rubrics check consent links, owner thoughts and read-back. Handoff approve seeds
+a filter conflict with the approved PRD and requires reconciliation before the
+package record. `references/brief.md` selects all six stages. These behavioral
+scenarios run on the orchestrator host; unit fixtures prove the checker only.
 The live Design approve/correction/empty and main-file scenarios run on the orchestrator host,
 not in a delivery worker; local fixtures do not certify live stage behavior.
 It also runs the [skills host probe regression](evals/scenarios/probe/README.md):

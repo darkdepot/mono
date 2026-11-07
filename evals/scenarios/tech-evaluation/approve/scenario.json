@@ -125,6 +125,11 @@
       "type": "mono-tech",
       "version": "fresh-read-after-shown-version",
       "count": 1
+    },
+    {
+      "type": "mono-brief",
+      "scope": "project",
+      "count": 1
     }
   ]
 }
