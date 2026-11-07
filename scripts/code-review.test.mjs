@@ -31,6 +31,37 @@ function assertUnchecked(record) {
 }
 
 const hostR6=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/host-r6-regressions.json'),'utf8'));
+test('C48: fatal or rejected unchanged exports contain only the safe marker and are named unchecked for both roles',async t=>{
+ const cases=[['fatal','['.repeat(40)+'1'+']'.repeat(40)+'\n'],['rejected',JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n']];
+ for(const [name,source] of cases)await t.test(name,async t=>{
+  const f=fixture(t),file='dependency.json',safe=screenModelOutput(source,{input:true,inputFile:file});assert.equal(safe.rejected,true);assert.equal(safe.fatal,name==='fatal');
+  fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','dependency base');const base=f.git('rev-parse','HEAD');fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// changed caller\n');f.git('add','.');f.git('commit','-qm','caller head');let calls=0;
+  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.unreviewedFiles,[file]);assert.deepEqual(c.partiallyWithheldFiles,[]);assert.equal(fs.readFileSync(path.join(request.worktree,file),'utf8'),'[unreadable or over-limit model output withheld]');assert.ok(!request.prompt.includes(source.trim()));calls++;
+   return {response:request.role==='code-review'?review([sample]):{completed:true,verdicts:[verdict()]}};
+  }});
+  assert.equal(calls,2);assertUnchecked(result);assert.deepEqual(result.unreviewedFiles,[file]);assert.equal(result.round.outcome,'not-reviewed');assert.match(formatReviewReport(result),/Не проверено: файлы dependency.json/);assert.equal(f.git('status','--porcelain'),'');
+ });
+});
+test('C48: full diff and pinned checker evidence never admit a fatal or rejected JSON value',async t=>{
+ for(const fatal of [true,false])for(const mode of ['diff','evidence'])await t.test(`${fatal}/${mode}`,async t=>{
+  const f=fixture(t),file='dependency.json',source=fatal?'['.repeat(40)+'1'+']'.repeat(40)+'\n':JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n';
+  fs.writeFileSync(path.join(f.worktree,file),mode==='diff'?'{}\n':source);f.git('add','.');f.git('commit','-qm','blob base');const base=f.git('rev-parse','HEAD');
+  if(mode==='diff')fs.writeFileSync(path.join(f.worktree,file),source);else fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// changed caller\n');f.git('add','.');f.git('commit','-qm','blob head');let calls=0;
+  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);calls++;assert.ok(!request.prompt.includes(source.trim()));assert.equal(fs.readFileSync(path.join(request.worktree,file),'utf8'),'[unreadable or over-limit model output withheld]');
+   if(!fatal&&mode==='diff')assert.ok(c.diff.includes('+[unreadable or over-limit model output withheld]'),'rejected diff side contains only the whole marker');
+   if(request.role==='code-review')return {response:review([{...sample,file}],c.files)};
+   assert.equal(c.headEvidence.find(item=>item.file===file).content,'[unreadable or over-limit model output withheld]');return {response:{completed:true,verdicts:[verdict({outcome:'rejected'})]}};
+  }});
+  assert.equal(calls,fatal?(mode==='diff'?0:1):2);assertUnchecked(result);assert.deepEqual(result.unreviewedFiles,[file]);assert.equal(f.git('status','--porcelain'),'');
+ });
+});
+test('C48: named-file Git stdout rejects uncertain JSON while raw identity reads retain exact bytes',t=>{
+ const f=fixture(t),file='dependency.json',source=JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n';fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','rejected source');const head=f.git('rev-parse','HEAD');
+ assert.equal(reviewGit(f.worktree,['show',head+':'+file]),'[unreadable or over-limit model output withheld]');assert.deepEqual(reviewGit(f.worktree,['cat-file','blob',head+':'+file],{},'blob'),Buffer.from(source));
+});
+
 test('C46: fully withheld unchanged exports are named unchecked in both role prompts and cannot return clean',async t=>{
  const shapes=[['over-limit','// '+'a'.repeat(MAX_SCREEN_VALUE_BYTES)+'\nexport const hidden = 1;\n'],['non-UTF8',Buffer.from([0xff,0x0a])],['fully hidden','const password = "opaqueFixture";\n']];
  for(const [name,source] of shapes)await t.test(name,async t=>{

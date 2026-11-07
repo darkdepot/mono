@@ -74,6 +74,7 @@ function screenChildOutput(result, stdoutOptions = {}) {
   if (joined?.diagnostic.secretMatches > 0) {
     safeStdout = withheldLines(stdout, stdoutOptions.inputPatch); safeStderr = withheldLines(stderr);
   }
+  if (out.rejected && stdoutOptions.inputFile != null) safeStdout = '[unreadable or over-limit model output withheld]';
   return { stdout: safeStdout, stderr: safeStderr, status: result.status, signal: result.signal, error: !!result.error };
 }
 function readGit(worktree, env, options, args, raw = false, outputFd = null, allowedStatuses = [0]) {
@@ -160,10 +161,10 @@ function exportReviewTree(worktree, head) {
           try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(file)); } catch {}
           if (content !== undefined) {
             screened = screenModelOutput(content, { input: true, inputFile: name });
-            safe = screened.value;
+            if (!screened.fatal && !screened.rejected) safe = screened.value;
           }
         }
-        if (!screened || screened.fullyWithheld) withheld.push(name);
+        if (!screened || screened.fatal || screened.rejected || screened.fullyWithheld) withheld.push(name);
         else if (screened.partiallyWithheld) partiallyWithheld.push(name);
         fs.ftruncateSync(fd, 0);
         requireValue(fs.writeSync(fd, safe, 0, 'utf8') === Buffer.byteLength(safe), 'screened export incomplete');
@@ -1100,9 +1101,9 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       if (safe.fatal) throw Object.assign(new Error('pinned evidence withheld'), {
         secrets: [{ file, line: 0, weight: 'P0', reason: 'credential-family or undecodable pinned evidence; value withheld' }],
       });
-      if (safe.partiallyWithheld && !safe.fullyWithheld && !partiallyWithheldFiles.includes(file)) partiallyWithheldFiles.push(file);
-      if (safe.fullyWithheld) unreviewedFiles.add(file);
-      return { file, content: safe.value };
+      if (safe.partiallyWithheld && !safe.fullyWithheld && !safe.rejected && !partiallyWithheldFiles.includes(file)) partiallyWithheldFiles.push(file);
+      if (safe.fullyWithheld || safe.rejected) unreviewedFiles.add(file);
+      return { file, content: safe.rejected ? '[unreadable or over-limit model output withheld]' : safe.value };
     });
     const baseEvidence = evidenceAt(base), headEvidence = evidenceAt(head);
     for (const item of headEvidence.filter(item => item.content === null)) {
