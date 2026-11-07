@@ -66,3 +66,5 @@
 - Continue:41: remove secret-derived hashes from path placeholders; ordinal aliases replay pinned inventories in stage order and survive new paths and consumer restarts. Keep the owner-accepted exotic-encoding boundary (d-003, MONO-329); plain-form leaks and unchecked inputs still block.
 
 - Continue:41 follow-up: isolate temporary Git metadata aliases from stage inventory replay; C41 checks restored file content, continued dangerous blocking and evidence-based closure after a process restart and earlier path addition.
+
+- Continue:41 percent-decoding follow-up: retain benign malformed UTF-8 escapes in source, tool output and checker reasons; use a replacement-decoded analysis view to keep adjacent encoded credential families detectable. Keep original output bytes or markers and existing decoder-limit refusals.

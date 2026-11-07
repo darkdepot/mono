@@ -270,7 +270,9 @@ function encodedAnalysis(maxBytes, maxNodes) {
       try { add(decodeURIComponent(source)); } catch {}
       for (const [fragment] of source.matchAll(/(?:%[0-9a-f]{2}|[A-Za-z0-9_.~!()*'-])+/gi)) {
         if (!fragment.includes('%')) continue;
-        try { add(decodeURIComponent(fragment)); } catch { result.dirty = result.opaque = true; }
+        try { add(decodeURIComponent(fragment)); } catch {
+          add(Buffer.from(fragment.replace(/%([0-9a-f]{2})/gi, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16))), 'latin1').toString('utf8'));
+        }
       }
     }
     // Four alignments cover an encoded fragment inside a longer base64 run.

@@ -95,6 +95,39 @@ test('C41: replayed inventories preserve content and danger after a restart and 
   if(checked.outcome==='confirmed'){assert.equal(restored.result.findings[0].danger,true);assert.equal(restored.result.findings[0].status,'confirmed');}
  }
 });
+test('C42: benign malformed percent UTF-8 stays visible in source, diff and checker reasons',async t=>{
+ const source='export const malformed = "%FF";',patch='diff --git a/input.mjs b/input.mjs\n--- a/input.mjs\n+++ b/input.mjs\n@@ -1 +1 @@\n-export const malformed = \"ordinary\";\n+'+source+'\n';
+ for(const value of [source,patch])for(const options of [{input:true,inputFile:'input.mjs'},{input:true,inputPatch:true},{},{diagnostic:true}]){
+  const safe=screenModelOutput(value,options);assert.equal(safe.rejected,false);assert.equal(safe.fatal,false);assert.equal(safe.value,value);
+ }
+ const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source+'\n');f.git('add','.');f.git('commit','-qm','malformed percent source');
+ const calls=[];const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+  calls.push(request);const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes(source));
+  return {response:request.role==='code-review'?review([sample],c.files):{completed:true,verdicts:[verdict({outcome:'rejected',reason:source})]}};
+ }});
+ assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(result.rounds.length,1);assert.equal(calls.length,2);
+ assert.deepEqual(result.unreviewedFiles,[]);assert.equal(result.findings[0].reason,source);
+});
+test('C42: malformed percent UTF-8 in successful child stdout and stderr does not stop a round',async t=>{
+ const f=fixture(t),source='export const malformed = "%FF";\n';fs.writeFileSync(path.join(f.worktree,'input.mjs'),source);f.git('add','.');f.git('commit','-qm','malformed child text');
+ const head=f.git('rev-parse','HEAD'),binary=execFileSync('which',['git'],{encoding:'utf8'}).trim(),bin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-percent-child-'));
+ t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));
+ fs.writeFileSync(path.join(bin,'git'),`#!${process.execPath}\nconst cp=require('node:child_process'),fs=require('node:fs');const r=cp.spawnSync(${JSON.stringify(binary)},process.argv.slice(2),{stdio:['ignore','pipe','pipe']});if(r.stdout)fs.writeSync(1,r.stdout);if(r.stderr)fs.writeSync(2,r.stderr);fs.writeSync(2,${JSON.stringify(source)});process.exit(r.status??1);\n`,{mode:0o700});
+ const previous=process.env.PATH;process.env.PATH=bin+path.delimiter+previous;
+ try{
+  assert.equal(reviewGit(f.worktree,['show',head+':input.mjs']),source);
+  const runner=responder(),result=await runReviewRound({...f.request,head},runner);
+  assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(result.rounds.length,1);assert.equal(runner.calls.length,1);
+ }finally{process.env.PATH=previous;}
+});
+test('C42: invalid percent UTF-8 cannot hide an adjacent encoded credential family',()=>{
+ const token='ghp_'+'P'.repeat(36),encoded=[...Buffer.from(token)].map(byte=>'%'+byte.toString(16).padStart(2,'0')).join('');
+ for(const value of ['%FF'+encoded,encoded+'%C3'])for(const input of [value,'export const payload = "'+value+'";']){
+  for(const options of [{input:true,inputFile:'input.mjs'},{},{diagnostic:true}]){
+   const safe=screenModelOutput(input,options);assert.ok(safe.diagnostic.secretMatches>0);assert.ok(!safe.value.includes(encoded));assert.ok(!safe.value.includes(token));assert.match(safe.value,/withheld/);
+  }
+ }
+});
 test('C30/v8: a matched opener withholds the file remainder across regexes, hunks and both roles',async t=>{
  const source='const credential = {\n delimiter: /}/,\n value: "opaqueCredentialValue"\n};\nconst tail = "tailFixture";';
  const blob=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
