@@ -1588,6 +1588,50 @@ function nativeMcpEvents(id,tool,input,value,bound=true){
   {type:'response_item',payload:{type:'custom_tool_call_output',call_id:'outer-'+id,output:JSON.stringify(value)}}
  ];
 }
+
+// Trace-derived Codex Idea defer: one patch fills four approval references.
+function nativeReplaceAllBriefFixture(t,missing=false){
+ const f=textFixture(t,'codex','defer'),link='https://linear.app/monotest/project/test#comment-r1';
+ const content=[
+  '## Суть сейчас','Сохраняем вводные проекта.','',
+  '## Как это видит владелец','05.11.2026, Idea: мысль владельца; причина: сохранить смысл; ожидается ссылка','',
+  '## Решения и повороты','05.11.2026, Idea: описание утверждено; причина: согласие владельца; ожидается ссылка','',
+  '## Что знаем','05.11.2026, Idea: вводные собраны; причина: разговор; ожидается ссылка','',
+  '## Отброшено','05.11.2026, Idea: прежняя формулировка; причина: новое согласие; ожидается ссылка','',
+  '```mono-brief',JSON.stringify({project:projectId}),'```'
+ ].join('\n');
+ const expected=[
+  '## Суть сейчас','Сохраняем вводные проекта.','',
+  '## Как это видит владелец','05.11.2026, Idea: мысль владельца; причина: сохранить смысл; '+link,'',
+  '## Решения и повороты','05.11.2026, Idea: описание утверждено; причина: согласие владельца; '+link,'',
+  '## Что знаем','05.11.2026, Idea: вводные собраны; причина: разговор; '+link,'',
+  '## Отброшено','05.11.2026, Idea: прежняя формулировка; причина: новое согласие; '+link,'',
+  '```mono-brief',JSON.stringify({project:projectId}),'```'
+ ].join('\n');
+ const doc={id:'brief',projectId,title:'Brief',content};
+ const truncated={...doc,content:'Brief… (truncated, use `get_document` for full description)'};
+ const patch={id:'brief',patch:[{op:'replace',old_string:missing?'нет такой отметки':'ожидается ссылка',new_string:link,replace_all:true}]};
+ f.request.expectedRecords.push({type:'mono-brief',count:1});
+ f.events.splice(7,0,
+  ...nativeMcpEvents('brief-create','save_document',{projectId,title:doc.title,content},truncated),
+  ...nativeMcpEvents('brief-read','get_document',{id:'brief'},doc),
+  ...nativeMcpEvents('brief-patch','save_document',patch,truncated));
+ f.events.unshift({type:'session_meta',payload:{id:'native-replace-all-session'}});
+ for(const binding of f.request.approvalBindings){binding.shownLine++;binding.currentLine++;}
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);
+ f.save('documents/brief.json',{...doc,content:missing?content:expected});
+ return f;
+}
+test('MONO-357 codex Idea defer replace_all resolves every approval marker and verifies the brief',t=>{
+ const f=nativeReplaceAllBriefFixture(t),result=f.check();
+ assert.equal(result.status,'passed',result.reason);
+});
+test('MONO-357 codex Idea defer replace_all with zero matches fails closed',t=>{
+ const result=nativeReplaceAllBriefFixture(t,true).check();
+ assert.equal(result.status,'failed',result.reason);
+ assert.match(result.reason,/document patch old_string must match at least once/);
+});
+
 function nativePatchFirstFixture(t,state='sequential'){
  const f=patchFirstFixture(t,'codex'),patch={id:'brief',patch:[{op:'replace',old_string:'Expected link.',new_string:'Approval link.'}]};
  const prior=(id='prior',value=f.doc,bound=true)=>nativeMcpEvents(id,'get_document',{id:value.id},value,bound);

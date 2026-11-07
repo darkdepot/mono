@@ -647,10 +647,10 @@ export function verifyRecords(request){
      }
      if(typeof content!=='string'||elided(content))missing(`document patch lacks full prior content for ${id}`);
      for(const edit of input.patch){
-      if(edit?.op!=='replace'||typeof edit.old_string!=='string'||!edit.old_string||typeof edit.new_string!=='string'||edit.replace_all===true)missing(`unsupported document patch for ${id}`);
+      if(edit?.op!=='replace'||typeof edit.old_string!=='string'||!edit.old_string||typeof edit.new_string!=='string')missing(`unsupported document patch for ${id}`);
       const start=content.indexOf(edit.old_string);
-      if(start<0||content.indexOf(edit.old_string,start+1)>=0)throw new Error(`document patch old_string must match exactly once for ${id}`);
-      content=content.slice(0,start)+edit.new_string+content.slice(start+edit.old_string.length);
+      if(start<0||edit.replace_all!==true&&content.indexOf(edit.old_string,start+1)>=0)throw new Error(`document patch old_string must match ${edit.replace_all===true?'at least':'exactly'} once for ${id}`);
+      content=edit.replace_all===true?content.split(edit.old_string).join(edit.new_string):content.slice(0,start)+edit.new_string+content.slice(start+edit.old_string.length);
      }
      input.content=content;
     }
