@@ -70,11 +70,12 @@ export function reviewContractDigest(contract, identity) {
 function exact(value, keys) {
   requireValue(object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)), 'response fields differ from schema');
 }
-function screenChildOutput(result, stdoutOptions = {}) {
-  const decode = value => typeof value === 'string' ? value : new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(value ?? Buffer.alloc(0));
-  let stdout, stderr;
-  try { stdout = decode(result.stdout); stderr = decode(result.stderr); }
+function decodeChildBytes(value) {
+  try { return typeof value === 'string' ? value : new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(value ?? Buffer.alloc(0)); }
   catch { throw new Error('child process output withheld: non-UTF8 stream'); }
+}
+function screenChildOutput(result, stdoutOptions = {}) {
+  const stdout = decodeChildBytes(result.stdout), stderr = decodeChildBytes(result.stderr);
   const out = screenModelOutput(stdout, stdoutOptions), err = screenModelOutput(stderr);
   let safeStdout = typeof out.value === 'string' ? out.value : JSON.stringify(out.value);
   let safeStderr = typeof err.value === 'string' ? err.value : JSON.stringify(err.value);
@@ -350,8 +351,9 @@ function encodedAnalysis(maxBytes, maxNodes, sourceFile = null) {
   const typedSource = /\.(?:[cm]?[jt]sx?|flow)$/i.test(sourceFile ?? '');
   const analysisCache = new Map();
   let decoderBytes = 0, decoderNodes = 0;
-  const analyze = (source, level = 0) => {
-    if (analysisCache.has(source)) return analysisCache.get(source);
+  const analyze = (source, level = 0, patch = false) => {
+    const cacheKey = (patch ? 'patch:' : 'source:') + source;
+    if (analysisCache.has(cacheKey)) return analysisCache.get(cacheKey);
     if (level > 8 || ++decoderNodes > maxNodes || (decoderBytes += Buffer.byteLength(source)) > maxBytes * 4)
       return { dirty: true, opaque: true, keySecret: false };
     let json = false; try { JSON.parse(source.trim()); json = true; } catch {}
@@ -386,7 +388,7 @@ function encodedAnalysis(maxBytes, maxNodes, sourceFile = null) {
     if (matchedFamilies.includes('JWT candidate')) bindings.push({ start: 0, end: source.length });
     const result = { values, families, bindings, forms: new Set([source]), dirty: families.size > 0 || bindings.length > 0, opaque: false, decodedDirty: false, bound, keySecret: secretKey(source) };
     // Reserve before recursion: repeated representations cannot cycle or multiply work.
-    analysisCache.set(source, result);
+    analysisCache.set(cacheKey, result);
     const collectValue = (value, representation = value) => {
       if (!credentialValue(value) || screenMarkers.has(value)) return;
       const inspected = analyze(value, level + 1);
@@ -395,6 +397,25 @@ function encodedAnalysis(maxBytes, maxNodes, sourceFile = null) {
       result.opaque ||= inspected.opaque;
     };
     for (const binding of sourceValues) collectValue(binding.value, binding.representation);
+    if (!json && level === 0) {
+      let runtimeSource = source;
+      if (typedSource) {
+        if (erasedTypes === undefined) {
+          erasedTypes = null;
+          try {
+            const stripped = nodeModule.stripTypeScriptTypes?.(source, { mode: 'strip' });
+            if (typeof stripped === 'string' && stripped.length === source.length) erasedTypes = stripped;
+          } catch {}
+        }
+        runtimeSource = erasedTypes ?? source;
+      }
+      const views = patch ? sourceViews(source, true, false) : [];
+      const inputs = views.length ? views.map(rows => rows.map(row => row.text).join('\n')) : [source];
+      for (const input of inputs) {
+        const literals = credentialStatementLiterals(input, views.length ? input : runtimeSource);
+        for (const literal of literals) collectValue(literal.value, literal.representation);
+      }
+    }
     const add = (decoded, map, coverage = true) => {
       if (decoded === source || !decoded.length) return;
       const inspected = analyze(decoded, level + 1);
@@ -518,27 +539,62 @@ function credentialValue(value) {
   // 33-character total limit when it differs from the pattern's upper bound.
   return value.length > 0 && !(value.length <= 33 && /^<[a-z][a-z0-9_-]{0,31}>$/.test(value));
 }
-// JSON members and embedded JSON use all tokens; source bindings need only
-// the next quoted value and keep their stateless line/remainder policy.
-function jsonTokens(source, limit = Infinity) {
-  const tokens = [];
+// JSON members retain every token. Source inventory mode separates statements
+// outside strings/comments; line masking still has its stateless remainder policy.
+function jsonTokens(source, limit = Infinity, statements = false) {
+  const tokens = [], parens = [], sourcePunctuation = ';()=!?&|+-*%<>./';
   for (let index = 0; index < source.length && tokens.length < limit;) {
     if (/\s/.test(source[index])) { index++; continue; }
     const start = index, char = source[index];
-    if ('"\''.includes(char)) {
+    if (statements && char === '[') {
+      const marker = [...screenMarkers].find(value => source.startsWith(value, index));
+      if (marker) { index += marker.length; tokens.push({ start, end: index, value: marker, quoted: true, closed: true }); continue; }
+    }
+    if (statements && source.startsWith('/*', index)) {
+      const end = source.indexOf('*/', index + 2); index = end < 0 ? source.length : end + 2; continue;
+    }
+    if (statements && source.startsWith('//', index)) {
+      const end = source.indexOf('\n', index + 2); index = end < 0 ? source.length : end + 1; continue;
+    }
+    const previous = tokens.at(-1);
+    if (statements && char === '/' && (!previous || previous.controlClose || (!previous.quoted && !previous.regexp &&
+      (/[=(:,[!&|?{};+*%~^<>/-]$/.test(previous.value) && !['++', '--'].includes(previous.value) ||
+        /^(?:return|throw|yield|case|else|do|typeof|void|delete|new|in|instanceof|of|await)$/.test(previous.value))))) {
+      let end = index + 1, characterClass = false;
+      for (; end < source.length && source[end] !== '\n'; end++) {
+        if (source[end] === '\\') { end++; continue; }
+        if (source[end] === '[') characterClass = true;
+        if (source[end] === ']') characterClass = false;
+        if (source[end] === '/' && !characterClass) break;
+      }
+      if (source[end] === '/') {
+        index = end + 1; while (/[a-z]/i.test(source[index] ?? '') && index < source.length) index++;
+        const value = source.slice(start, index);
+        tokens.push({ start, end: index, value, quoted: false, regexp: true });
+        continue;
+      }
+    }
+    if ('"\''.includes(char) || (statements && char === '`')) {
       index++; let closed = false;
       while (index < source.length) {
         if (source[index] === '\\') { index += 2; continue; }
+        if (statements && char !== '`' && /[\r\n]/.test(source[index])) break;
         if (source[index++] === char) { closed = true; break; }
       }
       index = Math.min(index, source.length);
       const raw = source.slice(start, index); let value = raw.slice(1, closed ? -1 : undefined);
       if (char === '"') { try { value = JSON.parse(raw); } catch {} }
-      tokens.push({ start, end: index, value, quoted: true, closed }); continue;
+      tokens.push({ start, end: index, value, quoted: true, closed });
+      continue;
     }
-    if ('{}[]:,'.includes(char)) index++;
-    else while (index < source.length && !/[\s"'{}\[\]:,]/.test(source[index])) index++;
-    tokens.push({ start, end: index, value: source.slice(start, index), quoted: false });
+    if (statements && ['=>', '++', '--'].includes(source.slice(index, index + 2))) index += 2;
+    else if ('{}[]:,'.includes(char) || (statements && sourcePunctuation.includes(char))) index++;
+    else while (index < source.length && !/[\s"'{}\[\]:,]/.test(source[index]) &&
+      !(statements && (source[index] === '`' || sourcePunctuation.includes(source[index])))) index++;
+    let controlClose = false;
+    if (statements && char === '(') parens.push(/^(?:if|for|while|with|switch|catch)$/.test(previous?.value ?? '') && tokens.at(-2)?.value !== '.');
+    if (statements && char === ')') controlClose = parens.pop() ?? false;
+    tokens.push({ start, end: index, value: source.slice(start, index), quoted: false, controlClose });
   }
   return tokens;
 }
@@ -577,35 +633,89 @@ const SOURCE_KEY = '(?:[\\p{L}\\p{N}_$-]*)(?:' + [...SECRET_KEY_SUFFIXES].sort((
   .map(name => [...name].join('[^A-Za-z0-9]*')).join('|') + ')(?![\\p{L}\\p{N}_$-])';
 const SOURCE_SPACE = '(?:\\s|/\\*[\\s\\S]*?\\*/)*';
 const SOURCE_BINDING = new RegExp('(?<![\\p{L}\\p{N}_$-])(?:' + SOURCE_KEY + '["\']?\\??' + SOURCE_SPACE + '[:=]|--' + SOURCE_KEY + '(?:' + SOURCE_SPACE + '=|[ \\t]+(?=\\S)))', 'iu');
+const SOURCE_NAME = new RegExp('(?<![\\p{L}\\p{N}_$-])' + SOURCE_KEY, 'iu');
+// Inventory complete credential statements, never an inferred initializer.
+// Value blocks inherit their binding; object/destructuring keys bind their parent.
+function credentialStatementLiterals(source, runtimeSource) {
+  const values = [], frames = [{ tokens: [], literals: [], inherited: false, bound: false, parens: 0 }];
+  const runtime = token => runtimeSource.slice(token.start, token.end).trim();
+  const assignment = token => !token.quoted && !token.regexp && token.value !== '=>' && /[=:]/.test(runtime(token));
+  const binds = frame => frame.inherited || frame.bound ||
+    frame.tokens.some((token, index) => runtime(token) &&
+      (token.quoted ? secretKey(token.value) && (frame.tokens[index + 1]?.value === '(' ||
+          frame.tokens.slice(index + 1).some(assignment))
+        : !token.regexp && SOURCE_NAME.test(runtime(token)) && (frame.tokens.slice(index + 1).find(runtime)?.value === '(' ||
+          frame.tokens.slice(index + 1).some(assignment))));
+  const finish = frame => {
+    if (binds(frame)) values.push(...frame.literals);
+    frame.tokens = []; frame.literals = []; frame.bound = false;
+  };
+  const tokens = jsonTokens(source, Infinity, true);
+  for (const token of tokens) {
+    const frame = frames.at(-1);
+    // A slash span can also be division containing source statements. Retain
+    // every adjacent same-quote span there, rather than discarding a binding.
+    if (token.regexp && (binds(frame) || SOURCE_NAME.test(runtime(token)))) {
+      const previous = new Map(); frame.bound = true;
+      for (let index = token.start; index < token.end; index++) {
+        const quote = source[index];
+        if (quote === '\\') { index++; continue; }
+        if (!['"', "'", '`'].includes(quote)) continue;
+        if (previous.has(quote)) {
+          const representation = source.slice(previous.get(quote) + 1, index);
+          const literal = jsonTokens(quote + representation + quote, 1)[0];
+          values.push({ value: literal.value, representation });
+        }
+        previous.set(quote, index);
+      }
+    }
+    if (!token.quoted && token.value === '{') {
+      const previous = frame.tokens.at(-1)?.value;
+      const expression = ['=', ':', '(', '[', ','].includes(previous) || ['const', 'let', 'var'].includes(previous);
+      frames.push({ tokens: [], literals: [], inherited: binds(frame), bound: false, expression, parens: 0 });
+      continue;
+    }
+    if (!token.quoted && token.value === '}' && frames.length > 1) {
+      if (frame.expression) {
+        frames.pop(); const parent = frames.at(-1);
+        parent.bound ||= binds(frame) || frame.tokens.some((token, index) => !token.quoted && SOURCE_NAME.test(runtime(token)) &&
+          (index === 0 || frame.tokens[index - 1].value === ',') &&
+          [undefined, ','].includes(frame.tokens.slice(index + 1).find(runtime)?.value));
+        parent.literals.push(...frame.literals);
+      } else { finish(frame); frames.pop(); }
+      continue;
+    }
+    if (!token.quoted && token.value === '(') frame.parens++;
+    if (!token.quoted && token.value === ')') frame.parens = Math.max(0, frame.parens - 1);
+    if (!token.quoted && token.value === ';' && !frame.parens) { finish(frame); continue; }
+    frame.tokens.push(token);
+    if (token.quoted && token.closed && runtimeSource.slice(token.start, token.end).trim())
+      frame.literals.push({ value: token.value, representation: source.slice(token.start + 1, token.end - 1) });
+  }
+  for (const frame of frames) finish(frame);
+  return values;
+}
 function sourceBindings(line, safeMarkers = false) {
   const matches = [...line.matchAll(new RegExp(SOURCE_BINDING.source, 'giu'))];
-  return matches.flatMap((match, index) => {
+  return matches.flatMap(match => {
     const bindingStart = match.index + match[0].length;
-    // A colon may introduce a type before the actual initializer. Capture the
-    // value after its assignment, including assertions following that literal.
-    // Stop before the next binding so repeated declarations never rescan suffixes.
-    const annotation = match[0].endsWith(':') ? /^(?:=>|[^=;\r\n])*?=(?![=>])\s*/u
-      .exec(line.slice(bindingStart, matches[index + 1]?.index ?? line.length)) : null;
-    // Retain the original colon value too: source data can itself contain '='.
-    return [bindingStart, ...(annotation ? [bindingStart + annotation[0].length] : [])].flatMap(position => {
-      let beginning = position;
-      beginning += line.slice(beginning).search(/\S|$/);
-      const rest = line.slice(beginning).trim();
-      // Only a complete scalar at the end of this line can exempt a binding.
-      // Anything else keeps the stateless line/remainder withholding policy.
-      const literal = /^(?:(["'])([^"']*)\1|([^\s"',;\]}]+))\s*[;,\]}]*\s*$/.exec(rest);
-      const scalar = literal ? literal[2] ?? literal[3] : null;
-      const token = literal || !/^["']/.test(rest) ? null : jsonTokens(rest, 1)[0];
-      const value = literal?.[2] ?? scalar ?? (token?.quoted && token.closed ? token.value : null);
-      const quoted = !!literal?.[1] || !!(token?.quoted && token.closed), start = beginning + (quoted ? 1 : 0);
-      const end = literal ? start + (literal[1] ? literal[2].length : literal[3].length)
-        : quoted ? beginning + token.end - 1 : line.length;
-      return (!safeMarkers || !screenMarkers.has(value)) && credentialValue(literal ? scalar : rest || null) ? [{ value, start, end, quoted }] : [];
-    });
+    let beginning = bindingStart;
+    beginning += line.slice(beginning).search(/\S|$/);
+    const rest = line.slice(beginning).trim();
+    // Only a complete scalar at the end of this line can exempt a binding.
+    // Anything else keeps the stateless line/remainder withholding policy.
+    const literal = /^(?:(["'])([^"']*)\1|([^\s"',;\]}]+))\s*[;,\]}]*\s*$/.exec(rest);
+    const scalar = literal ? literal[2] ?? literal[3] : null;
+    const token = literal || !/^["']/.test(rest) ? null : jsonTokens(rest, 1)[0];
+    const value = literal?.[2] ?? scalar ?? (token?.quoted && token.closed ? token.value : null);
+    const quoted = !!literal?.[1] || !!(token?.quoted && token.closed), start = beginning + (quoted ? 1 : 0);
+    const end = literal ? start + (literal[1] ? literal[2].length : literal[3].length)
+      : quoted ? beginning + token.end - 1 : line.length;
+    return (!safeMarkers || !screenMarkers.has(value)) && credentialValue(literal ? scalar : rest || null) ? [{ value, start, end, quoted }] : [];
   });
 }
 const sourceCredential = line => sourceBindings(line).length > 0;
-function sourceViews(source, patch) {
+function sourceViews(source, patch, includeHeaders = true) {
   const lines = source.split('\n'), views = [], headers = [];
   let before = [], after = [], inHunk = false;
   const flush = () => { if (before.length) views.push(before); if (after.length) views.push(after); before = []; after = []; };
@@ -618,7 +728,7 @@ function sourceViews(source, patch) {
       if (line[0] !== '-') after.push(row);
     } else headers.push(row);
   }
-  flush(); if (headers.length) views.push(headers);
+  flush(); if (headers.length && includeHeaders) views.push(headers);
   return views;
 }
 function withheldLines(source, patch = false) {
@@ -800,7 +910,9 @@ export function roleInvocation(role, route, { scratch, worktree, schemaFile }) {
     });
     requireValue(catalogResult.status === 0 && !catalogResult.error, 'installed Codex model catalog unavailable');
     let catalog;
-    try { catalog = JSON.parse(catalogResult.stdout); } catch { throw new Error('installed Codex model catalog unreadable'); }
+    const catalogSource = decodeChildBytes(catalogResult.stdout);
+    decodeChildBytes(catalogResult.stderr);
+    try { catalog = JSON.parse(catalogSource); } catch { throw new Error('installed Codex model catalog unreadable'); }
     requireValue(catalog.models?.some(model => model.slug === route.model), 'native model missing from installed catalog');
     for (const model of catalog.models) Object.assign(model, { apply_patch_tool_type: null, experimental_supported_tools: [],
       tool_mode: 'direct', multi_agent_version: 'disabled', node_repl_disabled: true, supports_search_tool: false });
@@ -886,7 +998,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (markers.has(entry)) return { value: entry, text: entry };
       if (layers > 8) return hide();
       const stringRevision = revision;
-      const analysis = analyze(entry);
+      const analysis = analyze(entry, 0, patch);
       if (input) rememberSecretValues(file, pointer, analysis.values ?? new Set(), analysis.families ?? new Set());
       if (analysis.opaque) return opaque(entry, patch);
 
@@ -1127,19 +1239,21 @@ function screenInvocationOutput(stdout, stderr) {
 function runInvocation(invocation, prompt, timeoutMs) {
   return new Promise((resolve, reject) => {
       const child = spawn(invocation.command, invocation.args, { cwd: invocation.cwd, env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
-      let stdout = '', stderr = '', exceeded = false, interrupted = false;
+      const stdout = [], stderr = [];
+      let stdoutBytes = 0, stderrBytes = 0, exceeded = false, interrupted = false;
       const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
       const interrupt = () => { interrupted = true; kill(); };
       process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
       const cleanup = () => { clearTimeout(timer); process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt); };
       const timer = setTimeout(() => { exceeded = true; kill(); }, timeoutMs);
-      child.stdout.on('data', data => { stdout += data; if (Buffer.byteLength(stdout) > 16 * 1024 * 1024) { exceeded = true; kill(); } });
-      child.stderr.on('data', data => { stderr += data; if (Buffer.byteLength(stderr) > 1024 * 1024) { exceeded = true; kill(); } });
+      child.stdout.on('data', data => { stdoutBytes += data.length; if (stdoutBytes > 16 * 1024 * 1024) { exceeded = true; kill(); } else stdout.push(data); });
+      child.stderr.on('data', data => { stderrBytes += data.length; if (stderrBytes > 1024 * 1024) { exceeded = true; kill(); } else stderr.push(data); });
       child.stdin.on('error', error => { if (error.code !== 'EPIPE') reject(new Error('role process input failed')); });
       child.once('error', () => { cleanup(); reject(new Error('role process could not start')); });
       child.once('close', code => { cleanup(); kill();
         try {
-          const result = screenInvocationOutput(stdout, stderr);
+          const output = decodeChildBytes(Buffer.concat(stdout)), diagnostic = decodeChildBytes(Buffer.concat(stderr));
+          const result = screenInvocationOutput(output, diagnostic);
           if (interrupted) throw Object.assign(new Error('review interrupted; role process group stopped'), { rawAnswer: result.stdout });
           if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${exceeded ? 'timeout/output limit' : code}); no response admitted`), { rawAnswer: result.stdout });
           resolve(result);

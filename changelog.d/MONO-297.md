@@ -97,3 +97,6 @@
 
 - Remember credential initializer literals after type annotations so a surviving copy triggers the final prompt barrier; preserve type-only declarations and bounded repeated-assignment scans. C57 covers optional/generic/union/array annotations, assertions, unsupported whole-file stripping and the original security repro.
 - Require exact-head Git path absence for deletion evidence; binary or otherwise unavailable present files keep existing findings open and unchecked.
+
+- Close the credential-statement class by remembering every string literal independently of annotations, comments, decorators, destructuring, object keys or chained assignments. Keep erased-type controls, value floors, existing line/remainder masks and the final prompt barrier; uncertain statement boundaries conservatively retain a larger unit. C59 includes the Greptile comment-equals repro, multiline/decorator/destructuring cases and nested/regex controls.
+- Accumulate bounded raw role stdout/stderr buffers and use one fatal UTF-8 decoder before parsing, including synchronous native catalog/auth outputs. C59 splits multibyte paths and checker evidence in both recorded transports and rejects invalid bytes on either stream.

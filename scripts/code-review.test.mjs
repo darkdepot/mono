@@ -81,7 +81,7 @@ test('C51/r7: repeated JSON keys in repository text are data, including the circ
  });
 });
 test('C51/r7: checker credential values redact in place after parsing and record their field paths',async t=>{
- const credential='ghp_'+'S'.repeat(36),reason='before '+credential+' after',expected='before [credential-shaped field withheld] after';
+ const credential='ghp_'+'S'.repeat(36);const reason='before '+credential+' after';const expected='before [credential-shaped field withheld] after';
  for(const encoded of [false,true])await t.test(encoded?'JSON answer':'object answer',async t=>{
   const answer={completed:true,verdicts:[verdict({danger:true,dangerCase:'data',dangerReason:'data corruption',reason})]};const value=encoded?JSON.stringify(answer):answer;
   assert.equal(parseChecker(value,[sample]).verdicts[0].reason,expected);
@@ -93,7 +93,8 @@ test('C51/r7: checker credential values redact in place after parsing and record
 });
 test('C51/r7: unreadable role answers keep the existing single retry and measured costs',async t=>{
  const f=fixture(t),token='ghp_'+'K'.repeat(36);
- for(const bad of ['{"completed":true,"verdicts":[','{"completed":false,"completed":true,"verdicts":[]}',{completed:true,verdicts:[],[token]:'unsafe key'}]){
+ const unsafeKey={completed:true,verdicts:[],[token]:'unsafe key'};
+ for(const bad of ['{"completed":true,"verdicts":[','{"completed":false,"completed":true,"verdicts":[]}',unsafeKey]){
   const runner=responder({responses:[review([sample]),bad,bad]}),record=await runReviewRound(f.request,runner);
   assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.equal(runner.calls.length,3);const failed=record.costs.filter(cost=>cost.role==='code-review-checker');assert.equal(failed.length,2);assert.ok(failed.every(cost=>cost.usage.input_tokens===12));assert.ok(!JSON.stringify(record).includes(token));
  }
@@ -141,7 +142,8 @@ test('C50: any unpassed file side excludes the whole file from diff, export and 
 
 test('C50: rejected non-file inputs are excluded and named before role input',async t=>{
  const ambiguous=JSON.stringify({public:1,nested:'\\'.repeat(64)+'u0061'}),fatal='['.repeat(40)+'1'+']'.repeat(40),marker='[unreadable or over-limit model output withheld]';
- for(const [name,contract] of [['unfixed escaped contract',ambiguous],['fatal contract',fatal],['secret-key contract',JSON.stringify({password:'opaqueC50',purpose:'Review input'})]])await t.test(name,async t=>{
+ const secretContract=JSON.stringify({password:'opaqueC50',purpose:'Review input'});
+ for(const [name,contract] of [['unfixed escaped contract',ambiguous],['fatal contract',fatal],['secret-key contract',secretContract]])await t.test(name,async t=>{
   const f=fixture(t),safe=screenModelOutput(contract,{input:true});assert.equal(safe.rejected,true);let calls=0;
   const result=await runReviewRound({...f.request,contract},{runRole:async request=>{const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);calls++;assert.equal(c.contract,marker);assert.ok(c.unreviewedInputs.includes('договор задачи'));assert.ok(!request.prompt.includes(contract));return {response:review([],c.files)};}});
   assert.equal(calls,1,JSON.stringify(result.failures));assertUnchecked(result);assert.ok(result.unreviewedInputs.includes('договор задачи'));assert.equal(f.git('status','--porcelain'),'');
@@ -1480,11 +1482,12 @@ test('patch multiline assignments redact before roles, on both sides and across 
 });
 test('failed transport answers decode JSONL and object fields before redaction, withholding malformed envelopes',async t=>{
  const f=fixture(t),secret='opaqueFixture'+'z'.repeat(24),assignment=`password = [\n"${secret}"\n]`;
+ const sensitive={completed:false,diagnostic:{password:secret}};
  const bad=[
   JSON.stringify({type:'assistant',message:{content:[{type:'text',text:assignment}]}})+'\n',
   JSON.stringify({type:'thread.started',thread_id:'fixture'})+'\n'+JSON.stringify({type:'item.completed',item:{type:'agent_message',text:assignment}})+'\n',
   'diagnostic prefix\n'+JSON.stringify({type:'result',result:`"access_token": "${secret}"`}),
-  {completed:false,diagnostic:{password:secret}},
+  sensitive,
   '{"type":"assistant","text":"password = \\"'+secret,
   JSON.stringify({message:{content:assignment}},null,2).slice(0,-1),
  ];
@@ -1972,7 +1975,7 @@ test('v2 family table must cover multiline payload and patch sides',async t=>{
 
 test('v2 unquoted secret-like names use the same any-separator rule in every payload screen',async t=>{
  const f=fixture(t);
- const credential='synthetic'+'v'.repeat(24),names=['privatekey','apikey','sessiontoken','sessionkey','secret','token','password','passwd','credential','secretaccesskey'];
+ const credential='synthetic'+'v'.repeat(24);const names=['privatekey','apikey','sessiontoken','sessionkey','secret','token','password','passwd','credential','secretaccesskey'];
  const payloads=['private/key: '+credential,...names.flatMap(name=>['/',';','=',':','_','-','.',' ','\t','|','+','!','—'].map(separator=>name.split('').join(separator)+': '+credential))];
  for(const payload of payloads){
   assert.ok(scanSecrets(payload,{patch:false}).length,payload);
@@ -2179,7 +2182,7 @@ test('C39: nested JSON under path fields reaches both prompts safely through the
  }
 });
 test('C39: deterministic nesting property screens raw and re-decoded prompts for arbitrary parent keys',async t=>{
- const f=fixture(t),token='ghp_'+'Q'.repeat(36),opaque='plainOpaqueC39',fields=['files','file','path','ordinary','note','nested'];
+ const f=fixture(t),token='ghp_'+'Q'.repeat(36),opaque='plainOpaqueC39';const fields=['files','file','path','ordinary','note','nested'];
  let seed=0x29739;const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed;};
  const wraps=[value=>JSON.stringify(value),value=>Buffer.from(JSON.stringify(value)).toString('base64url'),value=>encodeURIComponent(JSON.stringify(value))];
  for(let index=0;index<24;index++){
@@ -2317,6 +2320,94 @@ test('C54: exact nested source representations are checked before either role la
   }});
   assertUnchecked(result);assert.ok(!roles.includes(role));assert.ok(result.unreviewedFiles.includes(file));assert.match(result.failures.at(-1).reason,/final role prompt/);
 });
+});
+
+test('C59: every literal on a credential statement is remembered across intervening syntax',async t=>{
+ const value='opaqueCredentialValueC59', other='secondCredentialLiteralC59';
+ const statements=[
+  `const password /* note=x */: string = "${value}";`,
+  `const password: string /* note=x */ = "${value}";`,
+  `const password /* note=\"notTheValue\"; */: string = "${value}";`,
+  `const password:\n ReadonlyArray<string> /* note=x */\n = "${value}";`,
+  `class Login {\n @decorate("${other}")\n password?: ReadonlyArray<string> = "${value}";\n}`,
+  `const { password: renamed = "${value}" } = source;`,
+  `const { password = fallback("${other}", "${value}") } = source;`,
+  `const { password } = choose("${value}", "${other}");`,
+  `({ password } = choose("${value}", "${other}"));`,
+  `const { account: { password } } = choose("${value}", "${other}");`,
+  `use({ password }, "${value}", "${other}");`,
+  `const credentials = { password /* note=x */: "${value}", label: "${other}" };`,
+  `const credentials = { "password": "${value}", "label": "${other}" };`,
+  `const credentials = { ["password"] /* note=x */: "${value}", label: "${other}" };`,
+  `settings["password"] /* note=x */ = choose("${value}", "${other}");`,
+  `const credentials = { get password() { return "${value}"; } };`,
+  `const credentials = { "password"() { return "${value}"; } };`,
+  `function password() { return "${value}"; }`,
+  `const label = "${other}", credentials = { password: "${value}" };`,
+  `const { password: renamed = "${value}" } = source, label = "${other}";`,
+  `let publicValue; password = publicValue = "${value}";`,
+  `const password = "notCopiedC59", label = "${value}";`,
+  `const password: (value: string) => string = choose("${other}", "${value}");`,
+  `const password = (/;/).test(input) ? "${value}" : "${other}";`,
+  `const quote = /'/; const password /* note=x */: string = "${value}";`,
+  `if (ok) /'/.test(input);\nconst password: string /* note=x */ = "${value}";`,
+  `const n = x + /'/.test(input);\nconst password: string /* note=x */ = "${value}";`,
+  `const n = x / y; if (ok) /'/.test(input);\nconst password: string /* note=x */ = "${value}";`,
+  `const n = {} / y; const password: string /* note=x */ = "${value}"; const m = x / y;`,
+  `const password = choose(() => { check(); return "${value}"; }, "${other}");`,
+  `for (let password = "${value}"; ready; next()) { use("${other}"); }`,
+ ];
+ for(const statement of statements)for(const copied of [value,...(statement.includes(other)?[other]:[])])await t.test(statement+' / '+copied,async t=>{
+  const f=fixture(t),file='input.ts';
+  fs.writeFileSync(path.join(f.worktree,file),statement+'\nexport const copy = '+JSON.stringify(copied)+';\n');
+  fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const independentCopy = '+JSON.stringify(copied)+';\n');
+  f.git('add','.');f.git('commit','-qm','C59 credential statement and copied literal');let calls=0;
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   calls++;assert.ok(!request.prompt.includes(copied),'statement literal reached a role prompt');
+   assert.ok(!fs.readFileSync(path.join(request.worktree,file),'utf8').includes(copied));
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};
+  }});
+  assertUnchecked(record);assert.equal(calls,0,'a copied credential statement literal reached a role');
+  assert.ok(record.unreviewedFiles.includes(file));assert.ok(!JSON.stringify(record).includes(copied));
+  assert.match(record.failures.at(-1).reason,/final role prompt/);
+ });
+});
+
+test('C59: native role stdout and stderr decode complete UTF-8 bytes before parsing',async t=>{
+ const f=fixture(t),file='ж漢😀.mjs';
+ fs.writeFileSync(path.join(f.worktree,file),'export const available = true;\n');f.git('add','.');f.git('commit','-qm','C59 unicode path');
+ const bin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-utf8-stream-'));t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));
+ const roles=resolveReviewRoles({},packRoot),modeFile=path.join(bin,'mode');
+ fs.writeFileSync(path.join(bin,'data.json'),JSON.stringify({model:roles['code-review'].model,reviewer:review([sample],['input.mjs',file]),checker:{completed:true,verdicts:[verdict({reason:'Negative input still passes. Evidence: ж漢😀.mjs.'})]}}));
+ const fake=`#!${process.execPath}
+ const fs=require('node:fs'),path=require('node:path'),engine=path.basename(process.argv[1]),data=JSON.parse(fs.readFileSync(path.join(__dirname,'data.json'),'utf8'));
+ if(process.argv[2]==='debug'){const mode=fs.readFileSync(path.join(__dirname,'mode'),'utf8');if(mode.startsWith('catalog-'))(mode.includes('stdout')?process.stdout:process.stderr).write(Buffer.from([0xff]));console.log(JSON.stringify({models:[{slug:data.model,tool_mode:'code_mode_only',apply_patch_tool_type:'freeform',multi_agent_version:'v2'}]}));process.exit(0);}
+ if(process.argv[2]==='login'){console.error('Logged in using ChatGPT');process.exit(0);}
+ if(process.argv.includes('auth')){console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}));process.exit(0);}
+ let input='';process.stdin.on('data',d=>input+=d);process.stdin.on('end',async()=>{
+  if(input.startsWith('Boundary audit')){console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify({tools:['exec_command','write_stdin'],mcpServers:[]})}}));console.log(JSON.stringify({type:'turn.completed'}));return;}
+  const mode=fs.readFileSync(path.join(__dirname,'mode'),'utf8'),bad=mode.startsWith(engine+'-');
+  const response=engine==='codex'?[{type:'item.completed',item:{type:'agent_message',text:JSON.stringify(data.reviewer)}},{type:'turn.completed'}]:[{type:'system',subtype:'init',tools:['Read','Glob','Grep','StructuredOutput'],mcp_servers:[]},{type:'result',subtype:'success',is_error:false,structured_output:data.checker}];
+  const out=Buffer.from(response.map(x=>JSON.stringify(x)).join('\\n')+'\\n'),err=Buffer.from('ordinary diagnostic ж漢😀');
+  for(const [stream,bytes] of [[process.stdout,out],[process.stderr,err]]){
+   const split=Number(mode.split(':')[1]??1),at=bytes.indexOf(Buffer.from('ж'))+split;
+   if(bad&&mode.includes(stream===process.stdout?'stdout':'stderr')){stream.write(Buffer.from([0xff]));}
+   stream.write(bytes.subarray(0,at));await new Promise(resolve=>setTimeout(resolve,25));stream.write(bytes.subarray(at));
+  }
+ });`;
+ for(const engine of ['codex','claude'])fs.writeFileSync(path.join(bin,engine),fake,{mode:0o700});
+ const prior=process.env.PATH;process.env.PATH=bin+path.delimiter+prior;
+ try{
+  for(const mode of ['valid:1','valid:3','valid:6','codex-stdout:1','codex-stderr:1','claude-stdout:1','claude-stderr:1','catalog-stdout','catalog-stderr'])await t.test(mode,async()=>{
+   fs.writeFileSync(modeFile,mode);const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')});
+   if(mode.startsWith('valid')){
+    assert.equal(record.outcome,'not-converged');assert.ok(record.round.reviewedFiles.includes(file));
+    assert.equal(record.findings[0].reason,'Negative input still passes. Evidence: ж漢😀.mjs.');assert.ok(!JSON.stringify(record).includes('�'));
+   }else{
+    assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.ok(record.failures.some(f=>/non-UTF8/.test(f.reason)));
+   }
+  });
+ }finally{process.env.PATH=prior;}
 });
 
 test('C57: annotated credential initializers cannot leave a copy in either role input',async t=>{
