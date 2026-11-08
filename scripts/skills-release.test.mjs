@@ -55,7 +55,7 @@ test('production Codex legacy driver answers a defective async window and keeps 
  assert(r.check.windows.some(w=>w.status==='failed'&&w.issues.some(issue=>/async summary/.test(issue))));
 });
 
-const hostRegressions=JSON.parse(fs.readFileSync('evals/scenarios/probe/samples/host-regressions.json','utf8'));
+const hostRegressions=JSON.parse(fs.readFileSync('evals/scenarios/acceptance/host-regressions.json','utf8'));
 async function backgroundRun(t,omitContinuation=false) {
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-background-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const plan=path.join(dir,'plan.json');fs.writeFileSync(plan,JSON.stringify({background:hostRegressions.claudeBackground,omitContinuation,messages:['Что: колонка Источник.\nУтверждаем и начинаем Research?','Утверждение записал.']}));
@@ -113,4 +113,15 @@ test('N1 the checker binds the actual question inside the final message, still r
  const good=check();assert.equal(good.status,'passed',JSON.stringify(good));assert.equal(good.exchanges[0].question,expected.question);
  rows.splice(1,0,{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__get_workspace',call_id:'late',arguments:'{}'}});
  assert.equal(check().status,'failed');
+});
+
+for(const host of ['claude','codex'])test(`R1 ${host} explicit markerless choice reaches the production driver and native answer`,async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-explicit-choice-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const packRoot=path.join(dir,'pack');fs.mkdirSync(packRoot);fs.writeFileSync(path.join(packRoot,'VERSION'),'0.36.0\n');
+ for(const name of ['references','scripts'])fs.symlinkSync(path.join(root,name),path.join(packRoot,name));
+ const authFile=path.join(dir,'auth.json');fs.writeFileSync(authFile,'{}');
+ const r=await runScenario({host,cwd:dir,packRoot,authFile,outputDir:path.join(dir,'out'),timeoutMs:10000,idleMs:10,maxTurns:64,binary:{command:process.execPath,args:[path.join(root,'scripts/test-fixtures/skills-role-host.mjs'),'roles-markerless-choice',root]},mcpServers:{monotest:{url:'test'}},workspaceProof:{tool:'mcp__monotest__get_workspace',path:['name'],equals:'Test Space'},scenario:{prompt:'Run roles',allowedTools:['*'],windows:[{mode:'label',label:'Отдельная колонка'}],expectedWindows:[{id:'source-choice',role:'choice',decision:'источник',advice:'Совет',reason:'колонку',summary:[]}]}});
+ assert.equal(r.status,'failed',JSON.stringify(r)); // malformed card must not become green
+ assert.equal(r.replies.length,1,JSON.stringify(r));assert.equal(r.replies[0].received,true);
+ const sent=fs.readFileSync(r.sent,'utf8');assert.match(sent,/Отдельная колонка/);assert.match(sent,host==='codex'?/send_user_message_question_reply/:/updatedInput/);
 });

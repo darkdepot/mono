@@ -112,10 +112,21 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
       const c = native(call), r = native(result);
       const name=nativeToolName(c);
       if (kind === 'answer') {
-        // The driver binds the newly resumed user message to its exact sent prompt.
-        if (!callId || (prompt !== undefined && typeof prompt !== 'string') || c?.type !== 'function_call' || name !== 'request_user_input_async' || c.call_id !== callId || r?.type !== 'message' || r.role !== 'user') absent();
+        // Online and offline consumers require an answer to this exact native window.
+        if (typeof callId !== 'string' || !callId || (prompt !== undefined && typeof prompt !== 'string') || c?.type !== 'function_call' || name !== 'request_user_input_async' || c.call_id !== callId || r?.type !== 'message' || r.role !== 'user') absent();
         const content = at(r, ['content']);
         if (!Array.isArray(content) || content.length !== 1 || at(content,[0]).type !== 'input_text' || typeof at(content,[0,'text']) !== 'string' || (prompt !== undefined && at(content,[0,'text']) !== prompt)) absent();
+        const text=at(content,[0,'text']).trim(),open='<send_user_message_question_reply>',close='</send_user_message_question_reply>';
+        if(!text.startsWith(open)||!text.endsWith(close)) absent();
+        const answers=JSON.parse(text.slice(open.length,-close.length));
+        const questions=at(JSON.parse(at(c,['arguments'])),['questions']);
+        if(!Array.isArray(questions)||!questions.length||!Array.isArray(answers)||answers.length!==questions.length) absent();
+        for(let i=0;i<questions.length;i++){
+          const question=at(questions,[i,'title']),answer=at(answers,[i]);
+          if(typeof question!=='string'||!question||Object.keys(answer).length!==3||
+             typeof at(answer,['answer'])!=='string'||typeof at(answer,['questionItemId'])!=='string'||at(answer,['question'])!==question||
+             !isDeepStrictEqual(JSON.parse(at(answer,['questionItemId'])),['request_user_input_async',callId,i])) absent();
+        }
         return {status:'confirmed'};
       }
       const outputType = c?.type === 'function_call' ? 'function_call_output' : c?.type === 'custom_tool_call' ? 'custom_tool_call_output' : null;

@@ -56,7 +56,7 @@ function validate(request){
   if(request.recordDump&&(!request.readOnlyDump||request.recordDump.dumpDir!==path.join(request.outputDir,'dump')))throw new Error('fixed dump directory must be outputDir/dump');
   if(request.writableRoots!==undefined&&(!Array.isArray(request.writableRoots)||request.writableRoots.some(dir=>!path.isAbsolute(dir))))throw new Error('absolute writableRoots required');
   for(const key of ['timeoutMs','idleMs'])if(request[key]!==undefined&&(!Number.isFinite(request[key])||request[key]<=0))throw new Error(`invalid ${key}`);
-  if(roleWindows(request.scenario.expectedWindows)&&request.scenario.expectedWindows.some(w=>!['approval','transition'].includes(w.role)))throw new Error('every expected target needs its role');
+  if(roleWindows(request.scenario.expectedWindows)&&request.scenario.expectedWindows.some(w=>!['approval','transition','choice'].includes(w.role)))throw new Error('every expected target needs its role');
   if(request.seed){
     const seed=request.seed;
     if(!seed.prompt?.trim()||!path.isAbsolute(seed.projectFile??'')||fs.existsSync(seed.projectFile)||!seed.projectName)throw new Error('fresh seed prompt/projectFile/projectName required');

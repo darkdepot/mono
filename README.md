@@ -1810,7 +1810,9 @@ Claude background-task yields wait for a fresh completed stage summary. Idea
 presentation titles stay outside the canonical four-section approval; absent
 presentation bindings remain unverified. Markerless legacy choices require an
 explicit scenario label (`expectedWindows.role: "choice"`); the checker still
-reports malformed cards and summaries stranded before an async window.
+reports malformed cards and summaries stranded before an async window. Codex
+window answers require the native reply envelope with the tested call and question
+identities; plain chat and replies to other calls remain unverified.
 Historical acceptance uses real native window answers and the current conversation
 rubric. Linked approval records still bind the shown version after the answer.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
