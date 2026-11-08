@@ -80,3 +80,7 @@
 - Continue:49: replace fatal/rejected file-screen results with the existing safe marker and retain their paths as wholly unchecked, including unchanged exported dependencies. Apply the same rejected-status boundary to pinned checker evidence and named-file Git stdout; preserve normal line masks, exact raw identity reads, BOM and maximum danger. C48 covers the 40-array false-clean regression and nonfatal rejected JSON.
 
 - Continue:51: treat a rejected screen on either diff revision as wholly unchecked and replace that side with the existing safe marker. C49 covers rejected base/accepted head independently of head export, rejected head, both rejected and accepted controls; prior guards remain.
+
+- Apply the orchestrator stop rules to every role input, including non-file contracts and request templates: exclude rejected/fatal values with the existing marker and name them unchecked. Keep scope/risk flags as the structural OR over rounds before reopening shortcuts, including rejected/closed keys and new evidence. C50 covers both classes; prior danger, BOM and file masks remain.
+
+- Complete the same stop-rule exclusion for files: union task-base/previous-round/head refusals, omit whole files from both diff views, and withhold their exports, both evidence sides and project rules. C50 asserts exact reviewer/checker completion without technical-failure masking; accepted partial files remain readable.
