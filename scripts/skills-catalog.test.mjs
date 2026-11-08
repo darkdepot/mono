@@ -67,6 +67,7 @@ test('Mono catalog has exactly six stage contracts, all host text replies and no
       assert(catalog.stages.get('idea').files.includes('references/brief.md'));
       assert(scenario.expectedRecords.some(rule=>scenario.kind==='unclear'?rule.forbidden==='mono-brief':rule.type==='mono-brief'&&rule.count===1),'Idea scenarios require the Brief after approval and forbid it without consent');
     }
+    if(scenario.stage!=='idea')assert(scenario.expectedRecords.some(rule=>rule.type==='mono-brief'&&rule.scope==='project'&&rule.count===1),'later stages require the existing project Brief');
     for(const host of ['claude','codex']){
       assert(scenario.hosts[host].expectedReplies.length);
       assert(scenario.hosts[host].expectedReplies.every(r=>['approval','transition','clarification'].includes(r.role)),'roles are predetermined');
@@ -76,6 +77,10 @@ test('Mono catalog has exactly six stage contracts, all host text replies and no
     if(!file.endsWith('.json'))continue;
     const text=bytes.toString();assert(!/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/i.test(text),'no live UUIDs');
     assert(!/\/Users\/|https:\/\/linear\.app\/(?!monotest\/)/.test(text),'no private paths/workspace links');
+    if(file.includes(`${path.sep}seeds${path.sep}`)){
+      const seed=JSON.parse(text);assert.equal(seed.documents.filter(d=>d.type==='brief').length,1);
+      assert(seed.steps.some(step=>step.includes('--brief <read-back-brief-url>')),'seed Idea record binds its Brief');
+    }
     if(file.includes(`${path.sep}seeds${path.sep}`))for(const document of JSON.parse(text).documents ?? []){
       if(document.type==='research'){
         const block=document.content.split('```mono-research\n')[1]?.split('\n```')[0];
