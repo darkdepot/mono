@@ -6,6 +6,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import * as nodeModule from 'node:module';
 import { canonical, digest, resolveRole, runtimePackRoot, isMain } from './runtime.mjs';
 
 export const DANGER_CASES = ['data', 'security', 'gate-bypass', 'gate-stall', 'silent-result', 'readiness', 'unknown'];
@@ -330,9 +331,10 @@ function decodedBindingSpans(source, decoded, pattern, decode, bindings) {
   piece(input, source.length, source.length - input, true);
   return output === decoded.length && next === points.length ? result : [{ start: 0, end: source.length }];
 }
-function encodedAnalysis(maxBytes, maxNodes) {
+function encodedAnalysis(maxBytes, maxNodes, sourceFile = null) {
 // Decoders produce analysis views only. The emitted value always comes from
   // original bytes or a marker; no decoded data or decoder error is rendered.
+  const typedSource = /\.(?:[cm]?[jt]sx?|flow)$/i.test(sourceFile ?? '');
   const analysisCache = new Map();
   let decoderBytes = 0, decoderNodes = 0;
   const analyze = (source, level = 0) => {
@@ -340,15 +342,30 @@ function encodedAnalysis(maxBytes, maxNodes) {
     if (level > 8 || ++decoderNodes > maxNodes || (decoderBytes += Buffer.byteLength(source)) > maxBytes * 4)
       return { dirty: true, opaque: true, keySecret: false };
     let json = false; try { JSON.parse(source.trim()); json = true; } catch {}
-    const matchedFamilies = familyMatches(source), families = new Set(matchedFamilies.filter(value => value !== 'JWT candidate')), values = new Set(families), bindings = [], sourceValues = [];
+    const matchedFamilies = familyMatches(source), families = new Set(matchedFamilies.filter(value => value !== 'JWT candidate')), values = new Set(families), bindings = [], sourceValues = [], typeOnlyStarts = new Set();
+    // Use native erased-type positions, never filename/colon guesses. Unsupported
+    // syntax or runtimes retain the original strict value screening; source is not rejected.
+    let erasedTypes;
     for (const value of families) {
       for (let start = source.indexOf(value); start !== -1; start = source.indexOf(value, start + 1)) bindings.push({ start, end: start + value.length, eligible: true, family: true });
     }
     let offset = 0, bound = false;
     for (const line of source.split('\n')) {
+      // Decoded string contents remain data, even when their containing file is typed code.
       for (const binding of json ? [] : sourceBindings(line, true)) {
-        bound = true; bindings.push({ start: offset + binding.start, end: offset + binding.end, eligible: !!binding.value && binding.value.length >= 6 });
-        if (binding.value) sourceValues.push({ value: binding.value, representation: line.slice(binding.start, binding.end) });
+        const start = offset + binding.start, end = offset + binding.end;
+        if (typedSource && level === 0 && !binding.quoted && erasedTypes === undefined) {
+          erasedTypes = null;
+          try {
+            const stripped = nodeModule.stripTypeScriptTypes?.(source, { mode: 'strip' });
+            if (typeof stripped === 'string' && stripped.length === source.length) erasedTypes = stripped;
+          } catch {}
+        }
+        const typeOnly = typeof erasedTypes === 'string' && !binding.quoted && end > start && !erasedTypes.slice(start, end).trim();
+        const value = typeOnly ? null : binding.value;
+        bound = true; bindings.push({ start, end, eligible: !!value && value.length >= 6 });
+        if (typeOnly) typeOnlyStarts.add(start);
+        if (value) sourceValues.push({ value, representation: line.slice(binding.start, binding.end) });
       }
       offset += line.length + 1;
     }
@@ -423,6 +440,7 @@ function encodedAnalysis(maxBytes, maxNodes) {
       const key = analyze(token.value, level + 1), first = tokens[index + 2];
       // Inspect every original key before JSON.parse can discard duplicates.
       if (key.keySecret && first && !screenMarkers.has(first.value) && credentialValue(first.quoted ? first.value : null)) {
+        if (typeOnlyStarts.has(first.start)) continue;
         result.dirty = result.bound = true;
         const last = tokens[closes.get(index + 2) ?? index + 2];
         const start = first.start + (first.quoted ? 1 : 0), end = last.end - (first.quoted && first.closed ? 1 : 0);
@@ -559,7 +577,7 @@ function sourceBindings(line, safeMarkers = false) {
     const quoted = !!literal?.[1] || !!(token?.quoted && token.closed), start = beginning + (quoted ? 1 : 0);
     const end = literal ? start + (literal[1] ? literal[2].length : literal[3].length)
       : quoted ? beginning + token.end - 1 : line.length;
-    return (!safeMarkers || !screenMarkers.has(value)) && credentialValue(literal ? scalar : rest || null) ? [{ value, start, end }] : [];
+    return (!safeMarkers || !screenMarkers.has(value)) && credentialValue(literal ? scalar : rest || null) ? [{ value, start, end, quoted }] : [];
   });
 }
 const sourceCredential = line => sourceBindings(line).length > 0;
@@ -812,7 +830,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
   const withheld = '[unreadable or over-limit model output withheld]', lineHidden = '[credential-shaped line withheld]', fieldHidden = '[credential-shaped field withheld]';
   const markers = screenMarkers;
   const maxBytes = diagnostic ? 262144 : 16 * 1024 * 1024, maxNodes = diagnostic ? 4096 : 131072;
-  const analyze = encodedAnalysis(maxBytes, maxNodes), safePath = pathScreen(), redactedFields = new Set();
+  const analyze = encodedAnalysis(maxBytes, maxNodes, inputFile), safePath = pathScreen(), redactedFields = new Set();
   let bytes = 0, nodes = 0, secretMatches = 0, rejected = false, fatal = false, revision = 0, partiallyWithheld = false;
   const hide = (matches = 0) => { fatal = true; rejected = true; revision++; secretMatches += matches; return { value: withheld, text: withheld }; };
   const redact = (source, file, patch = inputPatch, json = false, coveredLines = null) => {

@@ -2282,5 +2282,50 @@ test('C54: exact nested source representations are checked before either role la
    const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([sample],c.files):{completed:true,verdicts:[verdict({outcome:'rejected',danger:false})]}};
   }});
   assertUnchecked(result);assert.ok(!roles.includes(role));assert.ok(result.unreviewedFiles.includes(file));assert.match(result.failures.at(-1).reason,/final role prompt/);
+});
+});
+
+test('C55: type-only members do not turn public type names into leaked values',async t=>{
+ const types=['string','number','boolean','any','unknown','object','null','undefined','never','void','CredentialType','ReadonlyArray<string>','CredentialType | null','FlowCredentialType'];
+ for(const type of types)await t.test(type,async t=>{
+  const f=fixture(t),file=type==='FlowCredentialType'||type==='object'?'input.js':'input.ts';
+  const source=type==='object'?'export function identity(s) { return typeof s === "object" ? s : {}; }\n/** @type {{ '+('pass'+'word')+': object }} */\n':'interface Login {\n  '+(type==='CredentialType'?JSON.stringify('pass'+'word'):('pass'+'word'))+': '+type+(type==='CredentialType'?'':';')+'\n}\nexport function identity(s: '+type+'): '+type+' { return s; }\n';
+  fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','C55 typed member');let calls=0;
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('identity'));assert.ok(c.diff.includes(type));
+   const exported=fs.readFileSync(path.join(request.worktree,file),'utf8');assert.ok(exported.includes('identity'));assert.ok(!exported.includes(('pass'+'word')+':'));
+   return {response:review([],c.files)};
+  }});
+  assert.equal(calls,1,JSON.stringify(record.failures));assert.equal(record.outcome,'clean');assert.deepEqual(record.unreviewedFiles,[]);assert.ok(record.partiallyWithheldFiles.includes(file));
  });
+});
+
+test('C55: quoted, initialized and data-file values retain the final barrier',async t=>{
+ for(const [file,source] of [['input.ts','const options = {\n  '+('pass'+'word')+': "string",\n};\nexport function identity(s: string): string { return s; }\n'],['input.ts','const '+('pass'+'word')+' = string;\nexport function identity(s: string): string { return s; }\n'],['input.ts','const options = {\n  '+('pass'+'word')+': 123456,\n};\nexport const visible = 123456;\n'],['input.yaml',('pass'+'word')+': CredentialType\npublic: CredentialType\n'],['input.yaml',('pass'+'word')+': string\npublic: string\n']])await t.test(source,async t=>{
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','C55 real value control');let calls=0;
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async()=>{calls++;assert.fail('remembered value reached a role');}});
+  assert.equal(calls,0);assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.match(record.failures.at(-1).reason,/final role prompt/);
+});
+});
+
+test('C55: a colon inside a source string remains a value rather than a declaration',async t=>{
+ const f=fixture(t),file='input.ts',value='opaqueBindingC55';
+ const source='export const message = '+JSON.stringify(('pass'+'word')+': '+value)+';\nexport const copy = '+JSON.stringify(value)+';\n';
+ fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','C55 source string control');let calls=0;
+ const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files)};}});
+ assert.equal(calls,0);assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.match(record.failures.at(-1).reason,/final role prompt/);
+});
+
+test('C55: runtime labels are not type declarations',async t=>{
+ const f=fixture(t),file='input.ts',value='opaqueBindingC55';
+ fs.writeFileSync(path.join(f.worktree,file),('pass'+'word')+': '+value+'\npublic: '+value+'\n');f.git('add','.');f.git('commit','-qm','C55 label control');let calls=0;
+ const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files)};}});
+ assert.equal(calls,0);assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.match(record.failures.at(-1).reason,/final role prompt/);
+});
+
+test('C55: unproven type syntax retains strict screening',async t=>{
+ const f=fixture(t),file='input.js';
+ fs.writeFileSync(path.join(f.worktree,file),'interface Login {\n  '+('pass'+'word')+': ?CredentialType;\n}\nexport function identity(s: ?CredentialType): ?CredentialType { return s; }\n');f.git('add','.');f.git('commit','-qm','C55 unproven syntax');let calls=0;
+ const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files)};}});
+ assert.equal(calls,0);assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.match(record.failures.at(-1).reason,/final role prompt/);
 });
