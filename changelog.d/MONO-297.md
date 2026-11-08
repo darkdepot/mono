@@ -96,3 +96,4 @@
 - Bound repeated-assignment screening to the next quoted token; check export size before full reads and classify oversized binary blobs in bounded UTF-8 chunks. C56 covers scaling, forbidden full reads, late binary bytes and unchanged fail-closed text reporting.
 
 - Remember credential initializer literals after type annotations so a surviving copy triggers the final prompt barrier; preserve type-only declarations and bounded repeated-assignment scans. C57 covers optional/generic/union/array annotations, assertions, unsupported whole-file stripping and the original security repro.
+- Require exact-head Git path absence for deletion evidence; binary or otherwise unavailable present files keep existing findings open and unchecked.

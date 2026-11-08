@@ -680,6 +680,40 @@ test('C35/C44: pinned deletion is recorded but cannot close dangerous or unmarke
   assert.deepEqual(result.findings[0].deletionEvidence,{before:fromBase?f.request.base:first.round.head,head});
  });
 });
+test('C58: present unavailable files cannot become deletion evidence or close an open finding',async t=>{
+ for(const state of ['binary','directory','oversized','withheld'])await t.test(state,async t=>{
+  const f=fixture(t),file='input.mjs';
+  const first=await runReviewRound(f.request,responder({findings:[sample]}));
+  assert.equal(first.outcome,'not-converged');assert.equal(first.findings[0].danger,false);
+  if(state==='directory'){fs.unlinkSync(path.join(f.worktree,file));fs.mkdirSync(path.join(f.worktree,file));fs.writeFileSync(path.join(f.worktree,file,'ordinary.txt'),'ordinary content\n');}
+  else fs.writeFileSync(path.join(f.worktree,file),state==='binary'?Buffer.from([0,255]):state==='oversized'?'x'.repeat(MAX_SCREEN_VALUE_BYTES+1):'password="opaqueUnavailableC58";\n');
+  f.git('add','.');f.git('commit','-qm','C58 present unavailable path');const head=f.git('rev-parse','HEAD');
+  assert.ok(f.git('ls-tree',head,'--',file).includes(file));let checkerCalls=0,headEvidence;
+  const result=await runReviewRound({...f.request,head,stageRecord:first},{runRole:async request=>{
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);
+   if(request.role==='code-review')return {response:review([],context.files)};
+   checkerCalls++;headEvidence=context.headEvidence.find(item=>item.file===file);
+   return {response:{completed:true,verdicts:[verdict({outcome:'rejected',closed:true,reason:'The file was deleted.'})]}};
+  }});
+  assert.equal(headEvidence?.deletionEvidence,undefined);
+  assertUnchecked(result);assert.ok(result.unreviewedFiles.includes(file));
+  assert.ok(!['closed','rejected'].includes(result.findings[0].status));assert.notEqual(result.findings[0].closed,true);
+  assert.equal(result.findings[0].deletionEvidence,undefined);
+  if(state==='binary')assert.equal(checkerCalls,1);
+ });
+});
+test('C58: a genuinely absent head path still records pinned deletion evidence',async t=>{
+ const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample]}));
+ fs.unlinkSync(path.join(f.worktree,'input.mjs'));f.git('add','.');f.git('commit','-qm','C58 real deletion');const head=f.git('rev-parse','HEAD');let checkerCalls=0;
+ const result=await runReviewRound({...f.request,head,stageRecord:first},{runRole:async request=>{
+  const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);
+  if(request.role==='code-review')return {response:review([],context.files)};
+  checkerCalls++;assert.deepEqual(context.headEvidence[0].deletionEvidence,{before:f.request.base,head});
+  return {response:{completed:true,verdicts:[verdict({outcome:'rejected',closed:true,reason:'The file was deleted.'})]}};
+ }});
+ assert.equal(checkerCalls,1);assert.equal(result.outcome,'clean');assert.equal(result.findings[0].status,'closed');
+ assert.deepEqual(result.findings[0].deletionEvidence,{before:f.request.base,head});
+});
 test('C35: a never-existing file is not verified deletion evidence',async t=>{
  const result=await runReviewRound(fixture(t).request,responder({findings:[{...sample,file:'absent.mjs',danger:true}],verdicts:[verdict({outcome:'rejected',closed:true})]}));
  assert.equal(result.outcome,'not-converged');assert.equal(result.findings[0].status,'unresolved');

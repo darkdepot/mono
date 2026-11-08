@@ -1384,8 +1384,8 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
         dangerMaximum, danger: dangerMaximum !== false });
     }
     const findings = [...byKey.values()];
-    const existsAt = (revision, raw) => git(worktree, ['ls-tree', '-z', revision, '--', raw]).split('\0')
-      .some(row => row.slice(row.indexOf('\t') + 1) === raw && row.includes(' blob '));
+    const existsAt = (revision, raw, blobOnly = true) => git(worktree, ['ls-tree', '-z', revision, '--', raw]).split('\0')
+      .some(row => row.slice(row.indexOf('\t') + 1) === raw && (!blobOnly || row.includes(' blob ')));
     const evidenceAt = revision => [...new Set(findings.map(finding => finding.file))].map(file => {
       const raw = paths.get(file) ?? file;
       if (!existsAt(revision, raw)) return { file, content: null };
@@ -1405,6 +1405,7 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     const baseEvidence = evidenceAt(base), headEvidence = evidenceAt(head);
     for (const item of headEvidence.filter(item => item.content === null)) {
       const raw = paths.get(item.file) ?? item.file;
+      if (existsAt(head, raw, false)) { unreviewedFiles.add(item.file); continue; }
       const before = [base, previous].find(revision => revision && existsAt(revision, raw));
       if (before) item.deletionEvidence = { before, head };
     }
@@ -1416,13 +1417,13 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       const dangerMaximum = maximumDanger(finding.dangerMaximum, verdict.danger), danger = dangerMaximum !== false;
       const evidence = headEvidence.find(item => item.file === finding.file);
       const deletionEvidence = evidence?.deletionEvidence;
-      const retained = danger && verdict.outcome === 'rejected';
+      const retained = (danger || unreviewedFiles.has(finding.file)) && verdict.outcome === 'rejected';
       return { ...verdict, outOfContract: !!saved?.outOfContract || verdict.outOfContract, riskRaised: !!saved?.riskRaised || verdict.riskRaised,
         ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, dangerMaximum, danger,
         origin: saved && savedDanger(saved) !== false ? saved.origin : verdict.origin,
         dangerCase: danger ? verdict.dangerCase ?? saved?.dangerCase ?? 'unknown' : null,
         dangerReason: danger && verdict.danger === false ? 'Сохранена ранее отмеченная или неясная опасность. ' + verdict.dangerReason : verdict.dangerReason,
-        ...(retained ? { outcome: 'unresolved', closed: false, rejectionUnproven: true, reason: 'Отклонение опасной или неразмеченной находки оспаривается; находка остаётся открытой. ' + verdict.reason } : {}) };
+        ...(retained ? { outcome: 'unresolved', closed: false, rejectionUnproven: true, reason: (danger ? 'Отклонение опасной или неразмеченной находки оспаривается; находка остаётся открытой. ' : 'Содержимое файла не проверено; находка остаётся открытой. ') + verdict.reason } : {}) };
     });
     requireValue(treeIdentity(worktree) === identity, 'HEAD/tree changed during review; result discarded');
     for (const verdict of checked) {
