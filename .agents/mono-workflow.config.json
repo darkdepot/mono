@@ -205,11 +205,18 @@
       "identity": "cwd is the detached copy and full SHA matches the requested version"
     },
     "data": {
-      "source": "local-fixtures",
-      "description": "Local pack fixtures in the detached copy"
+      "source": "synthetic",
+      "description": "Local pack fixtures in the detached copy; skill scenarios create fresh synthetic projects only in the separate Mono Test Linear workspace (monotest) and the test Paper file"
     },
     "forbiddenActions": [
-      "No publication, external mutations or real data writes"
-    ]
+      "No publication or real data writes from the QA copy",
+      "Skill scenarios call Linear only through the monotest server, confirmed as Mono Test before the first write, and never call the working Linear workspace",
+      "No external mutations except skill scenario writes to the Mono Test workspace and the test Paper file"
+    ],
+    "skills": {
+      "indexFile": "evals/scenarios/index.json",
+      "hosts": ["claude", "codex"],
+      "perChange": false
+    }
   }
 }
