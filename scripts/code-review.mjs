@@ -18,6 +18,17 @@ const savedDanger = finding => Object.hasOwn(finding, 'dangerMaximum') ? finding
 const reviewKeys = new Map(), activeReviewKey = new AsyncLocalStorage(), standaloneKey = randomBytes(32);
 const privateDigest = value => createHmac('sha256', activeReviewKey.getStore() ?? standaloneKey).update(JSON.stringify(value)).digest('hex');
 const activePathAliases = new AsyncLocalStorage(), standalonePathAliases = new Map();
+const activeSecretInputs = new AsyncLocalStorage();
+const containsSecretValue = (source, value) => source.includes(value) || source.includes(JSON.stringify(value).slice(1, -1));
+function rememberSecretValues(file, pointer, values, families = new Set()) {
+  const inputs = activeSecretInputs.getStore();
+  if (!inputs || !values.size) return;
+  const name = file === null ? `вход ${pointer || "контекст"}` : file;
+  const entry = inputs.get(name) ?? { file, values: new Set(), families: new Set() };
+  for (const value of values) entry.values.add(value);
+  for (const value of families) entry.families.add(value);
+  inputs.set(name, entry);
+}
 function pathAlias(value) {
   const aliases = activePathAliases.getStore() ?? standalonePathAliases, identity = JSON.stringify(value);
   if (!aliases.has(identity)) aliases.set(identity, String(aliases.size + 1));
@@ -262,8 +273,8 @@ const SECRET_FAMILIES = [
   ['bearer', /Bearer\s+[A-Za-z0-9._~+/=-]+/i],
 ];
 export const MAX_SCREEN_VALUE_BYTES = 2 * 1024 * 1024;
-function jwtMatches(source) {
-  let work = 0;
+function jwtMatches(source, captured = null) {
+  let work = 0, found = false;
   for (const [run] of source.matchAll(/[A-Za-z0-9_.-]+/g)) {
     const segments = run.split('.');
     for (let index = 0; index + 2 < segments.length; index++) {
@@ -276,19 +287,48 @@ function jwtMatches(source) {
         if ((work += header.length - start) > MAX_SCREEN_VALUE_BYTES * 8) return true;
         try {
           const value = JSON.parse(Buffer.from(header.slice(start), 'base64url').toString('utf8'));
-          if (object(value) && Object.hasOwn(value, 'alg')) return true;
+          if (object(value) && Object.hasOwn(value, 'alg')) {
+            if (!captured) return true;
+            captured.add(header.slice(start) + '.' + segments[index + 1] + '.' + segments[index + 2]); found = true;
+          }
         } catch {}
       }
     }
   }
-  return false;
+  return found;
 }
 // Families and JWT match substrings in every channel, regardless of adjacent bytes.
 function familyMatches(source) {
   const matches = SECRET_FAMILIES.flatMap(([, pattern]) => [...source.matchAll(
     new RegExp(pattern.source, pattern.flags + 'g'))].map(([match]) => match));
-  if (jwtMatches(source)) matches.push('JWT candidate');
+  const jwt = new Set();
+  if (jwtMatches(source, jwt)) matches.push(...(jwt.size ? jwt : ['JWT candidate']));
   return matches;
+}
+// Map only detected span boundaries, keeping provenance memory proportional to
+// findings rather than to every decoded character. Native decoders stay authoritative.
+function decodedBindingSpans(source, decoded, pattern, decode, bindings) {
+  if (!bindings.length) return [];
+  const points = bindings.flatMap((span, index) => [{ at: span.start, side: 'start', index }, { at: span.end, side: 'end', index }])
+    .sort((a, b) => a.at - b.at);
+  const result = bindings.map(span => ({ ...span }));
+  let input = 0, output = 0, next = 0;
+  const piece = (start, end, length, literal) => {
+    const until = output + length;
+    while (next < points.length && points[next].at <= until) {
+      const point = points[next++], offset = point.at - output;
+      result[point.index][point.side] = offset === 0 ? start : point.at === until ? end
+        : literal ? start + offset : point.side === 'start' ? start : end;
+    }
+    output = until;
+  };
+  for (const match of source.matchAll(pattern)) {
+    piece(input, match.index, match.index - input, true);
+    const end = match.index + match[0].length;
+    piece(match.index, end, decode(match[0]).length, false); input = end;
+  }
+  piece(input, source.length, source.length - input, true);
+  return output === decoded.length && next === points.length ? result : [{ start: 0, end: source.length }];
 }
 function encodedAnalysis(maxBytes, maxNodes) {
 // Decoders produce analysis views only. The emitted value always comes from
@@ -299,47 +339,98 @@ function encodedAnalysis(maxBytes, maxNodes) {
     if (analysisCache.has(source)) return analysisCache.get(source);
     if (level > 8 || ++decoderNodes > maxNodes || (decoderBytes += Buffer.byteLength(source)) > maxBytes * 4)
       return { dirty: true, opaque: true, keySecret: false };
-    const result = { dirty: familyMatches(source).length > 0 || source.split('\n').some(sourceCredential), opaque: false, decodedDirty: false, bound: source.split('\n').some(sourceCredential), keySecret: secretKey(source) };
+    let json = false; try { JSON.parse(source.trim()); json = true; } catch {}
+    const matchedFamilies = familyMatches(source), families = new Set(matchedFamilies.filter(value => value !== 'JWT candidate')), values = new Set(families), bindings = [], sourceValues = [];
+    for (const value of families) {
+      for (let start = source.indexOf(value); start !== -1; start = source.indexOf(value, start + 1)) bindings.push({ start, end: start + value.length, eligible: true, family: true });
+    }
+    let offset = 0, bound = false;
+    for (const line of source.split('\n')) {
+      for (const binding of json ? [] : sourceBindings(line, true)) {
+        bound = true; bindings.push({ start: offset + binding.start, end: offset + binding.end, eligible: !!binding.value && binding.value.length >= 6 });
+        if (binding.value) sourceValues.push({ value: binding.value, representation: line.slice(binding.start, binding.end) });
+      }
+      offset += line.length + 1;
+    }
+    // A budget-exhausted JWT analysis has no precise span: require whole-input coverage.
+    if (matchedFamilies.includes('JWT candidate')) bindings.push({ start: 0, end: source.length });
+    const result = { values, families, bindings, forms: new Set([source]), dirty: families.size > 0 || bindings.length > 0, opaque: false, decodedDirty: false, bound, keySecret: secretKey(source) };
     // Reserve before recursion: repeated representations cannot cycle or multiply work.
     analysisCache.set(source, result);
-    const children = new Set();
-    const add = decoded => { if (decoded !== source && decoded.length) children.add(decoded); };
-    add(decodeEscapeLayer(source));
+    const collectValue = (value, representation = value) => {
+      if (!credentialValue(value) || screenMarkers.has(value)) return;
+      const inspected = analyze(value, level + 1);
+      for (const form of inspected.forms ?? []) if (form.length >= 6) result.values.add(form);
+      if (value.length >= 6) result.values.add(representation);
+      result.opaque ||= inspected.opaque;
+    };
+    for (const binding of sourceValues) collectValue(binding.value, binding.representation);
+    const add = (decoded, map, coverage = true) => {
+      if (decoded === source || !decoded.length) return;
+      const inspected = analyze(decoded, level + 1);
+      result.dirty ||= inspected.dirty; result.decodedDirty ||= inspected.dirty; result.bound ||= inspected.bound; result.opaque ||= inspected.opaque;
+      result.keySecret ||= inspected.keySecret;
+      for (const value of inspected.values ?? []) result.values.add(value);
+      for (const value of inspected.families ?? []) result.families.add(value);
+      for (const form of inspected.forms ?? []) result.forms.add(form);
+      if (coverage && inspected.bindings?.length) for (const span of map(inspected.bindings)) {
+        result.bindings.push(span);
+        if (span.eligible) {
+          const representation = source.slice(span.start, span.end); result.values.add(representation);
+          if (span.family) result.families.add(representation);
+        }
+      }
+    };
+    // Valid JSON gets its key/value pairing and escapes from native token values;
+    // blindly unescaping its whole document can invent malformed extra bindings.
+    const escaped = decodeEscapeLayer(source);
+    add(escaped, spans => decodedBindingSpans(source, escaped, JSON_ESCAPES, decodeJsonEscape, spans), !json);
     if (/%[0-9a-f]{2}/i.test(source)) {
-      try { add(decodeURIComponent(source)); } catch {}
-      for (const [fragment] of source.matchAll(/(?:%[0-9a-f]{2}|[A-Za-z0-9_.~!()*'-])+/gi)) {
-        if (!fragment.includes('%')) continue;
-        try { add(decodeURIComponent(fragment)); } catch {
-          add(Buffer.from(fragment.replace(/%([0-9a-f]{2})/gi, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16))), 'latin1').toString('utf8'));
+      try {
+        const decoded = decodeURIComponent(source);
+        add(decoded, spans => decodedBindingSpans(source, decoded, /(?:%[0-9a-f]{2})+/gi, decodeURIComponent, spans), !json);
+      } catch {}
+      for (const match of source.matchAll(/(?:%[0-9a-f]{2}|[A-Za-z0-9_.~!()*'-])+/gi)) {
+        const [fragment] = match; if (!fragment.includes('%')) continue;
+        const map = spans => [{ start: match.index, end: match.index + fragment.length, eligible: spans.some(span => span.eligible), family: spans.some(span => span.family) }];
+        try { add(decodeURIComponent(fragment), map); } catch {
+          add(Buffer.from(fragment.replace(/%([0-9a-f]{2})/gi, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16))), 'latin1').toString('utf8'), map);
         }
       }
     }
     // Four alignments cover an encoded fragment inside a longer base64 run.
     // Replacement decoding is analysis-only and retains ASCII fragments even
     // when surrounding decoded bytes are not UTF-8.
-    for (const [fragment] of source.matchAll(/[A-Za-z0-9+/_-]{4,}={0,2}/g)) {
+    for (const match of source.matchAll(/[A-Za-z0-9+/_-]{4,}={0,2}/g)) {
+      const [fragment] = match;
       for (let offset = 0; offset < Math.min(4, fragment.length - 3); offset++) {
         decoderBytes += fragment.length - offset;
         if (decoderBytes > maxBytes * 4) { result.dirty = result.opaque = true; break; }
-        add(Buffer.from(fragment.slice(offset), 'base64').toString('utf8'));
+        add(Buffer.from(fragment.slice(offset), 'base64').toString('utf8'), spans => [{ start: match.index + offset, end: match.index + fragment.length, eligible: spans.some(span => span.eligible), family: spans.some(span => span.family) }]);
       }
       if (result.opaque) break;
     }
-    const tokens = jsonTokens(source);
+    const tokens = jsonTokens(source), closes = jsonCloses(tokens);
     for (let index = 0; index < tokens.length; index++) {
       const token = tokens[index];
       if (!token.quoted) continue;
-      if (token.closed) add(token.value);
+      if (token.closed) add(token.value, spans => {
+        const interior = source.slice(token.start + 1, token.end - 1);
+        const mapped = interior === token.value ? spans : decodedBindingSpans(interior, token.value, JSON_ESCAPES, decodeJsonEscape, spans);
+        return mapped.map(span => ({ ...span, start: span.start + token.start + 1, end: span.end + token.start + 1 }));
+      });
       if (tokens[index + 1]?.value !== ':') continue;
       const key = analyze(token.value, level + 1), first = tokens[index + 2];
       // Inspect every original key before JSON.parse can discard duplicates.
-      if (key.keySecret && first && credentialValue(first.quoted ? first.value : null)) result.dirty = result.bound = true;
+      if (key.keySecret && first && !screenMarkers.has(first.value) && credentialValue(first.quoted ? first.value : null)) {
+        result.dirty = result.bound = true;
+        const last = tokens[closes.get(index + 2) ?? index + 2];
+        const start = first.start + (first.quoted ? 1 : 0), end = last.end - (first.quoted && first.closed ? 1 : 0);
+        const representation = source.slice(start, end), value = first.quoted ? first.value : representation;
+        result.bindings.push({ start, end, eligible: value.length >= 6 });
+        collectValue(value, representation);
+      }
       if (key.opaque) result.dirty = result.opaque = true;
-    }
-    for (const child of children) {
-      const inspected = analyze(child, level + 1);
-      result.dirty ||= inspected.dirty; result.decodedDirty ||= inspected.dirty; result.bound ||= inspected.bound; result.opaque ||= inspected.opaque;
-      result.keySecret ||= inspected.keySecret;
     }
     return result;
   };
@@ -379,8 +470,10 @@ function secretKey(key) {
 }
 // Decode only JSON escape tokens, using the native parser for their semantics.
 // Unknown source escapes (e.g. regexp \w) are already at a fixpoint.
+const JSON_ESCAPES = /\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})/g;
+const decodeJsonEscape = escape => JSON.parse('"' + escape + '"');
 function decodeEscapeLayer(value) {
-  return value.replace(/\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})/g, escape => JSON.parse('"' + escape + '"'));
+  return value.replace(JSON_ESCAPES, decodeJsonEscape);
 }
 function decodedKey(value) {
   for (let layer = 0; layer < 8; layer++) {
@@ -418,24 +511,28 @@ function jsonTokens(source) {
   }
   return tokens;
 }
-function redactJsonBindings(source, screenString, secretName = key => secretKey(decodedKey(key) ?? ''), matchedBinding = () => {}) {
-  const tokens = jsonTokens(source), stack = [], closes = new Map(), spans = [];
+function jsonCloses(tokens) {
+  const stack = [], closes = new Map();
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
     if (token.quoted) continue;
     if (['{', '['].includes(token.value)) stack.push(index);
     else if (['}', ']'].includes(token.value)) closes.set(stack.pop(), index);
   }
+  return closes;
+}
+function redactJsonBindings(source, screenString, secretName = key => secretKey(decodedKey(key) ?? ''), matchedBinding = () => {}, screenedLiteral = () => {}) {
+  const tokens = jsonTokens(source), closes = jsonCloses(tokens), spans = [];
   for (let index = 0; index < tokens.length; index++) {
     const key = tokens[index];
     if (key.quoted && tokens[index + 1]?.value !== ':') {
       const child = screenString(key.value);
-      if (child !== key.value) spans.push({ start: key.start, end: key.end, replacement: JSON.stringify(child) });
+      if (child !== key.value) { spans.push({ start: key.start, end: key.end, replacement: JSON.stringify(child) }); screenedLiteral({ start: key.start, end: key.end }); }
     }
     if (!key.quoted || tokens[index + 1]?.value !== ':' || !secretName(key.value)) continue;
     const first = tokens[index + 2], last = tokens[closes.get(index + 2) ?? index + 2];
     const value = JSON.parse(source.slice(first.start, last.end));
-    if (credentialValue(value)) { spans.push({ start: first.start, end: last.end }); matchedBinding(); }
+    if (credentialValue(value)) { spans.push({ start: first.start, end: last.end }); matchedBinding({ start: first.start, end: last.end }); }
   }
   let cursor = 0, result = '';
   for (const span of spans.sort((a, b) => a.start - b.start || b.end - a.end)) {
@@ -449,15 +546,23 @@ const SOURCE_KEY = '(?:[\\p{L}\\p{N}_$-]*)(?:' + [...SECRET_KEY_SUFFIXES].sort((
   .map(name => [...name].join('[^A-Za-z0-9]*')).join('|') + ')(?![\\p{L}\\p{N}_$-])';
 const SOURCE_SPACE = '(?:\\s|/\\*[\\s\\S]*?\\*/)*';
 const SOURCE_BINDING = new RegExp('(?<![\\p{L}\\p{N}_$-])(?:' + SOURCE_KEY + '["\']?\\??' + SOURCE_SPACE + '[:=]|--' + SOURCE_KEY + '(?:' + SOURCE_SPACE + '=|[ \\t]+(?=\\S)))', 'iu');
-function sourceCredential(line) {
-  return [...line.matchAll(new RegExp(SOURCE_BINDING.source, 'giu'))].some(match => {
+function sourceBindings(line, safeMarkers = false) {
+  return [...line.matchAll(new RegExp(SOURCE_BINDING.source, 'giu'))].flatMap(match => {
     const rest = line.slice(match.index + match[0].length).trim();
     // Only a complete scalar at the end of this line can exempt a binding.
     // Anything else keeps the stateless line/remainder withholding policy.
     const literal = /^(?:(["'])([^"']*)\1|([^\s"',;\]}]+))\s*[;,\]}]*\s*$/.exec(rest);
-    return credentialValue(literal ? literal[2] ?? literal[3] : rest || null);
+    const scalar = literal ? literal[2] ?? literal[3] : null;
+    const token = literal ? null : jsonTokens(rest)[0];
+    const value = literal?.[2] ?? scalar ?? (token?.quoted && token.closed ? token.value : null);
+    const beginning = match.index + match[0].length + line.slice(match.index + match[0].length).search(/\S|$/);
+    const quoted = !!literal?.[1] || !!(token?.quoted && token.closed), start = beginning + (quoted ? 1 : 0);
+    const end = literal ? start + (literal[1] ? literal[2].length : literal[3].length)
+      : quoted ? beginning + token.end - 1 : line.length;
+    return (!safeMarkers || !screenMarkers.has(value)) && credentialValue(literal ? scalar : rest || null) ? [{ value, start, end }] : [];
   });
 }
+const sourceCredential = line => sourceBindings(line).length > 0;
 function sourceViews(source, patch) {
   const lines = source.split('\n'), views = [], headers = [];
   let before = [], after = [], inHunk = false;
@@ -518,7 +623,7 @@ function screenSourceLines(source, patch, bindings = true) {
     if (remainder && (!patch || (inHunk && /^[+ -]/.test(line)))) hidden.add(index);
   }
   const value = lines.map((line, index) => hidden.has(index) ? (prefixes.get(index) ?? '') + '[credential-shaped line withheld]' : line).join('\n');
-  return { value, rejected: false, familyMatched, matches: hidden.size, partiallyWithheld: hidden.size > 0 && visibleInput(value) };
+  return { value, hiddenLines: hidden, rejected: false, familyMatched, matches: hidden.size, partiallyWithheld: hidden.size > 0 && visibleInput(value) };
 }
 function ambiguousJsonMembers(source) {
   const tokens = jsonTokens(source), stack = [];
@@ -571,6 +676,7 @@ export function scanSecrets(value, options = {}) {
   const screened = screenModelOutput(value, { input: true, inputFile: options.file, inputPatch: options.patch ?? true });
   return screened.rejected ? [{ file: options.file ?? null, line: 0, weight: 'P0', reason: 'credential-family or undecodable payload; value withheld' }] : [];
 }
+const screenMarkers = new Set(['[unreadable or over-limit model output withheld]', '[credential-shaped line withheld]', '[credential-shaped field withheld]', '[credential-shaped answer withheld]', '[private-key answer withheld]', '[unreadable transport answer withheld]', '[unreadable or over-limit transport answer withheld]']);
 const withheldMarker = /\[(?:credential-shaped (?:line|field|answer|path)|private-key answer|unreadable(?: or over-limit)? (?:model output|transport answer)) withheld\](?:#(?:[a-f0-9]{64}|[1-9][0-9]*)(?:#path-(?:[a-f0-9]{64}|[1-9][0-9]*))?)?/;
 function visibleInput(value, depth = 0) {
   if (depth > 32) return false;
@@ -704,18 +810,19 @@ export function observeCodexBoundary(value, stderr) {
 // renderers use this before model text can leave transient parsing buffers.
 export function screenModelOutput(value, { diagnostic = false, strict = false, filesById = {}, input = false, inputFile = null, inputPatch = false, answer = false } = {}) {
   const withheld = '[unreadable or over-limit model output withheld]', lineHidden = '[credential-shaped line withheld]', fieldHidden = '[credential-shaped field withheld]';
-  const markers = new Set([withheld, lineHidden, fieldHidden, '[credential-shaped answer withheld]', '[private-key answer withheld]', '[unreadable transport answer withheld]', '[unreadable or over-limit transport answer withheld]']);
+  const markers = screenMarkers;
   const maxBytes = diagnostic ? 262144 : 16 * 1024 * 1024, maxNodes = diagnostic ? 4096 : 131072;
   const analyze = encodedAnalysis(maxBytes, maxNodes), safePath = pathScreen(), redactedFields = new Set();
   let bytes = 0, nodes = 0, secretMatches = 0, rejected = false, fatal = false, revision = 0, partiallyWithheld = false;
   const hide = (matches = 0) => { fatal = true; rejected = true; revision++; secretMatches += matches; return { value: withheld, text: withheld }; };
-  const redact = (source, file, patch = inputPatch, json = false) => {
+  const redact = (source, file, patch = inputPatch, json = false, coveredLines = null) => {
     if (json && !(input && (file !== null || patch))) {
       const matches = scanPayloadText(source, { file, patch: false, bindings: false });
       if (matches.length) { secretMatches += matches.length; rejected = true; revision++; return withheldLines(source, patch); }
       return source;
     }
     const result = screenSourceLines(source, patch, !json);
+    for (const line of result.hiddenLines ?? []) coveredLines?.add(line);
     secretMatches += result.matches; rejected ||= result.rejected || (result.familyMatched && !(input && (file !== null || patch))); partiallyWithheld ||= !!result.partiallyWithheld;
     if (result.value !== source) revision++;
     return result.value;
@@ -728,7 +835,8 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
   const visit = (entry, depth = 0, file = null, layers = 0, patch = inputPatch, pathValue = false, pointer = '') => {
     if (depth > 32 || ++nodes > maxNodes) return hide();
     if (typeof entry === 'string') {
-      const original = entry;
+      const original = entry, coveredLines = new Set(), coveredSpans = [];
+      let structured = false;
       const processString = () => {
       if (entry.length > MAX_SCREEN_VALUE_BYTES) return hide();
       const size = Buffer.byteLength(entry); bytes += size;
@@ -737,6 +845,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (layers > 8) return hide();
       const stringRevision = revision;
       const analysis = analyze(entry);
+      if (input) rememberSecretValues(file, pointer, analysis.values ?? new Set(), analysis.families ?? new Set());
       if (analysis.opaque) return opaque(entry, patch);
 
       if (answer) {
@@ -755,7 +864,8 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       let parsed, decoded = false;
       try { parsed = JSON.parse(entry.trim(), (_key, child, context) =>
         typeof child === 'number' ? JSON.rawJSON(context.source) : child); decoded = true; } catch {}
-      const initialSafe = redact(entry, file, patch, decoded);
+      structured = decoded;
+      const initialSafe = input && decoded && parsed && typeof parsed === 'object' && !JSON.isRawJSON(parsed) ? entry : redact(entry, file, patch, decoded, coveredLines);
       if (decoded && (parsed === null || JSON.isRawJSON(parsed) || !['object', 'string'].includes(typeof parsed))) {
         const safe = initialSafe; return { value: safe, text: safe };
       }
@@ -766,7 +876,8 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
         // preserves the original JSON formatting and numeric tokens.
         if (parsed && typeof parsed === 'object') {
           let bindings = 0;
-          const safe = redactJsonBindings(initialSafe, value => visit(value, depth + 1, file, layers + 1, false).value, name => analyze(name).keySecret, () => { bindings++; });
+          let safe = redactJsonBindings(initialSafe, value => visit(value, depth + 1, file, layers + 1, false).value, name => analyze(name).keySecret, span => { bindings++; coveredSpans.push(span); }, span => coveredSpans.push(span));
+          if (input) safe = redact(safe, file, patch, true, coveredLines);
           secretMatches += bindings;
           if (safe !== entry) {
             revision++;
@@ -774,10 +885,13 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
           }
           return { value: safe, text: safe };
         }
+        if (revision !== stringRevision) coveredSpans.push({ start: 0, end: entry.length });
         return { value: revision !== stringRevision ? JSON.stringify(child.value) : entry, text: child.text };
       }
       const lines = entry.split('\n').filter(line => line.trim());
       if (lines.length > 1 && lines.every(line => /^\s*[\[{"]/.test(line))) {
+        structured = true;
+        entry.split('\n').forEach((line, index) => { if (line.trim()) coveredLines.add(index); });
         const children = lines.map(line => visit(line, depth + 1, file, layers, patch));
         let index = 0;
         const safe = revision !== stringRevision ? entry.split('\n').map(line => {
@@ -809,6 +923,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       for (const [index, line] of entry.split('\n').entries()) {
         if (analyze(line).dirty) hidden.add(index);
       }
+      for (const index of hidden) coveredLines.add(index);
       const safe = initialSafe.split('\n').map((line, index) => hidden.has(index)
         ? (patch && /^[+ -]/.test(line) ? line[0] : '') + lineHidden : line).join('\n');
       if (analysis.dirty && safe === entry) {
@@ -818,7 +933,24 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (safe !== entry) { revision++; secretMatches++; }
       return { value: safe, text: safe };
       };
-      const result = processString();
+      let result = processString();
+      // Coverage is per detected binding, at every value length: a different
+      // redacted line cannot cover this binding's original value span.
+      let offset = 0;
+      for (const [index, line] of original.split('\n').entries()) {
+        if (coveredLines.has(index)) coveredSpans.push({ start: offset, end: offset + line.length + 1 });
+        offset += line.length + 1;
+      }
+      const analysis = analyze(original), spans = coveredSpans.sort((a, b) => a.start - b.start);
+      const uncovered = (analysis.bindings ?? []).some(binding => {
+        let end = binding.start;
+        for (const span of spans) { if (span.start > end) break; if (span.end > end) end = span.end; if (end >= binding.end) return false; }
+        return end < binding.end;
+      });
+      if (!answer && (input || !structured) && !fullyWithheld(result.value) && uncovered) {
+        revision++; secretMatches++;
+        const masked = withheldLines(original, patch); result = { value: masked, text: masked };
+      }
       if (pathValue && typeof result.value === 'string') {
         const screenedPath = safePath(original);
         const safe = screenedPath !== original ? screenedPath : result.value;
@@ -863,6 +995,10 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       if (analyze(key).opaque) return { name: withheld, ...opaque() };
       if ((secretKey(name) || analyze(key).keySecret) && credentialValue(content) && !markers.has(content)) {
         if (!answer && !(input && (file !== null || patch))) rejected = true;
+        if (input) {
+          const source = typeof content === 'string' ? content : JSON.stringify(content), inspected = analyze(source);
+          rememberSecretValues(file, field, new Set([...(inspected.forms ?? [])].filter(form => form.length >= 6)), inspected.families ?? new Set());
+        }
         revision++; secretMatches++; child.value = fieldHidden; child.text = fieldHidden; if (answer) redactedFields.add(field);
       }
       return { name, ...child };
@@ -1130,6 +1266,30 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     requireSafeContext({ ...context, history: record.findings, failedAnswers: record.failures }, unchecked);
     const call = async (role, extra, parse) => {
       const prompt = promptFor(packRoot, role, { ...context, ...extra, unreviewedFiles: [...unreviewedFiles], unreviewedInputs: [...unreviewedInputs] }, unchecked);
+      // Every whole-text binding must be covered by redaction at every length,
+      // otherwise withhold the whole file. On these exact assembled prompt bytes,
+      // check each detected binding value as a literal substring in its source
+      // representation and decoded/unescaped forms only at 6+ characters.
+      // Known credential-family formats keep substring matching with no length
+      // floor. Values shorter than 6 characters carry no meaningful secret and
+      // are guarded only by per-binding coverage above.
+      let leaked = false;
+      for (const [name, entry] of activeSecretInputs.getStore() ?? []) {
+        if (![...entry.values].some(value => (value.length >= 6 || entry.families.has(value)) && containsSecretValue(prompt, value))) continue;
+        leaked = true;
+        if (entry.file === null) unchecked(name);
+        else {
+          const raw = paths.get(entry.file) ?? entry.file;
+          unreviewedFiles.add(pathFor(raw));
+          const file = path.resolve(exported.root, raw);
+          if (file.startsWith(exported.root + path.sep) && fs.existsSync(file)) {
+            fs.chmodSync(file, 0o600);
+            fs.writeFileSync(file, '[unreadable or over-limit model output withheld]');
+            fs.chmodSync(file, 0o400);
+          }
+        }
+      }
+      requireValue(!leaked, 'final role prompt contains a detected secret; input withheld, no model launched');
       for (let attempt = 1; attempt <= 2; attempt++) {
         const started = Date.now();
         let costRecorded = false, screened, answerRedactions = 0;
@@ -1255,7 +1415,7 @@ export async function runReviewRound(input, dependencies = {}) {
       return { ...history, outcome: 'not-reviewed', round: null, costs: [], failures: [...(history?.failures ?? []), { reason: 'private review state unavailable' }] };
     }
   }
-  return activeReviewKey.run(key, () => activePathAliases.run(new Map(), () => screenedReviewRound(input, dependencies)));
+  return activeReviewKey.run(key, () => activePathAliases.run(new Map(), () => activeSecretInputs.run(new Map(), () => screenedReviewRound(input, dependencies))));
 }
 async function screenedReviewRound(input, dependencies) {
   const history = screenModelOutput(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });

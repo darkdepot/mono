@@ -2217,3 +2217,70 @@ test('C39: a detected binding spanning source lines cannot survive an absent per
  const source='const cfg = {\n"password"\n:\n"opaqueFragmentC39"\n};\n',safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
  assert.ok(!safe.value.includes('opaqueFragmentC39'));assert.equal(safe.value.split('\n').length,source.split('\n').length);assert.equal(safe.fatal,false);
 });
+
+test('C53: every whole-text binding must be covered despite an unrelated line mask',async t=>{
+ const f=fixture(t),value='opaqueFragmentC39',source=['const cfg = {',JSON.stringify('pass'+'word'),':',JSON.stringify(value),'};','to'+'ken=7;',''].join('\n');
+ const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
+ assert.ok(!safe.value.includes(value));assert.equal(safe.fullyWithheld,true);assert.equal(safe.value.split('\n').length,source.split('\n').length);
+ fs.writeFileSync(path.join(f.worktree,'input.mjs'),source);f.git('add','.');f.git('commit','-qm','C53 mixed binding head');let calls=0;
+ const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+  calls++;assert.ok(!request.prompt.includes(value));assert.ok(!fs.readFileSync(path.join(request.worktree,'input.mjs'),'utf8').includes(value));
+  const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([sample],c.files):{completed:true,verdicts:[verdict()]}};
+ }});
+ assert.ok(calls>0);assertUnchecked(result);assert.deepEqual(result.unreviewedFiles,['input.mjs']);
+});
+
+test('C53: exact final prompts independently reject a detected value reintroduced after screening',async t=>{
+ for(const role of ['code-review','code-review-checker'])for(const mutation of [false,true])await t.test(role+(mutation?' guard mutation':' guarded'),async t=>{
+  const f=fixture(t),clone=fs.mkdtempSync(path.join(os.tmpdir(),'mono-c53-final-prompt-'));t.after(()=>fs.rmSync(clone,{recursive:true,force:true}));copyPluginFixture(clone);
+  const value='finalPromptC53Sentinel',file='private.mjs';fs.writeFileSync(path.join(f.worktree,file),'const '+('pass'+'word')+' = '+JSON.stringify(value)+';\n');f.git('add','.');f.git('commit','-qm','C53 screened file');
+  const template=path.join(clone,'skills/code-review',role==='code-review'?'reviewer.md':'checker.md');fs.appendFileSync(template,'\nA deliberately misplaced value: '+value+'\n');
+  if(mutation){const code=path.join(clone,'scripts/code-review.mjs'),original=fs.readFileSync(code,'utf8'),guard="requireValue(!leaked, 'final role prompt contains a detected secret; input withheld, no model launched');";assert.ok(original.includes(guard));fs.writeFileSync(code,original.replace(guard,''));}
+  const implementation=await import(new URL('file://'+path.join(clone,'scripts/code-review.mjs')).href);let unsafe=0;const roles=[];
+  const result=await implementation.runReviewRound({...f.request,packRoot:clone,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   roles.push(request.role);if(request.prompt.includes(value))unsafe++;
+   assert.ok(!fs.readFileSync(path.join(request.worktree,file),'utf8').includes(value));
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([sample],c.files):{completed:true,verdicts:[verdict()]}};
+  }});
+  assert.equal(unsafe,mutation?1:0);assertUnchecked(result);assert.ok(result.unreviewedFiles.includes(file));
+  if(!mutation){assert.ok(!roles.includes(role));assert.match(result.failures.at(-1).reason,/final role prompt/);}
+ });
+});
+
+test('C54: binding coverage has no length floor and cannot lose a value with its redacted key',()=>{
+ for(const value of ['x','abcde','abcdef'])for(const colon of [':','\n:','%3a','\\u003a']){
+  const source=['const cfg = {',JSON.stringify('pass'+'word')+colon,JSON.stringify(value),'};','to'+'ken=7;',''].join('\n'),safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
+  assert.equal(safe.fullyWithheld,true,JSON.stringify({value,colon,safe}));assert.ok(!safe.value.includes(value));
+ }
+});
+
+test('C54: final prompt floor applies to binding values, including their source and decoded forms',async t=>{
+ const cases=[['one-character unrelated word','x','x','extra',false],['five-character unrelated word','abcde','abcde','zabcdez',false],['six-character value','abcdef','abcdef','abcdef',true],['source escape representation','abcdef','a\\u0062cdef','a\\u0062cdef',true],['unescaped value','abcdef','a\\u0062cdef','abcdef',true],['escaped quote value','ab"cde','ab\\"cde','ab"cde',true],['decoded percent value','abcdef',[...'abcdef'].map(char=>'%'+char.charCodeAt(0).toString(16)).join(''),'abcdef',true],['decoded base64 value','abcdef',Buffer.from('abcdef').toString('base64'),'abcdef',true]];
+ for(const [name,value,sourceValue,injected,blocked] of cases)for(const role of ['code-review','code-review-checker'])await t.test(name+' '+role,async t=>{
+  const f=fixture(t),clone=fs.mkdtempSync(path.join(os.tmpdir(),'mono-c54-prompt-'));t.after(()=>fs.rmSync(clone,{recursive:true,force:true}));copyPluginFixture(clone);const file='private.mjs';
+  const representation=sourceValue.includes('\\')?'"'+sourceValue+'"':JSON.stringify(sourceValue);fs.writeFileSync(path.join(f.worktree,file),'const '+('pass'+'word')+' = '+representation+';\nexport const enabled = true;\n');f.git('add','.');f.git('commit','-qm','C54 covered binding');
+  fs.appendFileSync(path.join(clone,'skills/code-review',role==='code-review'?'reviewer.md':'checker.md'),'\nAn unrelated fixture word: '+injected+'\n');const roles=[];
+  const result=await runReviewRound({...f.request,packRoot:clone,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   roles.push(request.role);if(blocked&&request.role===role)assert.fail('six-character binding reached the final prompt');
+   const exported=fs.readFileSync(path.join(request.worktree,file),'utf8');assert.ok(exported.includes('export const enabled'));assert.ok(!exported.includes(JSON.stringify(sourceValue)));
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([sample],c.files):{completed:true,verdicts:[verdict({outcome:'rejected',danger:false})]}};
+  }});
+  if(blocked){assertUnchecked(result);assert.ok(!roles.includes(role));assert.ok(result.unreviewedFiles.includes(file));assert.match(result.failures.at(-1).reason,/final role prompt/);}
+  else{assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.deepEqual(roles,['code-review','code-review-checker']);assert.deepEqual(result.unreviewedFiles,[]);assert.ok(result.partiallyWithheldFiles.includes(file));}
+ });
+});
+
+test('C54: exact nested source representations are checked before either role launches',async t=>{
+ for(const depth of [1,2])for(const role of ['code-review','code-review-checker'])await t.test('JSON layers '+depth+' '+role,async t=>{
+  const f=fixture(t),clone=fs.mkdtempSync(path.join(os.tmpdir(),'mono-c54-source-'));t.after(()=>fs.rmSync(clone,{recursive:true,force:true}));copyPluginFixture(clone);
+  const value='ab"cde',file='private.json';let body=JSON.stringify({['pass'+'word']:value,safe:'enabled'}),representation=JSON.stringify(value).slice(1,-1);
+  for(let index=0;index<depth;index++){body=JSON.stringify({payload:body});representation=JSON.stringify(representation).slice(1,-1);}
+  assert.ok(body.includes(representation));fs.writeFileSync(path.join(f.worktree,file),body+'\n');f.git('add','.');f.git('commit','-qm','C54 nested source');
+  fs.appendFileSync(path.join(clone,'skills/code-review',role==='code-review'?'reviewer.md':'checker.md'),'\nSource probe: '+representation+'\n');const roles=[];
+  const result=await runReviewRound({...f.request,packRoot:clone,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   roles.push(request.role);if(request.role===role)assert.fail('original source representation survived the final barrier');
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([sample],c.files):{completed:true,verdicts:[verdict({outcome:'rejected',danger:false})]}};
+  }});
+  assertUnchecked(result);assert.ok(!roles.includes(role));assert.ok(result.unreviewedFiles.includes(file));assert.match(result.failures.at(-1).reason,/final role prompt/);
+ });
+});
