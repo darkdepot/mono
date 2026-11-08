@@ -2322,6 +2322,59 @@ test('C54: exact nested source representations are checked before either role la
 });
 });
 
+test('C66: every numeric, template and config scalar on a credential statement is remembered',async t=>{
+ const cases=[
+  ['input.mjs','const password = 24681357, attempts = 0;\nexport const copy = 24681357;','24681357'],
+  ['input.mjs','const label = 13579246, password = 24681357, attempts = 0;','13579246'],
+  ['input.ts','const password: number = 123456789;','123456789'],
+  ['input.ts','const password /* note=x */: bigint = 246_813_579n, attempts = 0;','246_813_579n'],
+  ['input.mjs','const password = 0x12_ab_cd, attempts = 0;','0x12_ab_cd'],
+  ['input.mjs','const password = 0X12ABCDn, attempts = 0;','0X12ABCDn'],
+  ['input.mjs','const password = 1.246813e+7, attempts = 0;','1.246813e+7'],
+  ['input.mjs','const password = .246813e-7, attempts = 0;','.246813e-7'],
+  ['input.mjs','const password = 0b10110110, attempts = 0;','0b10110110'],
+  ['input.mjs','const password = 0o1234567, attempts = 0;','0o1234567'],
+  ['input.ts','const password:\n number /* note=x */\n = 24681357, attempts = 0;','24681357'],
+  ['input.ts','class Login {\n @decorate(13579246)\n password?: number = 24681357;\n}','13579246'],
+  ['input.mjs','const { password: renamed = 24681357 } = source;','24681357'],
+  ['input.mjs','let value; password = value = 24681357;','24681357'],
+  ['input.mjs','const n = {} / y; const password = 24681357; const m = x / y;','24681357'],
+  ['input.mjs','const password = `opaqueScalarValueC66`, attempts = 0;','opaqueScalarValueC66'],
+  ['input.yaml','password: opaque-config/value+suffix\nmode: enabled','opaque-config/value+suffix'],
+  ['input.yaml','password: 24681357 # synthetic PIN\nmode: enabled','24681357'],
+  ['.env','PASSWORD=opaque.config/value+suffix\nMODE=enabled','opaque.config/value+suffix'],
+  ['.env.local','PASSWORD=24681357 # synthetic PIN\nMODE=enabled','24681357'],
+  ['input.ini','[login]\npassword = opaque-config/value+suffix\nmode=enabled','opaque-config/value+suffix'],
+  ['input.toml','[login]\npassword = 246_813_579\nmode="enabled"','246_813_579'],
+ ];
+ for(const [file,statement,copied] of cases)await t.test(file+' / '+statement,async t=>{
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),statement+'\n');
+  fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const copy = '+JSON.stringify(copied)+';\n');
+  f.git('add','.');f.git('commit','-qm','C66 credential statement and copied scalar');let calls=0;
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   calls++;assert.ok(!request.prompt.includes(copied),'credential scalar reached a role prompt');
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};
+  }});
+  assertUnchecked(record);assert.equal(calls,0);assert.ok(!JSON.stringify(record).includes(copied));
+  assert.match(record.failures.at(-1).reason,/final role prompt/);
+ });
+});
+test('C66: short scalar and ordinary-number controls keep the six-character floor',async t=>{
+ for(const [file,statement,copied] of [
+  ['input.mjs','const password = 7, attempts = 0;','7'],
+  ['input.yaml','password: abc\nmode: enabled','abc'],
+  ['input.mjs','export const attempts = 24681357;','24681357'],
+ ])await t.test(file+' / '+copied,async t=>{
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),statement+'\nexport const enabled = true;\n');
+  fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const copy = '+JSON.stringify(copied)+';\n');
+  f.git('add','.');f.git('commit','-qm','C66 scalar floor controls');let calls=0;
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   calls++;const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(context.diff.includes(JSON.stringify(copied)));return {response:review([],context.files)};
+  }});
+  assert.equal(calls,1);assert.deepEqual(record.failures,[]);assert.equal(record.outcome,'clean');
+ });
+});
+
 test('C59: every literal on a credential statement is remembered across intervening syntax',async t=>{
  const value='opaqueCredentialValueC59', other='secondCredentialLiteralC59';
  const statements=[

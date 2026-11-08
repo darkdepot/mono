@@ -412,7 +412,7 @@ function encodedAnalysis(maxBytes, maxNodes, sourceFile = null) {
       const views = patch ? sourceViews(source, true, false) : [];
       const inputs = views.length ? views.map(rows => rows.map(row => row.text).join('\n')) : [source];
       for (const input of inputs) {
-        const literals = credentialStatementLiterals(input, views.length ? input : runtimeSource);
+        const literals = credentialStatementLiterals(input, views.length ? input : runtimeSource, sourceFile);
         for (const literal of literals) collectValue(literal.value, literal.representation);
       }
     }
@@ -541,13 +541,14 @@ function credentialValue(value) {
 }
 // JSON members retain every token. Source inventory mode separates statements
 // outside strings/comments; line masking still has its stateless remainder policy.
+const SOURCE_NUMBER = /^(?:0[xX][\da-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|(?:\d[\d_]*(?:\.[\d_]*)?|\.[\d_]+)(?:[eE][+-]?[\d_]+)?n?)/;
 function jsonTokens(source, limit = Infinity, statements = false) {
   const tokens = [], parens = [], sourcePunctuation = ';()=!?&|+-*%<>./';
   for (let index = 0; index < source.length && tokens.length < limit;) {
     if (/\s/.test(source[index])) { index++; continue; }
     const start = index, char = source[index];
     if (statements && char === '[') {
-      const marker = [...screenMarkers].find(value => source.startsWith(value, index));
+      const marker = [...screenMarkers, '[credential-shaped path withheld]'].find(value => source.startsWith(value, index));
       if (marker) { index += marker.length; tokens.push({ start, end: index, value: marker, quoted: true, closed: true }); continue; }
     }
     if (statements && source.startsWith('/*', index)) {
@@ -571,6 +572,14 @@ function jsonTokens(source, limit = Infinity, statements = false) {
         index = end + 1; while (/[a-z]/i.test(source[index] ?? '') && index < source.length) index++;
         const value = source.slice(start, index);
         tokens.push({ start, end: index, value, quoted: false, regexp: true });
+        continue;
+      }
+    }
+    if (statements && /[\d.]/.test(char)) {
+      const number = SOURCE_NUMBER.exec(source.slice(index));
+      if (number) {
+        index += number[0].length;
+        tokens.push({ start, end: index, value: number[0], quoted: false, literal: true });
         continue;
       }
     }
@@ -636,8 +645,17 @@ const SOURCE_BINDING = new RegExp('(?<![\\p{L}\\p{N}_$-])(?:' + SOURCE_KEY + '["
 const SOURCE_NAME = new RegExp('(?<![\\p{L}\\p{N}_$-])' + SOURCE_KEY, 'iu');
 // Inventory complete credential statements, never an inferred initializer.
 // Value blocks inherit their binding; object/destructuring keys bind their parent.
-function credentialStatementLiterals(source, runtimeSource) {
+function credentialStatementLiterals(source, runtimeSource, sourceFile) {
   const values = [], frames = [{ tokens: [], literals: [], inherited: false, bound: false, parens: 0 }];
+  // Config scalars need their original spelling, including punctuation that is
+  // an operator in source code. Retain the remainder and its whitespace tokens.
+  if (/(?:^|\/)(?:\.env(?:\.[^/]*)?|[^/]+\.(?:ya?ml|ini|toml|env|conf|config|properties))$/i.test(sourceFile ?? '')) {
+    for (const line of source.split('\n')) for (const binding of line.matchAll(new RegExp(SOURCE_BINDING.source, 'giu'))) {
+      const scalar = line.slice(binding.index + binding[0].length).trim();
+      if (!scalar || /^["'`[{(]/.test(scalar)) continue;
+      for (const value of new Set([scalar, ...scalar.split(/\s+/)])) values.push({ value, representation: value });
+    }
+  }
   const runtime = token => runtimeSource.slice(token.start, token.end).trim();
   const assignment = token => !token.quoted && !token.regexp && token.value !== '=>' && /[=:]/.test(runtime(token));
   const binds = frame => frame.inherited || frame.bound ||
@@ -657,6 +675,8 @@ function credentialStatementLiterals(source, runtimeSource) {
     // every adjacent same-quote span there, rather than discarding a binding.
     if (token.regexp && (binds(frame) || SOURCE_NAME.test(runtime(token)))) {
       const previous = new Map(); frame.bound = true;
+      for (const match of source.slice(token.start, token.end).matchAll(new RegExp(SOURCE_NUMBER.source.slice(1), 'g')))
+        values.push({ value: match[0], representation: match[0] });
       for (let index = token.start; index < token.end; index++) {
         const quote = source[index];
         if (quote === '\\') { index++; continue; }
@@ -689,8 +709,8 @@ function credentialStatementLiterals(source, runtimeSource) {
     if (!token.quoted && token.value === ')') frame.parens = Math.max(0, frame.parens - 1);
     if (!token.quoted && token.value === ';' && !frame.parens) { finish(frame); continue; }
     frame.tokens.push(token);
-    if (token.quoted && token.closed && runtimeSource.slice(token.start, token.end).trim())
-      frame.literals.push({ value: token.value, representation: source.slice(token.start + 1, token.end - 1) });
+    if ((token.literal || token.quoted && token.closed) && runtimeSource.slice(token.start, token.end).trim())
+      frame.literals.push({ value: token.value, representation: source.slice(token.start + (token.quoted ? 1 : 0), token.end - (token.quoted ? 1 : 0)) });
   }
   for (const frame of frames) finish(frame);
   return values;

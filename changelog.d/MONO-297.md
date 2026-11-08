@@ -100,3 +100,5 @@
 
 - Close the credential-statement class by remembering every string literal independently of annotations, comments, decorators, destructuring, object keys or chained assignments. Keep erased-type controls, value floors, existing line/remainder masks and the final prompt barrier; uncertain statement boundaries conservatively retain a larger unit. C59 includes the Greptile comment-equals repro, multiline/decorator/destructuring cases and nested/regex controls.
 - Accumulate bounded raw role stdout/stderr buffers and use one fatal UTF-8 decoder before parsing, including synchronous native catalog/auth outputs. C59 splits multibyte paths and checker evidence in both recorded transports and rejects invalid bytes on either stream.
+
+- Extend the credential-statement inventory to numeric literals (including hex, bigint, separators and exponents), substitution-free templates and unquoted YAML/INI/.env/TOML scalars. C66 catches numeric copies across declarators and annotations and retains the six-character floor; quoted erased TypeScript literal types remain the benign MONO-329 follow-up.
