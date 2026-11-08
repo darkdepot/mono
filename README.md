@@ -1812,7 +1812,9 @@ presentation bindings remain unverified. Markerless legacy choices require an
 explicit scenario label (`expectedWindows.role: "choice"`); the checker still
 reports malformed cards and summaries stranded before an async window. Codex
 window answers require the native reply envelope with the tested call and question
-identities; plain chat and replies to other calls remain unverified.
+identities; plain chat and replies to other calls remain unverified. Hidden
+reasoning, tool results and blank messages cannot mask the last visible
+pre-window presentation when checking the full final summary.
 Historical acceptance uses real native window answers and the current conversation
 rubric. Linked approval records still bind the shown version after the answer.
 The AC1 guard reads all files under `skills/` and `templates/`, plus

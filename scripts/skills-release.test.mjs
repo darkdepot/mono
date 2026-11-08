@@ -125,3 +125,38 @@ for(const host of ['claude','codex'])test(`R1 ${host} explicit markerless choice
  assert.equal(r.replies.length,1,JSON.stringify(r));assert.equal(r.replies[0].received,true);
  const sent=fs.readFileSync(r.sent,'utf8');assert.match(sent,/Отдельная колонка/);assert.match(sent,host==='codex'?/send_user_message_question_reply/:/updatedInput/);
 });
+
+const hiddenBeforeWindow=[
+ {name:'reasoning',items:[{type:'reasoning',summary:[{type:'summary_text',text:'Thinking about the choice'}]}]},
+ {name:'tool result',items:[{type:'function_call',name:'mcp__monotest__get_project',call_id:'read-project',arguments:'{}'},{type:'function_call_output',call_id:'read-project',output:'{}'}]},
+ {name:'blank message',items:[{type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text:'  '}]}]}
+];
+for(const {name,items} of hiddenBeforeWindow)test(`D5 ${name} cannot hide the last visible presentation before an async window`,()=>{
+ const values=structuredClone(hostRegressions.codexAsync);
+ values.splice(1,0,...items.map(payload=>({type:'response_item',payload})));
+ const check=()=>codexWindows(values.map((value,i)=>({value,line:i+1})),'hidden',{phase:'card'})[0];
+ const bad=check();assert.equal(bad.executionConfirmed,true);assert.equal(bad.status,'failed');assert.match(bad.reason,/summary.*final/);
+ values.findLast(v=>v.payload?.role==='assistant').payload.content=structuredClone(values[0].payload.content);
+ assert.equal(check().status,'passed','full final summary remains a positive control');
+});
+test('D5 compares the latest visible presentation within this turn, across hidden items',()=>{
+ const values=structuredClone(hostRegressions.codexAsync),latest='Последний полный итог для владельца.';
+ values.splice(1,0,{type:'response_item',payload:{type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text:latest}]}},{type:'response_item',payload:{type:'reasoning',summary:[]}});
+ const final=values.findLast(v=>v.payload?.role==='assistant');final.payload.content=[{type:'output_text',text:latest}];
+ const check=()=>codexWindows(values.map((value,i)=>({value,line:i+1})),'latest',{phase:'card'})[0];
+ assert.equal(check().status,'passed');final.payload.content=structuredClone(values[0].payload.content);assert.equal(check().status,'failed');
+ values.splice(1,2,{type:'event_msg',payload:{type:'task_complete'}});final.payload.content=[{type:'output_text',text:latest}];
+ assert.equal(check().status,'passed','previous turn presentation does not bind a new turn');
+});
+test('D5 full native window trace with empty anchors rejects the reasoning bypass',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-d5-reasoning-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const values=structuredClone(hostRegressions.codexAsync);
+ values.splice(1,0,{type:'response_item',payload:{type:'reasoning',summary:[]}});
+ const call=values[2].payload;
+ const question={title:'Утверждаем колонку? Советую начать Research: нужно проверить потребность.\nУтвердить, продолжу позже (Recommended): Источник виден / таблица шире\nЕщё обсудить: Отложим выбор / источник скрыт',options:['Утвердить, продолжу позже (Recommended)','Ещё обсудить']};
+ call.arguments=JSON.stringify({questions:[question]});for(const e of values)if(e.payload?.type==='task_complete')delete e.payload.turn_id;
+ values.push({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:windowReply('codex',{questions:[question]},{mode:'label',label:'Утвердить, продолжу позже'},call.call_id)}]}},{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]}},{type:'event_msg',payload:{type:'task_complete'}});
+ const trace=path.join(dir,'trace.jsonl'),check=()=>{fs.writeFileSync(trace,values.map(JSON.stringify).join('\n')+'\n');return checkTrace({host:'codex',trace,testedVersion:'0.38.1',expectedWindows:[{id:'approval',role:'approval',decision:'Утверждаем',advice:'Советую',reason:'Research',summary:[]}]});};
+ const bad=check();assert.equal(bad.status,'failed',JSON.stringify(bad));assert(bad.windows[0].issues.some(issue=>/summary.*final/.test(issue)));
+ values[4].payload.content=structuredClone(values[0].payload.content);const fixed=check();assert.equal(fixed.status,'passed',JSON.stringify(fixed));
+});

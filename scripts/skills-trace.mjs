@@ -43,9 +43,9 @@ export function codexWindows(rows, source, options) {
     const summary = last?.item.type === 'message' && last.item.role === 'assistant' && last.item.phase === 'final_answer' ? textOf(last.item) : '';
     const start=rows.findLast(r=>r.line<row.line&&(r.value.type==='event_msg'&&['task_started','task_complete'].includes(r.value.payload?.type)||r.value.type==='response_item'&&r.value.payload?.type==='message'&&r.value.payload.role==='user'));
     const preceding=items.filter(r=>r.line<row.line&&(!start||r.line>start.line));
-    const shown=preceding.at(-1)?.item;
-    // A visible offer immediately followed by the async call is part of this
-    // presentation. A short final instruction cannot stand in for that offer.
+    const shown=preceding.findLast(r=>r.item.type==='message'&&r.item.role==='assistant'&&visible(textOf(r.item)))?.item;
+    // Hidden items do not replace the owner's pre-window presentation.
+    // A short final instruction cannot stand in for that visible offer.
     const shownText=shown?.type==='message'&&shown.role==='assistant'?textOf(shown):'';
     const finalSummary=visible(summary)&&(!visible(shownText)||summary.includes(shownText));
     windows.push({ line: row.line, evidence: `${source}:${row.line}`, callId: p.call_id, questions: args?.questions ?? [],
