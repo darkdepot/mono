@@ -788,3 +788,26 @@ for(const changed of ['saved-state','saved-evidence','saved-request','selection'
  await assert.rejects(()=>runSuiteWithRecords({...request,resume:true},execute,verify),/saved suite evidence|request changed/);
  assert.equal(calls,1);assert.equal(reads,1,'changed evidence refused before verification or a new execution');
 });
+
+for(const state of ['passed','unverified'])test(`MONO-291 release selects one seedless whole chain per host and stops on ${state}`,async t=>{
+ const f=fixture(t);fs.cpSync(source,f.catalogDir,{recursive:true});f.commit();
+ const selection=selectScenarios({indexFile:path.join(f.catalogDir,'index.json'),worktree:f.dir,base:f.base,purpose:'release'});
+ assert.equal(selection.units.length,1);assert.deepEqual(selection.units[0].scenarios,['idea/approve','research/approve','discovery/approve','design/approve','tech-evaluation/approve','handoff/approve']);assert.equal(selection.expectedItems.length,12);
+ const calls=[];
+ const request=suiteRequest(f,selection,{releaseStartReason:'Approved full release in an isolated test project',paper:{fileIds:['sandbox','main'],command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory/memory.md')});
+ const result=await runSuiteWithRecords(request,async r=>{
+  assert.equal(r.seed,undefined,'release never seeds Linear');calls.push([r.host,r.context.entryStage]);
+  write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);
+ },async input=>({status:input.runRequest.context.entryStage==='design'?state:'passed',monotestTasks:0,taskIds:[],starts:input.runRequest.scenario.expectedReplies.flatMap(r=>(r.driverStart??[]).map(stage=>({stage})))}));
+ assert.equal(result.status,state);assert.equal(calls.length,state==='passed'?12:8);
+ for(const host of ['claude','codex'])assert.deepEqual(calls.filter(c=>c[0]===host).map(c=>c[1]),state==='passed'?['idea','research','discovery','design','tech-evaluation','handoff']:['idea','research','discovery','design']);
+ assert(fs.readFileSync(path.join(request.outputDir,'release-report.md'),'utf8').includes('не проверено'));
+});
+
+test('MONO-291 a truncated saved release cannot drop a stage from its frozen expectations',async t=>{
+ const f=fixture(t);fs.cpSync(source,f.catalogDir,{recursive:true});f.commit();
+ const selection=selectScenarios({indexFile:path.join(f.catalogDir,'index.json'),worktree:f.dir,base:f.base,purpose:'release'});
+ selection.units[0].scenarios.pop();selection.expectedItems=selection.expectedItems.filter(item=>item.scenario!=='handoff/approve');
+ let calls=0;
+ await assert.rejects(()=>actualSuite(suiteRequest(f,selection,{releaseStartReason:'Approved release'}),async()=>{calls++;}),/complete catalog plan/);assert.equal(calls,0);
+});

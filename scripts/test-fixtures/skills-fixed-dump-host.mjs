@@ -13,7 +13,8 @@ function result(tool,input){
  if(tool==='list_documents')return {documents:[{id:'doc'}],hasNextPage:false};
  if(tool==='get_document')return {id:'doc',projectId:id,title:'Document',content:'Full text'};
  if(tool==='list_issues')return {issues:[{id:'MON-1',uuid:'issue'}],hasNextPage:false};
- if(tool==='get_issue')return {id:'MON-1',uuid:'issue',projectId:id,title:'Task',description:'Full task',status:'Done',labels:[]};
+ if(tool==='list_issue_statuses')return [{id:'done',name:'Done',type:'completed'}];
+ if(tool==='get_issue')return {id:'MON-1',uuid:'issue',projectId:id,teamId:'test-team',title:'Task',description:'Full task',status:'Done',labels:[]};
  throw new Error('unexpected fixed tool');
 }
 function plan(prompt,first){
@@ -37,6 +38,11 @@ if(args[0]==='exec'){
 }else{
  let n=0;readline.createInterface({input:process.stdin}).on('line',l=>{
   const e=JSON.parse(l);if(e.type!=='user')return;const first=n++===0,job=plan(e.message.content[0].text,first),call='call-'+n,server=!first&&mode==='foreign'?'linear':'monotest';
+  if(!first&&['tool-search','tool-search-foreign'].includes(mode)){
+   const name=mode==='tool-search'?'monotest':'linear';
+   emit({type:'assistant',message:{content:[{type:'tool_use',id:call+'-search',name:'ToolSearch',input:{query:`select:mcp__${name}__${job.tool}`}}]}});
+   emit({type:'user',message:{content:[{type:'tool_result',tool_use_id:call+'-search',content:'Tool available'}]}});
+  }
   if(!first&&mode==='shell')emit({type:'assistant',message:{content:[{type:'tool_use',id:call+'-shell',name:'Bash',input:{command:'rg x session'}}]}});
   // Model an already completed native action. Publish its call/result together:
   // the driver's immediate foreign-call abort must not preempt this synthetic

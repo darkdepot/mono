@@ -8,12 +8,12 @@ const cleanupGraceMs=500;
 export function hostProcess({ binary, args, cwd, env, trace, stderr, sent, timeoutMs, input, onEvent, onIdle, idleMs = 0 }) {
   return new Promise(resolve => {
     const startedAt=new Date().toISOString();
-    let failure = null, buffer = '', closed = false, leaderExited = false, exitedCode, exitedSignal, completed = false, lineNumber=0, idle, killTimer, exitTimer, completionTimer;
+    let failure = null, buffer = '', closed = false, leaderExited = false, exitedCode, exitedSignal, completed = false, driverStopped = false, lineNumber=0, idle, killTimer, exitTimer, completionTimer;
     const cleanupErrors=[];
     const child = spawn(binary.command, [...(binary.args ?? []), ...args], {cwd,env,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
     const signalGroup = signal => {
       if(closed || !child.pid)return;
-      try { if(process.platform!=='win32')process.kill(-child.pid,signal);else child.kill(signal); }
+      try { if(process.platform!=='win32')process.kill(-child.pid,signal);else child.kill(signal);if(completed&&!failure&&!leaderExited)driverStopped=true; }
       catch(error){
         if(error.code==='ESRCH' || (error.code==='EPERM' && (leaderExited || closed || child.exitCode!==null || child.signalCode!==null)))return;
         cleanupErrors.push(error.message);
@@ -27,7 +27,7 @@ export function hostProcess({ binary, args, cwd, env, trace, stderr, sent, timeo
       // Persisted in the driver's existing result.json. Raw stdout stays native;
       // this interval binds timestamp-less Claude streams to actual processes.
       const traceTiming=fs.existsSync(trace)?{file:path.basename(trace),sha256:createHash('sha256').update(fs.readFileSync(trace)).digest('hex'),startedAt,finishedAt:new Date().toISOString()}:undefined;
-      resolve({code:completed&&!failure&&(code===0||signal==='SIGTERM'||signal==='SIGKILL')?0:code,signal,failure,traceTiming,...(cleanupErrors.length?{cleanupErrors}:{}),...(completed?{completed:true}:{})});
+      resolve({code:completed&&!failure&&(code===0||signal==='SIGTERM'||signal==='SIGKILL'||driverStopped&&[137,143].includes(code))?0:code,signal,failure,traceTiming,...(cleanupErrors.length?{cleanupErrors}:{}),...(completed?{completed:true}:{})});
     };
     const forceClose = () => {
       signalGroup('SIGKILL');

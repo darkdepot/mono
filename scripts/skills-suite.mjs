@@ -69,6 +69,13 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
   checkPack(request.packRoot,selection.head);
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(request.runId ?? '') || !path.isAbsolute(request.outputDir ?? '') || !path.isAbsolute(request.cwd ?? '')) throw new Error('runId and absolute outputDir/cwd required');
   if (!Array.isArray(selection.units) || !Array.isArray(selection.expectedItems) || !selection.hosts?.length) throw new Error('invalid saved selection');
+  const release=selection.purpose==='release'&&catalog.index.release!==undefined;
+  if(release&&(!request.releaseStartReason?.trim()||selection.units.length!==1||selection.units[0].seed))throw new Error('release requires a seedless chain and explicit orchestrator start reason');
+  if(release) {
+    const chain=catalog.index.release?.stages.map(id=>`${id}/${catalog.stages.get(id).main}`);
+    if(!chain||JSON.stringify(selection.units[0].scenarios)!==JSON.stringify(chain)||selection.units[0].target!==chain[0])throw new Error('release selection differs from the complete catalog plan');
+  }
+  const releaseDesignStart=(previous,next)=>release&&previous?.stage==='design'&&next==='tech-evaluation'&&previous.status==='passed';
   const proof=request.workspaceProof ?? {tool:'mcp__monotest__get_workspace',input:{},path:['name'],equals:'Mono Test'};
   if (proof.equals !== 'Mono Test' || JSON.stringify(proof.path) !== '["name"]' || proof.tool !== 'mcp__monotest__get_workspace') throw new Error('suite requires the pinned Mono Test workspace proof');
   if (request.mcpServers?.paper) throw new Error('Paper must be configured through the file guard');
@@ -114,11 +121,11 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
           scenario=catalog.scenarios.get(key);runRequest=prior.runRequest;result=prior.run;
           observedProject=prior.project;project=observedProject??project;
           if(result.status==='passed') {chainExchanges.push(...result.check.exchanges);checkEndings(chainExchanges);}
-          if(position>0&&previousResult?.anchored&&(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage)))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
+          if(position>0&&previousResult?.anchored&&!releaseDesignStart(previousResult,scenario.stage)&&(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage)))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
         } else {
         manifestDir ??= fs.mkdtempSync(path.join(request.cwd,`.mono-skills-${request.runId}-`));
         scenario=catalog.scenarios.get(key);
-        if(position>0&&previousResult?.anchored) {
+        if(position>0&&previousResult?.anchored&&!releaseDesignStart(previousResult,catalog.scenarios.get(key)?.stage)) {
           if(previousResult.status!=='passed'||!previousResult.records?.starts?.some(signal=>signal.stage===scenario.stage))throw new Error('driver start blocked: passed rubric, scenario permission and post-reply stage signal required');
         }
         if (!scenario) throw new Error(`selected scenario removed: ${key}`);
@@ -126,7 +133,8 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         const projectFile=path.join(manifestDir,`${unit.id}-${host}-${position}-project.json`);
         const seedProjectFile=projectFile+'.seed.json',dumpDir=projectFile+'.route';
         const seedPath=position===0 && unit.seed ? unit.seed : scenario.seed;
-        const seed=!project && seedPath ? JSON.parse(JSON.stringify(json(catalogFile(catalog.root,seedPath))).replaceAll('<projectName>',projectName)) : null;
+        if(release&&position>0&&!project)throw new Error('release lost its run project; no seeding permitted');
+        const seed=!release && !project && seedPath ? JSON.parse(JSON.stringify(json(catalogFile(catalog.root,seedPath))).replaceAll('<projectName>',projectName)) : null;
         const nextKey=unit.scenarios[position+1], next=nextKey ? catalog.scenarios.get(nextKey)?.stage : scenario.next;
         const servers={...request.mcpServers};
         let exportRunDir;
@@ -145,14 +153,14 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
         if(seed&&designMemory)seed.designMemory=designMemory;
         const target=catalog.scenarios.get(unit.target);
         if (!target) throw new Error('selected unit target missing');
-        const brief=target.brief+` Идентификатор тестового проекта этой правки: ${projectName}. Название колонки всегда «Источник», имя прогона в него не добавляй.`;
-        if(flow.expectedReplies.some(anchored)&&nextKey) {
+        const brief=(release?catalog.index.release.brief:target.brief)+` Идентификатор тестового проекта этой правки: ${projectName}. Название колонки всегда «Источник», имя прогона в него не добавляй.`;
+        if(flow.expectedReplies.some(anchored)&&nextKey&&!(release&&scenario.stage==='design'&&catalog.scenarios.get(nextKey)?.stage==='tech-evaluation')) {
           const destination=catalog.scenarios.get(nextKey)?.stage;
           if(!flow.expectedReplies.some(r=>r.outcome.startNext&&permittedStages(r).includes(destination)))throw new Error('chain has no predefined next-stage permission');
         }
         const prompt=scenarioPrompt({scenario:{...scenario,brief},host,seed,seedProjectFile,projectName,projectFile,project,next,packRoot:request.packRoot,paper:scenario.stage==='design'?request.paper:null,designMemoryFile:request.designMemoryFile,
           designMemory,
-          productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:catalog.index.routeHints?.[next]});
+          productName:catalog.index.productName,skillPrefix:catalog.index.skillPrefix,routeHint:release?catalog.index.release.routeHint:catalog.index.routeHints?.[next]});
         runRequest={host,cwd:request.cwd,packRoot:request.packRoot,outputDir,authFile:request.authFile,
           ...(scenario.stage==='design'?{writableRoots:[path.dirname(request.designMemoryFile),path.join(path.dirname(request.designMemoryFile),'approved'),exportRunDir]}:{}),
           timeoutMs:request.timeoutMs ?? 1_800_000,idleMs:20_000,maxTurns:request.maxTurns??128,mcpServers:servers,
@@ -203,7 +211,7 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
           result={...result,records,status:result.status==='failed'||records.status==='failed'?'failed':result.status!=='passed'||records.status!=='passed'?'unverified':'passed'};
         }catch(error){result={...result,status:result.status==='failed'||prior?.records?.status==='failed'?'failed':'unverified',records:{...prior?.records,status:prior?.records?.status==='failed'?'failed':'unverified',reason:error.message}};}
       }
-      previousResult={...result,anchored:runRequest?.scenario.expectedReplies?.some(anchored)};
+      previousResult={...result,stage:scenario?.stage,anchored:runRequest?.scenario.expectedReplies?.some(anchored)};
       const item={durationMs:Date.now()-stageStart,monotestTasks:result.records?.monotestTasks??null,unit:unit.id,scenario:key,host,status:result.status,outputDir,result};results.push(item);
       const files=[outputDir+'-request.json',outputDir+'-project.json',result.records?.reviewEvidence].filter(file=>file&&fs.existsSync(file)).map(file=>[file,rubricDigest(fs.readFileSync(file,'utf8'))]);
       checkpoints.push({unit:unit.id,scenario:key,host,run:stageRun,runRequest,project:observedProject??project??seedProject,reviewEvidence:result.records?.reviewEvidence??prior?.reviewEvidence,records:result.records,files});saveState();
@@ -213,13 +221,25 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
   }
   const items=selection.expectedItems.map(expected=>{
     const actual=results.find(r=>r.unit===expected.unit && r.scenario===expected.scenario && r.host===expected.host);
-    return {...expected,status:actual?.status ?? 'unverified',evidence:actual?.outputDir ?? 'previous chain stage failed'};
+    return {...expected,status:actual?.status ?? 'unverified',evidence:actual?.outputDir ?? 'previous chain stage failed',...(actual?.status==='passed'?{}:{reason:actual?.result.reason??actual?.result.records?.reason??'Предыдущий этап не прошёл полную проверку; этот этап не запускался'})};
   });
   const status=items.some(i=>i.status==='failed')?'failed':items.some(i=>i.status!=='passed')?'unverified':'passed';
   const taskCounts=results.map(r=>r.monotestTasks),taskIds=new Set(results.flatMap(r=>r.result.records?.taskIds??[]));
   const result={status,startedAt,finishedAt:new Date().toISOString(),durationMs:Date.now()-suiteStart,monotestTasks:taskCounts.some(c=>c===null)?null:taskIds.size,items,results,exportLeftovers:[...exportLeftovers],boundary:'mechanical driver results; fresh records verified separately for every host; conversation rubric remains required before a QA certificate'};
+  if(release)fs.writeFileSync(path.join(request.outputDir,resume?`release-report-${saved.revision+1}.md`:'release-report.md'),releaseReport(result)+'\n',{flag:'wx'});
   fs.writeFileSync(path.join(request.outputDir,resume?`suite-result-${saved.revision+1}.json`:'suite-result.json'),JSON.stringify(result,null,2)+'\n',{flag:'wx'});
   return result;
+}
+export function releaseReport(result) {
+ const lines=['# Выпуск скиллов','',`Цепочки: ${result.status}. Время: ${result.durationMs} ms. Задач monotest: ${result.monotestTasks??'не измерено'}.`,'',
+ '| Хост / этап | Исход | Доказательство | не проверено / причина |','| --- | --- | --- | --- |'];
+ for(const item of result.items)lines.push(`| ${item.host} / ${item.scenario} | ${item.status} | ${item.evidence} | ${item.status==='passed'?'—':item.reason?.replaceAll('|','/').replaceAll('\n',' ')??'Не проверено: нет причины в следе'} |`);
+ lines.push('','| Клиент | Снимок полного итога и вопроса согласия | не проверено / причина |','| --- | --- | --- |');
+ for(const client of ['Claude Code terminal (tmux)','Codex CLI (tmux)','Claude Code Desktop','Codex app'])lines.push(`| ${client} | не проверено | Снимок и текст панели / проба изоляции проверяются оркестратором на хосте, вне фонового драйвера |`);
+ lines.push('','Приёмка проекта не подтверждена этим фоновым проходом. Обязательны ключ старых версий со снимками, повтор красного на исправленной версии один раз, реальные решения ворот broken/fixed/unverified на отдельной невливаемой ветке и проверка обычных сессий обоих хостов. Пробелы — оркестратору; владелец не снимает и не прогоняет.','',
+ 'Расход на правку: не проверено — этот проход измеряет выпуск; оркестратор добавляет время и уникальные задачи отдельного perChange-прохода. Основной конфиг остаётся perChange: false.');
+ if(result.durationMs>8*60*60*1000)lines.push('','Выпуск дольше 8 часов: сценарии не срезаны; оркестратор заводит задачу на ускорение.');
+ return lines.join('\n');
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try { const result=await runSuite(json(process.argv[2])); console.log(JSON.stringify(result,null,2));process.exitCode=['passed','not-required'].includes(result.status)?0:result.status==='failed'?1:2; }

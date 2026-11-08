@@ -1804,7 +1804,10 @@ passage. The driver starts a following stage only with predefined scenario permi
 and a native post-reply action after the current stage rubric passes. Canonical
 document identities come from native responses, including slug lookups. Harmless
 deferral wording is allowed; exact forbidden offers and the semantic rubric remain
-blocking. Window decoders live only in archived test fixtures.
+blocking. The production driver, checker and record verifier select window mode
+only for tested versions before 0.43.0; current versions retain the window ban.
+Historical acceptance uses real native window answers and the current conversation
+rubric. Linked approval records still bind the shown version after the answer.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
 `references/owner-dialog.md` and `references/orchestration.md`, for retired window
 labels and answer-list formatting. History and old fixtures are outside that scope.
@@ -1814,7 +1817,7 @@ continue without rerunning a completed stage. Changed evidence or digest refuses
 resume; failed and unverified rubric results still block the next stage.
 Extra replies, questions, completed turns, forged quotes, early writes and unfinished
 main/scout activity remain blocking. See [skill QA](references/qa-skills.md).
-The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 18
+The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 19
 scenarios, with per-host question roles and probe-derived seeds. Scenario replies are fixed before the run. Fresh seed routes are
 checked before the stage starts. Select a committed
 `base...head` with `node scripts/skills-select.mjs <request.json>`, then pass that
@@ -1822,7 +1825,14 @@ saved selection and the explicit index path to `node scripts/skills-suite.mjs
 <request.json>`. The optional `qa.skills` recipe connects any product's own index/hosts/perChange.
 Use configFile/expectedFile/taskExpectedFile in selection to save scenario × host
 expectations in task-expected.json. Per-change selection can be disabled while
-release/acceptance still select the full catalog. Mono's own config is activated
+acceptance still selects the full catalog. Release selection uses the catalog's
+explicit release plan: all six stages once in one fresh project per host, without
+Linear seeds. It requires an orchestrator start reason for the separate transition
+after Design, and retains rubric/record checks before each next stage. Its generated
+report lists all four clients as unverified until host-side capture supplements it.
+The [acceptance key](evals/scenarios/acceptance/key.json) names the exact historical
+conditions, required screenshots, fixed-version controls and real gate decisions;
+a different failure or a report color does not satisfy the key. Mono's own config is activated
 only after 0.42.0 is installed. The expected items are frozen before the first host call;
 removed scenarios are refused. Main paths use short chains in one fresh monotest
 project, other neighbors use their own seeds. Design requires a request-supplied
@@ -1881,6 +1891,13 @@ servers. A startup read race retries once. Native proofs still require linked
 host evidence, native text, delivered replies and fresh completion. The default
 stage budget is one hour; text checks retain the full native trace.
 Run `node --test scripts/skills-{owner,run,trace,probe,proof}.test.mjs`.
+MONO-291 release/window regressions: `node --test scripts/skills-release.test.mjs
+scripts/skills-records.test.mjs scripts/skills-process.test.mjs scripts/skills-catalog.test.mjs`.
+The fixed dump includes raw team status lists and resolves exact UUID/name pairs;
+another status of the same type is a mismatch. Claude tool discovery, synthetic
+skill timestamps, rendered Linear chips/links and driver-initiated 137/143 exits
+have paired regression controls. These fixtures do not certify live client screens,
+ordinary-session isolation, measured per-change cost or release acceptance.
 Codex audits after a turn and cannot promise pre-execution refusal; isolation comes
 from the test home and servers, not from command strings. A mechanical pass still
 needs the conversation rubric and live orchestrator proof. Standalone synthetic

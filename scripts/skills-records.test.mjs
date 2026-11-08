@@ -36,9 +36,9 @@ function fixture(t){
   const reads=[];
   const walk=(directory)=>{for(const name of fs.readdirSync(directory)){const file=path.join(directory,name);if(fs.statSync(file).isDirectory()){walk(file);continue;}
    if(!name.endsWith('.json')||name.endsWith('.request.json'))continue;
-   const relative=path.relative(dumpDir,file),value=JSON.parse(fs.readFileSync(file)),kind=/^comments-/.test(name)?'list_comments':/^documents-/.test(name)?'list_documents':/^issues-/.test(name)?'list_issues':/^projects-/.test(name)?'list_projects':relative==='project.json'?'get_project':name==='issue.json'?'get_issue':'get_document';
+   const relative=path.relative(dumpDir,file),value=JSON.parse(fs.readFileSync(file)),kind=relative.startsWith('statuses/')?'list_issue_statuses':/^comments-/.test(name)?'list_comments':/^documents-/.test(name)?'list_documents':/^issues-/.test(name)?'list_issues':/^projects-/.test(name)?'list_projects':relative==='project.json'?'get_project':name==='issue.json'?'get_issue':'get_document';
    const page=kind.startsWith('list_'),scope=relative.startsWith('issues/')?relative.split('/')[1]:projectId;
-   const input=page?{...(kind==='list_projects'?{query:request.projectName}:{[kind==='list_issues'?'project':scope===projectId?'projectId':'issueId']:scope}),...(['list_issues','list_projects'].includes(kind)?{includeArchived:true}:{}),...(fs.existsSync(file.replace(/\.json$/,'.request.json'))?JSON.parse(fs.readFileSync(file.replace(/\.json$/,'.request.json'))):{})}:{id:value.uuid??value.id};
+   const input=kind==='list_issue_statuses'?{team:path.basename(name,'.json')}:page?{...(kind==='list_projects'?{query:request.projectName}:{[kind==='list_issues'?'project':scope===projectId?'projectId':'issueId']:scope}),...(['list_issues','list_projects'].includes(kind)?{includeArchived:true}:{}),...(fs.existsSync(file.replace(/\.json$/,'.request.json'))?JSON.parse(fs.readFileSync(file.replace(/\.json$/,'.request.json'))):{})}:{id:value.uuid??value.id};
    const id=String(reads.length);
    if(request.host==='claude')reads.push({type:'assistant',message:{content:[{type:'tool_use',id,name:`mcp__monotest__${kind}`,input}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}});
    else reads.push({type:'response_item',payload:{type:'function_call',name:`mcp__monotest__${kind}`,call_id:id,arguments:JSON.stringify(input)}},{type:'response_item',payload:{type:'function_call_output',call_id:id,output:JSON.stringify(value)}});
@@ -510,7 +510,7 @@ for(const host of ['claude','codex'])for(const mode of ['complete','shell','fore
   assert.equal(violation.stop,true);assert.deepEqual(violation.manualRemoval,['https://linear.app/working/issue/x']);
  }
  if(mode==='complete'){
-  assert.equal(collected.dumpComplete,true);assert.equal(collected.dumpFiles.length,8);
+  assert.equal(collected.dumpComplete,true);assert.equal(collected.dumpFiles.length,9);
   const p=JSON.parse(fs.readFileSync(path.join(collected.dumpDir,'project.json')));assert.equal(p.content[0].type,'text');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(collected.dumpDir,'comments-2.request.json'))),{cursor:'c1'});
   const request={host,trace:stage,dumpDir:collected.dumpDir,dumpTrace:collected.trace,project:{id:projectId,name:'fixed-run'},expectedRecords:[{type:'project'}]};
@@ -1874,4 +1874,55 @@ for(const host of ['claude','codex'])test(`project Brief presence accepts a fres
   f.save('documents/brief.json',{...doc,content});f.check();const bad=verifyTextRecords(f.request);assert.equal(bad.status,'failed');assert.match(bad.reason,/expected mono-brief: 1, observed 0/);
  }
  f.save('documents/brief.json',doc);f.request.expectedRecords=[{type:'mono-brief',count:1}];f.check();assert.notEqual(verifyTextRecords(f.request).status,'passed','write-required expectations remain strict');
+});
+
+test('MONO-291 synthetic Claude skill body cannot reverse native capture time',t=>{
+ const f=fixture(t);f.events.splice(2,0,{type:'user',isSynthetic:true,message:{content:[{type:'text',text:'Synthetic skill body'}]}});f.check();
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);rows[2].timestamp='2020-01-01T00:00:00Z';
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');assert.equal(verifyTextRecords(f.request).status,'passed');
+ delete rows[2].isSynthetic;fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');assert.equal(verifyTextRecords(f.request).status,'unverified');
+});
+for(const mode of ['chip','mixed-code'])test(`MONO-291 Linear prose normalization ${mode} preserves code and detects substantive changes`,t=>{
+ const f=fixture(t),url='https://linear.app/monotest/issue/MON-99/task';f.request.expectedRecords=[{type:'project'}];
+ const wanted=mode==='chip'?`Task: <issue id="uuid" href="${url}">MON-99</issue>`:`Keep \`x\`, see [${url}](<${url}>)`;
+ const actual=mode==='chip'?'Task: MON-99':`Keep \`x\`, see ${url}`;
+ f.events[2].message.content[0].input.body=wanted;f.events[3].message.content[0].content=JSON.stringify({...f.record,body:actual});f.page('comments','comments',[{...f.record,body:actual}]);f.check();
+ assert.equal(verifyTextRecords(f.request).status,'passed',JSON.stringify(verifyTextRecords(f.request)));
+ f.events[2].message.content[0].input.body=mode==='chip'?wanted.replace('MON-99</issue>','MON-98</issue>'):wanted.replace('`x`','`y`');f.check();assert.equal(verifyTextRecords(f.request).status,'failed');
+});
+
+for(const host of ['claude','codex'])test(`MONO-291 ${host} resolves a written status UUID from the fixed dump of its team`,t=>{
+ const f=fixture(t);f.request.host=host;
+ const team='00000000-0000-4000-8000-000000000002',status='00000000-0000-4000-8000-000000000003';
+ const statuses=[{id:status,name:'Done',type:'completed'},{id:'00000000-0000-4000-8000-000000000004',name:'Released',type:'completed'}];
+ const issue={id:'MON-1',uuid:'task',projectId,teamId:team,title:'Stage',description:'Body',status:'Done',labels:[]};
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('issues','issues',[{id:'task'}]);f.save('issues/task/issue.json',issue);f.page('issues/task/comments','comments',[]);f.save(`statuses/${team}.json`,statuses);
+ const input={id:'task',state:status};
+ f.events.splice(0,f.events.length,...(host==='claude'?[
+  {type:'assistant',message:{content:[{type:'tool_use',id:'status',name:'mcp__monotest__save_issue',input}]}},
+  {type:'user',message:{content:[{type:'tool_result',tool_use_id:'status',content:JSON.stringify(issue)}]}}
+ ]:[{type:'response_item',payload:{type:'function_call',call_id:'status',name:'mcp__monotest__save_issue',arguments:JSON.stringify(input)}},
+ {type:'response_item',payload:{type:'function_call_output',call_id:'status',output:JSON.stringify(issue)}}]));
+ const check=()=>{f.check();return verifyTextRecords(f.request);};
+ assert.equal(check().status,'passed',JSON.stringify(check()));
+ f.save('issues/task/issue.json',{...issue,status:'Released'});assert.equal(check().status,'failed','same status type cannot replace the exact status');
+ f.save('issues/task/issue.json',{...issue,status:{id:statuses[1].id,name:'Done',type:'completed'}});assert.equal(check().status,'failed','a returned name cannot hide a different explicit UUID');
+ f.save('issues/task/issue.json',issue);f.save(`statuses/${team}.json`,statuses.filter(row=>row.id!==status));assert.equal(check().status,'unverified','missing exact UUID cannot be inferred from type');
+});
+
+test('MONO-291 Claude fixed dump permits monotest ToolSearch, reads team statuses, rejects foreign search',async t=>{
+ for(const mode of ['tool-search','tool-search-foreign']){
+  const f=fixture(t);
+  const r=await collectRecordDump({host:'claude',cwd:f.dir,packRoot:process.cwd(),outputDir:path.join(f.dir,'fixed'),timeoutMs:10000,idleMs:10,binary:{command:process.execPath,args:[path.resolve('scripts/test-fixtures/skills-fixed-dump-host.mjs'),mode]},project:{id:projectId,name:'fixed-run'},mcpServers:{monotest:{url:'test'}}});
+  assert.equal(r.status,mode==='tool-search'?'passed':'failed',JSON.stringify(r));
+  if(mode==='tool-search')assert(fs.existsSync(path.join(r.dumpDir,'statuses/test-team.json')));
+ }
+});
+
+test('MONO-291 production record verifier binds an old window answer and rejects an empty answer',t=>{
+ const f=liveFixture(t,'idea-approve');f.request.testedVersion='0.41.0';
+ assert.equal(verifyTextRecords(f.request).status,'passed',JSON.stringify(verifyTextRecords(f.request)));
+ f.request.testedVersion='0.43.0';assert.match(verifyTextRecords(f.request).reason,/stage called a window/);f.request.testedVersion='0.41.0';
+ editLiveTrace(f,rows=>{const reply=rows.find(r=>r.payload?.role==='user'&&r.payload.content?.[0]?.text?.includes('send_user_message_question_reply'));const content=reply.payload.content[0].text;const answers=JSON.parse(content.replace(/^<send_user_message_question_reply>\n/,'').replace(/\n<\/send_user_message_question_reply>\n?$/,''));answers.forEach(a=>a.answer='');reply.payload.content[0].text='<send_user_message_question_reply>\n'+JSON.stringify(answers)+'\n</send_user_message_question_reply>\n';});
+ const empty=verifyTextRecords(f.request);assert.equal(empty.status,'failed',JSON.stringify(empty));assert.match(empty.reason,/empty\/refuse/);
 });

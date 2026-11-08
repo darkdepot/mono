@@ -11,7 +11,7 @@ const safeId=id=>{if(typeof id!=='string'||!/^[A-Za-z0-9-]+$/.test(id))missing('
 // only transports one exact MCP request per turn, never writes or chooses files.
 export class RecordDump {
  constructor({dumpDir,project,projectName}){
-  this.root=dumpDir;this.project=project;this.files=[];this.queue=[];this.cursors=new Map();fs.mkdirSync(dumpDir);
+  this.root=dumpDir;this.project=project;this.files=[];this.queue=[];this.cursors=new Map();this.teams=new Set();fs.mkdirSync(dumpDir);
   if(project)this.queue.push({tool:'get_project',input:{query:project.id??project.uuid,includeResources:true},file:'project.json'});
   else {if(!projectName)missing('run name required for dump');this.page('projects','projects','list_projects',{query:projectName,includeArchived:true});}
  }
@@ -45,6 +45,13 @@ export class RecordDump {
    if(value.uuid!==id||value.name!==this.project.name||!value.url?.startsWith('https://linear.app/monotest/'))throw new Error('dump project identity mismatch');
    this.page('comments','comments','list_comments',{projectId:id});this.page('documents','documents','list_documents',{projectId:id,includeArchived:true});this.page('issues','issues','list_issues',{project:id,includeArchived:true});
   }
+  if(job.tool==='get_issue'){
+   const team=value.teamId??value.team?.id;
+   if(!team)missing('issue team id required for fixed status dump');
+   safeId(team);
+   if(!this.teams.has(team)){this.teams.add(team);this.queue.push({tool:'list_issue_statuses',input:{team},file:`statuses/${team}.json`});}
+  }
+  if(job.tool==='list_issue_statuses'&&(!Array.isArray(value)||!value.length||value.some(row=>typeof row.id!=='string'||typeof row.name!=='string')||new Set(value.map(row=>row.id)).size!==value.length))missing('incomplete fixed team statuses');
   if(job.key==='documents')for(const ref of value.documents){const id=safeId(idOf(ref));this.queue.push({tool:'get_document',input:{id},file:`documents/${id}.json`});}
   if(job.key==='issues')for(const ref of value.issues){const id=safeId(idOf(ref));this.queue.push({tool:'get_issue',input:{id},file:`issues/${id}/issue.json`});this.page(`issues/${id}/comments`,'comments','list_comments',{issueId:id});}
   if(job.key&&value.hasNextPage){
