@@ -32,7 +32,7 @@ export function selectScenarios({indexFile, worktree, base, head = 'HEAD', hosts
     }
   }
   const catalogPaths = new Set([...catalog.files.keys()].map(f => path.relative(worktree,f).split(path.sep).join('/')));
-  const all = purpose==='release' || full || changed.some(f => catalog.index.sharedFiles.includes(f) || (catalogPaths.has(f) && ![...catalog.scenarios.values()].some(s =>
+  const all = purpose==='release' || purpose==='acceptance' || full || changed.some(f => catalog.index.sharedFiles.includes(f) || (catalogPaths.has(f) && ![...catalog.scenarios.values()].some(s =>
     f === path.relative(worktree,s.file).split(path.sep).join('/') || f === path.relative(worktree,path.join(path.dirname(s.file),'rubric.md')).split(path.sep).join('/'))));
   const affected = catalog.index.stages.filter(s => all || changed.some(f => s.files.some(rule => matches(f,rule)) ||
     s.scenarios.some(relative => matches(f,path.relative(worktree,path.join(catalog.root,path.dirname(relative))).split(path.sep).join('/')+'/')))).map(s => s.id);

@@ -43,9 +43,10 @@ export function codexWindows(rows, source, options) {
     const summary = last?.item.type === 'message' && last.item.role === 'assistant' && last.item.phase === 'final_answer' ? textOf(last.item) : '';
     const start=rows.findLast(r=>r.line<row.line&&(r.value.type==='event_msg'&&['task_started','task_complete'].includes(r.value.payload?.type)||r.value.type==='response_item'&&r.value.payload?.type==='message'&&r.value.payload.role==='user'));
     const preceding=items.filter(r=>r.line<row.line&&(!start||r.line>start.line));
-    const shown=preceding.findLast(r=>r.item.type==='message'&&r.item.role==='assistant'&&visible(textOf(r.item)))?.item;
-    // Hidden items do not replace the owner's pre-window presentation.
-    // A short final instruction cannot stand in for that visible offer.
+    const work=preceding.findLast(r=>['function_call','custom_tool_call'].includes(r.item.type));
+    // New tool work ends earlier progress. Reasoning, blank messages and delayed
+    // results do not replace a presentation made after that work was requested.
+    const shown=preceding.findLast(r=>(!work||r.line>work.line)&&r.item.type==='message'&&r.item.role==='assistant'&&visible(textOf(r.item)))?.item;
     const shownText=shown?.type==='message'&&shown.role==='assistant'?textOf(shown):'';
     const finalSummary=visible(summary)&&(!visible(shownText)||summary.includes(shownText));
     windows.push({ line: row.line, evidence: `${source}:${row.line}`, callId: p.call_id, questions: args?.questions ?? [],
@@ -63,15 +64,15 @@ function cardIssues(host, questions, expected) {
   for (const q of questions) {
     const title = host === 'claude' ? q.question : q.title;
     const options = q.options;
-    if (host === 'codex' && options == null && typeof title === 'string' && visible(title)) continue;
+    if (!expected && host === 'codex' && options == null && typeof title === 'string' && visible(title)) continue;
+    const gist = typeof title === 'string' ? title.split('\n')[0] : '';
+    if(expected){
+      for (const key of ['decision', 'advice', 'reason']) if (!gist.includes(expected[key])) issues.push(`question lacks scenario ${key}`);
+    }else if(!gist.includes('Совет'))issues.push('question lacks advice');
     if (typeof title !== 'string' || !Array.isArray(options) || options.length < 2 || options.length > 3) { issues.push('invalid question or option count'); continue; }
     const labels = options.map(o => typeof o === 'string' ? o : o?.label);
     if (labels.some(l => typeof l !== 'string' || !visible(l))) { issues.push('invalid option label'); continue; }
     if (!labels[0].endsWith(' (Recommended)') || labels.slice(1).some(l => l.endsWith(' (Recommended)'))) issues.push('recommended option must be first and unique');
-    const gist = title.split('\n')[0];
-    if(expected){
-      for (const key of ['decision', 'advice', 'reason']) if (!gist.includes(expected[key])) issues.push(`question lacks scenario ${key}`);
-    }else if(!gist.includes('Совет'))issues.push('question lacks advice');
     if ((gist.match(/[.!?]+(?:\s|$)/g)??[]).length > 2) issues.push('question gist exceeds two sentences');
     if (/https?:\/\/|\[[^\]]+\]\(|[`*#]/.test(gist)) issues.push('question gist has links or markup');
     const consequences = host === 'claude' ? options.map(o => o.description)

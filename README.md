@@ -1812,9 +1812,12 @@ presentation bindings remain unverified. Markerless legacy choices require an
 explicit scenario label (`expectedWindows.role: "choice"`); the checker still
 reports malformed cards and summaries stranded before an async window. Codex
 window answers require the native reply envelope with the tested call and question
-identities; plain chat and replies to other calls remain unverified. Hidden
-reasoning, tool results and blank messages cannot mask the last visible
-pre-window presentation when checking the full final summary.
+identities; plain chat and replies to other calls remain unverified. New tool
+work ends earlier progress; the last visible presentation after that work must
+appear in the final summary. Reasoning, blank messages and delayed results of
+earlier calls cannot hide that presentation. Only non-target free questions can
+omit options; target windows always require the scenario decision, advice,
+reason and valid options, including in role-less historical contracts.
 Historical acceptance uses real native window answers and the current conversation
 rubric. Linked approval records still bind the shown version after the answer.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
@@ -1834,7 +1837,8 @@ saved selection and the explicit index path to `node scripts/skills-suite.mjs
 <request.json>`. The optional `qa.skills` recipe connects any product's own index/hosts/perChange.
 Use configFile/expectedFile/taskExpectedFile in selection to save scenario × host
 expectations in task-expected.json. Per-change selection can be disabled while
-acceptance still selects the full catalog. Release selection uses the catalog's
+acceptance still selects the full catalog, including direct selection with an
+empty or stage-only diff. Release selection uses the catalog's
 explicit release plan: all six stages once in one fresh project per host, without
 Linear seeds. It requires an orchestrator start reason for the separate transition
 after Design, and retains rubric/record checks before each next stage. Its generated

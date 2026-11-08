@@ -128,7 +128,6 @@ for(const host of ['claude','codex'])test(`R1 ${host} explicit markerless choice
 
 const hiddenBeforeWindow=[
  {name:'reasoning',items:[{type:'reasoning',summary:[{type:'summary_text',text:'Thinking about the choice'}]}]},
- {name:'tool result',items:[{type:'function_call',name:'mcp__monotest__get_project',call_id:'read-project',arguments:'{}'},{type:'function_call_output',call_id:'read-project',output:'{}'}]},
  {name:'blank message',items:[{type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text:'  '}]}]}
 ];
 for(const {name,items} of hiddenBeforeWindow)test(`D5 ${name} cannot hide the last visible presentation before an async window`,()=>{
@@ -159,4 +158,57 @@ test('D5 full native window trace with empty anchors rejects the reasoning bypas
  const trace=path.join(dir,'trace.jsonl'),check=()=>{fs.writeFileSync(trace,values.map(JSON.stringify).join('\n')+'\n');return checkTrace({host:'codex',trace,testedVersion:'0.38.1',expectedWindows:[{id:'approval',role:'approval',decision:'Утверждаем',advice:'Советую',reason:'Research',summary:[]}]});};
  const bad=check();assert.equal(bad.status,'failed',JSON.stringify(bad));assert(bad.windows[0].issues.some(issue=>/summary.*final/.test(issue)));
  values[4].payload.content=structuredClone(values[0].payload.content);const fixed=check();assert.equal(fixed.status,'passed',JSON.stringify(fixed));
+});
+
+test('D5 a delayed tool result cannot hide a presentation made after its call',()=>{
+ const values=structuredClone(hostRegressions.codexAsync);
+ values.unshift({type:'response_item',payload:{type:'function_call',name:'mcp__monotest__get_project',call_id:'read-project',arguments:'{}'}});
+ values.splice(2,0,{type:'response_item',payload:{type:'function_call_output',call_id:'read-project',output:'{}'}});
+ const check=()=>codexWindows(values.map((value,i)=>({value,line:i+1})),'delayed-result',{phase:'card'})[0];
+ assert.equal(check().status,'failed');
+ values.findLast(v=>v.payload?.role==='assistant').payload.content=structuredClone(values[1].payload.content);
+ assert.equal(check().status,'passed');
+});
+
+const fixedWindowControls=JSON.parse(fs.readFileSync('evals/scenarios/acceptance/fixed-window-controls.json','utf8'));
+for(const control of fixedWindowControls.controls)test(`fixed ${control.version} Codex progress before tool work does not invalidate the full final summary`,t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-fixed-window-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const trace=path.join(dir,'trace.jsonl');fs.writeFileSync(trace,control.rows.map(JSON.stringify).join('\n')+'\n');
+ const result=checkTrace({host:'codex',trace,testedVersion:control.version,expectedWindows:control.expectedWindows,phase:'card'});
+ assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.windows[0].executionConfirmed,true);
+ assert(result.windows[0].summary.includes('## Что'));
+});
+
+test('D5 new work invalidates earlier progress but not a newer pre-window presentation',()=>{
+ const values=structuredClone(hostRegressions.codexAsync);
+ values.splice(1,0,{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__get_project',call_id:'read-project',arguments:'{}'}},{type:'response_item',payload:{type:'function_call_output',call_id:'read-project',output:'{}'}});
+ const final=values.findLast(v=>v.payload?.role==='assistant');final.payload.content=[{type:'output_text',text:'Что: полный итог после чтения. Зачем: видеть источник. Дальше: Research.'}];
+ const check=()=>codexWindows(values.map((value,i)=>({value,line:i+1})),'work-boundary',{phase:'card'})[0];
+ assert.equal(check().status,'passed','pre-execution progress does not bind a later summary');
+ const call=values.findIndex(v=>v.payload?.name==='request_user_input_async');
+ values.splice(call,0,{type:'response_item',payload:{type:'message',role:'assistant',phase:'commentary',content:structuredClone(final.payload.content)}},{type:'response_item',payload:{type:'reasoning',summary:[]}});
+ final.payload.content=[{type:'output_text',text:'Выбери вариант в окне.'}];
+ assert.equal(check().status,'failed','new presentation after the work still has to be in the final answer');
+});
+
+test('optionless legacy questions are exempt only when non-target, never in role-less target contracts',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-optionless-target-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const question={title:'Откуда брать данные?'},callId='free-question',trace=path.join(dir,'trace.jsonl');
+ const values=[{type:'response_item',payload:{type:'function_call',name:'request_user_input_async',call_id:callId,arguments:JSON.stringify({questions:[question]})}},
+  {type:'response_item',payload:{type:'function_call_output',call_id:callId,output:'{"accepted":true}'}},
+  {type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Что: добавить колонку источника.'}]}},
+  {type:'event_msg',payload:{type:'task_complete'}},
+  {type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:windowReply('codex',{questions:[question]},{mode:'default',text:'Из source'},callId)}]}},
+  {type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Принято.'}]}},{type:'event_msg',payload:{type:'task_complete'}}];
+ fs.writeFileSync(trace,values.map(JSON.stringify).join('\n')+'\n');
+ const expected={id:'approval',decision:'Утвердить',advice:'Совет',reason:'Research',summary:['Что']};
+ const check=expectedWindows=>checkTrace({host:'codex',trace,testedVersion:'0.42.0',expectedWindows});
+ const target=check([expected]);assert.equal(target.status,'failed',JSON.stringify(target));assert(target.windows[0].issues.includes('invalid question or option count'));
+ for(const key of ['decision','advice','reason'])assert(target.windows[0].issues.includes(`question lacks scenario ${key}`));
+ const generic=check([{...expected,role:'approval'}]);assert.equal(generic.windows[0].target,false);assert.equal(generic.windows[0].status,'passed',JSON.stringify(generic));
+ assert.equal(generic.status,'failed','a generic question cannot satisfy the missing target');
+ question.options=['Утвердить (Recommended)','Обсудить'];question.title+='\nУтвердить (Recommended): Сохраним / позже\nОбсудить: Уточним / задержка';
+ values[0].payload.arguments=JSON.stringify({questions:[question]});values[4].payload.content[0].text=windowReply('codex',{questions:[question]},{mode:'default',text:'Из source'},callId);
+ fs.writeFileSync(trace,values.map(JSON.stringify).join('\n')+'\n');
+ const wrong=check([expected]);assert.equal(wrong.status,'failed');for(const key of ['decision','advice','reason'])assert(wrong.windows[0].issues.includes(`question lacks scenario ${key}`));
 });

@@ -811,3 +811,13 @@ test('MONO-291 a truncated saved release cannot drop a stage from its frozen exp
  let calls=0;
  await assert.rejects(()=>actualSuite(suiteRequest(f,selection,{releaseStartReason:'Approved release'}),async()=>{calls++;}),/complete catalog plan/);assert.equal(calls,0);
 });
+
+for(const changed of [false,true])test(`acceptance directly selects the full catalog with ${changed?'a stage-only':'an empty'} diff`,t=>{
+ const f=fixture(t);fs.cpSync(source,f.catalogDir,{recursive:true});const base=f.commit();
+ if(changed){write(path.join(f.dir,'skills/idea/SKILL.md'),'changed Idea\n');f.commit();}
+ const args={indexFile:path.join(f.catalogDir,'index.json'),worktree:f.dir,base,purpose:'acceptance'};
+ const actual=selectScenarios(args),full=selectScenarios({...args,full:true});
+ assert.equal(actual.status,'selected');assert.equal(actual.expectedItems.length,56);
+ assert.deepEqual(actual.affected,Object.keys(neighbors));assert.deepEqual(actual.expectedItems,full.expectedItems);assert.deepEqual(actual.units,full.units);
+ assert.equal(selectScenarios({...args,purpose:'release'}).expectedItems.length,12,'release remains the single seedless chain');
+});
