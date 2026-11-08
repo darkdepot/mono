@@ -41,6 +41,15 @@ input.on('line',line=>{
   if(args.includes('--replay-user-messages')&&mode!=='drop-reply')out(e);
   if(mode==='extra-owner'&&e.message.content[0].text!=='Run text')out({...e,message:{role:'user',content:[{type:'text',text:'Начинай Research'}]}});
   const prompt=e.message.content[0].text,text=plan?plan.messages[planTurn++]:prompt==='Run text'?message:response();
+  if(plan?.background&&planTurn===1){
+   for(const event of plan.background)out(event);
+   if(!plan.omitContinuation)setTimeout(()=>{
+    out({type:'system',subtype:'task_notification',task_id:'scout-0',status:'completed'});
+    out({type:'system',subtype:'background_tasks_changed',tasks:[]});
+    out({type:'assistant',message:{content:[{type:'text',text}]}});out({type:'result',subtype:'success'});
+   },30);
+   return;
+  }
   if(mode==='window')out({type:'assistant',message:{content:[{type:'tool_use',id:'bad',name:'AskUserQuestion',input:{questions:[]}}]}});
   out({type:'assistant',message:{content:[{type:'text',text}]}});
  }

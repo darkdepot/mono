@@ -177,6 +177,9 @@ export async function runClaude(request){
         }else if(request.scenario.expectedReplies){
           if(replies.some(r=>!r.received))return missing('text reply not observed in native trace',c);
           const stageTurns=parentTurns('claude',traceRows(trace,'claude').rows).filter(t=>t.line>stageStartLine);
+          // Native background tasks continue without an owner message. Their yield
+          // result is not the completed stage offer; keep stdin open for the host.
+          if(stageTurns.at(-1)?.terminalLine!==line)return;
           if(stageTurns.length!==replies.length+1)return fail('unexpected stage turn without scenario policy',c);
           if(targetsAnswered(request,replies)){
             const turn=stageTurns.at(-1);

@@ -54,3 +54,63 @@ test('production Codex legacy driver answers a defective async window and keeps 
  assert.equal(r.status,'failed',JSON.stringify(r));assert(r.replies.some(reply=>reply.target&&reply.received),'defect still requires a real owner answer');
  assert(r.check.windows.some(w=>w.status==='failed'&&w.issues.some(issue=>/async summary/.test(issue))));
 });
+
+const hostRegressions=JSON.parse(fs.readFileSync('evals/scenarios/probe/samples/host-regressions.json','utf8'));
+async function backgroundRun(t,omitContinuation=false) {
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-background-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const plan=path.join(dir,'plan.json');fs.writeFileSync(plan,JSON.stringify({background:hostRegressions.claudeBackground,omitContinuation,messages:['Что: колонка Источник.\nУтверждаем и начинаем Research?','Утверждение записал.']}));
+ return runScenario({host:'claude',cwd:dir,packRoot:root,outputDir:path.join(dir,'out'),timeoutMs:omitContinuation?500:5000,idleMs:5,
+  binary:{command:process.execPath,args:[path.join(root,'scripts/test-fixtures/skills-text-host.mjs'),'plan','--plan',plan]},
+  mcpServers:{monotest:{url:'test'}},workspaceProof:{tool:'mcp__monotest__get_workspace',path:['name'],equals:'Test Space'},
+  scenario:{prompt:'Run text',allowedTools:['*'],expectedReplies:[{id:'idea',stage:'idea',role:'approval',summary:['Что:'],question:'Утверждаем и начинаем Research?',reply:'принимаю',intent:'agree',asksStart:true,outcome:{approval:true,startNext:true},response:['Утверждение записал.']}]}});
+}
+test('D1 Claude waits through the saved background result, then answers the fresh full summary',async t=>{
+ const r=await backgroundRun(t);assert.equal(r.status,'passed',JSON.stringify(r));
+ assert.equal(r.replies.length,1);assert.equal(r.replies[0].received,true);
+ assert(!r.replies[0].question.includes('Разведка идёт'));
+});
+test('D1 pending scouts without a new completed parent summary never receive owner consent',async t=>{
+ const r=await backgroundRun(t,true);assert.notEqual(r.status,'passed');assert.equal(r.replies.length,0);
+ assert.match(r.process.failure,/timeout/);
+});
+import {windowReply,windowPolicy,textReply} from './skills-owner.mjs';
+test('D4 markerless saved choice accepts a scenario label rather than inventing a recommended option',()=>{
+ const input=hostRegressions.markerlessChoice,label=input.questions[0].options[0];
+ const scenario={windows:[{mode:'label',label}],expectedWindows:[{id:'choice',role:'choice'}]};
+ const plan=windowPolicy(scenario,input.questions,[]);
+ assert.equal(plan.target,true);assert.equal(plan.policy.mode,'label');
+ assert.match(windowReply('codex',input,plan.policy,'choice'),/Колонка/);
+ assert.throws(()=>windowReply('codex',input,{mode:'label',label:'other'},'choice'),/unavailable/);
+ assert.throws(()=>windowReply('codex',input,{mode:'recommended'},'choice'),/unavailable/);
+});
+import {codexWindows} from './skills-trace.mjs';
+test('D5 saved 0.38.1 commentary summary cannot be replaced by a short final message, without anchors',()=>{
+ const rows=hostRegressions.codexAsync.map((value,i)=>({value,line:i+1}));
+ const bad=codexWindows(rows,'saved',{phase:'card'})[0];
+ assert.equal(bad.executionConfirmed,true);assert.equal(bad.status,'failed');assert.match(bad.reason,/summary.*final/);
+ const fixed=structuredClone(rows);fixed[3].value.payload.content=structuredClone(fixed[0].value.payload.content);
+ assert.equal(codexWindows(fixed,'fixed',{phase:'card'})[0].status,'passed');
+});
+test('N1 a consent question in the last message survives a following service paragraph',()=>{
+ const expected={id:'idea',stage:'idea',role:'approval',summary:['Что:'],question:'Утверждаешь это описание?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Записал.']};
+ const message='Что: колонка источника.\n\nУтверждаешь это описание?\n\n'+hostRegressions.afterQuestion;
+ assert.equal(textReply({expectedReplies:[expected]},message,0),'принимаю');
+ assert.throws(()=>textReply({expectedReplies:[expected]},message+'\nДелаем другое?',0),/question/);
+});
+
+import {parentTurns,completedTrace} from './skills-audit.mjs';
+test('D1 native completion notifications without a fresh terminal do not certify the old progress text',()=>{
+ const rows=hostRegressions.claudeBackground.map((value,i)=>({value,line:i+1}));
+ assert.equal(parentTurns('claude',rows).length,0);assert.equal(completedTrace('claude',rows),false);
+ rows.push({line:rows.length+1,value:{type:'system',subtype:'background_tasks_changed',tasks:[]}});
+ assert.equal(completedTrace('claude',rows),false);
+});
+test('N1 the checker binds the actual question inside the final message, still rejects later calls',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-question-tail-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const expected={id:'idea',stage:'idea',role:'approval',summary:['Что:'],question:'Утверждаешь это описание?',reply:'принимаю',intent:'agree',asksStart:false,outcome:{approval:true,startNext:false},response:['Записал.']};
+ const rows=[{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Что: колонка источника.\nУтверждаешь это описание?\n\n'+hostRegressions.afterQuestion}]}},{type:'event_msg',payload:{type:'task_complete'}},{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'принимаю'}]}},{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Записал.'}]}},{type:'event_msg',payload:{type:'task_complete'}}];
+ const trace=path.join(dir,'trace.jsonl'),check=()=>{fs.writeFileSync(trace,rows.map(JSON.stringify).join('\n')+'\n');return checkTrace({host:'codex',trace,testedVersion:'0.45.0',expectedReplies:[expected]});};
+ const good=check();assert.equal(good.status,'passed',JSON.stringify(good));assert.equal(good.exchanges[0].question,expected.question);
+ rows.splice(1,0,{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__get_workspace',call_id:'late',arguments:'{}'}});
+ assert.equal(check().status,'failed');
+});

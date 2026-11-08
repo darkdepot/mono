@@ -1926,3 +1926,35 @@ test('MONO-291 production record verifier binds an old window answer and rejects
  editLiveTrace(f,rows=>{const reply=rows.find(r=>r.payload?.role==='user'&&r.payload.content?.[0]?.text?.includes('send_user_message_question_reply'));const content=reply.payload.content[0].text;const answers=JSON.parse(content.replace(/^<send_user_message_question_reply>\n/,'').replace(/\n<\/send_user_message_question_reply>\n?$/,''));answers.forEach(a=>a.answer='');reply.payload.content[0].text='<send_user_message_question_reply>\n'+JSON.stringify(answers)+'\n</send_user_message_question_reply>\n';});
  const empty=verifyTextRecords(f.request);assert.equal(empty.status,'failed',JSON.stringify(empty));assert.match(empty.reason,/empty\/refuse/);
 });
+
+// D2 uses the saved Codex presentation shape (project name, then four sections),
+// with the already anonymized native approval fixture for independent gate proof.
+for(const corrected of [false,true])test(`D2 named shown Idea binds the same canonical four-section approval (${corrected?'correction':'agree'})`,t=>{
+ const f=corrected?correctedIdeaFixture(t):textIdeaFixture(t);
+ const name=f.request.project.name,full=f.request.approvalBindings[1].text;
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+ const shown=rows[f.request.approvalBindings[1].shownLine-1].payload.content[0];
+ shown.text=name+'\n\n'+shown.text;
+ f.request.approvalBindings.forEach(b=>{b.text=name+'\n\n'+full;if(b.artifactEnd!==undefined)b.artifactEnd+=name.length+2;});
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');
+ const result=corrected?f.attest():f.check();assert.equal(result.status,'passed',JSON.stringify(result));
+ if(!corrected){f.request.approvalBindings.forEach(b=>b.text=full);assert.equal(f.check().status,'passed','four-section binding also accepts the known title outside the artifact');f.request.approvalBindings.forEach(b=>b.text=name+'\n\n'+full);}
+ f.request.approvalBindings[0].text=f.request.approvalBindings[0].text.replace(name,'Different project');
+ assert.equal(f.check().status,'failed','a different leading title cannot be silently discarded');
+});
+test('D3 actual approvals with missing shown bindings are unverified, while missing records remain failed',t=>{
+ const f=textIdeaFixture(t);assert.equal(f.check().status,'passed');
+ f.request.approvalBindings=[];
+ const result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));assert.equal(result.bindingOnly,true);
+ assert.match(result.reason,/shown-version binding missing/);
+});
+test('D2 Codex native completed MCP approval binds its uniquely proved exec invocation line',t=>{
+ const f=textIdeaFixture(t),rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+ const i=rows.findIndex(r=>r.payload?.name==='mcp__monotest__save_comment'),call=rows[i].payload,result=JSON.parse(rows[i+1].payload.output);
+ const id='approval-exec',item={type:'McpToolCall',status:'completed',id:'approval-native',server:'monotest',tool:'save_comment',arguments:JSON.parse(call.arguments),result};
+ rows.splice(i,2,{type:'response_item',payload:{type:'custom_tool_call',name:'exec',call_id:id,input:`const r = await tools.mcp__monotest__save_comment(${call.arguments}); text(r);`}},{type:'event_msg',payload:{type:'item_completed',item}},{type:'response_item',payload:{type:'custom_tool_call_output',call_id:id,output:'stored'}});
+ fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:01Z').map(JSON.stringify).join('\n')+'\n');
+ f.request.approvalBindings[1].currentLine=i+1;
+ assert.equal(f.check().status,'passed',JSON.stringify(f.check()));
+ f.request.approvalBindings[1].currentLine=i;assert.notEqual(f.check().status,'passed','a neighbouring exec is not this approval');
+});

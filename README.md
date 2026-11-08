@@ -1806,6 +1806,11 @@ document identities come from native responses, including slug lookups. Harmless
 deferral wording is allowed; exact forbidden offers and the semantic rubric remain
 blocking. The production driver, checker and record verifier select window mode
 only for tested versions before 0.43.0; current versions retain the window ban.
+Claude background-task yields wait for a fresh completed stage summary. Idea
+presentation titles stay outside the canonical four-section approval; absent
+presentation bindings remain unverified. Markerless legacy choices require an
+explicit scenario label (`expectedWindows.role: "choice"`); the checker still
+reports malformed cards and summaries stranded before an async window.
 Historical acceptance uses real native window answers and the current conversation
 rubric. Linked approval records still bind the shown version after the answer.
 The AC1 guard reads all files under `skills/` and `templates/`, plus

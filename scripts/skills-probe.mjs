@@ -5,7 +5,7 @@ import { auditRows, parentTurns, completedTrace } from './skills-audit.mjs';
 import { MissingEvidence } from './skills-boundary.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 
-import { validateReplies, textReply, isOwnerWindow, checkStageResponse } from './skills-owner.mjs';
+import { validateReplies, textReply, isOwnerWindow, checkStageResponse, stageQuestion } from './skills-owner.mjs';
 
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 export const visibleText = text => typeof text === 'string' && text.replace(/[\s\p{Cf}\p{Variation_Selector}]/gu, '').length > 0;
@@ -105,6 +105,7 @@ export function textExchanges(host, rows, expectedReplies, {startLine=0}={}) {
     const turn=turns.find(t=>t.line>cursor);
     if (!turn) throw new Error(`last stage message missing for ${expected.id}`);
     textReply({expectedReplies},turn.text,index);
+    turn.question=stageQuestion(expected,turn.text);
     if (turn.reply===undefined) throw new Error(`actual owner reply missing for ${expected.id}`);
     if (turn.reply!==expected.reply) throw new Error(`actual owner reply differs from scenario for ${expected.id}`);
     const response=turns.find(t=>t.line>turn.replyLine);

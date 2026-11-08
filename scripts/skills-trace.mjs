@@ -41,10 +41,17 @@ export function codexWindows(rows, source, options) {
     const executionConfirmed = proof.status === 'confirmed';
     const last = turn.filter(r=>['message','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(r.item.type)).at(-1);
     const summary = last?.item.type === 'message' && last.item.role === 'assistant' && last.item.phase === 'final_answer' ? textOf(last.item) : '';
+    const start=rows.findLast(r=>r.line<row.line&&(r.value.type==='event_msg'&&['task_started','task_complete'].includes(r.value.payload?.type)||r.value.type==='response_item'&&r.value.payload?.type==='message'&&r.value.payload.role==='user'));
+    const preceding=items.filter(r=>r.line<row.line&&(!start||r.line>start.line));
+    const shown=preceding.at(-1)?.item;
+    // A visible offer immediately followed by the async call is part of this
+    // presentation. A short final instruction cannot stand in for that offer.
+    const shownText=shown?.type==='message'&&shown.role==='assistant'?textOf(shown):'';
+    const finalSummary=visible(summary)&&(!visible(shownText)||summary.includes(shownText));
     windows.push({ line: row.line, evidence: `${source}:${row.line}`, callId: p.call_id, questions: args?.questions ?? [],
       executionConfirmed, resultEvidence: proof.resultLine ? `${source}:${proof.resultLine}` : null,
-      summary, summaryLine: last?.line, status: !executionConfirmed ? 'unverified' : visible(summary) ? 'passed' : 'failed',
-      reason: !executionConfirmed ? 'linked native accepted:true window or delivered answer missing for this phase' : visible(summary) ? 'async summary is the last message' : 'async summary must be final and last; no calls after it' });
+      summary, summaryLine: last?.line, status: !executionConfirmed ? 'unverified' : finalSummary ? 'passed' : 'failed',
+      reason: !executionConfirmed ? 'linked native accepted:true window or delivered answer missing for this phase' : finalSummary ? 'async summary is the last message' : 'async summary must be final and last; no calls after it' });
   }
   return windows;
 }
@@ -84,14 +91,14 @@ function checkWindowTrace({ host, trace, expectedWindows, expectedReplies, rules
     if (expectedReplies!==undefined) return checkTextTrace({host,trace,expectedReplies,expectedWindows,rulesRoot,phase,endLine,stageStartLine});
     const roles=roleWindows(expectedWindows);
     if (!['claude', 'codex'].includes(host) || !Array.isArray(expectedWindows) || !expectedWindows.length || expectedWindows.some(w =>
-      !w?.id || (roles&&!['approval','transition'].includes(w.role)) || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || (!roles&&!w.summary.length) || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, role, decision, advice, reason and summary anchors');
+      !w?.id || (roles&&!['approval','transition','choice'].includes(w.role)) || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || (!roles&&!w.summary.length) || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, role, decision, advice, reason and summary anchors');
     const { rows } = traceRows(trace,host,{endLine});
     if (rows.some(r => !r.value || typeof r.value.type !== 'string')) throw new Error('invalid trace envelope');
     const responses=host==='claude'&&sent?traceRows(sent,'claude').rows.map(r=>r.value):[];
     const found = host === 'claude' ? claudeWindows(rows, trace, {phase,responses}) : codexWindows(rows, trace, {phase});
     let expectedIndex = 0;
     for (const [i, w] of found.entries()) {
-      const role=roles?windowRole(w.questions):null,target=!roles||role!==null;
+      const role=roles?(windowRole(w.questions)??(expectedWindows[expectedIndex]?.role==='choice'&&w.questions.every(q=>q.options?.length)?'choice':null)):null,target=!roles||role!==null;
       const expected = target?expectedWindows[expectedIndex]:null;
       const identity={target,role:role??(roles?'generic':'target'),id:expected?.id??`generic-${i}`};
       if (w.status === 'unverified') {

@@ -47,15 +47,22 @@ export function validateReplies(expected) {
   for (const r of expected) if(!anchored(r)&&r.response!==undefined && (!Array.isArray(r.response)||!r.response.length||r.response.some(text=>typeof text!=='string'||!text.trim()))) throw new Error('invalid declared stage response');
   return expected;
 }
-export function textReply(scenario, lastMessage, index) {
-  const expected=validateReplies(scenario.expectedReplies)[index];
-  if (!expected) throw new Error('unexpected text question without scenario policy');
-  if (typeof lastMessage!=='string' || !lastMessage.trimEnd().endsWith('?') || !expected.summary.every(s=>lastMessage.includes(s))) throw new Error('last stage question or summary differs from scenario');
-  const question=lastMessage.trimEnd().split('\n').at(-1);
+export function stageQuestion(expected,lastMessage) {
+  if (typeof lastMessage!=='string' || !expected.summary.every(s=>lastMessage.includes(s))) throw new Error('last stage question or summary differs from scenario');
+  // The contract owns the last message, not its last character. A same-message
+  // service paragraph does not move the actual question into another turn.
+  const question=lastMessage.trimEnd().split('\n').findLast(line=>line.includes('?'))?.trim();
+  if (!question) throw new Error('last stage question missing');
   if (anchored(expected)) {
     if ((question.match(/\?/g)??[]).length!==1) throw new Error('one stage question required');
     checkAnchors(expected.question,question,'question');
   } else if (!question.includes(expected.question)) throw new Error('last stage question differs from scenario');
+  return question;
+}
+export function textReply(scenario, lastMessage, index) {
+  const expected=validateReplies(scenario.expectedReplies)[index];
+  if (!expected) throw new Error('unexpected text question without scenario policy');
+  stageQuestion(expected,lastMessage);
   return expected.reply;
 }
 export function correctedVersion(shown, expected, actual) {
@@ -94,8 +101,8 @@ export function windowRole(questions) {
   return null;
 }
 export function windowPolicy(scenario, questions, replies) {
-  const roles=roleWindows(scenario.expectedWindows),role=roles?windowRole(questions):null;
-  if(roles&&!role){
+  const roles=roleWindows(scenario.expectedWindows),role=roles?(windowRole(questions)??(questions.every(q=>q.options?.length)?'choice':null)):null;
+  if(roles&&(!role||role==='choice'&&scenario.expectedWindows[targetReplyCount(replies)]?.role!=='choice')){
     const free=questions.filter(q=>!q.options?.length);
     return {target:false,role:free.length===questions.length?'free':'choice',policy:{mode:'default'},free,
       policyName:free.length===questions.length?'persona':free.length?'default':'recommended'};

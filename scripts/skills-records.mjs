@@ -388,7 +388,7 @@ function checkApprovedVersion({request,write,data,dump,createProject,packageStar
    (!shownText.includes(binding.text)&&(!text(read.value.url)||!shownText.includes(read.value.url)))||bodyOf(read.value)!==binding.text)missing('shown document link/version not bound to native read');
   shownVersion=read.value;
  }
- if(binding.currentLine===write.line&&/mono-(?:idea|tech):\s*approved/.test(writeBody(write))){
+ if((binding.currentLine===write.line||write.event.type==='event_msg'&&Number.isInteger(write.approvalInvocationLine)&&binding.currentLine===write.approvalInvocationLine)&&/mono-(?:idea|tech):\s*approved/.test(writeBody(write))){
   const info=writeBody(write).includes('mono-idea: approved')?'mono-idea-snapshot':'mono-tech-page';
   if(!bindsSnapshot(writeBody(write),info,approvedText))throw new Error('outgoing approved version differs from shown content');
   return; // idea-gate below independently checks the snapshot against persisted current data.
@@ -446,13 +446,22 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
  if(packageStart?!expected.outcome.startNext:!expected.outcome.approval)throw new Error('scenario reply does not authorize this record');
  if(binding.shownLine!==exchange.line || !text(binding.text))throw new Error('approval does not bind the last owner-visible text');
  const framing=expected.framing??{before:'',after:'\n'+exchange.question};
+ const displayed=text=>expected.stage==='idea'&&exchange.text.startsWith(dump.project.name+'\n\n')&&!text.startsWith(dump.project.name+'\n\n')?dump.project.name+'\n\n'+text:text;
  const presentation=anchored(expected)?presentationKind(expected,binding):'inline';
  if(presentation==='inline') {
   if(anchored(expected)&&binding.artifactEnd!==undefined) {
-   if(!Number.isInteger(binding.artifactEnd)||binding.artifactEnd<1||exchange.text.slice(0,binding.artifactEnd)!==binding.text||!exchange.text.slice(binding.artifactEnd).endsWith('\n'+exchange.question))throw new Error('approval does not bind the complete displayed artifact');
-  }else if(exchange.text!==framing.before+binding.text+framing.after)throw new Error('approval does not bind the complete displayed artifact');
+   if(!Number.isInteger(binding.artifactEnd)||binding.artifactEnd<1||exchange.text.slice(0,binding.artifactEnd)!==displayed(binding.text)||!exchange.text.slice(binding.artifactEnd).split('\n').some(line=>line.trim()===exchange.question))throw new Error('approval does not bind the complete displayed artifact');
+  }else if(exchange.text!==displayed(framing.before+binding.text+framing.after))throw new Error('approval does not bind the complete displayed artifact');
  }
  const body=writeBody(write);
+ let ideaText=binding.text;
+ if(expected.stage==='idea'){
+  const first=ideaText.indexOf('## '),prefix=first>0?ideaText.slice(0,first).trim():'';
+  if(prefix){
+   if(prefix!==dump.project.name)throw new Error('shown Idea project name differs from approved project');
+   ideaText=ideaText.slice(first);
+  }
+ }
  let approvedText;
  if(anchored(expected)&&presentation==='document') {
   approvedText=documentPresentation(data,exchange,binding,dump).approvedBody;
@@ -472,8 +481,8 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
   const snapshot=approvalBlocks(snapshotBody).find(b=>b.info==='mono-idea-snapshot'||b.info==='mono-tech-page')?.content.replace(/[\r\n]+$/,'');
   const call=!createProject&&data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
   const actual=snapshot??(call?bodyOf(resultFor(data.host,call,data.rows).value):undefined);
-  approvedText=correctedVersion(binding.text,expected,actual);
- } else approvedText=correctedVersion(binding.text,expected);
+  approvedText=correctedVersion(ideaText,expected,actual);
+ } else approvedText=correctedVersion(ideaText,expected);
  let approvedProjectText;
  if(createProject){
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mono-shown-idea-'));
@@ -780,7 +789,7 @@ export function verifyRecords(request){
   const bindingGaps=[],approvedExchanges=new Set();
   for(const write of activeWrites)try{
    for(const exchange of approvalCheck({...request,host:write.data.host,sent:write.data.sent},write,write.data,dump,activeWrites)??[])approvedExchanges.add(exchange);
-  }catch(error){if(!error.bindingOnly)throw error;bindingGaps.push(error.message);}
+  }catch(error){if(!error.bindingOnly)throw error;bindingGaps.push({message:error.message,write});}
   const gates=[...(request.gates??[])];
   for(const write of activeWrites){
    const has=type=>recordWrite(write,type,dump);
@@ -816,8 +825,12 @@ export function verifyRecords(request){
    gateResults.push({command:gate.command,exitCode:run.status,result});if(run.status!==0||!result.ok)throw new Error(`idea-gate ${gate.command}: ${result.code}`);
   }
   }finally{fs.rmSync(gateRoot,{recursive:true,force:true});}
-  for(const source of scenarios)for(const exchange of source.exchanges??[])
-   if(exchange.expected.outcome.approval&&!approvedExchanges.has(exchange))throw new Error('expected approval missing actual record bound to shown version');
+  for(const source of scenarios)for(const exchange of source.exchanges??[]) {
+   const marker={'idea':'mono-idea: approved','discovery':'mono-prd: approved','design':'mono-design: approved','tech-evaluation':'mono-tech: approved'}[exchange.expected.stage];
+   const awaitingBinding=bindingGaps.some(({write})=>write.data===source&&
+    source.exchanges.filter(e=>e.replyLine<write.line).at(-1)===exchange&&recordWrite(write,marker,dump));
+   if(exchange.expected.outcome.approval&&!approvedExchanges.has(exchange)&&!awaitingBinding)throw new Error('expected approval missing actual record bound to shown version');
+  }
   let rubric;
   if(scenarios.some(s=>s.exchanges?.some(e=>anchored(e.expected)))) {
    const input=scenarios.map(source=>({host:source.host,traceHash:sha256(fs.readFileSync(source.trace)),exchanges:(source.exchanges??[]).map(exchange=>({
@@ -825,7 +838,7 @@ export function verifyRecords(request){
    }))}));
    rubric=checkRubric({definition:request.rubricDefinition??null,sources:input,bindings:{approvals:request.approvalBindings??[],presentations:request.presentationBindings??[]},records:writes.map(w=>({name:w.name,input:w.input,value:w.value})),dump:dump.all},text(request.rubricDefinition)?request.rubric:undefined);
   }
-  return {status:bindingGaps.length?'unverified':rubric?.status??'passed',...(rubric??{}),...(bindingGaps.length?{status:'unverified',bindingOnly:true,reason:bindingGaps.join('; ')}:{}),starts:observedStarts,stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
+  return {status:bindingGaps.length?'unverified':rubric?.status??'passed',...(rubric??{}),...(bindingGaps.length?{status:'unverified',bindingOnly:true,reason:bindingGaps.map(gap=>gap.message).join('; ')}:{}),starts:observedStarts,stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
  }catch(error){return {status:error instanceof MissingEvidence||error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code)?'unverified':'failed',starts:observedStarts,stop:false,manualRemoval:[],reason:error.message,...(error.bindingOnly?{bindingOnly:true}:{}),gateResults,evidence:[request.trace,request.dumpDir]};}
 }
 
