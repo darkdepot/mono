@@ -637,7 +637,10 @@ export function verifyRecords(request){
       catch(error){if(error instanceof MissingEvidence)continue;throw error;}
       if(idOf(read.value)!==id||typeof read.value.content!=='string'||elided(read.value.content)||!before(source,read.resultLine,write.data,write))continue;
       if(previous&&!before(previous.data,previous.resultLine,source,read))continue;
-      if((index===0||insertionPatch)&&!uniquelyBoundNativeStart(source,read))missing(`document patch lacks uniquely bound prior content for ${id}`);
+      if((index===0||insertionPatch)&&!uniquelyBoundNativeStart(source,read)){
+       if(insertionPatch)continue;
+       missing(`document patch lacks uniquely bound prior content for ${id}`);
+      }
       priorReads.push(read);
      }
      if(insertionPatch&&!priorReads.length)missing(`document insert patch lacks bound native prior content for ${id}`);

@@ -1753,7 +1753,16 @@ function briefInsertPatchFixture(t,host,op,state='bound'){
   if(!['write-unbound-read','write-read'].includes(state))events.splice(0,host==='codex'?3:2);
   if(state!=='missing-read')events.unshift(...(host==='codex'?nativeMcpEvents('insert-create','save_document',{projectId,title:doc.title,content},doc):[f.call('insert-create','mcp__monotest__save_document',{projectId,title:doc.title,content}),f.result('insert-create',doc)]));
  }
+ if(host==='codex'&&state==='latest-bound')events.unshift(...nativeMcpEvents('insert-stale','get_document',{id:'brief'},{...doc,content:'Stale bound content.'}));
+ if(host==='codex'&&state==='unbound-after')events.splice(3,0,...nativeMcpEvents('insert-unbound-late','get_document',{id:'brief'},{...doc,content:'Unbound later content.'},false));
  f.events.splice(7,0,...events);
+ if(host==='codex'&&['grouped-seed','latest-bound'].includes(state)){
+  const seed=nativeMcpEvents('insert-seed','get_document',{id:'brief'},{...doc,content:'Unbound seed content.'},false);
+  seed[0].payload.input='const results = await Promise.allSettled([tools.mcp__monotest__get_document({id:"brief"}),tools.mcp__monotest__list_documents({projectId:"'+projectId+'"})]); results.forEach(text);';
+  seed.splice(2,0,{type:'event_msg',payload:{type:'item_completed',item:{type:'McpToolCall',id:'seed-list',server:'monotest',tool:'list_documents',arguments:{projectId},status:'completed',result:{documents:[doc]}}}});
+  seed.push(f.terminal);f.events.unshift(...seed);f.request.stageStartLine=seed.length+1;
+  for(const binding of f.request.approvalBindings){binding.shownLine+=seed.length;binding.currentLine+=seed.length;}
+ }
  if(host==='codex'){
   f.events.unshift({type:'session_meta',payload:{id:'native-insert-patch-session'}});
   for(const binding of f.request.approvalBindings){binding.shownLine++;binding.currentLine++;}
@@ -1766,11 +1775,15 @@ for(const host of ['claude','codex'])for(const op of ['insert_before','insert_af
  f.save('documents/brief.json',{...f.final,content:f.final.content+'Unexpected change.'});
  const changed=f.check();assert.equal(changed.status,'failed');assert.match(changed.reason,/mismatch.*brief\.content/);
 });
+for(const op of ['insert_before','insert_after'])for(const state of ['grouped-seed','latest-bound','unbound-after'])test(`MONO-358 codex: Brief ${op} uses latest bound read with ${state}`,t=>{
+ const f=briefInsertPatchFixture(t,'codex',op,state),result=f.check();assert.equal(result.status,'passed',result.reason);
+ f.save('documents/brief.json',{...f.final,content:f.final.content+'Unexpected change.'});assert.equal(f.check().status,'failed');
+});
 for(const host of ['claude','codex'])for(const op of ['insert_before','insert_after'])for(const state of ['missing-anchor','ambiguous-anchor'])test(`MONO-358 ${host}: Brief ${op} refuses ${state}`,t=>{
  const result=briefInsertPatchFixture(t,host,op,state).check();assert.equal(result.status,'failed');assert.match(result.reason,/document patch anchor.*exactly once.*(?:missing|ambiguous)/);
 });
 for(const op of ['insert_before','insert_after'])test(`MONO-358 codex: Brief ${op} refuses unbound prior native read`,t=>{
- const result=briefInsertPatchFixture(t,'codex',op,'unbound-read').check();assert.equal(result.status,'unverified');assert.match(result.reason,/document patch.*prior content/);
+ const result=briefInsertPatchFixture(t,'codex',op,'unbound-read').check();assert.equal(result.status,'unverified');assert.match(result.reason,/document insert patch lacks bound native prior content/);
 });
 
 for(const host of ['claude','codex'])for(const op of ['insert_before','insert_after'])for(const state of ['missing-read','write-without-read'])test(`MONO-358 ${host}: Brief ${op} requires native read for ${state}`,t=>{
