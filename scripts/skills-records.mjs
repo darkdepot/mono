@@ -629,16 +629,18 @@ export function verifyRecords(request){
     if(write.name==='mcp__monotest__save_document'&&Object.hasOwn(input,'patch')){
      if(Object.hasOwn(input,'content')||!Array.isArray(input.patch)||!input.patch.length)missing(`invalid document patch for ${id}`);
      let content=finalFields.content;
+     const insertionPatch=input.patch.some(edit=>edit?.op==='insert_before'||edit?.op==='insert_after');
      const priorReads=[],previous=versions[index-1];
      for(const source of scenarios)for(const call of source.calls.filter(c=>c.name==='mcp__monotest__get_document')){
       let read;
       try{read={...resultFor(source.host,call,source.rows),data:source};}
       catch(error){if(error instanceof MissingEvidence)continue;throw error;}
       if(idOf(read.value)!==id||typeof read.value.content!=='string'||elided(read.value.content)||!before(source,read.resultLine,write.data,write))continue;
-      if(index===0&&!uniquelyBoundNativeStart(source,read))missing(`document patch lacks uniquely bound prior content for ${id}`);
       if(previous&&!before(previous.data,previous.resultLine,source,read))continue;
+      if((index===0||insertionPatch)&&!uniquelyBoundNativeStart(source,read))missing(`document patch lacks uniquely bound prior content for ${id}`);
       priorReads.push(read);
      }
+     if(insertionPatch&&!priorReads.length)missing(`document insert patch lacks bound native prior content for ${id}`);
      if(priorReads.length){
       const latest=priorReads.find(read=>priorReads.every(other=>other===read||before(other.data,other.resultLine,read.data,read)));
       if(!latest)missing(`document patch prior read ordering across traces is not established for ${id}`);
@@ -647,6 +649,14 @@ export function verifyRecords(request){
      }
      if(typeof content!=='string'||elided(content))missing(`document patch lacks full prior content for ${id}`);
      for(const edit of input.patch){
+      if(edit?.op==='insert_before'||edit?.op==='insert_after'){
+       if(typeof edit.anchor!=='string'||!edit.anchor||typeof edit.text!=='string')missing(`unsupported document patch for ${id}`);
+       const start=content.indexOf(edit.anchor);
+       if(start<0||content.indexOf(edit.anchor,start+1)>=0)throw new Error(`document patch anchor must match exactly once for ${id}: ${start<0?'missing':'ambiguous'}`);
+       const offset=start+(edit.op==='insert_after'?edit.anchor.length:0);
+       content=content.slice(0,offset)+edit.text+content.slice(offset);
+       continue;
+      }
       if(edit?.op!=='replace'||typeof edit.old_string!=='string'||!edit.old_string||typeof edit.new_string!=='string')missing(`unsupported document patch for ${id}`);
       const start=content.indexOf(edit.old_string);
       if(start<0||edit.replace_all!==true&&content.indexOf(edit.old_string,start+1)>=0)throw new Error(`document patch old_string must match ${edit.replace_all===true?'at least':'exactly'} once for ${id}`);
