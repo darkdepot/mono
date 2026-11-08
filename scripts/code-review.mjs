@@ -148,6 +148,18 @@ function sourceText(bytes) {
   if (bytes.includes(0)) return null;
   try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return null; }
 }
+function binarySourceFile(fd) {
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }), buffer = Buffer.alloc(65536);
+  for (let position = 0;;) {
+    const length = fs.readSync(fd, buffer, 0, buffer.length, position);
+    if (!length) break;
+    const bytes = buffer.subarray(0, length);
+    if (bytes.includes(0)) return true;
+    try { decoder.decode(bytes, { stream: true }); } catch { return true; }
+    position += length;
+  }
+  try { decoder.decode(); return false; } catch { return true; }
+}
 // Export pinned blobs directly: archive attributes must not hide or rewrite files.
 // Symlinks become their target text, never links into the host filesystem.
 function exportReviewTree(worktree, head, excluded = new Set(), binaryPaths = new Set()) {
@@ -167,17 +179,18 @@ function exportReviewTree(worktree, head, excluded = new Set(), binaryPaths = ne
       for (let dir = parent; dir.startsWith(root); dir = path.dirname(dir)) {
         directories.add(dir); if (dir === root) break;
       }
-      const fd = fs.openSync(file, 'wx', 0o400);
+      const fd = fs.openSync(file, 'wx+', 0o400);
       let binary = false;
       try {
         // File tools receive the same screened source as diffs and evidence;
         // otherwise echoing a raw matched line can withhold the whole role stream.
         readGit(worktree, policy.env, policy.args, ['cat-file', 'blob', oid], false, fd);
         let safe = '[unreadable or over-limit model output withheld]', screened;
-        const content = sourceText(fs.readFileSync(file));
-        binary = content === null;
+        const withinLimit = fs.fstatSync(fd).size <= MAX_SCREEN_VALUE_BYTES;
+        const content = withinLimit ? sourceText(fs.readFileSync(file)) : null;
+        binary = withinLimit ? content === null : binarySourceFile(fd);
         if (binary) continue;
-        if (fs.fstatSync(fd).size <= MAX_SCREEN_VALUE_BYTES) {
+        if (withinLimit) {
           screened = screenModelOutput(content, { input: true, inputFile: name });
           if (!excluded.has(name) && !screened.fatal && !screened.rejected) safe = screened.value;
         }
@@ -505,11 +518,11 @@ function credentialValue(value) {
   // 33-character total limit when it differs from the pattern's upper bound.
   return value.length > 0 && !(value.length <= 33 && /^<[a-z][a-z0-9_-]{0,31}>$/.test(value));
 }
-// This tokenizer is only for JSON members and embedded JSON decoding. Source
-// bindings are screened independently, by line, without lexical state.
-function jsonTokens(source) {
+// JSON members and embedded JSON use all tokens; source bindings need only
+// the next quoted value and keep their stateless line/remainder policy.
+function jsonTokens(source, limit = Infinity) {
   const tokens = [];
-  for (let index = 0; index < source.length;) {
+  for (let index = 0; index < source.length && tokens.length < limit;) {
     if (/\s/.test(source[index])) { index++; continue; }
     const start = index, char = source[index];
     if ('"\''.includes(char)) {
@@ -571,7 +584,7 @@ function sourceBindings(line, safeMarkers = false) {
     // Anything else keeps the stateless line/remainder withholding policy.
     const literal = /^(?:(["'])([^"']*)\1|([^\s"',;\]}]+))\s*[;,\]}]*\s*$/.exec(rest);
     const scalar = literal ? literal[2] ?? literal[3] : null;
-    const token = literal ? null : jsonTokens(rest)[0];
+    const token = literal || !/^["']/.test(rest) ? null : jsonTokens(rest, 1)[0];
     const value = literal?.[2] ?? scalar ?? (token?.quoted && token.closed ? token.value : null);
     const beginning = match.index + match[0].length + line.slice(match.index + match[0].length).search(/\S|$/);
     const quoted = !!literal?.[1] || !!(token?.quoted && token.closed), start = beginning + (quoted ? 1 : 0);

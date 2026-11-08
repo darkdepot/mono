@@ -92,3 +92,5 @@
 - Track redaction coverage for every whole-text binding, including values whose key line was masked; withhold a file when any value span is uncovered. Check the exact reviewer/checker prompts against source and decoded/unescaped values at 6+ characters, with no floor for known credential families; shorter values remain protected by binding coverage. C53–C54 cover the mixed-mask leak, both final barriers and the length boundary without changing C51.
 
 - Use native erased-type positions to exclude proven declarations from remembered credential values, retaining strict screening for unproven syntax. C55 covers the typed-member regression, type references, source strings, runtime labels and retained value barriers.
+
+- Bound repeated-assignment screening to the next quoted token; check export size before full reads and classify oversized binary blobs in bounded UTF-8 chunks. C56 covers scaling, forbidden full reads, late binary bytes and unchanged fail-closed text reporting.

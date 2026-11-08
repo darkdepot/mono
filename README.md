@@ -1725,8 +1725,9 @@ checks do not excuse false gate refusals, altered evidence or missing readiness.
 Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
 confirmed ones stay report-only on round three; open unresolved findings block.
 Scope/risk flags are structural: each stable key retains their logical OR over all rounds, computed before reopening shortcuts. Rejection, closure and new checker evidence cannot clear them. Every rejected or fatal role input, including contracts, context fields and request templates, is excluded behind the existing safe marker and named unchecked; the round is `not-reviewed`. Accepted source-line masks retain their existing partial-coverage behavior. Before each launch, secret scanning covers the
-whole context: contract, rules, diff context, findings, history and base evidence;
-payload screening uses the same bounded literal JSON decoder for input and output,
+whole context: contract, rules, diff context, findings, history and base evidence.
+Repeated source assignments inspect only their next quoted token, without rescanning overlapping suffixes. Export size is checked before a full read: oversized text stays withheld and unchecked, while oversized binary classification streams bounded UTF-8 chunks without retaining the whole blob.
+Payload screening uses the same bounded literal JSON decoder for input and output,
 including JSON embedded in source text; a successful decode or an ordinary source backslash is not ambiguous. Duplicate-member ambiguity is enforced only when parsing role answers, never as a syntax rejection of repository text; all original members are still screened for secrets before parsing can discard them. One family table covers AWS AKIA/ASIA,
 GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values.
 JWT scanning checks every possible header suffix of at least four base64url characters in overlapping three-segment candidates, including prefixed headers, JSON whitespace and empty signatures. Every screen matches credential families and JWT as substrings anywhere, without lookaround or word boundaries on adjacent characters. This covers paths, source lines, ordinary text, JSON bindings and model output; harmless extra withholding is accepted under d-001/d-002 and remains MONO-329. The closed placeholder list and stable path aliases remain.

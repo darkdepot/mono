@@ -2285,6 +2285,48 @@ test('C54: exact nested source representations are checked before either role la
 });
 });
 
+test('C56: repeated assignments screen with bounded linear scaling',()=>{
+ for(const assignment of ['token=1;','token="x";']){
+  const elapsed=[];
+  for(const count of [2000,8000]){
+   const source=assignment.repeat(count),started=performance.now(),screened=screenModelOutput(source,{input:true,inputFile:'generated.txt'});
+   elapsed.push(performance.now()-started);
+   assert.equal(screened.rejected,false);assert.match(screened.value,/withheld/);
+   assert.ok(elapsed.at(-1)<=3000,`${assignment}: screen exceeded 3s`);
+  }
+  assert.ok(elapsed[1]<=elapsed[0]*6+50,`${assignment}: four times the assignments exceeded 6x time plus 50ms`);
+ }
+});
+test('C56: oversized unchanged exports never allocate a full read and retain text/binary outcomes',async t=>{
+ for(const ending of ['text','invalid UTF8','NUL'])await t.test(ending,async t=>{
+  const f=fixture(t),file='large.dat',bytes=Buffer.alloc(MAX_SCREEN_VALUE_BYTES+65536,0x61);
+  // A valid sequence straddles the classification chunk boundary; invalid bytes occur late.
+  bytes[65535]=0xc3;bytes[65536]=0xa9;
+  if(ending!=='text')bytes[bytes.length-1]=ending==='NUL'?0:0xff;
+  fs.writeFileSync(path.join(f.worktree,file),bytes);f.git('add','.');f.git('commit','-qm','large unchanged base');const base=f.git('rev-parse','HEAD');
+  fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// C56 caller change\n');f.git('add','.');f.git('commit','-qm','caller head');
+  const read=fs.readFileSync,readChunk=fs.readSync;let fullReads=0,chunkReads=0,calls=0;
+  t.mock.method(fs,'readFileSync',(target,...args)=>{
+   if(typeof target==='string'&&target.includes('mono-review-tree-')&&target.endsWith('/'+file)){
+    fullReads++;assert.ok(fs.statSync(target).size<=MAX_SCREEN_VALUE_BYTES,'oversized exported input must never be read in full');
+   }
+   return read(target,...args);
+  });
+  t.mock.method(fs,'readSync',(fd,buffer,offset,length,position)=>{
+   if(fs.fstatSync(fd).size>MAX_SCREEN_VALUE_BYTES){chunkReads++;assert.ok(length<=65536,'binary classification must use bounded reads');}
+   return readChunk(fd,buffer,offset,length,position);
+  });
+  const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.unreviewedFiles,ending==='text'?[file]:[]);
+   if(ending==='text')assert.equal(fs.readFileSync(path.join(request.worktree,file),'utf8'),'[unreadable or over-limit model output withheld]');
+   else assert.ok(!fs.existsSync(path.join(request.worktree,file)));
+   return {response:review([],c.files)};
+  }});
+  assert.equal(calls,1,JSON.stringify(record.failures));assert.deepEqual(record.failures,[]);assert.ok(chunkReads>0,'classification must inspect the oversized stream');
+  assert.equal(fullReads,ending==='text'?1:0,'only the small marker may be read in full');
+  if(ending==='text')assertUnchecked(record);else{assert.equal(record.outcome,'clean');assert.deepEqual(record.unreviewedFiles,[]);}
+ });
+});
 test('C55: type-only members do not turn public type names into leaked values',async t=>{
  const types=['string','number','boolean','any','unknown','object','null','undefined','never','void','CredentialType','ReadonlyArray<string>','CredentialType | null','FlowCredentialType'];
  for(const type of types)await t.test(type,async t=>{
