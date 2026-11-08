@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runReviewRound, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, screenModelOutput, reviewGit, MAX_SCREEN_VALUE_BYTES } from './code-review.mjs';
+import { runReviewRound, parseReviewer, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, screenModelOutput, reviewGit, MAX_SCREEN_VALUE_BYTES } from './code-review.mjs';
 import { requiredPairings, validateModels } from './runtime.mjs';
 import { scoreCheckerProbes } from './code-review-eval.mjs';
 import { copyPluginFixture } from './plugin-fixture.mjs';
@@ -31,9 +31,82 @@ function assertUnchecked(record) {
  assert.match(formatReviewReport(record),/Не проверено:/);
 }
 
+test('C51/r7: binary assets are absent from role inputs and never block text review',async t=>{
+ const png=Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489','hex');
+ for(const mode of ['unchanged','added','modified','deleted','text-to-binary','binary-to-text'])await t.test(mode,async t=>{
+  const f=fixture(t),file='fixtures/screen.png';fs.mkdirSync(path.join(f.worktree,'fixtures'));if(mode!=='added')fs.writeFileSync(path.join(f.worktree,file),mode==='text-to-binary'?'ordinary text\n':png);f.git('add','.');f.git('commit','--allow-empty','-qm','asset base');const base=f.git('rev-parse','HEAD');
+  if(mode==='deleted')fs.unlinkSync(path.join(f.worktree,file));else if(mode!=='unchanged')fs.writeFileSync(path.join(f.worktree,file),mode==='binary-to-text'?'ordinary new text\n':Buffer.concat([png,Buffer.from([0xff])]));
+  fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// C51 text change\n');f.git('add','.');f.git('commit','-qm','text head');let calls=0;
+  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.files,['input.mjs']);assert.deepEqual(c.unreviewedFiles,[]);assert.ok(!fs.existsSync(path.join(request.worktree,file)));assert.ok(c.diff.includes('C51 text change'));return {response:review([],c.files)};}});
+  assert.equal(calls,1,JSON.stringify(result.failures));assert.deepEqual(result.failures,[]);assert.equal(result.outcome,'clean');assert.deepEqual(result.unreviewedFiles,[]);assert.deepEqual(result.binaryFiles,mode==='unchanged'?[]:[file]);assert.equal(formatReviewReport(result).includes('двоичный файл, не проверялся'),mode!=='unchanged');assert.equal(f.git('status','--porcelain'),'');
+ });
+});
+test('C51/r7: binary-only and over-capture-limit assets remain report-only exclusions',async t=>{
+ for(const large of [false,true])await t.test(large?'large binary':'binary-only',async t=>{
+  const f=fixture(t),base=f.git('rev-parse','HEAD'),file='asset.bin';fs.writeFileSync(path.join(f.worktree,file),large?Buffer.alloc(33*1024*1024,0xff):Buffer.from([0xff]));f.git('add','.');f.git('commit','-qm','binary head');let calls=0;
+  const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.deepEqual(c.files,[]);assert.equal(c.diff,'');assert.ok(!fs.existsSync(path.join(request.worktree,file)));return {response:review([],[])};}});
+  assert.equal(calls,1,JSON.stringify(record.failures));assert.deepEqual(record.failures,[]);assert.equal(record.outcome,'clean');assert.deepEqual(record.binaryFiles,[file]);assert.deepEqual(record.unreviewedFiles,[]);assert.match(formatReviewReport(record),/asset\.bin; двоичный файл, не проверялся/);
+ });
+});
+test('C51/r7: binary exclusions cover both round-two views and survive a separate text refusal',async t=>{
+ for(const mode of ['task-base','previous-round'])await t.test(mode,async t=>{
+  const f=fixture(t),file='asset.bin',value='export const C51_BINARY_TRANSITION = 1;\n';fs.writeFileSync(path.join(f.worktree,file),mode==='task-base'?Buffer.from([0xff]):value);f.git('add','.');f.git('commit','-qm','asset base');const base=f.git('rev-parse','HEAD');
+  fs.writeFileSync(path.join(f.worktree,file),mode==='task-base'?value:Buffer.from([0xff]));fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// first text edit\n');f.git('add','.');f.git('commit','-qm','first round');const first=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},responder({findings:[sample]}));assert.equal(first.outcome,'not-converged',JSON.stringify(first.failures));
+  fs.writeFileSync(path.join(f.worktree,file),value+'// second asset edit\n');fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// second text edit\n');f.git('add','.');f.git('commit','-qm','second round');const roles=[];
+  const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD'),stageRecord:first},{runRole:async request=>{roles.push(request.role);const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(!request.prompt.includes('C51_BINARY_TRANSITION'));assert.deepEqual(c.files,['input.mjs']);assert.ok(!fs.existsSync(path.join(request.worktree,file)));return {response:request.role==='code-review'?review([],c.files):{completed:true,verdicts:[verdict()]}};}});
+  assert.deepEqual(roles,['code-review','code-review-checker']);assert.deepEqual(record.failures,[]);assert.equal(record.outcome,'not-converged');assert.deepEqual(record.binaryFiles,[file]);assert.deepEqual(record.unreviewedFiles,[]);
+ });
+ await t.test('separate fatal text',async t=>{
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'asset.bin'),Buffer.from([0xff]));fs.writeFileSync(path.join(f.worktree,'bad.json'),'['.repeat(40)+'1'+']'.repeat(40));f.git('add','.');f.git('commit','-qm','binary and unpassed text');const runner=responder(),record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+  assert.equal(record.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.deepEqual(record.unreviewedFiles,['bad.json']);assert.deepEqual(record.binaryFiles,['asset.bin']);assert.match(formatReviewReport(record),/asset\.bin; двоичный файл, не проверялся/);
+ });
+});
+test('C51/r7: repeated JSON keys in repository text are data, including the circle test source',async t=>{
+ const duplicate=String.raw`const bad=JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n';`+'\n';
+ for(const [name,source] of [['minimal',duplicate],['real test file',fs.readFileSync(path.join(packRoot,'scripts/code-review.test.mjs'),'utf8')]])await t.test(name,async t=>{
+  const f=fixture(t),file='scripts/a.test.mjs';fs.mkdirSync(path.join(f.worktree,'scripts'));fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','source base');const base=f.git('rev-parse','HEAD');fs.writeFileSync(path.join(f.worktree,file),'// C51 unrelated appended comment\n'+source);f.git('add','.');f.git('commit','-qm','source head');let calls=0;
+  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('C51 unrelated appended comment'));assert.deepEqual(c.unreviewedFiles,[]);assert.ok(fs.readFileSync(path.join(request.worktree,file),'utf8').includes('enabled'));return {response:review([],c.files)};}});
+  assert.equal(calls,1,JSON.stringify(result.failures));assert.deepEqual(result.failures,[]);assert.equal(result.outcome,'clean');assert.deepEqual(result.unreviewedFiles,[]);
+ });
+});
+test('C51/r7: checker credential values redact in place after parsing and record their field paths',async t=>{
+ const credential='ghp_'+'S'.repeat(36),reason='before '+credential+' after',expected='before [credential-shaped field withheld] after';
+ for(const encoded of [false,true])await t.test(encoded?'JSON answer':'object answer',async t=>{
+  const answer={completed:true,verdicts:[verdict({danger:true,dangerCase:'data',dangerReason:'data corruption',reason})]};const value=encoded?JSON.stringify(answer):answer;
+  assert.equal(parseChecker(value,[sample]).verdicts[0].reason,expected);
+  const f=fixture(t),runner=responder({findings:[sample],responses:[review([sample]),value]}),record=await runReviewRound(f.request,runner);
+  assert.equal(record.outcome,'not-converged',JSON.stringify(record.failures));assert.deepEqual(record.failures,[]);assert.equal(record.findings[0].reason,expected);assert.equal(runner.calls.length,2);assert.ok(!JSON.stringify(record).includes(credential));assert.ok(record.costs.find(c=>c.role==='code-review-checker').redactedFields.includes('/verdicts/0/reason'));assert.match(formatReviewReport(record),/Скрыто в ответе:/);
+ });
+ assert.throws(()=>parseChecker('{"completed":false,"completed":true,"verdicts":[]}',[]),/JSON|ambiguous|duplicate/);
+ assert.throws(()=>parseChecker(JSON.stringify('{\"completed\":false,\"completed\":true,\"verdicts\":[]}'),[]),/JSON|object/);
+});
+test('C51/r7: unreadable role answers keep the existing single retry and measured costs',async t=>{
+ const f=fixture(t),token='ghp_'+'K'.repeat(36);
+ for(const bad of ['{"completed":true,"verdicts":[','{"completed":false,"completed":true,"verdicts":[]}',{completed:true,verdicts:[],[token]:'unsafe key'}]){
+  const runner=responder({responses:[review([sample]),bad,bad]}),record=await runReviewRound(f.request,runner);
+  assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.equal(runner.calls.length,3);const failed=record.costs.filter(cost=>cost.role==='code-review-checker');assert.equal(failed.length,2);assert.ok(failed.every(cost=>cost.usage.input_tokens===12));assert.ok(!JSON.stringify(record).includes(token));
+ }
+});
+test('C51/r7: masking structural finding identity cannot reuse a previously rejected key',async t=>{
+ const f=fixture(t),label='task-'+'J'.repeat(32),masked='ta[credential-shaped field withheld]';
+ const first=await runReviewRound(f.request,responder({findings:[{...sample,class:masked}],verdicts:[verdict({outcome:'rejected',codeQuote:'return n;'})]}));assert.equal(first.outcome,'clean',JSON.stringify(first.failures));assert.equal(first.findings[0].status,'rejected');
+ const runner=responder({findings:[{...sample,class:label}],verdicts:[verdict()]}),second=await runReviewRound({...f.request,stageRecord:first},runner);
+ assert.equal(second.outcome,'not-reviewed',JSON.stringify(second.failures));assert.equal(runner.calls.length,2);assert.ok(runner.calls.every(call=>call.role==='code-review'));assert.ok(!JSON.stringify(second).includes(label));
+ for(const field of ['class','anchor'])assert.throws(()=>parseReviewer(review([{...sample,[field]:label}])),/identity|structure/);
+ const control=parseReviewer(review([{...sample,title:'before '+label+' after'}]));assert.equal(control.findings[0].title,'before ta[credential-shaped field withheld] after');assert.equal(control.findings[0].key,key);
+});
+test('C51/r7: native role streams preserve JSON envelopes and checker answers when a value matches',async t=>{
+ const f=fixture(t),bin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-c51-stream-'));t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));const credential='ghp_'+'N'.repeat(36),roles=resolveReviewRoles({},packRoot);
+ const checker={completed:true,verdicts:[verdict({reason:'before '+credential+' after'})]};
+ fs.writeFileSync(path.join(bin,'codex'),`#!${process.execPath}\nif(process.argv[2]==='debug'){console.log(JSON.stringify({models:[{slug:${JSON.stringify(roles['code-review'].model)},tool_mode:'code_mode_only',apply_patch_tool_type:'freeform',multi_agent_version:'v2'}]}));process.exit(0);}if(process.argv[2]==='login'){console.error('Logged in using ChatGPT');process.exit(0);}let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const response=s.startsWith('Boundary audit')?{tools:['exec_command','write_stdin'],mcpServers:[]}:${JSON.stringify(review([{...sample,title:'before '+credential+' after'}]))};console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'Checking source strings with repeated JSON keys.'}}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(response)}}));console.log(JSON.stringify({type:'turn.completed'}));});\n`,{mode:0o700});
+ fs.writeFileSync(path.join(bin,'claude'),`#!${process.execPath}\nif(process.argv.includes('auth')){console.log(JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}));process.exit(0);}let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{console.log(JSON.stringify({type:'system',subtype:'init',tools:['Read','Glob','Grep','StructuredOutput'],mcp_servers:[]}));console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,structured_output:${JSON.stringify(checker)}}));});\n`,{mode:0o700});
+ const prior=process.env.PATH;process.env.PATH=bin+path.delimiter+prior;
+ try{const record=await runReviewRound(f.request);assert.equal(record.outcome,'not-converged',JSON.stringify(record.failures));assert.deepEqual(record.failures,[]);assert.equal(record.findings[0].reason,'before [credential-shaped field withheld] after');assert.ok(!JSON.stringify(record).includes(credential));assert.ok(record.costs.find(c=>c.role==='code-review-checker').redactedFields.includes('/verdicts/0/reason'));assert.ok(record.costs.find(c=>c.role==='code-review').redactedFields.includes('/findings/0/title'));}finally{process.env.PATH=prior;}
+});
+
 const hostR6=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/host-r6-regressions.json'),'utf8'));
 test('C50: any unpassed file side excludes the whole file from diff, export and checker evidence',async t=>{
- const marker='[unreadable or over-limit model output withheld]',bad=JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n';
+ const marker='[unreadable or over-limit model output withheld]',bad=JSON.stringify({public:1,nested:'\\'.repeat(64)+'u0061'})+'\n';
  for(const mode of ['base','head','previous-round','base-with-partial-head'])await t.test(mode,async t=>{
   const f=fixture(t),file='dependency.json',baseValue=mode.startsWith('base')?bad:'{"public":"BASE_VISIBLE_ONLY"}\n';fs.writeFileSync(path.join(f.worktree,file),baseValue);f.git('add','.');f.git('commit','-qm','file base');const base=f.git('rev-parse','HEAD');
   fs.writeFileSync(path.join(f.worktree,file),mode==='base'?'{}\n':mode==='base-with-partial-head'?'// Bearer values.\nexport const VISIBLE_PARTIAL_HEAD=1;\n':bad);f.git('add','.');f.git('commit','-qm','file head');let stageRecord;
@@ -56,8 +129,8 @@ test('C50: any unpassed file side excludes the whole file from diff, export and 
 });
 
 test('C50: rejected non-file inputs are excluded and named before role input',async t=>{
- const ambiguous=JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'}),fatal='['.repeat(40)+'1'+']'.repeat(40),marker='[unreadable or over-limit model output withheld]';
- for(const [name,contract] of [['ambiguous contract',ambiguous],['fatal contract',fatal],['secret-key contract',JSON.stringify({password:'opaqueC50',purpose:'Review input'})]])await t.test(name,async t=>{
+ const ambiguous=JSON.stringify({public:1,nested:'\\'.repeat(64)+'u0061'}),fatal='['.repeat(40)+'1'+']'.repeat(40),marker='[unreadable or over-limit model output withheld]';
+ for(const [name,contract] of [['unfixed escaped contract',ambiguous],['fatal contract',fatal],['secret-key contract',JSON.stringify({password:'opaqueC50',purpose:'Review input'})]])await t.test(name,async t=>{
   const f=fixture(t),safe=screenModelOutput(contract,{input:true});assert.equal(safe.rejected,true);let calls=0;
   const result=await runReviewRound({...f.request,contract},{runRole:async request=>{const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);calls++;assert.equal(c.contract,marker);assert.ok(c.unreviewedInputs.includes('договор задачи'));assert.ok(!request.prompt.includes(contract));return {response:review([],c.files)};}});
   assert.equal(calls,1,JSON.stringify(result.failures));assertUnchecked(result);assert.ok(result.unreviewedInputs.includes('договор задачи'));assert.equal(f.git('status','--porcelain'),'');
@@ -80,10 +153,10 @@ test('C50: scope and risk are the OR over all rounds before reopening shortcuts 
 });
 
 test('C49: rejected base and head diff sides are independently marked unchecked and replaced before role input',async t=>{
- const file='dependency.json',rejected=JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n',accepted=JSON.stringify({public:1,nested:'ordinary'})+'\n',marker='[unreadable or over-limit model output withheld]';
+ const file='dependency.json',rejected=JSON.stringify({public:1,nested:'\\'.repeat(64)+'u0061'})+'\n',accepted=JSON.stringify({public:1,nested:'ordinary'})+'\n',marker='[unreadable or over-limit model output withheld]';
  assert.equal(screenModelOutput(rejected,{input:true,inputFile:file}).rejected,true);
  assert.equal(screenModelOutput(rejected,{input:true,inputFile:file}).fatal,false);
- assert.equal(screenModelOutput(rejected,{input:true,inputFile:file}).fullyWithheld,false);
+ assert.equal(screenModelOutput(rejected,{input:true,inputFile:file}).fullyWithheld,true);
  assert.equal(screenModelOutput(accepted,{input:true,inputFile:file}).rejected,false);
  for(const [name,before,after] of [['rejected base / clean head',rejected,accepted],['clean base / rejected head',accepted,rejected],['both rejected',rejected,rejected.replace('"public":1','"public":2')],['both accepted',accepted,accepted.replace('"public":1','"public":2')]])await t.test(name,async t=>{
   const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),before);f.git('add','.');f.git('commit','-qm','diff base');const base=f.git('rev-parse','HEAD');fs.writeFileSync(path.join(f.worktree,file),after);f.git('add','.');f.git('commit','-qm','diff head');let calls=0;
@@ -106,7 +179,7 @@ test('C49: rejected base and head diff sides are independently marked unchecked 
 });
 
 test('C48: fatal or rejected unchanged exports contain only the safe marker and are named unchecked for both roles',async t=>{
- const cases=[['fatal','['.repeat(40)+'1'+']'.repeat(40)+'\n'],['rejected',JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n']];
+ const cases=[['fatal','['.repeat(40)+'1'+']'.repeat(40)+'\n'],['rejected',JSON.stringify({public:1,nested:'\\'.repeat(64)+'u0061'})+'\n']];
  for(const [name,source] of cases)await t.test(name,async t=>{
   const f=fixture(t),file='dependency.json',safe=screenModelOutput(source,{input:true,inputFile:file});assert.equal(safe.rejected,true);assert.equal(safe.fatal,name==='fatal');
   fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','dependency base');const base=f.git('rev-parse','HEAD');fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// changed caller\n');f.git('add','.');f.git('commit','-qm','caller head');let calls=0;
@@ -119,7 +192,7 @@ test('C48: fatal or rejected unchanged exports contain only the safe marker and 
 });
 test('C48: full diff and pinned checker evidence never admit a fatal or rejected JSON value',async t=>{
  for(const fatal of [true,false])for(const mode of ['diff','evidence'])await t.test(`${fatal}/${mode}`,async t=>{
-  const f=fixture(t),file='dependency.json',source=fatal?'['.repeat(40)+'1'+']'.repeat(40)+'\n':JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n';
+  const f=fixture(t),file='dependency.json',source=fatal?'['.repeat(40)+'1'+']'.repeat(40)+'\n':JSON.stringify({public:1,nested:'\\'.repeat(64)+'u0061'})+'\n';
   fs.writeFileSync(path.join(f.worktree,file),mode==='diff'?'{}\n':source);f.git('add','.');f.git('commit','-qm','blob base');const base=f.git('rev-parse','HEAD');
   if(mode==='diff')fs.writeFileSync(path.join(f.worktree,file),source);else fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// changed caller\n');f.git('add','.');f.git('commit','-qm','blob head');let calls=0;
   const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
@@ -132,12 +205,12 @@ test('C48: full diff and pinned checker evidence never admit a fatal or rejected
  });
 });
 test('C48: named-file Git stdout rejects uncertain JSON while raw identity reads retain exact bytes',t=>{
- const f=fixture(t),file='dependency.json',source=JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n';fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','rejected source');const head=f.git('rev-parse','HEAD');
+ const f=fixture(t),file='dependency.json',source=JSON.stringify({public:1,nested:'\\'.repeat(64)+'u0061'})+'\n';fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','rejected source');const head=f.git('rev-parse','HEAD');
  assert.equal(reviewGit(f.worktree,['show',head+':'+file]),'[unreadable or over-limit model output withheld]');assert.deepEqual(reviewGit(f.worktree,['cat-file','blob',head+':'+file],{},'blob'),Buffer.from(source));
 });
 
 test('C46: fully withheld unchanged exports are named unchecked in both role prompts and cannot return clean',async t=>{
- const shapes=[['over-limit','// '+'a'.repeat(MAX_SCREEN_VALUE_BYTES)+'\nexport const hidden = 1;\n'],['non-UTF8',Buffer.from([0xff,0x0a])],['fully hidden','const password = "opaqueFixture";\n']];
+ const shapes=[['over-limit','// '+'a'.repeat(MAX_SCREEN_VALUE_BYTES)+'\nexport const hidden = 1;\n'],['fully hidden','const password = "opaqueFixture";\n']];
  for(const [name,source] of shapes)await t.test(name,async t=>{
   const f=fixture(t),file='dep.mjs';fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','dependency base');const base=f.git('rev-parse','HEAD');
   fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// changed caller\n');f.git('add','.');f.git('commit','-qm','caller head');let calls=0;
@@ -149,7 +222,7 @@ test('C46: fully withheld unchanged exports are named unchecked in both role pro
  });
 });
 test('C46: exported unchecked filenames use the existing stage aliases without exposing credential text',async t=>{
- const f=fixture(t),token='ghp_'+'v'.repeat(36),file='dep-'+token+'.mjs';fs.writeFileSync(path.join(f.worktree,file),Buffer.from([0xff]));f.git('add','.');f.git('commit','-qm','dependency base');const base=f.git('rev-parse','HEAD');fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// caller\n');f.git('add','.');f.git('commit','-qm','head');
+ const f=fixture(t),token='ghp_'+'v'.repeat(36),file='dep-'+token+'.mjs';fs.writeFileSync(path.join(f.worktree,file),'const password = "opaqueAliasFixture";\n');f.git('add','.');f.git('commit','-qm','dependency base');const base=f.git('rev-parse','HEAD');fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// caller\n');f.git('add','.');f.git('commit','-qm','head');
  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.equal(c.unreviewedFiles.length,1);assert.match(c.unreviewedFiles[0],/credential-shaped path withheld/);assert.ok(!request.prompt.includes(token));return {response:review()};
  }});
@@ -351,13 +424,13 @@ test('C40: fully withheld contract is reported as unchecked after both role call
  assert.ok(!JSON.stringify(result).includes('opaqueContractC40'));
  for(const value of ['opaqueContractC40',JSON.stringify('opaqueContractC40'),JSON.stringify({password:'opaqueContractC40'}),JSON.stringify(JSON.stringify({password:'opaqueContractC40'}))])assert.ok(!JSON.stringify(result).includes(createHash('sha256').update(value).digest('hex')));
 });
-test('C40: fully withheld file and duplicate-member JSON cannot count as reviewed',async t=>{
+test('C40: secret-withheld text blocks while duplicate-member source remains reviewable',async t=>{
  for(const content of ['const password = "opaqueFileC40";\n','{"enabled":false,"enabled":true}\n'])await t.test(content.startsWith('{')?'duplicate JSON':'source',async t=>{
   const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),content);f.git('add','.');f.git('commit','-qm','fully withheld');
-  const runner=responder({findings:[sample],verdicts:[verdict({outcome:'rejected'})]});
+  const runner=responder();
   const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
-  assert.equal(runner.calls.length,2);assert.equal(result.outcome,'not-reviewed');assert.deepEqual(result.unreviewedFiles,['input.mjs']);
-  assert.match(formatReviewReport(result),/Не проверено:.*input\.mjs/);
+  assert.equal(runner.calls.length,1);assert.deepEqual(result.failures,[]);assert.equal(result.outcome,content.startsWith('{')?'clean':'not-reviewed');assert.deepEqual(result.unreviewedFiles,content.startsWith('{')?[]:['input.mjs']);
+  if(!content.startsWith('{'))assert.match(formatReviewReport(result),/Не проверено:.*input\.mjs/);
  });
 });
 test('C40: partial file masks remain readable while a rejected contract is wholly unchecked',async t=>{
@@ -810,7 +883,7 @@ test('C23: roles get a read-only pinned export without repository Git helpers',a
  const f=fixture(t),tools=fs.mkdtempSync(path.join(os.tmpdir(),'mono-c23-helper-'));t.after(()=>fs.rmSync(tools,{recursive:true,force:true}));
  const marker='C23_FSMONITOR_EXECUTED',hook=path.join(tools,'fsmonitor');
  fs.writeFileSync(hook,'#!/bin/sh\nprintf "'+marker+'\\n" >&2\nprintf "fixture\\000"\n',{mode:0o700});
- fs.writeFileSync(path.join(f.worktree,'neighbor.dat'),Buffer.from([0,255,10,42]));
+ fs.writeFileSync(path.join(f.worktree,'neighbor.dat'),'// '+'n'.repeat(MAX_SCREEN_VALUE_BYTES));
  fs.writeFileSync(path.join(f.worktree,'.gitattributes'),'neighbor.dat export-ignore\n');
  const outside=path.join(tools,'outside');fs.writeFileSync(outside,'host-only fixture');fs.symlinkSync(outside,path.join(f.worktree,'link'));
  f.git('add','.');f.git('commit','-qm','export fixture base');const base=f.git('rev-parse','HEAD');
@@ -942,7 +1015,7 @@ test('C21/v6: source lines redact, while families and ambiguous JSON still withh
  }
  for(const source of ['password="'+'ghp_'+'h'.repeat(36)+'"', '{"password":"fixtureValue","password":""}']){
   const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
-  assert.equal(safe.rejected,source.startsWith('{'));assert.equal(safe.fullyWithheld,true);assert.ok(!safe.value.includes('ghp_'+'h'.repeat(36)));
+  assert.equal(safe.rejected,false);assert.equal(safe.fullyWithheld,true);assert.ok(!safe.value.includes('ghp_'+'h'.repeat(36)));
  }
 });
 test('v4: raw duplicate members, escaped keys and every bound value are screened before parsing',()=>{
@@ -967,14 +1040,19 @@ test('v4: key reads and non-JSON brace prose remain usable role responses',async
  const result=await runReviewRound(f.request,runner);
  assert.equal(result.outcome,'not-converged');assert.equal(result.rounds.length,1);assert.equal(runner.calls.length,2);
 });
-test('v4: every JSON decoding layer preserves members before resolving duplicate or escaped bindings',()=>{
+test('v4: every JSON decoding layer screens original members while only role parsing rejects duplicate syntax',()=>{
  for(const raw of ['{"completed":false,"completed":true}', '{"complet\\u0065d":false,"completed":true}',
   '{"outer":{"password":"x","password":""}}', '{"password":{"value":"x"},"password":{}}']){
   let value=raw;
   for(let layer=0;layer<4;layer++){
-   for(const options of [{input:true},{},{diagnostic:true}])assert.equal(screenModelOutput(value,options).rejected,true,raw);
+   for(const options of [{input:true},{},{diagnostic:true}]){
+    const safe=screenModelOutput(value,options);
+    if(raw.includes('password'))assert.ok(c39Views(safe.value).every(view=>!view.includes('"x"')),'original credential member must not survive');
+    else if(options.input)assert.equal(safe.rejected,false,'repository syntax is data');
+   }
    value=JSON.stringify(value);
   }
+  assert.throws(()=>parseChecker(raw,[]),/JSON|ambiguous|schema/);
  }
  // Continue:23 supersedes the v4 lossy-number refusal; valid numeric text stays exact.
  for(const value of ['{"value":99999999999999999}', '{"value":1e400}']){const safe=screenModelOutput(value);assert.equal(safe.rejected,false);assert.equal(safe.value,value);}
@@ -987,8 +1065,8 @@ test('v4: short/duplicate credentials in pinned input and checker evidence never
   if(channel==='blob'){fs.writeFileSync(path.join(f.worktree,'input.mjs'),payload);f.git('add','.');f.git('commit','-qm','duplicate input');request.head=f.git('rev-parse','HEAD');}
   const runner=responder({findings:[sample],verdicts:[verdict({reason:payload})]});
   const result=await runReviewRound(request,runner);
-  assert.equal(result.outcome,'not-reviewed',channel);assert.equal(result.rounds.length,0,channel);
-  assert.equal(runner.calls.length,3,channel);assert.ok(runner.calls.every(call=>!call.prompt.includes(payload)),channel);
+  assert.equal(result.outcome,channel==='checker'?'not-converged':'not-reviewed',channel);assert.equal(result.rounds.length,1,channel);
+  assert.equal(runner.calls.length,2,channel);assert.equal(result.findings.length,1,channel);assert.equal(result.findings[0].status,'confirmed',channel);assert.ok(runner.calls.every(call=>!call.prompt.includes(payload)),channel);
   assert.ok(!JSON.stringify(result).includes('"x"'),channel);
  }
 });
@@ -1246,11 +1324,11 @@ test('host Git isolation screens both pinned blobs even when attributes hide the
   assert.ok(runner.calls.every(call=>!call.prompt.includes(secret)));assert.ok(!JSON.stringify(result).includes(secret));
  });
 });
-test('host Git isolation refuses opaque blob bytes before a role can read them',async t=>{
+test('host Git isolation excludes binary bytes before a role can read them',async t=>{
  for(const bytes of [Buffer.from([0,65,66]),Buffer.from([0xff,0xfe,65])])await t.test(bytes.toString('hex'),async t=>{
   const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),bytes);f.git('add','.');f.git('commit','-qm','opaque blob');
-  const runner=responder(),result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
-  assert.equal(result.outcome,'not-reviewed');assert.equal(runner.calls.length,0);assert.equal(result.rounds.length,0);assert.deepEqual(result.unreviewedFiles,['input.mjs']);
+  const runner={calls:[],runRole:async request=>{runner.calls.push(request);assert.ok(!fs.existsSync(path.join(request.worktree,'input.mjs')));return {response:review([],[])};}},result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);
+  assert.equal(result.outcome,'clean');assert.equal(runner.calls.length,1);assert.equal(result.rounds.length,1);assert.deepEqual(result.unreviewedFiles,[]);assert.deepEqual(result.binaryFiles,['input.mjs']);
  });
 });
 test('host Git isolation refuses index hints initially and if introduced during a round',async t=>{
@@ -1279,7 +1357,7 @@ test('shared model screen preserves benign JSON/code without path exceptions',as
  const screened=screenModelOutput(safe);assert.equal(screened.rejected,false);assert.deepEqual(screened.value,safe);
  const f=fixture(t),file='evals/code-review/secret-example.txt',fake='token = '+'ghp_'+'0'.repeat(36);
  const finding={...sample,file,evidence:fake},runner=responder({findings:[finding],responses:[JSON.stringify(review([finding])),JSON.stringify({completed:true,verdicts:[verdict({origin:'pre-existing',reason:fake})]})]});
- const record=await runReviewRound(f.request,runner);assert.equal(record.outcome,'not-reviewed');
+ const record=await runReviewRound(f.request,runner);assert.equal(record.outcome,'clean');assert.deepEqual(record.failures,[]);assert.equal(record.findings.length,1);assert.ok(record.costs.some(cost=>cost.redactedFields.length));
  assert.ok(!JSON.stringify(record).includes(fake));assert.ok(!formatReviewReport(record).includes(fake));
  for(const value of [{summary:JSON.stringify({password:'opaqueFixture'+'z'.repeat(24)})},JSON.stringify({reason:'ghp_'+'q'.repeat(36)})]){
   const screened=screenModelOutput(value);assert.equal(screened.rejected,true);assert.equal(screenModelOutput(screened.value).rejected,false,'sanitized state is safe to persist and read back');
@@ -1293,7 +1371,7 @@ test('numeric-looking secret strings keep their literal bytes through every JSON
   let reason=depth===0?'{"password":'+secret+'}':{password:secret};for(let layer=0;layer<depth;layer++)reason=JSON.stringify(reason);
   const runner=responder({findings:[sample],verdicts:[verdict({reason:typeof reason==='string'?reason:JSON.stringify(reason)})]});
   const record=await runReviewRound(f.request,runner);
-  assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.ok(!JSON.stringify(record).includes(secret));
+  assert.equal(record.outcome,'not-converged');assert.equal(record.rounds.length,1);assert.equal(record.findings.length,1);assert.deepEqual(record.failures,[]);assert.ok(!JSON.stringify(record).includes(secret));
  }
 });
 test('all model output is screened before successful fields, metadata or derived reports escape',async t=>{
@@ -1319,7 +1397,8 @@ test('all model output is screened before successful fields, metadata or derived
    }
    return result;
   }});
-  assert.equal(result.outcome,'not-reviewed');assert.equal(result.rounds.length,0);
+  const preserved=item.metadata||(item.role==='code-review'&&['file','title','trigger','evidence'].includes(item.field))||(item.role==='code-review-checker'&&['reason','dangerReason','mergeKey'].includes(item.field));
+  assert.equal(result.outcome,preserved?'not-converged':'not-reviewed');if(preserved){assert.equal(result.findings.length,1);assert.deepEqual(result.failures,[]);}assert.equal(result.rounds.length,preserved?1:0);
   assert.ok(!JSON.stringify(result).includes(secret),'model output escaped into returned state');
   assert.ok(!formatReviewReport(result).includes(secret),'model output escaped into rendered report');
   assert.ok(prompts.every(prompt=>!prompt.includes(secret)),'model output escaped into another role prompt');
@@ -1820,7 +1899,7 @@ test('v2 payload channels share successful/failed screening and encoded pairing 
   }
  }
  const runner=responder({findings:[sample],verdicts:[verdict({reason:synthetic})]});
- const record=await runReviewRound(f.request,runner);assert.equal(record.outcome,'not-reviewed');assert.ok(!JSON.stringify(record).includes(synthetic));assert.ok(!formatReviewReport(record).includes(synthetic));
+ const record=await runReviewRound(f.request,runner);assert.equal(record.outcome,'not-converged');assert.equal(record.findings.length,1);assert.deepEqual(record.failures,[]);assert.ok(!JSON.stringify(record).includes(synthetic));assert.ok(!formatReviewReport(record).includes(synthetic));
  for(const source of [JSON.stringify({item:{text:JSON.stringify({reason:synthetic})}}),synthetic]){
   const result=await runReviewRound(f.request,responder({responses:[source,source]}));
   assert.equal(result.outcome,'not-reviewed');assert.equal(result.failures.filter(item=>item.role==='code-review').length,2);assert.ok(!JSON.stringify(result).includes(synthetic));
@@ -1897,7 +1976,7 @@ test('C17/C19: outgoing child bytes are screened; unused catalog stderr is never
   const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',env:{...process.env,PATH:bin+path.delimiter+process.env.PATH},stdio:['ignore','pipe','pipe']});
   assert.equal(child.status,0);assert.equal(child.stderr.includes(credential),false);assert.equal(child.stdout.includes(credential),false);
   assert.equal(child.stderr.includes('synthetic-credential'),false);assert.equal(child.stdout.includes('synthetic-credential'),false);
-  const record=JSON.parse(child.stdout);if(mode.startsWith('catalog:stderr')||mode==='auth:stdout'||['probe:stderr','role:stderr'].includes(mode)||mode.endsWith(':key')){assert.equal(record.outcome,'clean');assert.equal(record.rounds.length,1);}
+  const record=JSON.parse(child.stdout);if(mode.startsWith('catalog:stderr')||mode==='auth:stdout'||['probe:stderr','role:stderr','probe:stdout','role:stdout'].includes(mode)||mode.endsWith(':key')){assert.equal(record.outcome,'clean');assert.equal(record.rounds.length,1);}
   else{assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);assert.ok(record.failures.length>0,'unreadable output/authentication or failed transport must stay unreviewed');}
  });
 });
@@ -1964,8 +2043,7 @@ test('C19/C37: all nine unchanged real r3 answers retain explicit substring-scre
  assert.equal(entries.filter(entry=>held.has(entry.run)).length,2);
  for(const entry of entries)for(const answer of [entry.answer,JSON.stringify(entry.answer)]){
   assert.equal(screenModelOutput(answer).rejected,held.has(entry.run),entry.run);
-  if(held.has(entry.run))assert.throws(()=>parseChecker(answer,entry.findings),/model output withheld by secret screen/,entry.run);
-  else assert.equal(parseChecker(answer,entry.findings).verdicts.length,entry.findings.length,entry.run);
+  const parsed=parseChecker(answer,entry.findings);assert.equal(parsed.verdicts.length,entry.findings.length,entry.run);if(held.has(entry.run))assert.ok(JSON.stringify(parsed).includes('withheld'),'value matches must be redacted without losing the batch');
  }
 });
 test('C19: actual MONO-302 diff bytes and contract reach a completed review round',async t=>{
@@ -2009,7 +2087,7 @@ test('C19/C37: benign prose and placeholders stay usable while family substrings
 
 test('C19: decoded keys cannot overwrite a different key/value binding',async t=>{
  const ambiguous={['complet'+String.raw`\u0065`+'d']:false,completed:true};
- for(const value of[ambiguous,JSON.stringify(ambiguous)])for(const input of[true,false])assert.equal(screenModelOutput(value,{input}).rejected,true);
+ for(const value of[ambiguous,JSON.stringify(ambiguous)]){assert.equal(screenModelOutput(value,{input:true}).rejected,false,'repository keys are data');assert.equal(screenModelOutput(value).rejected,false,'retained text keys are data');}
  const answer={...ambiguous,...review()},record=await runReviewRound(fixture(t).request,responder({responses:[answer,answer]}));
  assert.equal(record.outcome,'not-reviewed');assert.equal(record.rounds.length,0);
 });

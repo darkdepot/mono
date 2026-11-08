@@ -132,9 +132,13 @@ function treeIdentity(worktree) {
     untracked: untracked.map(file => [file, fs.lstatSync(path.join(worktree, file)).isSymbolicLink()
       ? fs.readlinkSync(path.join(worktree, file)) : digest(fs.readFileSync(path.join(worktree, file)).toString('base64'))]) });
 }
+function sourceText(bytes) {
+  if (bytes.includes(0)) return null;
+  try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return null; }
+}
 // Export pinned blobs directly: archive attributes must not hide or rewrite files.
 // Symlinks become their target text, never links into the host filesystem.
-function exportReviewTree(worktree, head, excluded = new Set()) {
+function exportReviewTree(worktree, head, excluded = new Set(), binaryPaths = new Set()) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-review-tree-'));
   const symlinks = [], withheld = [], partiallyWithheld = [], directories = new Set([root]);
   try {
@@ -145,30 +149,31 @@ function exportReviewTree(worktree, head, excluded = new Set()) {
       requireValue(match, 'unsupported pinned tree entry');
       const [, mode, oid, name] = match, file = path.resolve(root, name);
       requireValue(file.startsWith(root + path.sep) && !name.split('/').some(part => part.toLowerCase() === '.git'), 'unsafe pinned tree path');
+      if (binaryPaths.has(name)) continue;
       const parent = path.dirname(file);
       fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
       for (let dir = parent; dir.startsWith(root); dir = path.dirname(dir)) {
         directories.add(dir); if (dir === root) break;
       }
       const fd = fs.openSync(file, 'wx', 0o400);
+      let binary = false;
       try {
         // File tools receive the same screened source as diffs and evidence;
         // otherwise echoing a raw matched line can withhold the whole role stream.
         readGit(worktree, policy.env, policy.args, ['cat-file', 'blob', oid], false, fd);
         let safe = '[unreadable or over-limit model output withheld]', screened;
+        const content = sourceText(fs.readFileSync(file));
+        binary = content === null;
+        if (binary) continue;
         if (fs.fstatSync(fd).size <= MAX_SCREEN_VALUE_BYTES) {
-          let content;
-          try { content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(fs.readFileSync(file)); } catch {}
-          if (content !== undefined) {
-            screened = screenModelOutput(content, { input: true, inputFile: name });
-            if (!excluded.has(name) && !screened.fatal && !screened.rejected) safe = screened.value;
-          }
+          screened = screenModelOutput(content, { input: true, inputFile: name });
+          if (!excluded.has(name) && !screened.fatal && !screened.rejected) safe = screened.value;
         }
         if (excluded.has(name) || !screened || screened.fatal || screened.rejected || screened.fullyWithheld) withheld.push(name);
         else if (screened.partiallyWithheld) partiallyWithheld.push(name);
         fs.ftruncateSync(fd, 0);
         requireValue(fs.writeSync(fd, safe, 0, 'utf8') === Buffer.byteLength(safe), 'screened export incomplete');
-      } finally { fs.closeSync(fd); }
+      } finally { fs.closeSync(fd); if (binary) fs.unlinkSync(file); }
       if (mode === '120000') symlinks.push(name);
     }
     for (const dir of [...directories].sort((a, b) => b.length - a.length)) fs.chmodSync(dir, 0o500);
@@ -193,16 +198,31 @@ function validateFinding(finding) {
   requireValue(!path.isAbsolute(finding.file) && !finding.file.split('/').includes('..') && Number.isSafeInteger(finding.line) && finding.line > 0, 'invalid finding location');
   return { ...finding, danger: finding.danger ?? null, key: findingKey(finding) };
 }
+function screenRoleAnswer(value) {
+  const unreadable = reason => {
+    throw Object.assign(new Error(reason), { answerDiagnostic: screenModelOutput(value, { diagnostic: true }).diagnostic });
+  };
+  if (typeof value === 'string') {
+    if (Buffer.byteLength(value) > MAX_SCREEN_VALUE_BYTES || ambiguousJsonMembers(value)) unreadable('unreadable or ambiguous role JSON');
+    try { value = JSON.parse(value); } catch { unreadable('unreadable role JSON'); }
+  }
+  if (!object(value)) unreadable('role JSON object required');
+  const screened = screenModelOutput(value, { answer: true });
+  if (screened.rejected) throw Object.assign(new Error('model output withheld by secret screen'), { answerDiagnostic: screened.diagnostic });
+  if (Array.isArray(value.findings) && value.findings.some((finding, index) =>
+    ['class', 'anchor'].some(field => typeof finding?.[field] === 'string' && finding[field] !== screened.value.findings?.[index]?.[field]))) {
+    unreadable('redaction changes stable finding identity');
+  }
+  return screened;
+}
 export function parseReviewer(value) {
-  value = screenModelOutput(value, { strict: true }).value;
-  if (typeof value === 'string') { try { value = JSON.parse(value); } catch { throw new Error('unreadable reviewer JSON'); } }
+  value = screenRoleAnswer(value).value;
   exact(value, ['completed', 'reviewedFiles', 'findings']);
   requireValue(value.completed === true && Array.isArray(value.reviewedFiles) && value.reviewedFiles.every(text) && Array.isArray(value.findings), 'review incomplete');
   return { ...value, findings: value.findings.map(validateFinding) };
 }
 export function parseChecker(value, findings, { separateContradictoryMerges = false } = {}) {
-  value = screenModelOutput(value, { strict: true }).value;
-  if (typeof value === 'string') { try { value = JSON.parse(value); } catch { throw new Error('unreadable checker JSON'); } }
+  value = screenRoleAnswer(value).value;
   exact(value, ['completed', 'verdicts']);
   requireValue(value.completed === true && Array.isArray(value.verdicts), 'checker incomplete');
   const expected = new Map(findings.map((finding, index) => [`F${index + 1}`, finding])), seen = new Set();
@@ -398,7 +418,7 @@ function jsonTokens(source) {
   }
   return tokens;
 }
-function redactJsonBindings(source, screenString, secretName = key => secretKey(decodedKey(key) ?? '')) {
+function redactJsonBindings(source, screenString, secretName = key => secretKey(decodedKey(key) ?? ''), matchedBinding = () => {}) {
   const tokens = jsonTokens(source), stack = [], closes = new Map(), spans = [];
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
@@ -415,7 +435,7 @@ function redactJsonBindings(source, screenString, secretName = key => secretKey(
     if (!key.quoted || tokens[index + 1]?.value !== ':' || !secretName(key.value)) continue;
     const first = tokens[index + 2], last = tokens[closes.get(index + 2) ?? index + 2];
     const value = JSON.parse(source.slice(first.start, last.end));
-    if (credentialValue(value)) spans.push({ start: first.start, end: last.end });
+    if (credentialValue(value)) { spans.push({ start: first.start, end: last.end }); matchedBinding(); }
   }
   let cursor = 0, result = '';
   for (const span of spans.sort((a, b) => a.start - b.start || b.end - a.end)) {
@@ -682,11 +702,11 @@ export function observeCodexBoundary(value, stderr) {
 }
 // The only model-output policy. Transport payloads, state, diagnostics and all
 // renderers use this before model text can leave transient parsing buffers.
-export function screenModelOutput(value, { diagnostic = false, strict = false, filesById = {}, input = false, inputFile = null, inputPatch = false } = {}) {
+export function screenModelOutput(value, { diagnostic = false, strict = false, filesById = {}, input = false, inputFile = null, inputPatch = false, answer = false } = {}) {
   const withheld = '[unreadable or over-limit model output withheld]', lineHidden = '[credential-shaped line withheld]', fieldHidden = '[credential-shaped field withheld]';
   const markers = new Set([withheld, lineHidden, fieldHidden, '[credential-shaped answer withheld]', '[private-key answer withheld]', '[unreadable transport answer withheld]', '[unreadable or over-limit transport answer withheld]']);
   const maxBytes = diagnostic ? 262144 : 16 * 1024 * 1024, maxNodes = diagnostic ? 4096 : 131072;
-  const analyze = encodedAnalysis(maxBytes, maxNodes), safePath = pathScreen();
+  const analyze = encodedAnalysis(maxBytes, maxNodes), safePath = pathScreen(), redactedFields = new Set();
   let bytes = 0, nodes = 0, secretMatches = 0, rejected = false, fatal = false, revision = 0, partiallyWithheld = false;
   const hide = (matches = 0) => { fatal = true; rejected = true; revision++; secretMatches += matches; return { value: withheld, text: withheld }; };
   const redact = (source, file, patch = inputPatch, json = false) => {
@@ -705,7 +725,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
     const safe = source === null ? withheld : withheldLines(source, patch);
     return { value: safe, text: safe };
   };
-  const visit = (entry, depth = 0, file = null, layers = 0, patch = inputPatch, pathValue = false) => {
+  const visit = (entry, depth = 0, file = null, layers = 0, patch = inputPatch, pathValue = false, pointer = '') => {
     if (depth > 32 || ++nodes > maxNodes) return hide();
     if (typeof entry === 'string') {
       const original = entry;
@@ -719,6 +739,14 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       const analysis = analyze(entry);
       if (analysis.opaque) return opaque(entry, patch);
 
+      if (answer) {
+        let safe = entry;
+        for (const [, pattern] of SECRET_FAMILIES) safe = safe.replace(new RegExp(pattern.source, pattern.flags + 'g'), fieldHidden);
+        safe = safe.replace(/[A-Za-z0-9_.-]+/g, candidate => jwtMatches(candidate) ? fieldHidden : candidate);
+        if (analyze(safe).dirty) safe = fieldHidden;
+        if (safe !== entry) { revision++; secretMatches++; redactedFields.add(pointer); }
+        return { value: safe, text: safe };
+      }
       // Check raw credential families before parsing can discard any member.
       if (!(input && (file !== null || patch)) && scanPayloadText(entry, { file, patch, bindings: false }).length) {
         const pathOnly = pathValue && !analysis.opaque && !analysis.decodedDirty && !analysis.bound;
@@ -728,7 +756,6 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
       try { parsed = JSON.parse(entry.trim(), (_key, child, context) =>
         typeof child === 'number' ? JSON.rawJSON(context.source) : child); decoded = true; } catch {}
       const initialSafe = redact(entry, file, patch, decoded);
-      if (decoded && parsed && typeof parsed === 'object' && !JSON.isRawJSON(parsed) && ambiguousJsonMembers(entry)) return opaque(entry, patch);
       if (decoded && (parsed === null || JSON.isRawJSON(parsed) || !['object', 'string'].includes(typeof parsed))) {
         const safe = initialSafe; return { value: safe, text: safe };
       }
@@ -737,9 +764,14 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
         const child = visit(parsed, depth + 1, file, layers + 1, patch);
         // Validate every decoded node even when source-span redaction below
         // preserves the original JSON formatting and numeric tokens.
-        if (input && (file !== null || patch) && typeof parsed === 'object') {
-          const safe = redactJsonBindings(initialSafe, value => visit(value, depth + 1, file, layers + 1, false).value, name => analyze(name).keySecret);
-          if (safe !== entry) revision++;
+        if (parsed && typeof parsed === 'object') {
+          let bindings = 0;
+          const safe = redactJsonBindings(initialSafe, value => visit(value, depth + 1, file, layers + 1, false).value, name => analyze(name).keySecret, () => { bindings++; });
+          secretMatches += bindings;
+          if (safe !== entry) {
+            revision++;
+            if (bindings && !(input && (file !== null || patch))) rejected = true;
+          }
           return { value: safe, text: safe };
         }
         return { value: revision !== stringRevision ? JSON.stringify(child.value) : entry, text: child.text };
@@ -817,24 +849,26 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
     else if (typeof entry.id === 'string' && Object.hasOwn(filesById, entry.id)) file = filesById[entry.id];
     if (Array.isArray(entry)) {
       if (entry.length > maxNodes) return hide();
-      const children = entry.map(item => visit(item, depth + 1, file, layers, patch, pathValue)), joined = children.map(child => child.text).join('\n');
-      const safe = input ? joined : redact(joined, file);
+      const children = entry.map((item, index) => visit(item, depth + 1, file, layers, patch, pathValue, pointer + '/' + index)), joined = children.map(child => child.text).join('\n');
+      const safe = input || answer ? joined : redact(joined, file);
       return { value: safe === joined ? children.map(child => child.value) : safe, text: safe };
     }
     const entries = Object.entries(entry); if (entries.length > maxNodes) return hide();
     const children = entries.map(([key, content]) => {
-      const keyResult = visit(key, depth + 1, file, layers, patch), child = visit(content, depth + 1, file, layers, input ? ['diff', 'baseDiff'].includes(key) : patch, ['file', 'files', 'path', 'paths', 'worktree', 'reviewedFiles', 'focusFiles', 'symlinks', 'unreviewedFiles', 'partiallyWithheldFiles'].includes(key));
-      const name = typeof keyResult.value === 'string' ? decodedKey(keyResult.value) : null;
+      const field = pointer + '/' + key.replace(/~/g, '~0').replace(/\//g, '~1');
+      const keyResult = visit(key, depth + 1, file, layers, patch), child = visit(content, depth + 1, file, layers, input ? ['diff', 'baseDiff'].includes(key) : patch, ['file', 'files', 'path', 'paths', 'worktree', 'reviewedFiles', 'focusFiles', 'symlinks', 'unreviewedFiles', 'partiallyWithheldFiles'].includes(key), field);
+      if (answer && keyResult.value !== key) return { name: withheld, ...hide() };
+      const name = typeof keyResult.value === 'string' ? (answer ? decodedKey(keyResult.value) : keyResult.value) : null;
       if (name === null) return { name: withheld, ...hide() };
       if (analyze(key).opaque) return { name: withheld, ...opaque() };
       if ((secretKey(name) || analyze(key).keySecret) && credentialValue(content) && !markers.has(content)) {
-        if (!(input && (file !== null || patch))) rejected = true;
-        revision++; secretMatches++; child.value = fieldHidden; child.text = fieldHidden;
+        if (!answer && !(input && (file !== null || patch))) rejected = true;
+        revision++; secretMatches++; child.value = fieldHidden; child.text = fieldHidden; if (answer) redactedFields.add(field);
       }
       return { name, ...child };
     });
     if (new Set(children.map(child => child.name)).size !== children.length) return hide();
-    const joined = children.map(child => child.text).join('\n'), safe = input ? joined : redact(joined, file);
+    const joined = children.map(child => child.text).join('\n'), safe = input || answer ? joined : redact(joined, file);
     return { value: safe === joined ? Object.fromEntries(children.map(child => [child.name, child.value])) : safe,
       text: safe === joined ? children.map(child => `${child.name}: ${child.text}`).join('\n') : safe };
   };
@@ -842,7 +876,7 @@ export function screenModelOutput(value, { diagnostic = false, strict = false, f
   if (safePath.collided) result = hide();
   const safeText = result.text, textBytes = Buffer.from(safeText);
   const output = { value: safeText === result.text ? result.value : safeText, rejected, fatal, fullyWithheld: input && fullyWithheld(result.value), partiallyWithheld, interrupted: value?.error?.interrupted === true,
-    diagnostic: { text: textBytes.subarray(0, 8188).toString('utf8'), truncated: textBytes.length > 8188, secretMatches } };
+    redactedFields: [...redactedFields], diagnostic: { text: textBytes.subarray(0, 8188).toString('utf8'), truncated: textBytes.length > 8188, secretMatches } };
   if (strict && rejected) throw new Error('model output withheld by secret screen');
   return output;
 }
@@ -888,6 +922,30 @@ function observeServedModels(boundary, stdout, phase = 'task') {
       }
   }
 }
+function screenInvocationOutput(stdout, stderr) {
+  const redactedFields = new Set();
+  const parsed = stdout.trim().split('\n').map(line => {
+    requireValue(!ambiguousJsonMembers(line), 'unreadable or ambiguous transport JSON');
+    try { return JSON.parse(line); } catch { throw new Error('unreadable transport JSON'); }
+  });
+  const final = parsed.filter(event => event.type === 'item.completed' && event.item?.type === 'agent_message').at(-1);
+  const events = parsed.map(event => {
+    const answers = [];
+    for (const [container, key] of [[event === final ? event.item : null, 'text'], [event, 'structured_output']]) {
+      if (!container || !Object.hasOwn(container, key)) continue;
+      const screened = screenRoleAnswer(container[key]);
+      screened.redactedFields.forEach(field => redactedFields.add(field));
+      answers.push({ key, value: key === 'text' ? JSON.stringify(screened.value) : screened.value });
+      delete container[key];
+    }
+    const safe = screenModelOutput(event, { strict: true, answer: true });
+    safe.redactedFields.forEach(field => redactedFields.add('/transport' + field));
+    for (const { key, value } of answers) (key === 'text' ? safe.value.item : safe.value)[key] = value;
+    return JSON.stringify(safe.value);
+  });
+  const safeError = screenChildOutput({ stdout: '', stderr }).stderr;
+  return { stdout: events.join('\n'), stderr: safeError, redactedFields: [...redactedFields] };
+}
 function runInvocation(invocation, prompt, timeoutMs) {
   return new Promise((resolve, reject) => {
       const child = spawn(invocation.command, invocation.args, { cwd: invocation.cwd, env: invocation.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
@@ -903,7 +961,7 @@ function runInvocation(invocation, prompt, timeoutMs) {
       child.once('error', () => { cleanup(); reject(new Error('role process could not start')); });
       child.once('close', code => { cleanup(); kill();
         try {
-          const result = screenChildOutput({ stdout, stderr });
+          const result = screenInvocationOutput(stdout, stderr);
           if (interrupted) throw Object.assign(new Error('review interrupted; role process group stopped'), { rawAnswer: result.stdout });
           if (code !== 0 || exceeded) throw Object.assign(new Error(`role failed (${exceeded ? 'timeout/output limit' : code}); no response admitted`), { rawAnswer: result.stdout });
           resolve(result);
@@ -956,7 +1014,7 @@ async function executeRole({ role, route, prompt, worktree, packRoot, timeoutMs 
       observeCodexBoundary({ tools: boundary.observed.tools, mcpServers: boundary.observed.mcpServers }, result.stderr);
       ({ response, usage } = codexResponse(result));
     }
-    return { response, usage, elapsedMs: Date.now() - started, boundary: invocation.boundary };
+    return { response, usage, elapsedMs: Date.now() - started, boundary: invocation.boundary, redactedFields: result.redactedFields };
   } catch (error) {
     error.rawAnswer ??= captured;
     if (boundary) observeServedModels(boundary, error.rawAnswer);
@@ -977,7 +1035,7 @@ function promptFor(packRoot, role, context, unchecked) {
 // expose a value whose binding sits outside that context.
 function screenedDiff(worktree, base, head, files, pathFor = screenPath) {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-screened-diff-'));
-  const withheld = [], fatal = [], partiallyWithheld = new Set(), parts = [];
+  const withheld = [], fatal = [], binary = [], partiallyWithheld = new Set(), parts = [];
   try {
     const policy = gitReadPolicy(worktree);
     for (const file of files) {
@@ -987,17 +1045,24 @@ function screenedDiff(worktree, base, head, files, pathFor = screenPath) {
         const exists = !!treeEntry, mode = treeEntry.slice(0, 6);
         if (!exists) { sides.push({ exists, value: '' }); continue; }
         try {
-          const bytes = readGit(worktree, policy.env, policy.args, ['cat-file', 'blob', `${revision}:${file}`], 'blob');
-          requireValue(!bytes.includes(0), 'unreadable blob');
-          const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-          const safe = screenModelOutput(content, { input: true, inputFile: file });
-          requireValue(!safe.fatal && typeof safe.value === 'string', 'blob withheld');
-          if (safe.fullyWithheld || safe.rejected) withheld.push(name);
-          if (safe.partiallyWithheld && !safe.fullyWithheld && !safe.rejected) partiallyWithheld.add(name);
-          sides.push({ exists, mode, value: safe.rejected ? '[unreadable or over-limit model output withheld]' : safe.value });
+          const blob = path.join(scratch, 'blob'), fd = fs.openSync(blob, 'w', 0o600);
+          try { readGit(worktree, policy.env, policy.args, ['cat-file', 'blob', `${revision}:${file}`], false, fd); }
+          finally { fs.closeSync(fd); }
+          const bytes = fs.readFileSync(blob);
+          const content = sourceText(bytes);
+          sides.push({ exists, mode, value: content });
         } catch { withheld.push(name); fatal.push(name); break; }
       }
       if (sides.length !== 2) continue;
+      if (sides.some(side => side.value === null)) { binary.push(name); continue; }
+      for (const side of sides.filter(side => side.exists)) {
+        const safe = screenModelOutput(side.value, { input: true, inputFile: file });
+        if (safe.fatal || typeof safe.value !== 'string') { withheld.push(name); fatal.push(name); break; }
+        if (safe.fullyWithheld || safe.rejected) withheld.push(name);
+        if (safe.partiallyWithheld && !safe.fullyWithheld && !safe.rejected) partiallyWithheld.add(name);
+        side.value = safe.rejected ? '[unreadable or over-limit model output withheld]' : safe.value;
+      }
+      if (fatal.includes(name)) continue;
       const [before, after] = sides, left = path.join(scratch, 'before'), right = path.join(scratch, 'after');
       fs.writeFileSync(left, before.value); fs.writeFileSync(right, after.value);
       const output = readGit(scratch, policy.env, policy.args, ['diff', '--no-index', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', '--', before.exists ? left : '/dev/null', after.exists ? right : '/dev/null'], false, null, [0, 1]);
@@ -1011,7 +1076,7 @@ function screenedDiff(worktree, base, head, files, pathFor = screenPath) {
       const modes = !before.exists ? `new file mode ${after.mode}\n` : !after.exists ? `deleted file mode ${before.mode}\n` : before.mode !== after.mode ? `old mode ${before.mode}\nnew mode ${after.mode}\n` : '';
       parts.push({ file: name, diff: `diff --git ${JSON.stringify('a/' + name)} ${JSON.stringify('b/' + name)}\n` + modes + body });
     }
-    return { parts, withheld: [...new Set(withheld)], fatal, partiallyWithheld: [...partiallyWithheld] };
+    return { parts, withheld: [...new Set(withheld)], fatal, binary, partiallyWithheld: [...partiallyWithheld] };
   } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
 }
 // The only round boundary. Callers persist/sign the returned record; manual mode only prints it.
@@ -1019,9 +1084,9 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
   const { worktree, head, base, contract, risk = 'standard', config = {}, packRoot = runtimePackRoot() } = input;
   const record = structuredClone(input.stageRecord ?? { schemaVersion: 1, rounds: [], findings: [], failures: [] });
   record.rounds ??= []; record.findings ??= []; record.failures ??= [];
-  const costs = [], partiallyWithheldFiles = [], unreviewedFiles = new Set(), unreviewedInputs = new Set(), number = record.rounds.length + 1;
+  const costs = [], binaryFiles = [], partiallyWithheldFiles = [], unreviewedFiles = new Set(), unreviewedInputs = new Set(), number = record.rounds.length + 1;
   let exported;
-  const fail = (reason, interrupted = false) => ({ ...record, outcome: 'not-reviewed', round: null, interrupted, partiallyWithheldFiles, unreviewedFiles: [...unreviewedFiles], unreviewedInputs: [...unreviewedInputs],
+  const fail = (reason, interrupted = false) => ({ ...record, outcome: 'not-reviewed', round: null, interrupted, binaryFiles, partiallyWithheldFiles, unreviewedFiles: [...unreviewedFiles], unreviewedInputs: [...unreviewedInputs],
     failures: [...record.failures, { head, round: number, reason, costs, interrupted }], costs });
   try {
     requireValue(path.isAbsolute(worktree ?? '') && /^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(base) && text(contract), 'absolute worktree, immutable head/base and task contract required');
@@ -1044,21 +1109,22 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     }
     requireValue(!pathFor.collided, 'screened paths collide; files not reviewed');
     const full = screenedDiff(worktree, base, head, rawFiles, pathFor);
-    full.withheld.forEach(file => unreviewedFiles.add(file));
-    if (full.fatal.length) return fail('pinned blobs unscreenable; files not reviewed');
     const scopeFiles = number === 2 ? git(worktree, ['diff', '--name-only', '--no-renames', '-z', previous, head, '--']).split('\0').filter(Boolean) : rawFiles;
     for (const file of scopeFiles) paths.set(pathFor(file), file);
-    const files = scopeFiles.map(pathFor), scoped = number === 2 ? screenedDiff(worktree, previous, head, scopeFiles, pathFor) : full;
-    scoped.withheld.forEach(file => unreviewedFiles.add(file));
-    if (scoped.fatal.length) return fail('scope blobs unscreenable; files not reviewed');
-    const excluded = new Set([...unreviewedFiles].map(file => paths.get(file) ?? file));
-    const view = result => result.parts.filter(part => !unreviewedFiles.has(part.file)).map(part => part.diff).join('');
+    const scoped = number === 2 ? screenedDiff(worktree, previous, head, scopeFiles, pathFor) : full;
+    binaryFiles.push(...new Set([...full.binary, ...scoped.binary]));
+    const binary = new Set(binaryFiles), files = scopeFiles.map(pathFor).filter(file => !binary.has(file));
+    [...full.withheld, ...scoped.withheld].filter(file => !binary.has(file)).forEach(file => unreviewedFiles.add(file));
+    if (full.fatal.some(file => !binary.has(file))) return fail('pinned blobs unscreenable; files not reviewed');
+    if (scoped.fatal.some(file => !binary.has(file))) return fail('scope blobs unscreenable; files not reviewed');
+    const excluded = new Set([...unreviewedFiles, ...binaryFiles].map(file => paths.get(file) ?? file));
+    const view = result => result.parts.filter(part => !unreviewedFiles.has(part.file) && !binary.has(part.file)).map(part => part.diff).join('');
     const diff = view(full), scopeDiff = view(scoped);
-    const rules = excluded.has('AGENTS.md') ? '[unreadable or over-limit model output withheld]'
-      : git(worktree, ['ls-tree', head, '--', 'AGENTS.md']) ? git(worktree, ['show', `${head}:AGENTS.md`]) : '';
-    exported = exportReviewTree(worktree, head, excluded);
+    exported = exportReviewTree(worktree, head, excluded, new Set(binaryFiles.map(file => paths.get(file) ?? file)));
+    const rulesFile = path.join(exported.root, 'AGENTS.md');
+    const rules = fs.existsSync(rulesFile) ? fs.readFileSync(rulesFile, 'utf8') : '';
     exported.withheld.forEach(file => unreviewedFiles.add(pathFor(file)));
-    partiallyWithheldFiles.push(...[...new Set([...full.partiallyWithheld, ...scoped.partiallyWithheld, ...exported.partiallyWithheld.map(pathFor)])].filter(file => !unreviewedFiles.has(file)));
+    partiallyWithheldFiles.push(...[...new Set([...full.partiallyWithheld, ...scoped.partiallyWithheld, ...exported.partiallyWithheld.map(pathFor)])].filter(file => !unreviewedFiles.has(file) && !binary.has(file)));
     const context = { worktree: exported.root, symlinks: exported.symlinks.map(pathFor), head, base, contract, rules, round: number, scope: number === 2 ? 'fixes-and-open-findings' : 'full', files, diff: scopeDiff, partiallyWithheldFiles };
     const unchecked = name => unreviewedInputs.add(name);
     requireSafeContext({ ...context, history: record.findings, failedAnswers: record.failures }, unchecked);
@@ -1066,26 +1132,35 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
       const prompt = promptFor(packRoot, role, { ...context, ...extra, unreviewedFiles: [...unreviewedFiles], unreviewedInputs: [...unreviewedInputs] }, unchecked);
       for (let attempt = 1; attempt <= 2; attempt++) {
         const started = Date.now();
-        let costRecorded = false, screened;
+        let costRecorded = false, screened, answerRedactions = 0;
         try {
           // Both transport outcomes enter the same gate before parsing, costs,
           // state, another prompt or a caller can observe any model text.
           const payload = await runRole({ role, route: roles[role], worktree: exported.root, packRoot, prompt }).then(
-            result => ({ result: { usage: result?.usage, boundary: result?.boundary, elapsedMs: result?.elapsedMs, response: result?.response } }),
-            error => ({ error: { message: error.message, boundary: error.boundary, interrupted: error.interrupted === true, rawAnswer: error.rawAnswer } }));
-          screened = screenModelOutput(payload, { diagnostic: true, filesById: Object.fromEntries((extra.findings ?? []).map(finding => [finding.id, finding.file])) });
+            result => {
+              const metadata = { usage: result?.usage, boundary: result?.boundary, elapsedMs: result?.elapsedMs };
+              try {
+                const answer = screenRoleAnswer(result?.response);
+                answerRedactions = answer.diagnostic.secretMatches;
+                return { result: { ...metadata, response: answer.value,
+                  redactedFields: [...new Set([...(result?.redactedFields ?? []), ...answer.redactedFields])] } };
+              } catch (error) { return { result: metadata, error: { message: error.message, answerDiagnostic: error.answerDiagnostic } }; }
+            },
+            error => ({ error: { message: error.message, boundary: error.boundary, interrupted: error.interrupted === true, rawAnswer: error.rawAnswer, answerDiagnostic: error.answerDiagnostic } }));
+          screened = screenModelOutput(payload, { diagnostic: true, answer: !!payload.result, filesById: Object.fromEntries((extra.findings ?? []).map(finding => [finding.id, finding.file])) });
+          screened.diagnostic.secretMatches += answerRedactions;
           const result = screened.value?.result, failure = screened.value?.error;
           if (result) {
-            costs.push({ role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, attempt, elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null, boundary: result.boundary ?? null });
+            costs.push({ role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, attempt, elapsedMs: result.elapsedMs ?? null, usage: result.usage ?? null, boundary: result.boundary ?? null, redactedFields: result.redactedFields ?? [] });
             costRecorded = true;
           }
           requireValue(!screened.rejected, 'model output withheld by secret screen');
-          if (failure) throw new Error(failure.message);
+          if (failure) throw Object.assign(new Error(failure.message), { answerDiagnostic: failure.answerDiagnostic });
           return parse(result.response, attempt);
         } catch (error) {
           const reason = screenModelOutput(error.message, { diagnostic: true }).diagnostic.text;
           if (!costRecorded) costs.push({ role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id, attempt, elapsedMs: Date.now() - started, usage: null, boundary: screened?.value?.error?.boundary ?? null, failure: true });
-          record.failures.push({ head, round: number, role, attempt, reason, answer: screened?.diagnostic ?? screenModelOutput(undefined, { diagnostic: true }).diagnostic });
+          record.failures.push({ head, round: number, role, attempt, reason, answer: error.answerDiagnostic ?? screened?.diagnostic ?? screenModelOutput(undefined, { diagnostic: true }).diagnostic });
           if (attempt === 2 || screened?.interrupted) throw Object.assign(new Error(reason), { interrupted: !!screened?.interrupted });
         }
       }
@@ -1112,9 +1187,12 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     const evidenceAt = revision => [...new Set(findings.map(finding => finding.file))].map(file => {
       const raw = paths.get(file) ?? file;
       if (!existsAt(revision, raw)) return { file, content: null };
+      if (binary.has(file)) return { file, content: null };
       if (excluded.has(raw)) return { file, content: '[unreadable or over-limit model output withheld]' };
       const bytes = git(worktree, ['cat-file', 'blob', `${revision}:${raw}`], {}, 'blob');
-      const safe = screenModelOutput(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes), { input: true, inputFile: raw });
+      const content = sourceText(bytes);
+      if (content === null) return { file, content: null };
+      const safe = screenModelOutput(content, { input: true, inputFile: raw });
       if (safe.fatal) throw Object.assign(new Error('pinned evidence withheld'), {
         secrets: [{ file, line: 0, weight: 'P0', reason: 'credential-family or undecodable pinned evidence; value withheld' }],
       });
@@ -1162,9 +1240,9 @@ async function reviewRound(input, { runRole = executeRole } = {}) {
     // Successor creation/signing belongs to T3. A round reports the obligation; it cannot manufacture permission.
     const successors = active.filter(finding => (finding.origin === 'pre-existing' && finding.danger) || (number === 3 && blocking.includes(finding) && !finding.danger));
     const outcome = unreviewedFiles.size || unreviewedInputs.size ? 'not-reviewed' : blocking.length || current.some(finding => finding.outOfContract || finding.riskRaised) || successors.length ? 'not-converged' : 'clean';
-    const round = { number, head, base, scope: context.scope, checkerMergesSeparated: checker.mergesSeparated, reviewedFiles: [...covered].filter(file => !unreviewedFiles.has(file)), partiallyWithheldFiles, findingKeys: checked.map(verdict => verdict.key), outcome, costs };
+    const round = { number, head, base, scope: context.scope, checkerMergesSeparated: checker.mergesSeparated, binaryFiles, reviewedFiles: [...covered].filter(file => !unreviewedFiles.has(file)), partiallyWithheldFiles, findingKeys: checked.map(verdict => verdict.key), outcome, costs };
     return { ...record, schemaVersion: 1, interrupted: false, base, contractDigest, rounds: [...record.rounds, round], findings: current, round, outcome,
-      successorKeys: successors.map(finding => finding.key), partiallyWithheldFiles, unreviewedFiles: [...unreviewedFiles], unreviewedInputs: [...unreviewedInputs], costs };
+      successorKeys: successors.map(finding => finding.key), binaryFiles, partiallyWithheldFiles, unreviewedFiles: [...unreviewedFiles], unreviewedInputs: [...unreviewedInputs], costs };
   } catch (error) { return { ...fail(screenModelOutput(error.message, { diagnostic: true }).diagnostic.text, !!error.interrupted), ...(error.secrets ? { secrets: error.secrets } : {}) }; }
   finally { if (exported) removeReviewTree(exported.root); }
 }
@@ -1201,6 +1279,8 @@ export function formatReviewReport(record) {
   const rendered = [
     `Проверено: ${record.round ? `${record.round.reviewedFiles.length} файлов, круг ${record.round.number}.` : 'проверка не завершена.'}`,
     ...(record.costs ?? record.round?.costs ?? []).map(cost => `Роль: ${cost.role}; engine=${cost.engine ?? cost.boundary?.engine ?? 'unknown'}; model=${cost.model ?? cost.boundary?.model ?? 'unknown'}; servedModels=${JSON.stringify(cost.boundary?.servedModels ?? (cost.boundary?.servedModel ? [cost.boundary.servedModel] : 'not observed'))}; family=${cost.family ?? cost.boundary?.family ?? 'unknown'}; observed boundary=${JSON.stringify(cost.boundary?.observed ?? 'not observed')}; credentialReads=${cost.boundary?.credentialReads ?? 'not observed'}.`),
+    ...(record.binaryFiles ?? []).map(file => `Не проверено: ${file}; двоичный файл, не проверялся (не входит в текстовое ревью).`),
+    ...(record.costs ?? record.round?.costs ?? []).filter(cost => cost.redactedFields?.length).map(cost => `Скрыто в ответе: ${cost.role}; поля ${cost.redactedFields.join(', ')}.`),
     ...((record.partiallyWithheldFiles ?? []).length ? [`Частично скрыто: ${record.partiallyWithheldFiles.join(', ')}; совпавшие строки или остаток файла удержаны экраном.`] : []),
     ...((record.unreviewedFiles ?? []).length ? [`Не проверено: файлы ${record.unreviewedFiles.join(', ')}; содержимое полностью скрыто.`] : []),
     ...((record.unreviewedInputs ?? []).length ? [`Не проверено: ${record.unreviewedInputs.join(', ')}; содержимое полностью скрыто.`] : []),
