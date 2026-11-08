@@ -1296,7 +1296,9 @@ export function formatReviewReport(record) {
 export async function main(argv) {
   if (argv.includes('--help')) { console.log('Usage: node scripts/code-review.mjs --request <json> [--json]\nRead-only manual report. Request: worktree, head, base, contract, risk?, stageRecord?, config?. No writes, verify or certificate.'); return; }
   requireValue(argv[0] === '--request' && text(argv[1]) && argv.slice(2).every(arg => arg === '--json'), 'use --request <json> [--json]');
-  const request = JSON.parse(fs.readFileSync(argv[1], 'utf8'));
+  let request;
+  try { request = JSON.parse(fs.readFileSync(argv[1], 'utf8')); }
+  catch { throw new Error('review request JSON unreadable'); }
   // The executable pack, never repository/request code, owns prompts and transports.
   const record = await runReviewRound({ ...request, packRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..') });
   console.log(screenModelOutput(argv.includes('--json') ? JSON.stringify(record, null, 2) : formatReviewReport(record)).value);

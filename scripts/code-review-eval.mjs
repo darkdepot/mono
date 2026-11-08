@@ -174,10 +174,14 @@ export function scoreCheckerProbes(gold, verdicts) {
 if (isMain(import.meta.url)) {
   try {
     const [mode, file, ...args] = process.argv.slice(2);
+    const readInput = () => {
+      try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+      catch { throw new Error('review evaluation JSON input unreadable'); }
+    };
     if (mode === '--help') console.log('Usage: code-review-eval.mjs --validate <cases.json> --bundle <absolute.bundle> | --request <json>\nLive request: {dataset,bundle,config,runId}. Runs 3 risky repetitions per task/control; prints records. Host only; no benchmark result is a certificate.');
-    else if (mode === '--validate' && args[0] === '--bundle' && args.length === 2) console.log(JSON.stringify(verifyDatasetBundle(JSON.parse(fs.readFileSync(file, 'utf8')), args[1]), null, 2));
+    else if (mode === '--validate' && args[0] === '--bundle' && args.length === 2) console.log(JSON.stringify(verifyDatasetBundle(readInput(), args[1]), null, 2));
     else if (mode === '--request' && !args.length) {
-      const evaluation = await runReviewEvaluation(JSON.parse(fs.readFileSync(file, 'utf8')), { onProgress: event => console.log(JSON.stringify(screenModelOutput(event, { strict: true }).value)) });
+      const evaluation = await runReviewEvaluation(readInput(), { onProgress: event => console.log(JSON.stringify(screenModelOutput(event, { strict: true }).value)) });
       console.log(JSON.stringify(screenModelOutput({ type: 'complete', evaluation }, { strict: true }).value));
       if (evaluation.interrupted) process.exitCode = 130;
     }

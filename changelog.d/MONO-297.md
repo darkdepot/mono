@@ -86,3 +86,5 @@
 - Complete the same stop-rule exclusion for files: union task-base/previous-round/head refusals, omit whole files from both diff views, and withhold their exports, both evidence sides and project rules. C50 asserts exact reviewer/checker completion without technical-failure masking; accepted partial files remain readable.
 
 - Host QA r7 / continue:54: exclude binary assets from all role inputs; report changed binary paths without blocking text review. Keep secret-withheld/unreadable text fail-closed. Treat repeated JSON members in repository source as data, retaining original-member secret screening and strict role-answer ambiguity checks. Parse native role envelopes and answers before redacting credential values in place; retain JSON structure, record redacted field paths and keep the existing unreadable-answer retry. C51 covers all three classes through the public round and model-free native transports.
+
+- Keep malformed manual/evaluation JSON input out of diagnostics: fixed read-boundary errors, exit 2 before any role, and no-model C52 regressions for both report formats and both evaluation modes.

@@ -31,6 +31,17 @@ function assertUnchecked(record) {
  assert.match(formatReviewReport(record),/Не проверено:/);
 }
 
+test('C52: malformed CLI request diagnostics never echo input or launch roles',async t=>{
+ const f=fixture(t),bin=fs.mkdtempSync(path.join(os.tmpdir(),'mono-c52-json-'));t.after(()=>fs.rmSync(bin,{recursive:true,force:true}));const value='probeC52',launched=path.join(bin,'launched'),requestFile=path.join(bin,'request.json');
+ for(const engine of ['codex','claude'])fs.writeFileSync(path.join(bin,engine),`#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(launched)},'unexpected launch\\n');process.exit(91);\n`,{mode:0o700});
+ const source=JSON.stringify({...f.request,contract:{['pass'+'word']:[value]}}).replace(JSON.stringify(value)+']',JSON.stringify(value)+',]');fs.writeFileSync(requestFile,source);
+ const cases=[['manual report','code-review.mjs',['--request',requestFile],'review request JSON unreadable'],['manual JSON','code-review.mjs',['--request',requestFile,'--json'],'review request JSON unreadable'],['evaluation request','code-review-eval.mjs',['--request',requestFile],'review evaluation JSON input unreadable'],['evaluation dataset','code-review-eval.mjs',['--validate',requestFile,'--bundle',path.join(bin,'unused.bundle')],'review evaluation JSON input unreadable']];
+ for(const [name,file,args,diagnostic] of cases)await t.test(name,()=>{
+  const result=spawnSync(process.execPath,[path.join(packRoot,'scripts',file),...args],{cwd:bin,env:{...process.env,PATH:bin+path.delimiter+process.env.PATH},encoding:'utf8'});
+  assert.equal(result.status,2);assert.equal(result.stdout,'','no report from a rejected request');assert.equal(result.stderr,diagnostic+'\n');assert.ok(!JSON.stringify({report:result.stdout,stderr:result.stderr}).includes(value));assert.ok(!fs.existsSync(launched),'no catalog, auth, probe or role process');assert.equal(f.git('status','--porcelain'),'');assert.equal(f.git('rev-parse','HEAD'),f.request.head);
+ });
+});
+
 test('C51/r7: binary assets are absent from role inputs and never block text review',async t=>{
  const png=Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489','hex');
  for(const mode of ['unchanged','added','modified','deleted','text-to-binary','binary-to-text'])await t.test(mode,async t=>{
