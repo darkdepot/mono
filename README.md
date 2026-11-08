@@ -1819,7 +1819,9 @@ earlier calls cannot hide that presentation. Only non-target free questions can
 omit options; target windows always require the scenario decision, advice,
 reason and valid options, including in role-less historical contracts.
 Historical acceptance uses real native window answers and the current conversation
-rubric. Linked approval records still bind the shown version after the answer.
+rubric. Linked approval records still bind the shown version after the answer;
+Claude child events cannot supply that owner-visible presentation or replace the
+last parent summary.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
 `references/owner-dialog.md` and `references/orchestration.md`, for retired window
 labels and answer-list formatting. History and old fixtures are outside that scope.

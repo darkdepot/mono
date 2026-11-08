@@ -46,7 +46,7 @@ function fixture(t){
   walk(dumpDir);fs.writeFileSync(dumpTrace,timed([...reads,terminal],'2026-11-02T04:01:00Z').map(e=>JSON.stringify(e)).join('\n')+'\n');
  };flush();
  const check=()=>{flush();return verifyRecords(request);};
- return {dir,dumpDir,project,record,events,save,page,check,request};
+ return {dir,dumpDir,project,record,events,save,page,flush,check,request};
 }
 
 test('records compare successful native write bodies to a fresh complete monotest dump',t=>{
@@ -311,6 +311,26 @@ test('amend1 a current-version read must complete before the approval write',t=>
  f.request.sent=path.join(f.dir,'sent.jsonl');fs.writeFileSync(f.request.sent,JSON.stringify({type:'control_response',response:{request_id:'permission',response:{behavior:'allow',updatedInput:{questions:[q],answers:{[q.question]:'Утвердить (Recommended)'}}}}})+'\n');
  f.request.approvalBindings=[{recordId:'r1',windowCallId:'window',shownLine:1,currentLine:5,text:draft}];
  const resultValue=f.check();assert.equal(resultValue.status,'failed',resultValue.reason);assert.match(resultValue.reason,/read completed after approval/);
+});
+
+const claudeChildApproval=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-claude-child-approval.json',import.meta.url)));
+for(const bindChild of [false,true])test(`production historical Claude ${bindChild?'rejects a scout-only presentation':'accepts the owner summary despite a later scout message'}`,t=>{
+ const f=fixture(t),saved=structuredClone(claudeChildApproval.events),draft=saved[bindChild?1:0].message.content[0].text;
+ const questions=saved[2].message.content[0].input.questions,question=questions[0].question,answer='Утвердить, продолжу позже';
+ const call=(id,name,input)=>({type:'assistant',message:{content:[{type:'tool_use',id,name,input}]}}),result=(id,value)=>({type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:typeof value==='string'?value:JSON.stringify(value)}]}});
+ f.record.body='mono-test: approved\n'+draft;f.request.testedVersion='0.42.0';
+ f.events.splice(0,f.events.length,...saved,
+  {type:'control_request',request_id:'permission',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions}}},
+  result('window',`Your questions have been answered: "${question}"="${answer}". You can now continue with these answers in mind.`),
+  call('read','mcp__monotest__get_document',{id:'doc'}),result('read',{id:'doc',content:draft}),
+  call('write','mcp__monotest__create_comment',{projectId,body:f.record.body}),result('write',f.record));
+ f.page('comments','comments',[f.record]);f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content:draft});
+ f.request.sent=path.join(f.dir,'sent.jsonl');fs.writeFileSync(f.request.sent,JSON.stringify({type:'control_response',response:{request_id:'permission',response:{behavior:'allow',updatedInput:{questions,answers:{[question]:answer}}}}})+'\n');
+ f.request.approvalBindings=[{recordId:'r1',windowCallId:'window',shownLine:bindChild?2:1,currentLine:6,text:draft}];
+ f.flush();const checked=verifyTextRecords(f.request);
+ assert.equal(checked.status,bindChild?'unverified':'passed',JSON.stringify(checked));
+ if(bindChild)assert.match(checked.reason,/shown version not found in owner-visible trace/);
+ assert.equal(saved[0].parent_tool_use_id,null,'native parent messages remain eligible');
 });
 
 test('missing native write result remains unverified and output errors never become a receipt',t=>{
