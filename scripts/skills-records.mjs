@@ -56,9 +56,10 @@ function markdown(value){
    // Keep the paragraph break after a list; only extra empty lines collapse.
    while(result.at(-1)===''&&result.at(-2)==='')result.pop();
   }
-  // Inline code is opaque too; unrecognized formatting stays unequal.
+  // Inline code is opaque too; destinations with whitespace or parenthesis
+  // syntax stay literal rather than risk changing the link's parse.
   const list=literal?line:line.replace(/^([ ]{0,3})- /,'$1* ');
-  result.push(literal||line.includes('`')?list:list.replace(/\[([^\]\n]+)\]\(<(https?:\/\/[^>\s]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1'));
+  result.push(literal||line.includes('`')?list:list.replace(/\[([^\]\n]+)\]\(<([^<>\s()]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1'));
   heading=!literal&&/^#{1,6} /.test(line);
   if(!block)for(const tick of line.matchAll(/`+/g)){
    if(inline===null)inline=tick[0].length;
@@ -152,7 +153,15 @@ function recordLines(body){
  return approvalBlocks(body).filter(block=>!['mono-idea-snapshot','mono-tech-page'].includes(block.info))
   .flatMap(block=>(block.fenced?block.content:block.text).split(/\r?\n/));
 }
-function recordCount(body,type){
+function recordCount(body,type,project){
+ if(type==='mono-brief'){
+  const blocks=approvalBlocks(body).filter(block=>block.fenced||block.text.trim());
+  const markers=blocks.filter(block=>block.info==='mono-brief');
+  if(markers.length!==1||blocks.at(-1)!==markers[0])return 0;
+  // JSON.parse loses duplicate members; accept only the literal single binding.
+  const content=markers[0].content;
+  try{return JSON.parse(content).project===project&&content.replace(/[ \t\r\n]/g,'')===JSON.stringify({project})?1:0;}catch{return 0;}
+ }
  if(type==='mono-research')return approvalBlocks(body).filter(block=>block.info==='mono-research').length;
  const markers=['mono-idea: approved','mono-prd: approved','mono-design: approved','mono-tech: approved','mono-package: start'];
  type=markers.find(marker=>marker.split(':')[0]===type)??type;
@@ -160,8 +169,8 @@ function recordCount(body,type){
   .filter(line=>{line=type.startsWith('mono-idea')?line:line.trim();return (type.includes(':')&&line===type)||line.startsWith(type+(type.includes(':')?' ':': '));}).length;
 }
 function expectedRecords(dump,type,body=row=>bodyOf(row)){
- const rows=type==='mono-research'?dump.documents:dump.projectComments;
- return rows.flatMap(row=>Array.from({length:recordCount(body(row),type)},()=>row));
+ const rows=['mono-research','mono-brief'].includes(type)?dump.documents:dump.projectComments;
+ return rows.flatMap(row=>Array.from({length:recordCount(body(row),type,dump.project?.uuid)},()=>row));
 }
 
 function recordWrite(write,type,dump){
@@ -225,8 +234,23 @@ function traceTime(data,line,start=false){
  if(row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp))missing('invalid native trace time');return stamp;}
  return start?captureInterval(data)?.start:captureInterval(data)?.end;
 }
+function uniquelyBoundNativeStart(data,call){
+ if(call.event.type!=='event_msg')return true;
+ if(!Number.isInteger(call.approvalInvocationLine))return false;
+ // Opaque or aliased outer calls can own a completion too. Only restrict the
+ // already-proved start; never infer ownership by parsing another JS spelling.
+ const open=data.rows.filter(row=>{
+  const p=row.value.payload;
+  if(row.line>=call.line||row.value.type!=='response_item'||!['function_call','custom_tool_call'].includes(p?.type))return false;
+  const outputs=text(p.call_id)?data.rows.filter(result=>result.line>row.line&&result.value.type==='response_item'&&['function_call_output','custom_tool_call_output'].includes(result.value.payload?.type)&&result.value.payload.call_id===p.call_id):[];
+  return outputs.length!==1||outputs[0].line>call.line;
+ });
+ if(open.length!==1||open[0].line!==call.approvalInvocationLine)return false;
+ const id=open[0].value.payload.call_id;
+ return text(id)&&data.rows.filter(row=>row.line>open[0].line&&row.value.type==='response_item'&&['function_call_output','custom_tool_call_output'].includes(row.value.payload?.type)&&row.value.payload.call_id===id).length===1;
+}
 function before(left,line,right,call){
- const startLine=call.event.type==='event_msg'?call.invocationLine:call.line;
+ const startLine=call.event.type==='event_msg'?(uniquelyBoundNativeStart(right,call)?call.approvalInvocationLine:call.invocationLine):call.line;
  if(fs.realpathSync(left.trace)===fs.realpathSync(right.trace)&&Number.isInteger(startLine))return line<startLine;
  const end=traceTime(left,line),start=traceTime(right,startLine,true);
  return Number.isFinite(end)&&Number.isFinite(start)&&end<start;
@@ -602,6 +626,47 @@ export function verifyRecords(request){
    const finalFields={};
    for(const [index,write] of versions.entries()){
     const value=write.value,input={...write.input},next=versions[index+1];
+    if(write.name==='mcp__monotest__save_document'&&Object.hasOwn(input,'patch')){
+     if(Object.hasOwn(input,'content')||!Array.isArray(input.patch)||!input.patch.length)missing(`invalid document patch for ${id}`);
+     let content=finalFields.content;
+     const insertionPatch=input.patch.some(edit=>edit?.op==='insert_before'||edit?.op==='insert_after');
+     const priorReads=[],previous=versions[index-1];
+     for(const source of scenarios)for(const call of source.calls.filter(c=>c.name==='mcp__monotest__get_document')){
+      let read;
+      try{read={...resultFor(source.host,call,source.rows),data:source};}
+      catch(error){if(error instanceof MissingEvidence)continue;throw error;}
+      if(idOf(read.value)!==id||typeof read.value.content!=='string'||elided(read.value.content)||!before(source,read.resultLine,write.data,write))continue;
+      if(previous&&!before(previous.data,previous.resultLine,source,read))continue;
+      if((index===0||insertionPatch)&&!uniquelyBoundNativeStart(source,read)){
+       if(insertionPatch)continue;
+       missing(`document patch lacks uniquely bound prior content for ${id}`);
+      }
+      priorReads.push(read);
+     }
+     if(insertionPatch&&!priorReads.length)missing(`document insert patch lacks bound native prior content for ${id}`);
+     if(priorReads.length){
+      const latest=priorReads.find(read=>priorReads.every(other=>other===read||before(other.data,other.resultLine,read.data,read)));
+      if(!latest)missing(`document patch prior read ordering across traces is not established for ${id}`);
+      if(typeof content==='string')compareField('content',content,latest.value.content,id);
+      content=latest.value.content;
+     }
+     if(typeof content!=='string'||elided(content))missing(`document patch lacks full prior content for ${id}`);
+     for(const edit of input.patch){
+      if(edit?.op==='insert_before'||edit?.op==='insert_after'){
+       if(typeof edit.anchor!=='string'||!edit.anchor||typeof edit.text!=='string')missing(`unsupported document patch for ${id}`);
+       const start=content.indexOf(edit.anchor);
+       if(start<0||content.indexOf(edit.anchor,start+1)>=0)throw new Error(`document patch anchor must match exactly once for ${id}: ${start<0?'missing':'ambiguous'}`);
+       const offset=start+(edit.op==='insert_after'?edit.anchor.length:0);
+       content=content.slice(0,offset)+edit.text+content.slice(offset);
+       continue;
+      }
+      if(edit?.op!=='replace'||typeof edit.old_string!=='string'||!edit.old_string||typeof edit.new_string!=='string')missing(`unsupported document patch for ${id}`);
+      const start=content.indexOf(edit.old_string);
+      if(start<0||edit.replace_all!==true&&content.indexOf(edit.old_string,start+1)>=0)throw new Error(`document patch old_string must match ${edit.replace_all===true?'at least':'exactly'} once for ${id}`);
+      content=edit.replace_all===true?content.split(edit.old_string).join(edit.new_string):content.slice(0,start)+edit.new_string+content.slice(start+edit.old_string.length);
+     }
+     input.content=content;
+    }
     if(Object.hasOwn(input,'state')){if(Object.hasOwn(input,'status'))compareField('status',input.state,input.status,id);input.status=input.state;}
     for(const field of fields){
      if(Object.hasOwn(input,field)){
@@ -620,7 +685,7 @@ export function verifyRecords(request){
        if(!confirmation)missing(`intermediate ${id}.${field} has no linked value or read before the next write`);
       }
       if(confirmation&&Object.hasOwn(confirmation,field)&&!elided(confirmation[field]))compareField(field,input[field],confirmation[field],id);
-      finalFields[field]=input[field];
+      finalFields[field]=confirmation&&Object.hasOwn(confirmation,field)&&!elided(confirmation[field])?confirmation[field]:input[field];
      }
      if(Object.hasOwn(value,field)&&!elided(value[field])&&!(field==='status'&&Object.hasOwn(input,field)))finalFields[field]=value[field];
     }
@@ -638,9 +703,10 @@ export function verifyRecords(request){
    }else if(rule.type==='project'){
     if(!dump.project)missing('project required');
    }else{
-    const found=expectedRecords(dump,rule.type).filter(row=>!seedIds.has(idOf(row))||activeWrites.some(w=>idOf(w.value)===idOf(row)));
+    const existingBrief=rule.type==='mono-brief'&&rule.scope==='project';
+    const found=expectedRecords(dump,rule.type).filter(row=>existingBrief||!seedIds.has(idOf(row))||activeWrites.some(w=>idOf(w.value)===idOf(row)));
     if(found.length!==(rule.count??1))throw new Error(`expected ${rule.type}: ${rule.count??1}, observed ${found.length}`);
-    if(!activeWrites.some(w=>idOf(w.value)===idOf(found[0])))missing(`expected ${rule.type} write absent from trace`);
+    if(!existingBrief&&!activeWrites.some(w=>idOf(w.value)===idOf(found[0])))missing(`expected ${rule.type} write absent from trace`);
    }
   }
   const bindingGaps=[],approvedExchanges=new Set();

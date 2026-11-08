@@ -23,6 +23,11 @@ every bounded contract and its direct lifecycle consumers.
 
 ## Project parity
 
+MONO-357 / U6 explicitly changes PC-002, PC-008 and PC-013: the body is a
+concise description; the active Brief document replaces Idea approval notes and
+preserves replaced text. The bounded Project fingerprint changes with these rules;
+the Idea approval fingerprint and reader do not change.
+
 | Contract source | Rule ID | Named consumers |
 | --- | --- | --- |
 | `references/contracts/project.md#PC-001` | `PC-001` | `mono:idea`, `mono:research`, `mono:handoff`, `mono:check`, `mono:review`, `scripts/lint-mono-artifacts.mjs` |

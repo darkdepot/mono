@@ -26,7 +26,7 @@ Legacy packages may carry:
 
 Rules:
 
-- Keep Project body as a concise product brief, not a workflow dashboard.
+- Keep Project body as a concise project description, not a workflow dashboard.
 - Do not inline full PRD or Tech Spec.
 - Do not include active docs, active issues, status bookkeeping, lifecycle notes, or workflow mechanics in the Project body.
 - Keep document and issue relationships in Linear metadata, resources, comments, or the handoff package.

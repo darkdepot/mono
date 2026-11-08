@@ -730,7 +730,7 @@ function validateArtifactContractParity() {
       contractPath: "references/contracts/project.md",
       ledgerSourcePath: "references/contracts/project.md",
       templatePath: "templates/project.md",
-      contractFingerprint: "fba6b0944535e2256e00bf12b4a26f8c26706f64eec2c204735331520b68bd12",
+      contractFingerprint: "82d5df23cf9f1e2721a2d77d15cea5a2f26b2873c1c8d013e34f3e79ddc55ff3",
       contractConsumers: [
         "skills/idea/SKILL.md",
         "skills/research/SKILL.md",
@@ -5694,6 +5694,7 @@ const STRING_PINS = [
   ["skills/idea/SKILL.md", "references/record.md"],
   ["skills/idea/SKILL.md", "mono:check idea"],
   ["skills/idea/references/record.md", "mono-idea: approved project=<uuid> sha256=<64 hex>"],
+  ["references/brief.md", "mono-brief"],
   ["skills/discovery/references/prd.md", "mono-prd: approved"],
   ["skills/discovery/references/prd.md", "by=owner"],
   ["references/owner-dialog.md", "by=orchestrator"],
@@ -6336,12 +6337,12 @@ const MACHINE_TOKENS = new Set([
   "node <pack-root>/scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",
   "approval_status=approved",
   // MONO-187: CLI commands, closed result dictionary and plugin-agent fields.
-  "record", "verify", "helper", "--help", "--draft", "--project", "--notes", "--out", "--dump", "--expect", "--host",
+  "record", "verify", "helper", "--help", "--draft", "--project", "--brief", "--brief-draft", "--out", "--dump", "--expect", "--host",
   "scout", "claude-code", "codex", "sonnet", "medium", "high",
   "name", "description", "model", "effort", "disallowedTools", "Write", "Edit", "NotebookEdit",
   "pass", "legacy-before-cutoff", "legacy-migrate", "issue-only", "no-record", "other-project", "bad-record", "stale",
   "missing-heading", "duplicate-heading", "unsupported-format", "bad-since", "read-failed",
-  "idea-helper", "mono-idea-snapshot", "mono-idea: approved project=<uuid> sha256=<64 hex>",
+  "idea-helper", "mono-idea-snapshot", "mono-brief", "references/brief.md", "mono-idea: approved project=<uuid> sha256=<64 hex>",
   "node scripts/idea-gate.mjs check --mode fresh --snapshot <dir> --config <path>",
   "node scripts/idea-gate.mjs check --mode approved --snapshot <dir> --config <path>",
   // MONO-175: closed Research gate refusal codes; shared success/date codes above.
@@ -7047,6 +7048,12 @@ function validateReadFirstTierContract() {
       }
     }
   }
+  const ideaFile = "skills/idea/SKILL.md", ideaText = read(ideaFile), ideaTier = readTierBounds(ideaText, ideaFile);
+  requireMachineToken("references/brief.md");
+  if (!ideaTier || extractReadFirstEntries(ideaText, ideaFile).paths.some(named => named.replace(/^<корень>\//, "") === "references/brief.md") ||
+      !ideaText.slice(ideaTier.start, ideaTier.end).split("\n").some(line =>
+        conditionalReadPaths(line, ideaFile)?.some(named => named.replace(/^<корень>\//, "") === "references/brief.md")))
+    fail("Idea must keep the Brief reference conditional, outside mandatory reading");
   const tiered = ["Read first:", "Read now:", "1. `AGENTS.md`", "2. `references/lifecycle.md`", "Read when:", "- `references/issue-only-lane.md` — fixture `lifecycle_state_entity=issue`", "", "End."].join("\n");
   if (extractReadFirstEntries(tiered).paths.join("|") !== "AGENTS.md|references/lifecycle.md") fail("read-tier fixture: conditional path leaked into eager reads");
   const misplaced = tiered.replace("2. `references/lifecycle.md`", "2. `references/lifecycle.md` — fixture `lifecycle_state_entity=issue`");
@@ -7325,9 +7332,19 @@ if (process.argv.includes("--document-skeleton-only") || process.argv.includes("
   console.log("Document skeleton validation passed."); process.exit(0);
 }
 
+function validateRecordReadbackFixtures() {
+  try {
+    runNode(["--test", "--test-name-pattern=MONO-357", "scripts/skills-records.test.mjs"]);
+    console.log("PASS records fixtures: relative link wrappers, content then patch, invalid patch anchors");
+  } catch (error) {
+    fail(`Records read-back fixtures failed: ${error.message}\n${error.stdout || ""}\n${error.stderr || ""}`);
+  }
+}
+
 // Partial modes above intentionally do not load the scenario corpus.
 try { loadCatalog(path.join(root, 'evals/scenarios/index.json')); }
 catch (error) { failures.push(error.message); }
+validateRecordReadbackFixtures();
 
 validateSkills();
 validateReadFirstTierContract();
