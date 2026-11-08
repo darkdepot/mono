@@ -578,19 +578,30 @@ const SOURCE_KEY = '(?:[\\p{L}\\p{N}_$-]*)(?:' + [...SECRET_KEY_SUFFIXES].sort((
 const SOURCE_SPACE = '(?:\\s|/\\*[\\s\\S]*?\\*/)*';
 const SOURCE_BINDING = new RegExp('(?<![\\p{L}\\p{N}_$-])(?:' + SOURCE_KEY + '["\']?\\??' + SOURCE_SPACE + '[:=]|--' + SOURCE_KEY + '(?:' + SOURCE_SPACE + '=|[ \\t]+(?=\\S)))', 'iu');
 function sourceBindings(line, safeMarkers = false) {
-  return [...line.matchAll(new RegExp(SOURCE_BINDING.source, 'giu'))].flatMap(match => {
-    const rest = line.slice(match.index + match[0].length).trim();
-    // Only a complete scalar at the end of this line can exempt a binding.
-    // Anything else keeps the stateless line/remainder withholding policy.
-    const literal = /^(?:(["'])([^"']*)\1|([^\s"',;\]}]+))\s*[;,\]}]*\s*$/.exec(rest);
-    const scalar = literal ? literal[2] ?? literal[3] : null;
-    const token = literal || !/^["']/.test(rest) ? null : jsonTokens(rest, 1)[0];
-    const value = literal?.[2] ?? scalar ?? (token?.quoted && token.closed ? token.value : null);
-    const beginning = match.index + match[0].length + line.slice(match.index + match[0].length).search(/\S|$/);
-    const quoted = !!literal?.[1] || !!(token?.quoted && token.closed), start = beginning + (quoted ? 1 : 0);
-    const end = literal ? start + (literal[1] ? literal[2].length : literal[3].length)
-      : quoted ? beginning + token.end - 1 : line.length;
-    return (!safeMarkers || !screenMarkers.has(value)) && credentialValue(literal ? scalar : rest || null) ? [{ value, start, end, quoted }] : [];
+  const matches = [...line.matchAll(new RegExp(SOURCE_BINDING.source, 'giu'))];
+  return matches.flatMap((match, index) => {
+    const bindingStart = match.index + match[0].length;
+    // A colon may introduce a type before the actual initializer. Capture the
+    // value after its assignment, including assertions following that literal.
+    // Stop before the next binding so repeated declarations never rescan suffixes.
+    const annotation = match[0].endsWith(':') ? /^(?:=>|[^=;\r\n])*?=(?![=>])\s*/u
+      .exec(line.slice(bindingStart, matches[index + 1]?.index ?? line.length)) : null;
+    // Retain the original colon value too: source data can itself contain '='.
+    return [bindingStart, ...(annotation ? [bindingStart + annotation[0].length] : [])].flatMap(position => {
+      let beginning = position;
+      beginning += line.slice(beginning).search(/\S|$/);
+      const rest = line.slice(beginning).trim();
+      // Only a complete scalar at the end of this line can exempt a binding.
+      // Anything else keeps the stateless line/remainder withholding policy.
+      const literal = /^(?:(["'])([^"']*)\1|([^\s"',;\]}]+))\s*[;,\]}]*\s*$/.exec(rest);
+      const scalar = literal ? literal[2] ?? literal[3] : null;
+      const token = literal || !/^["']/.test(rest) ? null : jsonTokens(rest, 1)[0];
+      const value = literal?.[2] ?? scalar ?? (token?.quoted && token.closed ? token.value : null);
+      const quoted = !!literal?.[1] || !!(token?.quoted && token.closed), start = beginning + (quoted ? 1 : 0);
+      const end = literal ? start + (literal[1] ? literal[2].length : literal[3].length)
+        : quoted ? beginning + token.end - 1 : line.length;
+      return (!safeMarkers || !screenMarkers.has(value)) && credentialValue(literal ? scalar : rest || null) ? [{ value, start, end, quoted }] : [];
+    });
   });
 }
 const sourceCredential = line => sourceBindings(line).length > 0;

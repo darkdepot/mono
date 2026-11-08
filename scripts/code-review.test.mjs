@@ -2285,6 +2285,61 @@ test('C54: exact nested source representations are checked before either role la
 });
 });
 
+test('C57: annotated credential initializers cannot leave a copy in either role input',async t=>{
+ const value='opaqueCredentialValueC57';
+ const declarations=[
+  'const password: string = "'+value+'";',
+  'class Login {\n password?: string = "'+value+'";\n}',
+  'const password: ReadonlyArray<string> = "'+value+'";',
+  'const password: ReadonlyArray<string>="'+value+'";',
+  'const password: string | null = "'+value+'";',
+  'const password: "allowed" | string = "'+value+'";',
+  'const password: string[] = "'+value+'";',
+  'const password: ?string = "'+value+'";',
+  'const password: string = "'+value+'" as string;',
+  'const password: string = "'+value+'" satisfies string;',
+  'enum State { Ready }\nconst password: string = "'+value+'";',
+ ];
+ for(const declaration of declarations)await t.test(declaration,async t=>{
+  const f=fixture(t),file='input.ts';
+  fs.writeFileSync(path.join(f.worktree,file),declaration+'\nexport const copy = '+JSON.stringify(value)+';\n');
+  f.git('add','.');f.git('commit','-qm','C57 annotated initializer and copy');let calls=0;
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   calls++;assert.ok(!request.prompt.includes(value),'credential copy reached a role');
+   assert.ok(!fs.readFileSync(path.join(request.worktree,file),'utf8').includes(value));
+   const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files)};
+  }});
+  assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.ok(!JSON.stringify(record).includes(value));
+  if(calls===0)assert.match(record.failures.at(-1).reason,/final role prompt/);else assert.deepEqual(record.failures,[]);
+ });
+});
+test('C57: a plain type-only password member is not a remembered credential',async t=>{
+ const f=fixture(t),file='input.ts';
+ fs.writeFileSync(path.join(f.worktree,file),'interface Login {\n password: string;\n}\nexport const publicType = "string";\n');
+ f.git('add','.');f.git('commit','-qm','C57 type-only control');let calls=0;
+ const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+  calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('publicType'));return {response:review([],c.files)};
+ }});
+ assert.equal(calls,1);assert.equal(record.outcome,'clean');assert.deepEqual(record.unreviewedFiles,[]);
+});
+test('C57: repeated annotated assignments retain bounded screening time',()=>{
+ const elapsed=[];
+ for(const count of [2000,8000]){
+  const source='password: string = "x";'.repeat(count),started=performance.now();
+  const screened=screenModelOutput(source,{input:true,inputFile:'generated.txt'});
+  elapsed.push(performance.now()-started);assert.equal(screened.rejected,false);assert.match(screened.value,/withheld/);
+  assert.ok(elapsed.at(-1)<=3000);
+ }
+ assert.ok(elapsed[1]<=elapsed[0]*6+50);
+});
+test('C57: a colon data value containing an equals sign keeps its original value barrier',async t=>{
+ const f=fixture(t),file='input.yaml',value='opaqueCredentialC57=x';
+ fs.writeFileSync(path.join(f.worktree,file),'password: '+value+'\npublic: '+value+'\n');
+ f.git('add','.');f.git('commit','-qm','C57 colon data control');let calls=0;
+ const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async()=>{calls++;assert.fail('original colon value reached a role');}});
+ assert.equal(calls,0);assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.match(record.failures.at(-1).reason,/final role prompt/);
+});
+
 test('C56: repeated assignments screen with bounded linear scaling',()=>{
  for(const assignment of ['token=1;','token="x";']){
   const elapsed=[];
