@@ -108,7 +108,7 @@ function checkWindowTrace({ host, trace, expectedWindows, expectedReplies, rules
       }
       if(target)expectedIndex++;
       const issues = w.status === 'failed' ? [w.reason] : [];
-      let summary = w.summary ?? '';
+      let summary = w.summary ?? '', summaryLine = w.summaryLine;
       if (host === 'claude') {
         const firstLine = w.textLines[0] ?? w.line;
         const parts = [];
@@ -129,6 +129,7 @@ function checkWindowTrace({ host, trace, expectedWindows, expectedReplies, rules
           }
         }
         summary = parts.join('\n');
+        summaryLine = presentation?.line;
       }
       if (!visible(summary)) issues.push('no visible owner summary');
       if (expected) {
@@ -137,7 +138,7 @@ function checkWindowTrace({ host, trace, expectedWindows, expectedReplies, rules
         if (visible(summary)&&!expected.summary.every(s => summary.includes(s))) issues.push('summary lacks scenario content');
       } else if(roles&&!target)issues.push(...cardIssues(host,w.questions,null));
       else issues.push('unexpected window without scenario policy');
-      windows.push({ ...w,...identity,issues,status: issues.length ? 'failed' : 'passed' });
+      windows.push({ ...w,...identity,summary,summaryLine,issues,status: issues.length ? 'failed' : 'passed' });
     }
     const uncertain = found.find(w => w.status === 'unverified');
     if (expectedIndex > expectedWindows.length || (!uncertain && expectedIndex !== expectedWindows.length&&!(roles&&phase==='card'))) checks.push({ id:'expected-windows',status:'failed',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:`expected ${expectedWindows.length} real target windows, found ${expectedIndex}; text is not a window` });

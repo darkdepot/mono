@@ -8,13 +8,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readJsonLines } from './transports/journal.mjs';
 import { traceRows } from './skills-probe.mjs';
-import { completedTrace, textExchanges, checkEndings } from './skills-trace.mjs';
+import { completedTrace, textExchanges, checkEndings, checkTrace } from './skills-trace.mjs';
 import { auditRows } from './skills-audit.mjs';
 import { isWrite, MissingEvidence } from './skills-boundary.mjs';
 import { unwrap } from './skills-proof.mjs';
 import { runScenario } from './skills-run.mjs';
 import { nativeRecords, resultFor, callInput } from './skills-record-data.mjs';
-import { windowRole, correctedVersion, isOwnerWindow, anchored, checkAnchors } from './skills-owner.mjs';
+import { windowRole, windowPolicy, correctedVersion, isOwnerWindow, anchored, checkAnchors } from './skills-owner.mjs';
 import { checkRubric, rubricDigest } from './skills-rubric.mjs';
 import { stageDriverTool, permittedStages, dialogueMode, testedVersion } from './skills-stage-driver.mjs';
 import { latestApproval, latestDesignApproval, approvalBlocks } from './idea-gate.mjs';
@@ -328,24 +328,12 @@ function documentPresentation(data,exchange,binding,dump) {
  if(!persisted||bodyOf(persisted)!==approved)throw new Error('approved version changed before final read-back');
  return {documentId:idOf(shown.value),shownBody,shownHash:sha256(shownBody),approvedBody:approved,approvedHash:sha256(approved),shownReadLine:shown.line,currentLine:fresh.line};
 }
-function approvalCheck(request,write,data,dump,writes){
- const createProject=write.name.endsWith('__create_project')||(write.name.endsWith('__save_project')&&!write.input.id);
- const markers=recordLines(writeBody(write)).map(line=>line.trim().match(/^(mono-[\w-]+: (?:approved|start))(?: |$)/)?.[1]).filter(Boolean);
- if(!createProject&&!markers.some(type=>recordWrite(write,type,dump)))return;
- const packageStart=recordWrite(write,'mono-package: start',dump);
- const binding=request.approvalBindings?.find(b=>b.recordId===idOf(write.value));
- if(data.expectedReplies) return textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding,writes});
- if(dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))!=='windows')throw new Error('text approval requires scenario expectedReplies');
- const candidates=data.audit.calls.filter(c=>['AskUserQuestion','request_user_input_async'].includes(c.name)&&c.line<write.line);
- const decisions=candidates.filter(c=>windowRole(c.input?.questions)===(packageStart?'transition':'approval'));
- const window=binding?candidates.find(c=>c.callId===binding.windowCallId):decisions.at(-1);
- if(!window)missing('approval window missing');
- if(window!==decisions.at(-1))throw new Error('approval binding does not name the latest decision window');
+function nativeWindowAnswer(request,data,window){
  // Codex sent.jsonl is the driver's {thread,prompt} journal, not a native
  // event stream. Its delivered answer is proved from the resumed rollout.
  const responses=request.host==='claude'&&request.sent?traceRows(request.sent,'claude').rows.map(r=>r.value):[];
  const accepted=data.audit.windowProof(window.event,window.line,window.callId,{responses});
- if(accepted.status!=='confirmed')missing('native approval reply missing');
+ if(accepted.status!=='confirmed')missing('native window reply missing');
  const after=data.rows.filter(r=>r.line>window.line);
  const reply=request.host==='claude'?after.find(r=>r.value.type==='user'&&r.value.message?.content?.some?.(b=>b.type==='tool_result'&&b.tool_use_id===window.callId))
   :after.find(r=>r.value.type==='response_item'&&r.value.payload?.type==='message'&&r.value.payload.role==='user');
@@ -354,13 +342,47 @@ function approvalCheck(request,write,data,dump,writes){
  if(request.host==='claude'){
   const permission=after.find(r=>r.value.type==='control_request'&&r.value.request?.tool_name==='AskUserQuestion');
   const sent=responses.find(r=>r.response?.request_id===permission?.value.request_id)?.response?.response;
-  answers=sent?.behavior==='allow'?Object.values(sent.updatedInput?.answers??{}):[];
+  if(sent?.behavior==='deny')return {reply,answers:[],refused:true,replyText:sent.message};
+  const updated=sent?.behavior==='allow'?sent.updatedInput:!sent?reply.value.tool_use_result:null;
+  answers=window.input.questions.map(q=>updated?.answers?.[q.question]);
  }else{
-  const content=reply.value.payload.content?.[0]?.text??'';
-  try{answers=JSON.parse(content.replace(/^<send_user_message_question_reply>\n/,'').replace(/\n<\/send_user_message_question_reply>\n?$/,'')).map(a=>a.answer);}catch{answers=[];}
+  const content=(reply.value.payload.content?.[0]?.text??'').trim();
+  try{answers=JSON.parse(content.slice('<send_user_message_question_reply>'.length,-'</send_user_message_question_reply>'.length)).map(a=>a.answer);}catch{answers=[];}
  }
- const authorizes=answer=>packageStart?/^(?:Начать работу|Передать оркестратору)(?: \(Recommended\))?$/.test(answer):/^Утвердить(?:[ ,]|$)/.test(answer);
- if(!answers.length||answers.some(answer=>!authorizes(answer)))throw new Error('approval write after empty/refuse/discuss/non-approval reply');
+ if(!answers.length||answers.some(a=>typeof a!=='string'))missing('native window answers unavailable');
+ return {reply,answers};
+}
+function windowPlans(request,data){
+ if(!Array.isArray(request.expectedWindows)||!request.expectedWindows.length||!Array.isArray(request.windows))missing('historical window scenario policies missing');
+ const replies=[],plans=new Map();
+ for(const call of data.audit.calls.filter(c=>!c.event.parent_tool_use_id&&isOwnerWindow(c.name))){
+  const plan=windowPolicy(request,call.input?.questions??[],replies);plans.set(call.callId,plan);replies.push(plan);
+ }
+ return plans;
+}
+function approvalCheck(request,write,data,dump,writes){
+ const createProject=write.name.endsWith('__create_project')||(write.name.endsWith('__save_project')&&!write.input.id);
+ const markers=recordLines(writeBody(write)).map(line=>line.trim().match(/^(mono-[\w-]+: (?:approved|start))(?: |$)/)?.[1]).filter(Boolean);
+ if(!createProject&&!markers.some(type=>recordWrite(write,type,dump)))return;
+ const packageStart=recordWrite(write,'mono-package: start',dump);
+ const binding=request.approvalBindings?.find(b=>b.recordId===idOf(write.value));
+ if(data.expectedReplies) return textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding,writes});
+ if(dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))!=='windows')throw new Error('text approval requires scenario expectedReplies');
+ const candidates=data.audit.calls.filter(c=>!c.event.parent_tool_use_id&&['AskUserQuestion','request_user_input_async'].includes(c.name)&&c.line<write.line);
+ const decisions=candidates.filter(c=>windowRole(c.input?.questions)===(packageStart?'transition':'approval'));
+ const window=binding?candidates.find(c=>c.callId===binding.windowCallId):decisions.at(-1);
+ if(!window)missing('approval window missing');
+ if(window!==decisions.at(-1))throw new Error('approval binding does not name the latest decision window');
+ const {reply,answers}=nativeWindowAnswer(request,data,window);
+ const policy=Array.isArray(request.expectedWindows)&&Array.isArray(request.windows)?windowPlans(request,data).get(window.callId)?.policy:null;
+ // Only actual approving choices grant authority. A prefix in arbitrary prose
+ // (including a refusal) is never a choice; correction text is scenario-owned.
+ const authorizes=(answer,index)=>{
+  const labels=(window.input.questions[index]?.options??[]).map(o=>typeof o==='string'?o:o.label);
+  const approving=packageStart?/^(?:Начать работу|Передать оркестратору)(?: \(Recommended\))?$/:/^Утвердить(?:, продолжу позже| и начать [A-Za-z ]+)?(?: \(Recommended\))?$/;
+  return labels.includes(answer)&&approving.test(answer)||policy?.mode==='correction'&&text(policy.text)&&answer===policy.text;
+ };
+ if(!answers.length||answers.some((answer,index)=>!authorizes(answer,index)))throw new Error('approval write after empty/refuse/discuss/non-approval reply');
  if(write.line<=reply.line)throw new Error('approval write before window answer');
  if(!binding)bindingMissing(`shown-version binding missing for ${idOf(write.value)}`);
  const ownerText=row=>!row.value.parent_tool_use_id&&(request.host==='claude'?row.value.type==='assistant'&&row.value.message?.content?.some(b=>b.type==='text'&&text(b.text))
@@ -831,14 +853,35 @@ export function verifyRecords(request){
     source.exchanges.filter(e=>e.replyLine<write.line).at(-1)===exchange&&recordWrite(write,marker,dump));
    if(exchange.expected.outcome.approval&&!approvedExchanges.has(exchange)&&!awaitingBinding)throw new Error('expected approval missing actual record bound to shown version');
   }
+  const historical=dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))==='windows'&&!request.expectedReplies;
+  const requiredChecks=[{id:'records',status:bindingGaps.length?'unverified':'passed'}];
+  let windowExchanges;
+  if(historical){
+   const plans=windowPlans(request,data);
+   const checked=checkTrace({...request,expectedReplies:undefined});
+   requiredChecks.push({id:'windows',status:checked.status});
+   if(checked.status!=='passed')return {status:checked.status,requiredChecks,windowChecks:checked,reason:checked.reason??'historical window checks not positively proved',starts:observedStarts,stop:false,manualRemoval:[],gateResults,evidence:[request.trace,request.dumpDir]};
+   windowExchanges=checked.windows.map(window=>{
+    const call=data.audit.calls.find(c=>c.callId===window.callId),plan=plans.get(window.callId);
+    if(!call||!plan)missing('historical window exchange unavailable');
+    const {reply,...answer}=nativeWindowAnswer(request,data,call);
+    const next=data.audit.calls.find(c=>c.line>reply.line&&isOwnerWindow(c.name)&&!c.event.parent_tool_use_id);
+    const response=data.rows.filter(r=>r.line>reply.line&&(!next||r.line<next.line)&&!r.value.parent_tool_use_id).map(r=>request.host==='claude'?r.value.message?.role!=='user'&&r.value.type==='assistant'?r.value.message.content.filter(b=>b.type==='text').map(b=>b.text).join('\n'):null:r.value.payload?.role==='assistant'?r.value.payload.content?.filter(b=>b.type==='output_text').map(b=>b.text).join('\n'):null).filter(text).join('\n');
+    return {id:window.id,line:window.line,callId:call.callId,text:window.summary,summaryLine:window.summaryLine,questions:window.questions,...answer,replyLine:reply.line,response,expected:plan.target?request.expectedWindows[plan.expectedIndex]:null,policy:plan.policy,target:plan.target};
+   });
+   if(!windowExchanges.length||!text(request.rubricDefinition))missing('historical window rubric input or definition missing');
+  }
   let rubric;
-  if(scenarios.some(s=>s.exchanges?.some(e=>anchored(e.expected)))) {
-   const input=scenarios.map(source=>({host:source.host,traceHash:sha256(fs.readFileSync(source.trace)),exchanges:(source.exchanges??[]).map(exchange=>({
+  const rubricRequired=historical||scenarios.some(s=>s.exchanges?.some(e=>anchored(e.expected)));
+  if(rubricRequired) {
+   const input=historical?[{host:data.host,traceHash:sha256(fs.readFileSync(data.trace)),exchanges:windowExchanges}]:scenarios.map(source=>({host:source.host,traceHash:sha256(fs.readFileSync(source.trace)),exchanges:(source.exchanges??[]).map(exchange=>({
     ...exchange,presentation:anchored(exchange.expected)&&presentationKind(exchange.expected,(request.presentationBindings??request.approvalBindings??[]).find(b=>b.replyId===exchange.expected.id))==='document'?documentPresentation(source,exchange,(request.presentationBindings??request.approvalBindings??[]).find(b=>b.replyId===exchange.expected.id),dump):null
    }))}));
    rubric=checkRubric({definition:request.rubricDefinition??null,sources:input,bindings:{approvals:request.approvalBindings??[],presentations:request.presentationBindings??[]},records:writes.map(w=>({name:w.name,input:w.input,value:w.value})),dump:dump.all},text(request.rubricDefinition)?request.rubric:undefined);
+   requiredChecks.push({id:'rubric',status:rubric.status});
   }
-  return {status:bindingGaps.length?'unverified':rubric?.status??'passed',...(rubric??{}),...(bindingGaps.length?{status:'unverified',bindingOnly:true,reason:bindingGaps.map(gap=>gap.message).join('; ')}:{}),starts:observedStarts,stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
+  const status=requiredChecks.some(c=>c.status==='failed')?'failed':requiredChecks.every(c=>c.status==='passed')?'passed':'unverified';
+  return {...(rubric??{}),status,requiredChecks,...(bindingGaps.length?{bindingOnly:true,reason:bindingGaps.map(gap=>gap.message).join('; ')}:{}),starts:observedStarts,stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
  }catch(error){return {status:error instanceof MissingEvidence||error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code)?'unverified':'failed',starts:observedStarts,stop:false,manualRemoval:[],reason:error.message,...(error.bindingOnly?{bindingOnly:true}:{}),gateResults,evidence:[request.trace,request.dumpDir]};}
 }
 
@@ -913,7 +956,7 @@ export async function verifyScenarioRecords({run,runRequest,scenario,project,out
  if(dump.status!=='passed')return {...dump,status:dump.status==='failed'?'failed':'unverified',durationMs:Date.now()-start};
  const bindings=bindingsFile&&fs.existsSync(bindingsFile)?read(bindingsFile):{};
  const verification={host:runRequest.host,testedVersion:run.testedVersion??runRequest.testedVersion,trace:run.trace,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
-  expectedReplies:runRequest.scenario?.expectedReplies,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
+  expectedReplies:runRequest.scenario?.expectedReplies,expectedWindows:runRequest.scenario?.expectedWindows,windows:runRequest.scenario?.windows,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
  const result=verifyRecords(verification),reviewEvidence=outputDir+'-evidence.json';
  const payload={request:verification,files:evidenceFiles(verification),rubricDigest:result.rubricDigest??null,rubricInput:result.rubricInput??null};
  fs.writeFileSync(reviewEvidence,JSON.stringify({...payload,digest:rubricDigest(payload)},null,2)+'\n',{flag:'wx'});

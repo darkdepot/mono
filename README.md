@@ -1824,6 +1824,12 @@ Claude child events cannot supply that owner-visible presentation or replace the
 last parent summary.
 Historical Claude windows retain that parent summary across message IDs; newer
 parent text replaces it, and parent service work invalidates it.
+Historical record verification requires every native window check and the digest-bound
+conversation rubric to pass. Rubric input includes the actual summaries, questions,
+native answers and following responses. Missing scenario policies, rubric input or
+judgment remain unverified. Approval requires an actual approving option label or
+the scenario's exact correction text; arbitrary prose cannot grant authority.
+Offline Claude answers may come from the already verified native receipt.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
 `references/owner-dialog.md` and `references/orchestration.md`, for retired window
 labels and answer-list formatting. History and old fixtures are outside that scope.
