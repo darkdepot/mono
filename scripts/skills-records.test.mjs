@@ -1115,6 +1115,48 @@ function correctedIdeaFixture(t,passage='unknowns') {
  };
  return {...f,transform,attest,full,before,after};
 }
+function historicalCorrectedIdeaFixture(t,passage='unknowns') {
+ const f=correctedIdeaFixture(t,passage),expected=f.request.expectedReplies[0];
+ const native=fs.readFileSync('scripts/test-fixtures/skills-records-live/idea-approve/trace.jsonl','utf8').trim().split('\n').map(JSON.parse);
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse),window=native[2].payload,questions=JSON.parse(window.arguments).questions;
+ rows[2]=native[2];rows[3]=native[3];
+ rows[6].payload.content[0].text='<send_user_message_question_reply>\n'+JSON.stringify(questions.map((q,i)=>({questionItemId:JSON.stringify(['request_user_input_async',window.call_id,i]),question:q.title,answer:expected.reply})))+'\n</send_user_message_question_reply>\n';
+ fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:01Z').map(JSON.stringify).join('\n')+'\n');
+ fs.writeFileSync(path.join(f.dir,'VERSION'),'0.42.0\n');fs.symlinkSync(path.resolve('scripts'),path.join(f.dir,'scripts'),'dir');
+ f.request.packRoot=f.dir;f.request.testedVersion='0.42.0';delete f.request.expectedReplies;
+ f.request.expectedWindows=[{...expected,decision:'Утверждаем',advice:'Совет',reason:'Research'}];
+ f.request.windows=[{mode:'correction',text:expected.reply}];
+ f.request.approvalBindings.forEach(b=>{delete b.replyId;b.windowCallId=window.call_id;});
+ f.check=()=>verifyTextRecords(f.request);
+ f.attest=()=>{
+  delete f.request.rubric;const initial=f.check();
+  if(initial.rubricDigest)f.request.rubric={digest:initial.rubricDigest,reviewer:'curated historical corrected Idea',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'native window, fixed correction and revised Idea snapshot',reason:'Only the named Codex addition is authorized.'}))};
+  return f.check();
+ };
+ return f;
+}
+for(const host of ['claude','codex'])test(`historical version rejects text-record metadata before authorization (${host})`,t=>{
+ const f=u7DocumentFixture(t,host);f.attest();assert.equal(f.check().status,'passed');
+ f.request.testedVersion='0.42.0';const result=verifyTextRecords({...f.request});
+ assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/legacy acceptance requires real windows, not text replies/);
+});
+for(const passage of ['unknowns','result'])test(`historical corrected Idea validates the revised native approval snapshot (${passage})`,t=>{
+ const f=historicalCorrectedIdeaFixture(t,passage),result=f.attest();
+ assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.gateResults[0].result.ok,true);
+ assert.deepEqual(result.requiredChecks.map(c=>[c.id,c.status]),[['records','passed'],['windows','passed'],['rubric','passed']]);
+});
+test('historical corrected Idea rejects a snapshot changed beyond the authorized correction',t=>{
+ const f=historicalCorrectedIdeaFixture(t),approved=f.full.replace(f.before,f.after),changed=approved.replace('## Что\n','## Что\nПостороннее изменение.\n');
+ const rewrite=value=>{
+  if(typeof value==='string'){
+   try{return JSON.stringify(rewrite(JSON.parse(value)));}catch{}
+   return value.includes('mono-idea: approved')?value.replace(approved,changed).replace(ideaFingerprint(approved),ideaFingerprint(changed)):value;
+  }
+  if(Array.isArray(value))return value.map(rewrite);
+  return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,rewrite(v)])):value;
+ };
+ f.transform(rewrite);const result=f.attest();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/change outside named passage/);
+});
 for(const passage of ['unknowns','result'])test(`continue5 corrected Idea uses its approval snapshot, not creation/currentLine (${passage})`,t=>{
  const f=correctedIdeaFixture(t,passage),result=f.attest();
  assert.equal(result.status,'passed',JSON.stringify(result));
@@ -2020,9 +2062,10 @@ test('MONO-291 Claude fixed dump permits monotest ToolSearch, reads team statuse
 });
 
 test('MONO-291 production historical records require scenario context and reject an empty answer',t=>{
- const f=liveFixture(t,'idea-approve');f.request.testedVersion='0.41.0';
+ const f=liveFixture(t,'idea-approve');fs.symlinkSync(path.resolve('scripts'),path.join(f.dir,'scripts'),'dir');f.request.packRoot=f.dir;
+ const version=value=>{f.request.testedVersion=value;fs.writeFileSync(path.join(f.dir,'VERSION'),value+'\n');};version('0.41.0');
  const incomplete=verifyTextRecords(f.request);assert.equal(incomplete.status,'unverified',JSON.stringify(incomplete));assert.match(incomplete.reason,/scenario policies missing/);assert.equal(incomplete.gateResults[0].result.ok,true,'record gate still runs before the missing conversation check');
- f.request.testedVersion='0.43.0';assert.match(verifyTextRecords(f.request).reason,/stage called a window/);f.request.testedVersion='0.41.0';
+ version('0.43.0');assert.match(verifyTextRecords(f.request).reason,/stage called a window/);version('0.41.0');
  editLiveTrace(f,rows=>{const reply=rows.find(r=>r.payload?.role==='user'&&r.payload.content?.[0]?.text?.includes('send_user_message_question_reply'));const content=reply.payload.content[0].text;const answers=JSON.parse(content.replace(/^<send_user_message_question_reply>\n/,'').replace(/\n<\/send_user_message_question_reply>\n?$/,''));answers.forEach(a=>a.answer='');reply.payload.content[0].text='<send_user_message_question_reply>\n'+JSON.stringify(answers)+'\n</send_user_message_question_reply>\n';});
  const empty=verifyTextRecords(f.request);assert.equal(empty.status,'failed',JSON.stringify(empty));assert.match(empty.reason,/empty\/refuse/);
 });

@@ -1825,7 +1825,10 @@ last parent summary.
 Historical Claude windows retain that parent summary across message IDs; newer
 parent text replaces it, and parent service work invalidates it.
 Historical record verification requires every native window check and the digest-bound
-conversation rubric to pass. Rubric input includes the actual summaries, questions,
+conversation rubric to pass. The tested version selects this path: text-reply
+metadata cannot bypass historical windows. Named corrections share the text path's
+snapshot and project-body checks, accepting only the authorized revised artifact.
+Rubric input includes the actual summaries, questions,
 native answers and following responses. Missing scenario policies, rubric input or
 judgment remain unverified. Approval requires an actual approving option label or
 the scenario's exact correction text; arbitrary prose cannot grant authority.

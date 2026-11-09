@@ -374,7 +374,7 @@ function approvalCheck(request,write,data,dump,writes){
  if(!window)missing('approval window missing');
  if(window!==decisions.at(-1))throw new Error('approval binding does not name the latest decision window');
  const {reply,answers}=nativeWindowAnswer(request,data,window);
- const policy=Array.isArray(request.expectedWindows)&&Array.isArray(request.windows)?windowPlans(request,data).get(window.callId)?.policy:null;
+ const plan=Array.isArray(request.expectedWindows)&&Array.isArray(request.windows)?windowPlans(request,data).get(window.callId):null,policy=plan?.policy;
  // Only actual approving choices grant authority. A prefix in arbitrary prose
  // (including a refusal) is never a choice; correction text is scenario-owned.
  const authorizes=(answer,index)=>{
@@ -396,7 +396,37 @@ function approvalCheck(request,write,data,dump,writes){
   if(!terminal||binding.shownLine<=window.line||binding.shownLine>=terminal.line)missing('shown version outside approved Codex window turn');
   if(data.rows.findLast(r=>r.line<terminal.line&&ownerText(r))?.line!==binding.shownLine)throw new Error('approval does not bind the last owner-visible text');
  }else if(data.rows.findLast(r=>r.line<window.line&&ownerText(r))?.line!==binding.shownLine)throw new Error('approval does not bind the last owner-visible text');
- return checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit:window.line});
+ const expected=plan?.target?request.expectedWindows[plan.expectedIndex]:null;
+ const corrected=policy?.mode==='correction'&&Boolean(expected?.correction);
+ const approvedText=corrected?correctedArtifact({request,write,data,dump,createProject,binding,writes,shown:binding.text,expected,replyLine:reply.line,
+  sameExchange:(candidate,b)=>b.windowCallId===window.callId&&data.audit.calls.filter(c=>!c.event.parent_tool_use_id&&isOwnerWindow(c.name)&&c.line<candidate.line).at(-1)===window}):binding.text;
+ const approvedProjectText=corrected&&createProject?ideaProjectBody(request,approvedText):approvedText;
+ return checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit:window.line,approvedText,approvedProjectText,corrected});
+}
+
+function correctedArtifact({request,write,data,dump,createProject,binding,writes,shown,expected,replyLine,sameExchange}) {
+ let snapshotBody=writeBody(write);
+ if(createProject) {
+  const approvals=writes.filter(candidate=>candidate.data===data&&recordWrite(candidate,'mono-idea: approved',dump)&&
+   request.approvalBindings?.some(b=>b.recordId===idOf(candidate.value)&&b.shownLine===binding.shownLine&&b.text===binding.text&&sameExchange(candidate,b)));
+  if(approvals.length!==1)throw new Error('unique Idea approval snapshot for the same exchange required');
+  const approval=approvals[0],invocation=approval.event.type==='event_msg'?approval.approvalInvocationLine:approval.line;
+  if(!Number.isInteger(invocation)||invocation<=replyLine||invocation<=write.resultLine)throw new Error('Idea approval snapshot must follow consent and project creation');
+  snapshotBody=writeBody(approval);
+ }
+ const snapshot=approvalBlocks(snapshotBody).find(b=>b.info==='mono-idea-snapshot'||b.info==='mono-tech-page')?.content.replace(/[\r\n]+$/,'');
+ const call=!createProject&&data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
+ const actual=snapshot??(call?bodyOf(resultFor(data.host,call,data.rows).value):undefined);
+ return correctedVersion(shown,expected,actual);
+}
+function ideaProjectBody(request,approvedText) {
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mono-shown-idea-'));
+ try{
+  const draft=path.join(directory,'approved.md');fs.writeFileSync(draft,approvedText);
+  const run=spawnSync(process.execPath,[path.join(request.packRoot,'scripts/idea-gate.mjs'),'record','--draft',draft,'--out',directory,'--config',request.configFile],{encoding:'utf8'});
+  if(run.status!==0)throw new Error('complete shown Idea cannot generate the project body');
+  return fs.readFileSync(path.join(directory,'body.md'),'utf8');
+ }finally{fs.rmSync(directory,{recursive:true,force:true});}
 }
 
 function checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit,approvedText=binding.text,approvedProjectText=approvedText,corrected=false}) {
@@ -488,33 +518,10 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
  if(anchored(expected)&&presentation==='document') {
   approvedText=documentPresentation(data,exchange,binding,dump).approvedBody;
  } else if(anchored(expected)&&expected.correction) {
-  let snapshotBody=body;
-  if(createProject) {
-   const approvals=writes.filter(candidate=>candidate.data===data&&recordWrite(candidate,'mono-idea: approved',dump)&&
-    request.approvalBindings?.some(b=>b.recordId===idOf(candidate.value)&&b.replyId===binding.replyId&&b.shownLine===exchange.line&&b.text===binding.text)&&
-    data.exchanges.filter(e=>e.replyLine<candidate.line).at(-1)===exchange);
-   if(approvals.length!==1)throw new Error('unique Idea approval snapshot for the same exchange required');
-   const approval=approvals[0],invocation=approval.event.type==='event_msg'?approval.approvalInvocationLine:approval.line;
-   if(!Number.isInteger(invocation)||invocation<=exchange.replyLine||invocation<=write.resultLine)throw new Error('Idea approval snapshot must follow consent and project creation');
-   // Creation stores only three sections. The agreed four-section version lives
-   // in this exchange's approval record; the project body is checked separately.
-   snapshotBody=writeBody(approval);
-  }
-  const snapshot=approvalBlocks(snapshotBody).find(b=>b.info==='mono-idea-snapshot'||b.info==='mono-tech-page')?.content.replace(/[\r\n]+$/,'');
-  const call=!createProject&&data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
-  const actual=snapshot??(call?bodyOf(resultFor(data.host,call,data.rows).value):undefined);
-  approvedText=correctedVersion(ideaText,expected,actual);
+  approvedText=correctedArtifact({request,write,data,dump,createProject,binding,writes,shown:ideaText,expected,replyLine:exchange.replyLine,
+   sameExchange:(candidate,b)=>b.replyId===binding.replyId&&data.exchanges.filter(e=>e.replyLine<candidate.line).at(-1)===exchange});
  } else approvedText=correctedVersion(ideaText,expected);
- let approvedProjectText;
- if(createProject){
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mono-shown-idea-'));
-  try{
-   const draft=path.join(directory,'approved.md');fs.writeFileSync(draft,approvedText);
-   const run=spawnSync(process.execPath,[path.join(request.packRoot,'scripts/idea-gate.mjs'),'record','--draft',draft,'--out',directory,'--config',request.configFile],{encoding:'utf8'});
-   if(run.status!==0)throw new Error('complete shown Idea cannot generate the project body');
-   approvedProjectText=fs.readFileSync(path.join(directory,'body.md'),'utf8');
-  }finally{fs.rmSync(directory,{recursive:true,force:true});}
- }
+ const approvedProjectText=createProject?ideaProjectBody(request,approvedText):undefined;
  const prose=approvalBlocks(body).filter(b=>!b.fenced).map(b=>b.text).join('\n').split(/\r?\n/);
  if(!createProject) {
   const quotedReply=expected.by==='orchestrator'&&expected.stage==='idea'?binding.ownerEvidence?.reply:expected.reply;
@@ -567,6 +574,8 @@ export function verifyRecords(request){
  const traces=[...scenarioTraces,...dumpTraces];
  try{
   const violation=runViolations(traces,request);if(violation)return violation;
+  const historical=dialogueMode(testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))==='windows';
+  if(historical&&scenarioTraces.some(source=>source.expectedReplies!==undefined))throw new Error('legacy acceptance requires real windows, not text replies');
   const load=(source,dump)=>{
    const full=nativeRecords(source.host,source.trace),data=nativeRecords(source.host,source.trace,!dump&&source.expectedReplies?undefined:source.endLine);
    data.sent=source.sent;
@@ -853,7 +862,6 @@ export function verifyRecords(request){
     source.exchanges.filter(e=>e.replyLine<write.line).at(-1)===exchange&&recordWrite(write,marker,dump));
    if(exchange.expected.outcome.approval&&!approvedExchanges.has(exchange)&&!awaitingBinding)throw new Error('expected approval missing actual record bound to shown version');
   }
-  const historical=dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))==='windows'&&!request.expectedReplies;
   const requiredChecks=[{id:'records',status:bindingGaps.length?'unverified':'passed'}];
   let windowExchanges;
   if(historical){

@@ -10,3 +10,4 @@
 - Excluded Claude child events from historical approval presentation lookups and last-visible-summary checks, preventing both false rejections and confirmation of scout-only text.
 - Preserved eligible Claude parent summaries when the approval window has a different message ID, without borrowing hidden scout text or summaries superseded by parent text or service work.
 - Made historical records fail closed on missing window checks or conversation judgments, with rubric input built from native exchanges; approval requires an actual approving option or exact scenario correction text, and offline Claude may use already verified receipt answers.
+- Selected historical record checks by the tested version, rejecting text-reply metadata before authorization; named corrections reuse the snapshot and canonical project-body checks, accepting only the authorized revised artifact.
