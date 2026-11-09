@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { runReviewRound, parseReviewer, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, screenModelOutput, reviewGit, MAX_SCREEN_VALUE_BYTES } from './code-review.mjs';
+import { runReviewRound, parseReviewer, parseChecker, findingKey, scanSecrets, formatReviewReport, resolveReviewRoles, roleInvocation, subscriptionStatus, screenModelOutput, reviewGit, MAX_SCREEN_VALUE_BYTES, MAX_SCREEN_WORK } from './code-review.mjs';
 import { requiredPairings, validateModels } from './runtime.mjs';
 import { scoreCheckerProbes } from './code-review-eval.mjs';
 import { copyPluginFixture } from './plugin-fixture.mjs';
@@ -2327,6 +2327,53 @@ test('C54: exact nested source representations are checked before either role la
   }});
   assertUnchecked(result);assert.ok(!roles.includes(role));assert.ok(result.unreviewedFiles.includes(file));assert.match(result.failures.at(-1).reason,/final role prompt/);
 });
+});
+
+test('C68: ordinary object screening has linear regex work independent of timing',()=>{
+ const work=[],meter=[];
+ for(const count of [4000,8000,16000,32000]){
+  const source='export const rows = ['+'{a:1},'.repeat(count)+'];\n';
+  const original=RegExp.prototype.test;let units=0,screened;
+  // Count the actual regex input inspected by the consumer, including runtime
+  // token classification. Abort the old quadratic scan before it stalls a test.
+  RegExp.prototype.test=function(value){units+=String(value).length;assert.ok(units<=source.length*256,'repeated growing-state scan exceeded linear work');return original.call(this,value);};
+  try{screened=screenModelOutput(source,{input:true,inputFile:'generated.mjs'});}finally{RegExp.prototype.test=original;}
+  assert.equal(screened.rejected,false);assert.equal(screened.value,source);work.push(units);
+  assert.equal(screened.screeningWork.exhausted,false);assert.ok(screened.screeningWork.limit<=MAX_SCREEN_WORK);
+  assert.deepEqual(Object.keys(screened.screeningWork),['units','limit','exhausted'],'analysis caches must stay private');
+  meter.push(screened.screeningWork.units);
+ }
+ for(let index=1;index<work.length;index++)assert.ok(work[index]<=work[index-1]*2.2,'doubling objects exceeded near-linear work');
+ for(let index=1;index<meter.length;index++)assert.ok(meter[index]<=meter[index-1]*2.2,'doubling objects exceeded near-linear total screening work');
+});
+
+test('C68: JWT suffix candidates reuse decoded alignment bytes with bounded work',()=>{
+ const source='e-'.repeat(2048)+'.b.c',original=Buffer.from;let bytes=0,result;
+ Buffer.from=function(value,encoding,...rest){if(typeof value==='string'&&encoding==='base64url')bytes+=value.length;return original.call(this,value,encoding,...rest);};
+ try{result=screenModelOutput(source,{input:true});}finally{Buffer.from=original;}
+ assert.equal(result.rejected,false);assert.equal(result.value,source);assert.ok(bytes<=64*source.length,'JWT suffixes rebuilt growing byte tails');
+});
+
+test('C68: repeated comment openers consume a finite native binding-search allowance',()=>{
+ const source='password /* note '.repeat(4000),safe=screenModelOutput(source,{input:true,inputFile:'generated.mjs'});
+ assert.equal(safe.screeningWork.exhausted,true);assert.equal(safe.rejected,true);assert.equal(safe.fatal,true);assert.equal(safe.fullyWithheld,true);
+ assert.ok(!safe.value.includes('password'));
+});
+
+test('C68: finite screening work withholds an entire file before any role sees its values',async t=>{
+ for(const separator of [',','/'])await t.test('overlapping RHS '+separator,async t=>{
+ const source=('password=opaqueBudgetC68Value'+separator).repeat(4000)+'end\n';
+ const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
+ assert.equal(safe.screeningWork?.exhausted,true,'explicit finite work budget must refuse overlapping RHS work');
+ assert.equal(safe.rejected,true);assert.equal(safe.fatal,true);assert.equal(safe.fullyWithheld,true);
+ assert.ok(!JSON.stringify(safe).includes('opaqueBudgetC68Value'));
+ assert.throws(()=>screenModelOutput(source,{input:true,inputFile:'input.mjs',strict:true}),/^Error: model output withheld by secret screen$/);
+ const matches=scanSecrets(source,{file:'input.mjs',patch:false});assert.ok(matches.length);assert.ok(!JSON.stringify(matches).includes('opaqueBudgetC68Value'));
+ const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source);f.git('add','.');f.git('commit','-qm','C68 screening work exhaustion');let calls=0;
+ const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async()=>{calls++;assert.fail('work-exhausted file reached a role');}});
+ assert.equal(calls,0);assertUnchecked(result);assert.ok(result.unreviewedFiles.includes('input.mjs'));
+ assert.ok(!JSON.stringify(result).includes('opaqueBudgetC68Value'));
+ });
 });
 
 test('C67: credential RHS tokens are remembered independently of syntax and delimiters',async t=>{

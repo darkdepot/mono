@@ -1783,6 +1783,26 @@ failed answers, metadata, legacy records and derived text. One screen analyzes r
 are withheld (2 MiB per string/key or screened text, checked before parsing and matching; 8 decoding layers, 32 structural levels; role diagnostics: 4096 nodes, 256 KiB, 8 KiB
 retained; records/rendering: 131072 nodes, 16 MiB). Interruption stops
 later evaluation calls and remains a scored row.
+Source frames accumulate binding state as tokens arrive; literal chains splice
+without copying parent lists. Statement ends and quoted containers are indexed
+once, source line positions advance monotonically, and merged coverage intervals
+replace per-binding rescans. Every screening call shares a finite work meter
+across its nested decoders, token scans, paths and coverage checks: at most
+128 Mi character/token work units, with a string allowance of 65,536 plus 512
+units per UTF-16 code unit. Overlapping RHS inventories and other expensive
+analysis consume that allowance before continuing. Native binding searches
+reserve their comment-backtracking bound before entering the regexp without
+narrowing the accepted binding syntax. Exhaustion withholds the whole input
+with the existing marker, marks the file unchecked and returns
+`not-reviewed`; strict consumers refuse it. The final assembled-prompt value
+barrier has the same finite bound. Counts appear as `screeningWork`; they are
+deterministic work estimates, not elapsed-time or CPU limits.
+Pure family, key, escape, binding and token analyses are reused within that
+call; their caches remain private and never enter prompts or returned metrics.
+JWT suffix searches reuse four decoded byte alignments and skip impossible
+native JSON object starts; the prior conservative header-work limit remains.
+Recorded C68 checks use 4k/8k/16k/32k ordinary objects without wall-clock thresholds and
+exercise budget exhaustion through the actual round with no role launch.
 Circle-owned text subprocesses capture stdout and stderr: Git reads,
 the native catalog, subscription checks and role launches. Non-role streams and their joined content cross the same family/key screen before diagnostics, metadata writes or forwarding. Role stdout keeps parsed JSON envelopes and screened answer values; role stderr is screened separately. Pinned export blobs stream into private files, then cross the source screen before file tools read them; their stderr is screened. The native catalog is consumed transiently without withholding and its unused stderr is discarded; its derived outgoing catalog is screened before it is written for the role. Safe redaction continues on both streams; unscreenable input withholds them on success,
 failure or interruption; Git errors expose no raw subprocess diagnostics. Source-text rule-2 matches hide entire original lines/blocks, while JSON blob values redact in place; both preserve patch prefixes and line counts; fully withheld inputs force `not-reviewed`. Exported unreadable, over-limit and wholly hidden text files are named as unchecked even outside the diff; binary assets are excluded as described above. A fatal or rejected screen exports only the existing safe marker, never its value; the path is wholly unchecked. If any task-base, previous-round or head side is unchecked, the entire file is excluded from both diff views; its export, pinned evidence and project rules contain only the existing safe marker. The path is named unchecked even when the other sides pass. Pinned checker evidence and named-file Git stdout also withhold rejected values; normal accepted line masks and exact identity-only raw reads are unchanged. Line masks with readable content remaining are reported as partial coverage in role prompts, saved rounds and the owner report, including unchanged exported files. Raw blob buffers for pinned identity and exact contract hashes retain their bytes without printing or logging. Prompt diff/blob text is redacted; role file tools read the same screened source. All fatal UTF-8 readers preserve the BOM in source, child output, diff hunks and base/head evidence; unaffected bytes are retained. There are no path-specific redaction exemptions.
