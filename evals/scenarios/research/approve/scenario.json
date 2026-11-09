@@ -46,7 +46,8 @@
             "discovery"
           ]
         }
-      ]
+      ],
+      "idleContinuation": "Продолжай."
     },
     "codex": {
       "expectedReplies": [

@@ -172,3 +172,39 @@ for(const host of ['claude','codex'])test(`${host}: late service work and a cut 
  rows.splice(1,0,host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id:'service',name:'Read',input:{file_path:'/scratch/example'}}]}}:{type:'response_item',payload:{type:'function_call',name:'exec_command',call_id:'service',arguments:'{"cmd":"pwd"}'}});
  assert.notEqual(check().status,'passed');
 });
+
+const liveContext=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-host-context-regressions.json',import.meta.url)));
+for(const syntheticReply of [false,true])test(`continue8 saved Claude Skill body is never an owner reply (${syntheticReply})`,t=>{
+ const rows=structuredClone(liveContext.synthetic.events),expected=JSON.parse(fs.readFileSync('evals/scenarios/idea/approve/scenario.json')).hosts.claude.expectedReplies;
+ if(syntheticReply){rows[7].message.content[0].text=expected[0].reply;rows.splice(3,1);}
+ const checked=textTrace({host:'claude',testedVersion:'0.45.0',trace:scratch(t)(rows),expectedReplies:expected});
+ assert.equal(checked.status,syntheticReply?'failed':'passed',JSON.stringify(checked));
+});
+for(const role of ['developer','system'])test(`continue8 saved Codex resumed ${role} context preserves actual owner reply`,t=>{
+ const rows=structuredClone(liveContext.context.events);rows.find(r=>r.payload?.role==='developer').payload.role=role;
+ const expected=JSON.parse(fs.readFileSync('evals/scenarios/idea/defer/scenario.json')).hosts.codex.expectedReplies;
+ const checked=textTrace({host:'codex',testedVersion:'0.45.0',trace:scratch(t)(rows),expectedReplies:expected});
+ assert.equal(checked.status,'passed',JSON.stringify(checked));assert.equal(checked.exchanges[0].reply,expected[0].reply);
+});
+for(const sample of liveContext.controls)test(`continue8 saved ${sample.id} service commentary is not a stranded presentation`,t=>{
+ const checked=textTrace({host:'codex',testedVersion:'0.42.0',trace:scratch(t)(sample.events),expectedWindows:sample.expectedWindows,phase:'excerpt'});
+ assert.equal(checked.status,'passed',JSON.stringify(checked));
+ const broken=structuredClone(sample.events),summary=broken.findLast(e=>e.payload?.role==='assistant'&&e.payload.phase==='final_answer').payload.content[0].text;
+ broken.find(e=>e.payload?.role==='assistant').payload.content[0].text=summary;
+ broken.findLast(e=>e.payload?.role==='assistant'&&e.payload.phase==='final_answer').payload.content[0].text='Короткое подтверждение.';
+ const bad=textTrace({host:'codex',testedVersion:'0.42.0',trace:scratch(t)(broken),expectedWindows:sample.expectedWindows,phase:'excerpt'});
+ assert.equal(bad.status,'failed');assert.match(bad.windows[0].issues.join(';'),/async summary must be final and last/);
+});
+for(const stage of ['idea','discovery','design','tech-evaluation','handoff'])for(const host of ['claude','codex'])test(`continue8 ${stage}/${host} clarification uses stems without accepting consent`,async()=>{
+ const {checkStageResponse}=await import('./skills-owner.mjs'),expected=JSON.parse(fs.readFileSync(`evals/scenarios/${stage}/empty/scenario.json`)).hosts[host].expectedReplies[0];
+ assert.doesNotThrow(()=>checkStageResponse(expected,liveContext.emptyResponse));
+ assert.throws(()=>checkStageResponse(expected,'Изменение принято. Начинаю следующий этап.'));
+});
+for(const sample of liveContext.controls)test(`continue8 ${sample.id} unanchored D5 cannot hide a stranded summary behind service text`,t=>{
+ const rows=structuredClone(sample.events),final=rows.findLast(r=>r.payload?.role==='assistant'&&r.payload.phase==='final_answer'),full=final.payload.content[0].text;
+ rows.find(r=>r.payload?.role==='assistant').payload.content[0].text=full;
+ const service={type:'response_item',payload:{type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text:'Продолжим после согласия.'}]}};
+ rows.splice(rows.findIndex(r=>r.payload?.name==='request_user_input_async'),0,service);final.payload.content[0].text='Продолжим после согласия.';
+ const checked=textTrace({host:'codex',testedVersion:'0.42.0',trace:scratch(t)(rows),expectedWindows:sample.expectedWindows.map(e=>({...e,role:'approval',summary:[]})),phase:'excerpt'});
+ assert.equal(checked.status,'failed',JSON.stringify(checked));assert.match(checked.windows[0].issues.join(';'),/async summary must be final and last/);
+});

@@ -148,3 +148,7 @@ export function personaPrompt(brief, lastMessage) {
   if (typeof brief !== 'string' || !brief.trim() || !lastMessage?.trim()) throw new Error('persona brief and stage message required');
   return `Ответь как владелец на последний свободный вопрос этапа. Не выбирай варианты окон и не утверждай документы. Используй только сведения брифа; неизвестное назови неизвестным. Ответь кратко обычным текстом.\n\nБриф:\n${brief}\n\nПоследнее сообщение этапа:\n${lastMessage}`;
 }
+
+// A message with a question or any summary section is never a progress-only
+// yield. A malformed consent offer must still fail its normal checks.
+export const progressOnly=(expected,message)=>typeof message==='string'&&Boolean(message.trim())&&!message.includes('?')&&!expected.summary.some(anchor=>message.includes(anchor));

@@ -1808,7 +1808,10 @@ blocking. The production driver, checker and record verifier select window mode
 only for tested versions before 0.43.0; current versions retain the window ban.
 Claude background-task yields and pending completion notifications wait for a fresh
 completed parent stage summary; progress before the notification-processing turn
-cannot trigger an owner reply. Idea
+cannot trigger an owner reply. A consumed native notification permits the
+completed parent turn; host-injected Skill bodies and resumed developer/system
+context never become owner replies. Claude scenarios permit one logged neutral
+idle continuation, then keep repeated progress unverified. Idea
 presentation titles stay outside the canonical four-section approval; absent
 presentation bindings remain unverified. Markerless legacy choices require an
 explicit scenario label (`expectedWindows.role: "choice"`); the checker still
@@ -1847,6 +1850,11 @@ the team: the fixed dump resolves it through project metadata or complete team
 reads before reading exact status UUIDs; ambiguous teams keep status verification
 unverified without discarding the issue dump. Recorded window failures remain
 failed even if later native answers or trace reads are missing.
+Resume can explicitly re-prepare bindings after a rubric digest exists; the old
+judgment is discarded and only the new digest can certify the annotations.
+Historical Codex sources omit owner rubric input only when a completed additional
+trace has no assistant text, window calls or writes. Scenario response anchors
+use stems/alternatives; malformed questions and unauthorized records still fail.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
 `references/owner-dialog.md` and `references/orchestration.md`, for retired window
 labels and answer-list formatting. History and old fixtures are outside that scope.

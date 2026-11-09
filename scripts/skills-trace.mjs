@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { MissingEvidence } from './skills-boundary.mjs';
-import { auditRows, completedTrace, codexTerminals } from './skills-audit.mjs';
+import { auditRows, completedTrace, codexTerminals, helperTrace } from './skills-audit.mjs';
 import { claudeWindows, traceRows, visibleText, textExchanges, checkEndings } from './skills-probe.mjs';
 import { roleWindows, windowRole, validateReplies, isOwnerWindow } from './skills-owner.mjs';
 
@@ -46,9 +46,12 @@ export function codexWindows(rows, source, options) {
     const work=preceding.findLast(r=>['function_call','custom_tool_call'].includes(r.item.type));
     // New tool work ends earlier progress. Reasoning, blank messages and delayed
     // results do not replace a presentation made after that work was requested.
-    const shown=preceding.findLast(r=>(!work||r.line>work.line)&&r.item.type==='message'&&r.item.role==='assistant'&&visible(textOf(r.item)))?.item;
-    const shownText=shown?.type==='message'&&shown.role==='assistant'?textOf(shown):'';
-    const finalSummary=visible(summary)&&(!visible(shownText)||summary.includes(shownText));
+    const presentations=preceding.filter(r=>(!work||r.line>work.line)&&r.item.type==='message'&&r.item.role==='assistant'&&visible(textOf(r.item)));
+    const unanchored=options?.expectedWindows?.some(expected=>!expected.summary.length)??false;
+    const shown=presentations.findLast(r=>!options?.expectedWindows||unanchored||options.expectedWindows.some(expected=>expected.summary.every(anchor=>textOf(r.item).includes(anchor))))?.item;
+    const shownText=shown?textOf(shown):'';
+    // Without anchors no later service line can erase an earlier presentation.
+    const finalSummary=visible(summary)&&(unanchored?presentations.every(r=>summary.includes(textOf(r.item))):!visible(shownText)||summary.includes(shownText));
     windows.push({ line: row.line, evidence: `${source}:${row.line}`, callId: p.call_id, questions: args?.questions ?? [],
       executionConfirmed, resultEvidence: proof.resultLine ? `${source}:${proof.resultLine}` : null,
       summary, summaryLine: last?.line, status: !executionConfirmed ? 'unverified' : finalSummary ? 'passed' : 'failed',
@@ -96,7 +99,7 @@ function checkWindowTrace({ host, trace, expectedWindows, expectedReplies, rules
     const { rows } = traceRows(trace,host,{endLine});
     if (rows.some(r => !r.value || typeof r.value.type !== 'string')) throw new Error('invalid trace envelope');
     const responses=host==='claude'&&sent?traceRows(sent,'claude').rows.map(r=>r.value):[];
-    const found = host === 'claude' ? claudeWindows(rows, trace, {phase,responses}) : codexWindows(rows, trace, {phase});
+    const found = host === 'claude' ? claudeWindows(rows, trace, {phase,responses}) : codexWindows(rows, trace, {phase,expectedWindows});
     let expectedIndex = 0;
     for (const [i, w] of found.entries()) {
       const role=roles?(windowRole(w.questions)??(expectedWindows[expectedIndex]?.role==='choice'&&w.questions.every(q=>q.options?.length)?'choice':null)):null,target=!roles||role!==null;
@@ -165,14 +168,16 @@ export function checkTrace(request) {
 export const worstStatus=(...statuses)=>statuses.includes('failed')?'failed':statuses.some(status=>status!=='passed')?'unverified':'passed';
 export function checkTraceSources(requests) {
  if(!Array.isArray(requests)||!requests.length)return {status:'unverified',sources:[],reason:'scenario trace sources missing'};
- const sources=requests.map(request=>{
-  try{return checkTrace(request);}catch(error){return {host:request?.host,trace:request?.trace,status:'unverified',windows:[],checks:[],reason:error.message};}
+ const sources=requests.map((request,index)=>{
+  try{
+   if(index>0&&request.expectedWindows===undefined&&request.expectedReplies===undefined&&helperTrace(request.host,traceRows(request.trace,request.host,{endLine:request.endLine}).rows))return {host:request.host,trace:request.trace,kind:'helper',status:'passed',windows:[],checks:[{id:'helper',status:'passed',reason:'completed tool-only source; no owner text, windows or writes'}]};
+   return checkTrace(request);}catch(error){return {host:request?.host,trace:request?.trace,status:'unverified',windows:[],checks:[],reason:error.message};}
  });
  return {status:worstStatus(...sources.map(source=>source.status)),sources};
 }
 // Shared with the probe and record verifier; expected words/outcomes stay in the
 // scenario. No approval is inferred from a Russian phrase or a model's verdict.
-function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase='complete',stageStartLine,rulesRoot=root}) {
+function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase='complete',stageStartLine,idleContinuation,rulesRoot=root}) {
   const checks=[],exchanges=[];
   let rows;
   try{({rows}=traceRows(trace,host));}catch(error){return {host,trace,status:'unverified',windows:[],checks,reason:error.message};}
@@ -184,7 +189,7 @@ function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase='compl
     const audit=auditRows(host,rows);
     const windows=audit.calls.filter(c=>isOwnerWindow(c.name));
     if (windows.length) throw new Error(`stage called a window: ${windows[0].name} at ${trace}:${windows[0].line}`);
-    exchanges.push(...textExchanges(host,rows,expectedReplies,{startLine:stageStartLine}));
+    exchanges.push(...textExchanges(host,rows,expectedReplies,{startLine:stageStartLine,idleContinuation}));
     checkEndings(exchanges);
     if (phase!=='excerpt'&&!completedTrace(host,rows)) return {host,trace,status:'unverified',windows:[],exchanges,checks,reason:'successful terminal event missing'};
     return {host,trace,status:'passed',windows:[],exchanges,checks,boundary:'mechanical checks; predetermined outcomes and exact native replies, conversation quality still requires rubric'};

@@ -41,7 +41,8 @@
                 "уточн",
                 "непонят",
                 "обсуд",
-                "измени"
+                "измен",
+                "сомн"
               ]
             ],
             "forbidden": [],
@@ -50,7 +51,8 @@
           "presentation": "document",
           "driverStart": null
         }
-      ]
+      ],
+      "idleContinuation": "Продолжай."
     },
     "codex": {
       "expectedReplies": [
@@ -85,7 +87,8 @@
                 "уточн",
                 "непонят",
                 "обсуд",
-                "измени"
+                "измен",
+                "сомн"
               ]
             ],
             "forbidden": [],

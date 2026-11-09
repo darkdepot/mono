@@ -2200,3 +2200,40 @@ test('D2 Codex native completed MCP approval binds its uniquely proved exec invo
  assert.equal(f.check().status,'passed',JSON.stringify(f.check()));
  f.request.approvalBindings[1].currentLine=i;assert.notEqual(f.check().status,'passed','a neighbouring exec is not this approval');
 });
+
+const contextNative=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-host-context-regressions.json',import.meta.url)));
+test('continue8 saved non-null rubric digest permits explicit binding re-preparation only',async t=>{
+ assert.equal(contextNative.bindingCapture.hadRubricDigest,true,'saved live capture reached this state');
+ const f=textIdeaFixture(t),expected=f.request.expectedReplies[0],full=f.request.approvalBindings[1].text;
+ Object.assign(expected,{question:{anchors:['описание']},presentation:'inline',driverStart:null,response:{anchors:['запис'],question:false}});
+ for(const b of f.request.approvalBindings)b.artifactEnd=full.length;
+ f.request.rubricDefinition='Full shown four-section Idea, native owner consent and canonical persisted version.';
+ fs.mkdirSync(path.join(f.dir,'.agents'));fs.copyFileSync(f.request.configFile,path.join(f.dir,'.agents/mono-workflow.config.json'));
+ const bindingsFile=path.join(f.dir,'annotations.json'),input={run:{trace:f.request.trace,stageStartLine:f.request.stageStartLine},runRequest:{host:'codex',cwd:f.dir,packRoot:process.cwd(),context:{skillPrefix:'mono',projectName:f.request.project.name},scenario:{expectedReplies:f.request.expectedReplies,rubricDefinition:f.request.rubricDefinition},mcpServers:{monotest:{url:'test'}}},scenario:{expectedRecords:f.request.expectedRecords},project:f.request.project,outputDir:path.join(f.dir,'saved-unbound')};
+ const first=await verifyTextScenarioRecords(input,async()=>({status:'passed',trace:f.request.dumpTrace,dumpDir:f.request.dumpDir}));
+ assert.equal(first.status,'unverified',JSON.stringify(first));assert.ok(first.rubricDigest,'bindingOnly live captures already have a rubric digest');
+ const stale={digest:first.rubricDigest,reviewer:'old review',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'native captured fixture',reason:'reviewed old unbound input'}))};
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings,rubric:stale}));
+ const reuse=()=>{throw Error('binding preparation must not collect or rerun a stage');};
+ await assert.rejects(()=>verifyTextScenarioRecords({...input,resumeEvidence:first.reviewEvidence,bindingsFile},reuse),/saved bindings changed/);
+ const prepared=await verifyTextScenarioRecords({...input,resumeEvidence:first.reviewEvidence,bindingsFile,prepareReview:true},reuse);
+ assert.equal(prepared.status,'unverified',JSON.stringify(prepared));assert.ok(prepared.rubricDigest);assert.notEqual(prepared.rubricDigest,first.rubricDigest);
+ const saved=JSON.parse(fs.readFileSync(prepared.reviewEvidence));assert.equal(saved.request.rubric,undefined,'preparation discards old judgments');
+ assert.equal((await verifyTextScenarioRecords({...input,resumeEvidence:prepared.reviewEvidence,bindingsFile},reuse)).status,'unverified','old digest never certifies new bindings');
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings,rubric:{...stale,digest:prepared.rubricDigest}}));
+ assert.equal((await verifyTextScenarioRecords({...input,resumeEvidence:prepared.reviewEvidence,bindingsFile},reuse)).status,'passed');
+});
+for(const mode of ['empty','owner-text','window','write','cut','explicit-policy'])test(`continue8 historical Codex helper source ${mode} cannot bypass owner checks`,t=>{
+ const f=historicalRecords(t,'codex'),trace=path.join(f.dir,'native-helper.jsonl');
+ const rows=[{type:'event_msg',payload:{type:'task_started',turn_id:'helper'}},{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__get_workspace',call_id:'helper-read',arguments:'{}'}},{type:'response_item',payload:{type:'function_call_output',call_id:'helper-read',output:'{"name":"Mono Test"}'}}];
+ if(mode==='owner-text')rows.push({type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Owner-visible scout summary.'}]}});
+ if(mode==='window')rows.push({type:'response_item',payload:{type:'function_call',name:'request_user_input_async',call_id:'helper-window',arguments:'{"questions":[{"title":"Approve?"}]}'}});
+ if(mode==='write')rows.push({type:'response_item',payload:{type:'function_call',name:'mcp__monotest__save_project',call_id:'helper-write',arguments:'{"name":"No authority"}'}});
+ if(mode!=='cut')rows.push({type:'event_msg',payload:{type:'task_complete',turn_id:'helper'}});
+ fs.writeFileSync(trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
+ f.request.additionalTraces=[{host:'codex',trace,...(mode==='explicit-policy'?{expectedWindows:f.request.expectedWindows,windows:f.request.windows}:{})}];
+ if(mode==='empty'){
+  const first=f.attest();assert.equal(first.rubricInput.sources.length,1,'tool-only helper is not an owner-rubric source');
+  const result=f.check();assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.windowChecks[1].kind,'helper');assert.equal(result.windowChecks[1].status,'passed');
+ }else assert.notEqual(f.check().status,'passed',JSON.stringify(f.check()));
+});

@@ -1,4 +1,4 @@
-import { codexToolCalls, MissingEvidence } from './skills-boundary.mjs';
+import { codexToolCalls, MissingEvidence, isWrite } from './skills-boundary.mjs';
 import { nativeProof } from './skills-proof.mjs';
 
 // Tool actions are audited; informational host events remain open.
@@ -75,27 +75,28 @@ export function auditRows(host, rows, {stdout = false} = {}) {
 function turnState(host, rows, options) {
   const audit=auditRows(host,rows,options),terminals=[],activityLines=new Set();
   const calls=new Set(audit.calls.map(c=>c.line));
-  let turnId,lastActivity,identified=false,notificationPending=false;const background=new Set();
+  let turnId,lastActivity,identified=false;const background=new Set(),backgroundTasks=new Set(),notifications=new Set();
   for(const row of rows) {
     const e=row.value,p=e.payload;
     if(e.parent_tool_use_id)continue;
     if(host==='claude'&&e.type==='system'){
-      if(e.subtype==='init')notificationPending=false;
+      if(e.subtype==='init')notifications.clear();
       if(e.subtype==='background_tasks_changed'&&Array.isArray(e.tasks)){
-        background.clear();for(const task of e.tasks)if(typeof task.task_id==='string')background.add(task.task_id);
-      }else if(e.subtype==='task_started'&&e.is_backgrounded&&typeof e.task_id==='string')background.add(e.task_id);
-      else if(e.subtype==='task_notification'&&['completed','failed','stopped'].includes(e.status)){background.delete(e.task_id);notificationPending=true;}
+        background.clear();for(const task of e.tasks)if(typeof task.task_id==='string'){background.add(task.task_id);backgroundTasks.add(task.task_id);}
+      }else if(e.subtype==='task_started'&&e.is_backgrounded&&typeof e.task_id==='string'){background.add(e.task_id);backgroundTasks.add(e.task_id);}
+      else if(e.subtype==='task_notification'&&['completed','failed','stopped'].includes(e.status)){background.delete(e.task_id);if(backgroundTasks.has(e.task_id))notifications.add(e.run_id??e.task_id);}
     }
+    if(host==='claude'&&e.type==='user'&&e.origin?.kind==='task-notification')notifications.delete(e.origin.runId);
     if(host==='codex'&&e.type==='event_msg'){
       if(['task_started','task_complete'].includes(p?.type)&&p.turn_id!==undefined)identified=true;
       if(p?.type==='task_started')turnId=p.turn_id;
     }
     const terminal=audit.proof({kind:'terminal',result:e}).status==='confirmed' &&
-      (host==='claude'?!background.size&&!notificationPending:p?.turn_id===turnId&&(!identified||typeof turnId==='string'&&turnId.length>0));
+      (host==='claude'?!background.size&&!notifications.size:p?.turn_id===turnId&&(!identified||typeof turnId==='string'&&turnId.length>0));
     if(terminal){terminals.push(row);if(host==='codex')turnId=undefined;}
     const activity=host==='claude'
-      ? ['assistant','user','result','control_request'].includes(e.type)||(e.type==='system'&&['init','background_tasks_changed','task_started','task_notification'].includes(e.subtype))
-      : (e.type==='response_item'&&['message','reasoning','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(p?.type)) ||
+      ? (['assistant','user','result','control_request'].includes(e.type)&&!(e.type==='user'&&e.isSynthetic===true))||(e.type==='system'&&['init','background_tasks_changed','task_started','task_notification'].includes(e.subtype))
+      : (e.type==='response_item'&&(['reasoning','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(p?.type)||p?.type==='message'&&['assistant','user'].includes(p.role))) ||
         (e.type==='event_msg'&&['task_complete','task_started','turn_aborted','error','item_started','item_completed','user_message','agent_message','agent_reasoning','agent_reasoning_raw_content'].includes(p?.type));
     if(activity||calls.has(row.line)){lastActivity=row;activityLines.add(row.line);}
   }
@@ -109,7 +110,7 @@ export function parentTurns(host, rows) {
   const terminalLines=new Set(terminals.map(r=>r.line));
   let candidate=null,pending=null;
   for (const {value:e,line} of rows) {
-    if (e.parent_tool_use_id) continue;
+    if (e.parent_tool_use_id || host==='claude'&&e.type==='user'&&(e.isSynthetic===true||e.origin?.kind==='task-notification')) continue;
     const turnStart=host==='codex'?e.type==='event_msg'&&e.payload?.type==='task_started':e.type==='system'&&e.subtype==='init';
     const message=audit.proof({kind:'text-message',result:e});
     if (message.status==='confirmed'&&message.role==='user') {
@@ -147,4 +148,16 @@ export function completedTrace(host, rows, options) {
     return audit.proof({kind:'terminal',result:rows.at(-1)?.value}).status==='confirmed';
   }
   return turnState(host,rows,options).complete;
+}
+
+// Only an additional, completed tool-only Codex source can omit owner policy.
+// Callers still audit every native action, record and fresh-read obligation.
+export function helperTrace(host,rows) {
+ if(host!=='codex'||!completedTrace(host,rows))return false;
+ const audit=auditRows(host,rows);
+ if(audit.calls.some(c=>['AskUserQuestion','request_user_input','request_user_input_async'].includes(c.name)||isWrite(c.name)))return false;
+ return !rows.some(({value:e})=>{
+  const p=e.payload,proof=audit.proof({kind:'text-message',result:e});
+  return proof.status==='confirmed'&&proof.role==='assistant'&&proof.value.trim() || p?.type==='agent_message'&&Boolean(p.text?.trim());
+ });
 }

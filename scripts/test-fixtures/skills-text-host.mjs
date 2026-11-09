@@ -43,6 +43,7 @@ input.on('line',line=>{
   if(args.includes('--replay-user-messages')&&mode!=='drop-reply')out(e);
   if(mode==='extra-owner'&&e.message.content[0].text!=='Run text')out({...e,message:{role:'user',content:[{type:'text',text:'Начинай Research'}]}});
   const prompt=e.message.content[0].text,text=plan?plan.messages[planTurn++]:prompt==='Run text'?message:response();
+  if(plan?.idlePrefix&&planTurn===1){for(const event of plan.idlePrefix)out(event);return;}
   if(plan?.nativeBackground&&planTurn===1){
    for(const event of plan.nativeBackground)out(event);
    if(plan.omitContinuation)setTimeout(()=>process.exit(0),30);

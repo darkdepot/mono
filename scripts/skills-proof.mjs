@@ -68,7 +68,7 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
     guarded(call); guarded(result);
     if (kind === 'text-message') {
       const r=native(result);
-      if (host==='claude' && (result?.parent_tool_use_id || !['assistant','user'].includes(result?.type))) absent();
+      if (host==='claude' && (result?.parent_tool_use_id || result?.type==='user'&&(result.isSynthetic===true||result.origin?.kind==='task-notification') || !['assistant','user'].includes(result?.type))) absent();
       if (host==='codex' && (r?.type!=='message' || !['assistant','user'].includes(r.role))) absent();
       const role=host==='claude'?result.type:r.role;
       const content=host==='claude'?at(result,['message','content']):at(r,['content']);

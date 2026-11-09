@@ -7,9 +7,9 @@ import { auditRows, parentTurns } from './skills-audit.mjs';
 import { RecordDump } from './skills-dump.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 import { hostProcess } from './skills-process.mjs';
-import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount, textReply, validateReplies, isOwnerWindow, checkStageResponse } from './skills-owner.mjs';
+import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount, textReply, validateReplies, isOwnerWindow, checkStageResponse, progressOnly } from './skills-owner.mjs';
 import { checkTrace, checkTraceSources, worstStatus, codexItems, codexWindows, visible, completedTrace, codexTerminals } from './skills-trace.mjs';
-import { traceRows } from './skills-probe.mjs';
+import { traceRows, textStageTurns } from './skills-probe.mjs';
 import { mcpConfig, privateCodexHome, toolViolation, workspaceReadCall, workspaceReadCode, MissingEvidence, isWrite } from './skills-boundary.mjs';
 
 import { dialogueMode, testedVersion, permittedStages } from './skills-stage-driver.mjs';
@@ -48,6 +48,7 @@ function validate(request){
   if(!request.scenario?.prompt?.trim()||(!request.readOnlyDump&&!request.scenario.expectedReplies&&!request.scenario.expectedWindows?.length)||(request.scenario.allowedTools!==undefined&&request.scenario.allowedTools!=='*'&&!Array.isArray(request.scenario.allowedTools))||(!request.readOnlyDump&&!request.scenario.expectedReplies&&!request.scenario.windows?.length))throw new Error('scenario prompt, expectedWindows, allowedTools and policies required');
   if(!request.readOnlyDump&&dialogueMode(request.testedVersion)==='windows'&&request.scenario.expectedReplies)throw new Error('legacy acceptance requires real windows');
   if(!request.readOnlyDump&&dialogueMode(request.testedVersion)==='text'&&!request.scenario.expectedReplies)throw new Error('window scenarios are retired from 0.43.0');
+  if(request.scenario.idleContinuation!==undefined&&request.scenario.idleContinuation!=='Продолжай.')throw new Error('idle continuation must be the neutral scenario text Продолжай.');
   if(request.scenario.expectedReplies){validateReplies(request.scenario.expectedReplies);if(request.scenario.expectedWindows?.length||request.scenario.windows?.length)throw new Error('scenario must choose text replies or windows');}
   const proof=request.workspaceProof;
   if(!/^mcp__monotest__\w+$/.test(proof?.tool??'')||!Array.isArray(proof.path)||proof.equals==null||isWrite(proof.tool))throw new Error('explicit monotest read proof required');
@@ -94,17 +95,17 @@ export async function runClaude(request){
   const toolPolicy=request.scenario.allowedTools??'*';
   const allowed=toolPolicy.includes('*')?null:toolPolicy.filter(n=>!n.startsWith('mcp__'));if(dialogueMode(request.testedVersion)==='windows'&&allowed&&!allowed.includes('AskUserQuestion'))allowed.push('AskUserQuestion');
   const args=[...(request.writableRoots?.length?['--add-dir',...request.writableRoots]:[]),'-p','--verbose','--input-format','stream-json','--output-format','stream-json',...(request.scenario.expectedReplies?['--replay-user-messages']:[]),'--permission-prompt-tool=stdio','--strict-mcp-config','--mcp-config',config,'--plugin-dir',request.packRoot,'--setting-sources','','--settings',JSON.stringify({enabledPlugins:{'mono@mono-marketplace':false}}),...(allowed?['--tools',allowed.join(',')]:[]),...modelArgs(request)];
-  const calls=new Map(),receipts=new Map(),replies=[],freeReplies=[],seenRequests=new Set(),pendingWindows=[];let confirmed=false,phase='confirm',seedEndLine,stageStartLine,lastMessage='',freeIndex=0,waiting=false,violation=null,evidenceMissing=null,endLine,seedRoute,hostFailure=false;
-  const personaTasks=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000);let lastFreeQuestion;
+  const calls=new Map(),receipts=new Map(),replies=[],freeReplies=[],nudges=[],seenRequests=new Set(),pendingWindows=[];let confirmed=false,phase='confirm',seedEndLine,stageStartLine,lastMessage='',freeIndex=0,waiting=false,violation=null,evidenceMissing=null,endLine,seedRoute,hostFailure=false;
+  const personaTasks=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000);let lastFreeQuestion,pendingProgress;
   const persona=question=>{
     const task=runPersona({...request,timeoutMs:Math.max(1,deadline-Date.now())},question,freeIndex++);
     personaTasks.add(task);task.then(()=>personaTasks.delete(task),()=>personaTasks.delete(task));return task;
   };
-  const beginTurn=()=>{waiting=false;lastMessage='';};
+  const beginTurn=()=>{waiting=false;lastMessage='';pendingProgress=null;};
   const deny=(e,message,c)=>c.send({type:'control_response',response:{subtype:'success',request_id:e.request_id,response:{behavior:'deny',message}}});
   const fail=(reason,c)=>{violation=reason;c.stop(reason);};
   const missing=(reason,c)=>{evidenceMissing=reason;c.stop(reason);};
-  const processResult=await hostProcess({binary:request.binary??{command:'claude'},args,cwd:request.cwd,env:childEnv(),trace,sent,stderr:path.join(request.outputDir,'stderr.log'),timeoutMs:request.timeoutMs??3_600_000,idleMs:request.idleMs??240_000,
+  const processResult=await hostProcess({binary:request.binary??{command:'claude'},args,cwd:request.cwd,env:childEnv(),trace,sent,stderr:path.join(request.outputDir,'stderr.log'),timeoutMs:request.timeoutMs??3_600_000,idleMs:request.scenario.expectedReplies?Math.min(request.idleMs??1000,1000):request.idleMs??240_000,
     input:userMessage(`Только чтение: вызови ${request.workspaceProof.tool}, покажи пространство. Ничего не записывай; затем остановись.`),
     onEvent:(e,c,line)=>{
       let audit;try{audit=auditRows('claude',[{value:e,line:0}]);}catch(error){return missing(error.message,c);}
@@ -176,10 +177,12 @@ export async function runClaude(request){
         }else if(request.readOnlyDump){waiting=true;endLine=line;c.complete();
         }else if(request.scenario.expectedReplies){
           if(replies.some(r=>!r.received))return missing('text reply not observed in native trace',c);
-          const stageTurns=parentTurns('claude',traceRows(trace,'claude').rows).filter(t=>t.line>stageStartLine);
+          const rows=traceRows(trace,'claude').rows,rawTurn=parentTurns('claude',rows).at(-1);
+          const {turns:stageTurns}=textStageTurns('claude',rows,request.scenario.expectedReplies,{startLine:stageStartLine,idleContinuation:request.scenario.idleContinuation});
           // Native background tasks continue without an owner message. Their yield
           // result is not the completed stage offer; keep stdin open for the host.
-          if(stageTurns.at(-1)?.terminalLine!==line)return;
+          if(rawTurn?.terminalLine!==line)return;
+          if(!targetsAnswered(request,replies)&&progressOnly(request.scenario.expectedReplies[replies.length],rawTurn.text)){pendingProgress={line:rawTurn.line,terminalLine:line};c.idle();return;}
           if(stageTurns.length!==replies.length+1)return fail('unexpected stage turn without scenario policy',c);
           if(targetsAnswered(request,replies)){
             const turn=stageTurns.at(-1);
@@ -198,6 +201,12 @@ export async function runClaude(request){
       }else if(waiting)c.idle();
     },
     onIdle:async c=>{
+      if(pendingProgress){
+        const rows=traceRows(trace,'claude').rows;
+        if(!completedTrace('claude',rows)||parentTurns('claude',rows).at(-1)?.terminalLine!==pendingProgress.terminalLine)return;
+        if(nudges.length||!request.scenario.idleContinuation)return missing('completed idle progress turn without a fresh stage offer',c);
+        nudges.push({...pendingProgress,text:request.scenario.idleContinuation,kind:'non-consent'});beginTurn();c.send(userMessage(request.scenario.idleContinuation));return;
+      }
       const free=request.scenario.freeQuestions?.[freeIndex];
       if((free&&lastMessage.includes(free.contains))||(roleWindows(request.scenario.expectedWindows)&&lastMessage.includes('?'))){
         const question=lastMessage;
@@ -207,7 +216,7 @@ export async function runClaude(request){
     }});
   await Promise.allSettled([...personaTasks]);
   if(!waiting&&!violation&&!evidenceMissing&&processResult.code===0&&!processResult.failure)evidenceMissing='fresh Claude parent terminal missing after last sent continuation';
-  return finishRun(request,{trace,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,stageStartLine,...(dump?{dumpComplete:dump.done,dumpFiles:dump.files,dumpStatusGaps:dump.statusGaps}:{}),process:processResult,violation,evidenceMissing,hostFailure,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
+  return finishRun(request,{trace,sent,replies,freeReplies,nudges,confirmed,seedRoute,seedEndLine,stageStartLine,...(dump?{dumpComplete:dump.done,dumpFiles:dump.files,dumpStatusGaps:dump.statusGaps}:{}),process:processResult,violation,evidenceMissing,hostFailure,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
 }
 
 function rolloutFiles(home){
@@ -393,7 +402,7 @@ function finishRun(request,run){
     const status=run.violation?'failed':reason||!run.confirmed||!complete||run.process?.code!==0?'unverified':'passed';
     return {host:request.host,...run,status,hostFailure:Boolean(!run.violation&&(run.hostFailure||run.process&&(run.process.failure||run.process.code!==0))),reason:reason??(!complete?'incomplete dump trace':null)};
   }
-  const primary={host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,expectedReplies:request.scenario.expectedReplies,rulesRoot:request.rulesRoot,testedVersion:request.testedVersion,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent};
+  const primary={host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,expectedReplies:request.scenario.expectedReplies,rulesRoot:request.rulesRoot,testedVersion:request.testedVersion,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent,idleContinuation:request.scenario.idleContinuation};
   const historical=dialogueMode(request.testedVersion)==='windows';
   const additional=historical?(run.auditedTraces??[]).filter(trace=>trace!==run.trace).map(trace=>({host:request.host,trace,rulesRoot:request.rulesRoot,testedVersion:request.testedVersion})):[];
   const checked=checkTraceSources([primary,...additional]),check=checked.sources[0];

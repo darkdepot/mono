@@ -369,6 +369,7 @@ function windowRequest(request,source){
 }
 function historicalSource(request,checked){
  const source={host:request.host,trace:request.trace,definition:request.rubricDefinition,traceHash:null,...checked,exchanges:null};
+ if(checked.kind==='helper')return {...source,traceHash:sha256(fs.readFileSync(request.trace)),definition:null,exchanges:[]};
  try{
   source.traceHash=sha256(fs.readFileSync(request.trace));
   const data=nativeRecords(request.host,request.trace,request.endLine),plans=windowPlans(request,data);
@@ -599,7 +600,7 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
 
 export function verifyRecords(request){
  const gateResults=[],observedStarts=[],requiredChecks=[],windowChecks=[];
- const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,stageStartLine:request.stageStartLine,sent:request.sent,expectedReplies:request.expectedReplies,expectedWindows:request.expectedWindows,windows:request.windows,rubricDefinition:request.rubricDefinition},...(request.additionalTraces??[])];
+ const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,stageStartLine:request.stageStartLine,sent:request.sent,idleContinuation:request.idleContinuation,expectedReplies:request.expectedReplies,expectedWindows:request.expectedWindows,windows:request.windows,rubricDefinition:request.rubricDefinition},...(request.additionalTraces??[])];
  const dumpTraces=[...(request.dumpTrace?[{host:request.host,trace:request.dumpTrace}]:[]),...(request.dumpAdditionalTraces??[])];
  const traces=[...scenarioTraces,...dumpTraces];
  try{
@@ -630,7 +631,7 @@ export function verifyRecords(request){
    if(!dump&&data.audit.calls.some(c=>isOwnerWindow(c.name))&&dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))!=='windows')throw new Error('stage called a window in text scenario');
    if(!dump&&(request.expectedReplies||source.expectedReplies)&&data.audit.calls.some(c=>isOwnerWindow(c.name)))throw new Error('stage called a window in text scenario');
    if(data.expectedReplies) {
-    data.exchanges=textExchanges(source.host,data.rows,data.expectedReplies,{startLine:source.stageStartLine});
+    data.exchanges=textExchanges(source.host,data.rows,data.expectedReplies,{startLine:source.stageStartLine,idleContinuation:source.idleContinuation});
    }
    return data;
   };
@@ -916,10 +917,10 @@ export function verifyRecords(request){
   let rubric;
   const rubricRequired=historical||scenarios.some(s=>s.exchanges?.some(e=>anchored(e.expected)));
   if(rubricRequired) {
-   const input=historical?windowChecks.map(source=>({host:source.host,trace:source.trace,traceHash:source.traceHash,definition:source.definition??null,status:source.status,exchanges:source.exchanges??[]})):scenarios.map(source=>({host:source.host,traceHash:sha256(fs.readFileSync(source.trace)),exchanges:(source.exchanges??[]).map(exchange=>({
+   const input=historical?windowChecks.filter(source=>source.kind!=='helper').map(source=>({host:source.host,trace:source.trace,traceHash:source.traceHash,definition:source.definition??null,status:source.status,exchanges:source.exchanges??[]})):scenarios.map(source=>({host:source.host,traceHash:sha256(fs.readFileSync(source.trace)),exchanges:(source.exchanges??[]).map(exchange=>({
     ...exchange,presentation:anchored(exchange.expected)&&presentationKind(exchange.expected,(request.presentationBindings??request.approvalBindings??[]).find(b=>b.replyId===exchange.expected.id))==='document'?documentPresentation(source,exchange,(request.presentationBindings??request.approvalBindings??[]).find(b=>b.replyId===exchange.expected.id),dump):null
    }))}));
-   const reviewable=!historical||windowChecks.every(source=>source.exchanges?.length&&text(source.definition));
+   const reviewable=!historical||windowChecks.every(source=>source.kind==='helper'||source.exchanges?.length&&text(source.definition));
    rubric=checkRubric({definition:request.rubricDefinition??null,sources:input,bindings:{approvals:request.approvalBindings??[],presentations:request.presentationBindings??[]},records:writes.map(w=>({name:w.name,input:w.input,value:w.value})),dump:dump.all},text(request.rubricDefinition)&&reviewable?request.rubric:undefined);
    requiredChecks.push({id:'rubric',status:rubric.status});
   }
@@ -973,9 +974,9 @@ export function resumeScenarioRecords({resumeEvidence,bindingsFile,prepareReview
  const saved=read(resumeEvidence),{digest,...payload}=saved;
  if(digest!==rubricDigest(payload)||JSON.stringify(evidenceFiles(saved.request))!==JSON.stringify(saved.files))throw new Error('saved evidence changed; resume refused');
  const bindings=bindingsFile?read(bindingsFile):{};
- // Missing native bindings can be annotated after capture, before a review
- // digest exists. Preparation never accepts a rubric or starts another stage.
- if(prepareReview&&saved.rubricDigest===null) {
+ // Explicit preparation always invalidates the old judgment when annotations
+ // are added or changed. It never accepts a rubric or starts another stage.
+ if(prepareReview) {
   const request={...saved.request,...Object.fromEntries(['approvalBindings','presentationBindings','gates'].filter(key=>bindings[key]!==undefined).map(key=>[key,bindings[key]]))};
   delete request.rubric;
   const result=verifyRecords(request),reviewEvidence=resumeEvidence+'.prepared.json';
@@ -1003,7 +1004,7 @@ export async function verifyScenarioRecords({run,runRequest,scenario,project,out
  if(dump.status!=='passed')return {...dump,status:dump.status==='failed'?'failed':'unverified',durationMs:Date.now()-start};
  const bindings=bindingsFile&&fs.existsSync(bindingsFile)?read(bindingsFile):{};
  const verification={host:runRequest.host,testedVersion:run.testedVersion??runRequest.testedVersion,trace:run.trace,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
-  expectedReplies:runRequest.scenario?.expectedReplies,expectedWindows:runRequest.scenario?.expectedWindows,windows:runRequest.scenario?.windows,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
+  idleContinuation:runRequest.scenario?.idleContinuation,expectedReplies:runRequest.scenario?.expectedReplies,expectedWindows:runRequest.scenario?.expectedWindows,windows:runRequest.scenario?.windows,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
  const result=verifyRecords(verification),reviewEvidence=outputDir+'-evidence.json';
  const payload={request:verification,files:evidenceFiles(verification),rubricDigest:result.rubricDigest??null,rubricInput:result.rubricInput??null};
  fs.writeFileSync(reviewEvidence,JSON.stringify({...payload,digest:rubricDigest(payload)},null,2)+'\n',{flag:'wx'});

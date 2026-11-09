@@ -545,3 +545,20 @@ test('U7 stage-driver MCP intercepts only predefined destinations without execut
  assert.deepEqual(JSON.parse(replies[2].result.content[0].text),{driverIntercepted:true,stage:'discovery',projectId:'fixture-project'});
  assert.match(replies[3].error.message,/permission/);assert.equal(replies[3].result,undefined);
 });
+
+const liveIdle=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-host-context-regressions.json',import.meta.url))).idle;
+for(const mode of ['full-native','foreground','one-nudge','second-idle','no-policy'])test(`continue8 Claude consumed midturn notification ${mode}`,async t=>{
+ const request=setup(t,'claude'),plan=path.join(request.cwd,'idle-plan.json'),prefix=structuredClone(liveIdle.events),full=prefix.at(-2).message.content[0].text;
+ const question=full.trim().split('\n').findLast(s=>s.includes('?')).trim();
+ if(mode==='foreground'){prefix[0]={type:'system',subtype:'task_started',task_id:prefix[2].task_id,is_backgrounded:false};prefix.splice(4,1);}
+ if(!['full-native','foreground'].includes(mode))prefix.at(-2).message.content[0].text='Ещё досматриваю Linear.';
+ const messages=['full-native','foreground'].includes(mode)?['unused','Утверждение записал.']:['unused',mode==='second-idle'?'Ещё проверяю материалы.':full,'Утверждение записал.'];
+ fs.writeFileSync(plan,JSON.stringify({idlePrefix:prefix,messages}));
+ request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'agree','--plan',plan];
+ request.scenario={prompt:'Run text',brief:'Saved native consumed notification order; continuation tails are synthetic.',allowedTools:['*'],...(mode==='no-policy'?{}:{idleContinuation:'Продолжай.'}),expectedReplies:[{id:'approval',stage:'idea',role:'approval',asksStart:true,summary:['## Что','## Зачем','## Образ результата','## Неизвестные'],question,reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true},response:['Утверждение записал.']}]};
+ const began=performance.now(),result=await runTextScenario(request);assert.equal(result.status,['full-native','foreground','one-nudge'].includes(mode)?'passed':'unverified',JSON.stringify(result));
+ assert.ok(performance.now()-began<1500,'known idle host must finish without reaching2s timeout');
+ assert.equal(result.replies.length,['full-native','foreground','one-nudge'].includes(mode)?1:0);
+ assert.equal(result.nudges?.length??0,['one-nudge','second-idle'].includes(mode)?1:0);
+ if(result.nudges?.length)assert.equal(result.nudges[0].kind,'non-consent');
+});
