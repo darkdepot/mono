@@ -75,16 +75,10 @@ test('C51/r7: binary exclusions cover both round-two views and survive a separat
 test('C51/r7: repeated JSON keys in repository text are data, including the circle test source',async t=>{
  const duplicate=String.raw`const bad=JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n';`+'\n';
  for(const [name,source] of [['minimal',duplicate],['real test file',fs.readFileSync(path.join(packRoot,'scripts/code-review.test.mjs'),'utf8')]])await t.test(name,async t=>{
-  const f=fixture(t),file='scripts/a.test.mjs';fs.mkdirSync(path.join(f.worktree,'scripts'));fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','source base');const base=f.git('rev-parse','HEAD');fs.writeFileSync(path.join(f.worktree,file),'// C51 unrelated appended comment\n'+source);f.git('add','.');f.git('commit','-qm','source head');let calls=0;
+  const f=fixture(t),file='scripts/a.test.mjs';fs.mkdirSync(path.join(f.worktree,'scripts'));fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','source base');const base=f.git('rev-parse','HEAD');fs.writeFileSync(path.join(f.worktree,file),'// C51 unrelated appended comment\n'+source);f.git('add','.');f.git('commit','-qm','source head');fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// C51 safe companion\n');f.git('add','.');f.git('commit','-qm','source safe companion');let calls=0;
   assert.equal(screenModelOutput(source,{input:true,inputFile:file}).rejected,false,'duplicate JSON keys in source are data');
-  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('C51 unrelated appended comment'));assert.deepEqual(c.unreviewedFiles,[]);assert.ok(fs.readFileSync(path.join(request.worktree,file),'utf8').includes('enabled'));return {response:review([],c.files)};}});
-  // C67 inventories public fixture words (e.g. Review) on credential statements.
-  // The approved benign boundary permits this refusal, never a JSON parse failure.
-  if(name==='real test file'){
-   assert.equal(calls,0);assertUnchecked(result);assert.deepEqual(result.unreviewedFiles,[file]);
-   assert.match(result.failures.at(-1).reason,/final role prompt/);return;
-  }
-  assert.equal(calls,1,JSON.stringify(result.failures));assert.deepEqual(result.failures,[]);assert.equal(result.outcome,'clean');assert.deepEqual(result.unreviewedFiles,[]);
+  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('C51 safe companion'));if(name==='minimal'){assert.ok(c.diff.includes('C51 unrelated appended comment'));assert.deepEqual(c.unreviewedFiles,[]);assert.ok(fs.readFileSync(path.join(request.worktree,file),'utf8').includes('enabled'));}else{assert.ok(c.unreviewedFiles.includes(file));assert.match(fs.readFileSync(path.join(request.worktree,file),'utf8'),/withheld/);}return {response:review([],c.files)};}});
+  assert.equal(calls,1,JSON.stringify(result.failures));assert.deepEqual(result.failures,[]);if(name==='minimal'){assert.equal(result.outcome,'clean');assert.deepEqual(result.unreviewedFiles,[]);}else{assertUnchecked(result);assert.ok(result.unreviewedFiles.includes(file));assert.match(result.unreviewedReasons[file],/copied credential value/);}
  });
 });
 test('C51/r7: checker credential values redact in place after parsing and record their field paths',async t=>{
@@ -966,7 +960,7 @@ test('C23: benign JSON numbers keep original numeric text and reach a role',asyn
   const safe=screenModelOutput(source,{input:true,inputFile:'input.json'});assert.equal(safe.rejected,false,source);assert.equal(safe.value,expected,source);
   assert.equal(screenModelOutput('{"buildId":9007199254740993}').value,'{"buildId":9007199254740993}');
   const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source);f.git('add','.');f.git('commit','-qm','large JSON number');const runner=responder();
-  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);assert.equal(record.outcome,'clean',JSON.stringify(record.failures));assert.equal(runner.calls.length,1);if(!source.includes('password'))assert.ok(runner.calls[0].prompt.includes('9007199254740993'));assert.ok(!runner.calls[0].prompt.includes('9007199254740992'));
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},runner);assert.equal(record.outcome,'clean',JSON.stringify({failures:record.failures,unreviewedFiles:record.unreviewedFiles,unreviewedReasons:record.unreviewedReasons,unreviewedInputs:record.unreviewedInputs}));assert.equal(runner.calls.length,1);if(!source.includes('password'))assert.ok(runner.calls[0].prompt.includes('9007199254740993'));assert.ok(!runner.calls[0].prompt.includes('9007199254740992'));
  }
 });
 test('C23/v6: runtime true/false/null and type-only source members are safely whole-line redacted',async t=>{
@@ -2362,7 +2356,7 @@ test('C68: repeated comment openers consume a finite native binding-search allow
 
 test('C68: finite screening work withholds an entire file before any role sees its values',async t=>{
  for(const separator of [',','/'])await t.test('overlapping RHS '+separator,async t=>{
- const source=('password=opaqueBudgetC68Value'+separator).repeat(4000)+'end\n';
+ const source=('password=opaqueBudgetC68Value'+separator).repeat(4000)+'end\n'+'password /* note '.repeat(4000);
  const safe=screenModelOutput(source,{input:true,inputFile:'input.mjs'});
  assert.equal(safe.screeningWork?.exhausted,true,'explicit finite work budget must refuse overlapping RHS work');
  assert.equal(safe.rejected,true);assert.equal(safe.fatal,true);assert.equal(safe.fullyWithheld,true);
@@ -2370,8 +2364,9 @@ test('C68: finite screening work withholds an entire file before any role sees i
  assert.throws(()=>screenModelOutput(source,{input:true,inputFile:'input.mjs',strict:true}),/^Error: model output withheld by secret screen$/);
  const matches=scanSecrets(source,{file:'input.mjs',patch:false});assert.ok(matches.length);assert.ok(!JSON.stringify(matches).includes('opaqueBudgetC68Value'));
  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'input.mjs'),source);f.git('add','.');f.git('commit','-qm','C68 screening work exhaustion');let calls=0;
- const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async()=>{calls++;assert.fail('work-exhausted file reached a role');}});
- assert.equal(calls,0);assertUnchecked(result);assert.ok(result.unreviewedFiles.includes('input.mjs'));
+ fs.writeFileSync(path.join(f.worktree,'safe.mjs'),'export const safe = 1;\n');f.git('add','.');f.git('commit','-qm','safe companion file');
+ const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(!request.prompt.includes('opaqueBudgetC68Value'));assert.ok(c.diff.includes('export const safe'));assert.ok(!fs.readFileSync(path.join(request.worktree,'input.mjs'),'utf8').includes('opaqueBudgetC68Value'));return {response:review([],['safe.mjs'])};}});
+ assert.equal(calls,1);assertUnchecked(result);assert.ok(result.unreviewedFiles.includes('input.mjs'));
  assert.ok(!JSON.stringify(result).includes('opaqueBudgetC68Value'));
  });
 });
@@ -2403,13 +2398,13 @@ test('C67: credential RHS tokens are remembered independently of syntax and deli
  for(const [file,statement,copied] of cases)await t.test(file+' / '+statement,async t=>{
   const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),statement+'\n');
   fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const copy = '+JSON.stringify(copied)+';\n');
-  f.git('add','.');f.git('commit','-qm','C67 credential RHS token and copied value');let calls=0;
+  fs.writeFileSync(path.join(f.worktree,'safe.mjs'),'export const safe = true;\n');f.git('add','.');f.git('commit','-qm','C67 credential RHS token and copied value');let calls=0;
   const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
    calls++;assert.ok(!request.prompt.includes(copied),'credential RHS token reached a role prompt');
-   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(context.diff.includes('export const safe'));return {response:review([],context.files.filter(file=>!context.unreviewedFiles.includes(file)))};
   }});
-  assertUnchecked(record);assert.equal(calls,0);assert.ok(!JSON.stringify(record).includes(copied));
-  assert.match(record.failures.at(-1).reason,/final role prompt/);
+  assertUnchecked(record);assert.equal(calls,1,JSON.stringify(record.failures));assert.ok(!JSON.stringify(record).includes(copied));
+  assert.deepEqual(record.failures,[]);for(const hidden of [file,'copy.mjs'])assert.ok(record.unreviewedFiles.includes(hidden));
  });
 });
 
@@ -2418,13 +2413,13 @@ test('C67: unchanged native JSON credentials remember component tokens before a 
  fs.writeFileSync(path.join(f.worktree,'settings.json'),JSON.stringify({password:value+'#c'})+'\n');
  f.git('add','.');f.git('commit','-qm','C67 native JSON credential base');const base=f.git('rev-parse','HEAD');
  fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const copy = '+JSON.stringify(value)+';\n');
- f.git('add','.');f.git('commit','-qm','C67 copied JSON credential token');let calls=0;
+ fs.writeFileSync(path.join(f.worktree,'safe.mjs'),'export const safe = true;\n');f.git('add','.');f.git('commit','-qm','C67 copied JSON credential token');let calls=0;
  const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
   calls++;assert.ok(!request.prompt.includes(value),'native JSON credential token reached a role prompt');
-  const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};
+  const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(context.diff.includes('export const safe'));return {response:review([],context.files.filter(file=>!context.unreviewedFiles.includes(file)))};
  }});
- assertUnchecked(record);assert.equal(calls,0);assert.ok(!JSON.stringify(record).includes(value));
- assert.match(record.failures.at(-1).reason,/final role prompt/);
+ assertUnchecked(record);assert.equal(calls,1,JSON.stringify(record.failures));assert.ok(!JSON.stringify(record).includes(value));
+ assert.deepEqual(record.failures,[]);for(const hidden of ['settings.json','copy.mjs'])assert.ok(record.unreviewedFiles.includes(hidden));
 });
 
 test('C66: every numeric, template and config scalar on a credential statement is remembered',async t=>{
@@ -2455,13 +2450,13 @@ test('C66: every numeric, template and config scalar on a credential statement i
  for(const [file,statement,copied] of cases)await t.test(file+' / '+statement,async t=>{
   const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),statement+'\n');
   fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const copy = '+JSON.stringify(copied)+';\n');
-  f.git('add','.');f.git('commit','-qm','C66 credential statement and copied scalar');let calls=0;
+  fs.writeFileSync(path.join(f.worktree,'safe.mjs'),'export const safe = true;\n');f.git('add','.');f.git('commit','-qm','C66 credential statement and copied scalar');let calls=0;
   const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
    calls++;assert.ok(!request.prompt.includes(copied),'credential scalar reached a role prompt');
-   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(context.diff.includes('export const safe'));return {response:review([],context.files.filter(file=>!context.unreviewedFiles.includes(file)))};
   }});
-  assertUnchecked(record);assert.equal(calls,0);assert.ok(!JSON.stringify(record).includes(copied));
-  assert.match(record.failures.at(-1).reason,/final role prompt/);
+  assertUnchecked(record);assert.equal(calls,1,JSON.stringify(record.failures));assert.ok(!JSON.stringify(record).includes(copied));
+  assert.deepEqual(record.failures,[]);for(const hidden of [file,'copy.mjs'])assert.ok(record.unreviewedFiles.includes(hidden));
  });
 });
 test('C66: short scalar and ordinary-number controls keep the six-character floor',async t=>{
@@ -2472,7 +2467,7 @@ test('C66: short scalar and ordinary-number controls keep the six-character floo
  ])await t.test(file+' / '+copied,async t=>{
   const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),statement+'\nexport const enabled = true;\n');
   fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const copy = '+JSON.stringify(copied)+';\n');
-  f.git('add','.');f.git('commit','-qm','C66 scalar floor controls');let calls=0;
+  fs.writeFileSync(path.join(f.worktree,'safe.mjs'),'export const safe = true;\n');f.git('add','.');f.git('commit','-qm','C66 scalar floor controls');let calls=0;
   const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
    calls++;const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(context.diff.includes(JSON.stringify(copied)));return {response:review([],context.files)};
   }});
@@ -2519,15 +2514,15 @@ test('C59: every literal on a credential statement is remembered across interven
   const f=fixture(t),file='input.ts';
   fs.writeFileSync(path.join(f.worktree,file),statement+'\nexport const copy = '+JSON.stringify(copied)+';\n');
   fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const independentCopy = '+JSON.stringify(copied)+';\n');
-  f.git('add','.');f.git('commit','-qm','C59 credential statement and copied literal');let calls=0;
+  fs.writeFileSync(path.join(f.worktree,'safe.mjs'),'export const safe = true;\n');f.git('add','.');f.git('commit','-qm','C59 credential statement and copied literal');let calls=0;
   const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
    calls++;assert.ok(!request.prompt.includes(copied),'statement literal reached a role prompt');
    assert.ok(!fs.readFileSync(path.join(request.worktree,file),'utf8').includes(copied));
-   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(context.diff.includes('export const safe'));return {response:review([],context.files.filter(file=>!context.unreviewedFiles.includes(file)))};
   }});
-  assertUnchecked(record);assert.equal(calls,0,'a copied credential statement literal reached a role');
-  assert.ok(record.unreviewedFiles.includes(file));assert.ok(!JSON.stringify(record).includes(copied));
-  assert.match(record.failures.at(-1).reason,/final role prompt/);
+  assertUnchecked(record);assert.equal(calls,1,JSON.stringify(record.failures));
+  for(const hidden of [file,'copy.mjs'])assert.ok(record.unreviewedFiles.includes(hidden));assert.ok(!JSON.stringify(record).includes(copied));
+  assert.deepEqual(record.failures,[]);
  });
 });
 
@@ -2619,8 +2614,8 @@ test('C57: a colon data value containing an equals sign keeps its original value
  const f=fixture(t),file='input.yaml',value='opaqueCredentialC57=x';
  fs.writeFileSync(path.join(f.worktree,file),'password: '+value+'\npublic: '+value+'\n');
  f.git('add','.');f.git('commit','-qm','C57 colon data control');let calls=0;
- const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async()=>{calls++;assert.fail('original colon value reached a role');}});
- assert.equal(calls,0);assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.match(record.failures.at(-1).reason,/final role prompt/);
+ const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;assert.ok(!request.prompt.includes(value));assert.ok(!fs.readFileSync(path.join(request.worktree,file),'utf8').includes(value));const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('export function value'));return {response:review([],c.files.filter(file=>!c.unreviewedFiles.includes(file)))};}});
+ assert.equal(calls,1,JSON.stringify(record.failures));assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.deepEqual(record.failures,[]);
 });
 
 test('C56: repeated assignments screen with bounded linear scaling',()=>{
@@ -2680,32 +2675,121 @@ test('C55: type-only members do not turn public type names into leaked values',a
  });
 });
 
-test('C55: quoted, initialized and data-file values retain the final barrier',async t=>{
- for(const [file,source] of [['input.ts','const options = {\n  '+('pass'+'word')+': "string",\n};\nexport function identity(s: string): string { return s; }\n'],['input.ts','const '+('pass'+'word')+' = string;\nexport function identity(s: string): string { return s; }\n'],['input.ts','const options = {\n  '+('pass'+'word')+': 123456,\n};\nexport const visible = 123456;\n'],['input.yaml',('pass'+'word')+': CredentialType\npublic: CredentialType\n'],['input.yaml',('pass'+'word')+': string\npublic: string\n']])await t.test(source,async t=>{
+test('C55: quoted and data-file literal values remain secret after per-file reassembly',async t=>{
+ const cases=[['input.ts','const options = {\n  password: "string",\n};\nexport function identity(s: string): string { return s; }\n','string'],['input.ts','const options = {\n  password: 123456,\n};\nexport const visible = 123456;\n','123456'],['input.yaml','password: CredentialType\npublic: CredentialType\n','CredentialType'],['input.yaml','password: string\npublic: string\n','string']];
+ for(const [file,source,value] of cases)await t.test(source,async t=>{
   const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','C55 real value control');let calls=0;
-  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async()=>{calls++;assert.fail('remembered value reached a role');}});
-  assert.equal(calls,0);assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.match(record.failures.at(-1).reason,/final role prompt/);
-});
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;assert.ok(!request.prompt.includes(value));assert.ok(!fs.readFileSync(path.join(request.worktree,file),'utf8').includes(value));const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('export function value'));return {response:review([],c.files.filter(file=>!c.unreviewedFiles.includes(file)))};}});
+  assert.equal(calls,1,JSON.stringify(record.failures));assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.deepEqual(record.failures,[]);
+ });
 });
 
-test('C55: a colon inside a source string remains a value rather than a declaration',async t=>{
+test('C55: a colon inside a source string remains data and its credential copy is withheld',async t=>{
  const f=fixture(t),file='input.ts',value='opaqueBindingC55';
- const source='export const message = '+JSON.stringify(('pass'+'word')+': '+value)+';\nexport const copy = '+JSON.stringify(value)+';\n';
- fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','C55 source string control');let calls=0;
- const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files)};}});
- assert.equal(calls,0);assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.match(record.failures.at(-1).reason,/final role prompt/);
+ fs.writeFileSync(path.join(f.worktree,file),'export const message = '+JSON.stringify('password: '+value)+';\nexport const copy = '+JSON.stringify(value)+';\n');f.git('add','.');f.git('commit','-qm','C55 source string control');let calls=0;
+ const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;assert.ok(!request.prompt.includes(value));assert.ok(!fs.readFileSync(path.join(request.worktree,file),'utf8').includes(value));const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files.filter(file=>!c.unreviewedFiles.includes(file)))};}});
+ assert.equal(calls,1,JSON.stringify(record.failures));assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.deepEqual(record.failures,[]);
 });
 
-test('C55: runtime labels are not type declarations',async t=>{
- const f=fixture(t),file='input.ts',value='opaqueBindingC55';
- fs.writeFileSync(path.join(f.worktree,file),('pass'+'word')+': '+value+'\npublic: '+value+'\n');f.git('add','.');f.git('commit','-qm','C55 label control');let calls=0;
- const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files)};}});
- assert.equal(calls,0);assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.match(record.failures.at(-1).reason,/final role prompt/);
+test('C55: code identifiers and unproven type names keep line masking without becoming values',async t=>{
+ const sources=['const password = string;\nexport function identity(s: string): string { return s; }\n','password: opaqueBindingC55\npublic: opaqueBindingC55\n','interface Login {\n password: ?CredentialType;\n}\nexport function identity(s: ?CredentialType): ?CredentialType { return s; }\n'];
+ for(const source of sources)await t.test(source,async t=>{
+  const f=fixture(t),file=source.startsWith('interface')?'input.js':'input.ts';fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','C55 code identifier control');let calls=0;
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('credential-shaped line withheld'));assert.ok(c.diff.includes(source.startsWith('password:')?'opaqueBindingC55':'identity'));return {response:review([],c.files)};}});
+  assert.equal(calls,1,JSON.stringify(record.failures));assert.equal(record.outcome,'clean');assert.deepEqual(record.unreviewedFiles,[]);
+ });
 });
 
-test('C55: unproven type syntax retains strict screening',async t=>{
- const f=fixture(t),file='input.js';
- fs.writeFileSync(path.join(f.worktree,file),'interface Login {\n  '+('pass'+'word')+': ?CredentialType;\n}\nexport function identity(s: ?CredentialType): ?CredentialType { return s; }\n');f.git('add','.');f.git('commit','-qm','C55 unproven syntax');let calls=0;
- const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files)};}});
- assert.equal(calls,0);assertUnchecked(record);assert.ok(record.unreviewedFiles.includes(file));assert.match(record.failures.at(-1).reason,/final role prompt/);
+// QA r8: a real pack expression must never turn identifiers into secret values.
+test('C69: credential expressions do not poison ordinary contract and comment words',async t=>{
+ for(const word of ['source','status','string','README','claude','paths'])await t.test(word,async t=>{
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'gate.mjs'),'export function credential(route, source) {\n const secret = route.credentialEnv ? source[route.credentialEnv] : null;\n const label = user.token ? "Settings" : "Other";\n password = sourceVariable123;\n password = process.env.X;\n password = sourceVariable123, label = source;\n password=sourceVariable123,label=source;\n const options={password:sourceVariable123,secret:source};\n const quoted={"password":sourceVariable123,"secret":source};\n if (typeof secret !== "string" || !secret.length) return value;\n return secret;\n}\n');
+  fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// '+word+' Settings Other\n');f.git('add','.');f.git('commit','-qm','QA r8 ordinary word');let calls=0;
+  const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),contract:'Read the configured '+word+'. Settings Other sourceVariable123 process.env.X.'},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files)};}});
+  assert.equal(calls,1,JSON.stringify(result.failures));assert.equal(result.outcome,'clean');assert.deepEqual(result.failures,[]);
+ });
+});
+test('C69: all fourteen QA r8 secret syntaxes withhold changed and copied values',async t=>{
+ const secret='fictionalR8Secret831729';
+ const forms=[['.env',`PASSWORD=${secret}#comment`],['config/app.env',`export PASSWORD=${secret}`],['config.yaml',`password: ${secret} # comment`],['settings.toml',`password = "${secret}"`],['app.properties',`password=${secret}`],['login.ini',`[login]\npassword=${secret};comment`],['settings.json',JSON.stringify({password:secret})],['client.mjs',`const password = "${secret}";`],['client.ts',`const password /* note=x */: string = "${secret}";`],['client.py',`password = "${secret}"`],['client.go',`password := "${secret}"`],['deploy.sh',`export PASSWORD=${secret}`],['destructure.mjs',`const {password = "${secret}"} = source;`],['numeric.mjs','const password = 24681357, attempts = 0;']];
+ for(const [file,statement] of forms)for(const copied of [false,true])await t.test(file+' copy='+copied,async t=>{
+  const f=fixture(t),value=file==='numeric.mjs'?'24681357':secret;fs.mkdirSync(path.dirname(path.join(f.worktree,file)),{recursive:true});fs.writeFileSync(path.join(f.worktree,file),statement+'\n');
+  if(copied)fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const copy = '+JSON.stringify(value)+';\n');f.git('add','.');f.git('commit','-qm','QA r8 fourteen forms');let calls=0;
+  const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;assert.ok(!request.prompt.includes(value));const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files.filter(file=>!c.unreviewedFiles.includes(file)))};}});
+  assert.equal(calls,1,JSON.stringify(result.failures));assert.ok(!JSON.stringify(result).includes(value));if(copied){assertUnchecked(result);for(const hidden of [file,'copy.mjs'])assert.ok(result.unreviewedFiles.includes(hidden));}
+ });
+});
+
+test('C70: copied credential values withhold owners and all carriers before either role',async t=>{
+ for(const value of ['external','copiedCredentialC70_192837'])await t.test(value,async t=>{
+  const f=fixture(t),owner='private.mjs',copies=['copy.mjs','unchanged.txt'];
+  fs.writeFileSync(path.join(f.worktree,owner),'const password = '+JSON.stringify(value)+';\nexport const enabled = true;\n');
+  fs.writeFileSync(path.join(f.worktree,copies[1]),'An existing copy: '+value+'\n');f.git('add','.');f.git('commit','-qm','C70 private base');const base=f.git('rev-parse','HEAD');
+  fs.writeFileSync(path.join(f.worktree,copies[0]),'export const label = '+JSON.stringify(value)+';\n');fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// C70 safe companion\n');f.git('add','.');f.git('commit','-qm','C70 copies and safe change');const roles=[];
+  const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   roles.push(request.role);assert.ok(!request.prompt.includes(value));const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('C70 safe companion'));assert.ok(!c.diff.includes('export const label'));
+   for(const file of [owner,...copies]){assert.ok(c.unreviewedFiles.includes(file));assert.ok(!fs.readFileSync(path.join(request.worktree,file),'utf8').includes(value));}
+   return {response:request.role==='code-review'?review([sample],c.files.filter(file=>!c.unreviewedFiles.includes(file))):{completed:true,verdicts:[verdict()]}};
+  }});
+  assert.deepEqual(roles,['code-review','code-review-checker'],JSON.stringify(result.failures));assertUnchecked(result);assert.deepEqual(result.failures,[]);
+  for(const file of [owner,...copies])assert.match(result.unreviewedReasons[file],/copied credential value/);
+  assert.ok(!JSON.stringify(result).includes(value));assert.equal(f.git('status','--porcelain'),'');
+ });
+});
+
+test('C70: whole configuration scalars have no dictionary or code-expression exemptions',async t=>{
+ for(const value of ['external','string','README','process.env.X','https://example.invalid/fixture42','correct horse battery staple'])await t.test(value,async t=>{
+  const f=fixture(t),file='login.yaml';fs.writeFileSync(path.join(f.worktree,file),'password: '+value+' # comment\n');fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const label = '+JSON.stringify(value)+';\n');f.git('add','.');f.git('commit','-qm','C70 configuration literal');let calls=0;
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;assert.ok(!request.prompt.includes(value));const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('export function value'));for(const hidden of [file,'copy.mjs'])assert.ok(!fs.readFileSync(path.join(request.worktree,hidden),'utf8').includes(value));return {response:review([],c.files.filter(file=>!c.unreviewedFiles.includes(file)))};}});
+  assert.equal(calls,1,JSON.stringify(record.failures));assertUnchecked(record);for(const hidden of [file,'copy.mjs'])assert.ok(record.unreviewedFiles.includes(hidden));assert.deepEqual(record.failures,[]);
+ });
+});
+
+test('C70: literal call arguments on a credential RHS retain dictionary values',async t=>{
+ for(const value of ['external','string'])await t.test(value,async t=>{
+  const f=fixture(t),file='login.mjs';fs.writeFileSync(path.join(f.worktree,file),'const password = choose('+JSON.stringify(value)+');\n');fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const label = '+JSON.stringify(value)+';\n');f.git('add','.');f.git('commit','-qm','C70 literal RHS argument');let calls=0;
+  const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;assert.ok(!request.prompt.includes(value));const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('export function value'));for(const hidden of [file,'copy.mjs'])assert.ok(!fs.readFileSync(path.join(request.worktree,hidden),'utf8').includes(value));return {response:review([],c.files.filter(file=>!c.unreviewedFiles.includes(file)))};}});
+  assert.equal(calls,1,JSON.stringify(result.failures));assertUnchecked(result);for(const hidden of [file,'copy.mjs'])assert.ok(result.unreviewedFiles.includes(hidden));assert.deepEqual(result.failures,[]);
+ });
+});
+
+test('C70: configuration prefixes preserve whole scalar values and copied-value secrecy',async t=>{
+ for(const value of ['external','fictionalConfigC70_718239'])for(const [file,statement] of [
+  ['config.yaml','accounts:\n - password: '+value+'\n'],
+  ['config.properties','database.password='+value+'\n'],
+  ['config.toml','database.password="'+value+'"\n'],
+  ['config.yaml','defaults: {password: '+value+', public: 1}\n'],
+ ])await t.test(file+' '+statement,async t=>{
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),statement);fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const label='+JSON.stringify(value)+';\n');f.git('add','.');f.git('commit','-qm','C70 prefixed configuration scalar');let calls=0;
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;assert.ok(!request.prompt.includes(value));const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('export function value'));for(const hidden of [file,'copy.mjs'])assert.ok(!fs.readFileSync(path.join(request.worktree,hidden),'utf8').includes(value));return {response:review([],c.files.filter(file=>!c.unreviewedFiles.includes(file)))};}});
+  assert.equal(calls,1,JSON.stringify(record.failures));assertUnchecked(record);for(const hidden of [file,'copy.mjs'])assert.ok(record.unreviewedFiles.includes(hidden));assert.deepEqual(record.failures,[]);
+ });
+});
+
+test('C70: generated configuration scalar screening has linear native string work',()=>{
+ const work=[];
+ for(const count of [4000,8000,16000,32000]){
+  const source=' '.repeat(count)+'['+Array.from({length:count},()=>'{password: x}').join(',')+']',split=String.prototype.split,trim=String.prototype.trim;let units=0,safe;
+  const charge=n=>{units+=n;if(units>source.length*256)throw new Error('growing configuration prefix or RHS rescanned beyond linear work');};
+  String.prototype.split=function(...args){charge(String(this).length);return split.apply(this,args);};
+  String.prototype.trim=function(...args){const value=String(this);let first=0,last=value.length;while(first<last&&/\s/.test(value[first]))first++;while(last>first&&/\s/.test(value[last-1]))last--;charge(first+value.length-last+1);return trim.apply(this,args);};
+  try{safe=screenModelOutput(source,{input:true,inputFile:'generated.yaml'});}finally{String.prototype.split=split;String.prototype.trim=trim;}
+  assert.equal(safe.rejected,false,'ordinary short-valued configuration must remain screenable');assert.equal(safe.screeningWork.exhausted,false);work.push(units);
+ }
+ for(let i=1;i<work.length;i++)assert.ok(work[i]<=work[i-1]*2.3,'doubling configuration exceeded near-linear native work');
+});
+
+test('C70: quoted and block code in configuration data never remember expression identifiers',async t=>{
+ for(const source of ['run: '+JSON.stringify('const secret = route.credentialEnv ? source[route.credentialEnv] : null;')+'\n','run: |\n const secret = route.credentialEnv ? source[route.credentialEnv] : null;\n const password = source;\n','run: |\n const options = {password: source};\n'])await t.test(source,async t=>{
+ const f=fixture(t),file='workflow.yaml';fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','C70 embedded code data');let calls=0;
+ const result=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),contract:'Keep source, status, string, README, claude and paths.'},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],c.files.filter(file=>!c.unreviewedFiles.includes(file)))};}});
+ assert.equal(calls,1,JSON.stringify(result.failures));assert.deepEqual(result.failures,[]);
+ });
+});
+
+test('C69: final prompt checks many remembered values without a whole-change work refusal',async t=>{
+ const f=fixture(t);fs.writeFileSync(path.join(f.worktree,'.env'),Array.from({length:1000},(_,i)=>'PASSWORD="opaqueBarrierC69_'+i+'"').join('\n')+'\n');f.git('add','.');f.git('commit','-qm','many private values');const base=f.git('rev-parse','HEAD');
+ fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// public C69 text '.repeat(12000)+'\n');f.git('add','.');f.git('commit','-qm','large safe change');let calls=0;
+ const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;assert.ok(!request.prompt.includes('opaqueBarrierC69_'));const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('public C69 text'));return {response:review([],['input.mjs'])};}});
+ assert.equal(calls,1,JSON.stringify(result.failures));assertUnchecked(result);assert.deepEqual(result.failures,[]);
 });
