@@ -1833,6 +1833,12 @@ native answers and following responses. Missing scenario policies, rubric input 
 judgment remain unverified. Approval requires an actual approving option label or
 the scenario's exact correction text; arbitrary prose cannot grant authority.
 Offline Claude answers may come from the already verified native receipt.
+Every historical scenario source, including each additional trace, requires its
+own window expectations, policy and native answer proof. All source exchanges
+enter the combined rubric; missing evidence stays unverified, and any failed
+source or record dominates an unverified one. Resume fingerprints include native
+answer journals. Codex refusals use the same call/question reply envelope as
+other window answers and grant no approval authority.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
 `references/owner-dialog.md` and `references/orchestration.md`, for retired window
 labels and answer-list formatting. History and old fixtures are outside that scope.

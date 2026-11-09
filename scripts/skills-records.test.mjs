@@ -364,6 +364,71 @@ function historicalRecords(t,host='claude',answer='Утвердить, прод�
  f.attest=()=>{delete f.request.rubric;const initial=f.check();assert.equal(initial.status,'unverified',JSON.stringify(initial));assert.ok(initial.rubricDigest,'historical rubric was built');f.request.rubric={digest:initial.rubricDigest,reviewer:'fixture-reviewer',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'fixture native exchange reviewed',reason:'Matches fixed scenario'}))};return initial;};
  return f;
 }
+function historicalSource(t,host,mode='valid') {
+ const f=historicalRecords(t,host),rows=f.events.slice(0,5);
+ const response=host==='claude'?{type:'assistant',message:{content:[{type:'text',text:'Утверждение не записываю; передаю результат.'}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Утверждение не записываю; передаю результат.'}]}};
+ const terminal=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ if(mode==='missing-answer')rows.splice(4,1);
+ rows.push(response,terminal);
+ const serialized=timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n';
+ fs.writeFileSync(f.request.trace,mode==='malformed-card'?serialized.replaceAll('Совет','Вывод'):serialized);
+ if(mode==='malformed-card'&&f.request.sent)fs.writeFileSync(f.request.sent,fs.readFileSync(f.request.sent,'utf8').replaceAll('Совет','Вывод'));
+ return {host,trace:f.request.trace,sent:f.request.sent,expectedWindows:f.request.expectedWindows,windows:f.request.windows,rubricDefinition:f.request.rubricDefinition};
+}
+for(const primaryHost of ['claude','codex'])for(const extraHost of ['claude','codex']) {
+ for(const mode of ['malformed-card','missing-answer','missing-policy'])test(`historical all sources: ${primaryHost} plus ${extraHost} ${mode} cannot pass`,t=>{
+  const f=historicalRecords(t,primaryHost);f.attest();const extra=historicalSource(t,extraHost,mode);if(mode==='missing-policy')delete extra.expectedWindows;
+  f.request.additionalTraces=[extra];const result=f.check();assert.equal(result.status,mode==='malformed-card'?'failed':'unverified',JSON.stringify(result));
+ });
+ test(`historical all sources: ${primaryHost} plus ${extraHost} both bind native exchanges and rubric`,t=>{
+  const f=historicalRecords(t,primaryHost);f.request.additionalTraces=[historicalSource(t,extraHost)];const initial=f.attest();
+  assert.equal(initial.rubricInput.sources.length,2,'each source belongs to the combined rubric');
+  assert.deepEqual(initial.rubricInput.sources.map(s=>s.host),[primaryHost,extraHost]);
+  assert(initial.rubricInput.sources.every(s=>s.exchanges[0].answers[0]==='Утвердить, продолжу позже'));
+  assert.equal(f.check().status,'passed');
+  const extra=f.request.additionalTraces[0];fs.appendFileSync(extra.trace,JSON.stringify(extraHost==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}})+'\n');
+  const changed=f.check();assert.equal(changed.status,'unverified','additional trace changes stale the combined judgment');assert.notEqual(changed.rubricDigest,initial.rubricDigest);
+ });
+}
+for(const host of ['claude','codex'])test(`historical all sources: ${host} cannot borrow an answer beyond its endLine`,t=>{
+ const f=historicalRecords(t);f.attest();f.request.additionalTraces=[{...historicalSource(t,host),endLine:4}];
+ const result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));
+});
+for(const uncertain of ['missing-answer','missing-file','missing-policy'])for(const reverse of [false,true])test(`historical all sources: failed dominates ${uncertain}, reversed=${reverse}`,t=>{
+ const f=historicalRecords(t,'codex');f.attest();const weak=historicalSource(t,'codex',uncertain),broken=historicalSource(t,'claude','malformed-card');
+ if(uncertain==='missing-file')weak.trace=path.join(path.dirname(weak.trace),'absent.jsonl');
+ if(uncertain==='missing-policy')delete weak.windows;
+ f.request.additionalTraces=reverse?[broken,weak]:[weak,broken];const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));
+});
+test('historical all sources: an uncertain primary cannot hide a failed additional window',t=>{
+ const f=historicalRecords(t,'codex');f.attest();f.events.splice(4,1);f.request.additionalTraces=[historicalSource(t,'claude','malformed-card')];
+ assert.equal(f.check().status,'failed');
+});
+test('historical all sources: an uncertain additional window cannot hide a failed record',t=>{
+ const f=historicalRecords(t);f.attest();f.request.additionalTraces=[historicalSource(t,'codex','missing-answer')];f.page('comments','comments',[{...f.record,body:'Changed after write'}]);
+ const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/mismatch/);
+});
+test('historical all sources: an unreadable additional trace cannot hide a failed record',t=>{
+ const f=historicalRecords(t);f.attest();f.request.additionalTraces=[{host:'codex',trace:path.join(f.dir,'absent.jsonl')}];f.page('comments','comments',[{...f.record,body:'Changed after write'}]);
+ const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/mismatch/);
+});
+for(const host of ['claude','codex'])test(`historical all sources: ${host} approval uses that source's native policy`,t=>{
+ const primary=historicalRecords(t,host==='claude'?'codex':'claude'),extra=historicalRecords(t,host,'Исправь указанную строку и утверди');
+ extra.request.windows=[{mode:'correction',text:'Исправь указанную строку и утверди'}];extra.request.expectedWindows[0].id='secondary-approval';
+ extra.record.id='r2';extra.record.body=extra.record.body.replace('mono-test:','mono-other:');extra.request.approvalBindings[0].recordId='r2';
+ const rewrite=value=>{
+  if(typeof value==='string')return value.replaceAll('mono-test: approved','mono-other: approved').replaceAll('"id":"r1"','"id":"r2"');
+  if(Array.isArray(value))return value.map(rewrite);
+  return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,k==='id'&&v==='r1'?'r2':rewrite(v)])):value;
+ };
+ extra.events.splice(0,extra.events.length,...rewrite(extra.events));extra.flush();
+ primary.request.additionalTraces=[{host,trace:extra.request.trace,sent:extra.request.sent,expectedWindows:extra.request.expectedWindows,windows:extra.request.windows}];
+ primary.request.expectedRecords.push({type:'mono-other',count:1});primary.request.approvalBindings.push(extra.request.approvalBindings[0]);primary.page('comments','comments',[primary.record,extra.record]);
+ primary.attest();const result=primary.check();assert.equal(result.status,'passed',JSON.stringify(result));
+ assert.equal(result.rubricInput.sources[1].exchanges[0].policy.mode,'correction');assert.equal(result.rubricInput.sources[1].exchanges[0].id,'secondary-approval');
+ primary.events.splice(4,1);extra.request.windows[0].text='Иная поправка';
+ const rejected=primary.check();assert.equal(rejected.status,'failed',JSON.stringify(rejected));assert(rejected.requiredChecks.some(c=>c.id.startsWith('approval:')&&c.status==='failed'),'unknown primary proof cannot hide an unauthorized secondary approval');
+});
 for(const host of ['claude','codex']) {
  for(const answer of ['Утвердить нельзя, нужно ещё обсудить','Утвердить неизвестный вариант','Ещё обсудить',''])test(`historical ${host} does not authorize approval from ${JSON.stringify(answer)}`,t=>{
   const f=historicalRecords(t,host,answer),checked=f.check();assert.equal(checked.status,'failed',JSON.stringify(checked));assert.match(checked.reason,/non-approval/);
@@ -391,7 +456,7 @@ for(const host of ['claude','codex']) {
 for(const host of ['claude','codex'])test(`historical ${host} records cannot use card-only checking to skip a required window`,t=>{
  const f=historicalRecords(t,host);f.request.expectedWindows.push({...f.request.expectedWindows[0],id:'second-approval'});f.request.windows.push({...f.request.windows[0]});f.request.phase='card';
  const initial=f.check();
- if(initial.rubricDigest){f.attest();}
+ if(initial.status==='unverified'&&initial.rubricDigest){f.attest();}
  const checked=f.check();assert.equal(checked.status,'failed',JSON.stringify(checked));
 });
 test('historical Claude native denial cannot authorize a record write',t=>{

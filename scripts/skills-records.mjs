@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readJsonLines } from './transports/journal.mjs';
 import { traceRows } from './skills-probe.mjs';
-import { completedTrace, textExchanges, checkEndings, checkTrace } from './skills-trace.mjs';
+import { completedTrace, textExchanges, checkEndings, checkTraceSources, worstStatus } from './skills-trace.mjs';
 import { auditRows } from './skills-audit.mjs';
 import { isWrite, MissingEvidence } from './skills-boundary.mjs';
 import { unwrap } from './skills-proof.mjs';
@@ -360,6 +360,29 @@ function windowPlans(request,data){
  }
  return plans;
 }
+const evidenceStatus=error=>error instanceof MissingEvidence||error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code)?'unverified':'failed';
+function windowRequest(request,source){
+ return {...request,host:source.host,trace:source.trace,endLine:source.endLine,stageStartLine:source.stageStartLine,sent:source.sent,
+  expectedReplies:source.expectedReplies,expectedWindows:source.expectedWindows,windows:source.windows,rubricDefinition:source.rubricDefinition??request.rubricDefinition};
+}
+function historicalSource(request,checked){
+ const source={host:request.host,trace:request.trace,definition:request.rubricDefinition,traceHash:null,...checked,exchanges:null};
+ try{
+  source.traceHash=sha256(fs.readFileSync(request.trace));
+  const data=nativeRecords(request.host,request.trace,request.endLine),plans=windowPlans(request,data);
+  source.exchanges=checked.windows.map(window=>{
+   const call=data.audit.calls.find(c=>c.callId===window.callId),plan=plans.get(window.callId);
+   if(!call||!plan)missing('historical window exchange unavailable');
+   const {reply,...answer}=nativeWindowAnswer(request,data,call);
+   const next=data.audit.calls.find(c=>c.line>reply.line&&isOwnerWindow(c.name)&&!c.event.parent_tool_use_id);
+   const response=data.rows.filter(r=>r.line>reply.line&&(!next||r.line<next.line)&&!r.value.parent_tool_use_id).map(r=>request.host==='claude'?r.value.message?.role!=='user'&&r.value.type==='assistant'?r.value.message.content.filter(b=>b.type==='text').map(b=>b.text).join('\n'):null:r.value.payload?.role==='assistant'?r.value.payload.content?.filter(b=>b.type==='output_text').map(b=>b.text).join('\n'):null).filter(text).join('\n');
+   return {id:window.id,line:window.line,callId:call.callId,text:window.summary,summaryLine:window.summaryLine,questions:window.questions,...answer,replyLine:reply.line,response,expected:plan.target?request.expectedWindows[plan.expectedIndex]:null,policy:plan.policy,target:plan.target};
+  });
+  if(!source.exchanges.length||!text(source.definition))missing('historical window rubric input or definition missing');
+ }catch(error){source.status=worstStatus(source.status,'unverified');source.reason=error.message;source.exchanges=null;}
+ if(source.status!=='passed'&&!source.reason)source.reason=[...(source.windows??[]).flatMap(w=>w.issues??[]),...(source.checks??[]).map(c=>c.reason)].filter(Boolean).join('; ');
+ return source;
+}
 function approvalCheck(request,write,data,dump,writes){
  const createProject=write.name.endsWith('__create_project')||(write.name.endsWith('__save_project')&&!write.input.id);
  const markers=recordLines(writeBody(write)).map(line=>line.trim().match(/^(mono-[\w-]+: (?:approved|start))(?: |$)/)?.[1]).filter(Boolean);
@@ -568,17 +591,27 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
 }
 
 export function verifyRecords(request){
- const gateResults=[],observedStarts=[];
- const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,stageStartLine:request.stageStartLine,sent:request.sent,expectedReplies:request.expectedReplies},...(request.additionalTraces??[])];
+ const gateResults=[],observedStarts=[],requiredChecks=[],windowChecks=[];
+ const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,stageStartLine:request.stageStartLine,sent:request.sent,expectedReplies:request.expectedReplies,expectedWindows:request.expectedWindows,windows:request.windows,rubricDefinition:request.rubricDefinition},...(request.additionalTraces??[])];
  const dumpTraces=[...(request.dumpTrace?[{host:request.host,trace:request.dumpTrace}]:[]),...(request.dumpAdditionalTraces??[])];
  const traces=[...scenarioTraces,...dumpTraces];
  try{
-  const violation=runViolations(traces,request);if(violation)return violation;
+  const auditErrors=[];
+  for(const source of traces)try{const violation=runViolations([source],request);if(violation)return violation;}catch(error){auditErrors.push({source,error});}
   const historical=dialogueMode(testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))==='windows';
   if(historical&&scenarioTraces.some(source=>source.expectedReplies!==undefined))throw new Error('legacy acceptance requires real windows, not text replies');
+  if(historical){
+   const sourceRequests=scenarioTraces.map(source=>({...windowRequest(request,source),phase:'complete',excerpt:false,expectedReplies:undefined}));
+   const checkedSources=checkTraceSources(sourceRequests);
+   for(const [index,source]of scenarioTraces.entries()){
+    const checked=historicalSource(sourceRequests[index],checkedSources.sources[index]);windowChecks.push(checked);
+    requiredChecks.push({id:index?`windows:${index}`:'windows',host:source.host,trace:source.trace,status:checked.status,reason:checked.reason});
+   }
+   for(const [index,{source,error}]of auditErrors.entries())requiredChecks.push({id:`source-audit:${index}`,host:source.host,trace:source.trace,status:evidenceStatus(error),reason:error.message});
+  }else if(auditErrors.length)throw auditErrors[0].error;
   const load=(source,dump)=>{
    const full=nativeRecords(source.host,source.trace),data=nativeRecords(source.host,source.trace,!dump&&source.expectedReplies?undefined:source.endLine);
-   data.sent=source.sent;
+   data.sent=source.sent;data.scenario=source;
    if(dump&&full.calls.some(c=>isWrite(c.name)))throw new Error('dump attempted an external write');
    if(source.endLine!==undefined&&full.calls.some(c=>c.line>source.endLine&&isWrite(c.name)))throw new Error('write after scenario terminal');
    if(!completedTrace(source.host,data.rows))missing(`${dump?'dump':'scenario'} trace incomplete: ${source.trace}`);
@@ -594,7 +627,10 @@ export function verifyRecords(request){
    }
    return data;
   };
-  const scenarios=scenarioTraces.map(source=>load(source,false)),dumps=dumpTraces.map(source=>load(source,true)),data=scenarios[0],writes=[];
+  const loaded=scenarioTraces.map((source,index)=>{
+   try{return load(source,false);}catch(error){if(!historical)throw error;requiredChecks.push({id:`source-records:${index}`,host:source.host,trace:source.trace,status:evidenceStatus(error),reason:error.message});return null;}
+  });
+  const scenarios=loaded.filter(Boolean),dumps=dumpTraces.map(source=>load(source,true)),data=loaded[0],writes=[];
   request={...request,scenarioData:scenarios};
   checkEndings(scenarios.flatMap(d=>d.exchanges??[]));
   const stageStarts={idea:['Research'],research:['Discovery'],discovery:['Design','Tech Evaluation','Handoff'],design:['Tech Evaluation','Handoff'],'tech-evaluation':['Handoff'],handoff:['Delivery']};
@@ -649,7 +685,7 @@ export function verifyRecords(request){
    for(const e of source.exchanges??[])if(e.expected.outcome.startNext&&!starts.some(s=>s.exchange===e))throw new Error('expected start-next-stage missing after actual reply');
   }
   let seedEndLine=0;
-  if(request.seedExpected||request.seedEndLine!==undefined){
+  if(data&&(request.seedExpected||request.seedEndLine!==undefined)){
    const boundary=data.rows.find(r=>r.line===request.seedEndLine);
    if(!Number.isInteger(request.seedEndLine)||!boundary||data.audit.proof({kind:'terminal',result:boundary.value}).status!=='confirmed')missing('native successful seed boundary missing');
    if(!request.seedProjectId)missing('validated seed project missing');
@@ -818,9 +854,14 @@ export function verifyRecords(request){
    }
   }
   const bindingGaps=[],approvedExchanges=new Set();
-  for(const write of activeWrites)try{
-   for(const exchange of approvalCheck({...request,host:write.data.host,sent:write.data.sent},write,write.data,dump,activeWrites)??[])approvedExchanges.add(exchange);
-  }catch(error){if(!error.bindingOnly)throw error;bindingGaps.push({message:error.message,write});}
+  for(const [index,write]of activeWrites.entries())try{
+   const sourceRequest=historical?windowRequest(request,write.data.scenario):{...request,host:write.data.host,sent:write.data.sent};
+   for(const exchange of approvalCheck(sourceRequest,write,write.data,dump,activeWrites)??[])approvedExchanges.add(exchange);
+  }catch(error){
+   if(error.bindingOnly)bindingGaps.push({message:error.message,write});
+   else if(historical)requiredChecks.push({id:`approval:${index}`,host:write.data.host,trace:write.data.trace,status:evidenceStatus(error),reason:error.message});
+   else throw error;
+  }
   const gates=[...(request.gates??[])];
   for(const write of activeWrites){
    const has=type=>recordWrite(write,type,dump);
@@ -862,35 +903,24 @@ export function verifyRecords(request){
     source.exchanges.filter(e=>e.replyLine<write.line).at(-1)===exchange&&recordWrite(write,marker,dump));
    if(exchange.expected.outcome.approval&&!approvedExchanges.has(exchange)&&!awaitingBinding)throw new Error('expected approval missing actual record bound to shown version');
   }
-  const requiredChecks=[{id:'records',status:bindingGaps.length?'unverified':'passed'}];
-  let windowExchanges;
-  if(historical){
-   const plans=windowPlans(request,data);
-   const checked=checkTrace({...request,phase:'complete',excerpt:false,expectedReplies:undefined});
-   requiredChecks.push({id:'windows',status:checked.status});
-   if(checked.status!=='passed')return {status:checked.status,requiredChecks,windowChecks:checked,reason:checked.reason??'historical window checks not positively proved',starts:observedStarts,stop:false,manualRemoval:[],gateResults,evidence:[request.trace,request.dumpDir]};
-   windowExchanges=checked.windows.map(window=>{
-    const call=data.audit.calls.find(c=>c.callId===window.callId),plan=plans.get(window.callId);
-    if(!call||!plan)missing('historical window exchange unavailable');
-    const {reply,...answer}=nativeWindowAnswer(request,data,call);
-    const next=data.audit.calls.find(c=>c.line>reply.line&&isOwnerWindow(c.name)&&!c.event.parent_tool_use_id);
-    const response=data.rows.filter(r=>r.line>reply.line&&(!next||r.line<next.line)&&!r.value.parent_tool_use_id).map(r=>request.host==='claude'?r.value.message?.role!=='user'&&r.value.type==='assistant'?r.value.message.content.filter(b=>b.type==='text').map(b=>b.text).join('\n'):null:r.value.payload?.role==='assistant'?r.value.payload.content?.filter(b=>b.type==='output_text').map(b=>b.text).join('\n'):null).filter(text).join('\n');
-    return {id:window.id,line:window.line,callId:call.callId,text:window.summary,summaryLine:window.summaryLine,questions:window.questions,...answer,replyLine:reply.line,response,expected:plan.target?request.expectedWindows[plan.expectedIndex]:null,policy:plan.policy,target:plan.target};
-   });
-   if(!windowExchanges.length||!text(request.rubricDefinition))missing('historical window rubric input or definition missing');
-  }
+  requiredChecks.unshift({id:'records',status:bindingGaps.length?'unverified':'passed',...(bindingGaps.length?{reason:bindingGaps.map(gap=>gap.message).join('; ')}:{})});
   let rubric;
   const rubricRequired=historical||scenarios.some(s=>s.exchanges?.some(e=>anchored(e.expected)));
   if(rubricRequired) {
-   const input=historical?[{host:data.host,traceHash:sha256(fs.readFileSync(data.trace)),exchanges:windowExchanges}]:scenarios.map(source=>({host:source.host,traceHash:sha256(fs.readFileSync(source.trace)),exchanges:(source.exchanges??[]).map(exchange=>({
+   const input=historical?windowChecks.map(source=>({host:source.host,trace:source.trace,traceHash:source.traceHash,definition:source.definition??null,status:source.status,exchanges:source.exchanges??[]})):scenarios.map(source=>({host:source.host,traceHash:sha256(fs.readFileSync(source.trace)),exchanges:(source.exchanges??[]).map(exchange=>({
     ...exchange,presentation:anchored(exchange.expected)&&presentationKind(exchange.expected,(request.presentationBindings??request.approvalBindings??[]).find(b=>b.replyId===exchange.expected.id))==='document'?documentPresentation(source,exchange,(request.presentationBindings??request.approvalBindings??[]).find(b=>b.replyId===exchange.expected.id),dump):null
    }))}));
-   rubric=checkRubric({definition:request.rubricDefinition??null,sources:input,bindings:{approvals:request.approvalBindings??[],presentations:request.presentationBindings??[]},records:writes.map(w=>({name:w.name,input:w.input,value:w.value})),dump:dump.all},text(request.rubricDefinition)?request.rubric:undefined);
+   const reviewable=!historical||windowChecks.every(source=>source.exchanges?.length&&text(source.definition));
+   rubric=checkRubric({definition:request.rubricDefinition??null,sources:input,bindings:{approvals:request.approvalBindings??[],presentations:request.presentationBindings??[]},records:writes.map(w=>({name:w.name,input:w.input,value:w.value})),dump:dump.all},text(request.rubricDefinition)&&reviewable?request.rubric:undefined);
    requiredChecks.push({id:'rubric',status:rubric.status});
   }
-  const status=requiredChecks.some(c=>c.status==='failed')?'failed':requiredChecks.every(c=>c.status==='passed')?'passed':'unverified';
-  return {...(rubric??{}),status,requiredChecks,...(bindingGaps.length?{bindingOnly:true,reason:bindingGaps.map(gap=>gap.message).join('; ')}:{}),starts:observedStarts,stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
- }catch(error){return {status:error instanceof MissingEvidence||error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code)?'unverified':'failed',starts:observedStarts,stop:false,manualRemoval:[],reason:error.message,...(error.bindingOnly?{bindingOnly:true}:{}),gateResults,evidence:[request.trace,request.dumpDir]};}
+  const status=worstStatus(...requiredChecks.map(c=>c.status));
+  const reason=requiredChecks.find(c=>c.status===status&&c.reason)?.reason;
+  return {...(rubric??{}),status,requiredChecks,...(windowChecks.length?{windowChecks}:{}),...(bindingGaps.length?{bindingOnly:true}:{}),...(reason?{reason}:{}),starts:observedStarts,stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
+ }catch(error){
+  const status=worstStatus(evidenceStatus(error),...requiredChecks.map(c=>c.status)),reasons=[...new Set([...requiredChecks.filter(c=>c.status===status&&c.reason).map(c=>c.reason),error.message])];
+  return {status,requiredChecks,...(windowChecks.length?{windowChecks}:{}),starts:observedStarts,stop:false,manualRemoval:[],reason:reasons[0],reasons,...(error.bindingOnly?{bindingOnly:true}:{}),gateResults,evidence:[request.trace,request.dumpDir]};
+ }
 }
 
 export function dumpPrompt({project,projectName,dumpDir}){
@@ -925,7 +955,7 @@ function evidenceFiles(request) {
   else throw new Error('saved evidence must contain regular files and directories');
  };
  capture(request.dumpDir);capture(request.configFile);
- for(const file of [request.trace,request.dumpTrace,...(request.additionalTraces??[]).map(t=>t.trace),...(request.dumpAdditionalTraces??[]).map(t=>t.trace),...(request.approvalBindings??[]).map(b=>b.ownerEvidence?.trace)].filter(Boolean)) {
+ for(const file of [request.trace,request.sent,request.dumpTrace,...(request.additionalTraces??[]).flatMap(t=>[t.trace,t.sent]),...(request.dumpAdditionalTraces??[]).map(t=>t.trace),...(request.approvalBindings??[]).map(b=>b.ownerEvidence?.trace)].filter(Boolean)) {
   capture(file);capture(path.join(path.dirname(file),'result.json'));
  }
  return [...files];

@@ -126,7 +126,7 @@ export function windowReply(host, input, policy, id) {
       return policy.text;
     }
     if (policy.mode === 'empty') return '';
-    if (policy.mode === 'correction') return policy.text;
+    if (policy.mode === 'correction' || policy.mode === 'refuse') return policy.text;
     const target = policy.mode === 'discuss' ? 'Ещё обсудить' : policy.label;
     const answer = ['recommended','default'].includes(policy.mode)
       ? labels.find(l => l.endsWith(' (Recommended)'))
@@ -139,7 +139,6 @@ export function windowReply(host, input, policy, id) {
       : { behavior: 'allow', updatedInput: { ...input, answers: Object.fromEntries(input.questions.map(q => [q.question, choose(q)])) } };
     return { type: 'control_response', response: { subtype: 'success', request_id: id, response } };
   }
-  if (policy.mode === 'refuse') return policy.text;
   const items = input.questions.map((q, i) => ({ questionItemId: JSON.stringify(['request_user_input_async', id, i]),
     question: q.title, answer: choose(q) }));
   return `<send_user_message_question_reply>\n${JSON.stringify(items)}\n</send_user_message_question_reply>\n`;

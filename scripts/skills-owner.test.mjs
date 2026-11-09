@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { test } from 'node:test';
 import { windowReply } from './test-fixtures/legacy-window-owner.mjs';
 import { correctedVersion } from './skills-owner.mjs';
+import { windowReply as currentWindowReply } from './skills-owner.mjs';
 import { nativeProof as textProof } from './skills-proof.mjs';
 import { nativeProof as windowProof } from './test-fixtures/legacy-window-proof.mjs';
 const nativeProof=request=>['window','answer'].includes(request.kind)?windowProof(request):textProof(request);
@@ -12,6 +13,14 @@ function claudeReplyDelivered(block,reply){
 }
 const read = (host, name) => JSON.parse(fs.readFileSync(`evals/scenarios/probe/samples/${host}/${name}.json`));
 const policies = { recommended: {mode:'recommended'}, label:{mode:'label',label:'Зелёный'}, correction:{mode:'correction',text:'Синий, но светлее'}, empty:{mode:'empty'}, refuse:{mode:'refuse',text:'Не буду отвечать на этот вопрос.'}, discuss:{mode:'discuss'} };
+test('historical Codex refusal uses the native call and every question identity',()=>{
+ const input={questions:[{title:'Первый вопрос?',options:['Да','Нет']},{title:'Второй вопрос?',options:['Да','Нет']}]},callId='refusal-window',policy={mode:'refuse',text:'Не утверждаю'};
+ const prompt=currentWindowReply('codex',input,policy,callId),call={type:'response_item',payload:{type:'function_call',name:'request_user_input_async',call_id:callId,arguments:JSON.stringify(input)}},result={type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:prompt}]}};
+ assert.equal(textProof({host:'codex',kind:'answer',call,result,callId,prompt}).status,'confirmed');
+ const replies=JSON.parse(prompt.replace(/^<send_user_message_question_reply>\n/,'').replace(/\n<\/send_user_message_question_reply>\n$/,''));
+ assert.deepEqual(replies,input.questions.map((q,i)=>({questionItemId:JSON.stringify(['request_user_input_async',callId,i]),question:q.title,answer:policy.text})));
+ assert.equal(textProof({host:'codex',kind:'answer',call,result,callId:'different-window',prompt}).status,'unverified');
+});
 for(const after of ['$&','$$','$`',"$'"])test(`named correction preserves literal replacement token ${after}`,()=>{
  assert.equal(correctedVersion('left old right',{correction:{before:'old',after}}),'left '+after+' right');
 });

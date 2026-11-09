@@ -8,7 +8,7 @@ import { RecordDump } from './skills-dump.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 import { hostProcess } from './skills-process.mjs';
 import { windowReply, personaPrompt, windowPolicy, roleWindows, targetReplyCount, textReply, validateReplies, isOwnerWindow, checkStageResponse } from './skills-owner.mjs';
-import { checkTrace, codexItems, codexWindows, visible, completedTrace, codexTerminals } from './skills-trace.mjs';
+import { checkTrace, checkTraceSources, worstStatus, codexItems, codexWindows, visible, completedTrace, codexTerminals } from './skills-trace.mjs';
 import { traceRows } from './skills-probe.mjs';
 import { mcpConfig, privateCodexHome, toolViolation, workspaceReadCall, workspaceReadCode, MissingEvidence, isWrite } from './skills-boundary.mjs';
 
@@ -392,12 +392,16 @@ function finishRun(request,run){
     const status=run.violation?'failed':reason||!run.confirmed||!complete||run.process?.code!==0?'unverified':'passed';
     return {host:request.host,...run,status,hostFailure:Boolean(!run.violation&&(run.hostFailure||run.process&&(run.process.failure||run.process.code!==0))),reason:reason??(!complete?'incomplete dump trace':null)};
   }
-  const check=checkTrace({host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,expectedReplies:request.scenario.expectedReplies,rulesRoot:request.rulesRoot,testedVersion:request.testedVersion,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent});
+  const primary={host:request.host,trace:run.trace,expectedWindows:request.scenario.expectedWindows,expectedReplies:request.scenario.expectedReplies,rulesRoot:request.rulesRoot,testedVersion:request.testedVersion,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent};
+  const historical=dialogueMode(request.testedVersion)==='windows';
+  const additional=historical?(run.auditedTraces??[]).filter(trace=>trace!==run.trace).map(trace=>({host:request.host,trace,rulesRoot:request.rulesRoot,testedVersion:request.testedVersion})):[];
+  const checked=checkTraceSources([primary,...additional]),check=checked.sources[0];
   let notes=[];try{const {rows}=traceRows(run.trace,request.host,{endLine:run.endLine});notes=auditRows(request.host,rows).notes;}catch{}
   const failure=run.violation??(run.evidenceMissing?null:run.process?.failure??(run.process?.code!==0?'host process failed':null));
   const allReplied=targetsAnswered(request,run.replies)&&run.replies.every(r=>r.received)&&(request.scenario.expectedReplies?check.exchanges?.length===request.scenario.expectedReplies.length:check.windows.every(w=>run.replies.some(r=>r.callId===w.callId&&r.received)));
-  const status=failure?'failed':run.evidenceMissing?'unverified':check.status!=='passed'?check.status:allReplied?'passed':'unverified';
-  return {host:request.host,status,...run,check,notes,reason:failure??run.evidenceMissing??(!allReplied?'not every expected window was answered':null),conversation:{status:'unverified',rubric:'references/qa-skills.md#рубрика-разговора'}};
+  const status=historical?worstStatus(failure?'failed':'passed',run.evidenceMissing?'unverified':'passed',checked.status,allReplied?'passed':'unverified')
+   :failure?'failed':run.evidenceMissing?'unverified':check.status!=='passed'?check.status:allReplied?'passed':'unverified';
+  return {host:request.host,status,...run,check,sourceChecks:checked.sources,notes,reason:failure??run.evidenceMissing??(checked.sources.find(source=>source.status===status)?.reason)??(!allReplied?'not every expected window was answered':null),conversation:{status:'unverified',rubric:'references/qa-skills.md#рубрика-разговора'}};
 }
 
 export async function runScenario(request){

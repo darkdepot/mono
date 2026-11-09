@@ -162,6 +162,14 @@ export function checkTrace(request) {
  if(request.expectedWindows?.length)return {host:request.host,trace:request.trace,status:'failed',windows:[],checks:[],reason:'window scenarios forbidden from 0.43.0'};
  return checkTextTrace(request);
 }
+export const worstStatus=(...statuses)=>statuses.includes('failed')?'failed':statuses.some(status=>status!=='passed')?'unverified':'passed';
+export function checkTraceSources(requests) {
+ if(!Array.isArray(requests)||!requests.length)return {status:'unverified',sources:[],reason:'scenario trace sources missing'};
+ const sources=requests.map(request=>{
+  try{return checkTrace(request);}catch(error){return {host:request?.host,trace:request?.trace,status:'unverified',windows:[],checks:[],reason:error.message};}
+ });
+ return {status:worstStatus(...sources.map(source=>source.status)),sources};
+}
 // Shared with the probe and record verifier; expected words/outcomes stay in the
 // scenario. No approval is inferred from a Russian phrase or a model's verdict.
 function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase='complete',stageStartLine,rulesRoot=root}) {

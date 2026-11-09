@@ -23,6 +23,17 @@ function setup(t,host,mode='ok'){
  const authFile=path.join(dir,'auth.json');fs.writeFileSync(authFile,'{}');
  return {host,cwd:dir,packRoot:repo,outputDir:path.join(dir,'out'),authFile,timeoutMs:2000,idleMs:10,binary:{command:process.execPath,args:[path.join(repo,'scripts/test-fixtures/skills-host.mjs'),mode,repo]},mcpServers:{monotest:{url:'https://example.test/mcp'}},workspaceProof:{tool:'mcp__monotest__get_workspace',path:['name'],equals:'Test Space'},scenario:{prompt:'Run stage',brief:'Владелец предпочитает синий.',allowedTools:['mcp__monotest__get_workspace','mcp__monotest__save_project'],windows:[{mode:'recommended'}],expectedWindows:[{id:'approval',decision:'описание',advice:'Research',reason:host==='codex'?'чтобы проверить':'риск',summary:['Что','Дальше:']}]}};
 }
+test('production historical Codex refusal reaches a confirmed native resumed answer',async t=>{
+ const request=setup(t,'codex'),packRoot=path.join(request.cwd,'tested-pack');fs.mkdirSync(packRoot);fs.writeFileSync(path.join(packRoot,'VERSION'),'0.42.0\n');request.packRoot=packRoot;
+ request.scenario.windows=[{mode:'refuse',text:'Не буду отвечать на этот вопрос.'}];
+ const result=await runTextScenario(request);assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.replies[0].received,true);
+ assert.match(fs.readFileSync(result.sent,'utf8'),/send_user_message_question_reply/);
+});
+test('production historical Codex includes additional rollout sources in its verdict',async t=>{
+ const request=setup(t,'codex','child-window'),packRoot=path.join(request.cwd,'tested-pack');fs.mkdirSync(packRoot);fs.writeFileSync(path.join(packRoot,'VERSION'),'0.42.0\n');request.packRoot=packRoot;
+ const result=await runTextScenario(request);assert.equal(result.status,'unverified',JSON.stringify(result));assert.equal(result.check.status,'passed');
+ assert.equal(result.sourceChecks.length,2);assert.equal(result.sourceChecks[1].status,'unverified','the child source has no own policy or complete native answer proof');
+});
 test('Codex completion on the final allowed iteration passes',async t=>{
  const request=setup(t,'codex');request.maxTurns=1;
  const complete=await runScenario(request);
