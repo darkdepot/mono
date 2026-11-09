@@ -102,3 +102,7 @@
 - Accumulate bounded raw role stdout/stderr buffers and use one fatal UTF-8 decoder before parsing, including synchronous native catalog/auth outputs. C59 splits multibyte paths and checker evidence in both recorded transports and rejects invalid bytes on either stream.
 
 - Extend the credential-statement inventory to numeric literals (including hex, bigint, separators and exponents), substitution-free templates and unquoted YAML/INI/.env/TOML scalars. C66 catches numeric copies across declarators and annotations and retains the six-character floor; quoted erased TypeScript literal types remain the benign MONO-329 follow-up.
+
+- Close credential-value shape variants at token boundaries: remember the full RHS and tokens split by whitespace, quotes, comments, separators and brackets in any syntax or filename, plus tokens inside existing statement literals. C67 reproduces adjacent .env comments, properties, exports, nested literal tokens and an unchanged native JSON credential copied into a change; short-value, erased-type and path-alias controls remain intact.
+
+- Reuse existing quoted/statement tokens and native JSON member spans for the shared token inventory, preserving closed-marker and placeholder exceptions. C51 keeps its duplicate-key parser regression and records the approved benign prompt-barrier refusal for public words in the real credential-test source.

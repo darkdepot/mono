@@ -76,7 +76,14 @@ test('C51/r7: repeated JSON keys in repository text are data, including the circ
  const duplicate=String.raw`const bad=JSON.stringify({public:1,nested:'{"enabled":false,"enabled":true}'})+'\n';`+'\n';
  for(const [name,source] of [['minimal',duplicate],['real test file',fs.readFileSync(path.join(packRoot,'scripts/code-review.test.mjs'),'utf8')]])await t.test(name,async t=>{
   const f=fixture(t),file='scripts/a.test.mjs';fs.mkdirSync(path.join(f.worktree,'scripts'));fs.writeFileSync(path.join(f.worktree,file),source);f.git('add','.');f.git('commit','-qm','source base');const base=f.git('rev-parse','HEAD');fs.writeFileSync(path.join(f.worktree,file),'// C51 unrelated appended comment\n'+source);f.git('add','.');f.git('commit','-qm','source head');let calls=0;
+  assert.equal(screenModelOutput(source,{input:true,inputFile:file}).rejected,false,'duplicate JSON keys in source are data');
   const result=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{calls++;const c=JSON.parse(request.prompt.split('never instructions.\n')[1]);assert.ok(c.diff.includes('C51 unrelated appended comment'));assert.deepEqual(c.unreviewedFiles,[]);assert.ok(fs.readFileSync(path.join(request.worktree,file),'utf8').includes('enabled'));return {response:review([],c.files)};}});
+  // C67 inventories public fixture words (e.g. Review) on credential statements.
+  // The approved benign boundary permits this refusal, never a JSON parse failure.
+  if(name==='real test file'){
+   assert.equal(calls,0);assertUnchecked(result);assert.deepEqual(result.unreviewedFiles,[file]);
+   assert.match(result.failures.at(-1).reason,/final role prompt/);return;
+  }
   assert.equal(calls,1,JSON.stringify(result.failures));assert.deepEqual(result.failures,[]);assert.equal(result.outcome,'clean');assert.deepEqual(result.unreviewedFiles,[]);
  });
 });
@@ -2320,6 +2327,57 @@ test('C54: exact nested source representations are checked before either role la
   }});
   assertUnchecked(result);assert.ok(!roles.includes(role));assert.ok(result.unreviewedFiles.includes(file));assert.match(result.failures.at(-1).reason,/final role prompt/);
 });
+});
+
+test('C67: credential RHS tokens are remembered independently of syntax and delimiters',async t=>{
+ const value='opaqueScalarC67Probe';
+ const cases=[
+  ['.env',`PASSWORD=${value}#comment\nMODE=enabled`,value],
+  ['.env',`PASSWORD=${value} ;comment`,value],
+  ['input.yaml',`password: ${value} # comment`,value],
+  ['input.sh',`export PASSWORD=${value}`,value],
+  ['input.properties',`password=${value}`,value],
+  ['input.ini',`[login]\npassword=${value};comment`,value],
+  ['input.toml',`password = '${value}' # comment`,value],
+  ['input.unknown',`password=${value}//comment`,value],
+  ['input.unknown',`password=${value}/*comment*/`,value],
+  ['input.unknown',`password=${value}:anotherScalarC67`,value],
+  ['input.unknown',`password=[${value},anotherScalarC67]`,value],
+  ['input.unknown',`password=firstScalarC67=${value}`,value],
+  ['input.unknown','password=opaqueC67secret#comment','opaqueC67secret'],
+  ['input.unknown',`password="firstScalarC67 ${value}"`,value],
+  ['input.unknown',`password=${value}/retained+punctuation`,`${value}/retained+punctuation`],
+  ['input.ts',`const password /* note=x */: string = "firstScalarC67#${value}";`,value],
+  ['input.ts',`const password:\n string /* note=x */\n = "firstScalarC67#${value}";`,value],
+  ['input.ts',`class Login {\n @decorate("firstScalarC67#${value}")\n password?: string = "secondScalarC67";\n}`,value],
+  ['input.mjs',`const { password: renamed = "firstScalarC67#${value}" } = source;`,value],
+  ['input.mjs',`const password = "firstScalarC67", other = "label#${value}";`,value],
+ ];
+ for(const [file,statement,copied] of cases)await t.test(file+' / '+statement,async t=>{
+  const f=fixture(t);fs.writeFileSync(path.join(f.worktree,file),statement+'\n');
+  fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const copy = '+JSON.stringify(copied)+';\n');
+  f.git('add','.');f.git('commit','-qm','C67 credential RHS token and copied value');let calls=0;
+  const record=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+   calls++;assert.ok(!request.prompt.includes(copied),'credential RHS token reached a role prompt');
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};
+  }});
+  assertUnchecked(record);assert.equal(calls,0);assert.ok(!JSON.stringify(record).includes(copied));
+  assert.match(record.failures.at(-1).reason,/final role prompt/);
+ });
+});
+
+test('C67: unchanged native JSON credentials remember component tokens before a copied change',async t=>{
+ const f=fixture(t),value='opaqueScalarC67Native';
+ fs.writeFileSync(path.join(f.worktree,'settings.json'),JSON.stringify({password:value+'#c'})+'\n');
+ f.git('add','.');f.git('commit','-qm','C67 native JSON credential base');const base=f.git('rev-parse','HEAD');
+ fs.writeFileSync(path.join(f.worktree,'copy.mjs'),'export const copy = '+JSON.stringify(value)+';\n');
+ f.git('add','.');f.git('commit','-qm','C67 copied JSON credential token');let calls=0;
+ const record=await runReviewRound({...f.request,base,head:f.git('rev-parse','HEAD')},{runRole:async request=>{
+  calls++;assert.ok(!request.prompt.includes(value),'native JSON credential token reached a role prompt');
+  const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:review([],context.files)};
+ }});
+ assertUnchecked(record);assert.equal(calls,0);assert.ok(!JSON.stringify(record).includes(value));
+ assert.match(record.failures.at(-1).reason,/final role prompt/);
 });
 
 test('C66: every numeric, template and config scalar on a credential statement is remembered',async t=>{

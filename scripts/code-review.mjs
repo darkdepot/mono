@@ -412,7 +412,14 @@ function encodedAnalysis(maxBytes, maxNodes, sourceFile = null) {
       const views = patch ? sourceViews(source, true, false) : [];
       const inputs = views.length ? views.map(rows => rows.map(row => row.text).join('\n')) : [source];
       for (const input of inputs) {
-        const literals = credentialStatementLiterals(input, views.length ? input : runtimeSource, sourceFile);
+        let runtimeInput = views.length ? input : runtimeSource;
+        if (typedSource && views.length) {
+          try {
+            const stripped = nodeModule.stripTypeScriptTypes?.(input, { mode: 'strip' });
+            if (typeof stripped === 'string' && stripped.length === input.length) runtimeInput = stripped;
+          } catch {}
+        }
+        const literals = credentialStatementLiterals(input, runtimeInput);
         for (const literal of literals) collectValue(literal.value, literal.representation);
       }
     }
@@ -481,6 +488,7 @@ function encodedAnalysis(maxBytes, maxNodes, sourceFile = null) {
         const representation = source.slice(start, end), value = first.quoted ? first.value : representation;
         result.bindings.push({ start, end, eligible: value.length >= 6 });
         collectValue(value, representation);
+        if (json) for (const part of credentialTokens(value, [token.value])) collectValue(part);
       }
       if (key.opaque) result.dirty = result.opaque = true;
     }
@@ -643,18 +651,45 @@ const SOURCE_KEY = '(?:[\\p{L}\\p{N}_$-]*)(?:' + [...SECRET_KEY_SUFFIXES].sort((
 const SOURCE_SPACE = '(?:\\s|/\\*[\\s\\S]*?\\*/)*';
 const SOURCE_BINDING = new RegExp('(?<![\\p{L}\\p{N}_$-])(?:' + SOURCE_KEY + '["\']?\\??' + SOURCE_SPACE + '[:=]|--' + SOURCE_KEY + '(?:' + SOURCE_SPACE + '=|[ \\t]+(?=\\S)))', 'iu');
 const SOURCE_NAME = new RegExp('(?<![\\p{L}\\p{N}_$-])' + SOURCE_KEY, 'iu');
+const CREDENTIAL_WORDS = new Set(('abstract any as assert asserts async await bigint boolean break case catch class const continue ' +
+  'debugger declare default delete do else enum export extends false finally for from function get if implements import in ' +
+  'infer instanceof interface intrinsic is keyof let module namespace never new null number object of out override package ' +
+  'private protected public readonly require return satisfies set static string super switch symbol this throw true try type ' +
+  'typeof undefined unique unknown var void while with yield').split(' '));
+function credentialTokens(raw, keys = []) {
+  const full = raw.trim();
+  if (!credentialValue(full) || screenMarkers.has(full)) return [];
+  return [...new Set([full, ...full.split(/\s|["'`#;=:,\[\]{}()]|\/\/|\/\*|\*\//)])]
+    .filter(value => value && !keys.includes(value) && !CREDENTIAL_WORDS.has(value) && (value.length >= 6 || familyMatches(value).length));
+}
 // Inventory complete credential statements, never an inferred initializer.
 // Value blocks inherit their binding; object/destructuring keys bind their parent.
-function credentialStatementLiterals(source, runtimeSource, sourceFile) {
-  const values = [], frames = [{ tokens: [], literals: [], inherited: false, bound: false, parens: 0 }];
-  // Config scalars need their original spelling, including punctuation that is
-  // an operator in source code. Retain the remainder and its whitespace tokens.
-  if (/(?:^|\/)(?:\.env(?:\.[^/]*)?|[^/]+\.(?:ya?ml|ini|toml|env|conf|config|properties))$/i.test(sourceFile ?? '')) {
-    for (const line of source.split('\n')) for (const binding of line.matchAll(new RegExp(SOURCE_BINDING.source, 'giu'))) {
-      const scalar = line.slice(binding.index + binding[0].length).trim();
-      if (!scalar || /^["'`[{(]/.test(scalar)) continue;
-      for (const value of new Set([scalar, ...scalar.split(/\s+/)])) values.push({ value, representation: value });
+function credentialStatementLiterals(source, runtimeSource) {
+  const values = [], tokens = jsonTokens(source, Infinity, true);
+  const frames = [{ tokens: [], literals: [], inherited: false, bound: false, parens: 0 }];
+  const remember = (raw, keys = []) => {
+    for (const value of credentialTokens(raw, keys)) values.push({ value, representation: value });
+  };
+  // Syntax and filenames cannot define a value boundary. Keep both the whole
+  // RHS and every delimited token. Existing tokens bound a containing string
+  // or statement; nested JSON members use their native value spans above.
+  let offset = 0, cursor = 0;
+  for (const line of runtimeSource.split('\n')) {
+    for (const binding of line.matchAll(new RegExp(SOURCE_BINDING.source, 'giu'))) {
+      const start = offset + binding.index, beginning = start + binding[0].length;
+      while (tokens[cursor]?.end <= start) cursor++;
+      const containing = tokens[cursor]; let end = offset + line.length;
+      if (containing?.quoted && beginning < containing.end) {
+        try { if (JSON.parse(containing.value) instanceof Object) continue; } catch {}
+        end = Math.min(end, containing.end - (containing.closed ? 1 : 0));
+      } else for (let index = cursor; tokens[index]?.start < end; index++) {
+        if (!tokens[index].quoted && !tokens[index].regexp && tokens[index].value === ';') { end = tokens[index].start; break; }
+      }
+      const rhs = runtimeSource.slice(beginning, end), first = jsonTokens(rhs, 1, true)[0];
+      if (first?.quoted && first.closed && (screenMarkers.has(first.value) || !credentialValue(first.value))) continue;
+      remember(rhs, [new RegExp(SOURCE_KEY, 'iu').exec(binding[0])?.[0]]);
     }
+    offset += line.length + 1;
   }
   const runtime = token => runtimeSource.slice(token.start, token.end).trim();
   const assignment = token => !token.quoted && !token.regexp && token.value !== '=>' && /[=:]/.test(runtime(token));
@@ -665,10 +700,16 @@ function credentialStatementLiterals(source, runtimeSource, sourceFile) {
         : !token.regexp && SOURCE_NAME.test(runtime(token)) && (frame.tokens.slice(index + 1).find(runtime)?.value === '(' ||
           frame.tokens.slice(index + 1).some(assignment))));
   const finish = frame => {
-    if (binds(frame)) values.push(...frame.literals);
+    if (binds(frame)) {
+      const keys = frame.tokens.filter((token, index) => !token.regexp &&
+        (token.quoted ? secretKey(token.value) : SOURCE_NAME.test(runtime(token))) &&
+        frame.tokens.slice(index + 1).some(assignment)).map(token => token.value);
+      for (const literal of frame.literals) {
+        values.push(literal); remember(literal.value, keys); remember(literal.representation, keys);
+      }
+    }
     frame.tokens = []; frame.literals = []; frame.bound = false;
   };
-  const tokens = jsonTokens(source, Infinity, true);
   for (const token of tokens) {
     const frame = frames.at(-1);
     // A slash span can also be division containing source statements. Retain
