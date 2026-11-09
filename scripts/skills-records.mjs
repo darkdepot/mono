@@ -858,7 +858,7 @@ export function verifyRecords(request){
   let windowExchanges;
   if(historical){
    const plans=windowPlans(request,data);
-   const checked=checkTrace({...request,expectedReplies:undefined});
+   const checked=checkTrace({...request,phase:'complete',excerpt:false,expectedReplies:undefined});
    requiredChecks.push({id:'windows',status:checked.status});
    if(checked.status!=='passed')return {status:checked.status,requiredChecks,windowChecks:checked,reason:checked.reason??'historical window checks not positively proved',starts:observedStarts,stop:false,manualRemoval:[],gateResults,evidence:[request.trace,request.dumpDir]};
    windowExchanges=checked.windows.map(window=>{

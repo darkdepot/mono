@@ -388,6 +388,12 @@ for(const host of ['claude','codex']) {
   const checked=f.check();assert.equal(checked.status,'unverified',JSON.stringify(checked));
  });
 }
+for(const host of ['claude','codex'])test(`historical ${host} records cannot use card-only checking to skip a required window`,t=>{
+ const f=historicalRecords(t,host);f.request.expectedWindows.push({...f.request.expectedWindows[0],id:'second-approval'});f.request.windows.push({...f.request.windows[0]});f.request.phase='card';
+ const initial=f.check();
+ if(initial.rubricDigest){f.attest();}
+ const checked=f.check();assert.equal(checked.status,'failed',JSON.stringify(checked));
+});
 test('historical Claude native denial cannot authorize a record write',t=>{
  const f=historicalRecords(t),message='Не утверждаю';
  f.events[4].message.content[0]={type:'tool_result',tool_use_id:'window',is_error:true,content:message};delete f.events[4].tool_use_result;
