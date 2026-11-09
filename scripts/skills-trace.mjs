@@ -110,10 +110,9 @@ function checkWindowTrace({ host, trace, expectedWindows, expectedReplies, rules
       const issues = w.status === 'failed' ? [w.reason] : [];
       let summary = w.summary ?? '';
       if (host === 'claude') {
-        const windowRow = rows.find(r => r.line === w.line);
-        const messageId = windowRow.value.message.id;
         const firstLine = w.textLines[0] ?? w.line;
         const parts = [];
+        let presentation;
         for (const r of rows.filter(r => r.line >= firstLine && r.line <= w.line)) {
           if (r.value.parent_tool_use_id || r.value.type !== 'assistant') continue;
           for (const block of r.value.message.content) {
@@ -121,8 +120,12 @@ function checkWindowTrace({ host, trace, expectedWindows, expectedReplies, rules
               if (block.id === w.callId) break;
               parts.length = 0; // Service work invalidates all earlier summary fragments.
             }
-            if (block.type === 'text' &&
-                (r.line === w.line || (messageId && r.value.message.id === messageId))) parts.push(block.text);
+            if (block.type === 'text' && visible(block.text)) {
+              if (presentation && presentation !== r &&
+                  (!r.value.message.id || r.value.message.id !== presentation.value.message.id)) parts.length = 0;
+              parts.push(block.text);
+              presentation = r;
+            }
           }
         }
         summary = parts.join('\n');

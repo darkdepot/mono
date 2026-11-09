@@ -1822,6 +1822,8 @@ Historical acceptance uses real native window answers and the current conversati
 rubric. Linked approval records still bind the shown version after the answer;
 Claude child events cannot supply that owner-visible presentation or replace the
 last parent summary.
+Historical Claude windows retain that parent summary across message IDs; newer
+parent text replaces it, and parent service work invalidates it.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
 `references/owner-dialog.md` and `references/orchestration.md`, for retired window
 labels and answer-list formatting. History and old fixtures are outside that scope.

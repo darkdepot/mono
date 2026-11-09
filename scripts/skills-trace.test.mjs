@@ -92,6 +92,23 @@ test('Claude summary anchors cannot be borrowed from an earlier API message',t=>
  summary.message.id='earlier-message';window.message.content.unshift({type:'text',text:'Коротко.'});
  assert.equal(checkTrace({host:'claude',trace:write([summary,window]),expectedWindows:[expected],excerpt:true}).status,'failed');
 });
+for(const differentChild of [false,true])test(`Claude parent summary survives distinct window message ID; different child text=${differentChild}`,t=>{
+ const rows=structuredClone(JSON.parse(fs.readFileSync('scripts/test-fixtures/skills-claude-child-approval.json')).events);
+ if(!differentChild)rows[1].message.content[0].text=rows[0].message.content[0].text;
+ const questions=rows[2].message.content[0].input.questions,answer='Утвердить, продолжу позже';
+ rows.push({type:'control_request',request_id:'permission',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions}}},
+  {type:'user',tool_use_result:{questions,answers:{[questions[0].question]:answer}},message:{content:[{type:'tool_result',tool_use_id:'window',content:`Your questions have been answered: "${questions[0].question}"="${answer}". You can now continue with these answers in mind.`}]}},
+  {type:'result',subtype:'success'});
+ const write=scratch(t),check=()=>textTrace({host:'claude',trace:write(rows),testedVersion:'0.42.0',expectedWindows:[{id:'idea-approval',role:'approval',decision:'Утвержд',advice:'Совет',reason:'Research',summary:['Что','Зачем','Дальше']}]});
+ assert.notEqual(rows[0].message.id,rows[2].message.id);
+ assert.equal(check().status,'passed',JSON.stringify(check()));
+ const parent=rows.shift();
+ assert.equal(check().status,'failed','hidden scout cannot supply the owner summary');rows.unshift(parent);
+ const short={type:'assistant',message:{id:'new-parent',content:[{type:'text',text:'Коротко.'}]}};
+ rows.splice(2,0,short);assert.equal(check().status,'failed','new parent text replaces the old presentation');rows.splice(2,1);
+ rows.splice(2,0,{type:'assistant',message:{id:'service',content:[{type:'tool_use',id:'read',name:'Read',input:{file_path:'fixture'}}]}});
+ assert.equal(check().status,'failed','parent service work invalidates the summary');
+});
 test('Claude service call inside the same content array cannot sit between summary and window',t=>{
  const write=scratch(t),sample=JSON.parse(fs.readFileSync(`${base}/claude/trace-control-v0.41.0-approval.json`));
  const summary=sample.events.find(r=>r.line===138).event,window=sample.events.find(r=>r.line===139).event;

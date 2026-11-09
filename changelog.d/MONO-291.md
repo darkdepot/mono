@@ -8,3 +8,4 @@
 - Kept the last visible pre-window Codex presentation across reasoning, delayed tool results and blank messages, with new tool work ending earlier progress; a short final instruction cannot replace that presentation, including with empty scenario anchors. Added anonymized regressions from all three fixed-version Codex controls.
 - Restricted optionless questions to non-target windows and made direct acceptance selection include the full catalog even with an empty or stage-only diff.
 - Excluded Claude child events from historical approval presentation lookups and last-visible-summary checks, preventing both false rejections and confirmation of scout-only text.
+- Preserved eligible Claude parent summaries when the approval window has a different message ID, without borrowing hidden scout text or summaries superseded by parent text or service work.
