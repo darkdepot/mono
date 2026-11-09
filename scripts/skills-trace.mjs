@@ -149,7 +149,7 @@ function checkWindowTrace({ host, trace, expectedWindows, expectedReplies, rules
     }
     const status = [...windows,...checks].some(c => c.status === 'failed') ? 'failed' : [...windows,...checks].some(c => c.status === 'unverified') ? 'unverified' : 'passed';
     return { host, status, phase, trace, windows, checks, rules: { source:ruleSource, sha256:rulesDigest }, boundary:'mechanical checks only; conversation rubric still requires tester judgment' };
-  } catch (error) { return {host,status:'unverified',trace,windows:[],checks,reason:error.message}; }
+  } catch (error) { return {host,status:worstStatus('unverified',...windows.map(w=>w.status),...checks.map(c=>c.status)),trace,windows,checks,reason:error.message}; }
 }
 export function checkTrace(request) {
  let mode;

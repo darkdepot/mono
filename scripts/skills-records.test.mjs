@@ -36,9 +36,9 @@ function fixture(t){
   const reads=[];
   const walk=(directory)=>{for(const name of fs.readdirSync(directory)){const file=path.join(directory,name);if(fs.statSync(file).isDirectory()){walk(file);continue;}
    if(!name.endsWith('.json')||name.endsWith('.request.json'))continue;
-   const relative=path.relative(dumpDir,file),value=JSON.parse(fs.readFileSync(file)),kind=relative.startsWith('statuses/')?'list_issue_statuses':/^comments-/.test(name)?'list_comments':/^documents-/.test(name)?'list_documents':/^issues-/.test(name)?'list_issues':/^projects-/.test(name)?'list_projects':relative==='project.json'?'get_project':name==='issue.json'?'get_issue':'get_document';
+   const relative=path.relative(dumpDir,file),value=JSON.parse(fs.readFileSync(file)),kind=relative.startsWith('statuses/')?'list_issue_statuses':/^comments-/.test(name)?'list_comments':/^documents-/.test(name)?'list_documents':/^issues-/.test(name)?'list_issues':/^projects-/.test(name)?'list_projects':/^teams-/.test(name)?'list_teams':relative==='project.json'?'get_project':name==='issue.json'?'get_issue':'get_document';
    const page=kind.startsWith('list_'),scope=relative.startsWith('issues/')?relative.split('/')[1]:projectId;
-   const input=kind==='list_issue_statuses'?{team:path.basename(name,'.json')}:page?{...(kind==='list_projects'?{query:request.projectName}:{[kind==='list_issues'?'project':scope===projectId?'projectId':'issueId']:scope}),...(['list_issues','list_projects'].includes(kind)?{includeArchived:true}:{}),...(fs.existsSync(file.replace(/\.json$/,'.request.json'))?JSON.parse(fs.readFileSync(file.replace(/\.json$/,'.request.json'))):{})}:{id:value.uuid??value.id};
+   const input=kind==='list_issue_statuses'?{team:path.basename(name,'.json')}:kind==='list_teams'?JSON.parse(fs.readFileSync(file.replace(/\.json$/,'.request.json'))):page?{...(kind==='list_projects'?{query:request.projectName}:{[kind==='list_issues'?'project':scope===projectId?'projectId':'issueId']:scope}),...(['list_issues','list_projects'].includes(kind)?{includeArchived:true}:{}),...(fs.existsSync(file.replace(/\.json$/,'.request.json'))?JSON.parse(fs.readFileSync(file.replace(/\.json$/,'.request.json'))):{})}:{id:value.uuid??value.id};
    const id=String(reads.length);
    if(request.host==='claude')reads.push({type:'assistant',message:{content:[{type:'tool_use',id,name:`mcp__monotest__${kind}`,input}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}});
    else reads.push({type:'response_item',payload:{type:'function_call',name:`mcp__monotest__${kind}`,call_id:id,arguments:JSON.stringify(input)}},{type:'response_item',payload:{type:'function_call_output',call_id:id,output:JSON.stringify(value)}});
@@ -593,6 +593,33 @@ function liveFixture(t,name){
  const edit=(file,mutate)=>{const p=path.join(dir,file),v=JSON.parse(fs.readFileSync(p));mutate(v);fs.writeFileSync(p,JSON.stringify(v));};
  return {dir,request,edit,check:()=>verifyRecords(request)};
 }
+for(const tamper of [false,true])test(`continue7 historical ordinary Idea binds full presentation to canonical body (${tamper})`,t=>{
+ const f=liveFixture(t,'idea-approve');fs.writeFileSync(path.join(f.dir,'VERSION'),'0.42.0\n');fs.symlinkSync(path.resolve('scripts'),path.join(f.dir,'scripts'),'dir');
+ Object.assign(f.request,{packRoot:f.dir,testedVersion:'0.42.0',expectedWindows:[{id:'approval',role:'approval',decision:'Утверждаем',advice:'Совет',reason:'Research',summary:['## Что','## Зачем','## Неизвестные']}],windows:[{mode:'label',label:'Утвердить, продолжу позже'}],rubricDefinition:'Full shown Idea, native consent and canonical project body.'});
+ f.request.approvalBindings[0].text=f.request.approvalBindings[1].text;
+ if(tamper){
+  const change=(value,key)=>{
+   if(typeof value==='string'){if(key==='description'&&value.includes('## Что'))return value+'\nUnapproved project change.';try{return JSON.stringify(change(JSON.parse(value)));}catch{return value;}}
+   if(Array.isArray(value))return value.map(v=>change(v));
+   return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,change(v,k)])):value;
+  };
+  for(const file of [f.request.trace,f.request.dumpTrace])fs.writeFileSync(file,fs.readFileSync(file,'utf8').trim().split('\n').map(line=>JSON.stringify(change(JSON.parse(line)))).join('\n')+'\n');
+  f.edit('dump/project.json',v=>Object.assign(v,change(v)));
+ }
+ const first=verifyTextRecords(f.request);if(first.rubricDigest)f.request.rubric={digest:first.rubricDigest,reviewer:'native-control oracle',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',reason:'Saved complete native approval',evidence:'native Idea control'}))};
+ const checked=verifyTextRecords(f.request);assert.equal(checked.status,tamper?'failed':'passed',JSON.stringify(checked));
+ if(!tamper)assert.equal(checked.gateResults[0].result.ok,true);else assert.match(checked.reason,/mismatch|differs/);
+});
+
+for(const host of ['claude','codex'])for(const mode of ['native-no-team','native-no-team-project','native-no-team-many'])test(`continue7 fixed native issue team resolution ${host} ${mode}`,async t=>{
+ const f=fixture(t),native=JSON.parse(JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-records-live/discovery-approve/dump/issues/MON-130/issue.json',import.meta.url))).content[0].text),authFile=path.join(f.dir,'auth.json');fs.writeFileSync(authFile,'{}');
+ const result=await collectRecordDump({host,cwd:f.dir,packRoot:process.cwd(),outputDir:path.join(f.dir,'fixed'),authFile,timeoutMs:10000,idleMs:10,binary:{command:process.execPath,args:[path.resolve('scripts/test-fixtures/skills-fixed-dump-host.mjs'),mode]},project:{id:native.projectId,name:'fixed-run'},mcpServers:{monotest:{url:'test'}}});
+ assert.equal(result.status,'passed',JSON.stringify(result));
+ const file=path.join(result.dumpDir,`issues/${native.uuid}/issue.json`);assert.ok(fs.existsSync(file),'whole native issue dump retained');
+ const resolved=mode!=='native-no-team-many';assert.equal(fs.existsSync(path.join(result.dumpDir,'statuses/test-team.json')),resolved);
+ if(resolved)assert.deepEqual(JSON.parse(JSON.parse(fs.readFileSync(path.join(result.dumpDir,'statuses/test-team.json'))).content[0].text),native.stateHistory.map(r=>r.state));
+ else assert.ok(result.dumpStatusGaps?.length,'ambiguous team is a status evidence gap, not a thrown whole-dump failure');
+});
 for(const name of ['idea-approve','idea-empty','discovery-approve'])test(`trimmed real Codex/monotest evidence: ${name}`,t=>{
  const f=liveFixture(t,name),before=fs.readFileSync(path.join(f.dir,name==='idea-empty'?'dump/projects-1.json':'dump/comments-1.json'),'utf8');
  const r=f.check();if(name==='discovery-approve')assertInvocationGap(r);else assert.equal(r.status,'passed',r.reason);assert.equal(r.monotestTasks,name==='discovery-approve'?2:0);
@@ -1266,7 +1293,7 @@ for(const mode of ['forged-quote','extra-change','wrong-question','early-project
 });
 
 function textPrdFixture(t,delegated=false) {
- const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0],question='Принимаем показанный PRD?',reply=delegated?'Принимаю PRD: причина — требования проверяемы.':'принимаю';
+ const f=liveFixture(t,'discovery-approve'),team='fixture-team',binding=f.request.approvalBindings[0],question='Принимаем показанный PRD?',reply=delegated?'Принимаю PRD: причина — требования проверяемы.':'принимаю';
  const expected={id:'prd',stage:'discovery',role:'approval',asksStart:false,summary:['## Кратко','## Требования'],question,reply,intent:'agree',outcome:{approval:true,startNext:false},...(delegated?{by:'orchestrator',reason:'требования проверяемы.'}:{})};
  const transform=value=>{
   if(typeof value==='string'){
@@ -1275,7 +1302,7 @@ function textPrdFixture(t,delegated=false) {
    return value;
   }
   if(Array.isArray(value))return value.map(transform);
-  return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,transform(v)])):value;
+  return value&&typeof value==='object'?{...Object.fromEntries(Object.entries(value).map(([k,v])=>[k,transform(v)])),...(value.uuid===f.request.project.id?{teams:[{id:team,name:'Fixture team'}]}:{})}:value;
  };
  const original=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse),rows=[],lineMap=new Map();
  for(const [i,row] of original.entries()){
@@ -1294,7 +1321,9 @@ function textPrdFixture(t,delegated=false) {
  f.request.seedEndLine=lineMap.get(f.request.seedEndLine);delete f.request.endLine;expected.response=['PRD утверждён, старт отложен.'];f.request.expectedReplies=[expected];
  fs.writeFileSync(f.request.trace,timed(transform(rows),'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
  const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(transform(JSON.parse(fs.readFileSync(file)))));}};walk(f.request.dumpDir);
- const dumpRows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);fs.writeFileSync(f.request.dumpTrace,timed(transform(dumpRows),'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');
+ const states=new Map();for(const entry of fs.readdirSync(path.join(f.request.dumpDir,'issues'))){const value=JSON.parse(JSON.parse(fs.readFileSync(path.join(f.request.dumpDir,'issues',entry,'issue.json'))).content[0].text);for(const row of value.stateHistory??[])states.set(row.state.id,row.state);}
+ const statuses=[...states.values()];fs.mkdirSync(path.join(f.request.dumpDir,'statuses'),{recursive:true});fs.writeFileSync(path.join(f.request.dumpDir,'statuses',team+'.json'),JSON.stringify(statuses));
+ const dumpRows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);dumpRows.splice(-1,0,{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__list_issue_statuses',call_id:'fixed-statuses',arguments:JSON.stringify({team})}},{type:'response_item',payload:{type:'function_call_output',call_id:'fixed-statuses',output:JSON.stringify(statuses)}});fs.writeFileSync(f.request.dumpTrace,timed(transform(dumpRows),'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');
  return f;
 }
 for(const delegated of [false,true])test(`text PRD binds updatedAt and native reads through real route gate; delegated=${delegated}`,t=>{
@@ -2098,12 +2127,16 @@ for(const mode of ['chip','mixed-code'])test(`MONO-291 Linear prose normalizatio
  f.events[2].message.content[0].input.body=mode==='chip'?wanted.replace('MON-99</issue>','MON-98</issue>'):wanted.replace('`x`','`y`');f.check();assert.equal(verifyTextRecords(f.request).status,'failed');
 });
 
-for(const host of ['claude','codex'])test(`MONO-291 ${host} resolves a written status UUID from the fixed dump of its team`,t=>{
+for(const host of ['claude','codex'])for(const teamSource of ['issue','project','teams','ambiguous'])test(`MONO-291 ${host} resolves a written status UUID from the fixed dump of its team (${teamSource})`,t=>{
  const f=fixture(t);f.request.host=host;
  const team='00000000-0000-4000-8000-000000000002',status='00000000-0000-4000-8000-000000000003';
  const statuses=[{id:status,name:'Done',type:'completed'},{id:'00000000-0000-4000-8000-000000000004',name:'Released',type:'completed'}];
  const issue={id:'MON-1',uuid:'task',projectId,teamId:team,title:'Stage',description:'Body',status:'Done',labels:[]};
  f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('issues','issues',[{id:'task'}]);f.save('issues/task/issue.json',issue);f.page('issues/task/comments','comments',[]);f.save(`statuses/${team}.json`,statuses);
+ if(teamSource!=='issue')delete issue.teamId;
+ if(teamSource==='project'){f.project.teams=[{id:team,name:'Native team'}];f.save('project.json',f.project);}
+ if(['teams','ambiguous'].includes(teamSource))f.page('teams','teams',[{id:team,name:'Native team'},...(teamSource==='ambiguous'?[{id:'other-team',name:'Other'}]:[])]);
+ f.save('issues/task/issue.json',issue);
  const input={id:'task',state:status};
  f.events.splice(0,f.events.length,...(host==='claude'?[
   {type:'assistant',message:{content:[{type:'tool_use',id:'status',name:'mcp__monotest__save_issue',input}]}},
@@ -2111,6 +2144,7 @@ for(const host of ['claude','codex'])test(`MONO-291 ${host} resolves a written s
  ]:[{type:'response_item',payload:{type:'function_call',call_id:'status',name:'mcp__monotest__save_issue',arguments:JSON.stringify(input)}},
  {type:'response_item',payload:{type:'function_call_output',call_id:'status',output:JSON.stringify(issue)}}]));
  const check=()=>{f.check();return verifyTextRecords(f.request);};
+ if(teamSource==='ambiguous'){assert.equal(check().status,'unverified',JSON.stringify(check()));return;}
  assert.equal(check().status,'passed',JSON.stringify(check()));
  f.save('issues/task/issue.json',{...issue,status:'Released'});assert.equal(check().status,'failed','same status type cannot replace the exact status');
  f.save('issues/task/issue.json',{...issue,status:{id:statuses[1].id,name:'Done',type:'completed'}});assert.equal(check().status,'failed','a returned name cannot hide a different explicit UUID');

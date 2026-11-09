@@ -1806,7 +1806,9 @@ document identities come from native responses, including slug lookups. Harmless
 deferral wording is allowed; exact forbidden offers and the semantic rubric remain
 blocking. The production driver, checker and record verifier select window mode
 only for tested versions before 0.43.0; current versions retain the window ban.
-Claude background-task yields wait for a fresh completed stage summary. Idea
+Claude background-task yields and pending completion notifications wait for a fresh
+completed parent stage summary; progress before the notification-processing turn
+cannot trigger an owner reply. Idea
 presentation titles stay outside the canonical four-section approval; absent
 presentation bindings remain unverified. Markerless legacy choices require an
 explicit scenario label (`expectedWindows.role: "choice"`); the checker still
@@ -1838,7 +1840,13 @@ own window expectations, policy and native answer proof. All source exchanges
 enter the combined rubric; missing evidence stays unverified, and any failed
 source or record dominates an unverified one. Resume fingerprints include native
 answer journals. Codex refusals use the same call/question reply envelope as
-other window answers and grant no approval authority.
+other window answers and grant no approval authority. Historical Idea creation
+compares the project description with the canonical three sections while the
+approval snapshot binds the complete shown presentation. Native issues may omit
+the team: the fixed dump resolves it through project metadata or complete team
+reads before reading exact status UUIDs; ambiguous teams keep status verification
+unverified without discarding the issue dump. Recorded window failures remain
+failed even if later native answers or trace reads are missing.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
 `references/owner-dialog.md` and `references/orchestration.md`, for retired window
 labels and answer-list formatting. History and old fixtures are outside that scope.

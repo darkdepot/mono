@@ -12,6 +12,16 @@ function scratch(t){const d=fs.mkdtempSync(path.join(os.tmpdir(),'skills-trace-'
 // The recorded cut omitted IDs; restore a synthetic matching pair for linkage tests.
 const codexRows=()=>JSON.parse(fs.readFileSync(`${base}/codex/trace-control-v0.41.0-async-order.json`)).items.map((payload)=>({type:'response_item',payload:{...payload,...(payload.type.startsWith('function_call')?{call_id:'synthetic-window'}:{})}}));
 const codexExpected={id:'approval',decision:'описание',advice:'Research',reason:'чтобы проверить',summary:['Что','Дальше:']};
+for(const reverse of [false,true])test(`continue7 a known window failure dominates missing native proof in either order (${reverse})`,t=>{
+ const failed=codexRows(),unknown=codexRows();
+ failed.at(-1).payload.phase='commentary';unknown[1].payload.output='{}';
+ unknown.forEach(r=>{if(r.payload.call_id)r.payload.call_id='uncertain-window';});
+ const boundary={type:'event_msg',payload:{type:'task_complete'}};
+ const rows=(reverse?[unknown,failed]:[failed,unknown]).flatMap(part=>[...part,boundary]);
+ const checked=textTrace({host:'codex',testedVersion:'0.42.0',trace:scratch(t)(rows),expectedWindows:[codexExpected],excerpt:true});
+ assert.equal(checked.status,'failed',JSON.stringify(checked));
+ assert.ok(checked.windows.some(w=>w.status==='failed'));assert.ok(checked.windows.some(w=>w.status==='unverified'));
+});
 test('Codex recorded accepted:true result establishes successful window execution',t=>{
  const r=checkTrace({host:'codex',trace:scratch(t)(codexRows()),expectedWindows:[codexExpected],excerpt:true});
  assert.equal(r.status,'passed');

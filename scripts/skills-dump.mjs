@@ -7,11 +7,18 @@ import { MissingEvidence, isWrite } from './skills-boundary.mjs';
 const idOf=row=>row?.uuid??row?.id;
 const missing=reason=>{throw new MissingEvidence(reason);};
 const safeId=id=>{if(typeof id!=='string'||!/^[A-Za-z0-9-]+$/.test(id))missing('invalid dump record id');return id;};
+export function issueTeam(issue,project,teams=[]){
+ const direct=issue.teamId??issue.team?.id??project?.teamId??project?.team?.id;
+ if(direct)return safeId(direct);
+ const candidates=Array.isArray(project?.teams)&&project.teams.length?project.teams:teams;
+ const matching=typeof issue.team==='string'?candidates.filter(t=>t.id===issue.team||t.name===issue.team):candidates;
+ return matching.length===1?safeId(matching[0].id):undefined;
+}
 // The script owns both the closed read list and every saved filename. The host
 // only transports one exact MCP request per turn, never writes or chooses files.
 export class RecordDump {
  constructor({dumpDir,project,projectName}){
-  this.root=dumpDir;this.project=project;this.files=[];this.queue=[];this.cursors=new Map();this.teams=new Set();fs.mkdirSync(dumpDir);
+  this.root=dumpDir;this.project=project;this.files=[];this.queue=[];this.cursors=new Map();this.teams=new Set();this.teamRows=[];this.unresolvedIssues=[];this.statusGaps=[];fs.mkdirSync(dumpDir);
   if(project)this.queue.push({tool:'get_project',input:{query:project.id??project.uuid,includeResources:true},file:'project.json'});
   else {if(!projectName)missing('run name required for dump');this.page('projects','projects','list_projects',{query:projectName,includeArchived:true});}
  }
@@ -20,6 +27,13 @@ export class RecordDump {
   this.queue.push({tool,input:{...input,...request},file:`${prefix}-${n}.json`,request,prefix,key,n,scope:input});
  }
  get done(){return this.queue.length===0;}
+ issueStatuses(issue){
+  const team=issueTeam(issue,this.projectData,this.teamRows);
+  if(team){if(!this.teams.has(team)){this.teams.add(team);this.queue.push({tool:'list_issue_statuses',input:{team},file:`statuses/${team}.json`});}return;}
+  if(this.teamLookupComplete){this.statusGaps.push({issue:idOf(issue),reason:'issue team unresolved by native project/team reads'});return;}
+  this.unresolvedIssues.push(issue);
+  if(!this.teamLookupStarted){this.teamLookupStarted=true;this.page('teams','teams','list_teams',{});}
+ }
  prompt(){const job=this.queue[0];return `Только чтение monotest. Выполни ровно один MCP ${job.tool} с аргументами ${JSON.stringify(job.input)}. Через exec строго: const r = await tools.mcp__monotest__${job.tool}(${JSON.stringify(job.input)}); text(r); Никаких других вызовов, команд, записи файлов или этапов. Сырой ответ сохранит драйвер из нативного следа. Заверши ход после результата.`;}
  consume(host,rows){
   const job=this.queue[0],data=nativeData(host,rows);
@@ -43,13 +57,15 @@ export class RecordDump {
   if(job.tool==='get_project'){
    const id=this.project.id??this.project.uuid;
    if(value.uuid!==id||value.name!==this.project.name||!value.url?.startsWith('https://linear.app/monotest/'))throw new Error('dump project identity mismatch');
+   this.projectData=value;
    this.page('comments','comments','list_comments',{projectId:id});this.page('documents','documents','list_documents',{projectId:id,includeArchived:true});this.page('issues','issues','list_issues',{project:id,includeArchived:true});
   }
   if(job.tool==='get_issue'){
-   const team=value.teamId??value.team?.id;
-   if(!team)missing('issue team id required for fixed status dump');
-   safeId(team);
-   if(!this.teams.has(team)){this.teams.add(team);this.queue.push({tool:'list_issue_statuses',input:{team},file:`statuses/${team}.json`});}
+   this.issueStatuses(value);
+  }
+  if(job.key==='teams'){
+   for(const team of value.teams){safeId(team.id);if(typeof team.name!=='string'||this.teamRows.some(t=>t.id===team.id))missing('incomplete native team list');this.teamRows.push(team);}
+   if(!value.hasNextPage){this.teamLookupComplete=true;for(const issue of this.unresolvedIssues.splice(0))this.issueStatuses(issue);}
   }
   if(job.tool==='list_issue_statuses'&&(!Array.isArray(value)||!value.length||value.some(row=>typeof row.id!=='string'||typeof row.name!=='string')||new Set(value.map(row=>row.id)).size!==value.length))missing('incomplete fixed team statuses');
   if(job.key==='documents')for(const ref of value.documents){const id=safeId(idOf(ref));this.queue.push({tool:'get_document',input:{id},file:`documents/${id}.json`});}

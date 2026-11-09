@@ -23,6 +23,29 @@ function setup(t,host,mode='ok'){
  const authFile=path.join(dir,'auth.json');fs.writeFileSync(authFile,'{}');
  return {host,cwd:dir,packRoot:repo,outputDir:path.join(dir,'out'),authFile,timeoutMs:2000,idleMs:10,binary:{command:process.execPath,args:[path.join(repo,'scripts/test-fixtures/skills-host.mjs'),mode,repo]},mcpServers:{monotest:{url:'https://example.test/mcp'}},workspaceProof:{tool:'mcp__monotest__get_workspace',path:['name'],equals:'Test Space'},scenario:{prompt:'Run stage',brief:'Владелец предпочитает синий.',allowedTools:['mcp__monotest__get_workspace','mcp__monotest__save_project'],windows:[{mode:'recommended'}],expectedWindows:[{id:'approval',decision:'описание',advice:'Research',reason:host==='codex'?'чтобы проверить':'риск',summary:['Что','Дальше:']}]}};
 }
+for(const missing of ['answer','trace'])test(`continue7 recorded failed card dominates later missing ${missing}`,async t=>{
+ const request=setup(t,'codex','unanswered'),pack=path.join(request.cwd,'pack');fs.mkdirSync(pack);fs.writeFileSync(path.join(pack,'VERSION'),'0.42.0\n');request.packRoot=pack;
+ request.scenario.expectedWindows[0].advice='Required advice absent from native card';
+ if(missing==='trace'){
+  const read=fs.readFileSync.bind(fs);let cut=false;
+  t.mock.method(fs,'readFileSync',(file,...args)=>{
+   if(String(file).endsWith('rollout-synthetic-thread.jsonl')){
+    if(cut)throw new MissingEvidence('saved trace became unreadable');
+    const value=read(file,...args);if(String(value).includes('Принято.')){cut=true;throw new MissingEvidence('saved trace became unreadable');}return value;
+   }return read(file,...args);
+  });
+ }
+ const result=await runTextScenario(request);assert.equal(result.cardCheck.status,'failed',JSON.stringify(result));assert.equal(result.status,'failed',JSON.stringify(result));
+});
+
+const notificationCases=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-claude-pending-notification.json',import.meta.url)));
+for(const sample of notificationCases.cases)for(const complete of [false,true])test(`continue7 Claude pending notification ${sample.id} ${complete?'finishes':'ends incomplete'}`,async t=>{
+ const request=setup(t,'claude'),plan=path.join(request.cwd,'plan.json');request.timeoutMs=3000;
+ fs.writeFileSync(plan,JSON.stringify({nativeBackground:sample.events,omitContinuation:!complete,messages:['Что: колонка Источник.\nУтверждаем и начинаем Research?','Утверждение записал.']}));
+ request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'agree','--plan',plan];
+ request.scenario={prompt:'Run text',brief:'Synthetic completed continuation after saved native prefix.',allowedTools:['*'],expectedReplies:[{id:'approval',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Утверждаем и начинаем Research?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true},response:['Утверждение записал.']}]};
+ const result=await runTextScenario(request);assert.equal(result.status,complete?'passed':'unverified',JSON.stringify(result));assert.equal(result.replies.length,complete?1:0);
+});
 test('production historical Codex refusal reaches a confirmed native resumed answer',async t=>{
  const request=setup(t,'codex'),packRoot=path.join(request.cwd,'tested-pack');fs.mkdirSync(packRoot);fs.writeFileSync(path.join(packRoot,'VERSION'),'0.42.0\n');request.packRoot=packRoot;
  request.scenario.windows=[{mode:'refuse',text:'Не буду отвечать на этот вопрос.'}];

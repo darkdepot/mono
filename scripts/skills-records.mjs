@@ -12,6 +12,7 @@ import { completedTrace, textExchanges, checkEndings, checkTraceSources, worstSt
 import { auditRows } from './skills-audit.mjs';
 import { isWrite, MissingEvidence } from './skills-boundary.mjs';
 import { unwrap } from './skills-proof.mjs';
+import { issueTeam } from './skills-dump.mjs';
 import { runScenario } from './skills-run.mjs';
 import { nativeRecords, resultFor, callInput } from './skills-record-data.mjs';
 import { windowRole, windowPolicy, correctedVersion, isOwnerWindow, anchored, checkAnchors } from './skills-owner.mjs';
@@ -134,7 +135,8 @@ export function readRecordDump(root,project,projectName){
  }
  const raw=rawRead(path.join(root,'project.json')),files=[{file:'project.json',value:raw,kind:'get_project',id:project.id??project.uuid}];
  if(!text(raw?.uuid)||raw.uuid!==(project.id??project.uuid)||raw.name!==project.name||!ownUrl(raw.url)||(typeof raw.description!=='string'||elided(raw.description)))missing('project read-back identity incomplete');
- const projectComments=pages(root,'comments','comments',files),comments=[...projectComments],documents=[],issues=[],statuses=new Map();
+ const projectComments=pages(root,'comments','comments',files),comments=[...projectComments],documents=[],issues=[],statuses=new Map(),issueTeams=new Map();
+ const teams=fs.existsSync(path.join(root,'teams-1.json'))?pages(root,'teams','teams',files):[];
  const refs=pages(root,'documents','documents',files);
  for(const ref of refs){
   const id=idOf(ref);if(!/^[A-Za-z0-9-]+$/.test(id))missing('invalid document id');
@@ -152,7 +154,7 @@ export function readRecordDump(root,project,projectName){
   if(idOf(issue)!==id||!text(issue.title)||typeof issue.description!=='string'||elided(issue.description)||!issue.status||
     !text(typeof issue.status==='string'?issue.status:issue.status.name)||!Array.isArray(issue.labels)||issue.labels.some(label=>!text(typeof label==='string'?label:label?.name)))missing('issue status/labels/body incomplete');
   if((issue.projectId??issue.project?.id)!==raw.uuid)missing('issue project incomplete');
-  const team=issue.teamId??issue.team?.id;
+  const team=issueTeam(issue,raw,teams);if(team)issueTeams.set(id,team);
   if(team&&!/^[A-Za-z0-9-]+$/.test(team))missing('invalid status team id');
   if(team&&!statuses.has(team)&&fs.existsSync(path.join(root,`statuses/${team}.json`))){
    const file=`statuses/${team}.json`,rows=rawRead(path.join(root,file));
@@ -165,7 +167,7 @@ export function readRecordDump(root,project,projectName){
  }
  const all=[raw,...comments,...documents,...issues];
  for(const row of all)if(row.url!==undefined&&!ownUrl(row.url))throw new Error(`record outside monotest: ${row.url}`);
- return {project:raw,projectComments,comments,documents,issues,statuses,all,files};
+ return {project:raw,projectComments,comments,documents,issues,statuses,issueTeams,all,files};
 }
 
 function recordLines(body){
@@ -423,7 +425,12 @@ function approvalCheck(request,write,data,dump,writes){
  const corrected=policy?.mode==='correction'&&Boolean(expected?.correction);
  const approvedText=corrected?correctedArtifact({request,write,data,dump,createProject,binding,writes,shown:binding.text,expected,replyLine:reply.line,
   sameExchange:(candidate,b)=>b.windowCallId===window.callId&&data.audit.calls.filter(c=>!c.event.parent_tool_use_id&&isOwnerWindow(c.name)&&c.line<candidate.line).at(-1)===window}):binding.text;
- const approvedProjectText=corrected&&createProject?ideaProjectBody(request,approvedText):approvedText;
+ // Older bindings name only the project's three sections. Its complete shown
+ // presentation is still bound by the Idea snapshot for this same window.
+ const presentation=createProject&&!corrected?(request.approvalBindings??[]).find(b=>b.windowCallId===window.callId&&b.shownLine===binding.shownLine&&
+  typeof b.text==='string'&&b.text.startsWith(binding.text)&&shownText.includes(b.text)&&
+  writes.some(w=>w.data===data&&idOf(w.value)===b.recordId&&recordWrite(w,'mono-idea: approved',dump)))?.text??approvedText:approvedText;
+ const approvedProjectText=createProject?ideaProjectBody(request,presentation):approvedText;
  return checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit:window.line,approvedText,approvedProjectText,corrected});
 }
 
@@ -708,6 +715,7 @@ export function verifyRecords(request){
    const pageArguments=new Map();
    for(const file of dump.files){
     const scoped=c=>{
+     if(file.kind==='list_teams')return isDeepStrictEqual(c.input,{...file.request});
      if(file.id)return Object.values(c.input).some(value=>value===file.id||value===file.alias);
      const scope=file.kind==='list_projects'?request.projectName:file.scope==='.'?(request.project.id??request.project.uuid):(file.scopeId??path.basename(file.scope));
      const key=file.kind==='list_projects'?'query':file.kind==='list_issues'?'project':file.scope==='.'?'projectId':'issueId';
@@ -737,7 +745,8 @@ export function verifyRecords(request){
    if(field==='status'&&/__(?:save|create)_project$/.test(write.name))return value;
    const tool=field==='status'?'list_issue_statuses':'list_issue_labels',aliases=[];
    if(field==='status'){
-    const issue=dump.issues.find(row=>idOf(row)===idOf(write.value)),team=issue?.teamId??issue?.team?.id;
+    const team=dump.issueTeams?.get(idOf(write.value));
+    if(!team&&typeof value==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value))missing('issue team unresolved for exact status UUID');
     if(team){
      const states=dump.statuses?.get(team);
      if(typeof value==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value)&&!states?.some(state=>state.id===value))missing('exact status UUID unavailable in fresh team dump');

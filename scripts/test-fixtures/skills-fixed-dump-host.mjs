@@ -4,17 +4,19 @@ import path from 'node:path';
 import readline from 'node:readline';
 const [mode,...args]=process.argv.slice(2),emit=e=>process.stdout.write(JSON.stringify(e)+'\n');
 if(args[0]==='plugin')process.exit(0);
-const id='00000000-0000-4000-8000-000000000001',stamp='2026-11-01T00:00:00Z';
+const nativeIssue=mode.startsWith('native-no-team')?JSON.parse(JSON.parse(fs.readFileSync(new URL('./skills-records-live/discovery-approve/dump/issues/MON-130/issue.json',import.meta.url))).content[0].text):null;
+const id=nativeIssue?.projectId??'00000000-0000-4000-8000-000000000001',stamp='2026-11-01T00:00:00Z';
 function result(tool,input){
  if(tool==='save_project')return {id:'foreign',url:'https://linear.app/working/issue/x'};
  if(tool==='get_workspace')return {name:'Mono Test'};
- if(tool==='get_project')return {uuid:id,name:'fixed-run',description:'Exact project',url:'https://linear.app/monotest/project/fixed'};
+ if(tool==='get_project')return {uuid:id,name:'fixed-run',description:'Exact project',url:'https://linear.app/monotest/project/fixed',...(mode==='native-no-team-project'?{teams:[{id:'test-team',name:'Mono Test'}]}:{})};
  if(tool==='list_comments')return {comments:input.issueId?[]:[{id:input.cursor?'c2':'c1',body:'comment',createdAt:stamp,updatedAt:stamp}],hasNextPage:!input.issueId&&!input.cursor,...(!input.issueId&&!input.cursor?{cursor:'c1'}:{})};
  if(tool==='list_documents')return {documents:[{id:'doc'}],hasNextPage:false};
  if(tool==='get_document')return {id:'doc',projectId:id,title:'Document',content:'Full text'};
- if(tool==='list_issues')return {issues:[{id:'MON-1',uuid:'issue'}],hasNextPage:false};
- if(tool==='list_issue_statuses')return [{id:'done',name:'Done',type:'completed'}];
- if(tool==='get_issue')return {id:'MON-1',uuid:'issue',projectId:id,teamId:'test-team',title:'Task',description:'Full task',status:'Done',labels:[]};
+ if(tool==='list_issues')return {issues:[nativeIssue??{id:'MON-1',uuid:'issue'}],hasNextPage:false};
+ if(tool==='list_teams')return {teams:[{id:'test-team',name:'Mono Test'},...(mode==='native-no-team-many'?[{id:'other-team',name:'Other'}]:[])],hasNextPage:false};
+ if(tool==='list_issue_statuses')return nativeIssue?nativeIssue.stateHistory.map(r=>r.state):[{id:'done',name:'Done',type:'completed'}];
+ if(tool==='get_issue')return nativeIssue??{id:'MON-1',uuid:'issue',projectId:id,teamId:'test-team',title:'Task',description:'Full task',status:'Done',labels:[]};
  throw new Error('unexpected fixed tool');
 }
 function plan(prompt,first){

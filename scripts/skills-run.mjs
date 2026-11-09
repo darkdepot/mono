@@ -207,7 +207,7 @@ export async function runClaude(request){
     }});
   await Promise.allSettled([...personaTasks]);
   if(!waiting&&!violation&&!evidenceMissing&&processResult.code===0&&!processResult.failure)evidenceMissing='fresh Claude parent terminal missing after last sent continuation';
-  return finishRun(request,{trace,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,stageStartLine,...(dump?{dumpComplete:dump.done,dumpFiles:dump.files}:{}),process:processResult,violation,evidenceMissing,hostFailure,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
+  return finishRun(request,{trace,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,stageStartLine,...(dump?{dumpComplete:dump.done,dumpFiles:dump.files,dumpStatusGaps:dump.statusGaps}:{}),process:processResult,violation,evidenceMissing,hostFailure,endLine,boundary:'Claude denies unlisted tools before permission; user/global instructions and customizations may still load.'});
 }
 
 function rolloutFiles(home){
@@ -232,7 +232,7 @@ export async function runCodex(request){
     if(result.status!==0||result.error){if(request.readOnlyDump)throw Object.assign(new MissingEvidence('Codex local pack setup failed'),{hostFailure:true});throw new Error('Codex local pack setup failed');}
   }
   let thread=null,rollout=null,confirmed=false,violation=null,seenLines=0,freeIndex=0,endLine,seedRoute,seedEndLine,stageStartLine,cardCheck,lastFreeQuestion;
-  const replies=[],freeReplies=[],seen=new Set(),auditedTraces=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000),proofCalls=new Map();
+  const replies=[],freeReplies=[],cardChecks=[],seen=new Set(),auditedTraces=new Set(),deadline=Date.now()+(request.timeoutMs??3_600_000),proofCalls=new Map();
   const stdout=path.join(request.outputDir,'stdout.jsonl'),sent=path.join(request.outputDir,'sent.jsonl');fs.writeFileSync(stdout,'');fs.writeFileSync(sent,'');
   let processResult;
   const turn=async(prompt,confirm=false,replyRecord=null)=>{
@@ -319,11 +319,11 @@ export async function runCodex(request){
     }
     if(dump){
       while(!dump.done){const rows=await turn(dump.prompt());dump.consume('codex',rows);}
-      return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,auditedTraces:[...auditedTraces],process:processResult,violation,dumpComplete:dump.done,dumpFiles:dump.files});
+      return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,auditedTraces:[...auditedTraces],process:processResult,violation,dumpComplete:dump.done,dumpFiles:dump.files,dumpStatusGaps:dump.statusGaps});
     }
     stageStartLine=request.seed?seedEndLine:codexTerminals(confirmationRows).at(-1)?.line;
     let rows=await turn(request.scenario.prompt);
-    if(request.readOnlyDump)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,auditedTraces:[...auditedTraces],process:processResult,violation});
+    if(request.readOnlyDump)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,auditedTraces:[...auditedTraces],process:processResult,violation});
     for(let n=0;n<(request.maxTurns??(roleWindows(request.scenario.expectedWindows)?128:32));n++){
       if(endLine)break;
       if(request.scenario.expectedReplies){
@@ -333,7 +333,7 @@ export async function runCodex(request){
           const response=stageTurns[0];
           if(!response)throw new MissingEvidence('final stage response missing');
           checkStageResponse(request.scenario.expectedReplies.at(-1),response.text);
-          return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation});
+          return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation});
         }
         const turnMessage=stageTurns[0];
         if(!turnMessage)throw new MissingEvidence('final stage message missing before text reply');
@@ -349,7 +349,8 @@ export async function runCodex(request){
         if(windows.length!==1)throw new Error('multiple unanswered windows in one turn');
         const window=windows[0],plan=windowPolicy(request.scenario,window.questions,replies);
         const checked=checkTrace({host:'codex',trace:rollout,expectedWindows:roleWindows(request.scenario.expectedWindows)?request.scenario.expectedWindows:request.scenario.expectedWindows.slice(0,replies.length+1),rulesRoot:request.rulesRoot,testedVersion:request.testedVersion,phase:'card'});
-        if(checked.status!=='passed'){cardCheck=checked;if(checked.status==='unverified')throw new MissingEvidence('window native proof missing before reply');}
+        cardChecks.push(checked);
+        if(checked.status!=='passed'){cardCheck=cardChecks.find(c=>c.status==='failed')??checked;if(checked.status==='unverified')throw new MissingEvidence('window native proof missing before reply');}
         // A known presentation defect is still answered through the native window.
         // The final checker retains failed; a text detour cannot supply this proof.
         const policy={...plan.policy};if(plan.free?.length)policy.text=await runPersona(request,plan.free.map(q=>q.title).join('\n'),freeIndex++);
@@ -365,16 +366,16 @@ export async function runCodex(request){
         if(roleWindows(request.scenario.expectedWindows)&&lastFreeQuestion===lastMessage)throw new Error('repeated free question without progress');
         lastFreeQuestion=lastMessage;const answer=await runPersona(request,lastMessage,freeIndex++);rows=await turn(answer);freeReplies.push({question:lastMessage,answer,policy:'persona'});continue;
       }
-      return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation,boundary:'Codex has no pre-execution refusal: private home, disabled linear/apps, first read-only turn and post-turn direct-call audit. A violation may already have executed; report failed.'});
+      return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation,boundary:'Codex has no pre-execution refusal: private home, disabled linear/apps, first read-only turn and post-turn direct-call audit. A violation may already have executed; report failed.'});
     }
-    if(endLine)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation,endLine,boundary:'Scenario ended at the terminal after its last expected answer.'});
+    if(endLine)return finishRun(request,{trace:rollout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation,endLine,boundary:'Scenario ended at the terminal after its last expected answer.'});
     throw new Error('scenario turn limit reached');
   }catch(error){
     if(request.readOnlyDump){
       for(const file of rolloutFiles(home))auditedTraces.add(file);
       if(!rollout&&thread)try{rollout=rolloutFor(home,thread);}catch{}
     }
-    return finishRun(request,{hostFailure:Boolean(error.hostFailure),trace:rollout??stdout,sent,replies,freeReplies,confirmed,seedRoute,seedEndLine,stageStartLine,cardCheck,auditedTraces:[...auditedTraces],process:processResult,violation:error instanceof MissingEvidence?null:violation??error.message,evidenceMissing:error instanceof MissingEvidence?error.message:null,boundary:'Codex cannot refuse MCP calls before execution; rollout audit failed.'});
+    return finishRun(request,{hostFailure:Boolean(error.hostFailure),trace:rollout??stdout,sent,replies,freeReplies,confirmed,cardCheck,cardChecks,seedRoute,seedEndLine,stageStartLine,auditedTraces:[...auditedTraces],process:processResult,violation:error instanceof MissingEvidence?null:violation??error.message,evidenceMissing:error instanceof MissingEvidence?error.message:null,boundary:'Codex cannot refuse MCP calls before execution; rollout audit failed.'});
   }
 }
 
@@ -399,8 +400,8 @@ function finishRun(request,run){
   let notes=[];try{const {rows}=traceRows(run.trace,request.host,{endLine:run.endLine});notes=auditRows(request.host,rows).notes;}catch{}
   const failure=run.violation??(run.evidenceMissing?null:run.process?.failure??(run.process?.code!==0?'host process failed':null));
   const allReplied=targetsAnswered(request,run.replies)&&run.replies.every(r=>r.received)&&(request.scenario.expectedReplies?check.exchanges?.length===request.scenario.expectedReplies.length:check.windows.every(w=>run.replies.some(r=>r.callId===w.callId&&r.received)));
-  const status=historical?worstStatus(failure?'failed':'passed',run.evidenceMissing?'unverified':'passed',checked.status,allReplied?'passed':'unverified')
-   :failure?'failed':run.evidenceMissing?'unverified':check.status!=='passed'?check.status:allReplied?'passed':'unverified';
+  const status=worstStatus(run.cardCheck?.status??'passed',...(run.cardChecks??[]).map(c=>c.status),historical?worstStatus(failure?'failed':'passed',run.evidenceMissing?'unverified':'passed',checked.status,allReplied?'passed':'unverified')
+   :failure?'failed':run.evidenceMissing?'unverified':check.status!=='passed'?check.status:allReplied?'passed':'unverified');
   return {host:request.host,status,...run,check,sourceChecks:checked.sources,notes,reason:failure??run.evidenceMissing??(checked.sources.find(source=>source.status===status)?.reason)??(!allReplied?'not every expected window was answered':null),conversation:{status:'unverified',rubric:'references/qa-skills.md#рубрика-разговора'}};
 }
 
@@ -419,7 +420,7 @@ export async function runScenario(request){
     run={...run,testedVersion:request.testedVersion};
     fs.writeFileSync(path.join(request.outputDir,'result.json'),JSON.stringify(run,null,2)+'\n');return run;
   }catch(error){
-    const result={host:request.host,status:'unverified',reason:error.message,...(error.hostFailure?{hostFailure:true}:{}),...(run?{run}:{})};
+    const result={host:request.host,status:worstStatus(run?.status??'passed','unverified'),reason:error.message,...(error.hostFailure?{hostFailure:true}:{}),...(run?{run}:{})};
     if(created&&!fs.existsSync(path.join(request.outputDir,'result.json')))fs.writeFileSync(path.join(request.outputDir,'result.json'),JSON.stringify(result,null,2)+'\n');return result;
   }
 }
