@@ -992,7 +992,8 @@ test('ship-next-attempt-after-fix: new head/state opens a window in the same tas
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'workers.json')))[issue].attempt, 1);
     snapshot.checks.pop(); atomicJson(request.fixtureSnapshot, snapshot);
     atomicJson(config, { orchestration: { delivery: { quietSec: 0.001, pollSec: 0.005,
-      collectionTimeoutSec: 0.005, confirmationTimeoutSec: 0.01, evidenceLimitSec: 0.06 } } });
+      collectionTimeoutSec: 0.005, confirmationTimeoutSec: 0.01, evidenceLimitSec: 0.6 } } });
+    // The limit leaves room for at least one poll on a loaded host before it parks.
     const waiting = { ...next, attempt: 3, stateFile: path.join(scratch, 'ship-3.json') };
     await assert.rejects(shipGate(waiting), /evidence-limit/);
     assert.match(JSON.parse(fs.readFileSync(waiting.stateFile)).pendingReason, /bot Greptile Review pending/);

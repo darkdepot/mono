@@ -656,7 +656,7 @@ async function main() {
     orchestrator_root: root,
     accounting: {
       rule: logResults.some(log => log.transport.transport === "claude-cli")
-        ? "sum per-turn usage exactly once across attempts: Codex turn.completed and Claude result; Claude cache reads and creation join normalized input; cached input is not added again"
+        ? "count every attempt log exactly once: sum each Claude result; sum Codex turn.completed usage when a log reports each run separately and take the last value when its counters never decrease (thread totals, per attempt `counting`); Claude cache reads and creation join normalized input; cached input is not added again"
         : "count every stage and attempt log exactly once: sum turn.completed usage when a log reports each run separately, take the last value when its counters never decrease (thread totals, per attempt `counting`); cached input remains a subset of input and is not added again",
       attempt_logs: logs.map((log) => path.relative(root, log.filename)),
     },
@@ -667,7 +667,7 @@ async function main() {
       input_delta_tokens: worker.usage ? worker.usage.input_tokens - oldRule.input_tokens : null,
       explanation:
         logResults.some(log => log.transport.transport === "claude-cli")
-          ? "The last-event comparison retains one result per attempt; per-turn usage sums every Codex turn.completed or Claude result across continuations. Missing final events preserve incomplete coverage."
+          ? "The last-event comparison retains one result per attempt. Claude results and Codex logs that report each run separately are summed across continuations; a Codex log that reports thread totals already carries the whole attempt in its last event. Missing final events preserve incomplete coverage."
           : "The retired hand-count rule kept only the last turn.completed event of each attempt. Logs that report each run separately are summed, so the corrected figure is larger whenever such an attempt has more than one completed turn; logs that report thread totals already carry the whole attempt in the last event, so both figures match.",
     },
     autoreview,

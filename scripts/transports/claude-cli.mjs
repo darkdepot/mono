@@ -334,7 +334,7 @@ function attemptUsage(parsed, source) {
   const status = errors.length ? "unavailable: worker logs contain malformed JSON or invalid turn usage"
     : unfinished || interrupted ? "incomplete: attempt contains interrupted or incomplete turn usage"
     : turns ? "measured" : "unavailable: worker log contains no usage events";
-  return { usage: turns ? finalizeUsage(total) : null, lastUsage, turns, status, complete: status === "measured", errors };
+  return { usage: turns ? finalizeUsage(total) : null, lastUsage, turns, counting: "per-turn", status, complete: status === "measured", errors };
 }
 
 function readingInputs(event) {
