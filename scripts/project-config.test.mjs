@@ -211,10 +211,10 @@ test('Mono config pins the confirmation window and CLI rejects a window at the e
     const check = () => spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
     fs.writeFileSync(file, JSON.stringify(config));
     let result = check(); assert.equal(result.status, 0, result.stderr);
-    config.orchestration.delivery.confirmationTimeoutSec = 2400;
-    config.orchestration.delivery.evidenceLimitSec = 2400;
+    config.orchestration.delivery.confirmationTimeoutSec = 5400;
+    config.orchestration.delivery.evidenceLimitSec = 5400;
     fs.writeFileSync(file, JSON.stringify(config));
-    result = check(); assert.equal(result.status, 1); assert.match(result.stderr, /confirmationTimeoutSec.*2400.*evidenceLimitSec.*2400/);
+    result = check(); assert.equal(result.status, 1); assert.match(result.stderr, /confirmationTimeoutSec.*5400.*evidenceLimitSec.*5400/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
