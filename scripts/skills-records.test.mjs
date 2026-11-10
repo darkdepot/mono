@@ -2278,6 +2278,24 @@ for(const mode of ['valid','wrong-key','code'])test(`continue9 saved self-closin
  f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:mode==='code'?'`See '+chip+'.`':'See '+(mode==='wrong-key'?chip.replace('label="MON-625"','label="MON-626"'):chip)+'.'}]);
  f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
 });
+// Linear's save-time rewrites of plain prose observed on a live Research document:
+// a bare file-like token becomes a link to itself, square brackets get a backslash.
+for(const mode of ['valid','wrong-destination','wrong-label','wrong-token','code'])test(`live Research bare-token autolink normalization ${mode}`,t=>{
+ const f=fixture(t),original='See GUIDE.md:3, then run.',stored=(label,dest)=>`See [${label}](<http://${dest}>), then run.`;
+ f.record.body=mode==='code'?'`'+original+'`':original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ const label=['wrong-label','wrong-token'].includes(mode)?'GUIDE.md:4':'GUIDE.md:3',dest=['wrong-destination','wrong-token'].includes(mode)?'GUIDE.md:4':'GUIDE.md:3';
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:mode==='code'?'`'+stored(label,dest)+'`':stored(label,dest)}]);
+ f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
+});
+for(const mode of ['valid','wrong-text','link-syntax','code','fence'])test(`live Research escaped square bracket normalization ${mode}`,t=>{
+ const f=fixture(t),sample="Width is rows.map(row => row[i].length) over [['name', 'Name']], then cb[i](a, b) and this[method]().",escaped=value=>value.replace(/[\[\]]/g,'\\$&');
+ const wrap={code:value=>'`'+value+'`',fence:value=>'Sample:\n\n```\n'+value+'\n```'}[mode]??(value=>value);
+ const original=mode==='link-syntax'?'See \\[note\\](target).':wrap(sample);
+ f.record.body=original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ const stored=mode==='link-syntax'?'See [note](target).':wrap(escaped(mode==='wrong-text'?sample.replace('row[i]','row[j]'):sample));
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:stored}]);
+ f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
+});
 for(const mode of ['valid','wrong-start','fragment','missing-end'])test(`continue9 absolute Idea artifact bounds preserve full four-section snapshot (${mode})`,t=>{
  const f=textIdeaFixture(t),rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse),binding=f.request.approvalBindings[1],full=binding.text;
  const expected=f.request.expectedReplies[0],question=expected.question;
