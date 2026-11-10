@@ -218,6 +218,11 @@ test('C35/C44: pinned deletion is recorded and closes a dangerous or unmarked fi
   }});
   assert.equal(result.outcome,'clean',JSON.stringify(result.failures));assert.equal(result.findings[0].status,'closed');assert.equal(result.findings[0].closed,true);assert.equal(result.findings[0].danger,true);
   assert.deepEqual(result.findings[0].deletionEvidence,{before:fromBase?f.request.base:first.round.head,head});
+  fs.writeFileSync(path.join(f.worktree,'other.mjs'),'export const other = 1;\n');f.git('add','.');f.git('commit','-qm','later unrelated change');
+  const later=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:result},{runRole:async request=>{
+   const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);return {response:request.role==='code-review'?review([],context.files):{completed:true,verdicts:[verdict({outcome:'rejected',closed:true,reason:'The affected file stays deleted.'})]}};
+  }});
+  assert.equal(later.outcome,'clean',JSON.stringify(later.failures));assert.equal(later.findings[0].status,'closed','an agreed fix stays closed after its file left the diff');
  });
 });
 test('a dangerous finding closes only by an agreed fix on a later head and then stays closed',async t=>{

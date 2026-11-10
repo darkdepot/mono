@@ -559,8 +559,9 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
       const deletionEvidence = evidence?.deletionEvidence;
       // A fix closes a dangerous finding only when both roles agree on a later head: the checker
       // verified it gone and the reviewer, shown the open finding, no longer reports it.
+      // Once closed that way it stays closed until the reviewer reports it again or the checker stops rejecting it.
       const agreedFix = verdict.outcome === 'rejected' && verdict.closed === true && !!saved && saved.lastCheckedHead !== head &&
-        !reported.has(verdict.key) && !unreviewedFiles.has(finding.file) && (covered.has(finding.file) || !!deletionEvidence);
+        !reported.has(verdict.key) && !unreviewedFiles.has(finding.file) && (saved.status === 'closed' || covered.has(finding.file) || !!deletionEvidence);
       const retained = (danger || unreviewedFiles.has(finding.file)) && verdict.outcome === 'rejected' && !agreedFix;
       return { ...verdict, outOfContract: !!saved?.outOfContract || verdict.outOfContract, riskRaised: !!saved?.riskRaised || verdict.riskRaised,
         ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, dangerMaximum, danger,

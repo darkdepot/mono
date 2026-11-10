@@ -7,7 +7,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER } from "./runtime.mjs";
-import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File } from "./orchestrator/command-state.mjs";
+import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, registryEntry } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound } from './code-review.mjs';
 
@@ -160,7 +160,8 @@ export function roundOutcome(record, round) {
   const harmless = finding => round >= ROUND_LIMIT && finding.danger === false && settled(finding);
   const stands = !open.length || record.findings.some(finding => finding.outOfContract || finding.riskRaised) ||
     !open.every(finding => older(finding) || minor(finding) || harmless(finding));
-  if (record.outcome !== 'not-converged' || stands) return { outcome: record.outcome, successors: [] };
+  // A clean round may still carry older harmless defects: they are listed, never dropped.
+  if (!['not-converged', 'clean'].includes(record.outcome) || stands) return { outcome: record.outcome, successors: [] };
   return { outcome: 'clean-with-successors', successors: open.map(finding => ({ key: finding.key, line: findingLine(finding), origin: finding.origin })) };
 }
 function reviewRefusal(review) {
@@ -169,7 +170,7 @@ function reviewRefusal(review) {
     ? `blocked: not-reviewed twice in a row on this head: ${review.reason}`
     : `not-reviewed: ${review.reason}; no round spent, request this head once more`;
   const open = leftover(review.record).map(openLine), round = `round ${review.round} of ${ROUND_LIMIT}`;
-  const list = `${open.length} open: ${open.slice(0, 20).join('; ')}`;
+  const list = `${open.length} open: ${open.join('; ')}`;
   return review.round === ROUND_LIMIT ? `needs-decision: review not-converged after ${round}; ${list}`
     : `review not-converged (${round}); fix and request the next round; ${list}`;
 }
@@ -481,10 +482,11 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     if (!pinnedIssue || !fs.existsSync(file)) return null;
     contract = fs.readFileSync(file, "utf8");
     // Amendment texts narrow or correct the task: the reviewer must read them with the Issue.
-    for (let n = 1; n <= Number(/pins\.v(\d+)\.json$/.exec(request.pins.file)?.[1] ?? 0); n++) {
-      const resume = path.join(path.dirname(request.pins.file), `resume.v${n}.md`);
-      if (fs.existsSync(resume)) contract += `\n\n## Orchestrator amendment ${n}\n${fs.readFileSync(resume, "utf8").split(/\n\n## (?:Effective attempt pins|issue-)/)[0]}`;
-    }
+    // Only registered ones: a prepared amendment that was never delivered stays on disk and is not part of the task.
+    const attempt = Number(/-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(request.pins.file)))[1]);
+    const registered = Object.values(registryEntry(path.dirname(path.dirname(path.dirname(request.pins.file))), pinnedIssue, attempt).completed_amendments ?? {});
+    for (const record of registered.filter(item => item.pinsVersion <= (pins.pinsVersion ?? 0)).sort((a, b) => a.pinsVersion - b.pinsVersion))
+      contract += `\n\n## Orchestrator amendment ${record.pinsVersion}\n${fs.readFileSync(record.resumeFile, "utf8").split(/\n\n## (?:Effective attempt pins|issue-)/)[0]}`;
     contractDigest = digest(contract);
     return reviewHistory(signedHistory(evidenceRoot, request.pins.file), { pins: request.pins, head, base, contractDigest });
   };

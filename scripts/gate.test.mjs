@@ -147,6 +147,7 @@ test("review outcome mapping: what leaves the rounds as a successor candidate", 
   const minor = (extra = {}) => reviewed({ weight: 'P3', danger: true, dangerCase: 'silent-result', ...extra });
   for (const [name, input, last, expected] of [
     ['clean stays clean', record('clean'), 3, 'clean'],
+    ['a clean round lists its older harmless defects', record('clean', [reviewed({ origin: 'pre-existing' })]), 1, 'clean-with-successors'],
     ['open findings before the last round', record('not-converged', [reviewed()]), 2, 'not-converged'],
     ['harmless leftovers on the last round', record('not-converged', [reviewed(), reviewed({ key: 'k2', status: 'closed' })]), 3, 'clean-with-successors'],
     ['dangerous', record('not-converged', [reviewed({ danger: true })]), 3, 'not-converged'],
@@ -560,7 +561,9 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         const amended = path.join(path.dirname(pinsFile), 'pins.v1.json'), resnapshot = path.join(path.dirname(pinsFile), 'snapshot.v1');
         write(path.join(resnapshot, 'issue-MONO-999.md'), '# MONO-999\n\nNarrowed fixture contract.\n');
         atomicJson(amended, { pinsVersion: 1, fullSnapshot: { directory: resnapshot } });
-        write(path.join(path.dirname(pinsFile), 'resume.v1.md'), 'Narrow: only input.mjs.\n\n## Effective attempt pins\npinsVersion: 1\n');
+        const resumeFile = path.join(path.dirname(pinsFile), 'resume.v1.md'); write(resumeFile, 'Narrow: only input.mjs.\n\n## Effective attempt pins\npinsVersion: 1\n');
+        write(path.join(path.dirname(pinsFile), 'resume.v0.md'), 'A prepared amendment that was never delivered.\n');
+        entry.completed_amendments = { 1: { pinsVersion: 1, resumeFile } };
         entry.pinsVersion = 1; register();
         const next = { file: amended, digest: sha256File(amended) }, launchContract = receipt.review.contractDigest;
         receipt = await round(at(fourth, 2, next), 1, /review not-converged \(round 1 of 3\)/);
