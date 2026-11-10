@@ -93,6 +93,9 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
     fs.mkdirSync(request.outputDir); // never overwrite an earlier run
     fs.writeFileSync(path.join(request.outputDir,'expected-items.json'),JSON.stringify(selection.expectedItems,null,2)+'\n',{flag:'wx'});
   }
+  // Preparation annotates one saved stage, never all earlier chain results.
+  const preparationTargets=typeof prepareReview==='string'?[prepareReview]:prepareReview?Object.keys(recordBindings??{}).filter(key=>saved.results.some(item=>`${item.unit}:${item.scenario}:${item.host}`===key&&item.records?.status!=='passed')):[];
+  if(prepareReview&&(preparationTargets.length!==1||!saved.results.some(item=>`${item.unit}:${item.scenario}:${item.host}`===preparationTargets[0])))throw new Error('review preparation requires exactly one saved stage binding target');
   const checkpoints=[];
   const saveState=()=>{
     const payload={requestDigest,revision:saved.revision+(resume?1:0),startedAt:saved.startedAt,results:[...checkpoints,...saved.results.filter(old=>!checkpoints.some(current=>current.unit===old.unit&&current.scenario===old.scenario&&current.host===old.host))],exportLeftovers:[...exportLeftovers]};
@@ -206,9 +209,13 @@ export async function runSuite(request, execute = runScenario, verify = verifySc
       if(result && runRequest && scenario){
         try{
           if(prior&&!prior.reviewEvidence)throw new Error('saved native review evidence missing; resume refused');
-          const records=await verify({run:result,runRequest,scenario,project:observedProject??project??seedProject,outputDir:outputDir+'-records',bindingsFile:recordBindings?.[`${unit.id}:${key}:${host}`],...(prior?{resumeEvidence:prior.reviewEvidence,prepareReview}: {})});
+          const prepareTarget=Boolean(prepareReview&&preparationTargets[0]===`${unit.id}:${key}:${host}`);
+          const records=prepareReview&&prior&&!prepareTarget?prior.records:await verify({run:result,runRequest,scenario,project:observedProject??project??seedProject,outputDir:outputDir+'-records',bindingsFile:recordBindings?.[`${unit.id}:${key}:${host}`],...(prior?{resumeEvidence:prior.reviewEvidence,prepareReview:prepareTarget}: {})});
           if(!records.stop)checkPack(request.packRoot,selection.head);
           result={...result,records,status:result.status==='failed'||records.status==='failed'?'failed':result.status!=='passed'||records.status!=='passed'?'unverified':'passed'};
+          // Non-target results are preserved during preparation. Certification
+          // must use ordinary resume, which revalidates every saved capture.
+          if(prepareTarget&&result.status==='passed')result={...result,status:'unverified',reason:'review preparation requires ordinary resume before certification'};
         }catch(error){result={...result,status:result.status==='failed'||prior?.records?.status==='failed'?'failed':'unverified',records:{...prior?.records,status:prior?.records?.status==='failed'?'failed':'unverified',reason:error.message}};}
       }
       previousResult={...result,stage:scenario?.stage,anchored:runRequest?.scenario.expectedReplies?.some(anchored)};

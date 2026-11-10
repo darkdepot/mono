@@ -2237,3 +2237,79 @@ for(const mode of ['empty','owner-text','window','write','cut','explicit-policy'
   const result=f.check();assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.windowChecks[1].kind,'helper');assert.equal(result.windowChecks[1].status,'passed');
  }else assert.notEqual(f.check().status,'passed',JSON.stringify(f.check()));
 });
+
+const resumeLive=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-resume-live-regressions.json',import.meta.url)));
+for(const kind of ['notification','owner','write','read'])test(`continue9 native enqueue time exemption is only for host notification (${kind})`,t=>{
+ const f=fixture(t);f.flush();
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+ if(kind==='notification')rows.splice(2,0,{...resumeLive.notification,timestamp:resumeLive.notification.timestamp});
+ else {const at={owner:1,write:2,read:3}[kind];rows[at].timestamp=resumeLive.notification.timestamp;rows[at-1].timestamp=resumeLive.previousTimestamp;}
+ if(kind==='notification')rows[1].timestamp=resumeLive.previousTimestamp;
+ // Keep all ordinary events later than the observed enqueue/preceding pair.
+ if(kind==='notification')for(let i=3;i<rows.length;i++)rows[i].timestamp='2026-11-09T21:46:00Z';
+ if(kind==='notification'){
+  const dump=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);dump.forEach(r=>r.timestamp='2026-11-09T21:47:00Z');fs.writeFileSync(f.request.dumpTrace,dump.map(JSON.stringify).join('\n')+'\n');
+ }
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');
+ const r=verifyTextRecords(f.request);assert.equal(r.status,kind==='notification'?'passed':'unverified',JSON.stringify(r));
+});
+test('continue9 saved Codex tool-name listing is not an unbound write or stage start',t=>{
+ const f=textFixture(t,'codex','defer'),sample=structuredClone(resumeLive.toolNameListing);
+ f.events.splice(7,0,sample,{type:'response_item',payload:{type:'custom_tool_call_output',call_id:sample.payload.call_id,output:'tool descriptions'}});
+ assert.equal(f.check().status,'passed',JSON.stringify(f.check()));
+ sample.payload.input+='text(await tools.mcp__monotest__save_comment({}));';
+ assert.equal(f.check().status,'unverified');
+});
+for(const mode of ['valid','wrong-key','code'])test(`continue9 saved self-closing issue chip normalization ${mode}`,t=>{
+ const f=fixture(t),original='See MON-625.',chip=resumeLive.selfClosingMention;
+ f.record.body=mode==='code'?'`'+original+'`':original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:mode==='code'?'`See '+chip+'.`':'See '+(mode==='wrong-key'?chip.replace('label="MON-625"','label="MON-626"'):chip)+'.'}]);
+ f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
+});
+for(const mode of ['valid','wrong-start','fragment','missing-end'])test(`continue9 absolute Idea artifact bounds preserve full four-section snapshot (${mode})`,t=>{
+ const f=textIdeaFixture(t),rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse),binding=f.request.approvalBindings[1],full=binding.text;
+ const expected=f.request.expectedReplies[0],question=expected.question;
+ Object.assign(expected,{question:{anchors:['описание']},presentation:'inline',driverStart:null,response:{anchors:['запис'],question:false}});
+ f.request.rubricDefinition='Full four-section Idea, native consent and bound snapshot; surrounding prose reviewed separately.';
+ const prefix=resumeLive.ideaPresentation.slice(0,resumeLive.ideaPresentation.indexOf('## Что'));
+ rows[4].payload.content[0].text=prefix+full+'\nДальше: обсудить Research.\n'+question;
+ for(const b of f.request.approvalBindings){b.artifactStart=prefix.length;b.artifactEnd=prefix.length+full.length;if(mode==='wrong-start')b.artifactStart--;if(mode==='fragment'){b.text=full.slice(0,full.indexOf('## Неизвестные'));b.artifactEnd=prefix.length+b.text.length;}if(mode==='missing-end')delete b.artifactEnd;}
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');
+ const r=verifyTextRecords(f.request);assert.equal(r.status,mode==='valid'?'unverified':'failed',JSON.stringify(r));
+ if(mode==='valid'){
+  assert.ok(r.rubricDigest);f.request.rubric={digest:r.rubricDigest,reviewer:'saved native presentation control',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'full native message and explicit artifact bounds',reason:'All four sections and snapshot bound; presentation prose separately judged.'}))};
+  assert.equal(verifyTextRecords(f.request).status,'passed',JSON.stringify(verifyTextRecords(f.request)));
+ }
+});
+for(const mode of ['recovered','no-explicit-error','no-retry','wrong-target','no-fresh-read'])test(`continue9 explicit nothing-saved native error requires same-target successful retry and fresh read (${mode})`,t=>{
+ const f=textFixture(t,'claude','defer'),doc={id:'brief',projectId,title:'Brief',content:'Expected link.'},final={...doc,content:'Approval link.'};
+ const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'MISSING',new_string:'Approval link.'}]});
+ const error={type:'user',message:{content:[{...resumeLive.writeError,tool_use_id:'bad-patch'}]}};
+ if(mode==='no-explicit-error')error.message.content[0].content='Error: network interrupted; save outcome unknown.';
+ const retry=f.call('patch','mcp__monotest__save_document',{id:mode==='wrong-target'?'other':'brief',patch:[{op:'replace',old_string:'Expected link.',new_string:'Approval link.'}]});
+ const events=[f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',doc),bad,error];
+ if(mode!=='no-retry')events.push(retry,f.result('patch',final));
+ if(mode!=='no-fresh-read')events.push(f.call('fresh','mcp__monotest__get_document',{id:'brief'}),f.result('fresh',final));
+ f.events.splice(7,0,...events);f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ const r=f.check();assert.equal(r.status,mode==='recovered'?'passed':'unverified',JSON.stringify(r));
+});
+test('continue9 missing saved rubric digest retains actual missing-binding reason on resume',async t=>{
+ const f=u7DocumentFixture(t,'codex');f.check();
+ const input={run:{trace:f.request.trace},runRequest:{host:'codex',cwd:f.dir,packRoot:process.cwd(),context:{skillPrefix:'mono',projectName:f.project.name},scenario:{expectedReplies:f.request.expectedReplies,rubricDefinition:f.request.rubricDefinition},mcpServers:{monotest:{url:'test'}}},scenario:{next:'handoff',expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,'missing-binding')};
+ const first=await verifyTextScenarioRecords(input,async()=>({status:'passed',trace:f.request.dumpTrace,dumpDir:f.dumpDir}));
+ const prepared=await verifyTextScenarioRecords({...input,resumeEvidence:first.reviewEvidence,prepareReview:true},()=>{throw Error('no new collection');});
+ assert.equal(JSON.parse(fs.readFileSync(prepared.reviewEvidence)).rubricDigest,null);
+ const resumed=await verifyTextScenarioRecords({...input,resumeEvidence:prepared.reviewEvidence},()=>{throw Error('no new collection');});
+ assert.equal(resumed.reason,prepared.reason);assert.equal(resumed.status,prepared.status);
+});
+
+for(const host of ['claude','codex'])test(`continue9 ${host} records consumer accepts the saved clarification with same-message trailing prose`,t=>{
+ const f=textFixture(t,host,'defer');
+ Object.assign(f.expected,{question:{anchors:['Утверждаем']},presentation:'inline',driverStart:null,asksStart:false,intent:'unclear',reply:'ну не знаю',outcome:{approval:false,startNext:false},response:{anchors:['смущ'],question:true}});
+ f.request.rubricDefinition='Saved clarification asks exactly one question in its final message; no consent or write.';
+ f.request.approvalBindings=[];f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('documents','documents',[]);
+ f.events.splice(0,f.events.length,f.assistant(f.draft+'\nУтверждаем описание?'),f.terminal,f.user(f.expected.reply),f.assistant(resumeLive.clarification));
+ const initial=f.check();assert.equal(initial.status,'unverified',JSON.stringify(initial));assert.ok(initial.rubricDigest);
+ f.request.rubric={digest:initial.rubricDigest,reviewer:'saved native clarification control',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'saved single-question response',reason:'No approval or start; one clarification question and a trailing imperative sentence.'}))};
+ assert.equal(f.check().status,'passed',JSON.stringify(f.check()));
+});

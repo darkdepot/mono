@@ -86,3 +86,12 @@ for(const stage of ['idea','discovery','tech-evaluation'])test(`continue1 ${stag
  for(const mention of [`${next} пока не начинаю.`,`Не начинаю ${next}.`,`${next} начнём позже.`])checkStageResponse(expected,`Экспорт исключён. Утверждение записал. ${mention}`);
  for(const offer of [`Начинаю ${next}.`,`Начнём ${next}?`])assert.throws(()=>checkStageResponse(expected,`Экспорт исключён. Утверждение записал.\n${offer}`),/forbidden|question/);
 });
+
+test('continue9 saved clarification question need not be the final character',async()=>{
+ const {checkStageResponse}=await import('./skills-owner.mjs');
+ const expected=JSON.parse(fs.readFileSync('evals/scenarios/idea/empty/scenario.json')).hosts.claude.expectedReplies[0];
+ const {clarification}=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-resume-live-regressions.json',import.meta.url)));
+ assert.doesNotThrow(()=>checkStageResponse(expected,clarification));
+ assert.throws(()=>checkStageResponse(expected,clarification+' Что ещё?'),/question/);
+ assert.throws(()=>checkStageResponse(expected,clarification.replace('?','.')),/question/);
+});

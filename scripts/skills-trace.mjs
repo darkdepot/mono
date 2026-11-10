@@ -24,6 +24,7 @@ export function codexItems(rows) {
 export function codexWindows(rows, source, options) {
   const audit=auditRows('codex',rows);
   const items = codexItems(rows), windows = [], seen = new Set();
+  let expectedIndex=0;
   for (const row of items) {
     const p = row.item;
     if (!p || typeof p.type !== 'string') throw new Error(`line ${row.line}: invalid response item`);
@@ -47,8 +48,12 @@ export function codexWindows(rows, source, options) {
     // New tool work ends earlier progress. Reasoning, blank messages and delayed
     // results do not replace a presentation made after that work was requested.
     const presentations=preceding.filter(r=>(!work||r.line>work.line)&&r.item.type==='message'&&r.item.role==='assistant'&&visible(textOf(r.item)));
-    const unanchored=options?.expectedWindows?.some(expected=>!expected.summary.length)??false;
-    const shown=presentations.findLast(r=>!options?.expectedWindows||unanchored||options.expectedWindows.some(expected=>expected.summary.every(anchor=>textOf(r.item).includes(anchor))))?.item;
+    const expectedWindows=options?.expectedWindows,roles=roleWindows(expectedWindows);
+    const role=roles?(windowRole(args?.questions)??(expectedWindows[expectedIndex]?.role==='choice'&&args?.questions?.every(q=>q.options?.length)?'choice':null)):null;
+    const target=!roles||role!==null,expected=target?expectedWindows?.[expectedIndex]:null;
+    if(target&&executionConfirmed)expectedIndex++;
+    const unanchored=Boolean(expected&&!expected.summary.length);
+    const shown=presentations.findLast(r=>!expected||unanchored||expected.summary.every(anchor=>textOf(r.item).includes(anchor)))?.item;
     const shownText=shown?textOf(shown):'';
     // Without anchors no later service line can erase an earlier presentation.
     const finalSummary=visible(summary)&&(unanchored?presentations.every(r=>summary.includes(textOf(r.item))):!visible(shownText)||summary.includes(shownText));

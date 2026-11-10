@@ -14,7 +14,7 @@ import { isWrite, MissingEvidence } from './skills-boundary.mjs';
 import { unwrap } from './skills-proof.mjs';
 import { issueTeam } from './skills-dump.mjs';
 import { runScenario } from './skills-run.mjs';
-import { nativeRecords, resultFor, callInput } from './skills-record-data.mjs';
+import { nativeRecords, resultFor, callInput, unsavedResult } from './skills-record-data.mjs';
 import { windowRole, windowPolicy, correctedVersion, isOwnerWindow, anchored, checkAnchors } from './skills-owner.mjs';
 import { checkRubric, rubricDigest } from './skills-rubric.mjs';
 import { stageDriverTool, permittedStages, dialogueMode, testedVersion } from './skills-stage-driver.mjs';
@@ -26,6 +26,22 @@ const text=value=>typeof value==='string'&&value.trim().length>0;
 const ownUrl=url=>typeof url==='string'&&url.startsWith('https://linear.app/monotest/');
 const idOf=row=>row?.uuid??row?.id;
 const bodyOf=row=>row?.body??row?.content??row?.description;
+function recoveredUnsavedWrite(data,call){
+ const error=unsavedResult(data.host,call,data.rows);
+ if(!error||call.name!=='mcp__monotest__save_document')return false;
+ const input=callInput(data.host,call);
+ if(!text(input?.id)||!Array.isArray(input.patch))return false;
+ for(const retry of data.calls.filter(c=>c.line>error.line&&c.name===call.name)){
+  if(callInput(data.host,retry)?.id!==input.id)continue;
+  let saved;try{saved=resultFor(data.host,retry,data.rows);}catch{continue;}
+  if(idOf(saved.value)!==input.id)continue;
+  for(const read of data.calls.filter(c=>c.line>saved.resultLine&&c.name==='mcp__monotest__get_document')){
+   if(callInput(data.host,read)?.id!==input.id)continue;
+   try{if(idOf(resultFor(data.host,read,data.rows).value)===input.id)return true;}catch{}
+  }
+ }
+ return false;
+}
 const writeBody=write=>bodyOf(write.input)??bodyOf(write.value)??'';
 const missing=reason=>{throw new MissingEvidence(reason);};
 const bindingMissing=reason=>{const error=new MissingEvidence(reason);error.bindingOnly=true;throw error;};
@@ -40,7 +56,10 @@ const identityValues=value=>typeof value==='string'?[value]:[value?.id,value?.na
 // Linear's observed block spacing, link wrappers and list markers. Preserve
 // paragraph boundaries, code and all substantive bytes.
 function prose(value) {
- return value.replace(/<issue\b[^>]*\bhref="https:\/\/linear\.app\/[^"\s]+\/issue\/([^/"#?]+)[^"]*"[^>]*>([^<>]*)<\/issue>/g,(all,key,label)=>label.trim()===key?key:all)
+ return value.replace(/<issue\b[^<>]*\/\s*>/g,all=>{
+   const label=all.match(/\blabel="([^"]+)"/)?.[1],key=all.match(/\bhref="https:\/\/linear\.app\/[^"\s]+\/issue\/([^/"#?]+)[^"]*"/)?.[1];
+   return key&&label===key?key:all;
+  }).replace(/<issue\b[^>]*\bhref="https:\/\/linear\.app\/[^"\s]+\/issue\/([^/"#?]+)[^"]*"[^>]*>([^<>]*)<\/issue>/g,(all,key,label)=>label.trim()===key?key:all)
   .replace(/\[([^\]\n]+)\]\(<([^<>\s()]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1');
 }
 function inlineProse(line,opened) {
@@ -532,8 +551,9 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
  const displayed=text=>expected.stage==='idea'&&exchange.text.startsWith(dump.project.name+'\n\n')&&!text.startsWith(dump.project.name+'\n\n')?dump.project.name+'\n\n'+text:text;
  const presentation=anchored(expected)?presentationKind(expected,binding):'inline';
  if(presentation==='inline') {
-  if(anchored(expected)&&binding.artifactEnd!==undefined) {
-   if(!Number.isInteger(binding.artifactEnd)||binding.artifactEnd<1||exchange.text.slice(0,binding.artifactEnd)!==displayed(binding.text)||!exchange.text.slice(binding.artifactEnd).split('\n').some(line=>line.trim()===exchange.question))throw new Error('approval does not bind the complete displayed artifact');
+  if(anchored(expected)&&(binding.artifactEnd!==undefined||binding.artifactStart!==undefined)) {
+   const start=binding.artifactStart??0,end=binding.artifactEnd;
+   if(!Number.isInteger(start)||start<0||!Number.isInteger(end)||end<=start||end>exchange.text.length||exchange.text.slice(start,end)!==(binding.artifactStart===undefined?displayed(binding.text):binding.text)||!exchange.text.slice(end).split('\n').some(line=>line.trim()===exchange.question))throw new Error('approval does not bind the complete displayed artifact');
   }else if(exchange.text!==displayed(framing.before+binding.text+framing.after))throw new Error('approval does not bind the complete displayed artifact');
  }
  const body=writeBody(write);
@@ -626,7 +646,8 @@ export function verifyRecords(request){
    data.terminal=data.rows.findLast(r=>!r.value.parent_tool_use_id&&data.audit.proof({kind:'terminal',result:r.value}).status==='confirmed');
    if(data.calls.some(c=>c.line>data.terminal.line&&isWrite(c.name)))throw new Error('write after scenario terminal');
    if(data.calls.some(c=>c.line>data.terminal.line))missing('call after successful trace terminal');
-   let previous=-Infinity;for(const row of data.rows)if(!(source.host==='claude'&&row.value.isSynthetic===true)&&row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp)||stamp<previous)missing('invalid or reversed native trace time order');previous=stamp;}
+   const notification=e=>e.type==='user'&&e.origin?.kind==='task-notification'&&typeof e.message?.content==='string'||e.type==='system'&&e.subtype==='task_notification';
+   let previous=-Infinity;for(const row of data.rows)if(!(source.host==='claude'&&(row.value.isSynthetic===true||notification(row.value)))&&row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp)||stamp<previous)missing('invalid or reversed native trace time order');previous=stamp;}
    data.expectedReplies=dump?undefined:source.expectedReplies;
    if(!dump&&data.audit.calls.some(c=>isOwnerWindow(c.name))&&dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))!=='windows')throw new Error('stage called a window in text scenario');
    if(!dump&&(request.expectedReplies||source.expectedReplies)&&data.audit.calls.some(c=>isOwnerWindow(c.name)))throw new Error('stage called a window in text scenario');
@@ -701,6 +722,7 @@ export function verifyRecords(request){
    seedEndLine=request.seedEndLine;
   }
   for(const source of scenarios)for(const call of source.calls.filter(c=>isWrite(c.name)&&!c.name.startsWith('mcp__paper__'))){
+   if(recoveredUnsavedWrite(source,call))continue;
    const seed=source===data&&call.line<=seedEndLine,write={...resultFor(source.host,call,source.rows,!seed),data:source,seed};
    if(seed&&write.resultLine>seedEndLine)missing('write crosses seed boundary');
    writes.push(write);
@@ -986,7 +1008,7 @@ export function resumeScenarioRecords({resumeEvidence,bindingsFile,prepareReview
  }
  for(const key of ['approvalBindings','presentationBindings','gates'])if(bindings[key]!==undefined&&!isDeepStrictEqual(bindings[key],saved.request[key]))throw new Error('saved bindings changed; resume refused');
  const result=verifyRecords({...saved.request,rubric:bindings.rubric??saved.request.rubric});
- if(result.rubricDigest!==saved.rubricDigest)throw new Error('saved rubric digest changed; resume refused');
+ if((result.rubricDigest??null)!==(saved.rubricDigest??null))throw new Error(saved.rubricDigest?'saved rubric digest changed; resume refused':'review preparation required: no saved rubric digest');
  return {...result,reviewEvidence:resumeEvidence};
 }
 export async function verifyScenarioRecords({run,runRequest,scenario,project,outputDir,bindingsFile,resumeEvidence,prepareReview=false},collect=collectRecordDump){

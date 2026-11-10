@@ -821,3 +821,51 @@ for(const changed of [false,true])test(`acceptance directly selects the full cat
  assert.deepEqual(actual.affected,Object.keys(neighbors));assert.deepEqual(actual.expectedItems,full.expectedItems);assert.deepEqual(actual.units,full.units);
  assert.equal(selectScenarios({...args,purpose:'release'}).expectedItems.length,12,'release remains the single seedless chain');
 });
+
+test('continue9 prepare targets Research successor without deleting the earlier completed rubric',async t=>{
+ const f=fixture(t);
+ for(const key of ['research/approve','discovery/approve'])write(path.join(f.catalogDir,key,'scenario.json'),fs.readFileSync(path.join(source,key,'scenario.json')));
+ f.commit();const selection=f.select(),unit={id:'prepare-chain',target:'research/approve',scenarios:['research/approve','discovery/approve']};
+ selection.units=[unit];selection.hosts=['codex'];selection.expectedItems=unit.scenarios.map(scenario=>({id:`${unit.id}:${scenario}:codex`,source:'scenario',expectation:`${scenario} / codex / ${unit.id}: conversation, word replies and fresh monotest records`,unit:unit.id,scenario,host:'codex'}));
+ const request=suiteRequest(f,selection),calls=[],prepared=[];let reviewed=false;
+ const execute=async r=>{calls.push(r.context.entryStage);write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);};
+ const verify=async input=>{
+  const stage=input.runRequest.context.entryStage,file=input.resumeEvidence??input.outputDir+'-evidence.json';
+  if(!input.resumeEvidence)write(file,stage==='research'?'completed rubric':'pending binding');
+  if(input.prepareReview){prepared.push(stage);return {status:'passed',reviewEvidence:file,rubricDigest:'b'.repeat(64)};}
+  return {status:stage==='research'||reviewed?'passed':'unverified',reviewEvidence:file,rubricDigest:(stage==='research'?'a':'b').repeat(64),starts:[{stage:'discovery',replyId:'research-approve'}],monotestTasks:0};
+ };
+ await runSuiteWithRecords(request,execute,verify);
+ const before=json(path.join(request.outputDir,'suite-state.json')).results[0];
+ const preparation=await runSuiteWithRecords({...request,resume:true,prepareReview:true,recordBindings:{'prepare-chain:research/approve:codex':'completed-rubric.json','prepare-chain:discovery/approve:codex':'target-bindings.json'}},execute,verify);
+ assert.deepEqual(prepared,['discovery']);assert.equal(preparation.results[0].status,'passed');assert.equal(preparation.status,'unverified','preparation is never a certifying run, even with positive mechanical checks');
+ const after=json(path.join(request.outputDir,'suite-state.json')).results[0];
+ assert.deepEqual(after.records,before.records);assert.equal(after.reviewEvidence,before.reviewEvidence);
+ reviewed=true;assert.equal((await runSuiteWithRecords({...request,resume:true},execute,verify)).status,'passed');assert.deepEqual(calls,['research','discovery']);
+});
+
+test('continue9 six-stage release can prepare each saved stage and reach Handoff once',async t=>{
+ const f=fixture(t);fs.cpSync(source,f.catalogDir,{recursive:true});f.commit();
+ const selection=selectScenarios({indexFile:path.join(f.catalogDir,'index.json'),worktree:f.dir,base:f.base,purpose:'release'});
+ selection.hosts=['codex'];selection.expectedItems=selection.expectedItems.filter(item=>item.host==='codex');
+ const request=suiteRequest(f,selection,{releaseStartReason:'Isolated release regression',paper:{fileIds:['sandbox','main'],command:'paper',args:['mcp']},designMemoryFile:path.join(f.dir,'memory/memory.md')});
+ const reviewed=new Set(),executed=[],prepared=[],bindings={};
+ const execute=async r=>{executed.push(r.context.entryStage);write(r.context.projectFile,JSON.stringify(runProject(r)));return passedStage(r);};
+ const verify=async input=>{
+  const stage=input.runRequest.context.entryStage,file=input.resumeEvidence??input.outputDir+'-evidence.json';
+  if(!input.resumeEvidence)write(file,`saved immutable native evidence: ${stage}`);
+  if(input.prepareReview)prepared.push(stage);
+  return {status:!input.prepareReview&&reviewed.has(stage)?'passed':'unverified',reviewEvidence:file,rubricDigest:stage,monotestTasks:0,starts:input.runRequest.scenario.expectedReplies.flatMap(r=>(r.driverStart??[]).map(stage=>({stage})))};
+ };
+ let result=await runSuiteWithRecords(request,execute,verify);
+ for(const stage of ['idea','research','discovery','design','tech-evaluation','handoff']){
+  assert.equal(result.results.at(-1).scenario,stage+'/approve');
+  const before=json(path.join(request.outputDir,'suite-state.json')).results.filter(item=>item.records.status==='passed');
+  bindings[`release:${stage}/approve:codex`]=stage+'-annotations.json';
+  await runSuiteWithRecords({...request,resume:true,prepareReview:true,recordBindings:bindings},execute,verify);
+  const after=json(path.join(request.outputDir,'suite-state.json')).results;
+  for(const item of before)assert.deepEqual(after.find(row=>row.scenario===item.scenario).records,item.records,'earlier rubric/result stays intact');
+  reviewed.add(stage);result=await runSuiteWithRecords({...request,resume:true},execute,verify);
+ }
+ assert.equal(result.status,'passed');assert.deepEqual(executed,['idea','research','discovery','design','tech-evaluation','handoff']);assert.deepEqual(prepared,executed);
+});

@@ -87,7 +87,7 @@ export function checkStageResponse(expected, text) {
     checkAnchors(expected.response,text,'stage response');
     if(expected.correction)checkAnchors({anchors:expected.correction.descriptionAnchors},text,'stage correction response');
     const questions=(text.match(/\?/g)??[]).length;
-    if (expected.response.question ? questions!==1||!text.trimEnd().endsWith('?') : questions!==0) throw new Error('stage response question differs from scenario policy');
+    if (expected.response.question ? questions!==1 : questions!==0) throw new Error('stage response question differs from scenario policy');
     return;
   }
   if (!expected.response?.includes(text)) throw new Error('stage response differs from declared scenario policy');

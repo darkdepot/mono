@@ -208,3 +208,15 @@ for(const sample of liveContext.controls)test(`continue8 ${sample.id} unanchored
  const checked=textTrace({host:'codex',testedVersion:'0.42.0',trace:scratch(t)(rows),expectedWindows:sample.expectedWindows.map(e=>({...e,role:'approval',summary:[]})),phase:'excerpt'});
  assert.equal(checked.status,'failed',JSON.stringify(checked));assert.match(checked.windows[0].issues.join(';'),/async summary must be final and last/);
 });
+
+test('continue9 empty anchors belong only to their own historical window',t=>{
+ const choice=codexRows(),approval=codexRows();
+ const q=JSON.parse(choice[0].payload.arguments).questions[0];
+ q.title=q.title.replaceAll('Утвердить','Выбрать');q.options=q.options.map(o=>typeof o==='string'?o.replaceAll('Утвердить','Выбрать'):{...o,label:o.label.replaceAll('Утвердить','Выбрать')});
+ choice[0].payload.arguments=JSON.stringify({questions:[q]});
+ approval.forEach(r=>{if(r.payload.call_id)r.payload.call_id='approval-second';});
+ approval.splice(0,0,{type:'response_item',payload:{type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text:'Служебное пояснение перед окном.'}]}});
+ const trace=scratch(t)([...choice,{type:'event_msg',payload:{type:'task_complete'}},...approval]);
+ const result=textTrace({host:'codex',testedVersion:'0.42.0',trace,phase:'excerpt',expectedWindows:[{...codexExpected,id:'choose',role:'choice',summary:[]},{...codexExpected,id:'approve',role:'approval'}]});
+ assert.equal(result.status,'passed',JSON.stringify(result));
+});

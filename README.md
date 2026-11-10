@@ -1862,6 +1862,9 @@ The suite saves the native trace, writes and fresh dump with their rubric digest
 Review that saved evidence, then use the same request with `resume: true` to
 continue without rerunning a completed stage. Changed evidence or digest refuses
 resume; failed and unverified rubric results still block the next stage.
+Binding preparation targets one saved stage and preserves completed earlier
+rubrics; native notification enqueue times, tool-name listings and rendered Linear
+mentions do not change the verified owner or record history.
 Extra replies, questions, completed turns, forged quotes, early writes and unfinished
 main/scout activity remain blocking. See [skill QA](references/qa-skills.md).
 The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 19
