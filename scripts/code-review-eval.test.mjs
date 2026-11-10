@@ -133,13 +133,6 @@ test('C32: a dangling clean-control symlink cannot create a file outside the che
  assert.match(error?.message??'',/clean control would overwrite a historical file/);
  assert.equal(fs.lstatSync(path.join(repo,file)).isSymbolicLink(),true);
 });
-test('C33: MONO-81 cases 20 and 24 validate against exact local blobs, not model payloads',async t=>{
- const frozen=JSON.parse(fs.readFileSync(path.join(packRoot,'evals/code-review/screen-regressions/qa-r5-historical.json'),'utf8'))['MONO-81'];
- assert.equal(createHash('sha256').update(frozen.source).digest('hex'),frozen.sha256);
- const {clone,bundle}=await evaluationFixture(t,{sourceFile:frozen.file,source:frozen.source,anchor:'import',anchors:frozen.anchors});
- for(const id of ['20','24']){const item=clone.cases.find(item=>item.id===id);assert.equal(item.file,'scripts/review-bench.test.mjs');assert.ok(frozen.source.includes(item.anchor));}
- assert.equal(verifyDatasetBundle(clone,bundle).modelCalls,0);
-});
 test('host Git isolation also disables smudge and process filters in evaluation checkouts',async t=>{
  for(const driver of ['smudge','process'])await t.test(driver,async t=>{
   const {clone,bundle}=await evaluationFixture(t),dir=fs.mkdtempSync(path.join(os.tmpdir(),'mono-eval-host-filter-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -193,20 +186,8 @@ test('D6: disputed danger is scored without a danger veto, partial consequence a
  assert.equal(validateReviewDataset(dataset).eligibleLate,10);assert.equal(validateReviewDataset(dataset).eligibleExtended,14);
 });
 
-test('model-derived evaluation scores, calibration, comparisons and progress errors share output screening',async t=>{
- const secret='ghp_'+'y'.repeat(36),record={outcome:'not-converged',findings:[{key:'a'}],costs:[{summary:secret}],failures:[]};
- const evaluation={datasetDigest:digest(dataset),runs:[{id:'screened',repeat:1,task:'MONO-81',caseId:'MONO-81',record}]};
- assert.throws(()=>scoreReviewEvaluation(dataset,evaluation,[]),/model output withheld/);
- assert.throws(()=>compareReviewEvaluations(evaluation,evaluation),/model output withheld/);
- const gold={key:'a',outcome:'confirmed',weight:'P2',danger:true,mergeKey:'a'};
- assert.throws(()=>scoreCheckerProbes([gold],[{...gold,reason:JSON.stringify(JSON.stringify({password:secret}))}]),/model output withheld/);
- const {clone,bundle}=await evaluationFixture(t),events=[];
- const result=await runReviewEvaluation({dataset:clone,bundle,runId:'screen-progress',packRoot},{onProgress:event=>{events.push(event);if(event.type==='started')throw Object.assign(Error(secret),{interrupted:true});},runRole:async()=>assert.fail('progress interrupted before launch')});
- assert.equal(result.interrupted,true);assert.equal(result.runs.length,1);assert.ok(!JSON.stringify({result,events}).includes(secret));
- await assert.rejects(()=>runReviewEvaluation({dataset:clone,bundle,runId:'screen-plan',packRoot},{onProgress:()=>{throw Error(secret);}}),error=>!error.message.includes(secret));
-});
 
-test('C43: private evaluation identities compare identical inputs across separate pack directories',async t=>{
+test('C43: evaluation identities compare identical inputs across separate pack directories and processes',async t=>{
  const {clone,bundle}=await evaluationFixture(t),copies=fs.mkdtempSync(path.join(os.tmpdir(),'mono-eval-comparison-'));t.after(()=>fs.rmSync(copies,{recursive:true,force:true}));
  const packs=['candidate','incumbent'].map(name=>{const dir=path.join(copies,name);fs.mkdirSync(dir);return dir;});
  const run=async(root,runId,inputs=clone)=>runReviewEvaluation({dataset:inputs,bundle,runId,packRoot:root},{onProgress:event=>{if(event.type==='started')throw Object.assign(Error('comparison fixture captured before role launch'),{interrupted:true});}});
@@ -214,11 +195,11 @@ test('C43: private evaluation identities compare identical inputs across separat
  const source=`import {runReviewEvaluation} from ${JSON.stringify(new URL('./code-review-eval.mjs',import.meta.url).href)};const result=await runReviewEvaluation(${JSON.stringify({dataset:clone,bundle,runId:'incumbent',packRoot:packs[1]})},{onProgress:event=>{if(event.type==='started')throw Object.assign(Error('comparison fixture captured before role launch'),{interrupted:true});}});console.log(JSON.stringify(result));`;
  const second=JSON.parse(execFileSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8'}));
  assert.equal(first.runs.length,1);assert.equal(second.runs.length,1);
- assert.equal(first.runs[0].contractDigest,second.runs[0].contractDigest,'checkout paths must not change private comparison identity');
+ assert.equal(first.runs[0].contractDigest,second.runs[0].contractDigest,'checkout paths must not change the comparison identity');
  assert.equal(compareReviewEvaluations(first,second).length,1);
  for(const field of ['head','base','contractDigest'])assert.throws(()=>compareReviewEvaluations(first,{...second,runs:[{...second.runs[0],[field]:'different'}]}),/inputs differ/);
  const changed=structuredClone(clone);changed.matchingRule+=' Different comparison input.';
- const different=await run(packs[1],'different',changed);assert.notEqual(first.runs[0].contractDigest,different.runs[0].contractDigest,'dataset inputs must participate in the private identity');
+ const different=await run(packs[1],'different',changed);assert.notEqual(first.runs[0].contractDigest,different.runs[0].contractDigest,'dataset inputs must participate in the identity');
  assert.throws(()=>compareReviewEvaluations(first,{...different,datasetDigest:first.datasetDigest}),/inputs differ/);
  const identity={head:first.runs[0].head,base:first.runs[0].base,inputs:{task:'fixed',dataset:'fixed'}},contract='Exact comparison contract.';
  const original=reviewContractDigest(contract,identity);
@@ -228,15 +209,4 @@ test('C43: private evaluation identities compare identical inputs across separat
   const rows=d=>({datasetDigest:'same',runs:[{id:d,caseId:'fixed',repeat:1,head:identity.head,base:identity.base,contractDigest:d}]});
   assert.throws(()=>compareReviewEvaluations(rows(original),rows(changedDigest)),/inputs differ/);
  }
-});
-test('C40: evaluation progress and reports use keyed contract identities, stable across runs',async t=>{
- const secret='evalOpaqueC40',contract=JSON.stringify({password:secret}),{clone,bundle}=await evaluationFixture(t,{contract});
- const captures=[];
- const run=async runId=>runReviewEvaluation({dataset:clone,bundle,runId,packRoot},{onProgress:event=>captures.push(event),runRole:async request=>{
-  assert.ok(!request.prompt.includes(secret));throw Object.assign(Error('interrupted recorded fixture'),{interrupted:true});
- }});
- const first=await run('first'),second=await run('second');
- assert.equal(first.runs.length,1);assert.equal(second.runs.length,1);assert.equal(first.runs[0].contractDigest,second.runs[0].contractDigest);
- for(const value of [secret,JSON.stringify(secret),contract,JSON.stringify(contract)])assert.ok(!JSON.stringify({first,second,captures}).includes(createHash('sha256').update(value).digest('hex')));
- assert.ok(!JSON.stringify({first,second,captures}).includes(secret));
 });

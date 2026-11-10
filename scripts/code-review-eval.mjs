@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { runReviewRound, reviewGit, screenModelOutput, reviewContractDigest } from './code-review.mjs';
+import { runReviewRound, reviewGit, reviewContractDigest } from './code-review.mjs';
 import { digest, isMain, runtimePackRoot } from './runtime.mjs';
 
 const need = (ok, reason) => { if (!ok) throw new Error(`review evaluation: ${reason}`); };
@@ -74,10 +74,7 @@ export async function runReviewEvaluation({ dataset, bundle, config = {}, runId,
   need(nonempty(runId), 'unique runId required');
   const runs = [];
   const tasks = [...dataset.tasks.map(task => ({ ...task, caseId: task.id })), ...dataset.cleanControls.map(item => ({ ...dataset.tasks.find(task => task.id === item.task), ...item, caseId: item.id }))];
-  const progress = async event => {
-    try { await dependencies.onProgress?.(screenModelOutput(event, { strict: true }).value); }
-    catch (error) { throw Object.assign(new Error(screenModelOutput(error.message, { diagnostic: true }).diagnostic.text), { interrupted: !!error.interrupted }); }
-  };
+  const progress = async event => { await dependencies.onProgress?.(event); };
   await progress({ type: 'plan', runId, datasetDigest: digest(dataset), runs: tasks.flatMap(task => [1, 2, 3].map(repeat => ({ id: `${runId}:${task.caseId}:${repeat}`, caseId: task.caseId, repeat, status: 'not-run' }))) });
   tasksLoop: for (const task of tasks) {
     for (let repeat = 1; repeat <= 3; repeat++) {
@@ -95,16 +92,15 @@ export async function runReviewEvaluation({ dataset, bundle, config = {}, runId,
         const record = await runReviewRound({ worktree: scratch, head: task.head, base: task.base, contract, risk: 'risky', config, packRoot }, dependencies);
         runs.push({ ...row, record });
       } catch (error) {
-        runs.push({ ...row, record: { outcome: 'not-reviewed', interrupted: !!error.interrupted, findings: [], costs: [], failures: [{ reason: screenModelOutput(error.message, { diagnostic: true }).diagnostic.text }] } });
+        runs.push({ ...row, record: { outcome: 'not-reviewed', interrupted: !!error.interrupted, findings: [], costs: [], failures: [{ reason: error.message }] } });
       } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
       await progress({ type: 'result', ...runs.at(-1) });
       if (runs.at(-1).record.interrupted) break tasksLoop;
     }
   }
-  return screenModelOutput({ schemaVersion: 1, datasetDigest: digest(dataset), runId, runs, interrupted: runs.some(run => run.record.interrupted), quality: 'unscored; separate independent adjudications required' }, { strict: true }).value;
+  return { schemaVersion: 1, datasetDigest: digest(dataset), runId, runs, interrupted: runs.some(run => run.record.interrupted), quality: 'unscored; separate independent adjudications required' };
 }
 export function compareReviewEvaluations(candidate, baseline) {
-  ({ candidate, baseline } = screenModelOutput({ candidate, baseline }, { strict: true }).value);
   need(candidate.datasetDigest === baseline.datasetDigest, 'comparison dataset differs');
   need(candidate.runs.length > 0, 'empty comparison is unreviewed');
   need(candidate.runs.length === baseline.runs.length, 'comparison run denominator differs');
@@ -117,7 +113,6 @@ export function compareReviewEvaluations(candidate, baseline) {
   });
 }
 export function scoreReviewEvaluation(dataset, evaluation, adjudications) {
-  ({ evaluation, adjudications } = screenModelOutput({ evaluation, adjudications }, { strict: true }).value);
   validateReviewDataset(dataset); need(evaluation.datasetDigest === digest(dataset), 'dataset changed after runs');
   need(Array.isArray(evaluation.runs) && evaluation.runs.length > 0, 'empty evaluation is unreviewed');
   need(new Set(evaluation.runs.map(run => run.id)).size === evaluation.runs.length, 'duplicate run id');
@@ -149,7 +144,6 @@ export function scoreReviewEvaluation(dataset, evaluation, adjudications) {
     boundary: 'Every run is separate. Union is additional only. Compare incumbent rows only for identical head/base/contract. Reviewer recall alone does not block release.' };
 }
 export function scoreCheckerProbes(gold, verdicts) {
-  ({ gold, verdicts } = screenModelOutput({ gold, verdicts }, { strict: true }).value);
   need(Array.isArray(gold) && gold.length > 0 && new Set(gold.map(item => item.key)).size === gold.length, 'empty or duplicate gold key');
   need(Array.isArray(verdicts) && new Set(verdicts.map(item => item.key)).size === verdicts.length && verdicts.every(item => gold.some(expected => expected.key === item.key)), 'unknown/duplicate probe key');
   need([...gold, ...verdicts].every(item => ['confirmed', 'rejected', 'unresolved'].includes(item.outcome) && /^P[0-3]$/.test(item.weight) &&
@@ -181,10 +175,10 @@ if (isMain(import.meta.url)) {
     if (mode === '--help') console.log('Usage: code-review-eval.mjs --validate <cases.json> --bundle <absolute.bundle> | --request <json>\nLive request: {dataset,bundle,config,runId}. Runs 3 risky repetitions per task/control; prints records. Host only; no benchmark result is a certificate.');
     else if (mode === '--validate' && args[0] === '--bundle' && args.length === 2) console.log(JSON.stringify(verifyDatasetBundle(readInput(), args[1]), null, 2));
     else if (mode === '--request' && !args.length) {
-      const evaluation = await runReviewEvaluation(readInput(), { onProgress: event => console.log(JSON.stringify(screenModelOutput(event, { strict: true }).value)) });
-      console.log(JSON.stringify(screenModelOutput({ type: 'complete', evaluation }, { strict: true }).value));
+      const evaluation = await runReviewEvaluation(readInput(), { onProgress: event => console.log(JSON.stringify(event)) });
+      console.log(JSON.stringify({ type: 'complete', evaluation }));
       if (evaluation.interrupted) process.exitCode = 130;
     }
     else throw new Error('use --help');
-  } catch (error) { console.error(screenModelOutput(error.message, { diagnostic: true }).diagnostic.text); process.exitCode = 2; }
+  } catch (error) { console.error(error.message); process.exitCode = 2; }
 }

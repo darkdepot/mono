@@ -44,7 +44,7 @@ Pi off|minimal|low|medium|high|xhigh.
 Routes bind engine/model, effort|effortByRisk, provider{id,endpoint}, credentialEnv;
 producer adds role. Compare every field/five risks; changes renew owner approval.
 `requiredPairings(config,{reviewerRole:'code-review'})` binds reviewer.role and
-reviewer.checker routes. Either change renews acceptance. Default: `autoreview`. Acceptance never waives native auth or different families. Payload screening excludes role tool reads, post-screen edits and evaluation reconstruction.
+reviewer.checker routes. Either change renews acceptance. Default: `autoreview`. Acceptance never waives native auth or different families.
 
 ## Audience profile
 

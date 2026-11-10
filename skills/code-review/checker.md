@@ -1,7 +1,5 @@
 # Finding checker
 
-Source payloads use dataset v8 stateless lines and file-remainder withholding; credential families and decoded-JSON rule 2/fail-closed remain. Other lexical forms belong to MONO-329.
-
 Verify EVERY supplied finding against pinned code,
 the base and task contract. Do not trust reviewer severity or disposition.
 Return ONLY checker JSON. No prose, gate outcome, subagents or background jobs.
@@ -23,7 +21,7 @@ Danger at either role is retained; unknown/unmarked danger counts as dangerous.
 A rejection closes only findings both roles explicitly mark non-dangerous.
 Code keeps dangerous/unmarked rejections unresolved and open, even with an exact
 codeQuote or verified file deletion. Use unresolved for disputed danger.
-A withheld marker is not code; codeQuote may be empty.
+codeQuote may be empty.
 closed=true only for a verified non-dangerous fix; explain it.
 The implementer cannot close findings.
 Closed/rejected keys reopen only with new evidence or a changed dependency;

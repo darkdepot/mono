@@ -70,9 +70,9 @@ costs remain in the row, not silently dropped. The CLI emits JSONL plan/started/
 interruption evidence outside the repository so an interrupted call stays in
 the denominator. The final complete event contains the whole evaluation. The host compares incumbent results on exactly
 the same head/base/contract and repeats, not the old summary percentages. `compareReviewEvaluations` rejects changed
-head/base/contract or repeat denominators before pairing incumbent rows. A shared
-owner-only local comparison key signs the canonical head, base, exact contract,
-dataset and task inputs; checkout and pack paths never enter that identity.
+head/base/contract or repeat denominators before pairing incumbent rows. A plain
+SHA-256 digest of the canonical head, base, exact contract, dataset and task
+inputs identifies a run; checkout and pack paths never enter that identity.
 Identical inputs compare across directories and processes; changed inputs refuse.
 `scoreReviewEvaluation(dataset,evaluation,adjudications)` requires independent
 `{runId,key,match,caseId,judge,evidence}` annotations for strict/partial matches;
@@ -120,37 +120,25 @@ list separately; an init model cannot hide a later fallback. This records identi
 observations, not an inference about final-model ordering from modelUsage keys.
 `round2-model-stream.json` separates the observed refusal fallback from authored
 multi-fallback and usage-alias controls; these names are data, not model policy.
-`screenModelOutput` is the shared output boundary for successful and failed role
-replies, every field, metadata, history, reports, evaluation progress and scoring.
-No model field is persisted, rendered or forwarded before that screen. Secret
-inputs use the same bounded decoder, including JSON literals embedded in source;
-pinned blobs and all context fields are screened before their role starts. Secret
-replies fail closed, while retained diagnostics redact values. Every JSON/JSONL
-string layer uses literal `JSON.parse` to a fixed point, including Codex
-`item.text`, preserving quoted key/value boundaries. Raw text is screened before parsing so duplicate JSON members and escaped keys cannot disappear. Non-JSON source uses dataset v8 stateless matching: matched lines are withheld, and a matched opener withholds the file remainder. Decoding only maps hits back to original lines. Other lexical forms and harmless excess withholding belong to MONO-329. JSON retains member binding and nested-subtree screening without a length floor; property reads bind nothing. At most eight decoding layers are allowed; unresolved JSON pairing and over-limit content are withheld. The family table includes AWS AKIA/ASIA, GitHub, OpenAI/Anthropic, Slack, Google, PEM private keys, JWT and Bearer values. Paths use strict JWT recognition and distinct aliases. `session` alone is allowed. This applies
-to prompts, contracts, rules, filenames, history, checker evidence, diagnostics and
-kept model output. Role tool reads, files changed after screening and values
-reconstructed by evaluation are outside payload screening. New credential families
-belong to MONO-329. Structural bounds are 32 levels,
-4096 nodes/256 KiB for role diagnostics (8 KiB retained per attempt), and
-131072 nodes/16 MiB for records and renderers. Mixed line and multiline matches
-are independent; text is rescanned after redaction. Tests cover successful and
-failed fields, nested encodings, legacy records, evaluation sinks and safe replies. Circle and evaluation Git calls share
+Roles see the diff, contract, rules and pinned files as they are, through the same
+subscription providers as the coding worker; nothing is screened for secrets or
+redacted. Role answers are bounded JSON objects (2 MiB) and each failed attempt
+keeps at most 8 KiB of its answer. Circle and evaluation Git calls share
 one policy: hook/fsmonitor and color overrides, configured content filters and
 diff/merge helpers disabled, and diff/show (including raw diffs) forced colorless
 without external diff or textconv. Raw contracts keep exact hash-validated bytes.
-Both roles read precomputed context and a read-only export of every pinned blob, without `.git`; symlinks become target text, export attributes are ignored, and cleanup runs after the circle. Global/system Git config is neutral. Helper environment overrides remain defense in depth, not the boundary. Valid JSON numbers retain their raw numeric text, including unsafe integers. Runtime object true/false/null values bind; type-only members do not. Regressions exercise clean/process helpers with absolute Git and
-explicit git-dir calls with cleared overrides (a negative control executes the original repository helper), plus singly/doubly/triply encoded input assignments.
+Both roles read precomputed context and a read-only export of every pinned text blob, without `.git`; symlinks become target text, export attributes are ignored, and cleanup runs after the circle. Global/system Git config is neutral. Helper environment overrides remain defense in depth, not the boundary. Regressions exercise clean/process helpers with absolute Git and
+explicit git-dir calls with cleared overrides (a negative control executes the original repository helper).
 Before worktree reads, gitlinks and index hints are refused; this also avoids
-entering submodules with independent executable configuration. Both pinned blobs
-of every changed path are scanned regardless of attributes. NUL-containing or
-non-UTF8 blobs are refused before roles; patch scanning still reconstructs both
-hunk sides for multiline assignments. Unsupported helper names fail closed.
+entering submodules with independent executable configuration. Diffs are built
+from both pinned blobs of every changed path regardless of attributes. NUL-containing
+or non-UTF8 blobs are listed as binary and are not role inputs; they do not block
+the text review. Unsupported helper names fail closed.
 
-Clean controls reject existing entries, including dangling symlinks, and create files exclusively. The raw MONO-302 diff fixture keeps its exact whitespace through a path-specific Git attribute.
+Clean controls reject existing entries, including dangling symlinks, and create files exclusively.
 
-Dataset validation and anchor checks read exact local Git blobs; payload screening applies when content goes to a model. `screen-regressions/qa-r5-historical.json` pins the actual MONO-302 changed paths and raw MONO-81 test source, including cases20/24 anchors.
+Dataset validation and anchor checks read exact local Git blobs. `real-changes.json` lists twenty real pack changes that `scripts/code-review-real.test.mjs` runs through the round with stub roles; each must come back clean with every changed text file in the diff.
 
 Circle danger is the union of reviewer/checker danger, with unknown or absent labels treated as dangerous. Any dangerous/unmarked rejection remains unresolved and open, even with an exact codeQuote or file deletion; only explicit non-danger on both roles permits rejection/closure. A contradictory merge batch retries once, then retains separate finding keys. This guard does not turn archived raw checker replies into a live calibration pass; the host still needs explicit per-finding gold and independent adjudication.
 
-Host r6 regressions are recorded in `host-r6-regressions.json`: the MONO-81:1 and MONO-95:2 dangerous probe rejections retain their exact code quotes, and the pinned public MONO-146 source blob reproduces family-substring withholding. Recorded tests exercise the same round boundary without live models; host calibration and defect-set reruns remain required before merge. Family hits mask only matching original source lines (PEM includes the body/footer or unclosed remainder), while the existing secret-key opener remainder rule and unscreenable-blob refusals remain.
+Host r6 regressions are recorded in `host-r6-regressions.json`: the MONO-81:1 and MONO-95:2 dangerous probe rejections retain their exact code quotes. Recorded tests exercise the same round boundary without live models; host calibration and defect-set reruns remain required before merge.
