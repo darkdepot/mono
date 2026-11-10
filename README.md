@@ -1201,7 +1201,7 @@ the worker reading corpus stays unchanged.
 
 Collections retain validation and usage lines in bounded streaming output before signing. Reviewer input, cache reads, cache writes and output stay separate: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. Raw samples remain available; missing usage is null with a reason. Collection datasets are archived as immutable `<KEY>-review-scope.v<N>.md` files with `.sha256` sidecars, and receipts bind version and digest. Old receipts remain valid without usage or archive metadata; those inputs remain unavailable for reproduction.
 
-Sum non-overlapping per-turn usage across every attempt. Cached input is part of input, not another amount to add. An attempt without usage records is unavailable; an unfinished turn makes the attempt incomplete. A wave containing either has an incomplete total. Known completed-turn usage remains a partial subtotal, and absent attempt usage is null, never a measured zero. The static worker reading budget is a separate measure: one union of mandatory, conditional and nested readings, shared files counted once, bounded at **99,882 bytes** with bytes/4 shown as an approximation. README is outside the worker reading list. Explanatory rationale stays outside that list and adds no gates.
+Count each attempt once: sum per-turn usage, or take the last event when a Codex log reports thread totals (its counters never decrease; `counting` shows which). Cached input is part of input, not another amount to add. An attempt without usage records is unavailable; an unfinished turn makes the attempt incomplete. A wave containing either has an incomplete total. Known completed-turn usage remains a partial subtotal, and absent attempt usage is null, never a measured zero. The static worker reading budget is a separate measure: one union of mandatory, conditional and nested readings, shared files counted once, bounded at **99,882 bytes** with bytes/4 shown as an approximation. README is outside the worker reading list. Explanatory rationale stays outside that list and adds no gates.
 
 ```bash
 node '<pack-root>/scripts/wave-cost.mjs' <ISSUE-KEY>
@@ -1873,7 +1873,7 @@ Linear, ограничения пробы, требования к хосту и
 [отдельный шаблон](templates/qa-output.md) описывает task/project, короткий и
 given-version сертификаты. Ожидания связывают id, точный текст и источник; scenario нельзя исключить или заменить no-behavior.
 
-Run before completing a change:
+Run before completing a change (independent steps run in parallel; `MONO_VERIFY_JOBS=1` runs one step at a time):
 
 ```bash
 node scripts/verify.mjs

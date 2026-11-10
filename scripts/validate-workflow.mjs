@@ -4706,21 +4706,21 @@ function validateWaveCostBehavior() {
         event({
           type: "turn.completed",
           usage: {
-            input_tokens: 100,
-            cached_input_tokens: 40,
-            cache_write_input_tokens: 0,
-            output_tokens: 10,
-            reasoning_output_tokens: 3,
-          },
-        }) +
-        event({
-          type: "turn.completed",
-          usage: {
             input_tokens: 250,
             cached_input_tokens: 200,
             cache_write_input_tokens: 0,
             output_tokens: 20,
             reasoning_output_tokens: 5,
+          },
+        }) +
+        event({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 100,
+            cached_input_tokens: 40,
+            cache_write_input_tokens: 0,
+            output_tokens: 10,
+            reasoning_output_tokens: 3,
           },
         })
     );
@@ -4751,12 +4751,12 @@ function validateWaveCostBehavior() {
       result.worker.usage.output_tokens !== 35 ||
       result.worker.usage.non_overlapping_total_tokens !== 435
     ) {
-      fail("wave-cost multi-turn fixture must sum every turn of every attempt without adding cached input twice");
+      fail("wave-cost per-turn fixture must sum every turn of every attempt without adding cached input twice");
     }
     if (
-      result.accounting_comparison.old_last_event_rule.input_tokens !== 300 ||
+      result.accounting_comparison.old_last_event_rule.input_tokens !== 150 ||
       result.accounting_comparison.corrected_all_turns.input_tokens !== 400 ||
-      result.accounting_comparison.input_delta_tokens !== 100
+      result.accounting_comparison.input_delta_tokens !== 250
     ) {
       fail("wave-cost output must explain the divergence from the retired last-event accounting rule");
     }
