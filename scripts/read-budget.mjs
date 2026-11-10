@@ -82,7 +82,7 @@ export function measureReadBudget(root, { skills = DELIVERY_SKILLS, includeCondi
     if (/^<(?:корень|pack-root)>\//.test(reference) || (/^skills\/[^/]+\//.test(from) && reference.startsWith('references/')))
       reference = path.relative(root, resolveSkillPath(root, from, reference)).split(path.sep).join('/');
     if (/^(?:https?:|\/)/.test(reference) || /[<>*]/.test(reference)) return null;
-    const names = /^(?:AGENTS\.md|skills\/|references\/|templates\/|docs\/|plans\/|examples\/)/.test(reference)
+    const names = /^(?:AGENTS\.md|skills\/|references\/|templates\/|docs\/|plans\/|examples\/|evals\/)/.test(reference)
       ? [reference] : [path.posix.normalize(path.posix.join(path.posix.dirname(from), reference))];
     for (const name of names.map((value) => path.posix.normalize(value))) {
       if (name.startsWith("../")) continue;

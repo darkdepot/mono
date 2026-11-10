@@ -1628,6 +1628,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | [mono:tech-evaluation](skills/tech-evaluation/SKILL.md) | One checked technical solution, one version-approved plain-language page, then a short Tech Spec; same stage for owner or delegated orchestrator |
 | [mono:issue](skills/issue/SKILL.md) | Eligible issue-only create-then-approve intake and body renewal |
 | [mono:handoff](skills/handoff/SKILL.md) | Team lead: reconciles approved inputs, slices (one Issue by default), one reviewed package record, Ready; work starts by owner or delegated orchestrator; repair by the record |
+| [mono:code-review](skills/code-review/SKILL.md) | Manual code report with an independent checker; delivery still uses Preflight |
 | [mono:review](skills/review/SKILL.md) | Report-only quality/risk review |
 | [mono:check](skills/check/SKILL.md) | Readiness-only transition assessment |
 | [mono:deliver](skills/deliver/SKILL.md) | One delivery context sequencing its three phase owners |
@@ -1664,6 +1665,85 @@ Keep gates and responsibilities intact in both interactive and orchestrated deli
 
 Treat Markdown as agent instructions. Protect executable behavior with fixtures, artifact contracts with their bounded fingerprints and consumer checks, and document shape with skeleton checks. Do not encode agent-only rules twice or pin sentences. Every pack change begins with a Linear Issue; README freshness is mandatory even when the optional documentation workflow is unavailable.
 
+## Manual code review pilot
+
+`mono:code-review` reports checked code, verified findings, remaining work and
+whether ordinary checks can continue. It leaves the tree and Linear untouched.
+Use `node scripts/code-review.mjs --request <temporary.json>` with
+`{worktree,head,base,contract,risk,config}`; head/base are full immutable commits,
+the tree must be clean, config is the parsed product config. Human report is the
+default; `--json` prints the returned record. It neither runs verify nor signs or
+issues a delivery certificate. Preflight, autoreview and Ship remain unchanged.
+
+`runReviewRound(input,{runRole?})` in `scripts/code-review.mjs` is the sole circle
+boundary for the host and manual command. Input includes the task contract and
+optional `stageRecord`; output has schemaVersion, base, contractDigest, rounds,
+findings, failures, the current round and the code-computed outcome. Callers own
+persistence/signing. Technical failure returns no round and is retried once.
+Changed-file coverage gets one focused pass. Risky/1000-line first rounds add an
+ordinary second pass, combined by stable class/file/code-anchor key. The checker
+sees every open finding, original base content, current files and prior decisions;
+only its evidence closes or reopens a key. Checker wire IDs are F1..Fn; code maps
+them back to stable keys. Each failed answer is kept in the record, capped at 8 KiB. The checker assigns P0-P3, R7 danger/case,
+origin relative to task base, merge key and scope/risk flags. Code adds whether
+the location changed after round one (±2 context lines), costs and failures.
+Danger retains the maximum over all observations of a stable key (true > unknown > false), before any reopening shortcut; unknown/unmarked danger stays dangerous. The record keeps this tri-state maximum alongside its fail-safe boolean danger. A fresh unresolved verdict is retained even without newEvidence; an old safe rejection cannot discard a later dangerous or unknown verdict. A previously dangerous key retains its danger and original origin even after closure and reopening. A rejected finding stays unresolved and open if either role marks danger true or leaves it unknown, regardless of an exact codeQuote or Git-verified deletion. Only both-explicit-false findings can close through rejection. Contradictory merge verdicts get one batch retry, then keep separate keys. Visible damage, recognizable placeholders or downstream fail-closed
+checks do not excuse false gate refusals, altered evidence or missing readiness.
+Unknown danger stays dangerous. Pre-existing non-dangerous defects are reported;
+confirmed ones stay report-only on round three; open unresolved findings block.
+Scope/risk flags are structural: each stable key retains their logical OR over all rounds, computed before reopening shortcuts. Rejection, closure and new checker evidence cannot clear them.
+
+Roles see the diff, task contract, project rules and pinned files as they are,
+through the same subscription providers as the coding worker. The stage does not
+screen for secrets: inputs, model output, records and reports are not redacted.
+A role answer is one JSON object of at most 2 MiB, checked against the response
+fields; a malformed answer is retried once. Malformed JSON input to the manual
+and evaluation CLIs produces a fixed diagnostic. Binary blobs (NUL-containing or
+non-UTF-8) are not role inputs and are not exported; changed binary paths are
+listed as «двоичный файл, не проверялся» without affecting the text-review
+outcome. An open finding on a path that exists at the reviewed head but has no
+readable text (a binary file or a directory) stays open and makes the round
+`not-reviewed`; deletion evidence requires actual path absence at that head.
+`contractDigest` and the evaluation comparison identity are plain SHA-256 digests.
+
+Recorded fixtures stub the native catalog; live host probes use the installed CLI. Repository rules
+come from pinned Git blobs; the host never follows AGENTS.md symlinks into files
+outside the reviewed version.
+The circle and evaluation share one host Git policy: override color, hooks and
+fsmonitor, disable configured content filters and diff/merge helpers before every
+call, and force `--no-color`, no external diff and no textconv on diff/show.
+Outgoing diffs are built per file from the pinned base/head blobs, so attributes
+cannot hide a change; file modes and added/deleted paths are kept.
+Both roles read one temporary, read-only export of every pinned HEAD text blob, with no `.git` directory. Export attributes cannot hide or rewrite files; symlinks become their target text and are listed in context. The export is removed after the circle. Neutral global/system Git config and helper overrides remain defense in depth; mutable environment overrides are not the repository-config boundary.
+Exact contract blobs keep their bytes. Worktree reads refuse gitlinks and index
+hints (`assume-unchanged`, `skip-worktree`) before inspecting files.
+Role stdout/stderr accumulate bounded raw Buffers (16 MiB/1 MiB) and decode once with fatal UTF-8 before parsing; chunk boundaries preserve multibyte paths and evidence, the BOM is kept, and invalid bytes are refused. Interruption kills the role process group, is never retried and stops later evaluation calls as a scored row.
+`scripts/code-review-real.test.mjs`, run by verify, runs the round over a fixed list of twenty real pack changes (including the 112-file 28f5de40) with stub roles. Every change must come back `clean` with each changed text file in the diff and in the export; CI fetches full history.
+
+Outcome vocabulary is `clean`, `clean-with-successors`, `not-converged`,
+`not-reviewed`; this first slice emits no successor admission. It reports
+successorKeys and keeps their obligations not-converged until the later stage
+owner implements confirmed successor IDs. No model selects a stage outcome.
+
+Roles [code-review](references/model-policy.md#roles) and
+[code-review-checker](references/model-policy.md#roles) resolve separately with
+native subscription auth and different known families. New circle pairing
+records use `requiredPairings(config,{reviewerRole:'code-review'})`; existing
+role-less records still refer to autoreview. New records bind the full checker
+route in `reviewer.checker`; either role change requires renewed acceptance.
+New circle launches also check changed producer routes against that pair.
+Pair acceptance cannot waive the
+new roles' family boundary. Each launch has its own read-only permissions and a
+neutral working directory, with user/project configuration, hooks and connectors
+excluded. Codex gets a temporary auth-only CODEX_HOME and a native catalog with
+write/delegation tool selectors removed. Each launch probes its live tool list;
+unknown tools or MCP startup fail closed. Claude retains USER/LOGNAME for native
+login and reports its startup tool list; a tree under a denied credential directory
+is refused before any model call. Human reports name each engine, requested model,
+all observed served models (init, fallback events and modelUsage), family
+and observed boundary, including unknown observations. The [dataset instructions](evals/code-review/README.md) state the
+credential-read limitation and required live boundary tests.
+
 ## Validation
 
 The recorded [Claude PR publication probe](references/worker-contract.md#claude-pr-probe)
@@ -1698,6 +1778,13 @@ node scripts/verify.mjs
 ```
 
 The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures.
+It also runs the recorded code-review round and evaluation fixtures:
+`node --test scripts/code-review.test.mjs scripts/code-review-eval.test.mjs scripts/code-review-real.test.mjs`.
+These prove parsing, coverage, launch boundaries and result calculation; host
+isolation and live model quality remain host checks, as described in the
+[review dataset](evals/code-review/README.md).
+Checker calibration treats unclear gold danger as dangerous; removing it blocks release and leaves calibration incomplete.
+
 Design approval regressions cover legacy `paper=`, new `canvas`/`tool`, mixed or
 incomplete fields and a damaged latest record through the shared reader and the
 `design`/`route` commands. Run them with

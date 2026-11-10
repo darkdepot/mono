@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "provenance": "Host QA r6 on7fb9a83d, recorded reviewer/checker probes; retained fields restored to raw checker danger, ordinalF1. No models or live host evidence claimed by tests.",
+  "probes": [
+    {
+      "source": "MONO-81-retry.jsonl",
+      "runId": "cand-20261103:MONO-81:1",
+      "finding": {
+        "class": "resolved-novel-misclassification",
+        "file": "scripts/review-bench.mjs",
+        "anchor": "reportBench/unresolvedOutcomes",
+        "line": 354,
+        "title": "Keep confirmed novel defects out of unresolved outcomes",
+        "trigger": "A completed sample has one finding adjudicated as novel, with reviewer evidence and no disputed or ungraded findings.",
+        "evidence": "scoreBench records the confirmed novel finding separately, but reportBench adds sum('novel') to unresolvedOutcomes. The fully adjudicated sample therefore reports an unresolved outcome. This contradicts the protocol’s distinction between confirmed novel defects and observations still awaiting adjudication."
+      },
+      "checker": {
+        "outcome": "rejected",
+        "weight": "P3",
+        "dangerCase": "unknown",
+        "dangerReason": "The claimed path (an adjudicated novel finding inflating unresolvedOutcomes) is not a defect: findings not resolved against gold are deliberately held outside the completed/resolved count, and confirmed novel findings are reported separately as regressions.novelFindings (line 357), while outcome/qualityRecommendation depend only on gaps (line 363). No category has a concrete path — nothing is written to the archive (data), no credential appears (security), no certificate or gate verdict exists (gate-bypass), no work is refused since the bench never gates (gate-stall), the counts are conservative and cannot overstate candidate quality (silent-result), and no required readiness fact is removed because novel counts remain visible (readiness) — but the reviewer left danger unmarked, so it is retained as uncertain rather than cleared.",
+        "origin": "introduced",
+        "mergeKey": "unresolved-outcomes-includes-novel",
+        "outOfContract": false,
+        "riskRaised": false,
+        "reason": "Counting adjudicated novel findings as not resolved against the gold set is a deliberate conservative aggregation, and the confirmed novel count is reported separately; no protocol clause in the pinned contract distinguishes confirmed novel defects from ungraded observations in this metric.",
+        "closed": false,
+        "newEvidence": false,
+        "codeQuote": "unresolvedOutcomes:samples.length-completed.length+sum('unresolved')+sum('novel')+sum('disputed'),",
+        "id": "F1",
+        "danger": null
+      },
+      "independentDangerCase": "silent-result"
+    },
+    {
+      "source": "MONO-95.jsonl",
+      "runId": "cand-20261103:MONO-95:2",
+      "finding": {
+        "class": "ack-tombstone",
+        "file": "scripts/orchestrator/accept.mjs",
+        "anchor": "validatedAck: candidates",
+        "line": 23,
+        "title": "Honor attempt tombstones before exposing a lifecycle plan",
+        "trigger": "One raw ack exists while an applied/rejected/blocked tombstone exists in the other delivery location, and there is no trusted private consumption record.",
+        "evidence": "validatedAck examines only the two raw .json paths and the private record. It never examines tombstones, so it treats the raw file as a new ack and prints a move plan. The contract and watcher's readGateAck suppress the entire attempt when either location contains a tombstone; the polling command bypasses that suppression."
+      },
+      "checker": {
+        "outcome": "rejected",
+        "weight": "P3",
+        "dangerCase": null,
+        "dangerReason": "Сохранена ранее отмеченная или неясная опасность. No reachable defect: both consumers publish the private consumption record before any rename (consume-gate-ack.mjs writes recordFile then renames), so a tombstone in either location implies a current-attempt record, and validatedAck's prior branch then completes the journaled recovery without printing a new plan; if a worker rewrites a raw ack after consumption, the prior.ackDigest/canonical(prior.ack) comparison refuses with 'contradictory ack consumption'. Excluding categories on this path: no artifact is altered (data), no privilege surface (security), no plan is exposed and no move is applied with a tombstone present (gate-bypass), the contracted recovery still completes for an identical candidate (gate-stall), no verdict is produced (silent-result), and the registry field plus ack stay in place until the journaled outcome completes (readiness).",
+        "origin": "introduced",
+        "mergeKey": "accept-ack-tombstone",
+        "outOfContract": false,
+        "riskRaised": false,
+        "reason": "Rejected: the stated trigger ('tombstone present and no trusted private consumption record') cannot arise from this code, because the record is always published before the renames; with the record present the prior branch is taken and no new lifecycle plan is exposed. The residual is cosmetic — a differing post-consumption raw ack reports 'contradictory' instead of finishing the journaled rename — which is fail-closed, not the claimed suppression bypass.",
+        "closed": false,
+        "newEvidence": false,
+        "codeQuote": "  const candidates = [path.join(root, \"reports\", `${issue}-gate-ack-a${attempt}.json`), path.join(entry.worktree, \".orchestrator\", `${issue}-gate-ack-a${attempt}.json`)].filter(name => fs.existsSync(name));",
+        "id": "F1",
+        "danger": false
+      },
+      "independentDangerCase": "gate-bypass"
+    }
+  ]
+}

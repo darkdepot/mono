@@ -1,0 +1,85 @@
+{
+  "description": "QA r8 fixed real pack changes, including MONO-302 ca16110b and 112-file 28f5de40. Full committed trees are reviewed, not diffs embedded in synthetic files. Requires repository history (CI checkout fetch-depth: 0).",
+  "changes": [
+    {
+      "head": "34c025676bcd62551a04d55ebc76bc5c75884f3a",
+      "base": "6142db839d9814f6fb9b2c39937ac23b42188ed1"
+    },
+    {
+      "head": "6142db839d9814f6fb9b2c39937ac23b42188ed1",
+      "base": "834a948ada3cac71e249ac1c2c599111c0810fd5"
+    },
+    {
+      "head": "834a948ada3cac71e249ac1c2c599111c0810fd5",
+      "base": "7dd5cf7028c030f633f292e1febd652760b0f766"
+    },
+    {
+      "head": "7dd5cf7028c030f633f292e1febd652760b0f766",
+      "base": "fd39c8f62c1679a9a0705d097f4e8d9ab7c19ff9"
+    },
+    {
+      "head": "fd39c8f62c1679a9a0705d097f4e8d9ab7c19ff9",
+      "base": "ddcd6e9b77afd60e8c6d0894cae5c1405ea022f1"
+    },
+    {
+      "head": "ddcd6e9b77afd60e8c6d0894cae5c1405ea022f1",
+      "base": "28f5de404f91b1f23b7d9ff0c7a5a0c4cba5d2c0"
+    },
+    {
+      "head": "28f5de404f91b1f23b7d9ff0c7a5a0c4cba5d2c0",
+      "base": "7d3a17328867a9524e98c3f15c26178eced3b062"
+    },
+    {
+      "head": "7d3a17328867a9524e98c3f15c26178eced3b062",
+      "base": "6db0ab0ae1fb1477814030b551cccdb35d3cb3e5"
+    },
+    {
+      "head": "6db0ab0ae1fb1477814030b551cccdb35d3cb3e5",
+      "base": "97ccb76e7b145a9268ea0eea27f0e21ffbf01df2"
+    },
+    {
+      "head": "97ccb76e7b145a9268ea0eea27f0e21ffbf01df2",
+      "base": "1ee9cedb3f4245bac07b53035d80c413c55077ec"
+    },
+    {
+      "head": "1ee9cedb3f4245bac07b53035d80c413c55077ec",
+      "base": "ca16110b9ef28817a1506621511ea6725dbc5f94"
+    },
+    {
+      "head": "ca16110b9ef28817a1506621511ea6725dbc5f94",
+      "base": "8226fca80635dedf0c97d86979b529275976b565"
+    },
+    {
+      "head": "8226fca80635dedf0c97d86979b529275976b565",
+      "base": "9e97ef7ea31068b13400fb8a8666d32f0fe7f3ba"
+    },
+    {
+      "head": "9e97ef7ea31068b13400fb8a8666d32f0fe7f3ba",
+      "base": "465050f08c36eed561a3d53112c557189c3f861e"
+    },
+    {
+      "head": "465050f08c36eed561a3d53112c557189c3f861e",
+      "base": "a63116303cfb84ec73fdde18155b0c687997bd91"
+    },
+    {
+      "head": "a63116303cfb84ec73fdde18155b0c687997bd91",
+      "base": "8155a6ff7ddcba07b1a166b694d2e672823fd231"
+    },
+    {
+      "head": "8155a6ff7ddcba07b1a166b694d2e672823fd231",
+      "base": "56b64e20d069cc8a96104824fdcdba47739c647f"
+    },
+    {
+      "head": "56b64e20d069cc8a96104824fdcdba47739c647f",
+      "base": "771ccc27477a89ebb68480a24695322df530ffe2"
+    },
+    {
+      "head": "771ccc27477a89ebb68480a24695322df530ffe2",
+      "base": "8229a94c8343caa4113c4a0c482feeeea8aaf443"
+    },
+    {
+      "head": "8229a94c8343caa4113c4a0c482feeeea8aaf443",
+      "base": "a9a2c8e0c4b3e91d4b34fce922de68f67f3fcdb1"
+    }
+  ]
+}

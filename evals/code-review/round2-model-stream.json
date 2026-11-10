@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "provenance": "Host round 2 boundary-claude.stdout observed init and the first refusal fallback, plus modelUsage for both names. The second fallback and usage-only canonical alias are authored controls, not measured serving behavior. No task text, session IDs or credentials retained.",
+  "init": {"type":"system","subtype":"init","model":"claude-opus-5","tools":["Read","Glob","Grep","StructuredOutput"],"mcp_servers":[]},
+  "fallbacks": [
+    {"type":"system","subtype":"model_refusal_fallback","original_model":"claude-opus-5","fallback_model":"claude-opus-4-8"},
+    {"type":"system","subtype":"model_refusal_fallback","original_model":"claude-opus-4-8","fallback_model":"fixture-final"}
+  ],
+  "modelUsage": {"claude-opus-5":{},"claude-opus-4-8":{},"fixture-final":{},"fixture-usage-only":{"canonicalModel":"fixture-canonical-observed"}},
+  "expectedBeforeResult": ["claude-opus-5","claude-opus-4-8","fixture-final"],
+  "expectedAfterResult": ["claude-opus-5","claude-opus-4-8","fixture-final","fixture-usage-only","fixture-canonical-observed"]
+}

@@ -434,6 +434,7 @@ export function deliveryConfig(source) {
 export const ROLE_ENGINES = {
   orchestrator: ['claude'], 'second-voice': ['codex'], 'second-voice-alt': ['claude'],
   'worker-default': ['codex'], 'worker-complex': ['codex'], 'worker-claude': ['claude'],
+  'code-review': ['codex', 'claude'], 'code-review-checker': ['claude', 'codex'],
   autoreview: ['claude', 'kimi', 'pi', 'codex'], 'idea-helper': ['codex', 'claude'], scout: ['codex', 'claude'], qa: ['claude'],
 };
 export const RISK_KEYS = ['tiny', 'standard', 'deep', 'risky', 'riskyCritical'];
@@ -513,7 +514,7 @@ function checkCredentialFields(value, location = '') {
   for (const [key, entry] of Object.entries(value)) {
     const at = location ? location + '.' + key : key;
     if (/api.?key|token|secret|password|credential|authorization/i.test(key)) {
-      const declared = key === 'credentialEnv' && /^(?:models\.roles\.[^.]+\.provider|models\.pairingAccepted\.\d+\.(?:producer|reviewer))$/.test(location);
+      const declared = key === 'credentialEnv' && /^(?:models\.roles\.[^.]+\.provider|models\.pairingAccepted\.\d+\.(?:producer|reviewer(?:\.checker)?))$/.test(location);
       need(declared && (entry === null || (typeof entry === 'string' && /^[A-Z][A-Z0-9_]*$/.test(entry))), 'credential values/fields forbidden at ' + at);
     }
     checkCredentialFields(entry, at);
@@ -561,17 +562,19 @@ function modelState(config, skillsRoot, host) {
   need(Array.isArray(records), 'pairingAccepted must be an array');
   return { defaults, roles, records };
 }
-function pairFor(role, roles) {
-  return { producer: { role, ...roles[role] }, reviewer: { ...roles.autoreview }, riskClasses: [...RISK_KEYS] };
+function pairFor(role, roles, reviewerRole = 'autoreview') {
+  return { producer: { role, ...roles[role] }, reviewer: { ...(reviewerRole === 'code-review' ? { role: reviewerRole, checker: roles['code-review-checker'] } : {}), ...roles[reviewerRole] }, riskClasses: [...RISK_KEYS] };
 }
-function changedPairs(state) {
+function changedPairs(state, reviewerRole = 'autoreview') {
   return ['worker-default', 'worker-complex', 'worker-claude'].filter(role =>
-    canonical(pairFor(role, state.roles)) !== canonical(pairFor(role, state.defaults))).map(role => pairFor(role, state.roles));
+    canonical(pairFor(role, state.roles, reviewerRole)) !== canonical(pairFor(role, state.defaults, reviewerRole))).map(role => pairFor(role, state.roles, reviewerRole));
 }
-export function requiredPairings(config, { packRoot, skillsRoot, host } = {}) {
-  return changedPairs(modelState(config, packRoot ?? skillsRoot, host));
+export function requiredPairings(config, { packRoot, skillsRoot, host, reviewerRole = 'autoreview' } = {}) {
+  need(['autoreview', 'code-review'].includes(reviewerRole), 'unsupported reviewer pairing role');
+  return changedPairs(modelState(config, packRoot ?? skillsRoot, host), reviewerRole);
 }
-export function validateModels(config, { packRoot, skillsRoot, host } = {}) {
+export function validateModels(config, { packRoot, skillsRoot, host, reviewerRole = 'autoreview' } = {}) {
+  need(['autoreview', 'code-review'].includes(reviewerRole), 'unsupported reviewer pairing role');
   const state = modelState(config, packRoot ?? skillsRoot, host);
   for (const record of state.records) {
     fields(record, ['producer', 'reviewer', 'riskClasses', 'linearDecision', 'by', 'date'], 'pairingAccepted record');
@@ -580,15 +583,19 @@ export function validateModels(config, { packRoot, skillsRoot, host } = {}) {
     const role = record.producer?.role;
     need(['worker-default', 'worker-complex', 'worker-claude'].includes(role), 'pairingAccepted producer role invalid');
     const actual = { producer: record.producer, reviewer: record.reviewer, riskClasses: record.riskClasses };
-    need(canonical(actual) === canonical(pairFor(role, state.roles)), `pair ${role} -> autoreview changed; renew its bound acceptance`);
+    const reviewerRole = record.reviewer?.role ?? 'autoreview';
+    need(['autoreview', 'code-review'].includes(reviewerRole), 'unsupported reviewer pairing role');
+    need(canonical(actual) === canonical(pairFor(role, state.roles, reviewerRole)), `pair ${role} -> ${reviewerRole} changed; renew its bound acceptance`);
   }
-  for (const pair of changedPairs(state)) need(state.records.some(record =>
+  const reviewers = new Set(['autoreview', reviewerRole]);
+  if (['code-review', 'code-review-checker'].some(role => Object.hasOwn(config.models?.roles ?? {}, role))) reviewers.add('code-review');
+  for (const reviewer of reviewers) for (const pair of changedPairs(state, reviewer)) need(state.records.some(record =>
     canonical({ producer: record.producer, reviewer: record.reviewer, riskClasses: record.riskClasses }) === canonical(pair)),
-  `pair ${pair.producer.role} -> autoreview requires bound pairingAccepted and linearDecision`);
+  `pair ${pair.producer.role} -> ${reviewer} requires bound pairingAccepted and linearDecision`);
   return state.roles;
 }
 export function resolveRole(role, config = {}, options = {}) {
-  const roles = validateModels(config, options);
+  const roles = validateModels(config, { ...options, ...(['code-review', 'code-review-checker'].includes(role) ? { reviewerRole: 'code-review' } : {}) });
   need(Object.hasOwn(roles, role), `unknown role ${role}`);
   const route = roles[role];
   return { ...route, fingerprint: digest({ route, configDigest: digest(config) }) };
