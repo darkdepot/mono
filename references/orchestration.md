@@ -2085,11 +2085,13 @@ of a 1M-token window with no signal to the owner.
 
 Per-Issue collection, performed by the orchestrator:
 
-- Worker tokens: sum every Codex `turn.completed` or Claude Code `result.usage`
+- Worker tokens: count every Codex `turn.completed` or Claude Code `result.usage`
   event in every attempt log of
-  every stage (`logs/<ISSUE-KEY>-<stage>-a<attempt>.jsonl`). Each event is
-  per-turn, not cumulative — the observed input sequence 516,590 → 433,845
-  → 5,072,542 in one thread is the motivating evidence. Keep input, cached
+  every stage (`logs/<ISSUE-KEY>-<stage>-a<attempt>.jsonl`). A Codex log whose
+  counters never decrease reports thread totals (logs from 30.09.2026 on:
+  16.3M → 22.0M → 26.9M … 107.9M in one resumed thread), so its last event is
+  the attempt; a log that reports each run separately (516,590 → 433,845 →
+  5,072,542) is summed. `wave-cost.mjs` shows the choice as `counting`. Keep input, cached
   input, and output separate; cached input is a subset of input and must not
   be added to it again. Include respawned, parked, and failed attempts, and
   deduplicate attempt files by their canonical path. Claude cache reads and
