@@ -4,11 +4,10 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants, packLayout, deliveryConfig } from "../runtime.mjs";
+import { atomicJson, canonical, digest, readJson, isMain, withLock, reclaimLock, lockTreeDead, processStart, resolvedLocation, validateEvidenceGrants, packLayout, deliveryConfig, REVIEW_PRODUCER } from "../runtime.mjs";
 import { confirmQueue, confirmationPath, validateConfirmation, classifyQueue } from "../delivery-state.mjs";
-import { commandFlags, allowedFlags, registryEntry, correlatedPhase, validateReportBarriers, admitCollection, CollectionAdmissionRefusal, effectivePins, sha256File, collectionDecisionDigest, recheckCollection, attemptDirectory } from "./command-state.mjs";
+import { commandFlags, allowedFlags, registryEntry, correlatedPhase, validateReportBarriers, admitCollection, CollectionAdmissionRefusal, effectivePins, sha256File, attemptDirectory } from "./command-state.mjs";
 import { sessionContext, reconcile } from './linear-adapter.mjs';
-import {syncLocalPasses,withholdReviewCap} from '../review-cap.mjs';
 
 const lockPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.lock`);
 const logPath = ({ root, issue, attempt }) => path.join(root, "reports", `${issue}-collector-a${attempt}.log`);
@@ -19,7 +18,7 @@ function verifyReceipt(file, request) {
   const key = fs.readFileSync(path.join(request.evidenceRoot, "receipt.key"));
   const signature = crypto.createHmac("sha256", key).update(canonical(receipt)).digest("hex");
   if (!fs.lstatSync(file).isFile() || fs.lstatSync(file).isSymbolicLink() || key.length !== 32 || envelope.signature !== signature ||
-      receipt?.producer !== "gate-autoreview-v2" || !/^[a-f0-9-]{36}$/.test(receipt.runId ?? "") ||
+      receipt?.producer !== REVIEW_PRODUCER || !/^[a-f0-9-]{36}$/.test(receipt.runId ?? "") ||
       fs.realpathSync(file) !== path.join(fs.realpathSync(request.evidenceRoot), "history", `${receipt.runId}.json`)) throw new Error("invalid signed history receipt");
   const expected = { ...(request.packRoot ? { packRoot: request.packRoot } : {}), collectionId: request.collectionId, head: request.head, product: request.product, skillsRoot: request.skillsRoot,
     ...(request.pins ? { pins: request.pins } : {}),
@@ -175,9 +174,6 @@ async function collection(options, report, write, entry, admission, authorize) {
     // collector crash cannot refill retries, even before gate registration.
     const launches = prior?.launches ?? (prior ? 1 : 0);
     if (launches >= budget.retries + 1) throw new CollectionTimeout('timed-out: collection retries exhausted without signed receipt');
-    await recheckCollection(options.root, report, admission);
-    found = historyReceipt(request);
-    if (found) break;
     authorize();
     budget.beforeLaunch();
     if (fs.existsSync(headLock)) reclaimLock(headLock);
@@ -211,8 +207,6 @@ export async function collectOnce(options) {
     const files = [path.join(options.root, "reports", name), path.join(entry.worktree, ".orchestrator", name)].filter(file => fs.existsSync(file));
     if (!files.length) continue;
     const { report } = correlatedPhase(options.root, files[0]);
-    const local=report.phase==='preflight'||report.capsule.local_passes?.length?await withLock(path.join(options.root,'launch.lock'),()=>
-      syncLocalPasses({evidenceRoot:effectivePins(entry).evidenceRoot,report})):null;
     const queue = classifyQueue(report, options.root), collectWrite = queue.collection;
     if (queue.connectors.length && !collectWrite) continue;
     const connectorSession = () => {
@@ -232,8 +226,7 @@ export async function collectOnce(options) {
     const attentionFile = attentionPath(options);
     const attention = collectWrite && fs.existsSync(attentionFile) ? readJson(attentionFile) : null;
     const reportDigest = digest(report), pinsVersion = entry.pinsVersion ?? 0;
-    const decisionDigest=collectWrite?collectionDecisionDigest(entry):null;
-    if (collectWrite && attention?.reportDigest === reportDigest && attention.pinsVersion === pinsVersion && attention.decisionDigest === decisionDigest) {
+    if (collectWrite && attention?.reportDigest === reportDigest && attention.pinsVersion === pinsVersion) {
       const lateReceipt = attention.reason.startsWith('timed-out:') && collectionBudget(entry, report).deadline - Date.now() >= 30_000 &&
         historyReceipt(collectWrite.payload.request);
       if (!lateReceipt) continue;
@@ -241,20 +234,10 @@ export async function collectOnce(options) {
     await validateReportBarriers(options.root, report, path.dirname(files[0]));
     let admissions = [];
     if (collectWrite) {
-      try {
-        if(local?.localStop&&!local.continued) {
-          const refused=await withLock(path.join(options.root,'launch.lock'),()=>{
-            const current=syncLocalPasses({evidenceRoot:effectivePins(entry).evidenceRoot,report});
-            return current.localStop&&!current.continued?withholdReviewCap({...current,evidenceRoot:effectivePins(entry).evidenceRoot,report,
-              collectionId:collectWrite.id,stop:current.localStop}):null;
-          });
-          if(refused)throw new CollectionAdmissionRefusal('needs-decision: review cap');
-        }
-        admissions = await admitCollection(options.root, report);
-      }
+      try { admissions = await admitCollection(options.root, report); }
       catch (error) {
         if (!(error instanceof CollectionAdmissionRefusal)) throw error;
-        atomicJson(attentionFile, { reportDigest, collectionId: collectWrite.id, reason: error.message, pinsVersion, decisionDigest:collectionDecisionDigest(entry), at: new Date().toISOString() });
+        atomicJson(attentionFile, { reportDigest, collectionId: collectWrite.id, reason: error.message, pinsVersion, at: new Date().toISOString() });
         log(options, `attention: ${error.message}`);
         continue;
       }
@@ -285,8 +268,7 @@ export async function collectOnce(options) {
     } catch (error) {
       if (error instanceof CollectionSessionPending) continue;
       if (!(error instanceof CollectionTimeout) && !(error instanceof CollectionAdmissionRefusal) && !error.message.startsWith('timed-out:')) throw error;
-      atomicJson(attentionFile, { reportDigest, collectionId: collectWrite.id, reason: error.message, pinsVersion,
-        decisionDigest: collectionDecisionDigest(entry), at: new Date().toISOString() });
+      atomicJson(attentionFile, { reportDigest, collectionId: collectWrite.id, reason: error.message, pinsVersion, at: new Date().toISOString() });
       log(options, `attention: ${error.message}`);
       continue;
     }

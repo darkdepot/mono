@@ -6,7 +6,7 @@ export { qaDeliveryState } from './qa-gate.mjs';
 import path from "node:path";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, isMain, flags, withLock, deliveryConfig, validateEvidenceGrants } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, identity, IDENTITY_FIELDS, isMain, flags, withLock, deliveryConfig, validateEvidenceGrants, REVIEW_PRODUCER } from "./runtime.mjs";
 
 import { validateEntry } from "./decisions.mjs";
 
@@ -41,7 +41,7 @@ function validateCollectionEvidence(write, evidence, report) {
   const envelope = readJson(evidence.receipt), receipt = envelope.receipt;
   if (!/^[a-f0-9-]{36}$/.test(receipt?.runId ?? "") ||
       fs.realpathSync(evidence.receipt) !== path.join(root, "history", `${receipt.runId}.json`) ||
-      digest(envelope) !== evidence.receiptDigest || receipt.producer !== "gate-autoreview-v2" ||
+      digest(envelope) !== evidence.receiptDigest || receipt.producer !== REVIEW_PRODUCER ||
       receipt.collectionId !== write.id || receipt.head !== write.target || receipt.evidenceRoot !== root)
     throw new Error("collection evidence does not identify this immutable receipt");
   const key = fs.readFileSync(path.join(root, "receipt.key"));

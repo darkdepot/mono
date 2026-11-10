@@ -1,33 +1,22 @@
 # Review Admission
 
-Findings: fix or propose decline in phase report, bound to receipt
-runId/collectionId/digest, head, dataset version, finding index/full canonical
-SHA-256. ID: `<receipt digest>:<index>:<finding digest>`; never titles.
+A collection runs one read-only review round on the committed head (reviewer and
+checker from different model families), then verification. The gate line is the
+result; findings are in the signed receipt under `review.record.findings`.
 
-Basis: refutation (command/output or unreachable-path citation, evidence digest)
-or boundary (earlier current approved d-NNN, scope/content digest); never likelihood.
-Dangerous: unreviewed admission, secrets/security, data corruption, money,
-irreversible actions. P0/P1/dangerous require refutation. Only orchestrator records,
-approves/revokes; workers propose, never write evidence. Proposals block.
+At most three completed rounds per pins file; an accepted amendment (new
+`pins.v<n>.json`) opens a fresh three. The same head reuses its round. A changed
+base or contract starts a fresh record; the count stays.
 
-accepted-with-declines requires one valid unrevoked decline per finding on the
-same receipt/head/dataset. Missing/rejected/filtered P0–P2/incomplete/contradictory
-results or failed verification block. Preserve review/receipt. New head needs
-review; new evidence needs decline-revoke. Recheck approvals/revocations;
-Autoreview declines: lists finding ID/basis/approver. Clean unchanged.
+- `review clean` or `clean-with-successors` with verification: pass.
+- `review not-converged (round 1|2 of 3)`: fix the error class of each open
+  finding with existing/literal tools, check, commit, request the next round.
+- `needs-decision:` (not-converged after round 3, round limit, failed
+  verification): park needs-decision with that line. The orchestrator narrows
+  the contract, splits or changes approach.
+- `not-reviewed:` (a role failed or coverage was incomplete): no round spent;
+  request the same head once more. `blocked:` (twice in a row): park blocked.
 
-Repeated key/class: park needs-decision before fixes/review/collection.
-Propose class fix/checkpoint; only orchestrator
-class-decision resumes. Unknown matching needs judgment; unmatched classes proceed.
-Limit: restrict/remove behavior, verify remaining contract, create successor.
-Boundary cannot excuse defects; new residual risk/reduced outcome needs owner.
-Fix the class with existing/literal tools; no custom parsers/heuristics/extra mechanisms.
-
-Counts survive heads/attempts/successors. After two local passes, stop before a third,
-before/after external review. A clean last pass permits collection; a stop needs
-continue. Two blocking receipts: no third collection without continue. Report
-id/head/result (clean|findings) in capsule.local_passes;
-orchestrator persists counts. Continue binds stop/next collection, finite
-local/external allowances, nextStep/checkpoint. Use confirmed limits; count once,
-park at exhaustion; replay never refills. Orchestrator alone links successors
-to original chain. Continue cannot certify defects.
+Successors: on round 3 leftovers that are not dangerous, unresolved, out of
+contract or risk-raised pass as candidates. List them in the certificate and
+report; the orchestrator files Issues after merge. Never weaken tests to converge.

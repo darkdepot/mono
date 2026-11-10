@@ -205,11 +205,8 @@ diff -r /path/to/fresh/agent-skills/skills/autoreview "$skills_root/autoreview"
 
 Require a matching tree and `autoreview source-sha256:` followed by the hash above.
 Use Python 3; install the selected engine CLI and its native authentication.
-The gate still binds the installed helper digest to each receipt. A new upstream
-version needs renewed output-fixture proof before updating this pin. The named
-`collection-helper-*` tests replay its `status.json`/`review.json` for clean and
-findings outcomes, including approved/revoked declines:
-`node --test --test-name-pattern='named collection fixtures' scripts/gate.test.mjs`.
+The delivery gate no longer runs this helper: collection runs the read-only
+review round instead, so the helper serves only the manual `autoreview` skill.
 
 ## Project Policy
 

@@ -353,7 +353,7 @@ test('pre-rename stage and certificate fixture confirms and expands without chan
     });
     const body = [...applied.values()].find(write => write.id === ready.capsule.open_queue[0].id).payload.body;
     assert.match(body, /^Справка исправлена/);
-    assert.ok(body.includes('Autoreview loop: 0 local passes + 1 collection'));
+    assert.ok(body.includes('Review: clean; round: 1 of 3'));
     assert.equal(body.split('```\n')[1].split('\n```')[0], ready.certificate);
     assert.ok(ready.certificate.startsWith('mono-preflight certificate\nPreflight: ready\n'));
     assert.equal(body.split('mono-preflight certificate').length, 2);

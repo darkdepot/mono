@@ -188,15 +188,15 @@ payload.request, kind=confirmation-request:
 id=request.collectionId=preflight-collect:<head>:<n>, operation=preflight-collect,
 target=<head>, payload={request}. Adapter: immutable receipt path/digest/gate even
 on failure; confirmation proves completion only. Verify collect:false.
-Findings: apply references/review-admission.md. Repeated key/class parks needs-decision
-before edits/new requests; otherwise fix/recommit/request or propose decline.
-Transient: same head/route, increment n/sequence.
+Collection = review round, then verification. Follow the gate line per
+references/review-admission.md: fix/recommit/request, or park.
+Same head: increment n/sequence; its round is reused.
 Ship: preflight={full collect:false request}; judgment={head,preShipReview,
 readinessCheck,documentation,documentationReason,closures,botRemarks}. Verify sealed
 head/merge-base receipt before judgment; no string substitutes.
 Orchestrator rechecks preflight before ship. Ship-fix amendment: next ship-gate
 attempt, new head/stateFile; preserve old state/task attempt. No gate-attempt cap;
-window/review thresholds/declines/class stops/caps unchanged.
+the new head needs a review round (the amendment opens a fresh three).
 
 ## Implementation exit evidence
 
@@ -266,7 +266,7 @@ denied: <worktree>/.orchestrator/<ISSUE-KEY>-mono-deliver.json. English JSON.
   "question":"<str|null>",
   "recommendation":"<str|null>",
   "linear_mutations_pending":[],
-  "capsule":{"phase":"<code | preflight | ship>","head":"<sha>","open_queue":[],"decisions":[],"local_passes":[{"id":"<id>","head":"<sha>","result":"<clean|findings>"}],"writable_roots":["<grant>"] },
+  "capsule":{"phase":"<code | preflight | ship>","head":"<sha>","open_queue":[],"decisions":[],"writable_roots":["<grant>"] },
   "certificate":"<str|null>",
   "notes":"<str|null>",
   "next":"<mono:deploy|owner>"

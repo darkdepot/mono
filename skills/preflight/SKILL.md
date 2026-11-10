@@ -1,6 +1,6 @@
 ---
 name: preflight
-description: Use after implementation for local readiness and mandatory autoreview before ship.
+description: Use after implementation for local readiness and the mandatory review round before ship.
 ---
 
 # Mono Preflight
@@ -17,14 +17,13 @@ Read now:
 
 1. `AGENTS.md`
 2. `references/worker-contract.md`
-3. `references/autoreview-routing.md`
-4. `references/readiness-gates.md`
-5. `references/human-friendly-output.md`
+3. `references/readiness-gates.md`
+4. `references/human-friendly-output.md`
 
 Read when:
 
 - `references/issue-only-lane.md` — Issue lifecycle or lane decisions.
-- `references/review-admission.md` — review loops, findings or declines.
+- `references/review-admission.md` — review rounds, findings or parks.
 
 Before work/resume: identity, package/config/checks, git/diff/base, start
 comments/certificates; apply worker snapshot/queue rules.
@@ -36,24 +35,17 @@ comments/certificates; apply worker snapshot/queue rules.
    artifacts/risk escalation → drift-candidate/fallback; stale context blocks.
 2. Targeted checks; disclose unavailable/manual/browser/mobile/prod/acceptance.
    Final diff/approved risk: higher wins.
-3. `autoreview`: resolve installed helper path; missing → blocked. Read
-   Classification/Invocation in references/autoreview-routing.md; resolve
-   [role:autoreview](references/model-policy.md#roles), explicit engine/model/
-   thinking effort. Never substitute reviews/defaults.
-4. Commit before review. Full/final deep/risky: mandatory committed loop,
-   --mode branch --base <actual base>; fix/check/commit before another pass.
-   Short tiny/standard: local pass optional; checks/commit/collection mandatory.
-   Use review-admission caps; keep cumulative capsule.local_passes [{id,head,result:clean|findings}].
-   `claude-cli`: external collection only (nested sandbox unavailable); publish
-   pinned collect:false gate's returned request, confirm, rerun gate.
-5. Certifying review: complete clean exit 0/no actionable residuals; P3-only
-   filtered/correct is advisory. Apply references/review-admission.md for findings;
-   only orchestrator-approved declines certify. No broad/release-sensitive rewrites
-   or weakened tests. Fixes repeat checks/committed review within allowances;
-   tooling/decision blockers park.
-6. Reclassify fixes. Orchestrator preflight-collect, then gate.mjs preflight
-   collect:false. Missing/hand-made/incomplete/stale proof fails. Retain failures;
-   count local passes/collections separately (short may have zero local passes).
+3. `review round`: the orchestrator's collection runs it read-only on the
+   committed head with [role:code-review](references/model-policy.md#roles) and
+   [role:code-review-checker](references/model-policy.md#roles), then
+   verification. No in-worker review or substitute.
+4. Commit; run the pinned gate.mjs preflight collect:false, publish its returned
+   request, confirm, rerun the gate.
+5. Follow the gate line per references/review-admission.md: open findings → fix,
+   check, commit, next round (three per pins file); `needs-decision:`/`blocked:`
+   → park. No broad/release-sensitive rewrites or weakened tests.
+6. Reclassify fixes. Pass needs review clean|clean-with-successors and
+   verification on this head; missing/hand-made/old/stale proof fails.
 7. Record safe commit/action; full `mono-preflight certificate` in
    Linear, dispatch append #/certificate once. Keep Issue verification/recovery/lead.
 
@@ -70,11 +62,9 @@ Issue(s): <keys>
 Branch: <branch>; commit state: <clean/dirty/committed>
 Changed files: <count/list/summary>
 Local verification: <commands/outcomes>
-Autoreview: <clean|accepted-with-declines|blocked|needs-human|unavailable>; final command: <scope helper command>; result: <exit 0 + clean line|accepted-with-declines + receipt|none>
-Autoreview declines: <none|finding id; basis; approvedBy for each>
-Autoreview decisions: <none|stop id; continue id; remaining local/external allowances>
-Autoreview route: risk=<tiny|standard|deep|risky>; source=<Linear|diff>; critical=<none|signal>; model=<resolved model id>; effort=<low|medium|high|xhigh>; reclassified=<no|summary>
-Autoreview loop: <iterations>; accepted findings fixed: <none/list>; residual actionable findings: <none/list; ready: none>
+Review: <clean|clean-with-successors|not-converged|not-reviewed|unavailable>; round: <n of 3>; receipt: <collectionId|none>
+Review successors: <none|weight file:line title for each>
+Review route: risk=<tiny|standard|deep|risky>; source=<Linear|diff>; critical=<none|signal>; reclassified=<no|summary>
 Drift candidate: <none/summary>
 Decision needed: <none | точное решение по-русски>
 Not checked: <manual QA/browser/mobile/deploy/...>
@@ -82,5 +72,4 @@ Next: <mono:ship | mono:handoff | needs-human>
 ```
 
 Claude ready certificate adds `Delivery differences:`: same-session startup
-stop/resume; external committed-head pre-PR review, no in-worker pass.
-Count local passes/collections separately.
+stop/resume.

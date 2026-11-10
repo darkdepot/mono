@@ -9,7 +9,7 @@
   "sequence": 1,
   "kind": "phase",
   "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  "certificate": "mono-preflight certificate\nPreflight: ready\nIssue(s): MONO-993\nBranch: fixture; commit state: committed\nChanged files: fixture\nLocal verification: targeted checks PASS\nAutoreview: clean; final command: orchestrator collection; clean result: exit 0 + scoped-clean\nAutoreview route: risk=standard; source=Issue; critical=none; model=fixture; effort=medium; reclassified=no\nAutoreview loop: 0 local passes + 1 collection; accepted findings fixed: none; residual actionable findings: none\nDrift candidate: none\nDecision needed: none\nNot checked: deploy\nNext: mono-ship",
+  "certificate": "mono-preflight certificate\nPreflight: ready\nIssue(s): MONO-993\nBranch: fixture; commit state: committed\nChanged files: fixture\nLocal verification: targeted checks PASS\nReview: clean; round: 1 of 3; receipt: preflight-collect:fixture:1\nReview successors: none\nReview route: risk=standard; source=Issue; critical=none; reclassified=no\nDrift candidate: none\nDecision needed: none\nNot checked: deploy\nNext: mono-ship",
   "linear_mutations_pending": [
     {
       "id": "MONO-993:preflight:ready-certificate:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

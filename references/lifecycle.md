@@ -468,7 +468,7 @@ Required:
 - Branch/worktree state inspected.
 - Local diff compared against Project, PRD, Tech Spec, and Issue.
 - Targeted tests/checks run or explicitly reported as not run.
-- Installed `autoreview` helper run until it reports clean with the model resolved from [role:autoreview](model-policy.md#roles) and risk-matched effort from `references/autoreview-routing.md`, or preflight exits `blocked`/`needs-human`.
+- The collection's read-only review round by [role:code-review](model-policy.md#roles) and [role:code-review-checker](model-policy.md#roles) ends `clean` or `clean-with-successors` within three rounds and verification passes, or preflight parks.
 - Commit state reported, with commits created only when safe and configured.
 - Preflight certificate emitted with status `ready`, `blocked`, `drift-candidate`, or `needs-human`.
 
@@ -478,7 +478,7 @@ Forbidden:
 - Running or claiming `mono:check pre-ship`.
 - Creating the final PR.
 - Merging, deploying, or closing Linear Issues.
-- Replacing `autoreview` with Compound `ce-code-review`, built-in `/review`, ad hoc review, or a hand-written self-review.
+- Replacing the review round with Compound `ce-code-review`, built-in `/review`, ad hoc review, or a hand-written self-review.
 
 Gate: `mono:preflight` certificate, then `mono:ship`.
 

@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Read-only manual code review of a ready branch, with an independent finding checker. Use when asked to review code and report what remains; this pilot does not replace Preflight yet.
+description: Read-only manual code review of a ready branch, with an independent finding checker. Use when asked to review code and report what remains; delivery runs the same round inside collection.
 ---
 
 # Mono Code Review

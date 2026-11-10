@@ -245,7 +245,7 @@ Workflow states:
      pins.v<n>.json after resume.mjs succeeds, under the collection admission lock.
      Refused resume leaves the current registry pins unchanged.
      Keep durable per-write results/reconciliation.
-     Grant workers reports/ only; publish confirmations/ outside their grants. Handle preflight-collect with sandboxed verification/review at the pinned evidenceRoot; recheck collect:false before ship.
+     Grant workers reports/ only; publish confirmations/ outside their grants. Handle preflight-collect at the pinned evidenceRoot: a read-only review round, then sandboxed verification. The collector host needs both the Codex and Claude CLIs logged in by subscription, from different model families; a single-family setup gives `not-reviewed`. Approve nothing between rounds ([Review rounds](../../references/orchestration.md#review-rounds)); recheck collect:false before ship.
      Publish whole-queue confirmation; never send a stage-resume prompt to a
      worker waiting on a file. Preserve certificate-before-review,
      drift-before-PR, In-Review-after-PR ordering. On recovery read capsule and

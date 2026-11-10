@@ -9,8 +9,8 @@ Files: here or pack root.
 
 One Issue/context/worktree. Phase owners: implement/preflight/ship; deploy outside.
 Use existing tools or literal conservative solutions, no custom parsers/heuristics
-or extra mechanisms beyond the Issue. Correct the error class; repeated key/class
-parks needs-decision before edits/collection (`references/review-admission.md`).
+or extra mechanisms beyond the Issue. Correct the error class; review rounds and
+parks follow `references/review-admission.md`.
 
 Read first:
 
@@ -36,9 +36,10 @@ Start: gate.mjs start --request <file>; implement handshake; wait mode runs wait
    with its full queue. Only its generated implemented-needs-preflight comment
    defers confirmation to Preflight; all other queues wait. No broken/unfinished work advances.
 2. Preflight/commit; publish preflight-collect confirmation-request. Confirm,
-   gate.mjs preflight collect:false, worker failure rules. Pass: publish ready
-   certificate once; confirm before formal review.
-3. Ship with write barriers. New head repeats checks/review/evidence.
+   gate.mjs preflight collect:false, worker failure rules. Open findings: fix,
+   commit, next round. Pass: publish ready certificate once; confirm before
+   formal review.
+3. Ship with write barriers. New head repeats checks/review round/evidence.
    gate.mjs ship --request <file> → pass/decision/deadline; confirm queue/certificate.
    Orchestrator rechecks collect:false before ship.
 

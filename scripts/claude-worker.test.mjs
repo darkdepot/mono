@@ -497,7 +497,7 @@ test("installed dispatch selects Claude role and transport from immutable BASE",
     assert.match(dispatch, /Transport: claude-cli/);
     assert.match(dispatch, /### Claude Code delivery differences/);
     assert.match(dispatch, /Never print credential values/);
-    assert.match(dispatch, /Pre-PR autoreview uses only external collection/);
+    assert.match(dispatch, /The review round runs only in external collection/);
     assert.equal(entry.model_launch.delivery_differences.length, 2);
     assert.equal(entry.handshake, "resume");
   });
