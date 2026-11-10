@@ -5,7 +5,6 @@ import path from "node:path";
 import process from "node:process";
 import { deliveryConfig, validateModels, validateLanding } from "./runtime.mjs";
 import { preapplyMandate } from "./orchestrator/preapply.mjs";
-import { configuredBackup } from "./orchestrator/backup-switch.mjs";
 import { validateIdeaGate, validateResearchGate } from "./idea-gate.mjs";
 
 import { validateQaConfig } from "./qa-recipe.mjs";
@@ -285,7 +284,6 @@ function validateConfig(config, failures) {
       if ("transport" in orchestration && orchestration.transport !== null && !allowedTransports.includes(orchestration.transport)) {
         failures.push(`Project config orchestration.transport must be one of: ${allowedTransports.join(", ")}`);
       }
-      try { configuredBackup(config); } catch (error) { failures.push(`Project config ${error.message}`); }
       if (
         "maxParallelWorkers" in orchestration &&
         orchestration.maxParallelWorkers !== null &&

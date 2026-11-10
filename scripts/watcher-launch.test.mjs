@@ -42,7 +42,7 @@ function fixture() {
   fs.chmodSync(path.join(bin, 'codex'), 0o700);
   put(path.join(bin, 'ps'), `#!${process.execPath}\nconsole.log('fixture-start');\n`); fs.chmodSync(path.join(bin, 'ps'), 0o700);
   const policy = read(path.join(checkout, '.agents/mono-workflow.config.json'));
-  policy.orchestration.transport = 'codex-cli'; delete policy.orchestration.backupTransport;
+  policy.orchestration.transport = 'codex-cli';
   policy.ideaGate = { since: '2026-10-17' };
   policy.orchestration.delivery.attemptCap = 10;
   policy.orchestration.dispatch = { product: 'watcher-fixture', evidenceRoot: evidence, openDecisions: 0, lifecycle_moves: [], verification: { command: 'node', args: ['scripts/verify.mjs'] } };

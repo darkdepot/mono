@@ -7,7 +7,6 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { workerTransport } from "../worker-transport.mjs";
 import { effectivePins, attemptState, validateAmendment } from "./command-state.mjs";
-import { configuredBackup, resolveBackupSwitch, validateBackupLaunch, recordAttempt, recordBackupSwitch, backupProcessBaseline } from "./backup-switch.mjs";
 
 function releasePin(request) {
   if (!request.pins) return false;
@@ -56,9 +55,7 @@ function deliveryLaunch(request, transport) {
 }
 function selectedTransport(request) {
   const config = baseModelConfig(request.worktree, request.base);
-  configuredBackup(config);
-  const backupSwitch = resolveBackupSwitch(request);
-  const transport = backupSwitch?.backupTransport ?? config.orchestration?.transport ?? 'codex-cli';
+  const transport = config.orchestration?.transport ?? 'codex-cli';
   if (request.transport !== undefined && request.transport !== transport) throw new Error('request transport conflicts with immutable BASE config');
   const implementation = workerTransport(transport);
   if (!implementation?.workerRoles.includes(request.role)) throw new Error('unsupported worker role/transport for managed launch');
@@ -157,7 +154,7 @@ async function launchTransport(root, entry, prompt, resume, prepared, lifecycle 
     const options = { cwd: entry.worktree, detached: true,
       stdio: piped ? ["pipe", "ignore", "ignore"] : ["ignore", stdout, stderr],
       env: { ...transport.environment(entry.modelRoutes?.roles[entry.model_policy.role], process.env,
-        { ...prepared, attemptMarker: entry.attemptMarker, timeoutSec: entry.confirmationTimeoutSec, tempDir: temporaryDirectory(transport, entry, roots) }),
+        { ...prepared, timeoutSec: entry.confirmationTimeoutSec, tempDir: temporaryDirectory(transport, entry, roots) }),
         ...(piped ? { MONO_WORKER_JOURNAL_IDENTITY: JSON.stringify({ issue: entry.issue, attempt: entry.attempt, thread_id: entry.thread_id }) } : {}) } };
     guard(root, resume);
     requireWatcher(root);
@@ -182,7 +179,6 @@ async function launchTransport(root, entry, prompt, resume, prepared, lifecycle 
   if (resume) registry[entry.issue].last_resume = { pid: child.pid, thread_id: entry.thread_id,
     registeredAt: registry[entry.issue].last_activity_at, gateAckDigest, logOffset };
   atomicJson(registryPath, registry);
-  recordAttempt(root, { ...registry[entry.issue], procStart });
   return { pid: child.pid, thread_id: entry.thread_id, procStart, logOffset };
 }
 async function waitForThread(root, entry, pid, launchedStart, logOffset = 0) {
@@ -229,7 +225,6 @@ async function waitForThread(root, entry, pid, launchedStart, logOffset = 0) {
           }
           if (writer.handshake === "wait" && !writer.procStart) throw new Error("waiting writer process start unavailable");
           atomicJson(registryPath, current);
-          recordAttempt(root, writer);
           return { pid, thread_id: threadId };
         });
       } catch (error) { if (error.code !== "ELOCKED") throw error; }
@@ -301,8 +296,6 @@ export async function spawnWorker(request, preparation = {}) {
       if (!Array.isArray(request.writable_roots) || request.writable_roots.some(p => !path.isAbsolute(p))) throw new Error("explicit writable roots required");
       fs.mkdirSync(path.join(request.root, "reports"), { recursive: true });
       const roots = effectiveGrants(request, request.root);
-      const backupProof = validateBackupLaunch(request, used, roots);
-      const backupSwitch = backupProof?.record ?? null;
       let prepared;
       try {
         prepared = transport.prepare?.(model_policy, { cwd: request.worktree,
@@ -326,7 +319,6 @@ export async function spawnWorker(request, preparation = {}) {
         auth_requested: prepared.auth.requested, auth_observed: prepared.auth.observed, auth_confirmed: prepared.auth.positive,
         delivery_differences: transport.deliveryDifferences });
       const entry = { issue: request.issue, transport: transport.transport, stage: "mono-deliver", attempt, ...launch,
-        attemptMarker: crypto.randomUUID(),
         thread_id: transport.startupEvent ? crypto.randomUUID() : null, pid: null, worktree: request.worktree, branch: request.branch, product_name: request.product_name,
         ...(typeof request.config === 'string' ? { config: path.resolve(request.config) } : {}),
         packVersion: request.packVersion, sourceCommit: request.sourceCommit, surfaceRevision: request.surfaceRevision,
@@ -339,18 +331,14 @@ export async function spawnWorker(request, preparation = {}) {
         collectionRetries: deliveryConfig(request.config).collectionRetries,
         capsule: { phase: "code", head: worktreeGit(request.worktree, ["HEAD"]),
           open_queue: [], decisions: [], writable_roots: roots } };
-      if (configuredBackup(baseModelConfig(request.worktree, request.base))) entry.processBaseline = backupProcessBaseline();
-      if (backupSwitch) { entry.backupSwitch = backupSwitch; entry.processOwnership = backupProof.ownership; entry.modelReason = request.modelReason ?? null; }
       if (gates.length) entry.gates = gates;
       if (prepared?.credentialPaths) entry.githubCredentialPaths = prepared.credentialPaths;
       if (prepared?.githubConfigDir) entry.githubConfigDir = prepared.githubConfigDir;
       try { return { entry, ...await launchTransport(request.root, entry, prompt, false, prepared, { beforeSpawn() {
-        if (backupSwitch) recordBackupSwitch(request.root, backupSwitch);
         attempts[request.issue] = attempt; atomicJson(attemptsFile, attempts);
         registry[request.issue] = entry; atomicJson(file, registry);
-        recordAttempt(request.root, entry);
         appendLog(log, { type: "mono.launch", timestamp: entry.spawned_at, issue: entry.issue, attempt, modelRoutes, model_policy, model_launch,
-          model: entry.model, effort: entry.effort, ...(backupSwitch ? { backupSwitch, modelReason: entry.modelReason } : {}) });
+          model: entry.model, effort: entry.effort });
       } }) }; }
       catch (error) { if (!registry[request.issue]) fs.unlinkSync(log); throw error; }
     } catch (error) {
@@ -403,7 +391,6 @@ export async function resumeWorker(request) {
     const registry = readJson(path.join(request.root, "workers.json")); registry[request.issue] = updated;
     atomicJson(path.join(request.root, "workers.json"), registry);
     return { entry: updated, ...await launchTransport(request.root, updated, prompt, true, prepared, { beforeSpawn() {
-      recordAttempt(request.root, updated);
       if (amendment) {
         if (canonical(readJson(amendmentFile)) !== canonical(amendment)) throw new Error("amendment changed before spawn");
         amendment = { ...amendment, launchMayHaveStartedAt: new Date().toISOString() };

@@ -20,7 +20,6 @@
   },
   "orchestration": {
     "transport": "codex-cli",
-    "backupTransport": "claude-cli",
     "maxParallelWorkers": 3,
     "delivery": {
       "confirmationTimeoutSec": 1800,
