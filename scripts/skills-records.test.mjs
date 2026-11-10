@@ -2355,3 +2355,103 @@ for(const host of ['claude','codex'])test(`continue9 ${host} records consumer ac
  f.request.rubric={digest:initial.rubricDigest,reviewer:'saved native clarification control',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'saved single-question response',reason:'No approval or start; one clarification question and a trailing imperative sentence.'}))};
  assert.equal(f.check().status,'passed',JSON.stringify(f.check()));
 });
+
+// MONO-371: refusals of a correct stage found by the live Design and Handoff runs.
+function rangePatchFixture(t,state='valid'){
+ const f=textFixture(t,'claude','defer'),from='Открыто:',to='## Как это видит владелец';
+ let content=`## Суть сейчас\nСохраняем контекст.\n\n${from} выбрать ширину.\n\n${to}\nТаблица.\n`;
+ if(state==='missing-from')content=content.replace(from,'Закрыто:');
+ if(state==='ambiguous-from')content=`${from} ещё.\n${content}`;
+ if(state==='missing-to')content=content.replace(to,'## Иначе');
+ if(state==='ambiguous-to')content+=to+'\n';
+ const doc={id:'brief',projectId,title:'Brief',content},start=content.indexOf(from),end=content.indexOf(to,start);
+ const final={...doc,content:start<0||end<0?content:content.slice(0,start)+content.slice(end)};
+ const patch={id:'brief',patch:[{op:'replace_range',from,to,new_string:''}]},truncated={...doc,content:'Brief… (truncated, use `get_document` for full description)'};
+ f.events.splice(7,0,f.call('range-prior','mcp__monotest__get_document',{id:'brief'}),f.result('range-prior',doc),f.call('range-patch','mcp__monotest__save_document',patch),f.result('range-patch',truncated),f.call('range-read-back','mcp__monotest__get_document',{id:'brief'}),f.result('range-read-back',final));
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ return {...f,final,to};
+}
+test('MONO-371 document range patch replays native content and keeps the range end in place',t=>{
+ const f=rangePatchFixture(t),result=f.check();assert.equal(result.status,'passed',result.reason);
+ f.save('documents/brief.json',{...f.final,content:f.final.content.replace(f.to+'\n','')});
+ const consumed=f.check();assert.equal(consumed.status,'failed');assert.match(consumed.reason,/mismatch.*brief\.content/);
+});
+for(const state of ['missing-from','ambiguous-from','missing-to','ambiguous-to'])test(`MONO-371 document range patch refuses ${state}`,t=>{
+ const result=rangePatchFixture(t,state).check();assert.equal(result.status,'failed');assert.match(result.reason,/document patch range must match exactly once/);
+});
+
+for(const mode of ['record-canvas','other-canvas','longer-canvas','no-link','other-prd','prd-stage'])test(`MONO-371 Design summary binds through the canvas of its approval record (${mode})`,t=>{
+ const f=u7DocumentFixture(t),prd='00000000-0000-4000-8000-0000000000d1',canvas='https://canvas.example.test/file/F1/p-1-0',design=mode!=='prd-stage';
+ f.old.id=f.fresh.id=prd;f.events[1]=f.result('shown',f.old);f.events[6]=f.result('read',f.fresh);
+ f.page('documents','documents',[{id:prd}]);f.save(`documents/${prd}.json`,f.fresh);
+ const approval='```text\nmono-design: approved project='+projectId+' prd='+(mode==='other-prd'?'00000000-0000-4000-8000-0000000000d2':prd)+' prd-updatedAt='+f.fresh.updatedAt+' canvas='+canvas+' tool=paper images='+'a'.repeat(64)+' next=handoff by=owner\n```';
+ if(design){
+  Object.assign(f.expected,{stage:'design',question:{anchors:[['макет']],forbidden:[]}});
+  f.record.body=approval+'\n\nВладелец: ответил «'+f.expected.reply+'»';f.events[7]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[8]=f.result('write',f.record);
+  f.page('comments','comments',[f.record]);f.request.expectedRecords=[{type:'mono-design: approved',count:1}];
+ }else f.page('comments','comments',[f.record,{id:'earlier-design',body:approval,createdAt:date,updatedAt:date}]);
+ const link={'other-canvas':'https://canvas.example.test/file/F1/p-2-0','longer-canvas':canvas+'1','no-link':'на странице задачи'}[mode]??canvas;
+ f.events[2]=f.assistant(`Источник после имени; советую одну колонку. Макет: ${link}.\n${design?'Утверждаешь этот макет?':'Принимаем этот PRD?'}`);
+ f.request.packRoot=process.cwd();const result=f.check();
+ // The curated fixture has no PNG archive, so a bound Design summary still stops later, at the real design gate.
+ if(mode==='record-canvas'){assert.equal(result.gateResults.length,1,JSON.stringify(result));assert.equal(result.gateResults[0].command,'design');}
+ else{assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/summary link does not bind native document/);}
+});
+
+for(const mode of ['lower-case-name','type','name-and-type','other-status','ambiguous-type','no-catalog'])test(`MONO-371 a status written as a name in another case or as a type resolves through the team catalog (${mode})`,t=>{
+ const f=fixture(t),team='00000000-0000-4000-8000-000000000002';
+ const statuses=['Backlog:backlog','Todo:unstarted','Done:completed','Released:completed'].map((row,index)=>({id:`00000000-0000-4000-8000-00000000001${index}`,name:row.split(':')[0],type:row.split(':')[1]}));
+ const [state,stored]={'lower-case-name':['todo','Todo'],type:['unstarted','Todo'],'name-and-type':['backlog','Backlog'],'other-status':['backlog','Todo'],'ambiguous-type':['completed','Done'],'no-catalog':['backlog','Backlog']}[mode];
+ const issue={id:'MON-1',uuid:'task',projectId,teamId:team,title:'Stage',description:'Body',status:stored,labels:[]};
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('issues','issues',[{id:'task'}]);f.save('issues/task/issue.json',issue);f.page('issues/task/comments','comments',[]);
+ if(mode!=='no-catalog')f.save(`statuses/${team}.json`,statuses);
+ f.events.splice(0,f.events.length,{type:'assistant',message:{content:[{type:'tool_use',id:'status',name:'mcp__monotest__save_issue',input:{id:'task',state}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'status',content:JSON.stringify(issue)}]}});
+ f.check();const result=verifyTextRecords(f.request);
+ assert.equal(result.status,['lower-case-name','type','name-and-type'].includes(mode)?'passed':'failed',JSON.stringify(result));
+ if(result.status==='failed')assert.match(result.reason,/mismatch for task\.status/);
+});
+
+for(const mode of ['fragment','other-comment','longer-comment','row-address-differs'])test(`MONO-371 a record read from a comment list binds the summary by its comment fragment (${mode})`,t=>{
+ const f=u7DocumentFixture(t),shownId='00000000-0000-4000-8000-0000000000c1',parent='https://linear.app/monotest/project/test';
+ const shown={id:shownId,body:f.shown,createdAt:date,updatedAt:date,...(mode==='row-address-differs'?{url:`https://linear.app/monotest/issue/MON-1#comment-${shownId}`}:{})},list={comments:[shown],hasNextPage:false};
+ f.events[0]=f.call('shown','mcp__monotest__list_comments',{projectId});f.events[1]=f.result('shown',list);f.events[5]=f.call('read','mcp__monotest__list_comments',{projectId});f.events[6]=f.result('read',list);
+ f.events[2]=f.assistant(`Источник после имени; советую одну колонку. [PRD](${parent}#comment-${mode==='other-comment'?'00000000-0000-4000-8000-0000000000c2':mode==='longer-comment'?shownId+'0':shownId})\nПринимаем этот PRD?`);
+ f.page('comments','comments',[f.record,shown]);f.request.approvalBindings[0].currentRecordId=shownId;
+ if(mode==='fragment'){f.attest();assert.equal(f.check().status,'passed',f.check().reason);return;}
+ const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/summary link does not bind native document/);
+});
+
+async function packageStartFixture(t,mode){
+ const {createHash}=await import('node:crypto'),{unwrap}=await import('./skills-proof.mjs'),f=textPrdFixture(t),id=f.request.project.id,sha=value=>createHash('sha256').update(value).digest('hex');
+ const content='## Кратко\nПакет: одна задача для показа источника прогона.\n\n```js\nconst columns = 4;\n```',fenceHash=sha(content+'\n');
+ const lf='```text\nmono-package: recorded project='+id+' version=1 previous=none class=new sha256='+(mode==='header-differs'?'0'.repeat(64):fenceHash)+'\n```\n\n`````mono-package\n'+content+'\n`````\n\nРевью: проверяющий согласен.';
+ const body=mode==='crlf'?lf.replace(/\n/g,'\r\n'):lf; // the hash covers the fence lines with LF either way
+ const question='Начинаем работу по этому пакету?',reply='принимаю';
+ const packet={id:'00000000-0000-4000-8000-000000000091',body,createdAt:'2026-11-02T03:59:00Z',updatedAt:'2026-11-02T03:59:00Z'};
+ const start={id:'00000000-0000-4000-8000-000000000092',createdAt:'2026-11-02T03:59:01Z',updatedAt:'2026-11-02T03:59:01Z',body:`\`\`\`text\nmono-package: start project=${id} record=${packet.id} sha256=${mode==='whole-body'?sha(body):fenceHash} issues=T1:MON-1 by=owner\napproval_status=approved\n\`\`\`\n\nВладелец: ответил «${reply}»`};
+ const commentsFile=path.join(f.request.dumpDir,'comments-1.json'),comments=unwrap(JSON.parse(fs.readFileSync(commentsFile)));comments.comments.unshift(start,packet);fs.writeFileSync(commentsFile,JSON.stringify(comments));
+ const dumpRows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);
+ for(const row of dumpRows){const item=row.payload?.item;if(item?.tool==='list_comments'&&item.arguments.projectId===id)item.result=comments;}
+ fs.writeFileSync(f.request.dumpTrace,timed(dumpRows,'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');
+ const assistant=text=>({type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text}]}}),terminal={type:'event_msg',payload:{type:'task_complete'}};
+ const rows=[assistant(body+'\n'+question),terminal,{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:reply}]}},
+  {type:'response_item',payload:{type:'function_call',name:'mcp__monotest__list_comments',call_id:'packet-read',arguments:JSON.stringify({projectId:id})}},
+  {type:'response_item',payload:{type:'function_call_output',call_id:'packet-read',output:JSON.stringify({comments:[packet],hasNextPage:false})}},
+  {type:'response_item',payload:{type:'function_call',name:'mcp__monotest__save_comment',call_id:'start',arguments:JSON.stringify({projectId:id,body:start.body})}},
+  {type:'response_item',payload:{type:'function_call_output',call_id:'start',output:JSON.stringify(start)}},assistant('Старт работы записан.'),terminal];
+ const expected={id:'handoff',stage:'handoff',role:'transition',asksStart:true,summary:['Пакет:'],question,reply,intent:'agree',outcome:{approval:false,startNext:true},response:['Старт работы записан.']};
+ f.request.expectedReplies=[expected];f.request.expectedRecords=[{type:'mono-package: start',count:1}];
+ f.request.approvalBindings=mode==='unbound'?[]:[{recordId:start.id,replyId:'handoff',shownLine:1,text:body,currentLine:4,currentRecordId:packet.id}];
+ for(const key of ['seedExpected','seedEndLine','seedProjectId','stageStartLine'])delete f.request[key]; // This replacement trace starts directly with Handoff.
+ fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
+ return f;
+}
+for(const mode of ['fence','crlf','whole-body','header-differs'])test(`MONO-371 a package start binds the hash of the mono-package fence content (${mode})`,async t=>{
+ const result=(await packageStartFixture(t,mode)).check(),valid=['fence','crlf'].includes(mode);
+ assert.equal(result.status,valid?'passed':'failed',JSON.stringify(result));
+ if(!valid)assert.match(result.reason,/written approval does not bind the shown content\/version/);
+});
+test('MONO-371 a package start without bindings waits for them instead of failing',async t=>{
+ const result=(await packageStartFixture(t,'unbound')).check();
+ assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/shown-version binding missing/);assert.equal(result.bindingOnly,true);
+});

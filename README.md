@@ -789,6 +789,8 @@ Ship и реализация бриф не ведут.
 `insert_before` и `insert_after` требуют привязанного нативного чтения того же
 документа, ровно одного совпадения `anchor` и совпадения результата с обратным
 чтением; отсутствующий или неоднозначный якорь отвергается.
+`replace_range` заменяет текст от единственного `from` до единственного после него
+`to`; сам `to` остаётся на месте.
 Ссылка согласия в строке брифа — полный Linear URL записи с `#comment-<uuid>`,
 не голый id. При сверке Handoff итог явно называет этап пропущенного решения.
 
@@ -1826,7 +1828,10 @@ trace with `node scripts/skills-trace.mjs <request.json>`. The active catalog us
 word replies only. Question roles, approval/start outcomes and anchors are fixed
 before the run; a required rubric judges their meaning against the native document.
 A short summary links to the document ID and body hash read before showing and
-freshly after the reply; updatedAt is auxiliary. Corrections change only the named
+freshly after the reply; updatedAt is auxiliary. A record read from a comment list,
+whose rows carry no address, is linked by `#comment-<id>`; a Design summary links the
+canvas of its approval record while the named PRD stays bound by the reads. A package
+start carries the hash of the `mono-package` fence content, equal to the record header. Corrections change only the named
 passage. The driver starts a following stage only with predefined scenario permission
 and a native post-reply action after the current stage rubric passes. Canonical
 document identities come from native responses, including slug lookups. Harmless
@@ -1875,7 +1880,8 @@ compares the project description with the canonical three sections while the
 approval snapshot binds the complete shown presentation. Native issues may omit
 the team: the fixed dump resolves it through project metadata or complete team
 reads before reading exact status UUIDs; ambiguous teams keep status verification
-unverified without discarding the issue dump. Recorded window failures remain
+unverified without discarding the issue dump. A status written as a name in another
+letter case or as a status type resolves only to a single status of that catalog. Recorded window failures remain
 failed even if later native answers or trace reads are missing.
 Resume can explicitly re-prepare bindings after a rubric digest exists; the old
 judgment is discarded and only the new digest can certify the annotations.
