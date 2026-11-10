@@ -11,7 +11,7 @@ import { roleWindows, windowRole, validateReplies, isOwnerWindow } from './legac
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 // Full rule source, including final-message order. A rule edit requires checker/rubric review.
-export const OWNER_DIALOG_SHA256 = 'f2c3870c84841dbbdeeab2e257025bb0daefd459f7f4f11aafe11a9308c90499';
+export const OWNER_DIALOG_SHA256 = '6fcc18441a91dbad28aad8cb78d8c818b6a7fa709f798a2c1e79d173d81b67f2';
 export const visible = visibleText;
 export { completedTrace, codexTerminals } from './legacy-window-audit.mjs';
 export { textExchanges, checkEndings } from './legacy-window-probe.mjs';
