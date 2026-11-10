@@ -59,7 +59,8 @@
             "handoff"
           ]
         }
-      ]
+      ],
+      "idleContinuation": "Продолжай."
     },
     "codex": {
       "expectedReplies": [

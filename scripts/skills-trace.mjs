@@ -4,9 +4,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { MissingEvidence } from './skills-boundary.mjs';
-import { auditRows, completedTrace, codexTerminals } from './skills-audit.mjs';
-import { traceRows, visibleText, textExchanges, checkEndings } from './skills-probe.mjs';
-import { validateReplies, isOwnerWindow } from './skills-owner.mjs';
+import { auditRows, completedTrace, codexTerminals, helperTrace } from './skills-audit.mjs';
+import { claudeWindows, traceRows, visibleText, textExchanges, checkEndings } from './skills-probe.mjs';
+import { roleWindows, windowRole, validateReplies, isOwnerWindow } from './skills-owner.mjs';
+
+import { dialogueMode, testedVersion } from './skills-stage-driver.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Full rule source, including final-message order. A rule edit requires checker/rubric review.
@@ -19,9 +21,168 @@ export function codexItems(rows) {
   auditRows('codex',rows);
   return rows.filter(r => r.value?.type === 'response_item').map(r => ({ ...r, item: r.value.payload }));
 }
+export function codexWindows(rows, source, options) {
+  const audit=auditRows('codex',rows);
+  const items = codexItems(rows), windows = [], seen = new Set();
+  let expectedIndex=0;
+  for (const row of items) {
+    const p = row.item;
+    if (!p || typeof p.type !== 'string') throw new Error(`line ${row.line}: invalid response item`);
+    if (!['function_call', 'custom_tool_call'].includes(p.type) || p.name !== 'request_user_input_async') continue;
+    if (typeof p.call_id !== 'string' || !p.call_id) throw new Error(`line ${row.line}: missing call id`);
+    if (seen.has(p.call_id)) continue;
+    seen.add(p.call_id);
+    // A user message or an actual task boundary ends the turn; tool output does not.
+    const following = rows.filter(r => r.line > row.line);
+    const end = following.find(r => (r.value.type === 'response_item' && r.value.payload?.type === 'message' && r.value.payload.role === 'user') ||
+      (r.value.type === 'event_msg' && ['task_complete', 'task_started', 'turn_aborted'].includes(r.value.payload?.type)));
+    const turn = items.filter(r => r.line > row.line && (!end || r.line < end.line));
+    const proof = audit.windowProof(row.value,row.line,p.call_id,options);
+    let args;try{args=JSON.parse(p.arguments);}catch{args=null;}
+    const executionConfirmed = proof.status === 'confirmed';
+    const last = turn.filter(r=>['message','function_call','custom_tool_call','function_call_output','custom_tool_call_output'].includes(r.item.type)).at(-1);
+    const summary = last?.item.type === 'message' && last.item.role === 'assistant' && last.item.phase === 'final_answer' ? textOf(last.item) : '';
+    const start=rows.findLast(r=>r.line<row.line&&(r.value.type==='event_msg'&&['task_started','task_complete'].includes(r.value.payload?.type)||r.value.type==='response_item'&&r.value.payload?.type==='message'&&r.value.payload.role==='user'));
+    const preceding=items.filter(r=>r.line<row.line&&(!start||r.line>start.line));
+    const work=preceding.findLast(r=>['function_call','custom_tool_call'].includes(r.item.type));
+    // New tool work ends earlier progress. Reasoning, blank messages and delayed
+    // results do not replace a presentation made after that work was requested.
+    const presentations=preceding.filter(r=>(!work||r.line>work.line)&&r.item.type==='message'&&r.item.role==='assistant'&&visible(textOf(r.item)));
+    const expectedWindows=options?.expectedWindows,roles=roleWindows(expectedWindows);
+    const role=roles?(windowRole(args?.questions)??(expectedWindows[expectedIndex]?.role==='choice'&&args?.questions?.every(q=>q.options?.length)?'choice':null)):null;
+    const target=!roles||role!==null,expected=target?expectedWindows?.[expectedIndex]:null;
+    if(target&&executionConfirmed)expectedIndex++;
+    const unanchored=Boolean(expected&&!expected.summary.length);
+    const shown=presentations.findLast(r=>!expected||unanchored||expected.summary.every(anchor=>textOf(r.item).includes(anchor)))?.item;
+    const shownText=shown?textOf(shown):'';
+    // Without anchors no later service line can erase an earlier presentation.
+    const finalSummary=visible(summary)&&(unanchored?presentations.every(r=>summary.includes(textOf(r.item))):!visible(shownText)||summary.includes(shownText));
+    windows.push({ line: row.line, evidence: `${source}:${row.line}`, callId: p.call_id, questions: args?.questions ?? [],
+      executionConfirmed, resultEvidence: proof.resultLine ? `${source}:${proof.resultLine}` : null,
+      summary, summaryLine: last?.line, status: !executionConfirmed ? 'unverified' : finalSummary ? 'passed' : 'failed',
+      reason: !executionConfirmed ? 'linked native accepted:true window or delivered answer missing for this phase' : finalSummary ? 'async summary is the last message' : 'async summary must be final and last; no calls after it' });
+  }
+  return windows;
+}
+
+
+function cardIssues(host, questions, expected) {
+  const issues = [];
+  if (questions.length !== 1 && (expected || questions.length !== 2)) issues.push('one question at a time');
+  for (const q of questions) {
+    const title = host === 'claude' ? q.question : q.title;
+    const options = q.options;
+    if (!expected && host === 'codex' && options == null && typeof title === 'string' && visible(title)) continue;
+    const gist = typeof title === 'string' ? title.split('\n')[0] : '';
+    if(expected){
+      for (const key of ['decision', 'advice', 'reason']) if (!gist.includes(expected[key])) issues.push(`question lacks scenario ${key}`);
+    }else if(!gist.includes('Совет'))issues.push('question lacks advice');
+    if (typeof title !== 'string' || !Array.isArray(options) || options.length < 2 || options.length > 3) { issues.push('invalid question or option count'); continue; }
+    const labels = options.map(o => typeof o === 'string' ? o : o?.label);
+    if (labels.some(l => typeof l !== 'string' || !visible(l))) { issues.push('invalid option label'); continue; }
+    if (!labels[0].endsWith(' (Recommended)') || labels.slice(1).some(l => l.endsWith(' (Recommended)'))) issues.push('recommended option must be first and unique');
+    if ((gist.match(/[.!?]+(?:\s|$)/g)??[]).length > 2) issues.push('question gist exceeds two sentences');
+    if (/https?:\/\/|\[[^\]]+\]\(|[`*#]/.test(gist)) issues.push('question gist has links or markup');
+    const consequences = host === 'claude' ? options.map(o => o.description)
+      : labels.map(label => title.split('\n').find(l => l.startsWith(`${label}:`))?.slice(label.length + 1));
+    if (consequences.some(s => typeof s !== 'string' || s.includes('\n') || !s.split('/').every(visible) || !s.includes('/'))) issues.push('each option needs one consequence / tradeoff line');
+    if (host === 'claude' && (typeof q.header !== 'string' || [...q.header].length > 12 || !visible(q.header) || labels.some(l => {const n=l.replace(/ \(Recommended\)$/, '').trim().split(/\s+/).length;return n<1||n>5;}))) issues.push('Claude header or label length');
+  }
+  return issues;
+}
+
+function checkWindowTrace({ host, trace, expectedWindows, expectedReplies, rulesRoot = root, excerpt = false, phase = excerpt ? 'excerpt' : 'complete', endLine, stageStartLine, sent }) {
+  const windows = [], checks = [];
+  try {
+    const ruleSource = path.join(rulesRoot, 'references/owner-dialog.md');
+    const rulesDigest = crypto.createHash('sha256').update(fs.readFileSync(ruleSource)).digest('hex');
+    if (rulesDigest !== OWNER_DIALOG_SHA256) throw new Error('owner-dialog changed: update checker and conversation rubric together');
+    if (expectedReplies!==undefined) return checkTextTrace({host,trace,expectedReplies,expectedWindows,rulesRoot,phase,endLine,stageStartLine});
+    const roles=roleWindows(expectedWindows);
+    if (!['claude', 'codex'].includes(host) || !Array.isArray(expectedWindows) || !expectedWindows.length || expectedWindows.some(w =>
+      !w?.id || (roles&&!['approval','transition','choice'].includes(w.role)) || ['decision','advice','reason'].some(k => !visible(w[k])) || !Array.isArray(w.summary) || (!roles&&!w.summary.length) || w.summary.some(s => !visible(s)))) throw new Error('scenario expectedWindows needs id, role, decision, advice, reason and summary anchors');
+    const { rows } = traceRows(trace,host,{endLine});
+    if (rows.some(r => !r.value || typeof r.value.type !== 'string')) throw new Error('invalid trace envelope');
+    const responses=host==='claude'&&sent?traceRows(sent,'claude').rows.map(r=>r.value):[];
+    const found = host === 'claude' ? claudeWindows(rows, trace, {phase,responses}) : codexWindows(rows, trace, {phase,expectedWindows});
+    let expectedIndex = 0;
+    for (const [i, w] of found.entries()) {
+      const role=roles?(windowRole(w.questions)??(expectedWindows[expectedIndex]?.role==='choice'&&w.questions.every(q=>q.options?.length)?'choice':null)):null,target=!roles||role!==null;
+      const expected = target?expectedWindows[expectedIndex]:null;
+      const identity={target,role:role??(roles?'generic':'target'),id:expected?.id??`generic-${i}`};
+      if (w.status === 'unverified') {
+        windows.push({ ...w,...identity,issues: [w.reason] });
+        continue;
+      }
+      if(target)expectedIndex++;
+      const issues = w.status === 'failed' ? [w.reason] : [];
+      let summary = w.summary ?? '', summaryLine = w.summaryLine;
+      if (host === 'claude') {
+        const firstLine = w.textLines[0] ?? w.line;
+        const parts = [];
+        let presentation;
+        for (const r of rows.filter(r => r.line >= firstLine && r.line <= w.line)) {
+          if (r.value.parent_tool_use_id || r.value.type !== 'assistant') continue;
+          for (const block of r.value.message.content) {
+            if (block.type === 'tool_use') {
+              if (block.id === w.callId) break;
+              parts.length = 0; // Service work invalidates all earlier summary fragments.
+            }
+            if (block.type === 'text' && visible(block.text)) {
+              if (presentation && presentation !== r &&
+                  (!r.value.message.id || r.value.message.id !== presentation.value.message.id)) parts.length = 0;
+              parts.push(block.text);
+              presentation = r;
+            }
+          }
+        }
+        summary = parts.join('\n');
+        summaryLine = presentation?.line;
+      }
+      if (!visible(summary)) issues.push('no visible owner summary');
+      if (expected) {
+        if(roles&&expected.role!==role)issues.push('unexpected target role');
+        issues.push(...cardIssues(host, w.questions, expected));
+        if (visible(summary)&&!expected.summary.every(s => summary.includes(s))) issues.push('summary lacks scenario content');
+      } else if(roles&&!target)issues.push(...cardIssues(host,w.questions,null));
+      else issues.push('unexpected window without scenario policy');
+      windows.push({ ...w,...identity,summary,summaryLine,issues,status: issues.length ? 'failed' : 'passed' });
+    }
+    const uncertain = found.find(w => w.status === 'unverified');
+    if (expectedIndex > expectedWindows.length || (!uncertain && expectedIndex !== expectedWindows.length&&!(roles&&phase==='card'))) checks.push({ id:'expected-windows',status:'failed',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:`expected ${expectedWindows.length} real target windows, found ${expectedIndex}; text is not a window` });
+    if (uncertain) checks.push({ id:'expected-windows',status:'unverified',evidence:`${trace}:${uncertain.line}`,reason:`expected ${expectedWindows.length} real windows, confirmed ${expectedIndex}; successful native execution is not confirmed for every call` });
+    if (phase !== 'excerpt') {
+      const complete = completedTrace(host, rows);
+      if (!complete) checks.push({ id:'complete-trace',status:'unverified',evidence:`${trace}:${rows.at(-1)?.line ?? 1}`,reason:'successful terminal event missing; cut trace is not proof' });
+    }
+    const status = [...windows,...checks].some(c => c.status === 'failed') ? 'failed' : [...windows,...checks].some(c => c.status === 'unverified') ? 'unverified' : 'passed';
+    return { host, status, phase, trace, windows, checks, rules: { source:ruleSource, sha256:rulesDigest }, boundary:'mechanical checks only; conversation rubric still requires tester judgment' };
+  } catch (error) { return {host,status:worstStatus('unverified',...windows.map(w=>w.status),...checks.map(c=>c.status)),trace,windows,checks,reason:error.message}; }
+}
+export function checkTrace(request) {
+ let mode;
+ try { mode=dialogueMode(testedVersion(request,root)); }
+ catch(error){return {host:request.host,trace:request.trace,status:'unverified',windows:[],checks:[],reason:error.message};}
+ if(mode==='windows') {
+  if(request.expectedReplies?.length)return {host:request.host,trace:request.trace,status:'failed',windows:[],checks:[],reason:'legacy acceptance requires real windows, not text replies'};
+  return checkWindowTrace(request);
+ }
+ if(request.expectedWindows?.length)return {host:request.host,trace:request.trace,status:'failed',windows:[],checks:[],reason:'window scenarios forbidden from 0.43.0'};
+ return checkTextTrace(request);
+}
+export const worstStatus=(...statuses)=>statuses.includes('failed')?'failed':statuses.some(status=>status!=='passed')?'unverified':'passed';
+export function checkTraceSources(requests) {
+ if(!Array.isArray(requests)||!requests.length)return {status:'unverified',sources:[],reason:'scenario trace sources missing'};
+ const sources=requests.map((request,index)=>{
+  try{
+   if(index>0&&request.expectedWindows===undefined&&request.expectedReplies===undefined&&helperTrace(request.host,traceRows(request.trace,request.host,{endLine:request.endLine}).rows))return {host:request.host,trace:request.trace,kind:'helper',status:'passed',windows:[],checks:[{id:'helper',status:'passed',reason:'completed tool-only source; no owner text, windows or writes'}]};
+   return checkTrace(request);}catch(error){return {host:request?.host,trace:request?.trace,status:'unverified',windows:[],checks:[],reason:error.message};}
+ });
+ return {status:worstStatus(...sources.map(source=>source.status)),sources};
+}
 // Shared with the probe and record verifier; expected words/outcomes stay in the
 // scenario. No approval is inferred from a Russian phrase or a model's verdict.
-export function checkTrace({host,trace,expectedReplies,expectedWindows,phase='complete',stageStartLine,rulesRoot=root}) {
+function checkTextTrace({host,trace,expectedReplies,expectedWindows,phase='complete',stageStartLine,idleContinuation,rulesRoot=root}) {
   const checks=[],exchanges=[];
   let rows;
   try{({rows}=traceRows(trace,host));}catch(error){return {host,trace,status:'unverified',windows:[],checks,reason:error.message};}
@@ -33,7 +194,7 @@ export function checkTrace({host,trace,expectedReplies,expectedWindows,phase='co
     const audit=auditRows(host,rows);
     const windows=audit.calls.filter(c=>isOwnerWindow(c.name));
     if (windows.length) throw new Error(`stage called a window: ${windows[0].name} at ${trace}:${windows[0].line}`);
-    exchanges.push(...textExchanges(host,rows,expectedReplies,{startLine:stageStartLine}));
+    exchanges.push(...textExchanges(host,rows,expectedReplies,{startLine:stageStartLine,idleContinuation}));
     checkEndings(exchanges);
     if (phase!=='excerpt'&&!completedTrace(host,rows)) return {host,trace,status:'unverified',windows:[],exchanges,checks,reason:'successful terminal event missing'};
     return {host,trace,status:'passed',windows:[],exchanges,checks,boundary:'mechanical checks; predetermined outcomes and exact native replies, conversation quality still requires rubric'};

@@ -7,6 +7,7 @@ const userBeforeStart=rawArgs.includes('--user-before-start'),args=rawArgs.filte
 const planIndex=rawArgs.indexOf('--plan');
 const plan=planIndex<0?null:JSON.parse(fs.readFileSync(rawArgs[planIndex+1],'utf8'));
 let planTurn=0;
+let offerReady=false;
 const out=e=>process.stdout.write(JSON.stringify(e)+'\n');
 const samples=JSON.parse(fs.readFileSync(new URL('./skills-text-responses.json',import.meta.url)));
 const response=()=>samples.find(sample=>sample.id===mode)?.actual??(mode==='unclear'?'Что смущает?':mode==='correction'?'Добавлен вопрос про Codex.':'Утверждение записал.');
@@ -38,9 +39,27 @@ input.on('line',line=>{
  const e=JSON.parse(line);if(e.type!=='user')return;
  if(!started){started=true;out({type:'assistant',message:{content:[{type:'tool_use',id:'workspace',name:'mcp__monotest__get_workspace',input:{}}]}});out({type:'user',message:{content:[{type:'tool_result',tool_use_id:'workspace',content:'{"name":"Test Space"}'}]}});}
  else {
+  if(plan?.nativeBackground&&planTurn===1&&!offerReady)throw new Error('owner replied while background notification was pending');
   if(args.includes('--replay-user-messages')&&mode!=='drop-reply')out(e);
   if(mode==='extra-owner'&&e.message.content[0].text!=='Run text')out({...e,message:{role:'user',content:[{type:'text',text:'Начинай Research'}]}});
   const prompt=e.message.content[0].text,text=plan?plan.messages[planTurn++]:prompt==='Run text'?message:response();
+  if(plan?.idlePrefix&&planTurn===1){for(const event of plan.idlePrefix)out(event);return;}
+  if(plan?.nativeBackground&&planTurn===1){
+   for(const event of plan.nativeBackground)out(event);
+   if(plan.omitContinuation)setTimeout(()=>process.exit(0),30);
+   else setTimeout(()=>{offerReady=true;out({type:'assistant',message:{content:[{type:'text',text}]}});out({type:'result',subtype:'success'});},30);
+   return;
+  }
+  if(plan?.background&&planTurn===1){
+   for(const event of plan.background)out(event);
+   if(!plan.omitContinuation)setTimeout(()=>{
+    out({type:'system',subtype:'task_notification',task_id:'scout-0',status:'completed'});
+    out({type:'system',subtype:'background_tasks_changed',tasks:[]});
+    out({type:'system',subtype:'init'});
+    out({type:'assistant',message:{content:[{type:'text',text}]}});out({type:'result',subtype:'success'});
+   },30);
+   return;
+  }
   if(mode==='window')out({type:'assistant',message:{content:[{type:'tool_use',id:'bad',name:'AskUserQuestion',input:{questions:[]}}]}});
   out({type:'assistant',message:{content:[{type:'text',text}]}});
  }

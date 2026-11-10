@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
 import { auditRows } from './test-fixtures/legacy-window-audit.mjs';
+import { auditRows as productionAudit } from './skills-audit.mjs';
 import { nativeProof as textProof } from './skills-proof.mjs';
 import { nativeProof as windowProof } from './test-fixtures/legacy-window-proof.mjs';
 const nativeProof=request=>['window','answer'].includes(request.kind)?windowProof(request):textProof(request);
@@ -171,4 +172,24 @@ for(const host of ['claude','codex'])test(`${host}: text replies need a real par
  blocks[0].type='tool_result';assert.equal(check(bad).status,'unverified');
  const flagged=structuredClone(original);(host==='claude'?flagged.message.content:flagged.payload.content)[0].is_error=true;assert.equal(check(flagged).status,'unverified');
  if(host==='claude')assert.equal(check({...original,parent_tool_use_id:'child'}).status,'unverified');
+});
+
+test('R2 production Codex window answers require the native envelope and every tested question identity',()=>{
+ const id='tested-call',questions=[{title:'Первый вопрос?',options:['Да','Нет']},{title:'Второй вопрос?',options:['Сейчас','Позже']}];
+ const call={type:'response_item',payload:{type:'function_call',name:'request_user_input_async',call_id:id,arguments:JSON.stringify({questions})}};
+ const answers=questions.map((q,i)=>({questionItemId:JSON.stringify(['request_user_input_async',id,i]),question:q.title,answer:i?'':'Да'}));
+ const envelope=items=>'<send_user_message_question_reply>\n'+JSON.stringify(items)+'\n</send_user_message_question_reply>\n';
+ const check=(text,online=false,c=call)=>{
+  const result={type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}};
+  const status=textProof({host:'codex',kind:'answer',call:c,callId:id,result,...(online?{prompt:text}:{})}).status;
+  const rows=[c,{type:'response_item',payload:{type:'function_call_output',call_id:id,output:'{"accepted":true}'}},{type:'event_msg',payload:{type:'task_complete'}},result].map((value,i)=>({value,line:i+1}));
+  assert.equal(productionAudit('codex',rows).windowProof(c,1,id).status,status,'offline window consumer');
+  return status;
+ };
+ for(const online of [false,true]){
+  assert.equal(check(envelope(answers),online),'confirmed');
+  for(const text of ['Да','Не продолжай.',JSON.stringify(answers),envelope(answers)+'extra',envelope(answers).replace('send_user_message_question_reply','other'),envelope(answers.slice(0,1)),envelope([...answers,answers[0]]),envelope([answers[0],answers[0]]),envelope(answers.map(a=>({...a,questionItemId:JSON.stringify(['request_user_input_async','another-call',0])}))),envelope(answers.map((a,i)=>({...a,questionItemId:JSON.stringify(['request_user_input_async',id,1-i])}))),envelope(answers.map(a=>({...a,question:'another question'}))),envelope(answers.map(a=>({...a,answer:null}))),envelope(answers.map(a=>({...a,questionItemId:[a.questionItemId]})))])assert.equal(check(text,online),'unverified',text);
+ }
+ const foreign=structuredClone(call);foreign.payload.call_id='another-call';assert.equal(check(envelope(answers),false,foreign),'unverified');
+ const missing=structuredClone(call);missing.payload.arguments='{}';assert.equal(check(envelope(answers),false,missing),'unverified');
 });

@@ -59,6 +59,10 @@ export function loadCatalog(indexFile) {
         stage.chain.some(id => id !== stage.id && !stage.neighbors.includes(id))) fail(`invalid main/chain ${stage.id}`);
     if (stage.chain.length > 3 || stage.chain.indexOf(stage.id) > 1 || stage.chain.length - stage.chain.indexOf(stage.id) > 2) fail(`chain is not short ${stage.id}`);
   }
+  if(index.release!==undefined) {
+    const release=index.release;
+    if(!text(release.brief)||!text(release.routeHint)||!Array.isArray(release.stages)||!unique(release.stages)||release.stages.length!==stages.size||release.stages.some(id=>!stages.has(id))||scenarios.get(`${release.stages[0]}/${stages.get(release.stages[0])?.main}`)?.seed!==null)fail('release needs every stage once and a seedless first scenario');
+  }
   const digest = sha256([...files].sort(([a],[b]) => a.localeCompare(b)).map(([file, bytes]) =>
     `${path.relative(root,file)}\0${sha256(bytes)}\0`).join(''));
   return { indexFile, root, index, stages, scenarios, files, digest };

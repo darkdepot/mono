@@ -1,0 +1,422 @@
+{
+  "provenance": "Anonymized native fixed-version control excerpts. Preserve progress, subsequent tool calls/results, scout input, reasoning, async call/accepted result and full final answer. Original full traces remain external evidence; excerpts test card/order only, not owner replies, records or rubric.",
+  "controls": [
+    {
+      "version": "0.40.0",
+      "source": "c0400a-codex native trace",
+      "sourceSha256": "a32aa697bc72b4dd714693c194d6fec598ccff4134f32a2f633055fbe7667503",
+      "sourceLines": [
+        99,
+        132
+      ],
+      "expectedWindows": [
+        {
+          "id": "idea-approval",
+          "decision": "Утвержд",
+          "advice": "Совет",
+          "reason": "Research",
+          "summary": [
+            "Что",
+            "Зачем",
+            "Дальше"
+          ],
+          "role": "approval"
+        }
+      ],
+      "rows": [
+        {
+          "type": "event_msg",
+          "payload": {
+            "type": "task_started",
+            "turn_id": "turn-control"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Поле источника уже есть в примере данных, но таблица его не показывает. Нашёл и важную деталь: пустая строка сейчас остаётся пустой, поэтому для новой колонки нужно явно обеспечить прочерк."
+              }
+            ]
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call",
+            "name": "wait_agent",
+            "call_id": "call-1",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "{}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "agent_message",
+            "message": "Scout report to parent; not an owner-visible assistant message."
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call",
+            "name": "wait_agent",
+            "call_id": "call-2",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call_output",
+            "call_id": "call-2",
+            "output": "{}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "agent_message",
+            "message": "Scout report to parent; not an owner-visible assistant message."
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "custom_tool_call",
+            "name": "exec",
+            "call_id": "call-3",
+            "input": "text(\"test read-back\")"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "custom_tool_call_output",
+            "call_id": "call-3",
+            "output": "{}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call",
+            "name": "request_user_input_async",
+            "call_id": "call-4",
+            "arguments": "{\"questions\":[{\"title\":\"Утверждаем колонку «Источник» после имени прогона? Советую начать Research, чтобы сверить все представления таблицы и случаи пустого источника; отдельный этап потребует дополнительного согласования перед реализацией.\\nУтвердить и начать Research (Recommended): сохраняем идею и проверяем детали / реализация начнётся после следующих согласований.\\nУтвердить, продолжу позже: сохраняем идею / исследование ждёт старта.\\nЕщё обсудить: уточняем описание / запись и переход откладываются.\",\"options\":[\"Утвердить и начать Research (Recommended)\",\"Утвердить, продолжу позже\",\"Ещё обсудить\"]}]}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call_output",
+            "call_id": "call-4",
+            "output": "{\"accepted\":true}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "agent_message",
+            "message": "Scout report to parent; not an owner-visible assistant message."
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "assistant",
+            "phase": "final_answer",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Тестовая таблица\n\n## Что\n\nДобавить во внутреннюю таблицу тестовых прогонов колонку «Источник» после имени прогона.\n\n## Зачем\n\nСейчас: источник в строке не виден, приходится смотреть данные отдельно. Он должен читаться сразу в таблице.\n\n## Образ результата\n\nКолонка «Источник» показывает значение source. Пустое значение, null и отсутствие поля показываются прочерком. Имя прогона остаётся отдельно. Не берём фильтр и сортировку: для этой задачи они не нужны.\n\n## Неизвестные\n\nКакие представления используют общую таблицу? От этого зависит полнота изменения и проверки.\n\nДальше: Research проверит представления таблицы и отображение пустого источника."
+              }
+            ]
+          }
+        },
+        {
+          "type": "event_msg",
+          "payload": {
+            "type": "task_complete",
+            "turn_id": "turn-control"
+          }
+        }
+      ]
+    },
+    {
+      "version": "0.41.0",
+      "source": "c0410a-codex native trace",
+      "sourceSha256": "085860ec831fac4126a4798a86eca1f42c734ec8fa78ba2ff13b704d48252bda",
+      "sourceLines": [
+        93,
+        120
+      ],
+      "expectedWindows": [
+        {
+          "id": "idea-approval",
+          "decision": "Утвержд",
+          "advice": "Совет",
+          "reason": "Research",
+          "summary": [
+            "Что",
+            "Зачем",
+            "Дальше"
+          ],
+          "role": "approval"
+        }
+      ],
+      "rows": [
+        {
+          "type": "event_msg",
+          "payload": {
+            "type": "task_started",
+            "turn_id": "turn-control"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Источник уже есть в данных прогонов, но таблица его не показывает. Таблица общая для «Прогонов», «Истории» и «Архива»; пустая строка сейчас также требует отдельного преобразования в прочерк."
+              }
+            ]
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call",
+            "name": "wait_agent",
+            "call_id": "call-1",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "{}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "agent_message",
+            "message": "Scout report to parent; not an owner-visible assistant message."
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "reasoning",
+            "summary": []
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "custom_tool_call",
+            "name": "exec",
+            "call_id": "call-2",
+            "input": "text(\"test read-back\")"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "custom_tool_call_output",
+            "call_id": "call-2",
+            "output": "{}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "agent_message",
+            "message": "Scout report to parent; not an owner-visible assistant message."
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call",
+            "name": "request_user_input_async",
+            "call_id": "call-3",
+            "arguments": "{\"questions\":[{\"title\":\"Утверждаем добавление колонки «Источник»? Советую начать Research: проверим общую таблицу и отображение пустых значений.\\nУтвердить и начать Research (Recommended): фиксируем описание и проверяем детали / принимаем указанную границу изменения.\\nУтвердить, продолжу позже: сохраняем описание / исследование ждёт старта.\\nЕщё обсудить: уточняем описание / создание проекта откладывается.\",\"options\":[\"Утвердить и начать Research (Recommended)\",\"Утвердить, продолжу позже\",\"Ещё обсудить\"]}]}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call_output",
+            "call_id": "call-3",
+            "output": "{\"accepted\":true}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "assistant",
+            "phase": "final_answer",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Тестовая таблица\n\n## Что\nДобавить во внутреннюю таблицу тестовых прогонов колонку «Источник» после имени прогона.\n\n## Зачем\nСейчас: источник есть в данных, но в строке не виден. Нужно читать его сразу при просмотре прогонов.\n\n## Образ результата\nВ «Прогонах», «Истории» и «Архиве» виден источник каждого прогона. Пустое значение, null и отсутствующий источник показываются прочерком. Не берём фильтр и сортировку: для чтения источника они не нужны.\n\n## Неизвестные\nКакие места используют общую таблицу и как обрабатывают пустые значения? От этого зависит полнота изменения.\n\nДальше: Research проверит места отображения таблицы и обработку пустого источника."
+              }
+            ]
+          }
+        },
+        {
+          "type": "event_msg",
+          "payload": {
+            "type": "task_complete",
+            "turn_id": "turn-control"
+          }
+        }
+      ]
+    },
+    {
+      "version": "0.42.0",
+      "source": "c0420a-codex native trace",
+      "sourceSha256": "b53e5ccd7741ed8805f8b74e6c2a563a445d63c4a6a2f614ede079f7b99f7ac6",
+      "sourceLines": [
+        96,
+        118
+      ],
+      "expectedWindows": [
+        {
+          "id": "idea-approval",
+          "decision": "Утвержд",
+          "advice": "Совет",
+          "reason": "Research",
+          "summary": [
+            "Что",
+            "Зачем",
+            "Дальше"
+          ],
+          "role": "approval"
+        }
+      ],
+      "rows": [
+        {
+          "type": "event_msg",
+          "payload": {
+            "type": "task_started",
+            "turn_id": "turn-control"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "assistant",
+            "phase": "commentary",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Источник уже есть в данных одного прогона, но таблица его не показывает. Одна таблица используется в «Прогонах», «Истории» и «Архиве»; пустая строка сейчас остаётся пустой, поэтому для источника нужно учесть её отдельно.\n"
+              }
+            ]
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call",
+            "name": "wait_agent",
+            "call_id": "call-1",
+            "arguments": "{}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "{}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "agent_message",
+            "message": "Scout report to parent; not an owner-visible assistant message."
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "reasoning",
+            "summary": []
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call",
+            "name": "request_user_input_async",
+            "call_id": "call-2",
+            "arguments": "{\"questions\":[{\"title\":\"Утверждаем колонку «Источник» после имени прогона? Советую начать Research: проверим все места показа таблицы и единое отображение пустого источника.\\nУтвердить и начать Research (Recommended): сохраняем идею и начинаем исследование / переходим к проверке решения.\\nУтвердить, продолжу позже: сохраняем идею / исследование ждёт старта.\\nЕщё обсудить: уточняем описание / запись и переход откладываются.\",\"options\":[\"Утвердить и начать Research (Recommended)\",\"Утвердить, продолжу позже\",\"Ещё обсудить\"]}]}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "function_call_output",
+            "call_id": "call-2",
+            "output": "{\"accepted\":true}"
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "agent_message",
+            "message": "Scout report to parent; not an owner-visible assistant message."
+          }
+        },
+        {
+          "type": "response_item",
+          "payload": {
+            "type": "message",
+            "role": "assistant",
+            "phase": "final_answer",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Тестовая таблица\n\n## Что\nДобавить разработчику колонку «Источник» после имени прогона в существующей внутренней таблице тестовых прогонов приложения записи.\n\n## Зачем\nСейчас: источник в строке не виден, приходится смотреть данные прогона. Колонка позволит прочитать его сразу.\n\n## Образ результата\nВ «Прогонах», «Истории» и «Архиве» источник берётся из поля source. Пустое значение, null и отсутствие источника показываются прочерком. Заголовок всегда «Источник». Не берём фильтр и сортировку: для чтения источника они не нужны.\n\n## Неизвестные\nВсе ли представления таблицы показывают источник одинаково? От этого зависит полнота правки и проверки пустых значений.\n\nДальше: Research проверит места показа таблицы и отображение пустого источника."
+              }
+            ]
+          }
+        },
+        {
+          "type": "event_msg",
+          "payload": {
+            "type": "task_complete",
+            "turn_id": "turn-control"
+          }
+        }
+      ]
+    }
+  ]
+}

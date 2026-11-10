@@ -23,6 +23,40 @@ function setup(t,host,mode='ok'){
  const authFile=path.join(dir,'auth.json');fs.writeFileSync(authFile,'{}');
  return {host,cwd:dir,packRoot:repo,outputDir:path.join(dir,'out'),authFile,timeoutMs:2000,idleMs:10,binary:{command:process.execPath,args:[path.join(repo,'scripts/test-fixtures/skills-host.mjs'),mode,repo]},mcpServers:{monotest:{url:'https://example.test/mcp'}},workspaceProof:{tool:'mcp__monotest__get_workspace',path:['name'],equals:'Test Space'},scenario:{prompt:'Run stage',brief:'Владелец предпочитает синий.',allowedTools:['mcp__monotest__get_workspace','mcp__monotest__save_project'],windows:[{mode:'recommended'}],expectedWindows:[{id:'approval',decision:'описание',advice:'Research',reason:host==='codex'?'чтобы проверить':'риск',summary:['Что','Дальше:']}]}};
 }
+for(const missing of ['answer','trace'])test(`continue7 recorded failed card dominates later missing ${missing}`,async t=>{
+ const request=setup(t,'codex','unanswered'),pack=path.join(request.cwd,'pack');fs.mkdirSync(pack);fs.writeFileSync(path.join(pack,'VERSION'),'0.42.0\n');request.packRoot=pack;
+ request.scenario.expectedWindows[0].advice='Required advice absent from native card';
+ if(missing==='trace'){
+  const read=fs.readFileSync.bind(fs);let cut=false;
+  t.mock.method(fs,'readFileSync',(file,...args)=>{
+   if(String(file).endsWith('rollout-synthetic-thread.jsonl')){
+    if(cut)throw new MissingEvidence('saved trace became unreadable');
+    const value=read(file,...args);if(String(value).includes('Принято.')){cut=true;throw new MissingEvidence('saved trace became unreadable');}return value;
+   }return read(file,...args);
+  });
+ }
+ const result=await runTextScenario(request);assert.equal(result.cardCheck.status,'failed',JSON.stringify(result));assert.equal(result.status,'failed',JSON.stringify(result));
+});
+
+const notificationCases=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-claude-pending-notification.json',import.meta.url)));
+for(const sample of notificationCases.cases)for(const complete of [false,true])test(`continue7 Claude pending notification ${sample.id} ${complete?'finishes':'ends incomplete'}`,async t=>{
+ const request=setup(t,'claude'),plan=path.join(request.cwd,'plan.json');request.timeoutMs=3000;
+ fs.writeFileSync(plan,JSON.stringify({nativeBackground:sample.events,omitContinuation:!complete,messages:['Что: колонка Источник.\nУтверждаем и начинаем Research?','Утверждение записал.']}));
+ request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'agree','--plan',plan];
+ request.scenario={prompt:'Run text',brief:'Synthetic completed continuation after saved native prefix.',allowedTools:['*'],expectedReplies:[{id:'approval',stage:'idea',role:'approval',asksStart:true,summary:['Что:'],question:'Утверждаем и начинаем Research?',reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true},response:['Утверждение записал.']}]};
+ const result=await runTextScenario(request);assert.equal(result.status,complete?'passed':'unverified',JSON.stringify(result));assert.equal(result.replies.length,complete?1:0);
+});
+test('production historical Codex refusal reaches a confirmed native resumed answer',async t=>{
+ const request=setup(t,'codex'),packRoot=path.join(request.cwd,'tested-pack');fs.mkdirSync(packRoot);fs.writeFileSync(path.join(packRoot,'VERSION'),'0.42.0\n');request.packRoot=packRoot;
+ request.scenario.windows=[{mode:'refuse',text:'Не буду отвечать на этот вопрос.'}];
+ const result=await runTextScenario(request);assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.replies[0].received,true);
+ assert.match(fs.readFileSync(result.sent,'utf8'),/send_user_message_question_reply/);
+});
+test('production historical Codex includes additional rollout sources in its verdict',async t=>{
+ const request=setup(t,'codex','child-window'),packRoot=path.join(request.cwd,'tested-pack');fs.mkdirSync(packRoot);fs.writeFileSync(path.join(packRoot,'VERSION'),'0.42.0\n');request.packRoot=packRoot;
+ const result=await runTextScenario(request);assert.equal(result.status,'unverified',JSON.stringify(result));assert.equal(result.check.status,'passed');
+ assert.equal(result.sourceChecks.length,2);assert.equal(result.sourceChecks[1].status,'unverified','the child source has no own policy or complete native answer proof');
+});
 test('Codex completion on the final allowed iteration passes',async t=>{
  const request=setup(t,'codex');request.maxTurns=1;
  const complete=await runScenario(request);
@@ -510,4 +544,21 @@ test('U7 stage-driver MCP intercepts only predefined destinations without execut
  assert.deepEqual(replies[1].result.tools[0].inputSchema.properties.stage.enum,['discovery']);
  assert.deepEqual(JSON.parse(replies[2].result.content[0].text),{driverIntercepted:true,stage:'discovery',projectId:'fixture-project'});
  assert.match(replies[3].error.message,/permission/);assert.equal(replies[3].result,undefined);
+});
+
+const liveIdle=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-host-context-regressions.json',import.meta.url))).idle;
+for(const mode of ['full-native','foreground','one-nudge','second-idle','no-policy'])test(`continue8 Claude consumed midturn notification ${mode}`,async t=>{
+ const request=setup(t,'claude'),plan=path.join(request.cwd,'idle-plan.json'),prefix=structuredClone(liveIdle.events),full=prefix.at(-2).message.content[0].text;
+ const question=full.trim().split('\n').findLast(s=>s.includes('?')).trim();
+ if(mode==='foreground'){prefix[0]={type:'system',subtype:'task_started',task_id:prefix[2].task_id,is_backgrounded:false};prefix.splice(4,1);}
+ if(!['full-native','foreground'].includes(mode))prefix.at(-2).message.content[0].text='Ещё досматриваю Linear.';
+ const messages=['full-native','foreground'].includes(mode)?['unused','Утверждение записал.']:['unused',mode==='second-idle'?'Ещё проверяю материалы.':full,'Утверждение записал.'];
+ fs.writeFileSync(plan,JSON.stringify({idlePrefix:prefix,messages}));
+ request.binary.args=[path.join(repo,'scripts/test-fixtures/skills-text-host.mjs'),'agree','--plan',plan];
+ request.scenario={prompt:'Run text',brief:'Saved native consumed notification order; continuation tails are synthetic.',allowedTools:['*'],...(mode==='no-policy'?{}:{idleContinuation:'Продолжай.'}),expectedReplies:[{id:'approval',stage:'idea',role:'approval',asksStart:true,summary:['## Что','## Зачем','## Образ результата','## Неизвестные'],question,reply:'принимаю',intent:'agree',outcome:{approval:true,startNext:true},response:['Утверждение записал.']}]};
+ const began=performance.now(),result=await runTextScenario(request);assert.equal(result.status,['full-native','foreground','one-nudge'].includes(mode)?'passed':'unverified',JSON.stringify(result));
+ assert.ok(performance.now()-began<1500,'known idle host must finish without reaching2s timeout');
+ assert.equal(result.replies.length,['full-native','foreground','one-nudge'].includes(mode)?1:0);
+ assert.equal(result.nudges?.length??0,['one-nudge','second-idle'].includes(mode)?1:0);
+ if(result.nudges?.length)assert.equal(result.nudges[0].kind,'non-consent');
 });

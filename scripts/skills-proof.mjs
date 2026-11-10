@@ -45,6 +45,22 @@ function claudeBlock(event, type, id, answer = false) {
   if (matches.length !== 1) absent();
   return answer ? matches[0] : guarded(matches[0]);
 }
+function claudeAnswer(sent) {
+  // Allow receipts use the captured answer wording; deny is checked separately.
+  if (sent?.behavior !== 'allow') absent();
+  const questions = sent.updatedInput?.questions;
+  const answers = Object.entries(sent.updatedInput?.answers ?? {});
+  if (!Array.isArray(questions) || !questions.length || answers.length !== questions.length ||
+      answers.some(([question,answer]) => typeof answer !== 'string' || !questions.some(q => q.question === question))) absent();
+  const filled = answers.filter(([,answer]) => answer !== '');
+  if (!filled.length) return 'The user did not answer the questions.';
+  const pairs = filled.map(([question,answer]) => `"${question}"="${answer}"`).join(', ');
+  const known = filled.every(([question,answer]) => questions.find(q => q.question === question)?.options?.some(o => o.label === answer));
+  return known
+    ? `Your questions have been answered: ${pairs}. You can now continue with these answers in mind.`
+    : `The user answered: ${pairs}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`;
+}
+
 export function nativeProof({host, kind, call, result, proof, reply, prompt, callId}) {
   try {
     let value,raw;
@@ -52,7 +68,7 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
     guarded(call); guarded(result);
     if (kind === 'text-message') {
       const r=native(result);
-      if (host==='claude' && (result?.parent_tool_use_id || !['assistant','user'].includes(result?.type))) absent();
+      if (host==='claude' && (result?.parent_tool_use_id || result?.type==='user'&&(result.isSynthetic===true||result.origin?.kind==='task-notification') || !['assistant','user'].includes(result?.type))) absent();
       if (host==='codex' && (r?.type!=='message' || !['assistant','user'].includes(r.role))) absent();
       const role=host==='claude'?result.type:r.role;
       const content=host==='claude'?at(result,['message','content']):at(r,['content']);
@@ -95,9 +111,35 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
     if (host === 'codex') {
       const c = native(call), r = native(result);
       const name=nativeToolName(c);
+      if (kind === 'answer') {
+        // Online and offline consumers require an answer to this exact native window.
+        if (typeof callId !== 'string' || !callId || (prompt !== undefined && typeof prompt !== 'string') || c?.type !== 'function_call' || name !== 'request_user_input_async' || c.call_id !== callId || r?.type !== 'message' || r.role !== 'user') absent();
+        const content = at(r, ['content']);
+        if (!Array.isArray(content) || content.length !== 1 || at(content,[0]).type !== 'input_text' || typeof at(content,[0,'text']) !== 'string' || (prompt !== undefined && at(content,[0,'text']) !== prompt)) absent();
+        const text=at(content,[0,'text']).trim(),open='<send_user_message_question_reply>',close='</send_user_message_question_reply>';
+        if(!text.startsWith(open)||!text.endsWith(close)) absent();
+        const answers=JSON.parse(text.slice(open.length,-close.length));
+        const questions=at(JSON.parse(at(c,['arguments'])),['questions']);
+        if(!Array.isArray(questions)||!questions.length||!Array.isArray(answers)||answers.length!==questions.length) absent();
+        for(let i=0;i<questions.length;i++){
+          const question=at(questions,[i,'title']),answer=at(answers,[i]);
+          if(typeof question!=='string'||!question||Object.keys(answer).length!==3||
+             typeof at(answer,['answer'])!=='string'||typeof at(answer,['questionItemId'])!=='string'||at(answer,['question'])!==question||
+             !isDeepStrictEqual(JSON.parse(at(answer,['questionItemId'])),['request_user_input_async',callId,i])) absent();
+        }
+        return {status:'confirmed'};
+      }
       const outputType = c?.type === 'function_call' ? 'function_call_output' : c?.type === 'custom_tool_call' ? 'custom_tool_call_output' : null;
       if (!outputType || typeof c.call_id !== 'string' || !c.call_id || r?.type !== outputType || r.call_id !== c.call_id) absent();
       const output = at(r, ['output']);
+      if (kind === 'window') {
+        if (c.type !== 'function_call' || name !== 'request_user_input_async') absent();
+        if (typeof output !== 'string') absent();
+        value = guarded(JSON.parse(output));
+        const args = JSON.parse(at(c,['arguments']));
+        if (!Array.isArray(args?.questions) || !args.questions.length || !value || value.accepted !== true || Object.keys(value).length !== 1) absent();
+        return {status:'confirmed',value:args};
+      }
       if(['workspace','record'].includes(kind)&&Array.isArray(output)&&output.length>1){
         guarded(output);
         const parsed=[];
@@ -118,7 +160,32 @@ export function nativeProof({host, kind, call, result, proof, reply, prompt, cal
       const id = callId;
       if (typeof id !== 'string' || !id) absent();
       const c = claudeBlock(call,'tool_use',id);
-      const r = claudeBlock(result,'tool_result',id);
+      if (kind === 'window') {
+        const r = at(result,['request']);
+        if ((r.tool_use_id !== undefined && r.tool_use_id !== id) || c.name !== 'AskUserQuestion' || result.type !== 'control_request' || !result.request_id || r.subtype !== 'can_use_tool' || r.tool_name !== c.name || !isDeepStrictEqual(r.input,c.input)) absent();
+        return {status:'confirmed'};
+      }
+      const r = claudeBlock(result,'tool_result',id,kind === 'answer');
+      if (kind === 'workspace' && c.name !== proof?.tool) absent();
+      if (kind === 'answer') {
+        if(c.name !== 'AskUserQuestion') absent();
+        let sent=reply?.response?.response;
+        if(sent?.behavior==='deny'){
+          if(r.is_error!==true||r.isError||typeof sent.message!=='string'||r.content!==sent.message)absent();
+          return {status:'confirmed',refused:true};
+        }
+        guarded(r);
+        if(!reply){
+          // Recorded full Claude receipts include the answered input. Reuse the
+          // same exact receipt check as online delivery; do not parse prose.
+          const updatedInput=at(result,['tool_use_result']);
+          at(updatedInput,['answers']);
+          if(!isDeepStrictEqual(at(updatedInput,['questions']),c.input?.questions)) absent();
+          sent={behavior:'allow',updatedInput};
+        }
+        if(at(r,['content']) !== claudeAnswer(sent)) absent();
+        return {status:'confirmed'};
+      }
       if (kind === 'command') {
         if (c.name !== 'Bash' || typeof at(r,['content']) !== 'string') absent();
         return {status:'confirmed'};

@@ -12,6 +12,16 @@ function scratch(t){const d=fs.mkdtempSync(path.join(os.tmpdir(),'skills-trace-'
 // The recorded cut omitted IDs; restore a synthetic matching pair for linkage tests.
 const codexRows=()=>JSON.parse(fs.readFileSync(`${base}/codex/trace-control-v0.41.0-async-order.json`)).items.map((payload)=>({type:'response_item',payload:{...payload,...(payload.type.startsWith('function_call')?{call_id:'synthetic-window'}:{})}}));
 const codexExpected={id:'approval',decision:'описание',advice:'Research',reason:'чтобы проверить',summary:['Что','Дальше:']};
+for(const reverse of [false,true])test(`continue7 a known window failure dominates missing native proof in either order (${reverse})`,t=>{
+ const failed=codexRows(),unknown=codexRows();
+ failed.at(-1).payload.phase='commentary';unknown[1].payload.output='{}';
+ unknown.forEach(r=>{if(r.payload.call_id)r.payload.call_id='uncertain-window';});
+ const boundary={type:'event_msg',payload:{type:'task_complete'}};
+ const rows=(reverse?[unknown,failed]:[failed,unknown]).flatMap(part=>[...part,boundary]);
+ const checked=textTrace({host:'codex',testedVersion:'0.42.0',trace:scratch(t)(rows),expectedWindows:[codexExpected],excerpt:true});
+ assert.equal(checked.status,'failed',JSON.stringify(checked));
+ assert.ok(checked.windows.some(w=>w.status==='failed'));assert.ok(checked.windows.some(w=>w.status==='unverified'));
+});
 test('Codex recorded accepted:true result establishes successful window execution',t=>{
  const r=checkTrace({host:'codex',trace:scratch(t)(codexRows()),expectedWindows:[codexExpected],excerpt:true});
  assert.equal(r.status,'passed');
@@ -92,6 +102,23 @@ test('Claude summary anchors cannot be borrowed from an earlier API message',t=>
  summary.message.id='earlier-message';window.message.content.unshift({type:'text',text:'Коротко.'});
  assert.equal(checkTrace({host:'claude',trace:write([summary,window]),expectedWindows:[expected],excerpt:true}).status,'failed');
 });
+for(const differentChild of [false,true])test(`Claude parent summary survives distinct window message ID; different child text=${differentChild}`,t=>{
+ const rows=structuredClone(JSON.parse(fs.readFileSync('scripts/test-fixtures/skills-claude-child-approval.json')).events);
+ if(!differentChild)rows[1].message.content[0].text=rows[0].message.content[0].text;
+ const questions=rows[2].message.content[0].input.questions,answer='Утвердить, продолжу позже';
+ rows.push({type:'control_request',request_id:'permission',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions}}},
+  {type:'user',tool_use_result:{questions,answers:{[questions[0].question]:answer}},message:{content:[{type:'tool_result',tool_use_id:'window',content:`Your questions have been answered: "${questions[0].question}"="${answer}". You can now continue with these answers in mind.`}]}},
+  {type:'result',subtype:'success'});
+ const write=scratch(t),check=()=>textTrace({host:'claude',trace:write(rows),testedVersion:'0.42.0',expectedWindows:[{id:'idea-approval',role:'approval',decision:'Утвержд',advice:'Совет',reason:'Research',summary:['Что','Зачем','Дальше']}]});
+ assert.notEqual(rows[0].message.id,rows[2].message.id);
+ assert.equal(check().status,'passed',JSON.stringify(check()));
+ const parent=rows.shift();
+ assert.equal(check().status,'failed','hidden scout cannot supply the owner summary');rows.unshift(parent);
+ const short={type:'assistant',message:{id:'new-parent',content:[{type:'text',text:'Коротко.'}]}};
+ rows.splice(2,0,short);assert.equal(check().status,'failed','new parent text replaces the old presentation');rows.splice(2,1);
+ rows.splice(2,0,{type:'assistant',message:{id:'service',content:[{type:'tool_use',id:'read',name:'Read',input:{file_path:'fixture'}}]}});
+ assert.equal(check().status,'failed','parent service work invalidates the summary');
+});
 test('Claude service call inside the same content array cannot sit between summary and window',t=>{
  const write=scratch(t),sample=JSON.parse(fs.readFileSync(`${base}/claude/trace-control-v0.41.0-approval.json`));
  const summary=sample.events.find(r=>r.line===138).event,window=sample.events.find(r=>r.line===139).event;
@@ -144,4 +171,52 @@ for(const host of ['claude','codex'])test(`${host}: late service work and a cut 
  rows.push(assistant('Ещё служебная работа.'));assert.equal(check().status,'unverified');rows.pop();
  rows.splice(1,0,host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id:'service',name:'Read',input:{file_path:'/scratch/example'}}]}}:{type:'response_item',payload:{type:'function_call',name:'exec_command',call_id:'service',arguments:'{"cmd":"pwd"}'}});
  assert.notEqual(check().status,'passed');
+});
+
+const liveContext=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-host-context-regressions.json',import.meta.url)));
+for(const syntheticReply of [false,true])test(`continue8 saved Claude Skill body is never an owner reply (${syntheticReply})`,t=>{
+ const rows=structuredClone(liveContext.synthetic.events),expected=JSON.parse(fs.readFileSync('evals/scenarios/idea/approve/scenario.json')).hosts.claude.expectedReplies;
+ if(syntheticReply){rows[7].message.content[0].text=expected[0].reply;rows.splice(3,1);}
+ const checked=textTrace({host:'claude',testedVersion:'0.45.0',trace:scratch(t)(rows),expectedReplies:expected});
+ assert.equal(checked.status,syntheticReply?'failed':'passed',JSON.stringify(checked));
+});
+for(const role of ['developer','system'])test(`continue8 saved Codex resumed ${role} context preserves actual owner reply`,t=>{
+ const rows=structuredClone(liveContext.context.events);rows.find(r=>r.payload?.role==='developer').payload.role=role;
+ const expected=JSON.parse(fs.readFileSync('evals/scenarios/idea/defer/scenario.json')).hosts.codex.expectedReplies;
+ const checked=textTrace({host:'codex',testedVersion:'0.45.0',trace:scratch(t)(rows),expectedReplies:expected});
+ assert.equal(checked.status,'passed',JSON.stringify(checked));assert.equal(checked.exchanges[0].reply,expected[0].reply);
+});
+for(const sample of liveContext.controls)test(`continue8 saved ${sample.id} service commentary is not a stranded presentation`,t=>{
+ const checked=textTrace({host:'codex',testedVersion:'0.42.0',trace:scratch(t)(sample.events),expectedWindows:sample.expectedWindows,phase:'excerpt'});
+ assert.equal(checked.status,'passed',JSON.stringify(checked));
+ const broken=structuredClone(sample.events),summary=broken.findLast(e=>e.payload?.role==='assistant'&&e.payload.phase==='final_answer').payload.content[0].text;
+ broken.find(e=>e.payload?.role==='assistant').payload.content[0].text=summary;
+ broken.findLast(e=>e.payload?.role==='assistant'&&e.payload.phase==='final_answer').payload.content[0].text='Короткое подтверждение.';
+ const bad=textTrace({host:'codex',testedVersion:'0.42.0',trace:scratch(t)(broken),expectedWindows:sample.expectedWindows,phase:'excerpt'});
+ assert.equal(bad.status,'failed');assert.match(bad.windows[0].issues.join(';'),/async summary must be final and last/);
+});
+for(const stage of ['idea','discovery','design','tech-evaluation','handoff'])for(const host of ['claude','codex'])test(`continue8 ${stage}/${host} clarification uses stems without accepting consent`,async()=>{
+ const {checkStageResponse}=await import('./skills-owner.mjs'),expected=JSON.parse(fs.readFileSync(`evals/scenarios/${stage}/empty/scenario.json`)).hosts[host].expectedReplies[0];
+ assert.doesNotThrow(()=>checkStageResponse(expected,liveContext.emptyResponse));
+ assert.throws(()=>checkStageResponse(expected,'Изменение принято. Начинаю следующий этап.'));
+});
+for(const sample of liveContext.controls)test(`continue8 ${sample.id} unanchored D5 cannot hide a stranded summary behind service text`,t=>{
+ const rows=structuredClone(sample.events),final=rows.findLast(r=>r.payload?.role==='assistant'&&r.payload.phase==='final_answer'),full=final.payload.content[0].text;
+ rows.find(r=>r.payload?.role==='assistant').payload.content[0].text=full;
+ const service={type:'response_item',payload:{type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text:'Продолжим после согласия.'}]}};
+ rows.splice(rows.findIndex(r=>r.payload?.name==='request_user_input_async'),0,service);final.payload.content[0].text='Продолжим после согласия.';
+ const checked=textTrace({host:'codex',testedVersion:'0.42.0',trace:scratch(t)(rows),expectedWindows:sample.expectedWindows.map(e=>({...e,role:'approval',summary:[]})),phase:'excerpt'});
+ assert.equal(checked.status,'failed',JSON.stringify(checked));assert.match(checked.windows[0].issues.join(';'),/async summary must be final and last/);
+});
+
+test('continue9 empty anchors belong only to their own historical window',t=>{
+ const choice=codexRows(),approval=codexRows();
+ const q=JSON.parse(choice[0].payload.arguments).questions[0];
+ q.title=q.title.replaceAll('Утвердить','Выбрать');q.options=q.options.map(o=>typeof o==='string'?o.replaceAll('Утвердить','Выбрать'):{...o,label:o.label.replaceAll('Утвердить','Выбрать')});
+ choice[0].payload.arguments=JSON.stringify({questions:[q]});
+ approval.forEach(r=>{if(r.payload.call_id)r.payload.call_id='approval-second';});
+ approval.splice(0,0,{type:'response_item',payload:{type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text:'Служебное пояснение перед окном.'}]}});
+ const trace=scratch(t)([...choice,{type:'event_msg',payload:{type:'task_complete'}},...approval]);
+ const result=textTrace({host:'codex',testedVersion:'0.42.0',trace,phase:'excerpt',expectedWindows:[{...codexExpected,id:'choose',role:'choice',summary:[]},{...codexExpected,id:'approve',role:'approval'}]});
+ assert.equal(result.status,'passed',JSON.stringify(result));
 });
