@@ -2287,14 +2287,26 @@ for(const mode of ['valid','wrong-destination','wrong-label','wrong-token','code
  f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:mode==='code'?'`'+stored(label,dest)+'`':stored(label,dest)}]);
  f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
 });
-for(const mode of ['valid','wrong-text','link-syntax','code','fence'])test(`live Research escaped square bracket normalization ${mode}`,t=>{
- const f=fixture(t),sample="Width is rows.map(row => row[i].length) over [['name', 'Name']], then cb[i](a, b) and this[method]().",escaped=value=>value.replace(/[\[\]]/g,'\\$&');
+for(const mode of ['valid','wrong-text','code','fence'])test(`live Research escaped square bracket normalization ${mode}`,t=>{
+ const f=fixture(t),sample="Width is rows.map(row => row[i].length) over [['name', 'Name']], then cb[i](a, b) and this[method]().",escaped=value=>value.replace(/[\\\[\]]/g,'\\$&');
  const wrap={code:value=>'`'+value+'`',fence:value=>'Sample:\n\n```\n'+value+'\n```'}[mode]??(value=>value);
- const original=mode==='link-syntax'?'See \\[note\\](target).':wrap(sample);
- f.record.body=original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
- const stored=mode==='link-syntax'?'See [note](target).':wrap(escaped(mode==='wrong-text'?sample.replace('row[i]','row[j]'):sample));
- f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:stored}]);
+ f.record.body=wrap(sample);f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:wrap(escaped(mode==='wrong-text'?sample.replace('row[i]','row[j]'):sample))}]);
  f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
+});
+// A real link and the same text with escaped brackets are different records, whatever the link shape.
+const linkShapes={simple:'[note](target)',title:'[Guide](https://example.test "Title")',parentheses:'[Guide](https://example.test/a_(b))',angle:'[Guide](<https://example.test/a b>)',nested:'[run[key]](https://example.test)'};
+for(const [shape,link] of Object.entries(linkShapes))for(const side of ['written','stored'])test(`live Research escaped brackets never equal a real link (${shape}, link ${side})`,t=>{
+ const f=fixture(t),literal=link.replace(/[\\\[\]]/g,'\\$&'),bodies=side==='written'?[link,literal]:[literal,link];
+ f.record.body=`See ${bodies[0]}.`;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:`See ${bodies[1]}.`}]);
+ f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,'failed',JSON.stringify(result));
+});
+test('live Research link label keeps its link when only the inner brackets are escaped',t=>{
+ const f=fixture(t);
+ f.record.body='See [run[key]](https://example.test).';f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:'See [run\\[key\\]](https://example.test).'}]);
+ f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,'passed',JSON.stringify(result));
 });
 for(const mode of ['valid','wrong-start','fragment','missing-end'])test(`continue9 absolute Idea artifact bounds preserve full four-section snapshot (${mode})`,t=>{
  const f=textIdeaFixture(t),rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse),binding=f.request.approvalBindings[1],full=binding.text;

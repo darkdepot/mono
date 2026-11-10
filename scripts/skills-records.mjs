@@ -58,6 +58,7 @@ const identityValues=value=>typeof value==='string'?[value]:[value?.id,value?.na
 // Linear's observed block spacing, link wrappers, list markers, self-links on
 // bare file-like tokens and backslashes before prose square brackets. Preserve
 // paragraph boundaries, code and all substantive bytes.
+const escapedBracket=(all,slashes,mark)=>slashes.length%2?all:`${slashes}\\${mark}`;
 function prose(value) {
  return value.replace(/<issue\b[^<>]*\/\s*>/g,all=>{
    const label=all.match(/\blabel="([^"]+)"/)?.[1],key=all.match(/\bhref="https:\/\/linear\.app\/[^"\s]+\/issue\/([^/"#?]+)[^"]*"/)?.[1];
@@ -66,9 +67,11 @@ function prose(value) {
   .replace(/\[([^\]\n]+)\]\(<([^<>\s()]+)>\)/g,'[$1]($2)').replace(/\]\(([^()\s<>]+)\)/g,(all,dest)=>{try{return `](${decodeURI(dest)})`;}catch{return all;}}).replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1')
   // README.md:7 is stored as [README.md:7](<http://README.md:7>); only a label equal to its own target collapses.
   .replace(/\[([^\[\]\s]+)\]\(http:\/\/\1\)/g,'$1')
-  // row[i] is stored as row\[i\]. Escaped is the common form; only the label brackets of a whole simple
-  // link stay bare, so escaped literal text never equals a link and call syntax like cb[i](a, b) still matches.
-  .replace(/(\[[^\[\]\n]*\]\([^()\s<>]+\))|(\\*)([\[\]])/g,(all,link,slashes,bracket)=>link??(slashes.length%2?all:`${slashes}\\${bracket}`));
+  // row[i] is stored as row\[i\]. Escaped is the common form; only the label brackets of a whole inline link
+  // (bare or <angle> destination, optional title) stay bare, so escaped literal text never equals a link and
+  // call syntax like cb[i](a, b) still matches.
+  .replace(/\[((?:[^\[\]\\\n]|\\.|\[[^\[\]\n]*\])*)\](\((?:<[^<>\n]+>|(?:[^\s<>()]|\([^\s<>()]*\))+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\))|(\\*)([\[\]])/g,
+   (all,label,tail,slashes,mark)=>tail?`[${label.replace(/(\\*)([\[\]])/g,escapedBracket)}]${tail}`:escapedBracket(all,slashes,mark));
 }
 function inlineProse(line,opened) {
  let result='',start=0,delimiter=opened;
