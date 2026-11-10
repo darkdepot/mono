@@ -93,8 +93,8 @@ function markdown(value){
    else if(marker[1][0]===fence[0]&&marker[1].length>=fence.length&&!marker[2].trim())fence=null;
   }
   if(!literal&&heading&&line==='')continue;
-  if(!literal&&/^(?:#{1,6} | {0,3}[-*] )/.test(line)){
-   // Optional separation before a heading/list is renderer formatting.
+  if(!literal&&/^(?:#{1,6} | {0,3}[-*] | {0,3}\d{1,3}\. )/.test(line)){
+   // Optional separation before a heading, bullet or numbered item is renderer formatting.
    while(result.at(-1)==='')result.pop();
   }else if(!literal&&line!==''&&result.at(-1)===''&&result.at(-2)===''&&/^ {0,3}[-*] /.test(result.findLast(v=>v!=='')??'')){
    // Keep the paragraph break after a list; only extra empty lines collapse.
@@ -586,7 +586,7 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
  if(presentation==='inline') {
   if(anchored(expected)&&(binding.artifactEnd!==undefined||binding.artifactStart!==undefined)) {
    const start=binding.artifactStart??0,end=binding.artifactEnd;
-   if(binding.artifactStart!==undefined&&expected.stage!=='idea')throw new Error('approval does not bind the complete displayed artifact');
+   if(binding.artifactStart!==undefined&&!['idea','tech-evaluation'].includes(expected.stage))throw new Error('approval does not bind the complete displayed artifact');
    if(!Number.isInteger(start)||start<0||!Number.isInteger(end)||end<=start||end>exchange.text.length||exchange.text.slice(start,end)!==(binding.artifactStart===undefined?displayed(binding.text):binding.text)||!exchange.text.slice(end).split('\n').some(line=>line.trim()===exchange.question))throw new Error('approval does not bind the complete displayed artifact');
   }else if(exchange.text!==displayed(framing.before+binding.text+framing.after))throw new Error('approval does not bind the complete displayed artifact');
  }

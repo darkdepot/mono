@@ -2455,3 +2455,41 @@ test('MONO-371 a package start without bindings waits for them instead of failin
  const result=(await packageStartFixture(t,'unbound')).check();
  assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/shown-version binding missing/);assert.equal(result.bindingOnly,true);
 });
+
+// MONO-372: refusals of a correct stage found by the live Codex chain.
+for(const mode of ['valid','wrong-text','plain-line','code'])test(`MONO-372 an empty line Linear puts before a numbered item is renderer formatting (${mode})`,t=>{
+ const f=fixture(t),steps='1. Данные: источник читается из поля.\n2. Текст: колонка после имени.',lead=mode==='plain-line'?'Затем сверить вывод.':steps;
+ const wrap=mode==='code'?(value=>'```\n'+value+'\n```'):(value=>value),written=wrap('Запустить проверки по порядку.\n'+lead);
+ f.record.body=written;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ const stored=wrap('Запустить проверки по порядку.\n\n'+(mode==='wrong-text'?lead.replace('после имени','перед именем'):lead));
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:stored}]);
+ f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
+});
+
+function techPageFixture(t,mode){
+ const f=textFixture(t,'claude','defer'),prd='00000000-0000-4000-8000-0000000000e1',spec='00000000-0000-4000-8000-0000000000e2';
+ const page='Добавляем «Источник» одной колонкой после имени.\nТекст и графика читают один список колонок.\nДальше: задачи.',lead='Опирался на бриф: место после имени, прочерк для пустого.\n\n',question='Утверждаешь это решение?';
+ Object.assign(f.expected,{stage:mode==='other-stage'?'discovery':'tech-evaluation',asksStart:false,reply:'утверждаю',intent:'agree',outcome:{approval:true,startNext:false},question:{anchors:[['решение']],forbidden:[]},summary:['Источник'],presentation:'inline',driverStart:null,response:{anchors:[['запис']],forbidden:[],question:false}});
+ f.record.body='```text\nmono-tech: approved project='+projectId+' prd='+prd+' prd-updatedAt='+date+' spec='+spec+' spec-sha256='+'b'.repeat(64)+' page-sha256='+'c'.repeat(64)+' by=owner\n```\n\n```mono-tech-page\n'+page+'\n```\n\nВладелец: ответил «утверждаю»';
+ f.page('comments','comments',[f.record]);f.request.expectedRecords=[{type:'mono-tech: approved',count:1}];f.request.packRoot=process.cwd();
+ f.events.splice(0,f.events.length,f.assistant(lead+page+'\n\nСоветую брать этот вариант.\n'+question),f.terminal,f.user('утверждаю'),f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body}),f.result('write',f.record),f.assistant('Утверждение записал.'));
+ const binding={recordId:'r1',replyId:'decision',shownLine:1,currentLine:4,text:page,artifactStart:lead.length,artifactEnd:lead.length+page.length};
+ if(mode==='wrong-start')binding.artifactStart--;
+ if(mode==='fragment'){binding.text=page.slice(0,page.indexOf('\nДальше'));binding.artifactEnd=lead.length+binding.text.length;}
+ if(mode==='missing-end')delete binding.artifactEnd;
+ f.request.approvalBindings=[binding];
+ return f;
+}
+for(const mode of ['valid','wrong-start','fragment','missing-end','other-stage'])test(`MONO-372 a Tech Evaluation page may start after a brief line when bound by absolute artifact bounds (${mode})`,t=>{
+ const result=techPageFixture(t,mode).check();
+ // The curated fixture has no PRD or Tech Spec documents, so a bound page still stops later, at the real tech gate.
+ if(mode==='valid'){assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/tech prd document absent/);return;}
+ assert.equal(result.status,'failed',JSON.stringify(result));
+ assert.match(result.reason,mode==='fragment'?/outgoing approved version differs from shown content/:/approval does not bind the complete displayed artifact/);
+});
+
+test('MONO-372 the owner line ends at the closing quote; a full stop after it is refused',t=>{
+ const f=textFixture(t,'claude','defer');assert.equal(f.check().status,'passed',f.check().reason);
+ f.record.body=f.record.body.replace(`«${f.expected.reply}»`,`«${f.expected.reply}».`);f.events[5]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[6]=f.result('write',f.record);f.page('comments','comments',[f.record]);
+ const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/verbatim owner reply missing or substituted outside fences/);
+});
