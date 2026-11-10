@@ -142,18 +142,26 @@ test("head changes reset evidence; new events reset quiet time; deadline survive
   s.reviews.push({ id: 1 }); assert.equal(advanceEvidence(state, s, 4000).lastEventAt, 4000);
 });
 const reviewed = (extra = {}) => ({ key: 'k1', weight: 'P2', file: 'a.mjs', line: 3, title: 'Leftover', status: 'confirmed', outcome: 'confirmed', danger: false, origin: 'introduced', outOfContract: false, riskRaised: false, ...extra });
-test("review outcome mapping: only harmless leftovers of the last round become successors", () => {
+test("review outcome mapping: what leaves the rounds as a successor candidate", () => {
   const record = (outcome, findings = []) => ({ outcome, findings });
+  const minor = (extra = {}) => reviewed({ weight: 'P3', danger: true, dangerCase: 'silent-result', ...extra });
   for (const [name, input, last, expected] of [
-    ['clean stays clean', record('clean'), true, 'clean'],
-    ['open findings before the last round', record('not-converged', [reviewed()]), false, 'not-converged'],
-    ['harmless leftovers on the last round', record('not-converged', [reviewed(), reviewed({ key: 'k2', status: 'closed' })]), true, 'clean-with-successors'],
-    ['dangerous', record('not-converged', [reviewed({ danger: true })]), true, 'not-converged'],
-    ['unresolved', record('not-converged', [reviewed({ outcome: 'unresolved', status: 'unresolved' })]), true, 'not-converged'],
-    ['out of contract', record('not-converged', [reviewed({ outOfContract: true })]), true, 'not-converged'],
-    ['risk raised on a closed finding', record('not-converged', [reviewed(), reviewed({ key: 'k2', status: 'closed', riskRaised: true })]), true, 'not-converged'],
-    ['nothing left open', record('not-converged', [reviewed({ status: 'closed', outOfContract: true })]), true, 'not-converged'],
-    ['not reviewed', record('not-reviewed', [reviewed()]), true, 'not-reviewed'],
+    ['clean stays clean', record('clean'), 3, 'clean'],
+    ['open findings before the last round', record('not-converged', [reviewed()]), 2, 'not-converged'],
+    ['harmless leftovers on the last round', record('not-converged', [reviewed(), reviewed({ key: 'k2', status: 'closed' })]), 3, 'clean-with-successors'],
+    ['dangerous', record('not-converged', [reviewed({ danger: true })]), 3, 'not-converged'],
+    ['unresolved', record('not-converged', [reviewed({ outcome: 'unresolved', status: 'unresolved' })]), 3, 'not-converged'],
+    ['out of contract', record('not-converged', [reviewed({ outOfContract: true })]), 3, 'not-converged'],
+    ['risk raised on a closed finding', record('not-converged', [reviewed(), reviewed({ key: 'k2', status: 'closed', riskRaised: true })]), 3, 'not-converged'],
+    ['nothing left open', record('not-converged', [reviewed({ status: 'closed', outOfContract: true })]), 3, 'not-converged'],
+    ['not reviewed', record('not-reviewed', [reviewed()]), 3, 'not-reviewed'],
+    ['minor leftovers are fixed in round one', record('not-converged', [minor()]), 1, 'not-converged'],
+    ['minor leftovers pass from round two, dangerous or unresolved', record('not-converged', [minor({ outcome: 'unresolved', status: 'unresolved', dangerCase: 'unknown' })]), 2, 'clean-with-successors'],
+    ['a minor leftover about data never passes', record('not-converged', [minor({ dangerCase: 'data' })]), 3, 'not-converged'],
+    ['a minor leftover about a gate bypass never passes', record('not-converged', [minor({ dangerCase: 'gate-bypass' })]), 2, 'not-converged'],
+    ['a minor leftover does not carry a serious one', record('not-converged', [minor(), reviewed({ key: 'k2', danger: true })]), 2, 'not-converged'],
+    ['an older dangerous defect is a successor in any round', record('not-converged', [reviewed({ origin: 'pre-existing', danger: true })]), 1, 'clean-with-successors'],
+    ['an older unresolved defect still blocks', record('not-converged', [reviewed({ origin: 'pre-existing', outcome: 'unresolved', status: 'unresolved' })]), 3, 'not-converged'],
   ]) {
     const result = roundOutcome(input, last);
     assert.equal(result.outcome, expected, name);

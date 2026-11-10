@@ -147,12 +147,19 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
   return { spent: completed.length, notReviewed, reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
     record: completed.findLast(same)?.review.record ?? null };
 }
-// Before the last round open findings mean "fix and ask again". On the last round
-// harmless leftovers become successor candidates; anything else stays not-converged.
-export function roundOutcome(record, last) {
-  const open = leftover(record);
-  const stands = !last || !open.length || open.some(finding => finding.danger !== false || finding.outcome === 'unresolved') ||
-    record.findings.some(finding => finding.outOfContract || finding.riskRaised);
+// What may leave the rounds as a successor candidate instead of blocking the PR:
+// - an older defect the task did not introduce (any round);
+// - a minor (P3) leftover once the first fixes are in (round 2 on), unless it is about data, security or a gate letting work through;
+// - on the last round also any leftover both roles call harmless.
+// Everything else open means "fix and ask again", and on the last round stays not-converged.
+const STRICT_DANGER = ['data', 'security', 'gate-bypass'];
+export function roundOutcome(record, round) {
+  const open = leftover(record), settled = finding => finding.outcome !== 'unresolved';
+  const older = finding => finding.origin === 'pre-existing' && settled(finding);
+  const minor = finding => round > 1 && finding.weight === 'P3' && !STRICT_DANGER.includes(finding.dangerCase);
+  const harmless = finding => round >= ROUND_LIMIT && finding.danger === false && settled(finding);
+  const stands = !open.length || record.findings.some(finding => finding.outOfContract || finding.riskRaised) ||
+    !open.every(finding => older(finding) || minor(finding) || harmless(finding));
   if (record.outcome !== 'not-converged' || stands) return { outcome: record.outcome, successors: [] };
   return { outcome: 'clean-with-successors', successors: open.map(finding => ({ key: finding.key, line: findingLine(finding), origin: finding.origin })) };
 }
@@ -547,7 +554,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     // Review first: a round is spent only by a completed round on a new head.
     let review;
     const refuse = reason => ({ outcome: 'refused', spent: false, round: null, reason, successors: [], record: null });
-    if (prior.reuse) review = { ...prior.reuse.review, spent: false, reusedFrom: prior.reuse.runId };
+    if (prior.reuse) review = { ...prior.reuse.review, ...roundOutcome(prior.reuse.review.record, prior.reuse.review.round), spent: false, reusedFrom: prior.reuse.runId };
     else if (prior.notReviewed >= 2) review = refuse(`blocked: ${NOT_REVIEWED_TWICE}`);
     else if (prior.spent >= ROUND_LIMIT) review = refuse(`needs-decision: ${ROUND_LIMIT_REACHED}`);
     else {
@@ -557,7 +564,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
       review = record.outcome === 'not-reviewed'
         ? { outcome: 'not-reviewed', spent: false, round: null, repeated: prior.notReviewed > 0, reason: record.failures.at(-1)?.reason ?? `no readable text for ${record.unreviewedFiles.join(', ') || 'the review'}`,
           successors: [], record: null, failures: record.failures.slice(-6), costs }
-        : { ...roundOutcome(record, prior.spent + 1 === ROUND_LIMIT), spent: true, round: prior.spent + 1, record: stageRecord };
+        : { ...roundOutcome(record, prior.spent + 1), spent: true, round: prior.spent + 1, record: stageRecord };
     }
     review.contractDigest = contractDigest;
     checkConsistency();
