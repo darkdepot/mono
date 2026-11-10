@@ -18,11 +18,13 @@ mergeKey; outOfContract; riskRaised; reason; closed; newEvidence; codeQuote.
 confirmed requires a concrete breaking input and code proof. unresolved means
 the defect remains open at its own severity, including unresolved danger.
 Danger at either role is retained; unknown/unmarked danger counts as dangerous.
-A rejection closes only findings both roles explicitly mark non-dangerous.
-Code keeps dangerous/unmarked rejections unresolved and open, even with an exact
-codeQuote or verified file deletion. Use unresolved for disputed danger.
-codeQuote may be empty.
-closed=true only for a verified non-dangerous fix; explain it.
+A same-head rejection closes only findings both roles explicitly mark
+non-dangerous; code keeps a dangerous/unmarked one unresolved and open, even with
+an exact codeQuote. Use unresolved for disputed danger. codeQuote may be empty.
+A verified fix differs: when a finding from an earlier round no longer holds on
+the pinned head, return outcome=rejected, closed=true and name the fixing code.
+Code closes it, dangerous or not, only if the reviewer also stopped reporting it.
+closed=true only for such a verified fix of the reported mechanism.
 The implementer cannot close findings.
 Closed/rejected keys reopen only with new evidence or a changed dependency;
 set newEvidence=true and name it. Check all open findings even if the reviewer

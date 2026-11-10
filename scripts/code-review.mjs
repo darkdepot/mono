@@ -529,7 +529,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const missing = () => files.filter(file => !covered.has(file));
     if (missing().length) absorb(await call('code-review', { openFindings: open, pass: 'coverage', focusFiles: missing() }, parseReviewer));
     requireValue(missing().length === 0, 'incomplete changed-file coverage after focused pass');
-    const merged = new Map(record.findings.map(finding => [finding.key, finding])), byKey = new Map();
+    const merged = new Map(record.findings.map(finding => [finding.key, finding])), byKey = new Map(), reported = new Set(found.map(finding => finding.key));
     for (const finding of [...open, ...found]) {
       const prior = byKey.get(finding.key), saved = merged.get(finding.key);
       const dangerMaximum = maximumDanger(...[saved, prior].filter(Boolean).map(savedDanger), savedDanger(finding));
@@ -557,7 +557,11 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
       const dangerMaximum = maximumDanger(finding.dangerMaximum, verdict.danger), danger = dangerMaximum !== false;
       const evidence = headEvidence.find(item => item.file === finding.file);
       const deletionEvidence = evidence?.deletionEvidence;
-      const retained = (danger || unreviewedFiles.has(finding.file)) && verdict.outcome === 'rejected';
+      // A fix closes a dangerous finding only when both roles agree on a later head: the checker
+      // verified it gone and the reviewer, shown the open finding, no longer reports it.
+      const agreedFix = verdict.outcome === 'rejected' && verdict.closed === true && !!saved && saved.lastCheckedHead !== head &&
+        !reported.has(verdict.key) && !unreviewedFiles.has(finding.file) && (covered.has(finding.file) || !!deletionEvidence);
+      const retained = (danger || unreviewedFiles.has(finding.file)) && verdict.outcome === 'rejected' && !agreedFix;
       return { ...verdict, outOfContract: !!saved?.outOfContract || verdict.outOfContract, riskRaised: !!saved?.riskRaised || verdict.riskRaised,
         ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, dangerMaximum, danger,
         origin: saved && savedDanger(saved) !== false ? saved.origin : verdict.origin,
