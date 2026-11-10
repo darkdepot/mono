@@ -49,7 +49,7 @@ function readGit(worktree, env, options, args, raw = false, outputFd = null, all
 function gitReadPolicy(worktree, inherited = process.env) {
   const env = Object.fromEntries(Object.entries(inherited).filter(([key]) => !key.startsWith('GIT_')));
   Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_GLOBAL: '/dev/null', GIT_GRAFT_FILE: '/dev/null',
-    GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_ATTR_NOSYSTEM: '1', GIT_PAGER: 'cat' });
+    GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1', GIT_LITERAL_PATHSPECS: '1', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_ATTR_NOSYSTEM: '1', GIT_PAGER: 'cat' });
   const safeArgs = ['--no-pager', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false',
     '-c', 'color.ui=false', '-c', 'color.diff=false', '-c', 'diff.external=', '-c', 'core.attributesFile=/dev/null',
     '-c', 'core.alternateRefsCommand=', '-c', 'credential.helper=', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=false',
@@ -166,6 +166,8 @@ function readRoleAnswer(value) {
     try { value = JSON.parse(value); } catch { unreadable('unreadable role JSON'); }
   }
   if (!object(value)) unreadable('role JSON object required');
+  // A CLI may hand over an already parsed object; the same limit applies to it.
+  if (Buffer.byteLength(JSON.stringify(value)) > MAX_ANSWER_BYTES) unreadable('role JSON over size limit');
   return value;
 }
 export function parseReviewer(value) {

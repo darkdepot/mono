@@ -918,3 +918,14 @@ test('C56: large unchanged exports stream without a full host read and keep text
   assert.equal(record.outcome,'clean');assert.deepEqual(record.unreviewedFiles,[]);
  });
 });
+
+test('review git reads treat a colon-led file name literally', t => {
+ const worktree=fs.mkdtempSync(path.join(os.tmpdir(),'mono-colon-path-'));t.after(()=>fs.rmSync(worktree,{recursive:true,force:true}));
+ const git=(...args)=>execFileSync('git',args,{cwd:worktree,env:{...process.env,GIT_LITERAL_PATHSPECS:'1'},stdio:['ignore','pipe','pipe']});
+ git('init','-q');git('config','user.email','review@example.test');git('config','user.name','review');
+ fs.writeFileSync(path.join(worktree,':example.txt'),'removed later\n');git('add','--',':example.txt');git('commit','-q','-m','add');
+ assert.match(reviewGit(worktree,['ls-tree','HEAD','--',':example.txt']),/^100644 blob [0-9a-f]+\t:example\.txt/);
+});
+test('an already parsed role answer over the size limit is unreadable', () => {
+ assert.throws(()=>parseReviewer({findings:[],padding:'x'.repeat(MAX_ANSWER_BYTES)}),/over size limit/);
+});
