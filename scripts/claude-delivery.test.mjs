@@ -206,6 +206,7 @@ test("Claude result usage sums resumed turns, normalizes caches and keeps missin
   const complete = measure([...f.events, result, { ...f.instance, pid: 42 }, f.init, result]);
   assert.equal(complete.status, "measured");
   assert.equal(complete.turns, 2);
+  assert.equal(complete.counting, "per-turn");
   assert.equal(complete.usage.input_tokens, 40);
   assert.equal(complete.usage.cached_input_tokens, 14);
   assert.equal(complete.usage.cache_write_input_tokens, 6);

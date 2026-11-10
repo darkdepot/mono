@@ -73,7 +73,7 @@ const steps = [
 const requestedJobs = Number(process.env.MONO_VERIFY_JOBS);
 const jobs = Number.isInteger(requestedJobs) && requestedJobs > 0
   ? requestedJobs
-  : Math.max(1, Math.min(DEFAULT_JOBS, Math.floor(os.availableParallelism() / 4)));
+  : Math.max(1, Math.min(DEFAULT_JOBS, Math.floor(os.availableParallelism() / 2)));
 
 function runStep(step) {
   return new Promise((resolve) => {
