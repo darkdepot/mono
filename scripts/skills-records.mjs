@@ -343,12 +343,14 @@ function presentationKind(expected,binding) {
 // The owner-visible text links what was shown: the read record's own address; for the bound record read from a
 // comment list, whose rows carry no address, its #comment-<id> fragment; for Design, which shows the mockup, the
 // canvas of the approval record that names the read PRD. Body and version checks of the read record stay with the callers.
+// The fragment and the canvas must be shown whole: nothing that continues an address may follow them.
+const wholeAddress=(shownText,address)=>shownText.split(address).slice(1).some(rest=>!/^(?:[\w\-/%#?=&~+@:]|[.,][\w\-/%#?=&~+@:])/.test(rest));
 function linksShown(shownText,row,binding,design,dump) {
  if(text(row.url)&&shownText.includes(row.url))return true;
- if(!text(row.url)&&text(binding.currentRecordId)&&idOf(row)===binding.currentRecordId)return shownText.includes(`#comment-${binding.currentRecordId}`);
+ if(!text(row.url)&&text(binding.currentRecordId)&&idOf(row)===binding.currentRecordId)return wholeAddress(shownText,`#comment-${binding.currentRecordId}`);
  if(!design)return false;
  let approval;try{approval=latestDesignApproval(dump.projectComments);}catch{return false;}
- return Boolean(approval)&&approval.fields.prd===idOf(row)&&shownText.includes(approval.fields.canvas);
+ return Boolean(approval)&&approval.fields.prd===idOf(row)&&wholeAddress(shownText,approval.fields.canvas);
 }
 // record.md: a package's sha256 covers the lines inside its mono-package fence, each with LF, and the record header
 // repeats it. A body without that fence keeps the whole-text hash.
@@ -356,8 +358,8 @@ function packageHash(body) {
  let blocks;try{blocks=approvalBlocks(body);}catch{return null;}
  const fences=blocks.filter(block=>block.info==='mono-package');
  if(!fences.length)return sha256(body);
- const headers=blocks.filter(block=>block.fenced&&block.info==='text').flatMap(block=>block.content.split(/\r?\n/)).filter(line=>/^mono-package: recorded(?: |$)/.test(line.trim()));
- const hash=fences.length===1?sha256(fences[0].content.replace(/\r\n/g,'\n')+'\n'):null;
+ const headers=blocks.filter(block=>block.fenced&&block.info==='text').flatMap(block=>block.content.split(/\r?\n/)).map(line=>line.trim()).filter(line=>/^mono-package: recorded(?: |$)/.test(line));
+ const hash=fences.length===1?sha256(fences[0].content.replace(/\r$/gm,'')+'\n'):null;
  return hash&&headers.length===1&&headers[0].match(/ sha256=([0-9a-f]{64})(?: |$)/)?.[1]===hash?hash:null;
 }
 function documentPresentation(data,exchange,binding,dump) {

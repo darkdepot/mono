@@ -2380,7 +2380,7 @@ for(const state of ['missing-from','ambiguous-from','missing-to','ambiguous-to']
  const result=rangePatchFixture(t,state).check();assert.equal(result.status,'failed');assert.match(result.reason,/document patch range must match exactly once/);
 });
 
-for(const mode of ['record-canvas','other-canvas','no-link','other-prd','prd-stage'])test(`MONO-371 Design summary binds through the canvas of its approval record (${mode})`,t=>{
+for(const mode of ['record-canvas','other-canvas','longer-canvas','no-link','other-prd','prd-stage'])test(`MONO-371 Design summary binds through the canvas of its approval record (${mode})`,t=>{
  const f=u7DocumentFixture(t),prd='00000000-0000-4000-8000-0000000000d1',canvas='https://canvas.example.test/file/F1/p-1-0',design=mode!=='prd-stage';
  f.old.id=f.fresh.id=prd;f.events[1]=f.result('shown',f.old);f.events[6]=f.result('read',f.fresh);
  f.page('documents','documents',[{id:prd}]);f.save(`documents/${prd}.json`,f.fresh);
@@ -2390,8 +2390,8 @@ for(const mode of ['record-canvas','other-canvas','no-link','other-prd','prd-sta
   f.record.body=approval+'\n\nВладелец: ответил «'+f.expected.reply+'»';f.events[7]=f.call('write','mcp__monotest__create_comment',{projectId,body:f.record.body});f.events[8]=f.result('write',f.record);
   f.page('comments','comments',[f.record]);f.request.expectedRecords=[{type:'mono-design: approved',count:1}];
  }else f.page('comments','comments',[f.record,{id:'earlier-design',body:approval,createdAt:date,updatedAt:date}]);
- const link={'other-canvas':'https://canvas.example.test/file/F1/p-2-0','no-link':'на странице задачи'}[mode]??canvas;
- f.events[2]=f.assistant(`Источник после имени; советую одну колонку. Макет: ${link}\n${design?'Утверждаешь этот макет?':'Принимаем этот PRD?'}`);
+ const link={'other-canvas':'https://canvas.example.test/file/F1/p-2-0','longer-canvas':canvas+'1','no-link':'на странице задачи'}[mode]??canvas;
+ f.events[2]=f.assistant(`Источник после имени; советую одну колонку. Макет: ${link}.\n${design?'Утверждаешь этот макет?':'Принимаем этот PRD?'}`);
  f.request.packRoot=process.cwd();const result=f.check();
  // The curated fixture has no PNG archive, so a bound Design summary still stops later, at the real design gate.
  if(mode==='record-canvas'){assert.equal(result.gateResults.length,1,JSON.stringify(result));assert.equal(result.gateResults[0].command,'design');}
@@ -2411,11 +2411,11 @@ for(const mode of ['lower-case-name','type','name-and-type','other-status','ambi
  if(result.status==='failed')assert.match(result.reason,/mismatch for task\.status/);
 });
 
-for(const mode of ['fragment','other-comment','row-address-differs'])test(`MONO-371 a record read from a comment list binds the summary by its comment fragment (${mode})`,t=>{
+for(const mode of ['fragment','other-comment','longer-comment','row-address-differs'])test(`MONO-371 a record read from a comment list binds the summary by its comment fragment (${mode})`,t=>{
  const f=u7DocumentFixture(t),shownId='00000000-0000-4000-8000-0000000000c1',parent='https://linear.app/monotest/project/test';
  const shown={id:shownId,body:f.shown,createdAt:date,updatedAt:date,...(mode==='row-address-differs'?{url:`https://linear.app/monotest/issue/MON-1#comment-${shownId}`}:{})},list={comments:[shown],hasNextPage:false};
  f.events[0]=f.call('shown','mcp__monotest__list_comments',{projectId});f.events[1]=f.result('shown',list);f.events[5]=f.call('read','mcp__monotest__list_comments',{projectId});f.events[6]=f.result('read',list);
- f.events[2]=f.assistant(`Источник после имени; советую одну колонку. [PRD](${parent}#comment-${mode==='other-comment'?'00000000-0000-4000-8000-0000000000c2':shownId})\nПринимаем этот PRD?`);
+ f.events[2]=f.assistant(`Источник после имени; советую одну колонку. [PRD](${parent}#comment-${mode==='other-comment'?'00000000-0000-4000-8000-0000000000c2':mode==='longer-comment'?shownId+'0':shownId})\nПринимаем этот PRD?`);
  f.page('comments','comments',[f.record,shown]);f.request.approvalBindings[0].currentRecordId=shownId;
  if(mode==='fragment'){f.attest();assert.equal(f.check().status,'passed',f.check().reason);return;}
  const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/summary link does not bind native document/);
@@ -2424,7 +2424,8 @@ for(const mode of ['fragment','other-comment','row-address-differs'])test(`MONO-
 async function packageStartFixture(t,mode){
  const {createHash}=await import('node:crypto'),{unwrap}=await import('./skills-proof.mjs'),f=textPrdFixture(t),id=f.request.project.id,sha=value=>createHash('sha256').update(value).digest('hex');
  const content='## Кратко\nПакет: одна задача для показа источника прогона.\n\n```js\nconst columns = 4;\n```',fenceHash=sha(content+'\n');
- const body='```text\nmono-package: recorded project='+id+' version=1 previous=none class=new sha256='+(mode==='header-differs'?'0'.repeat(64):fenceHash)+'\n```\n\n`````mono-package\n'+content+'\n`````\n\nРевью: проверяющий согласен.';
+ const lf='```text\nmono-package: recorded project='+id+' version=1 previous=none class=new sha256='+(mode==='header-differs'?'0'.repeat(64):fenceHash)+'\n```\n\n`````mono-package\n'+content+'\n`````\n\nРевью: проверяющий согласен.';
+ const body=mode==='crlf'?lf.replace(/\n/g,'\r\n'):lf; // the hash covers the fence lines with LF either way
  const question='Начинаем работу по этому пакету?',reply='принимаю';
  const packet={id:'00000000-0000-4000-8000-000000000091',body,createdAt:'2026-11-02T03:59:00Z',updatedAt:'2026-11-02T03:59:00Z'};
  const start={id:'00000000-0000-4000-8000-000000000092',createdAt:'2026-11-02T03:59:01Z',updatedAt:'2026-11-02T03:59:01Z',body:`\`\`\`text\nmono-package: start project=${id} record=${packet.id} sha256=${mode==='whole-body'?sha(body):fenceHash} issues=T1:MON-1 by=owner\napproval_status=approved\n\`\`\`\n\nВладелец: ответил «${reply}»`};
@@ -2445,10 +2446,10 @@ async function packageStartFixture(t,mode){
  fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
  return f;
 }
-for(const mode of ['fence','whole-body','header-differs'])test(`MONO-371 a package start binds the hash of the mono-package fence content (${mode})`,async t=>{
- const result=(await packageStartFixture(t,mode)).check();
- assert.equal(result.status,mode==='fence'?'passed':'failed',JSON.stringify(result));
- if(mode!=='fence')assert.match(result.reason,/written approval does not bind the shown content\/version/);
+for(const mode of ['fence','crlf','whole-body','header-differs'])test(`MONO-371 a package start binds the hash of the mono-package fence content (${mode})`,async t=>{
+ const result=(await packageStartFixture(t,mode)).check(),valid=['fence','crlf'].includes(mode);
+ assert.equal(result.status,valid?'passed':'failed',JSON.stringify(result));
+ if(!valid)assert.match(result.reason,/written approval does not bind the shown content\/version/);
 });
 test('MONO-371 a package start without bindings waits for them instead of failing',async t=>{
  const result=(await packageStartFixture(t,'unbound')).check();
