@@ -340,18 +340,38 @@ function presentationKind(expected,binding) {
  if(!binding||!expected.presentation.includes(binding.presentation))bindingMissing('presentation kind binding missing');
  return binding.presentation;
 }
+// The owner-visible text links what was shown: the read record's own address; for the bound record read from a
+// comment list, whose rows carry no address, its #comment-<id> fragment; for Design, which shows the mockup, the
+// canvas of the approval record that names the read PRD. Body and version checks of the read record stay with the callers.
+function linksShown(shownText,row,binding,design,dump) {
+ if(text(row.url)&&shownText.includes(row.url))return true;
+ if(!text(row.url)&&text(binding.currentRecordId)&&idOf(row)===binding.currentRecordId)return shownText.includes(`#comment-${binding.currentRecordId}`);
+ if(!design)return false;
+ let approval;try{approval=latestDesignApproval(dump.projectComments);}catch{return false;}
+ return Boolean(approval)&&approval.fields.prd===idOf(row)&&shownText.includes(approval.fields.canvas);
+}
+// record.md: a package's sha256 covers the lines inside its mono-package fence, each with LF, and the record header
+// repeats it. A body without that fence keeps the whole-text hash.
+function packageHash(body) {
+ let blocks;try{blocks=approvalBlocks(body);}catch{return null;}
+ const fences=blocks.filter(block=>block.info==='mono-package');
+ if(!fences.length)return sha256(body);
+ const headers=blocks.filter(block=>block.fenced&&block.info==='text').flatMap(block=>block.content.split(/\r?\n/)).filter(line=>/^mono-package: recorded(?: |$)/.test(line.trim()));
+ const hash=fences.length===1?sha256(fences[0].content.replace(/\r\n/g,'\n')+'\n'):null;
+ return hash&&headers.length===1&&headers[0].match(/ sha256=([0-9a-f]{64})(?: |$)/)?.[1]===hash?hash:null;
+}
 function documentPresentation(data,exchange,binding,dump) {
  if(!binding)bindingMissing('native presentation binding missing');
  if(binding.shownLine!==exchange.line)throw new Error('presentation does not bind last stage message');
  const shown=presentationRead(data,binding.shownReadLine,binding.currentRecordId);
  if(shown.resultLine>=exchange.line)throw new Error('document read outside shown boundary');
- if(!text(shown.value.url)||!exchange.text.includes(shown.value.url))throw new Error('summary link does not bind native document');
+ if(!linksShown(exchange.text,shown.value,binding,exchange.expected.stage==='design',dump))throw new Error('summary link does not bind native document');
  if(binding.text!==bodyOf(shown.value))throw new Error('presentation body differs from native document');
  if(!exchange.expected.outcome.approval&&!exchange.expected.outcome.startNext)return {documentId:idOf(shown.value),shownBody:bodyOf(shown.value),shownHash:sha256(bodyOf(shown.value)),shownReadLine:shown.line};
  const fresh=presentationRead(data,binding.currentLine,binding.currentRecordId);
  if(shown.resultLine>=exchange.line||fresh.line<=exchange.replyLine||fresh.resultLine>=exchange.response.line)throw new Error('document read outside shown/reply version boundary');
  if(idOf(shown.value)!==idOf(fresh.value)||(binding.documentId!==undefined&&binding.documentId!==idOf(shown.value)))throw new Error('approved document changed');
- if(!text(shown.value.url)||!exchange.text.includes(shown.value.url))throw new Error('summary link does not bind native document');
+ if(!linksShown(exchange.text,shown.value,binding,exchange.expected.stage==='design',dump))throw new Error('summary link does not bind native document');
  const shownBody=bodyOf(shown.value),freshBody=bodyOf(fresh.value);
  if(binding.text!==shownBody)throw new Error('presentation body differs from native document');
  const approved=correctedVersion(shownBody,exchange.expected,freshBody);
@@ -498,7 +518,7 @@ function checkApprovedVersion({request,write,data,dump,createProject,packageStar
   const read=resultFor(request.host,before,data.rows);
   if(binding.currentRecordId&&Array.isArray(read.value.comments))read.value=read.value.comments.find(row=>idOf(row)===binding.currentRecordId);
   if(read.resultLine>=shownLimit||read.resultLine>=binding.shownLine||(binding.documentId&&idOf(read.value)!==binding.documentId)||!text(idOf(read.value))||
-   (!shownText.includes(binding.text)&&(!text(read.value.url)||!shownText.includes(read.value.url)))||bodyOf(read.value)!==binding.text)missing('shown document link/version not bound to native read');
+   (!shownText.includes(binding.text)&&!linksShown(shownText,read.value,binding,recordWrite(write,'mono-design: approved',dump),dump))||bodyOf(read.value)!==binding.text)missing('shown document link/version not bound to native read');
   shownVersion=read.value;
  }
  if((binding.currentLine===write.line||write.event.type==='event_msg'&&Number.isInteger(write.approvalInvocationLine)&&binding.currentLine===write.approvalInvocationLine)&&/mono-(?:idea|tech):\s*approved/.test(writeBody(write))){
@@ -529,7 +549,7 @@ function checkApprovedVersion({request,write,data,dump,createProject,packageStar
   if(!bound)throw new Error('written approval does not bind the shown content/version');
  }else if(packageStart){
   const {fields}=versionApproval(write);
-  if(!text(idOf(fresh))||fields.record!==idOf(fresh)||fields.sha256!==sha256(approvedText))throw new Error('written approval does not bind the shown content/version');
+  if(!text(idOf(fresh))||fields.record!==idOf(fresh)||fields.sha256!==packageHash(approvedText))throw new Error('written approval does not bind the shown content/version');
  }else if(!writeBody(write).includes(approvedText))throw new Error('written approval does not bind the shown content/version');
  if(shownVersion&&!corrected&&!data.expectedReplies?.some(anchored)&&shownVersion.updatedAt!==fresh.updatedAt)throw new Error('version changed after shown approval');
  if(shownVersion&&idOf(shownVersion)!==idOf(fresh))throw new Error('approved document changed');
@@ -795,12 +815,18 @@ export function verifyRecords(request){
     const rows=Array.isArray(read.value)?read.value:read.value.labels;
     if(Array.isArray(rows))aliases.push(...rows);
    }
+   // Linear also takes a state as a status name in any letter case or as a status type; that resolves only
+   // through the team catalog and only to a single status.
+   const catalog=[...aliases],named=v=>{
+    const hits=field==='status'?catalog.filter(row=>typeof row?.name==='string'&&(row.name.toLowerCase()===v.toLowerCase()||row.type===v)):[];
+    return new Set(hits.map(row=>row.id)).size===1?hits[0]:v;
+   };
    // Updates without a team can use this record's native state history.
    for(const call of write.data.calls.filter(c=>field==='status'&&c.name==='mcp__monotest__get_issue')){
     const read=resultFor(write.data.host,call,write.data.rows);
     if(idOf(read.value)===idOf(write.value))aliases.push(...(read.value.stateHistory??[]).map(row=>row.state));
    }
-   const resolve=v=>typeof v==='string'?aliases.find(row=>row.id===v)??v:v;
+   const resolve=v=>typeof v==='string'?aliases.find(row=>row.id===v)??named(v):v;
    return field==='labels'&&Array.isArray(value)?value.map(resolve):resolve(value);
   };
   const fields=['body','content','description','title','name','status','labels'];
@@ -846,6 +872,14 @@ export function verifyRecords(request){
        if(start<0||content.indexOf(edit.anchor,start+1)>=0)throw new Error(`document patch anchor must match exactly once for ${id}: ${start<0?'missing':'ambiguous'}`);
        const offset=start+(edit.op==='insert_after'?edit.anchor.length:0);
        content=content.slice(0,offset)+edit.text+content.slice(offset);
+       continue;
+      }
+      if(edit?.op==='replace_range'){
+       // Linear's range edit: `from` matches exactly once and starts the replaced text; `to` matches exactly once after it and stays.
+       if(typeof edit.from!=='string'||!edit.from||typeof edit.to!=='string'||!edit.to||typeof edit.new_string!=='string')missing(`unsupported document patch for ${id}`);
+       const start=content.indexOf(edit.from),end=start<0?-1:content.indexOf(edit.to,start+edit.from.length);
+       if(start<0||content.indexOf(edit.from,start+1)>=0||end<0||content.indexOf(edit.to,end+1)>=0)throw new Error(`document patch range must match exactly once for ${id}`);
+       content=content.slice(0,start)+edit.new_string+content.slice(end);
        continue;
       }
       if(edit?.op!=='replace'||typeof edit.old_string!=='string'||!edit.old_string||typeof edit.new_string!=='string')missing(`unsupported document patch for ${id}`);
@@ -942,7 +976,7 @@ export function verifyRecords(request){
   }
   }finally{fs.rmSync(gateRoot,{recursive:true,force:true});}
   for(const source of scenarios)for(const exchange of source.exchanges??[]) {
-   const marker={'idea':'mono-idea: approved','discovery':'mono-prd: approved','design':'mono-design: approved','tech-evaluation':'mono-tech: approved'}[exchange.expected.stage];
+   const marker={'idea':'mono-idea: approved','discovery':'mono-prd: approved','design':'mono-design: approved','tech-evaluation':'mono-tech: approved','handoff':'mono-package: start'}[exchange.expected.stage];
    const awaitingBinding=bindingGaps.some(({write})=>write.data===source&&
     source.exchanges.filter(e=>e.replyLine<write.line).at(-1)===exchange&&recordWrite(write,marker,dump));
    if(exchange.expected.outcome.approval&&!approvedExchanges.has(exchange)&&!awaitingBinding)throw new Error('expected approval missing actual record bound to shown version');
