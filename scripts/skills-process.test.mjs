@@ -76,3 +76,21 @@ test('forced pipe closure preserves completed evidence when the leader ignores S
  await ready.promise;t.mock.timers.tick(25);const result=await bounded(t,run,500);
  assert.equal(result.completed,true);assert.equal(result.failure,null);assert.equal(result.code,0);
 });
+
+for(const code of [137,143])test(`MONO-291 driver stop accepts trapped Claude exit ${code} only after successful completion`,async t=>{
+ const f=fixture(t,'skills-trapped-stop-'),ready=deferred(),exited=observeExit(t);
+ const run=hostProcess({...f.request,binary:{command:process.execPath,args:['-e',`process.on('SIGTERM',()=>process.exit(${code}));`+liveLeader]},timeoutMs:5000,onEvent:(e,c)=>{f.track(e.pid);c.complete();ready.resolve();}});
+ await ready.promise;t.mock.timers.tick(25);await exited;const result=await bounded(t,run,500);
+ assert.equal(result.code,0);assert.equal(result.failure,null);assert.equal(result.completed,true);
+});
+for(const completed of [false,true])test(`MONO-291 unsolicited shell-style exit 143 stays failed, completed=${completed}`,async t=>{
+ const f=fixture(t,'skills-unsolicited-exit-');
+ const run=hostProcess({...f.request,binary:{command:process.execPath,args:['-e','console.log("{}");process.exit(143);']},timeoutMs:5000,onEvent:(e,c)=>{if(completed)c.complete();}});
+ const result=await run;assert.equal(result.code,143);
+});
+
+test('MONO-291 descendant cleanup cannot excuse an unsolicited leader exit 143',async t=>{
+ const f=fixture(t,'skills-exited-leader-'),ready=deferred(),exited=observeExit(t);
+ const run=hostProcess({...f.request,binary:{command:process.execPath,args:['-e',heldPipes+'process.exit(143);']},timeoutMs:5000,onEvent:(e,c)=>{f.track(e.pid);c.complete();ready.resolve();}});
+ await Promise.all([ready.promise,exited]);const result=await bounded(t,run,500);assert.equal(result.code,143);
+});

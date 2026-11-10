@@ -74,7 +74,8 @@
           ],
           "driverStart": null
         }
-      ]
+      ],
+      "idleContinuation": "Продолжай."
     },
     "codex": {
       "expectedReplies": [

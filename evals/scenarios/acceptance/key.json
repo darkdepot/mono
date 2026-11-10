@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "mode": "windows-before-0.43.0",
+  "cases": [
+    {
+      "id": "claude-choice-thinking",
+      "version": "0.38.1",
+      "host": "claude",
+      "client": "Claude Code Desktop",
+      "observations": ["choice window, not approval", "tool result before the window", "position exists only in thinking after that result", "no visible position before the choice window"],
+      "screenshotRequired": true,
+      "expected": "failed"
+    },
+    {
+      "id": "codex-intermediate-summary",
+      "version": "0.38.1",
+      "host": "codex",
+      "client": "Codex app",
+      "observations": ["summary in an intermediate message before request_user_input_async", "summary is not the final message of the turn"],
+      "screenshotRequired": true,
+      "expected": "failed"
+    },
+    {
+      "id": "discovery-repeated-opening",
+      "version": "0.36.0",
+      "host": "both",
+      "stage": "discovery",
+      "observations": ["questions have the same first word", "no visible summary before the window"],
+      "screenshotRequired": false,
+      "expected": "failed"
+    }
+  ],
+  "controls": {
+    "versions": ["0.40.0", "0.41.0", "0.42.0"],
+    "includeOtherAvailablePatchVersions": true,
+    "repeatRedOnce": true,
+    "retainBothResults": true,
+    "expected": "no false failed"
+  },
+  "gateAcceptance": {
+    "perChange": true,
+    "branch": "separate never-merge branch",
+    "cases": {"broken-summary-or-consent": "denied", "fixed": "allowed", "unverified": "denied"},
+    "proof": "actual gate decision; report color alone is insufficient",
+    "mainConfigChanges": false
+  }
+}

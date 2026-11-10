@@ -47,7 +47,8 @@
           "presentation": "document",
           "driverStart": null
         }
-      ]
+      ],
+      "idleContinuation": "Продолжай."
     },
     "codex": {
       "expectedReplies": [

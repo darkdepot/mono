@@ -14,10 +14,12 @@ if(persona){
 }
 const choices=mode==='roles-many'?12:1;
 const sequence=[...Array.from({length:choices},()=> 'choice'),...(mode==='roles-mixed-free'?['free','free']:['free']),'approval',...(['roles-correction','roles-extra-target'].includes(mode)?['choice','approval']:[]),...(['roles-tail','roles-plain-tail'].includes(mode)?['free']:[])];
+if(mode==='roles-markerless-choice')sequence.splice(1);
 if(['roles-missing','roles-replaced'].includes(mode))sequence.splice(sequence.indexOf('approval'),1);
 const card=step=>{
  const role=sequence[step],target=role==='approval';
  const labels=target?[mode==='roles-transition'?'Начать Discovery (Recommended)':mode==='roles-handoff'?'Передать оркестратору (Recommended)':'Утвердить, продолжу позже (Recommended)','Ещё обсудить']:['Отдельная колонка (Recommended)','Отложить'];
+ if(mode==='roles-markerless-choice')labels[0]='Отдельная колонка';
  if(mode==='roles-default-bad'&&!target)labels.reverse();
  const gist=target?mode==='roles-transition'?'Начинаем Discovery? Советую перейти: потребность ясна.':mode==='roles-handoff'?'Начинаем работу? Советую передать оркестратору: пакет готов.':'Утверждаем колонку? Советую начать Research: нужно проверить потребность.':'Как показывать источник прогона? Советую отдельную колонку: её видно сразу.';
  return {role,target,labels,gist,summary:target?(mode==='roles-plain-summary'?'Полный итог этого окна без четырёх разделов.':'Что: колонка. Зачем: источник виден. Дальше: Research.'):'Выбрали форму источника.',consequences:['Источник виден / таблица шире','Отложим выбор / источник скрыт']};

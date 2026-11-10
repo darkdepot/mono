@@ -9,7 +9,8 @@ import { loadCatalog } from './skills-catalog.mjs';
 const git = (cwd, ...args) => execFileSync('git', args, {cwd, encoding:'utf8'});
 const matches = (file, rule) => rule.endsWith('/') ? file.startsWith(rule) : file === rule;
 
-export function selectScenarios({indexFile, worktree, base, head = 'HEAD', hosts = ['claude','codex'], full = false}) {
+export function selectScenarios({indexFile, worktree, base, head = 'HEAD', hosts = ['claude','codex'], full = false, purpose = 'change'}) {
+  if(!['change','release','acceptance'].includes(purpose))throw new Error('invalid selection purpose');
   worktree = fs.realpathSync(worktree);
   const catalog = loadCatalog(indexFile);
   if (!hosts.length || new Set(hosts).size !== hosts.length || hosts.some(h => !['claude','codex'].includes(h))) throw new Error('invalid hosts');
@@ -31,7 +32,7 @@ export function selectScenarios({indexFile, worktree, base, head = 'HEAD', hosts
     }
   }
   const catalogPaths = new Set([...catalog.files.keys()].map(f => path.relative(worktree,f).split(path.sep).join('/')));
-  const all = full || changed.some(f => catalog.index.sharedFiles.includes(f) || (catalogPaths.has(f) && ![...catalog.scenarios.values()].some(s =>
+  const all = purpose==='release' || purpose==='acceptance' || full || changed.some(f => catalog.index.sharedFiles.includes(f) || (catalogPaths.has(f) && ![...catalog.scenarios.values()].some(s =>
     f === path.relative(worktree,s.file).split(path.sep).join('/') || f === path.relative(worktree,path.join(path.dirname(s.file),'rubric.md')).split(path.sep).join('/'))));
   const affected = catalog.index.stages.filter(s => all || changed.some(f => s.files.some(rule => matches(f,rule)) ||
     s.scenarios.some(relative => matches(f,path.relative(worktree,path.join(catalog.root,path.dirname(relative))).split(path.sep).join('/')+'/')))).map(s => s.id);
@@ -53,11 +54,15 @@ export function selectScenarios({indexFile, worktree, base, head = 'HEAD', hosts
     }
   }
   for (const key of wanted.keys()) if (!covered.has(key)) units.push({id:key.replace('/','-'),target:key,scenarios:[key]});
+  if(purpose==='release'&&catalog.index.release){
+    const chain=catalog.index.release.stages.map(id=>`${id}/${catalog.stages.get(id).main}`);
+    units.splice(0,units.length,{id:'release',target:chain[0],scenarios:chain});
+  }
   const expectedItems = units.flatMap(unit => hosts.flatMap(host => unit.scenarios.map(key => ({
     ...scenarioExpectation(unit.id,key,host)
   }))));
-  return {schemaVersion:1,status:uncovered.length?'uncovered':units.length?'selected':'not-required',uncovered,indexFile:catalog.indexFile,catalogDigest:catalog.digest,base,head,changed,affected,
-    selected:[...wanted].map(([scenario,reason])=>({scenario,reason})),hosts,units,expectedItems};
+  return {schemaVersion:1,purpose,status:uncovered.length?'uncovered':units.length?'selected':'not-required',uncovered,indexFile:catalog.indexFile,catalogDigest:catalog.digest,base,head,changed,affected,
+    selected:purpose==='release'&&catalog.index.release?units[0].scenarios.map(scenario=>({scenario,reason:'release'})):[...wanted].map(([scenario,reason])=>({scenario,reason})),hosts,units,expectedItems};
 }
 
 export function scenarioExpectation(unit, scenario, host) {
@@ -74,7 +79,7 @@ export function selectQaScenarios({config, worktree, base, head='HEAD', purpose=
     const revision=git(worktree,'rev-parse','--verify',`${head}^{commit}`).trim();
     const catalog=skills?loadCatalog(path.resolve(worktree,skills.indexFile)):null;
     selection={...(catalog?{indexFile:catalog.indexFile,catalogDigest:catalog.digest}:{}),schemaVersion:1,status:'not-required',base:git(worktree,'merge-base',base,revision).trim(),head:revision,hosts:skills?.hosts??[],units:[],expectedItems:[],uncovered:[]};
-  } else selection=selectScenarios({indexFile:path.resolve(worktree,skills.indexFile),worktree,base,head,hosts:skills.hosts,full:purpose!=='change'});
+  } else selection=selectScenarios({indexFile:path.resolve(worktree,skills.indexFile),worktree,base,head,hosts:skills.hosts,full:purpose!=='change',purpose});
   if (taskExpectedFile) {
     if (!expected || !Array.isArray(expected.expectedItems) || expected.expectedItems.some(item=>!item?.id || !item.expectation || !item.source)) throw new Error('independent expectedItems required');
     if ((expected.head && expected.head!==selection.head) || (expected.base && expected.base!==selection.base)) throw new Error('task expectations head/base mismatch');

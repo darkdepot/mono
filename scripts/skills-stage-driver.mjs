@@ -1,6 +1,20 @@
 #!/usr/bin/env node
 import readline from 'node:readline';
+import fs from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+export function dialogueMode(version) {
+ const match=/^v?(\d+)\.(\d+)\.(\d+)$/.exec(version?.trim()??'');
+ if(!match)throw new Error('tested pack VERSION must be an exact release version');
+ const [,major,minor]=match.map(Number);
+ return major===0&&minor<43?'windows':'text';
+}
+export function testedVersion(request, fallbackRoot) {
+ const version=fs.readFileSync(path.join(request.packRoot??fallbackRoot,'VERSION'),'utf8').trim();
+ if(request.testedVersion!==undefined&&request.packRoot&&request.testedVersion!==version)throw new Error('testedVersion differs from tested pack VERSION');
+ return request.packRoot?version:request.testedVersion??version;
+}
 
 export const stageDriverTool='mcp__stage_driver__start_stage';
 export const permittedStages=reply=>reply.driverStart===null?[]:Array.isArray(reply.driverStart)?reply.driverStart:[reply.driverStart];

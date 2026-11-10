@@ -8,15 +8,16 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readJsonLines } from './transports/journal.mjs';
 import { traceRows } from './skills-probe.mjs';
-import { completedTrace, textExchanges, checkEndings } from './skills-trace.mjs';
+import { completedTrace, textExchanges, checkEndings, checkTraceSources, worstStatus } from './skills-trace.mjs';
 import { auditRows } from './skills-audit.mjs';
 import { isWrite, MissingEvidence } from './skills-boundary.mjs';
 import { unwrap } from './skills-proof.mjs';
+import { issueTeam } from './skills-dump.mjs';
 import { runScenario } from './skills-run.mjs';
-import { nativeRecords, resultFor, callInput } from './skills-record-data.mjs';
-import { correctedVersion, isOwnerWindow, anchored, checkAnchors } from './skills-owner.mjs';
+import { nativeRecords, resultFor, callInput, unsavedResult } from './skills-record-data.mjs';
+import { windowRole, windowPolicy, correctedVersion, isOwnerWindow, anchored, checkAnchors } from './skills-owner.mjs';
 import { checkRubric, rubricDigest } from './skills-rubric.mjs';
-import { stageDriverTool, permittedStages } from './skills-stage-driver.mjs';
+import { stageDriverTool, permittedStages, dialogueMode, testedVersion } from './skills-stage-driver.mjs';
 import { latestApproval, latestDesignApproval, approvalBlocks } from './idea-gate.mjs';
 
 const read=file=>JSON.parse(fs.readFileSync(file,'utf8'));
@@ -25,6 +26,24 @@ const text=value=>typeof value==='string'&&value.trim().length>0;
 const ownUrl=url=>typeof url==='string'&&url.startsWith('https://linear.app/monotest/');
 const idOf=row=>row?.uuid??row?.id;
 const bodyOf=row=>row?.body??row?.content??row?.description;
+function recoveredUnsavedWrite(data,call){
+ const error=unsavedResult(data.host,call,data.rows);
+ if(!error||call.name!=='mcp__monotest__save_document')return false;
+ const input=callInput(data.host,call);
+ if(!text(input?.id)||!Array.isArray(input.patch))return false;
+ const wanted=input.patch.map(p=>p?.new_string);
+ for(const retry of data.calls.filter(c=>c.line>error.line&&c.name===call.name)){
+  const again=callInput(data.host,retry);
+  if(again?.id!==input.id||!Array.isArray(again.patch)||!isDeepStrictEqual(again.patch.map(p=>p?.new_string),wanted))continue;
+  let saved;try{saved=resultFor(data.host,retry,data.rows);}catch{continue;}
+  if(idOf(saved.value)!==input.id)continue;
+  for(const read of data.calls.filter(c=>c.line>saved.resultLine&&c.name==='mcp__monotest__get_document')){
+   if(callInput(data.host,read)?.id!==input.id)continue;
+   try{if(idOf(resultFor(data.host,read,data.rows).value)===input.id)return true;}catch{}
+  }
+ }
+ return false;
+}
 const writeBody=write=>bodyOf(write.input)??bodyOf(write.value)??'';
 const missing=reason=>{throw new MissingEvidence(reason);};
 const bindingMissing=reason=>{const error=new MissingEvidence(reason);error.bindingOnly=true;throw error;};
@@ -38,6 +57,22 @@ function date(value){
 const identityValues=value=>typeof value==='string'?[value]:[value?.id,value?.name].filter(text);
 // Linear's observed block spacing, link wrappers and list markers. Preserve
 // paragraph boundaries, code and all substantive bytes.
+function prose(value) {
+ return value.replace(/<issue\b[^<>]*\/\s*>/g,all=>{
+   const label=all.match(/\blabel="([^"]+)"/)?.[1],key=all.match(/\bhref="https:\/\/linear\.app\/[^"\s]+\/issue\/([^/"#?]+)[^"]*"/)?.[1];
+   return key&&label===key?key:all;
+  }).replace(/<issue\b[^>]*\bhref="https:\/\/linear\.app\/[^"\s]+\/issue\/([^/"#?]+)[^"]*"[^>]*>([^<>]*)<\/issue>/g,(all,key,label)=>label.trim()===key?key:all)
+  .replace(/\[([^\]\n]+)\]\(<([^<>\s()]+)>\)/g,'[$1]($2)').replace(/\]\(([^()\s<>]+)\)/g,(all,dest)=>{try{return `](${decodeURI(dest)})`;}catch{return all;}}).replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1');
+}
+function inlineProse(line,opened) {
+ let result='',start=0,delimiter=opened;
+ for(const match of line.matchAll(/`+/g)) {
+  const part=line.slice(start,match.index);result+=delimiter===null?prose(part):part;
+  result+=match[0];start=match.index+match[0].length;
+  if(delimiter===null)delimiter=match[0].length;else if(delimiter===match[0].length)delimiter=null;
+ }
+ const tail=line.slice(start);return result+(delimiter===null?prose(tail):tail);
+}
 function markdown(value){
  if(typeof value!=='string')return value;
  let fence=null,inline=null,heading=false;const result=[];
@@ -59,7 +94,7 @@ function markdown(value){
   // Inline code is opaque too; destinations with whitespace or parenthesis
   // syntax stay literal rather than risk changing the link's parse.
   const list=literal?line:line.replace(/^([ ]{0,3})- /,'$1* ');
-  result.push(literal||line.includes('`')?list:list.replace(/\[([^\]\n]+)\]\(<([^<>\s()]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1'));
+  result.push(block?list:inlineProse(list,inline));
   heading=!literal&&/^#{1,6} /.test(line);
   if(!block)for(const tick of line.matchAll(/`+/g)){
    if(inline===null)inline=tick[0].length;
@@ -77,8 +112,8 @@ function compareField(field,wanted,actual,id){
   if(!Array.isArray(desired)||!Array.isArray(observed))missing(`unreadable ${id}.${field}`);
   const matched=new Set();let unresolved=false;
   same=desired.every(value=>{
-   const identities=identityValues(value),index=observed.findIndex(row=>identityValues(row).some(v=>identities.includes(v)));
-   if(index<0){if(identities.some(v=>/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(v))&&observed.some(row=>typeof row==='string'))unresolved=true;return false;}
+   const identities=identityValues(value),index=observed.findIndex(row=>field==='status'&&value?.id&&row?.id?value.id===row.id:identityValues(row).some(v=>identities.includes(v)));
+   if(index<0){if(!text(value?.name)&&identities.some(v=>/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(v))&&observed.some(row=>typeof row==='string'))unresolved=true;return false;}
    matched.add(index);return true;
   })&&matched.size===observed.length;
   if(!same&&unresolved)missing(`id/name resolution unavailable for ${id}.${field}`);
@@ -121,7 +156,8 @@ export function readRecordDump(root,project,projectName){
  }
  const raw=rawRead(path.join(root,'project.json')),files=[{file:'project.json',value:raw,kind:'get_project',id:project.id??project.uuid}];
  if(!text(raw?.uuid)||raw.uuid!==(project.id??project.uuid)||raw.name!==project.name||!ownUrl(raw.url)||(typeof raw.description!=='string'||elided(raw.description)))missing('project read-back identity incomplete');
- const projectComments=pages(root,'comments','comments',files),comments=[...projectComments],documents=[],issues=[];
+ const projectComments=pages(root,'comments','comments',files),comments=[...projectComments],documents=[],issues=[],statuses=new Map(),issueTeams=new Map();
+ const teams=fs.existsSync(path.join(root,'teams-1.json'))?pages(root,'teams','teams',files):[];
  const refs=pages(root,'documents','documents',files);
  for(const ref of refs){
   const id=idOf(ref);if(!/^[A-Za-z0-9-]+$/.test(id))missing('invalid document id');
@@ -139,13 +175,20 @@ export function readRecordDump(root,project,projectName){
   if(idOf(issue)!==id||!text(issue.title)||typeof issue.description!=='string'||elided(issue.description)||!issue.status||
     !text(typeof issue.status==='string'?issue.status:issue.status.name)||!Array.isArray(issue.labels)||issue.labels.some(label=>!text(typeof label==='string'?label:label?.name)))missing('issue status/labels/body incomplete');
   if((issue.projectId??issue.project?.id)!==raw.uuid)missing('issue project incomplete');
+  const team=issueTeam(issue,raw,teams);if(team)issueTeams.set(id,team);
+  if(team&&!/^[A-Za-z0-9-]+$/.test(team))missing('invalid status team id');
+  if(team&&!statuses.has(team)&&fs.existsSync(path.join(root,`statuses/${team}.json`))){
+   const file=`statuses/${team}.json`,rows=rawRead(path.join(root,file));
+   if(!Array.isArray(rows)||!rows.length||rows.some(row=>!text(row.id)||!text(row.name))||new Set(rows.map(row=>row.id)).size!==rows.length)missing('incomplete fixed team statuses');
+   statuses.set(team,rows);files.push({file,value:rows,kind:'list_issue_statuses',id:team,alias:typeof issue.team==='string'?issue.team:issue.team?.name});
+  }
   issues.push(issue);files.push({file,value:issue,kind:'get_issue',id,alias});
   const start=files.length;comments.push(...pages(root,`issues/${directory}/comments`,'comments',files));
   for(const file of files.slice(start)){file.scopeId=id;file.scopeAlias=alias;}
  }
  const all=[raw,...comments,...documents,...issues];
  for(const row of all)if(row.url!==undefined&&!ownUrl(row.url))throw new Error(`record outside monotest: ${row.url}`);
- return {project:raw,projectComments,comments,documents,issues,all,files};
+ return {project:raw,projectComments,comments,documents,issues,statuses,issueTeams,all,files};
 }
 
 function recordLines(body){
@@ -308,6 +351,62 @@ function documentPresentation(data,exchange,binding,dump) {
  if(!persisted||bodyOf(persisted)!==approved)throw new Error('approved version changed before final read-back');
  return {documentId:idOf(shown.value),shownBody,shownHash:sha256(shownBody),approvedBody:approved,approvedHash:sha256(approved),shownReadLine:shown.line,currentLine:fresh.line};
 }
+function nativeWindowAnswer(request,data,window){
+ // Codex sent.jsonl is the driver's {thread,prompt} journal, not a native
+ // event stream. Its delivered answer is proved from the resumed rollout.
+ const responses=request.host==='claude'&&request.sent?traceRows(request.sent,'claude').rows.map(r=>r.value):[];
+ const accepted=data.audit.windowProof(window.event,window.line,window.callId,{responses});
+ if(accepted.status!=='confirmed')missing('native window reply missing');
+ const after=data.rows.filter(r=>r.line>window.line);
+ const reply=request.host==='claude'?after.find(r=>r.value.type==='user'&&r.value.message?.content?.some?.(b=>b.type==='tool_result'&&b.tool_use_id===window.callId))
+  :after.find(r=>r.value.type==='response_item'&&r.value.payload?.type==='message'&&r.value.payload.role==='user');
+ if(!reply)missing('approval reply line missing');
+ let answers;
+ if(request.host==='claude'){
+  const permission=after.find(r=>r.value.type==='control_request'&&r.value.request?.tool_name==='AskUserQuestion');
+  const sent=responses.find(r=>r.response?.request_id===permission?.value.request_id)?.response?.response;
+  if(sent?.behavior==='deny')return {reply,answers:[],refused:true,replyText:sent.message};
+  const updated=sent?.behavior==='allow'?sent.updatedInput:!sent?reply.value.tool_use_result:null;
+  answers=window.input.questions.map(q=>updated?.answers?.[q.question]);
+ }else{
+  const content=(reply.value.payload.content?.[0]?.text??'').trim();
+  try{answers=JSON.parse(content.slice('<send_user_message_question_reply>'.length,-'</send_user_message_question_reply>'.length)).map(a=>a.answer);}catch{answers=[];}
+ }
+ if(!answers.length||answers.some(a=>typeof a!=='string'))missing('native window answers unavailable');
+ return {reply,answers};
+}
+function windowPlans(request,data){
+ if(!Array.isArray(request.expectedWindows)||!request.expectedWindows.length||!Array.isArray(request.windows))missing('historical window scenario policies missing');
+ const replies=[],plans=new Map();
+ for(const call of data.audit.calls.filter(c=>!c.event.parent_tool_use_id&&isOwnerWindow(c.name))){
+  const plan=windowPolicy(request,call.input?.questions??[],replies);plans.set(call.callId,plan);replies.push(plan);
+ }
+ return plans;
+}
+const evidenceStatus=error=>error instanceof MissingEvidence||error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code)?'unverified':'failed';
+function windowRequest(request,source){
+ return {...request,host:source.host,trace:source.trace,endLine:source.endLine,stageStartLine:source.stageStartLine,sent:source.sent,
+  expectedReplies:source.expectedReplies,expectedWindows:source.expectedWindows,windows:source.windows,rubricDefinition:source.rubricDefinition??request.rubricDefinition};
+}
+function historicalSource(request,checked){
+ const source={host:request.host,trace:request.trace,definition:request.rubricDefinition,traceHash:null,...checked,exchanges:null};
+ if(checked.kind==='helper')return {...source,traceHash:sha256(fs.readFileSync(request.trace)),definition:null,exchanges:[]};
+ try{
+  source.traceHash=sha256(fs.readFileSync(request.trace));
+  const data=nativeRecords(request.host,request.trace,request.endLine),plans=windowPlans(request,data);
+  source.exchanges=checked.windows.map(window=>{
+   const call=data.audit.calls.find(c=>c.callId===window.callId),plan=plans.get(window.callId);
+   if(!call||!plan)missing('historical window exchange unavailable');
+   const {reply,...answer}=nativeWindowAnswer(request,data,call);
+   const next=data.audit.calls.find(c=>c.line>reply.line&&isOwnerWindow(c.name)&&!c.event.parent_tool_use_id);
+   const response=data.rows.filter(r=>r.line>reply.line&&(!next||r.line<next.line)&&!r.value.parent_tool_use_id).map(r=>request.host==='claude'?r.value.message?.role!=='user'&&r.value.type==='assistant'?r.value.message.content.filter(b=>b.type==='text').map(b=>b.text).join('\n'):null:r.value.payload?.role==='assistant'?r.value.payload.content?.filter(b=>b.type==='output_text').map(b=>b.text).join('\n'):null).filter(text).join('\n');
+   return {id:window.id,line:window.line,callId:call.callId,text:window.summary,summaryLine:window.summaryLine,questions:window.questions,...answer,replyLine:reply.line,response,expected:plan.target?request.expectedWindows[plan.expectedIndex]:null,policy:plan.policy,target:plan.target};
+  });
+  if(!source.exchanges.length||!text(source.definition))missing('historical window rubric input or definition missing');
+ }catch(error){source.status=worstStatus(source.status,'unverified');source.reason=error.message;source.exchanges=null;}
+ if(source.status!=='passed'&&!source.reason)source.reason=[...(source.windows??[]).flatMap(w=>w.issues??[]),...(source.checks??[]).map(c=>c.reason)].filter(Boolean).join('; ');
+ return source;
+}
 function approvalCheck(request,write,data,dump,writes){
  const createProject=write.name.endsWith('__create_project')||(write.name.endsWith('__save_project')&&!write.input.id);
  const markers=recordLines(writeBody(write)).map(line=>line.trim().match(/^(mono-[\w-]+: (?:approved|start))(?: |$)/)?.[1]).filter(Boolean);
@@ -315,7 +414,71 @@ function approvalCheck(request,write,data,dump,writes){
  const packageStart=recordWrite(write,'mono-package: start',dump);
  const binding=request.approvalBindings?.find(b=>b.recordId===idOf(write.value));
  if(data.expectedReplies) return textApprovalCheck(request,write,data,dump,{createProject,packageStart,binding,writes});
- throw new Error('text approval requires scenario expectedReplies');
+ if(dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))!=='windows')throw new Error('text approval requires scenario expectedReplies');
+ const candidates=data.audit.calls.filter(c=>!c.event.parent_tool_use_id&&['AskUserQuestion','request_user_input_async'].includes(c.name)&&c.line<write.line);
+ const decisions=candidates.filter(c=>windowRole(c.input?.questions)===(packageStart?'transition':'approval'));
+ const window=binding?candidates.find(c=>c.callId===binding.windowCallId):decisions.at(-1);
+ if(!window)missing('approval window missing');
+ if(window!==decisions.at(-1))throw new Error('approval binding does not name the latest decision window');
+ const {reply,answers}=nativeWindowAnswer(request,data,window);
+ const plan=Array.isArray(request.expectedWindows)&&Array.isArray(request.windows)?windowPlans(request,data).get(window.callId):null,policy=plan?.policy;
+ // Only actual approving choices grant authority. A prefix in arbitrary prose
+ // (including a refusal) is never a choice; correction text is scenario-owned.
+ const authorizes=(answer,index)=>{
+  const labels=(window.input.questions[index]?.options??[]).map(o=>typeof o==='string'?o:o.label);
+  const approving=packageStart?/^(?:Начать работу|Передать оркестратору)(?: \(Recommended\))?$/:/^Утвердить(?:, продолжу позже| и начать [A-Za-z ]+)?(?: \(Recommended\))?$/;
+  return labels.includes(answer)&&approving.test(answer)||policy?.mode==='correction'&&text(policy.text)&&answer===policy.text;
+ };
+ if(!answers.length||answers.some((answer,index)=>!authorizes(answer,index)))throw new Error('approval write after empty/refuse/discuss/non-approval reply');
+ if(write.line<=reply.line)throw new Error('approval write before window answer');
+ if(!binding)bindingMissing(`shown-version binding missing for ${idOf(write.value)}`);
+ const ownerText=row=>!row.value.parent_tool_use_id&&(request.host==='claude'?row.value.type==='assistant'&&row.value.message?.content?.some(b=>b.type==='text'&&text(b.text))
+  :row.value.payload?.type==='message'&&row.value.payload.role==='assistant'&&row.value.payload.content?.some(b=>b.type==='output_text'&&text(b.text)));
+ const shown=data.rows.find(r=>r.line===binding.shownLine&&!r.value.parent_tool_use_id),current=data.rows.find(r=>r.line===binding.currentLine);
+ const shownText=request.host==='claude'?shown?.value.message?.content?.filter(b=>b.type==='text').map(b=>b.text).join('\n')
+  :shown?.value.payload?.role==='assistant'?shown.value.payload.content?.filter(b=>b.type==='output_text').map(b=>b.text).join('\n'):null;
+ if(!text(binding.text)||!shownText||binding.shownLine>=reply.line||(request.host==='claude'&&binding.shownLine>=window.line))missing('shown version not found in owner-visible trace');
+ if(request.host==='codex'){
+  const terminal=data.rows.find(r=>r.line>window.line&&r.line<reply.line&&data.audit.proof({kind:'terminal',result:r.value}).status==='confirmed');
+  if(!terminal||binding.shownLine<=window.line||binding.shownLine>=terminal.line)missing('shown version outside approved Codex window turn');
+  if(data.rows.findLast(r=>r.line<terminal.line&&ownerText(r))?.line!==binding.shownLine)throw new Error('approval does not bind the last owner-visible text');
+ }else if(data.rows.findLast(r=>r.line<window.line&&ownerText(r))?.line!==binding.shownLine)throw new Error('approval does not bind the last owner-visible text');
+ const expected=plan?.target?request.expectedWindows[plan.expectedIndex]:null;
+ const corrected=policy?.mode==='correction'&&Boolean(expected?.correction);
+ const approvedText=corrected?correctedArtifact({request,write,data,dump,createProject,binding,writes,shown:binding.text,expected,replyLine:reply.line,
+  sameExchange:(candidate,b)=>b.windowCallId===window.callId&&data.audit.calls.filter(c=>!c.event.parent_tool_use_id&&isOwnerWindow(c.name)&&c.line<candidate.line).at(-1)===window}):binding.text;
+ // Older bindings name only the project's three sections. Its complete shown
+ // presentation is still bound by the Idea snapshot for this same window.
+ const presentation=createProject&&!corrected?(request.approvalBindings??[]).find(b=>b.windowCallId===window.callId&&b.shownLine===binding.shownLine&&
+  typeof b.text==='string'&&b.text.startsWith(binding.text)&&shownText.includes(b.text)&&
+  writes.some(w=>w.data===data&&idOf(w.value)===b.recordId&&recordWrite(w,'mono-idea: approved',dump)))?.text??approvedText:approvedText;
+ const approvedProjectText=createProject?ideaProjectBody(request,presentation):approvedText;
+ return checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit:window.line,approvedText,approvedProjectText,corrected});
+}
+
+function correctedArtifact({request,write,data,dump,createProject,binding,writes,shown,expected,replyLine,sameExchange}) {
+ let snapshotBody=writeBody(write);
+ if(createProject) {
+  const approvals=writes.filter(candidate=>candidate.data===data&&recordWrite(candidate,'mono-idea: approved',dump)&&
+   request.approvalBindings?.some(b=>b.recordId===idOf(candidate.value)&&b.shownLine===binding.shownLine&&b.text===binding.text&&sameExchange(candidate,b)));
+  if(approvals.length!==1)throw new Error('unique Idea approval snapshot for the same exchange required');
+  const approval=approvals[0],invocation=approval.event.type==='event_msg'?approval.approvalInvocationLine:approval.line;
+  if(!Number.isInteger(invocation)||invocation<=replyLine||invocation<=write.resultLine)throw new Error('Idea approval snapshot must follow consent and project creation');
+  snapshotBody=writeBody(approval);
+ }
+ const snapshot=approvalBlocks(snapshotBody).find(b=>b.info==='mono-idea-snapshot'||b.info==='mono-tech-page')?.content.replace(/[\r\n]+$/,'');
+ const call=!createProject&&data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
+ const actual=snapshot??(call?bodyOf(resultFor(data.host,call,data.rows).value):undefined);
+ return correctedVersion(shown,expected,actual);
+}
+function ideaProjectBody(request,approvedText) {
+ const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mono-shown-idea-'));
+ try{
+  const draft=path.join(directory,'approved.md');fs.writeFileSync(draft,approvedText);
+  const run=spawnSync(process.execPath,[path.join(request.packRoot,'scripts/idea-gate.mjs'),'record','--draft',draft,'--out',directory,'--config',request.configFile],{encoding:'utf8'});
+  if(run.status!==0)throw new Error('complete shown Idea cannot generate the project body');
+  return fs.readFileSync(path.join(directory,'body.md'),'utf8');
+ }finally{fs.rmSync(directory,{recursive:true,force:true});}
 }
 
 function checkApprovedVersion({request,write,data,dump,createProject,packageStart,binding,shownText,reply,shownLimit,approvedText=binding.text,approvedProjectText=approvedText,corrected=false}) {
@@ -329,7 +492,7 @@ function checkApprovedVersion({request,write,data,dump,createProject,packageStar
    (!shownText.includes(binding.text)&&(!text(read.value.url)||!shownText.includes(read.value.url)))||bodyOf(read.value)!==binding.text)missing('shown document link/version not bound to native read');
   shownVersion=read.value;
  }
- if(binding.currentLine===write.line&&/mono-(?:idea|tech):\s*approved/.test(writeBody(write))){
+ if((binding.currentLine===write.line||write.event.type==='event_msg'&&Number.isInteger(write.approvalInvocationLine)&&binding.currentLine===write.approvalInvocationLine)&&/mono-(?:idea|tech):\s*approved/.test(writeBody(write))){
   const info=writeBody(write).includes('mono-idea: approved')?'mono-idea-snapshot':'mono-tech-page';
   if(!bindsSnapshot(writeBody(write),info,approvedText))throw new Error('outgoing approved version differs from shown content');
   return; // idea-gate below independently checks the snapshot against persisted current data.
@@ -387,44 +550,32 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
  if(packageStart?!expected.outcome.startNext:!expected.outcome.approval)throw new Error('scenario reply does not authorize this record');
  if(binding.shownLine!==exchange.line || !text(binding.text))throw new Error('approval does not bind the last owner-visible text');
  const framing=expected.framing??{before:'',after:'\n'+exchange.question};
+ const displayed=text=>expected.stage==='idea'&&exchange.text.startsWith(dump.project.name+'\n\n')&&!text.startsWith(dump.project.name+'\n\n')?dump.project.name+'\n\n'+text:text;
  const presentation=anchored(expected)?presentationKind(expected,binding):'inline';
  if(presentation==='inline') {
-  if(anchored(expected)&&binding.artifactEnd!==undefined) {
-   if(!Number.isInteger(binding.artifactEnd)||binding.artifactEnd<1||exchange.text.slice(0,binding.artifactEnd)!==binding.text||!exchange.text.slice(binding.artifactEnd).endsWith('\n'+exchange.question))throw new Error('approval does not bind the complete displayed artifact');
-  }else if(exchange.text!==framing.before+binding.text+framing.after)throw new Error('approval does not bind the complete displayed artifact');
+  if(anchored(expected)&&(binding.artifactEnd!==undefined||binding.artifactStart!==undefined)) {
+   const start=binding.artifactStart??0,end=binding.artifactEnd;
+   if(binding.artifactStart!==undefined&&expected.stage!=='idea')throw new Error('approval does not bind the complete displayed artifact');
+   if(!Number.isInteger(start)||start<0||!Number.isInteger(end)||end<=start||end>exchange.text.length||exchange.text.slice(start,end)!==(binding.artifactStart===undefined?displayed(binding.text):binding.text)||!exchange.text.slice(end).split('\n').some(line=>line.trim()===exchange.question))throw new Error('approval does not bind the complete displayed artifact');
+  }else if(exchange.text!==displayed(framing.before+binding.text+framing.after))throw new Error('approval does not bind the complete displayed artifact');
  }
  const body=writeBody(write);
+ let ideaText=binding.text;
+ if(expected.stage==='idea'){
+  const first=ideaText.indexOf('## '),prefix=first>0?ideaText.slice(0,first).trim():'';
+  if(prefix){
+   if(prefix!==dump.project.name)throw new Error('shown Idea project name differs from approved project');
+   ideaText=ideaText.slice(first);
+  }
+ }
  let approvedText;
  if(anchored(expected)&&presentation==='document') {
   approvedText=documentPresentation(data,exchange,binding,dump).approvedBody;
  } else if(anchored(expected)&&expected.correction) {
-  let snapshotBody=body;
-  if(createProject) {
-   const approvals=writes.filter(candidate=>candidate.data===data&&recordWrite(candidate,'mono-idea: approved',dump)&&
-    request.approvalBindings?.some(b=>b.recordId===idOf(candidate.value)&&b.replyId===binding.replyId&&b.shownLine===exchange.line&&b.text===binding.text)&&
-    data.exchanges.filter(e=>e.replyLine<candidate.line).at(-1)===exchange);
-   if(approvals.length!==1)throw new Error('unique Idea approval snapshot for the same exchange required');
-   const approval=approvals[0],invocation=approval.event.type==='event_msg'?approval.approvalInvocationLine:approval.line;
-   if(!Number.isInteger(invocation)||invocation<=exchange.replyLine||invocation<=write.resultLine)throw new Error('Idea approval snapshot must follow consent and project creation');
-   // Creation stores only three sections. The agreed four-section version lives
-   // in this exchange's approval record; the project body is checked separately.
-   snapshotBody=writeBody(approval);
-  }
-  const snapshot=approvalBlocks(snapshotBody).find(b=>b.info==='mono-idea-snapshot'||b.info==='mono-tech-page')?.content.replace(/[\r\n]+$/,'');
-  const call=!createProject&&data.audit.calls.find(c=>c.line===binding.currentLine&&!isWrite(c.name));
-  const actual=snapshot??(call?bodyOf(resultFor(data.host,call,data.rows).value):undefined);
-  approvedText=correctedVersion(binding.text,expected,actual);
- } else approvedText=correctedVersion(binding.text,expected);
- let approvedProjectText;
- if(createProject){
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mono-shown-idea-'));
-  try{
-   const draft=path.join(directory,'approved.md');fs.writeFileSync(draft,approvedText);
-   const run=spawnSync(process.execPath,[path.join(request.packRoot,'scripts/idea-gate.mjs'),'record','--draft',draft,'--out',directory,'--config',request.configFile],{encoding:'utf8'});
-   if(run.status!==0)throw new Error('complete shown Idea cannot generate the project body');
-   approvedProjectText=fs.readFileSync(path.join(directory,'body.md'),'utf8');
-  }finally{fs.rmSync(directory,{recursive:true,force:true});}
- }
+  approvedText=correctedArtifact({request,write,data,dump,createProject,binding,writes,shown:ideaText,expected,replyLine:exchange.replyLine,
+   sameExchange:(candidate,b)=>b.replyId===binding.replyId&&data.exchanges.filter(e=>e.replyLine<candidate.line).at(-1)===exchange});
+ } else approvedText=correctedVersion(ideaText,expected);
+ const approvedProjectText=createProject?ideaProjectBody(request,approvedText):undefined;
  const prose=approvalBlocks(body).filter(b=>!b.fenced).map(b=>b.text).join('\n').split(/\r?\n/);
  if(!createProject) {
   const quotedReply=expected.by==='orchestrator'&&expected.stage==='idea'?binding.ownerEvidence?.reply:expected.reply;
@@ -471,30 +622,47 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
 }
 
 export function verifyRecords(request){
- const gateResults=[],observedStarts=[];
- const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,stageStartLine:request.stageStartLine,sent:request.sent,expectedReplies:request.expectedReplies},...(request.additionalTraces??[])];
+ const gateResults=[],observedStarts=[],requiredChecks=[],windowChecks=[];
+ const scenarioTraces=[{host:request.host,trace:request.trace,endLine:request.endLine,stageStartLine:request.stageStartLine,sent:request.sent,idleContinuation:request.idleContinuation,expectedReplies:request.expectedReplies,expectedWindows:request.expectedWindows,windows:request.windows,rubricDefinition:request.rubricDefinition},...(request.additionalTraces??[])];
  const dumpTraces=[...(request.dumpTrace?[{host:request.host,trace:request.dumpTrace}]:[]),...(request.dumpAdditionalTraces??[])];
  const traces=[...scenarioTraces,...dumpTraces];
  try{
-  const violation=runViolations(traces,request);if(violation)return violation;
+  const auditErrors=[];
+  for(const source of traces)try{const violation=runViolations([source],request);if(violation)return violation;}catch(error){auditErrors.push({source,error});}
+  const historical=dialogueMode(testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))==='windows';
+  if(historical&&scenarioTraces.some(source=>source.expectedReplies!==undefined))throw new Error('legacy acceptance requires real windows, not text replies');
+  if(historical){
+   const sourceRequests=scenarioTraces.map(source=>({...windowRequest(request,source),phase:'complete',excerpt:false,expectedReplies:undefined}));
+   const checkedSources=checkTraceSources(sourceRequests);
+   for(const [index,source]of scenarioTraces.entries()){
+    const checked=historicalSource(sourceRequests[index],checkedSources.sources[index]);windowChecks.push(checked);
+    requiredChecks.push({id:index?`windows:${index}`:'windows',host:source.host,trace:source.trace,status:checked.status,reason:checked.reason});
+   }
+   for(const [index,{source,error}]of auditErrors.entries())requiredChecks.push({id:`source-audit:${index}`,host:source.host,trace:source.trace,status:evidenceStatus(error),reason:error.message});
+  }else if(auditErrors.length)throw auditErrors[0].error;
   const load=(source,dump)=>{
    const full=nativeRecords(source.host,source.trace),data=nativeRecords(source.host,source.trace,!dump&&source.expectedReplies?undefined:source.endLine);
-   data.sent=source.sent;
+   data.sent=source.sent;data.scenario=source;
    if(dump&&full.calls.some(c=>isWrite(c.name)))throw new Error('dump attempted an external write');
    if(source.endLine!==undefined&&full.calls.some(c=>c.line>source.endLine&&isWrite(c.name)))throw new Error('write after scenario terminal');
    if(!completedTrace(source.host,data.rows))missing(`${dump?'dump':'scenario'} trace incomplete: ${source.trace}`);
    data.terminal=data.rows.findLast(r=>!r.value.parent_tool_use_id&&data.audit.proof({kind:'terminal',result:r.value}).status==='confirmed');
    if(data.calls.some(c=>c.line>data.terminal.line&&isWrite(c.name)))throw new Error('write after scenario terminal');
    if(data.calls.some(c=>c.line>data.terminal.line))missing('call after successful trace terminal');
-   let previous=-Infinity;for(const row of data.rows)if(row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp)||stamp<previous)missing('invalid or reversed native trace time order');previous=stamp;}
+   const notification=e=>e.type==='user'&&e.origin?.kind==='task-notification'&&typeof e.message?.content==='string'||e.type==='system'&&e.subtype==='task_notification';
+   let previous=-Infinity;for(const row of data.rows)if(!(source.host==='claude'&&(row.value.isSynthetic===true||notification(row.value)))&&row.value.timestamp!==undefined){const stamp=date(row.value.timestamp);if(!Number.isFinite(stamp)||stamp<previous)missing('invalid or reversed native trace time order');previous=stamp;}
    data.expectedReplies=dump?undefined:source.expectedReplies;
+   if(!dump&&data.audit.calls.some(c=>isOwnerWindow(c.name))&&dialogueMode(request.testedVersion??testedVersion(request,path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')))!=='windows')throw new Error('stage called a window in text scenario');
    if(!dump&&(request.expectedReplies||source.expectedReplies)&&data.audit.calls.some(c=>isOwnerWindow(c.name)))throw new Error('stage called a window in text scenario');
    if(data.expectedReplies) {
-    data.exchanges=textExchanges(source.host,data.rows,data.expectedReplies,{startLine:source.stageStartLine});
+    data.exchanges=textExchanges(source.host,data.rows,data.expectedReplies,{startLine:source.stageStartLine,idleContinuation:source.idleContinuation});
    }
    return data;
   };
-  const scenarios=scenarioTraces.map(source=>load(source,false)),dumps=dumpTraces.map(source=>load(source,true)),data=scenarios[0],writes=[];
+  const loaded=scenarioTraces.map((source,index)=>{
+   try{return load(source,false);}catch(error){if(!historical)throw error;requiredChecks.push({id:`source-records:${index}`,host:source.host,trace:source.trace,status:evidenceStatus(error),reason:error.message});return null;}
+  });
+  const scenarios=loaded.filter(Boolean),dumps=dumpTraces.map(source=>load(source,true)),data=loaded[0],writes=[];
   request={...request,scenarioData:scenarios};
   checkEndings(scenarios.flatMap(d=>d.exchanges??[]));
   const stageStarts={idea:['Research'],research:['Discovery'],discovery:['Design','Tech Evaluation','Handoff'],design:['Tech Evaluation','Handoff'],'tech-evaluation':['Handoff'],handoff:['Delivery']};
@@ -549,7 +717,7 @@ export function verifyRecords(request){
    for(const e of source.exchanges??[])if(e.expected.outcome.startNext&&!starts.some(s=>s.exchange===e))throw new Error('expected start-next-stage missing after actual reply');
   }
   let seedEndLine=0;
-  if(request.seedExpected||request.seedEndLine!==undefined){
+  if(data&&(request.seedExpected||request.seedEndLine!==undefined)){
    const boundary=data.rows.find(r=>r.line===request.seedEndLine);
    if(!Number.isInteger(request.seedEndLine)||!boundary||data.audit.proof({kind:'terminal',result:boundary.value}).status!=='confirmed')missing('native successful seed boundary missing');
    if(!request.seedProjectId)missing('validated seed project missing');
@@ -557,6 +725,7 @@ export function verifyRecords(request){
    seedEndLine=request.seedEndLine;
   }
   for(const source of scenarios)for(const call of source.calls.filter(c=>isWrite(c.name)&&!c.name.startsWith('mcp__paper__'))){
+   if(recoveredUnsavedWrite(source,call))continue;
    const seed=source===data&&call.line<=seedEndLine,write={...resultFor(source.host,call,source.rows,!seed),data:source,seed};
    if(seed&&write.resultLine>seedEndLine)missing('write crosses seed boundary');
    writes.push(write);
@@ -572,6 +741,7 @@ export function verifyRecords(request){
    const pageArguments=new Map();
    for(const file of dump.files){
     const scoped=c=>{
+     if(file.kind==='list_teams')return isDeepStrictEqual(c.input,{...file.request});
      if(file.id)return Object.values(c.input).some(value=>value===file.id||value===file.alias);
      const scope=file.kind==='list_projects'?request.projectName:file.scope==='.'?(request.project.id??request.project.uuid):(file.scopeId??path.basename(file.scope));
      const key=file.kind==='list_projects'?'query':file.kind==='list_issues'?'project':file.scope==='.'?'projectId':'issueId';
@@ -600,6 +770,15 @@ export function verifyRecords(request){
    if(!['status','labels'].includes(field))return value;
    if(field==='status'&&/__(?:save|create)_project$/.test(write.name))return value;
    const tool=field==='status'?'list_issue_statuses':'list_issue_labels',aliases=[];
+   if(field==='status'){
+    const team=dump.issueTeams?.get(idOf(write.value));
+    if(!team&&typeof value==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value))missing('issue team unresolved for exact status UUID');
+    if(team){
+     const states=dump.statuses?.get(team);
+     if(typeof value==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value)&&!states?.some(state=>state.id===value))missing('exact status UUID unavailable in fresh team dump');
+     aliases.push(...(states??[]));
+    }
+   }
    for(const call of write.data.calls.filter(c=>c.name===`mcp__monotest__${tool}`&&c.line<write.line)){
     if(!write.input.team||call.input.team!==write.input.team)continue;
     const read=resultFor(write.data.host,call,write.data.rows);
@@ -685,7 +864,7 @@ export function verifyRecords(request){
        if(!confirmation)missing(`intermediate ${id}.${field} has no linked value or read before the next write`);
       }
       if(confirmation&&Object.hasOwn(confirmation,field)&&!elided(confirmation[field]))compareField(field,input[field],confirmation[field],id);
-      finalFields[field]=confirmation&&Object.hasOwn(confirmation,field)&&!elided(confirmation[field])?confirmation[field]:input[field];
+      finalFields[field]=field==='status'?input[field]:confirmation&&Object.hasOwn(confirmation,field)&&!elided(confirmation[field])?confirmation[field]:input[field];
      }
      if(Object.hasOwn(value,field)&&!elided(value[field])&&!(field==='status'&&Object.hasOwn(input,field)))finalFields[field]=value[field];
     }
@@ -710,9 +889,14 @@ export function verifyRecords(request){
    }
   }
   const bindingGaps=[],approvedExchanges=new Set();
-  for(const write of activeWrites)try{
-   for(const exchange of approvalCheck({...request,host:write.data.host,sent:write.data.sent},write,write.data,dump,activeWrites)??[])approvedExchanges.add(exchange);
-  }catch(error){if(!error.bindingOnly)throw error;bindingGaps.push(error.message);}
+  for(const [index,write]of activeWrites.entries())try{
+   const sourceRequest=historical?windowRequest(request,write.data.scenario):{...request,host:write.data.host,sent:write.data.sent};
+   for(const exchange of approvalCheck(sourceRequest,write,write.data,dump,activeWrites)??[])approvedExchanges.add(exchange);
+  }catch(error){
+   if(error.bindingOnly)bindingGaps.push({message:error.message,write});
+   else if(historical)requiredChecks.push({id:`approval:${index}`,host:write.data.host,trace:write.data.trace,status:evidenceStatus(error),reason:error.message});
+   else throw error;
+  }
   const gates=[...(request.gates??[])];
   for(const write of activeWrites){
    const has=type=>recordWrite(write,type,dump);
@@ -748,17 +932,30 @@ export function verifyRecords(request){
    gateResults.push({command:gate.command,exitCode:run.status,result});if(run.status!==0||!result.ok)throw new Error(`idea-gate ${gate.command}: ${result.code}`);
   }
   }finally{fs.rmSync(gateRoot,{recursive:true,force:true});}
-  for(const source of scenarios)for(const exchange of source.exchanges??[])
-   if(exchange.expected.outcome.approval&&!approvedExchanges.has(exchange))throw new Error('expected approval missing actual record bound to shown version');
+  for(const source of scenarios)for(const exchange of source.exchanges??[]) {
+   const marker={'idea':'mono-idea: approved','discovery':'mono-prd: approved','design':'mono-design: approved','tech-evaluation':'mono-tech: approved'}[exchange.expected.stage];
+   const awaitingBinding=bindingGaps.some(({write})=>write.data===source&&
+    source.exchanges.filter(e=>e.replyLine<write.line).at(-1)===exchange&&recordWrite(write,marker,dump));
+   if(exchange.expected.outcome.approval&&!approvedExchanges.has(exchange)&&!awaitingBinding)throw new Error('expected approval missing actual record bound to shown version');
+  }
+  requiredChecks.unshift({id:'records',status:bindingGaps.length?'unverified':'passed',...(bindingGaps.length?{reason:bindingGaps.map(gap=>gap.message).join('; ')}:{})});
   let rubric;
-  if(scenarios.some(s=>s.exchanges?.some(e=>anchored(e.expected)))) {
-   const input=scenarios.map(source=>({host:source.host,traceHash:sha256(fs.readFileSync(source.trace)),exchanges:(source.exchanges??[]).map(exchange=>({
+  const rubricRequired=historical||scenarios.some(s=>s.exchanges?.some(e=>anchored(e.expected)));
+  if(rubricRequired) {
+   const input=historical?windowChecks.filter(source=>source.kind!=='helper').map(source=>({host:source.host,trace:source.trace,traceHash:source.traceHash,definition:source.definition??null,status:source.status,exchanges:source.exchanges??[]})):scenarios.map(source=>({host:source.host,traceHash:sha256(fs.readFileSync(source.trace)),exchanges:(source.exchanges??[]).map(exchange=>({
     ...exchange,presentation:anchored(exchange.expected)&&presentationKind(exchange.expected,(request.presentationBindings??request.approvalBindings??[]).find(b=>b.replyId===exchange.expected.id))==='document'?documentPresentation(source,exchange,(request.presentationBindings??request.approvalBindings??[]).find(b=>b.replyId===exchange.expected.id),dump):null
    }))}));
-   rubric=checkRubric({definition:request.rubricDefinition??null,sources:input,bindings:{approvals:request.approvalBindings??[],presentations:request.presentationBindings??[]},records:writes.map(w=>({name:w.name,input:w.input,value:w.value})),dump:dump.all},text(request.rubricDefinition)?request.rubric:undefined);
+   const reviewable=!historical||windowChecks.every(source=>source.kind==='helper'||source.exchanges?.length&&text(source.definition));
+   rubric=checkRubric({definition:request.rubricDefinition??null,sources:input,bindings:{approvals:request.approvalBindings??[],presentations:request.presentationBindings??[]},records:writes.map(w=>({name:w.name,input:w.input,value:w.value})),dump:dump.all},text(request.rubricDefinition)&&reviewable?request.rubric:undefined);
+   requiredChecks.push({id:'rubric',status:rubric.status});
   }
-  return {status:bindingGaps.length?'unverified':rubric?.status??'passed',...(rubric??{}),...(bindingGaps.length?{status:'unverified',bindingOnly:true,reason:bindingGaps.join('; ')}:{}),starts:observedStarts,stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
- }catch(error){return {status:error instanceof MissingEvidence||error instanceof SyntaxError||['ENOENT','ENOTDIR'].includes(error.code)?'unverified':'failed',starts:observedStarts,stop:false,manualRemoval:[],reason:error.message,...(error.bindingOnly?{bindingOnly:true}:{}),gateResults,evidence:[request.trace,request.dumpDir]};}
+  const status=worstStatus(...requiredChecks.map(c=>c.status));
+  const reason=requiredChecks.find(c=>c.status===status&&c.reason)?.reason;
+  return {...(rubric??{}),status,requiredChecks,...(windowChecks.length?{windowChecks}:{}),...(bindingGaps.length?{bindingOnly:true}:{}),...(reason?{reason}:{}),starts:observedStarts,stop:false,manualRemoval:[],monotestTasks:dump.issues.length,taskIds:dump.issues.map(idOf),writes:writes.length,gateResults,evidence:[request.trace,request.dumpDir]};
+ }catch(error){
+  const status=worstStatus(evidenceStatus(error),...requiredChecks.map(c=>c.status)),reasons=[...new Set([...requiredChecks.filter(c=>c.status===status&&c.reason).map(c=>c.reason),error.message])];
+  return {status,requiredChecks,...(windowChecks.length?{windowChecks}:{}),starts:observedStarts,stop:false,manualRemoval:[],reason:reasons[0],reasons,...(error.bindingOnly?{bindingOnly:true}:{}),gateResults,evidence:[request.trace,request.dumpDir]};
+ }
 }
 
 export function dumpPrompt({project,projectName,dumpDir}){
@@ -793,7 +990,7 @@ function evidenceFiles(request) {
   else throw new Error('saved evidence must contain regular files and directories');
  };
  capture(request.dumpDir);capture(request.configFile);
- for(const file of [request.trace,request.dumpTrace,...(request.additionalTraces??[]).map(t=>t.trace),...(request.dumpAdditionalTraces??[]).map(t=>t.trace),...(request.approvalBindings??[]).map(b=>b.ownerEvidence?.trace)].filter(Boolean)) {
+ for(const file of [request.trace,request.sent,request.dumpTrace,...(request.additionalTraces??[]).flatMap(t=>[t.trace,t.sent]),...(request.dumpAdditionalTraces??[]).map(t=>t.trace),...(request.approvalBindings??[]).map(b=>b.ownerEvidence?.trace)].filter(Boolean)) {
   capture(file);capture(path.join(path.dirname(file),'result.json'));
  }
  return [...files];
@@ -802,9 +999,9 @@ export function resumeScenarioRecords({resumeEvidence,bindingsFile,prepareReview
  const saved=read(resumeEvidence),{digest,...payload}=saved;
  if(digest!==rubricDigest(payload)||JSON.stringify(evidenceFiles(saved.request))!==JSON.stringify(saved.files))throw new Error('saved evidence changed; resume refused');
  const bindings=bindingsFile?read(bindingsFile):{};
- // Missing native bindings can be annotated after capture, before a review
- // digest exists. Preparation never accepts a rubric or starts another stage.
- if(prepareReview&&saved.rubricDigest===null) {
+ // Explicit preparation always invalidates the old judgment when annotations
+ // are added or changed. It never accepts a rubric or starts another stage.
+ if(prepareReview) {
   const request={...saved.request,...Object.fromEntries(['approvalBindings','presentationBindings','gates'].filter(key=>bindings[key]!==undefined).map(key=>[key,bindings[key]]))};
   delete request.rubric;
   const result=verifyRecords(request),reviewEvidence=resumeEvidence+'.prepared.json';
@@ -814,7 +1011,7 @@ export function resumeScenarioRecords({resumeEvidence,bindingsFile,prepareReview
  }
  for(const key of ['approvalBindings','presentationBindings','gates'])if(bindings[key]!==undefined&&!isDeepStrictEqual(bindings[key],saved.request[key]))throw new Error('saved bindings changed; resume refused');
  const result=verifyRecords({...saved.request,rubric:bindings.rubric??saved.request.rubric});
- if(result.rubricDigest!==saved.rubricDigest)throw new Error('saved rubric digest changed; resume refused');
+ if((result.rubricDigest??null)!==(saved.rubricDigest??null))throw new Error(saved.rubricDigest?'saved rubric digest changed; resume refused':'review preparation required: no saved rubric digest');
  return {...result,reviewEvidence:resumeEvidence};
 }
 export async function verifyScenarioRecords({run,runRequest,scenario,project,outputDir,bindingsFile,resumeEvidence,prepareReview=false},collect=collectRecordDump){
@@ -831,8 +1028,8 @@ export async function verifyScenarioRecords({run,runRequest,scenario,project,out
  }
  if(dump.status!=='passed')return {...dump,status:dump.status==='failed'?'failed':'unverified',durationMs:Date.now()-start};
  const bindings=bindingsFile&&fs.existsSync(bindingsFile)?read(bindingsFile):{};
- const verification={host:runRequest.host,trace:run.trace,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
-  expectedReplies:runRequest.scenario?.expectedReplies,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
+ const verification={host:runRequest.host,testedVersion:run.testedVersion??runRequest.testedVersion,trace:run.trace,endLine:run.endLine,stageStartLine:run.stageStartLine,sent:run.sent,seedExpected:Boolean(runRequest.seed),seedEndLine:run.seedEndLine,seedProjectId:run.seedRoute?.project?.id,dumpDir:dump.dumpDir,dumpTrace:dump.trace,additionalTraces:traces,dumpAdditionalTraces:(dump.auditedTraces??[]).filter(trace=>trace!==dump.trace).map(trace=>({host:runRequest.host,trace})),
+  idleContinuation:runRequest.scenario?.idleContinuation,expectedReplies:runRequest.scenario?.expectedReplies,expectedWindows:runRequest.scenario?.expectedWindows,windows:runRequest.scenario?.windows,rubricDefinition:runRequest.scenario?.rubricDefinition,approvalBindings:bindings.approvalBindings,presentationBindings:bindings.presentationBindings,rubric:bindings.rubric,gates:bindings.gates,project,projectName:runRequest.context.projectName,expectedRecords:scenario.expectedRecords,nextStage:next,nextSkill:rules.nextSkill,nextAgent:rules.nextAgent,packRoot:runRequest.packRoot,configFile:path.join(runRequest.cwd,'.agents/mono-workflow.config.json')};
  const result=verifyRecords(verification),reviewEvidence=outputDir+'-evidence.json';
  const payload={request:verification,files:evidenceFiles(verification),rubricDigest:result.rubricDigest??null,rubricInput:result.rubricInput??null};
  fs.writeFileSync(reviewEvidence,JSON.stringify({...payload,digest:rubricDigest(payload)},null,2)+'\n',{flag:'wx'});

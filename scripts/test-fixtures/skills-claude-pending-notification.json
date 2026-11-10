@@ -1,0 +1,257 @@
+{
+  "provenance": "Projected native parent/background envelopes from two saved da863bd2 Claude release traces. Task IDs anonymized; thinking/tool bodies omitted. No final summary existed in these cut traces. Any appended completed offer is explicitly synthetic.",
+  "cases": [
+    {
+      "id": "notification-1",
+      "sourceSha256": "b314a0ee95bb9161030174eef32c1a4e03b5e19599a21f20449c87ce50c69f93",
+      "sourceLines": [
+        13,
+        60,
+        61,
+        72,
+        73,
+        98,
+        113,
+        144,
+        145,
+        146,
+        171,
+        172,
+        176,
+        178,
+        179
+      ],
+      "events": [
+        {
+          "type": "system",
+          "subtype": "init"
+        },
+        {
+          "type": "system",
+          "subtype": "background_tasks_changed",
+          "tasks": [
+            {
+              "task_id": "scout-1"
+            }
+          ]
+        },
+        {
+          "type": "system",
+          "subtype": "task_started",
+          "task_id": "scout-1",
+          "is_backgrounded": true
+        },
+        {
+          "type": "system",
+          "subtype": "background_tasks_changed",
+          "tasks": [
+            {
+              "task_id": "scout-1"
+            },
+            {
+              "task_id": "scout-2"
+            }
+          ]
+        },
+        {
+          "type": "system",
+          "subtype": "task_started",
+          "task_id": "scout-2",
+          "is_backgrounded": true
+        },
+        {
+          "type": "assistant",
+          "parent_tool_use_id": null,
+          "message": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Ищу похожие проекты в Linear и смотрю, как таблица прогонов устроена сейчас. Напишу, когда будут находки."
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success"
+        },
+        {
+          "type": "system",
+          "subtype": "task_notification",
+          "task_id": "scout-2",
+          "status": "completed"
+        },
+        {
+          "type": "system",
+          "subtype": "background_tasks_changed",
+          "tasks": [
+            {
+              "task_id": "scout-1"
+            }
+          ]
+        },
+        {
+          "type": "system",
+          "subtype": "init"
+        },
+        {
+          "type": "system",
+          "subtype": "task_notification",
+          "task_id": "scout-1",
+          "status": "completed"
+        },
+        {
+          "type": "system",
+          "subtype": "background_tasks_changed",
+          "tasks": []
+        },
+        {
+          "type": "assistant",
+          "parent_tool_use_id": null,
+          "message": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Код посмотрел. Жду, что найдётся в Linear."
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success"
+        },
+        {
+          "type": "system",
+          "subtype": "init"
+        }
+      ]
+    },
+    {
+      "id": "notification-2",
+      "sourceSha256": "774101861388582014f9ee78256cfa8bb27d692d63188cffdf873f33087f30d8",
+      "sourceLines": [
+        14,
+        67,
+        68,
+        79,
+        80,
+        171,
+        173,
+        176,
+        177,
+        178,
+        183,
+        186,
+        187,
+        189,
+        190
+      ],
+      "events": [
+        {
+          "type": "system",
+          "subtype": "init"
+        },
+        {
+          "type": "system",
+          "subtype": "background_tasks_changed",
+          "tasks": [
+            {
+              "task_id": "scout-1"
+            }
+          ]
+        },
+        {
+          "type": "system",
+          "subtype": "task_started",
+          "task_id": "scout-1",
+          "is_backgrounded": true
+        },
+        {
+          "type": "system",
+          "subtype": "background_tasks_changed",
+          "tasks": [
+            {
+              "task_id": "scout-1"
+            },
+            {
+              "task_id": "scout-2"
+            }
+          ]
+        },
+        {
+          "type": "system",
+          "subtype": "task_started",
+          "task_id": "scout-2",
+          "is_backgrounded": true
+        },
+        {
+          "type": "assistant",
+          "parent_tool_use_id": null,
+          "message": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Смотрю Linear и код, скоро вернусь с находками."
+              }
+            ]
+          }
+        },
+        {
+          "type": "result",
+          "subtype": "success"
+        },
+        {
+          "type": "system",
+          "subtype": "task_notification",
+          "task_id": "scout-2",
+          "status": "completed"
+        },
+        {
+          "type": "system",
+          "subtype": "background_tasks_changed",
+          "tasks": [
+            {
+              "task_id": "scout-1"
+            }
+          ]
+        },
+        {
+          "type": "system",
+          "subtype": "init"
+        },
+        {
+          "type": "assistant",
+          "parent_tool_use_id": null,
+          "message": {
+            "content": [
+              {
+                "type": "text",
+                "text": "В коде колонки «Источник» пока нет. Поле source уже есть в данных, но заполнено только у одного прогона из двух, и ни одна таблица его не выводит. Ещё досматриваю Linear."
+              }
+            ]
+          }
+        },
+        {
+          "type": "system",
+          "subtype": "task_notification",
+          "task_id": "scout-1",
+          "status": "completed"
+        },
+        {
+          "type": "system",
+          "subtype": "background_tasks_changed",
+          "tasks": []
+        },
+        {
+          "type": "result",
+          "subtype": "success"
+        },
+        {
+          "type": "system",
+          "subtype": "init"
+        }
+      ]
+    }
+  ]
+}

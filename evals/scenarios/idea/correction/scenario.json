@@ -72,7 +72,8 @@
           "presentation": "inline",
           "driverStart": null
         }
-      ]
+      ],
+      "idleContinuation": "Продолжай."
     },
     "codex": {
       "expectedReplies": [

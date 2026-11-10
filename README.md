@@ -1818,7 +1818,57 @@ passage. The driver starts a following stage only with predefined scenario permi
 and a native post-reply action after the current stage rubric passes. Canonical
 document identities come from native responses, including slug lookups. Harmless
 deferral wording is allowed; exact forbidden offers and the semantic rubric remain
-blocking. Window decoders live only in archived test fixtures.
+blocking. The production driver, checker and record verifier select window mode
+only for tested versions before 0.43.0; current versions retain the window ban.
+Claude background-task yields and pending completion notifications wait for a fresh
+completed parent stage summary; progress before the notification-processing turn
+cannot trigger an owner reply. A consumed native notification permits the
+completed parent turn; host-injected Skill bodies and resumed developer/system
+context never become owner replies. Claude scenarios permit one logged neutral
+idle continuation, then keep repeated progress unverified. Idea
+presentation titles stay outside the canonical four-section approval; absent
+presentation bindings remain unverified. Markerless legacy choices require an
+explicit scenario label (`expectedWindows.role: "choice"`); the checker still
+reports malformed cards and summaries stranded before an async window. Codex
+window answers require the native reply envelope with the tested call and question
+identities; plain chat and replies to other calls remain unverified. New tool
+work ends earlier progress; the last visible presentation after that work must
+appear in the final summary. Reasoning, blank messages and delayed results of
+earlier calls cannot hide that presentation. Only non-target free questions can
+omit options; target windows always require the scenario decision, advice,
+reason and valid options, including in role-less historical contracts.
+Historical acceptance uses real native window answers and the current conversation
+rubric. Linked approval records still bind the shown version after the answer;
+Claude child events cannot supply that owner-visible presentation or replace the
+last parent summary.
+Historical Claude windows retain that parent summary across message IDs; newer
+parent text replaces it, and parent service work invalidates it.
+Historical record verification requires every native window check and the digest-bound
+conversation rubric to pass. The tested version selects this path: text-reply
+metadata cannot bypass historical windows. Named corrections share the text path's
+snapshot and project-body checks, accepting only the authorized revised artifact.
+Rubric input includes the actual summaries, questions,
+native answers and following responses. Missing scenario policies, rubric input or
+judgment remain unverified. Approval requires an actual approving option label or
+the scenario's exact correction text; arbitrary prose cannot grant authority.
+Offline Claude answers may come from the already verified native receipt.
+Every historical scenario source, including each additional trace, requires its
+own window expectations, policy and native answer proof. All source exchanges
+enter the combined rubric; missing evidence stays unverified, and any failed
+source or record dominates an unverified one. Resume fingerprints include native
+answer journals. Codex refusals use the same call/question reply envelope as
+other window answers and grant no approval authority. Historical Idea creation
+compares the project description with the canonical three sections while the
+approval snapshot binds the complete shown presentation. Native issues may omit
+the team: the fixed dump resolves it through project metadata or complete team
+reads before reading exact status UUIDs; ambiguous teams keep status verification
+unverified without discarding the issue dump. Recorded window failures remain
+failed even if later native answers or trace reads are missing.
+Resume can explicitly re-prepare bindings after a rubric digest exists; the old
+judgment is discarded and only the new digest can certify the annotations.
+Historical Codex sources omit owner rubric input only when a completed additional
+trace has no assistant text, window calls or writes. Scenario response anchors
+use stems/alternatives; malformed questions and unauthorized records still fail.
 The AC1 guard reads all files under `skills/` and `templates/`, plus
 `references/owner-dialog.md` and `references/orchestration.md`, for retired window
 labels and answer-list formatting. History and old fixtures are outside that scope.
@@ -1826,9 +1876,12 @@ The suite saves the native trace, writes and fresh dump with their rubric digest
 Review that saved evidence, then use the same request with `resume: true` to
 continue without rerunning a completed stage. Changed evidence or digest refuses
 resume; failed and unverified rubric results still block the next stage.
+Binding preparation targets one saved stage and preserves completed earlier
+rubrics; native notification enqueue times, tool-name listings and rendered Linear
+mentions do not change the verified owner or record history.
 Extra replies, questions, completed turns, forged quotes, early writes and unfinished
 main/scout activity remain blocking. See [skill QA](references/qa-skills.md).
-The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 18
+The [scenario catalog](evals/scenarios/README.md) holds six Mono stages and 19
 scenarios, with per-host question roles and probe-derived seeds. Scenario replies are fixed before the run. Fresh seed routes are
 checked before the stage starts. Select a committed
 `base...head` with `node scripts/skills-select.mjs <request.json>`, then pass that
@@ -1836,7 +1889,15 @@ saved selection and the explicit index path to `node scripts/skills-suite.mjs
 <request.json>`. The optional `qa.skills` recipe connects any product's own index/hosts/perChange.
 Use configFile/expectedFile/taskExpectedFile in selection to save scenario × host
 expectations in task-expected.json. Per-change selection can be disabled while
-release/acceptance still select the full catalog. Mono's own config is activated
+acceptance still selects the full catalog, including direct selection with an
+empty or stage-only diff. Release selection uses the catalog's
+explicit release plan: all six stages once in one fresh project per host, without
+Linear seeds. It requires an orchestrator start reason for the separate transition
+after Design, and retains rubric/record checks before each next stage. Its generated
+report lists all four clients as unverified until host-side capture supplements it.
+The [acceptance key](evals/scenarios/acceptance/key.json) names the exact historical
+conditions, required screenshots, fixed-version controls and real gate decisions;
+a different failure or a report color does not satisfy the key. Mono's own config is activated
 only after 0.42.0 is installed. The expected items are frozen before the first host call;
 removed scenarios are refused. Main paths use short chains in one fresh monotest
 project, other neighbors use their own seeds. Design requires a request-supplied
@@ -1895,6 +1956,13 @@ servers. A startup read race retries once. Native proofs still require linked
 host evidence, native text, delivered replies and fresh completion. The default
 stage budget is one hour; text checks retain the full native trace.
 Run `node --test scripts/skills-{owner,run,trace,probe,proof}.test.mjs`.
+MONO-291 release/window regressions: `node --test scripts/skills-release.test.mjs
+scripts/skills-records.test.mjs scripts/skills-process.test.mjs scripts/skills-catalog.test.mjs`.
+The fixed dump includes raw team status lists and resolves exact UUID/name pairs;
+another status of the same type is a mismatch. Claude tool discovery, synthetic
+skill timestamps, rendered Linear chips/links and driver-initiated 137/143 exits
+have paired regression controls. These fixtures do not certify live client screens,
+ordinary-session isolation, measured per-change cost or release acceptance.
 Codex audits after a turn and cannot promise pre-execution refusal; isolation comes
 from the test home and servers, not from command strings. A mechanical pass still
 needs the conversation rubric and live orchestrator proof. Standalone synthetic

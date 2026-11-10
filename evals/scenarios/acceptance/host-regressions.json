@@ -1,0 +1,139 @@
+{
+  "claudeBackground": [
+    {
+      "type": "system",
+      "subtype": "background_tasks_changed",
+      "tasks": [
+        {
+          "task_id": "scout-0",
+          "task_type": "local_agent"
+        }
+      ]
+    },
+    {
+      "type": "system",
+      "subtype": "task_started",
+      "task_id": "scout-0",
+      "is_backgrounded": true
+    },
+    {
+      "type": "system",
+      "subtype": "background_tasks_changed",
+      "tasks": [
+        {
+          "task_id": "scout-0",
+          "task_type": "local_agent"
+        },
+        {
+          "task_id": "scout-1",
+          "task_type": "local_agent"
+        }
+      ]
+    },
+    {
+      "type": "system",
+      "subtype": "task_started",
+      "task_id": "scout-1",
+      "is_backgrounded": true
+    },
+    {
+      "type": "system",
+      "subtype": "task_notification",
+      "task_id": "scout-1",
+      "status": "completed"
+    },
+    {
+      "type": "system",
+      "subtype": "background_tasks_changed",
+      "tasks": [
+        {
+          "task_id": "scout-0",
+          "task_type": "local_agent"
+        }
+      ]
+    },
+    {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Разведка идёт. Как только Linear и код вернутся, принесу картину."
+          }
+        ]
+      }
+    },
+    {
+      "type": "result",
+      "subtype": "success"
+    }
+  ],
+  "shownIdea": "Synthetic source column\n\n## Что\n\nДобавить «Источник» после имени прогона в командной и графической таблицах Mono.\n\n## Зачем\n\nСейчас: источник встречается в данных, но в таблицах не виден. Нужно видеть его одинаково в обоих представлениях.\n\n## Образ результата\n\nОбе таблицы показывают источник; пустое значение, null и отсутствие дают прочерк. Приёмка охватывает данные и обе таблицы с независимыми проверками. Утверждённый макет передаётся в техническое решение. Не берём фильтр и сортировку: они не нужны для этой задачи.\n\n## Неизвестные\n\nКак связаны данные и обе таблицы? От этого зависит полнота изменения. Чем независимо проверить результат? От этого зависит приёмка.",
+  "codexAsync": [
+    {
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "Synthetic source column\n\n## Что\nДобавить разработчику в существующую таблицу тестовых прогонов колонку «Источник» сразу после имени прогона.\n\n## Зачем\nСейчас: источник хранится в данных, но в строке таблицы не виден. Чтобы узнать его, приходится открывать данные прогона.\n\n## Образ результата\nИсточник читается сразу в «Прогонах», «Истории» и «Архиве». Заголовок всегда «Источник», без имени прогона. Пустое значение, null и отсутствие источника показываются прочерком. Не берём фильтр и сортировку: для чтения источника они не нужны.\n\n## Неизвестные\nПоместится ли дополнительная колонка в текущем представлении? От этого зависит расположение таблицы.\n\nДальше: Research проверит отображение источника во всех представлениях и размещение новой колонки.\n"
+          }
+        ],
+        "phase": "commentary"
+      }
+    },
+    {
+      "type": "response_item",
+      "payload": {
+        "type": "function_call",
+        "name": "request_user_input_async",
+        "arguments": "{\"questions\":[{\"title\":\"Утвердить показанное описание Synthetic source column?\",\"options\":[\"Утвердить и начать Research\",\"Утвердить, продолжу позже\",\"Ещё обсудить\"]}]}",
+        "call_id": "choice-call"
+      }
+    },
+    {
+      "type": "response_item",
+      "payload": {
+        "type": "function_call_output",
+        "call_id": "choice-call",
+        "output": "{\"accepted\":true}"
+      }
+    },
+    {
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "Выбери вариант в окне выше."
+          }
+        ],
+        "phase": "final_answer"
+      }
+    },
+    {
+      "type": "event_msg",
+      "payload": {
+        "type": "task_complete",
+        "turn_id": "turn-choice"
+      }
+    }
+  ],
+  "markerlessChoice": {
+    "questions": [
+      {
+        "title": "Выбираем колонку «Источник» после имени прогона в общей таблице, как в показанном примере?",
+        "options": [
+          "Колонка «Источник» (рекомендую)",
+          "Ещё обсудить"
+        ]
+      }
+    ]
+  },
+  "afterQuestion": "mono:idea (skills/idea/references/record.md) требует: «Без ответа записи нет», поэтому перед созданием нужно согласие на показанный текст.",
+  "provenance": "Anonymized native excerpts from MONO-291 793c103f host run (2026-11-08); tests add explicitly constructed completion/repair events. No live approval or screen claim."
+}

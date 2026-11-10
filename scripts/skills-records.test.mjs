@@ -36,9 +36,9 @@ function fixture(t){
   const reads=[];
   const walk=(directory)=>{for(const name of fs.readdirSync(directory)){const file=path.join(directory,name);if(fs.statSync(file).isDirectory()){walk(file);continue;}
    if(!name.endsWith('.json')||name.endsWith('.request.json'))continue;
-   const relative=path.relative(dumpDir,file),value=JSON.parse(fs.readFileSync(file)),kind=/^comments-/.test(name)?'list_comments':/^documents-/.test(name)?'list_documents':/^issues-/.test(name)?'list_issues':/^projects-/.test(name)?'list_projects':relative==='project.json'?'get_project':name==='issue.json'?'get_issue':'get_document';
+   const relative=path.relative(dumpDir,file),value=JSON.parse(fs.readFileSync(file)),kind=relative.startsWith('statuses/')?'list_issue_statuses':/^comments-/.test(name)?'list_comments':/^documents-/.test(name)?'list_documents':/^issues-/.test(name)?'list_issues':/^projects-/.test(name)?'list_projects':/^teams-/.test(name)?'list_teams':relative==='project.json'?'get_project':name==='issue.json'?'get_issue':'get_document';
    const page=kind.startsWith('list_'),scope=relative.startsWith('issues/')?relative.split('/')[1]:projectId;
-   const input=page?{...(kind==='list_projects'?{query:request.projectName}:{[kind==='list_issues'?'project':scope===projectId?'projectId':'issueId']:scope}),...(['list_issues','list_projects'].includes(kind)?{includeArchived:true}:{}),...(fs.existsSync(file.replace(/\.json$/,'.request.json'))?JSON.parse(fs.readFileSync(file.replace(/\.json$/,'.request.json'))):{})}:{id:value.uuid??value.id};
+   const input=kind==='list_issue_statuses'?{team:path.basename(name,'.json')}:kind==='list_teams'?JSON.parse(fs.readFileSync(file.replace(/\.json$/,'.request.json'))):page?{...(kind==='list_projects'?{query:request.projectName}:{[kind==='list_issues'?'project':scope===projectId?'projectId':'issueId']:scope}),...(['list_issues','list_projects'].includes(kind)?{includeArchived:true}:{}),...(fs.existsSync(file.replace(/\.json$/,'.request.json'))?JSON.parse(fs.readFileSync(file.replace(/\.json$/,'.request.json'))):{})}:{id:value.uuid??value.id};
    const id=String(reads.length);
    if(request.host==='claude')reads.push({type:'assistant',message:{content:[{type:'tool_use',id,name:`mcp__monotest__${kind}`,input}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}});
    else reads.push({type:'response_item',payload:{type:'function_call',name:`mcp__monotest__${kind}`,call_id:id,arguments:JSON.stringify(input)}},{type:'response_item',payload:{type:'function_call_output',call_id:id,output:JSON.stringify(value)}});
@@ -46,7 +46,7 @@ function fixture(t){
   walk(dumpDir);fs.writeFileSync(dumpTrace,timed([...reads,terminal],'2026-11-02T04:01:00Z').map(e=>JSON.stringify(e)).join('\n')+'\n');
  };flush();
  const check=()=>{flush();return verifyRecords(request);};
- return {dir,dumpDir,project,record,events,save,page,check,request};
+ return {dir,dumpDir,project,record,events,save,page,flush,check,request};
 }
 
 test('records compare successful native write bodies to a fresh complete monotest dump',t=>{
@@ -313,6 +313,171 @@ test('amend1 a current-version read must complete before the approval write',t=>
  const resultValue=f.check();assert.equal(resultValue.status,'failed',resultValue.reason);assert.match(resultValue.reason,/read completed after approval/);
 });
 
+const claudeChildApproval=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-claude-child-approval.json',import.meta.url)));
+for(const bindChild of [false,true])test(`production historical Claude ${bindChild?'rejects a scout-only presentation':'accepts the owner summary despite a later scout message'}`,t=>{
+ const f=fixture(t),saved=structuredClone(claudeChildApproval.events),draft=saved[bindChild?1:0].message.content[0].text;
+ const questions=saved[2].message.content[0].input.questions,question=questions[0].question,answer='Утвердить, продолжу позже';
+ const call=(id,name,input)=>({type:'assistant',message:{content:[{type:'tool_use',id,name,input}]}}),result=(id,value)=>({type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:typeof value==='string'?value:JSON.stringify(value)}]}});
+ f.record.body='mono-test: approved\n'+draft;f.request.testedVersion='0.42.0';
+ f.events.splice(0,f.events.length,...saved,
+  {type:'control_request',request_id:'permission',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions}}},
+  result('window',`Your questions have been answered: "${question}"="${answer}". You can now continue with these answers in mind.`),
+  call('read','mcp__monotest__get_document',{id:'doc'}),result('read',{id:'doc',content:draft}),
+  call('write','mcp__monotest__create_comment',{projectId,body:f.record.body}),result('write',f.record));
+ f.page('comments','comments',[f.record]);f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content:draft});
+ f.request.sent=path.join(f.dir,'sent.jsonl');fs.writeFileSync(f.request.sent,JSON.stringify({type:'control_response',response:{request_id:'permission',response:{behavior:'allow',updatedInput:{questions,answers:{[question]:answer}}}}})+'\n');
+ f.request.approvalBindings=[{recordId:'r1',windowCallId:'window',shownLine:bindChild?2:1,currentLine:6,text:draft}];
+ f.request.expectedWindows=[{id:'approval',role:'approval',decision:'Утвержд',advice:'Совет',reason:'Research',summary:['## Что','## Зачем']}];
+ f.request.windows=[{mode:'label',label:answer}];f.request.rubricDefinition='Review the visible parent summary and native window reply.';
+ f.flush();let checked=verifyTextRecords(f.request);
+ if(!bindChild){assert.equal(checked.status,'unverified');assert.ok(checked.rubricDigest);f.request.rubric={digest:checked.rubricDigest,reviewer:'fixture-reviewer',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',reason:'Parent presentation and reply reviewed',evidence:'native fixture'}))};checked=verifyTextRecords(f.request);}
+ assert.equal(checked.status,bindChild?'unverified':'passed',JSON.stringify(checked));
+ if(bindChild)assert.match(checked.reason,/shown version not found in owner-visible trace/);
+ assert.equal(saved[0].parent_tool_use_id,null,'native parent messages remain eligible');
+});
+
+// Saved owner/scout/window excerpts plus constructed read-back and native replies.
+function historicalRecords(t,host='claude',answer='Утвердить, продолжу позже') {
+ const f=fixture(t),saved=structuredClone(claudeChildApproval.events),draft=saved[0].message.content[0].text;
+ const questions=saved[2].message.content[0].input.questions;
+ const call=(id,name,input)=>host==='claude'?{type:'assistant',message:{content:[{type:'tool_use',id,name,input}]}}:{type:'response_item',payload:{type:'function_call',call_id:id,name,arguments:JSON.stringify(input)}};
+ const result=(id,value)=>host==='claude'?{type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:typeof value==='string'?value:JSON.stringify(value)}]}}:{type:'response_item',payload:{type:'function_call_output',call_id:id,output:typeof value==='string'?value:JSON.stringify(value)}};
+ f.request.host=host;f.request.testedVersion='0.42.0';f.record.body='mono-test: approved\n'+draft;
+ f.request.expectedWindows=[{id:'approval',role:'approval',decision:'Утвержд',advice:'Совет',reason:'Research',summary:['## Что','## Зачем','Дальше:']}];
+ f.request.windows=[{mode:'label',label:'Утвердить, продолжу позже'}];
+ f.request.rubricDefinition='Summary must be visible; judge question, owner response and any correction against the fixed policy.';
+ if(host==='claude') {
+  const question=questions[0].question,updatedInput={questions,answers:{[question]:answer}};
+  const receipt=answer===''?'The user did not answer the questions.':questions[0].options.some(o=>o.label===answer)?`Your questions have been answered: "${question}"="${answer}". You can now continue with these answers in mind.`:`The user answered: "${question}"="${answer}". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`;
+  const reply=result('window',receipt);reply.tool_use_result=updatedInput;
+  f.events.splice(0,f.events.length,...saved,{type:'control_request',request_id:'permission',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions}}},reply);
+  f.request.sent=path.join(f.dir,'sent.jsonl');fs.writeFileSync(f.request.sent,JSON.stringify({type:'control_response',response:{request_id:'permission',response:{behavior:'allow',updatedInput}}})+'\n');
+ } else {
+  const qs=questions.map(q=>({title:q.question+'\n'+q.options.map(o=>o.label+': '+o.description).join('\n'),options:q.options.map(o=>o.label)}));
+  const reply=`<send_user_message_question_reply>\n${JSON.stringify(qs.map((q,i)=>({questionItemId:JSON.stringify(['request_user_input_async','window',i]),question:q.title,answer})))}\n</send_user_message_question_reply>\n`;
+  f.events.splice(0,f.events.length,call('window','request_user_input_async',{questions:qs}),result('window',{accepted:true}),{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:draft}]}},{type:'event_msg',payload:{type:'task_complete'}},{type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:reply}]}});
+ }
+ f.events.push(call('read','mcp__monotest__get_document',{id:'doc'}),result('read',{id:'doc',content:draft}),call('write','mcp__monotest__create_comment',{projectId,body:f.record.body}),result('write',f.record));
+ f.page('comments','comments',[f.record]);f.page('documents','documents',[{id:'doc'}]);f.save('documents/doc.json',{id:'doc',projectId,title:'Draft',content:draft});
+ f.request.approvalBindings=[{recordId:'r1',windowCallId:'window',shownLine:host==='claude'?1:3,currentLine:6,text:draft}];
+ f.check=()=>{f.flush();return verifyTextRecords(f.request);};
+ f.attest=()=>{delete f.request.rubric;const initial=f.check();assert.equal(initial.status,'unverified',JSON.stringify(initial));assert.ok(initial.rubricDigest,'historical rubric was built');f.request.rubric={digest:initial.rubricDigest,reviewer:'fixture-reviewer',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'fixture native exchange reviewed',reason:'Matches fixed scenario'}))};return initial;};
+ return f;
+}
+function historicalSource(t,host,mode='valid') {
+ const f=historicalRecords(t,host),rows=f.events.slice(0,5);
+ const response=host==='claude'?{type:'assistant',message:{content:[{type:'text',text:'Утверждение не записываю; передаю результат.'}]}}:{type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Утверждение не записываю; передаю результат.'}]}};
+ const terminal=host==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}};
+ if(mode==='missing-answer')rows.splice(4,1);
+ rows.push(response,terminal);
+ const serialized=timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n';
+ fs.writeFileSync(f.request.trace,mode==='malformed-card'?serialized.replaceAll('Совет','Вывод'):serialized);
+ if(mode==='malformed-card'&&f.request.sent)fs.writeFileSync(f.request.sent,fs.readFileSync(f.request.sent,'utf8').replaceAll('Совет','Вывод'));
+ return {host,trace:f.request.trace,sent:f.request.sent,expectedWindows:f.request.expectedWindows,windows:f.request.windows,rubricDefinition:f.request.rubricDefinition};
+}
+for(const primaryHost of ['claude','codex'])for(const extraHost of ['claude','codex']) {
+ for(const mode of ['malformed-card','missing-answer','missing-policy'])test(`historical all sources: ${primaryHost} plus ${extraHost} ${mode} cannot pass`,t=>{
+  const f=historicalRecords(t,primaryHost);f.attest();const extra=historicalSource(t,extraHost,mode);if(mode==='missing-policy')delete extra.expectedWindows;
+  f.request.additionalTraces=[extra];const result=f.check();assert.equal(result.status,mode==='malformed-card'?'failed':'unverified',JSON.stringify(result));
+ });
+ test(`historical all sources: ${primaryHost} plus ${extraHost} both bind native exchanges and rubric`,t=>{
+  const f=historicalRecords(t,primaryHost);f.request.additionalTraces=[historicalSource(t,extraHost)];const initial=f.attest();
+  assert.equal(initial.rubricInput.sources.length,2,'each source belongs to the combined rubric');
+  assert.deepEqual(initial.rubricInput.sources.map(s=>s.host),[primaryHost,extraHost]);
+  assert(initial.rubricInput.sources.every(s=>s.exchanges[0].answers[0]==='Утвердить, продолжу позже'));
+  assert.equal(f.check().status,'passed');
+  const extra=f.request.additionalTraces[0];fs.appendFileSync(extra.trace,JSON.stringify(extraHost==='claude'?{type:'result',subtype:'success'}:{type:'event_msg',payload:{type:'task_complete'}})+'\n');
+  const changed=f.check();assert.equal(changed.status,'unverified','additional trace changes stale the combined judgment');assert.notEqual(changed.rubricDigest,initial.rubricDigest);
+ });
+}
+for(const host of ['claude','codex'])test(`historical all sources: ${host} cannot borrow an answer beyond its endLine`,t=>{
+ const f=historicalRecords(t);f.attest();f.request.additionalTraces=[{...historicalSource(t,host),endLine:4}];
+ const result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));
+});
+for(const uncertain of ['missing-answer','missing-file','missing-policy'])for(const reverse of [false,true])test(`historical all sources: failed dominates ${uncertain}, reversed=${reverse}`,t=>{
+ const f=historicalRecords(t,'codex');f.attest();const weak=historicalSource(t,'codex',uncertain),broken=historicalSource(t,'claude','malformed-card');
+ if(uncertain==='missing-file')weak.trace=path.join(path.dirname(weak.trace),'absent.jsonl');
+ if(uncertain==='missing-policy')delete weak.windows;
+ f.request.additionalTraces=reverse?[broken,weak]:[weak,broken];const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));
+});
+test('historical all sources: an uncertain primary cannot hide a failed additional window',t=>{
+ const f=historicalRecords(t,'codex');f.attest();f.events.splice(4,1);f.request.additionalTraces=[historicalSource(t,'claude','malformed-card')];
+ assert.equal(f.check().status,'failed');
+});
+test('historical all sources: an uncertain additional window cannot hide a failed record',t=>{
+ const f=historicalRecords(t);f.attest();f.request.additionalTraces=[historicalSource(t,'codex','missing-answer')];f.page('comments','comments',[{...f.record,body:'Changed after write'}]);
+ const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/mismatch/);
+});
+test('historical all sources: an unreadable additional trace cannot hide a failed record',t=>{
+ const f=historicalRecords(t);f.attest();f.request.additionalTraces=[{host:'codex',trace:path.join(f.dir,'absent.jsonl')}];f.page('comments','comments',[{...f.record,body:'Changed after write'}]);
+ const result=f.check();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/mismatch/);
+});
+for(const host of ['claude','codex'])test(`historical all sources: ${host} approval uses that source's native policy`,t=>{
+ const primary=historicalRecords(t,host==='claude'?'codex':'claude'),extra=historicalRecords(t,host,'Исправь указанную строку и утверди');
+ extra.request.windows=[{mode:'correction',text:'Исправь указанную строку и утверди'}];extra.request.expectedWindows[0].id='secondary-approval';
+ extra.record.id='r2';extra.record.body=extra.record.body.replace('mono-test:','mono-other:');extra.request.approvalBindings[0].recordId='r2';
+ const rewrite=value=>{
+  if(typeof value==='string')return value.replaceAll('mono-test: approved','mono-other: approved').replaceAll('"id":"r1"','"id":"r2"');
+  if(Array.isArray(value))return value.map(rewrite);
+  return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,k==='id'&&v==='r1'?'r2':rewrite(v)])):value;
+ };
+ extra.events.splice(0,extra.events.length,...rewrite(extra.events));extra.flush();
+ primary.request.additionalTraces=[{host,trace:extra.request.trace,sent:extra.request.sent,expectedWindows:extra.request.expectedWindows,windows:extra.request.windows}];
+ primary.request.expectedRecords.push({type:'mono-other',count:1});primary.request.approvalBindings.push(extra.request.approvalBindings[0]);primary.page('comments','comments',[primary.record,extra.record]);
+ primary.attest();const result=primary.check();assert.equal(result.status,'passed',JSON.stringify(result));
+ assert.equal(result.rubricInput.sources[1].exchanges[0].policy.mode,'correction');assert.equal(result.rubricInput.sources[1].exchanges[0].id,'secondary-approval');
+ primary.events.splice(4,1);extra.request.windows[0].text='Иная поправка';
+ const rejected=primary.check();assert.equal(rejected.status,'failed',JSON.stringify(rejected));assert(rejected.requiredChecks.some(c=>c.id.startsWith('approval:')&&c.status==='failed'),'unknown primary proof cannot hide an unauthorized secondary approval');
+});
+for(const host of ['claude','codex']) {
+ for(const answer of ['Утвердить нельзя, нужно ещё обсудить','Утвердить неизвестный вариант','Ещё обсудить',''])test(`historical ${host} does not authorize approval from ${JSON.stringify(answer)}`,t=>{
+  const f=historicalRecords(t,host,answer),checked=f.check();assert.equal(checked.status,'failed',JSON.stringify(checked));assert.match(checked.reason,/non-approval/);
+ });
+ test(`historical ${host} requires a native window rubric and includes actual exchange evidence`,t=>{
+  const f=historicalRecords(t,host),initial=f.attest(),exchange=initial.rubricInput.sources[0].exchanges[0];
+  assert.match(exchange.text,/## Что/);assert.equal(exchange.answers[0],'Утвердить, продолжу позже');assert.ok(exchange.questions[0]);assert.ok(exchange.replyLine>exchange.line);
+  assert.equal(f.check().status,'passed',JSON.stringify(f.check()));
+  f.request.rubric.checks[0].status='failed';assert.equal(f.check().status,'failed');
+ });
+ test(`historical ${host} allows only the explicit correction policy text`,t=>{
+  const f=historicalRecords(t,host,'Исправь указанную строку и утверди');f.request.windows=[{mode:'correction',text:'Исправь указанную строку и утверди'}];
+  f.attest();assert.equal(f.check().status,'passed');
+  f.request.windows[0].text='Иной текст';assert.equal(f.check().status,'failed');
+ });
+ for(const absent of ['expectedWindows','windows','rubricDefinition','rubric','summary','question','response','correction','approvalBindings','dumpTrace','nativeAnswer','staleRubric','unverifiedRubric'])test(`historical ${host} cannot pass a skipped required check: ${absent}`,t=>{
+  const f=historicalRecords(t,host);f.attest();
+  if(absent==='nativeAnswer')f.events.splice(4,1);
+  else if(absent==='staleRubric')f.request.rubric.digest='0'.repeat(64);
+  else if(absent==='unverifiedRubric')f.request.rubric.checks[0].status='unverified';
+  else if(['summary','question','response','correction'].includes(absent))f.request.rubric.checks=f.request.rubric.checks.filter(c=>c.id!==absent);else delete f.request[absent];
+  const checked=f.check();assert.equal(checked.status,'unverified',JSON.stringify(checked));
+ });
+}
+for(const host of ['claude','codex'])test(`historical ${host} records cannot use card-only checking to skip a required window`,t=>{
+ const f=historicalRecords(t,host);f.request.expectedWindows.push({...f.request.expectedWindows[0],id:'second-approval'});f.request.windows.push({...f.request.windows[0]});f.request.phase='card';
+ const initial=f.check();
+ if(initial.status==='unverified'&&initial.rubricDigest){f.attest();}
+ const checked=f.check();assert.equal(checked.status,'failed',JSON.stringify(checked));
+});
+test('historical Claude native denial cannot authorize a record write',t=>{
+ const f=historicalRecords(t),message='Не утверждаю';
+ f.events[4].message.content[0]={type:'tool_result',tool_use_id:'window',is_error:true,content:message};delete f.events[4].tool_use_result;
+ fs.writeFileSync(f.request.sent,JSON.stringify({type:'control_response',response:{request_id:'permission',response:{behavior:'deny',message}}})+'\n');
+ const checked=f.check();assert.equal(checked.status,'failed',JSON.stringify(checked));assert.match(checked.reason,/non-approval/);
+});
+test('historical record collection preserves scenario policy and a reviewable native exchange on resume',async t=>{
+ const f=historicalRecords(t);f.flush();fs.writeFileSync(path.join(f.dir,'VERSION'),'0.42.0\n');const bindingsFile=path.join(f.dir,'bindings.json');fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings}));
+ const input={run:{trace:f.request.trace,sent:f.request.sent,testedVersion:'0.42.0'},runRequest:{host:'claude',cwd:f.dir,packRoot:f.dir,mcpServers:{monotest:{url:'test'}},context:{projectName:f.project.name,skillPrefix:'mono'},scenario:{expectedWindows:f.request.expectedWindows,windows:f.request.windows,rubricDefinition:f.request.rubricDefinition}},scenario:{expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,'records'),bindingsFile};
+ const initial=await verifyTextScenarioRecords(input,async()=>({status:'passed',trace:f.request.dumpTrace,dumpDir:f.dumpDir}));assert.equal(initial.status,'unverified',JSON.stringify(initial));assert.ok(initial.rubricDigest,JSON.stringify(initial));
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings,rubric:{digest:initial.rubricDigest,reviewer:'fixture-reviewer',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'native exchange',reason:'Matches fixed policy'}))}}));
+ const resumed=await verifyTextScenarioRecords({...input,resumeEvidence:initial.reviewEvidence},()=>{throw Error('must reuse evidence');});assert.equal(resumed.status,'passed',JSON.stringify(resumed));
+});
+test('historical Claude uses only already verified native receipt answers offline',t=>{
+ const f=historicalRecords(t);delete f.request.sent;f.attest();assert.equal(f.check().status,'passed');
+ f.events[4].tool_use_result.answers[Object.keys(f.events[4].tool_use_result.answers)[0]]='Утвердить нельзя';
+ assert.equal(f.check().status,'unverified','mismatched receipt cannot authorize approval');
+});
+
 test('missing native write result remains unverified and output errors never become a receipt',t=>{
  const f=fixture(t);f.events.pop();assert.equal(f.check().status,'unverified');
  f.events.push({type:'user',message:{content:[{type:'tool_result',tool_use_id:'write',is_error:true,content:JSON.stringify(f.record)}]}});
@@ -428,6 +593,33 @@ function liveFixture(t,name){
  const edit=(file,mutate)=>{const p=path.join(dir,file),v=JSON.parse(fs.readFileSync(p));mutate(v);fs.writeFileSync(p,JSON.stringify(v));};
  return {dir,request,edit,check:()=>verifyRecords(request)};
 }
+for(const tamper of [false,true])test(`continue7 historical ordinary Idea binds full presentation to canonical body (${tamper})`,t=>{
+ const f=liveFixture(t,'idea-approve');fs.writeFileSync(path.join(f.dir,'VERSION'),'0.42.0\n');fs.symlinkSync(path.resolve('scripts'),path.join(f.dir,'scripts'),'dir');
+ Object.assign(f.request,{packRoot:f.dir,testedVersion:'0.42.0',expectedWindows:[{id:'approval',role:'approval',decision:'Утверждаем',advice:'Совет',reason:'Research',summary:['## Что','## Зачем','## Неизвестные']}],windows:[{mode:'label',label:'Утвердить, продолжу позже'}],rubricDefinition:'Full shown Idea, native consent and canonical project body.'});
+ f.request.approvalBindings[0].text=f.request.approvalBindings[1].text;
+ if(tamper){
+  const change=(value,key)=>{
+   if(typeof value==='string'){if(key==='description'&&value.includes('## Что'))return value+'\nUnapproved project change.';try{return JSON.stringify(change(JSON.parse(value)));}catch{return value;}}
+   if(Array.isArray(value))return value.map(v=>change(v));
+   return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,change(v,k)])):value;
+  };
+  for(const file of [f.request.trace,f.request.dumpTrace])fs.writeFileSync(file,fs.readFileSync(file,'utf8').trim().split('\n').map(line=>JSON.stringify(change(JSON.parse(line)))).join('\n')+'\n');
+  f.edit('dump/project.json',v=>Object.assign(v,change(v)));
+ }
+ const first=verifyTextRecords(f.request);if(first.rubricDigest)f.request.rubric={digest:first.rubricDigest,reviewer:'native-control oracle',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',reason:'Saved complete native approval',evidence:'native Idea control'}))};
+ const checked=verifyTextRecords(f.request);assert.equal(checked.status,tamper?'failed':'passed',JSON.stringify(checked));
+ if(!tamper)assert.equal(checked.gateResults[0].result.ok,true);else assert.match(checked.reason,/mismatch|differs/);
+});
+
+for(const host of ['claude','codex'])for(const mode of ['native-no-team','native-no-team-project','native-no-team-many'])test(`continue7 fixed native issue team resolution ${host} ${mode}`,async t=>{
+ const f=fixture(t),native=JSON.parse(JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-records-live/discovery-approve/dump/issues/MON-130/issue.json',import.meta.url))).content[0].text),authFile=path.join(f.dir,'auth.json');fs.writeFileSync(authFile,'{}');
+ const result=await collectRecordDump({host,cwd:f.dir,packRoot:process.cwd(),outputDir:path.join(f.dir,'fixed'),authFile,timeoutMs:10000,idleMs:10,binary:{command:process.execPath,args:[path.resolve('scripts/test-fixtures/skills-fixed-dump-host.mjs'),mode]},project:{id:native.projectId,name:'fixed-run'},mcpServers:{monotest:{url:'test'}}});
+ assert.equal(result.status,'passed',JSON.stringify(result));
+ const file=path.join(result.dumpDir,`issues/${native.uuid}/issue.json`);assert.ok(fs.existsSync(file),'whole native issue dump retained');
+ const resolved=mode!=='native-no-team-many';assert.equal(fs.existsSync(path.join(result.dumpDir,'statuses/test-team.json')),resolved);
+ if(resolved)assert.deepEqual(JSON.parse(JSON.parse(fs.readFileSync(path.join(result.dumpDir,'statuses/test-team.json'))).content[0].text),native.stateHistory.map(r=>r.state));
+ else assert.ok(result.dumpStatusGaps?.length,'ambiguous team is a status evidence gap, not a thrown whole-dump failure');
+});
 for(const name of ['idea-approve','idea-empty','discovery-approve'])test(`trimmed real Codex/monotest evidence: ${name}`,t=>{
  const f=liveFixture(t,name),before=fs.readFileSync(path.join(f.dir,name==='idea-empty'?'dump/projects-1.json':'dump/comments-1.json'),'utf8');
  const r=f.check();if(name==='discovery-approve')assertInvocationGap(r);else assert.equal(r.status,'passed',r.reason);assert.equal(r.monotestTasks,name==='discovery-approve'?2:0);
@@ -510,7 +702,7 @@ for(const host of ['claude','codex'])for(const mode of ['complete','shell','fore
   assert.equal(violation.stop,true);assert.deepEqual(violation.manualRemoval,['https://linear.app/working/issue/x']);
  }
  if(mode==='complete'){
-  assert.equal(collected.dumpComplete,true);assert.equal(collected.dumpFiles.length,8);
+  assert.equal(collected.dumpComplete,true);assert.equal(collected.dumpFiles.length,9);
   const p=JSON.parse(fs.readFileSync(path.join(collected.dumpDir,'project.json')));assert.equal(p.content[0].type,'text');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(collected.dumpDir,'comments-2.request.json'))),{cursor:'c1'});
   const request={host,trace:stage,dumpDir:collected.dumpDir,dumpTrace:collected.trace,project:{id:projectId,name:'fixed-run'},expectedRecords:[{type:'project'}]};
@@ -1015,6 +1207,48 @@ function correctedIdeaFixture(t,passage='unknowns') {
  };
  return {...f,transform,attest,full,before,after};
 }
+function historicalCorrectedIdeaFixture(t,passage='unknowns') {
+ const f=correctedIdeaFixture(t,passage),expected=f.request.expectedReplies[0];
+ const native=fs.readFileSync('scripts/test-fixtures/skills-records-live/idea-approve/trace.jsonl','utf8').trim().split('\n').map(JSON.parse);
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse),window=native[2].payload,questions=JSON.parse(window.arguments).questions;
+ rows[2]=native[2];rows[3]=native[3];
+ rows[6].payload.content[0].text='<send_user_message_question_reply>\n'+JSON.stringify(questions.map((q,i)=>({questionItemId:JSON.stringify(['request_user_input_async',window.call_id,i]),question:q.title,answer:expected.reply})))+'\n</send_user_message_question_reply>\n';
+ fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:01Z').map(JSON.stringify).join('\n')+'\n');
+ fs.writeFileSync(path.join(f.dir,'VERSION'),'0.42.0\n');fs.symlinkSync(path.resolve('scripts'),path.join(f.dir,'scripts'),'dir');
+ f.request.packRoot=f.dir;f.request.testedVersion='0.42.0';delete f.request.expectedReplies;
+ f.request.expectedWindows=[{...expected,decision:'Утверждаем',advice:'Совет',reason:'Research'}];
+ f.request.windows=[{mode:'correction',text:expected.reply}];
+ f.request.approvalBindings.forEach(b=>{delete b.replyId;b.windowCallId=window.call_id;});
+ f.check=()=>verifyTextRecords(f.request);
+ f.attest=()=>{
+  delete f.request.rubric;const initial=f.check();
+  if(initial.rubricDigest)f.request.rubric={digest:initial.rubricDigest,reviewer:'curated historical corrected Idea',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'native window, fixed correction and revised Idea snapshot',reason:'Only the named Codex addition is authorized.'}))};
+  return f.check();
+ };
+ return f;
+}
+for(const host of ['claude','codex'])test(`historical version rejects text-record metadata before authorization (${host})`,t=>{
+ const f=u7DocumentFixture(t,host);f.attest();assert.equal(f.check().status,'passed');
+ f.request.testedVersion='0.42.0';const result=verifyTextRecords({...f.request});
+ assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/legacy acceptance requires real windows, not text replies/);
+});
+for(const passage of ['unknowns','result'])test(`historical corrected Idea validates the revised native approval snapshot (${passage})`,t=>{
+ const f=historicalCorrectedIdeaFixture(t,passage),result=f.attest();
+ assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.gateResults[0].result.ok,true);
+ assert.deepEqual(result.requiredChecks.map(c=>[c.id,c.status]),[['records','passed'],['windows','passed'],['rubric','passed']]);
+});
+test('historical corrected Idea rejects a snapshot changed beyond the authorized correction',t=>{
+ const f=historicalCorrectedIdeaFixture(t),approved=f.full.replace(f.before,f.after),changed=approved.replace('## Что\n','## Что\nПостороннее изменение.\n');
+ const rewrite=value=>{
+  if(typeof value==='string'){
+   try{return JSON.stringify(rewrite(JSON.parse(value)));}catch{}
+   return value.includes('mono-idea: approved')?value.replace(approved,changed).replace(ideaFingerprint(approved),ideaFingerprint(changed)):value;
+  }
+  if(Array.isArray(value))return value.map(rewrite);
+  return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,rewrite(v)])):value;
+ };
+ f.transform(rewrite);const result=f.attest();assert.equal(result.status,'failed',JSON.stringify(result));assert.match(result.reason,/change outside named passage/);
+});
 for(const passage of ['unknowns','result'])test(`continue5 corrected Idea uses its approval snapshot, not creation/currentLine (${passage})`,t=>{
  const f=correctedIdeaFixture(t,passage),result=f.attest();
  assert.equal(result.status,'passed',JSON.stringify(result));
@@ -1059,7 +1293,7 @@ for(const mode of ['forged-quote','extra-change','wrong-question','early-project
 });
 
 function textPrdFixture(t,delegated=false) {
- const f=liveFixture(t,'discovery-approve'),binding=f.request.approvalBindings[0],question='Принимаем показанный PRD?',reply=delegated?'Принимаю PRD: причина — требования проверяемы.':'принимаю';
+ const f=liveFixture(t,'discovery-approve'),team='fixture-team',binding=f.request.approvalBindings[0],question='Принимаем показанный PRD?',reply=delegated?'Принимаю PRD: причина — требования проверяемы.':'принимаю';
  const expected={id:'prd',stage:'discovery',role:'approval',asksStart:false,summary:['## Кратко','## Требования'],question,reply,intent:'agree',outcome:{approval:true,startNext:false},...(delegated?{by:'orchestrator',reason:'требования проверяемы.'}:{})};
  const transform=value=>{
   if(typeof value==='string'){
@@ -1068,7 +1302,7 @@ function textPrdFixture(t,delegated=false) {
    return value;
   }
   if(Array.isArray(value))return value.map(transform);
-  return value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,transform(v)])):value;
+  return value&&typeof value==='object'?{...Object.fromEntries(Object.entries(value).map(([k,v])=>[k,transform(v)])),...(value.uuid===f.request.project.id?{teams:[{id:team,name:'Fixture team'}]}:{})}:value;
  };
  const original=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse),rows=[],lineMap=new Map();
  for(const [i,row] of original.entries()){
@@ -1087,7 +1321,9 @@ function textPrdFixture(t,delegated=false) {
  f.request.seedEndLine=lineMap.get(f.request.seedEndLine);delete f.request.endLine;expected.response=['PRD утверждён, старт отложен.'];f.request.expectedReplies=[expected];
  fs.writeFileSync(f.request.trace,timed(transform(rows),'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
  const walk=dir=>{for(const name of fs.readdirSync(dir)){const file=path.join(dir,name);if(fs.statSync(file).isDirectory())walk(file);else if(file.endsWith('.json'))fs.writeFileSync(file,JSON.stringify(transform(JSON.parse(fs.readFileSync(file)))));}};walk(f.request.dumpDir);
- const dumpRows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);fs.writeFileSync(f.request.dumpTrace,timed(transform(dumpRows),'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');
+ const states=new Map();for(const entry of fs.readdirSync(path.join(f.request.dumpDir,'issues'))){const value=JSON.parse(JSON.parse(fs.readFileSync(path.join(f.request.dumpDir,'issues',entry,'issue.json'))).content[0].text);for(const row of value.stateHistory??[])states.set(row.state.id,row.state);}
+ const statuses=[...states.values()];fs.mkdirSync(path.join(f.request.dumpDir,'statuses'),{recursive:true});fs.writeFileSync(path.join(f.request.dumpDir,'statuses',team+'.json'),JSON.stringify(statuses));
+ const dumpRows=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);dumpRows.splice(-1,0,{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__list_issue_statuses',call_id:'fixed-statuses',arguments:JSON.stringify({team})}},{type:'response_item',payload:{type:'function_call_output',call_id:'fixed-statuses',output:JSON.stringify(statuses)}});fs.writeFileSync(f.request.dumpTrace,timed(transform(dumpRows),'2026-11-02T04:01:00Z').map(JSON.stringify).join('\n')+'\n');
  return f;
 }
 for(const delegated of [false,true])test(`text PRD binds updatedAt and native reads through real route gate; delegated=${delegated}`,t=>{
@@ -1874,4 +2110,218 @@ for(const host of ['claude','codex'])test(`project Brief presence accepts a fres
   f.save('documents/brief.json',{...doc,content});f.check();const bad=verifyTextRecords(f.request);assert.equal(bad.status,'failed');assert.match(bad.reason,/expected mono-brief: 1, observed 0/);
  }
  f.save('documents/brief.json',doc);f.request.expectedRecords=[{type:'mono-brief',count:1}];f.check();assert.notEqual(verifyTextRecords(f.request).status,'passed','write-required expectations remain strict');
+});
+
+test('MONO-291 synthetic Claude skill body cannot reverse native capture time',t=>{
+ const f=fixture(t);f.events.splice(2,0,{type:'user',isSynthetic:true,message:{content:[{type:'text',text:'Synthetic skill body'}]}});f.check();
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);rows[2].timestamp='2020-01-01T00:00:00Z';
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');assert.equal(verifyTextRecords(f.request).status,'passed');
+ delete rows[2].isSynthetic;fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');assert.equal(verifyTextRecords(f.request).status,'unverified');
+});
+for(const mode of ['chip','mixed-code'])test(`MONO-291 Linear prose normalization ${mode} preserves code and detects substantive changes`,t=>{
+ const f=fixture(t),url='https://linear.app/monotest/issue/MON-99/task';f.request.expectedRecords=[{type:'project'}];
+ const wanted=mode==='chip'?`Task: <issue id="uuid" href="${url}">MON-99</issue>`:`Keep \`x\`, see [${url}](<${url}>)`;
+ const actual=mode==='chip'?'Task: MON-99':`Keep \`x\`, see ${url}`;
+ f.events[2].message.content[0].input.body=wanted;f.events[3].message.content[0].content=JSON.stringify({...f.record,body:actual});f.page('comments','comments',[{...f.record,body:actual}]);f.check();
+ assert.equal(verifyTextRecords(f.request).status,'passed',JSON.stringify(verifyTextRecords(f.request)));
+ f.events[2].message.content[0].input.body=mode==='chip'?wanted.replace('MON-99</issue>','MON-98</issue>'):wanted.replace('`x`','`y`');f.check();assert.equal(verifyTextRecords(f.request).status,'failed');
+});
+
+for(const host of ['claude','codex'])for(const teamSource of ['issue','project','teams','ambiguous'])test(`MONO-291 ${host} resolves a written status UUID from the fixed dump of its team (${teamSource})`,t=>{
+ const f=fixture(t);f.request.host=host;
+ const team='00000000-0000-4000-8000-000000000002',status='00000000-0000-4000-8000-000000000003';
+ const statuses=[{id:status,name:'Done',type:'completed'},{id:'00000000-0000-4000-8000-000000000004',name:'Released',type:'completed'}];
+ const issue={id:'MON-1',uuid:'task',projectId,teamId:team,title:'Stage',description:'Body',status:'Done',labels:[]};
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('issues','issues',[{id:'task'}]);f.save('issues/task/issue.json',issue);f.page('issues/task/comments','comments',[]);f.save(`statuses/${team}.json`,statuses);
+ if(teamSource!=='issue')delete issue.teamId;
+ if(teamSource==='project'){f.project.teams=[{id:team,name:'Native team'}];f.save('project.json',f.project);}
+ if(['teams','ambiguous'].includes(teamSource))f.page('teams','teams',[{id:team,name:'Native team'},...(teamSource==='ambiguous'?[{id:'other-team',name:'Other'}]:[])]);
+ f.save('issues/task/issue.json',issue);
+ const input={id:'task',state:status};
+ f.events.splice(0,f.events.length,...(host==='claude'?[
+  {type:'assistant',message:{content:[{type:'tool_use',id:'status',name:'mcp__monotest__save_issue',input}]}},
+  {type:'user',message:{content:[{type:'tool_result',tool_use_id:'status',content:JSON.stringify(issue)}]}}
+ ]:[{type:'response_item',payload:{type:'function_call',call_id:'status',name:'mcp__monotest__save_issue',arguments:JSON.stringify(input)}},
+ {type:'response_item',payload:{type:'function_call_output',call_id:'status',output:JSON.stringify(issue)}}]));
+ const check=()=>{f.check();return verifyTextRecords(f.request);};
+ if(teamSource==='ambiguous'){assert.equal(check().status,'unverified',JSON.stringify(check()));return;}
+ assert.equal(check().status,'passed',JSON.stringify(check()));
+ f.save('issues/task/issue.json',{...issue,status:'Released'});assert.equal(check().status,'failed','same status type cannot replace the exact status');
+ f.save('issues/task/issue.json',{...issue,status:{id:statuses[1].id,name:'Done',type:'completed'}});assert.equal(check().status,'failed','a returned name cannot hide a different explicit UUID');
+ f.save('issues/task/issue.json',issue);f.save(`statuses/${team}.json`,statuses.filter(row=>row.id!==status));assert.equal(check().status,'unverified','missing exact UUID cannot be inferred from type');
+});
+
+test('MONO-291 Claude fixed dump permits monotest ToolSearch, reads team statuses, rejects foreign search',async t=>{
+ for(const mode of ['tool-search','tool-search-foreign']){
+  const f=fixture(t);
+  const r=await collectRecordDump({host:'claude',cwd:f.dir,packRoot:process.cwd(),outputDir:path.join(f.dir,'fixed'),timeoutMs:10000,idleMs:10,binary:{command:process.execPath,args:[path.resolve('scripts/test-fixtures/skills-fixed-dump-host.mjs'),mode]},project:{id:projectId,name:'fixed-run'},mcpServers:{monotest:{url:'test'}}});
+  assert.equal(r.status,mode==='tool-search'?'passed':'failed',JSON.stringify(r));
+  if(mode==='tool-search')assert(fs.existsSync(path.join(r.dumpDir,'statuses/test-team.json')));
+ }
+});
+
+test('MONO-291 production historical records require scenario context and reject an empty answer',t=>{
+ const f=liveFixture(t,'idea-approve');fs.symlinkSync(path.resolve('scripts'),path.join(f.dir,'scripts'),'dir');f.request.packRoot=f.dir;
+ const version=value=>{f.request.testedVersion=value;fs.writeFileSync(path.join(f.dir,'VERSION'),value+'\n');};version('0.41.0');
+ const incomplete=verifyTextRecords(f.request);assert.equal(incomplete.status,'unverified',JSON.stringify(incomplete));assert.match(incomplete.reason,/scenario policies missing/);assert.equal(incomplete.gateResults[0].result.ok,true,'record gate still runs before the missing conversation check');
+ version('0.43.0');assert.match(verifyTextRecords(f.request).reason,/stage called a window/);version('0.41.0');
+ editLiveTrace(f,rows=>{const reply=rows.find(r=>r.payload?.role==='user'&&r.payload.content?.[0]?.text?.includes('send_user_message_question_reply'));const content=reply.payload.content[0].text;const answers=JSON.parse(content.replace(/^<send_user_message_question_reply>\n/,'').replace(/\n<\/send_user_message_question_reply>\n?$/,''));answers.forEach(a=>a.answer='');reply.payload.content[0].text='<send_user_message_question_reply>\n'+JSON.stringify(answers)+'\n</send_user_message_question_reply>\n';});
+ const empty=verifyTextRecords(f.request);assert.equal(empty.status,'failed',JSON.stringify(empty));assert.match(empty.reason,/empty\/refuse/);
+});
+
+// D2 uses the saved Codex presentation shape (project name, then four sections),
+// with the already anonymized native approval fixture for independent gate proof.
+for(const corrected of [false,true])test(`D2 named shown Idea binds the same canonical four-section approval (${corrected?'correction':'agree'})`,t=>{
+ const f=corrected?correctedIdeaFixture(t):textIdeaFixture(t);
+ const name=f.request.project.name,full=f.request.approvalBindings[1].text;
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+ const shown=rows[f.request.approvalBindings[1].shownLine-1].payload.content[0];
+ shown.text=name+'\n\n'+shown.text;
+ f.request.approvalBindings.forEach(b=>{b.text=name+'\n\n'+full;if(b.artifactEnd!==undefined)b.artifactEnd+=name.length+2;});
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');
+ const result=corrected?f.attest():f.check();assert.equal(result.status,'passed',JSON.stringify(result));
+ if(!corrected){f.request.approvalBindings.forEach(b=>b.text=full);assert.equal(f.check().status,'passed','four-section binding also accepts the known title outside the artifact');f.request.approvalBindings.forEach(b=>b.text=name+'\n\n'+full);}
+ f.request.approvalBindings[0].text=f.request.approvalBindings[0].text.replace(name,'Different project');
+ assert.equal(f.check().status,'failed','a different leading title cannot be silently discarded');
+});
+test('D3 actual approvals with missing shown bindings are unverified, while missing records remain failed',t=>{
+ const f=textIdeaFixture(t);assert.equal(f.check().status,'passed');
+ f.request.approvalBindings=[];
+ const result=f.check();assert.equal(result.status,'unverified',JSON.stringify(result));assert.equal(result.bindingOnly,true);
+ assert.match(result.reason,/shown-version binding missing/);
+});
+test('D2 Codex native completed MCP approval binds its uniquely proved exec invocation line',t=>{
+ const f=textIdeaFixture(t),rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+ const i=rows.findIndex(r=>r.payload?.name==='mcp__monotest__save_comment'),call=rows[i].payload,result=JSON.parse(rows[i+1].payload.output);
+ const id='approval-exec',item={type:'McpToolCall',status:'completed',id:'approval-native',server:'monotest',tool:'save_comment',arguments:JSON.parse(call.arguments),result};
+ rows.splice(i,2,{type:'response_item',payload:{type:'custom_tool_call',name:'exec',call_id:id,input:`const r = await tools.mcp__monotest__save_comment(${call.arguments}); text(r);`}},{type:'event_msg',payload:{type:'item_completed',item}},{type:'response_item',payload:{type:'custom_tool_call_output',call_id:id,output:'stored'}});
+ fs.writeFileSync(f.request.trace,timed(rows,'2026-11-02T04:00:01Z').map(JSON.stringify).join('\n')+'\n');
+ f.request.approvalBindings[1].currentLine=i+1;
+ assert.equal(f.check().status,'passed',JSON.stringify(f.check()));
+ f.request.approvalBindings[1].currentLine=i;assert.notEqual(f.check().status,'passed','a neighbouring exec is not this approval');
+});
+
+const contextNative=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-host-context-regressions.json',import.meta.url)));
+test('continue8 saved non-null rubric digest permits explicit binding re-preparation only',async t=>{
+ assert.equal(contextNative.bindingCapture.hadRubricDigest,true,'saved live capture reached this state');
+ const f=textIdeaFixture(t),expected=f.request.expectedReplies[0],full=f.request.approvalBindings[1].text;
+ Object.assign(expected,{question:{anchors:['описание']},presentation:'inline',driverStart:null,response:{anchors:['запис'],question:false}});
+ for(const b of f.request.approvalBindings)b.artifactEnd=full.length;
+ f.request.rubricDefinition='Full shown four-section Idea, native owner consent and canonical persisted version.';
+ fs.mkdirSync(path.join(f.dir,'.agents'));fs.copyFileSync(f.request.configFile,path.join(f.dir,'.agents/mono-workflow.config.json'));
+ const bindingsFile=path.join(f.dir,'annotations.json'),input={run:{trace:f.request.trace,stageStartLine:f.request.stageStartLine},runRequest:{host:'codex',cwd:f.dir,packRoot:process.cwd(),context:{skillPrefix:'mono',projectName:f.request.project.name},scenario:{expectedReplies:f.request.expectedReplies,rubricDefinition:f.request.rubricDefinition},mcpServers:{monotest:{url:'test'}}},scenario:{expectedRecords:f.request.expectedRecords},project:f.request.project,outputDir:path.join(f.dir,'saved-unbound')};
+ const first=await verifyTextScenarioRecords(input,async()=>({status:'passed',trace:f.request.dumpTrace,dumpDir:f.request.dumpDir}));
+ assert.equal(first.status,'unverified',JSON.stringify(first));assert.ok(first.rubricDigest,'bindingOnly live captures already have a rubric digest');
+ const stale={digest:first.rubricDigest,reviewer:'old review',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'native captured fixture',reason:'reviewed old unbound input'}))};
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings,rubric:stale}));
+ const reuse=()=>{throw Error('binding preparation must not collect or rerun a stage');};
+ await assert.rejects(()=>verifyTextScenarioRecords({...input,resumeEvidence:first.reviewEvidence,bindingsFile},reuse),/saved bindings changed/);
+ const prepared=await verifyTextScenarioRecords({...input,resumeEvidence:first.reviewEvidence,bindingsFile,prepareReview:true},reuse);
+ assert.equal(prepared.status,'unverified',JSON.stringify(prepared));assert.ok(prepared.rubricDigest);assert.notEqual(prepared.rubricDigest,first.rubricDigest);
+ const saved=JSON.parse(fs.readFileSync(prepared.reviewEvidence));assert.equal(saved.request.rubric,undefined,'preparation discards old judgments');
+ assert.equal((await verifyTextScenarioRecords({...input,resumeEvidence:prepared.reviewEvidence,bindingsFile},reuse)).status,'unverified','old digest never certifies new bindings');
+ fs.writeFileSync(bindingsFile,JSON.stringify({approvalBindings:f.request.approvalBindings,rubric:{...stale,digest:prepared.rubricDigest}}));
+ assert.equal((await verifyTextScenarioRecords({...input,resumeEvidence:prepared.reviewEvidence,bindingsFile},reuse)).status,'passed');
+});
+for(const mode of ['empty','owner-text','window','write','cut','explicit-policy'])test(`continue8 historical Codex helper source ${mode} cannot bypass owner checks`,t=>{
+ const f=historicalRecords(t,'codex'),trace=path.join(f.dir,'native-helper.jsonl');
+ const rows=[{type:'event_msg',payload:{type:'task_started',turn_id:'helper'}},{type:'response_item',payload:{type:'function_call',name:'mcp__monotest__get_workspace',call_id:'helper-read',arguments:'{}'}},{type:'response_item',payload:{type:'function_call_output',call_id:'helper-read',output:'{"name":"Mono Test"}'}}];
+ if(mode==='owner-text')rows.push({type:'response_item',payload:{type:'message',role:'assistant',phase:'final_answer',content:[{type:'output_text',text:'Owner-visible scout summary.'}]}});
+ if(mode==='window')rows.push({type:'response_item',payload:{type:'function_call',name:'request_user_input_async',call_id:'helper-window',arguments:'{"questions":[{"title":"Approve?"}]}'}});
+ if(mode==='write')rows.push({type:'response_item',payload:{type:'function_call',name:'mcp__monotest__save_project',call_id:'helper-write',arguments:'{"name":"No authority"}'}});
+ if(mode!=='cut')rows.push({type:'event_msg',payload:{type:'task_complete',turn_id:'helper'}});
+ fs.writeFileSync(trace,timed(rows,'2026-11-02T04:00:00Z').map(JSON.stringify).join('\n')+'\n');
+ f.request.additionalTraces=[{host:'codex',trace,...(mode==='explicit-policy'?{expectedWindows:f.request.expectedWindows,windows:f.request.windows}:{})}];
+ if(mode==='empty'){
+  const first=f.attest();assert.equal(first.rubricInput.sources.length,1,'tool-only helper is not an owner-rubric source');
+  const result=f.check();assert.equal(result.status,'passed',JSON.stringify(result));assert.equal(result.windowChecks[1].kind,'helper');assert.equal(result.windowChecks[1].status,'passed');
+ }else assert.notEqual(f.check().status,'passed',JSON.stringify(f.check()));
+});
+
+const resumeLive=JSON.parse(fs.readFileSync(new URL('./test-fixtures/skills-resume-live-regressions.json',import.meta.url)));
+for(const kind of ['notification','owner','write','read'])test(`continue9 native enqueue time exemption is only for host notification (${kind})`,t=>{
+ const f=fixture(t);f.flush();
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse);
+ if(kind==='notification')rows.splice(2,0,{...resumeLive.notification,timestamp:resumeLive.notification.timestamp});
+ else {const at={owner:1,write:2,read:3}[kind];rows[at].timestamp=resumeLive.notification.timestamp;rows[at-1].timestamp=resumeLive.previousTimestamp;}
+ if(kind==='notification')rows[1].timestamp=resumeLive.previousTimestamp;
+ // Keep all ordinary events later than the observed enqueue/preceding pair.
+ if(kind==='notification')for(let i=3;i<rows.length;i++)rows[i].timestamp='2026-11-09T21:46:00Z';
+ if(kind==='notification'){
+  const dump=fs.readFileSync(f.request.dumpTrace,'utf8').trim().split('\n').map(JSON.parse);dump.forEach(r=>r.timestamp='2026-11-09T21:47:00Z');fs.writeFileSync(f.request.dumpTrace,dump.map(JSON.stringify).join('\n')+'\n');
+ }
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');
+ const r=verifyTextRecords(f.request);assert.equal(r.status,kind==='notification'?'passed':'unverified',JSON.stringify(r));
+});
+test('continue9 saved Codex tool-name listing is not an unbound write or stage start',t=>{
+ const f=textFixture(t,'codex','defer'),sample=structuredClone(resumeLive.toolNameListing);
+ f.events.splice(7,0,sample,{type:'response_item',payload:{type:'custom_tool_call_output',call_id:sample.payload.call_id,output:'tool descriptions'}});
+ assert.equal(f.check().status,'passed',JSON.stringify(f.check()));
+ sample.payload.input+='text(await tools.mcp__monotest__save_comment({}));';
+ assert.equal(f.check().status,'unverified');
+});
+test('continue9 indexed tools access keeps a Codex tool-name mention as an action',t=>{
+ const f=textFixture(t,'codex','defer'),sample=structuredClone(resumeLive.toolNameListing);
+ sample.payload.input+='text(await tools["mcp__monotest__save_comment"]({}));';
+ f.events.splice(7,0,sample,{type:'response_item',payload:{type:'custom_tool_call_output',call_id:sample.payload.call_id,output:'tool descriptions'}});
+ assert.equal(f.check().status,'unverified',JSON.stringify(f.check()));
+});
+for(const mode of ['valid','wrong-destination','code'])test(`continue9 percent-encoded link destination normalization ${mode}`,t=>{
+ const f=fixture(t),original='See [запись](ССЫЛКА-СОГЛАСИЯ).',stored=d=>`See [запись](${encodeURI(d)}).`;
+ f.record.body=mode==='code'?'`'+original+'`':original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:mode==='code'?'`'+stored('ССЫЛКА-СОГЛАСИЯ')+'`':stored(mode==='wrong-destination'?'ССЫЛКА-ОТКАЗА':'ССЫЛКА-СОГЛАСИЯ')}]);
+ f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
+});
+for(const mode of ['valid','wrong-key','code'])test(`continue9 saved self-closing issue chip normalization ${mode}`,t=>{
+ const f=fixture(t),original='See MON-625.',chip=resumeLive.selfClosingMention;
+ f.record.body=mode==='code'?'`'+original+'`':original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:mode==='code'?'`See '+chip+'.`':'See '+(mode==='wrong-key'?chip.replace('label="MON-625"','label="MON-626"'):chip)+'.'}]);
+ f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
+});
+for(const mode of ['valid','wrong-start','fragment','missing-end'])test(`continue9 absolute Idea artifact bounds preserve full four-section snapshot (${mode})`,t=>{
+ const f=textIdeaFixture(t),rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse),binding=f.request.approvalBindings[1],full=binding.text;
+ const expected=f.request.expectedReplies[0],question=expected.question;
+ Object.assign(expected,{question:{anchors:['описание']},presentation:'inline',driverStart:null,response:{anchors:['запис'],question:false}});
+ f.request.rubricDefinition='Full four-section Idea, native consent and bound snapshot; surrounding prose reviewed separately.';
+ const prefix=resumeLive.ideaPresentation.slice(0,resumeLive.ideaPresentation.indexOf('## Что'));
+ rows[4].payload.content[0].text=prefix+full+'\nДальше: обсудить Research.\n'+question;
+ for(const b of f.request.approvalBindings){b.artifactStart=prefix.length;b.artifactEnd=prefix.length+full.length;if(mode==='wrong-start')b.artifactStart--;if(mode==='fragment'){b.text=full.slice(0,full.indexOf('## Неизвестные'));b.artifactEnd=prefix.length+b.text.length;}if(mode==='missing-end')delete b.artifactEnd;}
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');
+ const r=verifyTextRecords(f.request);assert.equal(r.status,mode==='valid'?'unverified':'failed',JSON.stringify(r));
+ if(mode==='valid'){
+  assert.ok(r.rubricDigest);f.request.rubric={digest:r.rubricDigest,reviewer:'saved native presentation control',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'full native message and explicit artifact bounds',reason:'All four sections and snapshot bound; presentation prose separately judged.'}))};
+  assert.equal(verifyTextRecords(f.request).status,'passed',JSON.stringify(verifyTextRecords(f.request)));
+ }
+});
+for(const mode of ['recovered','no-explicit-error','no-retry','wrong-target','no-fresh-read','other-text'])test(`continue9 explicit nothing-saved native error requires same-target successful retry and fresh read (${mode})`,t=>{
+ const f=textFixture(t,'claude','defer'),doc={id:'brief',projectId,title:'Brief',content:'Expected link.'},final={...doc,content:'Approval link.'};
+ const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'MISSING',new_string:mode==='other-text'?'Another record.':'Approval link.'}]});
+ const error={type:'user',message:{content:[{...resumeLive.writeError,tool_use_id:'bad-patch'}]}};
+ if(mode==='no-explicit-error')error.message.content[0].content='Error: network interrupted; save outcome unknown.';
+ const retry=f.call('patch','mcp__monotest__save_document',{id:mode==='wrong-target'?'other':'brief',patch:[{op:'replace',old_string:'Expected link.',new_string:'Approval link.'}]});
+ const events=[f.call('prior','mcp__monotest__get_document',{id:'brief'}),f.result('prior',doc),bad,error];
+ if(mode!=='no-retry')events.push(retry,f.result('patch',final));
+ if(mode!=='no-fresh-read')events.push(f.call('fresh','mcp__monotest__get_document',{id:'brief'}),f.result('fresh',final));
+ f.events.splice(7,0,...events);f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ const r=f.check();assert.equal(r.status,mode==='recovered'?'passed':'unverified',JSON.stringify(r));
+});
+test('continue9 missing saved rubric digest retains actual missing-binding reason on resume',async t=>{
+ const f=u7DocumentFixture(t,'codex');f.check();
+ const input={run:{trace:f.request.trace},runRequest:{host:'codex',cwd:f.dir,packRoot:process.cwd(),context:{skillPrefix:'mono',projectName:f.project.name},scenario:{expectedReplies:f.request.expectedReplies,rubricDefinition:f.request.rubricDefinition},mcpServers:{monotest:{url:'test'}}},scenario:{next:'handoff',expectedRecords:f.request.expectedRecords},project:f.project,outputDir:path.join(f.dir,'missing-binding')};
+ const first=await verifyTextScenarioRecords(input,async()=>({status:'passed',trace:f.request.dumpTrace,dumpDir:f.dumpDir}));
+ const prepared=await verifyTextScenarioRecords({...input,resumeEvidence:first.reviewEvidence,prepareReview:true},()=>{throw Error('no new collection');});
+ assert.equal(JSON.parse(fs.readFileSync(prepared.reviewEvidence)).rubricDigest,null);
+ const resumed=await verifyTextScenarioRecords({...input,resumeEvidence:prepared.reviewEvidence},()=>{throw Error('no new collection');});
+ assert.equal(resumed.reason,prepared.reason);assert.equal(resumed.status,prepared.status);
+});
+
+for(const host of ['claude','codex'])test(`continue9 ${host} records consumer accepts the saved clarification with same-message trailing prose`,t=>{
+ const f=textFixture(t,host,'defer');
+ Object.assign(f.expected,{question:{anchors:['Утверждаем']},presentation:'inline',driverStart:null,asksStart:false,intent:'unclear',reply:'ну не знаю',outcome:{approval:false,startNext:false},response:{anchors:['смущ'],question:true}});
+ f.request.rubricDefinition='Saved clarification asks exactly one question in its final message; no consent or write.';
+ f.request.approvalBindings=[];f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('documents','documents',[]);
+ f.events.splice(0,f.events.length,f.assistant(f.draft+'\nУтверждаем описание?'),f.terminal,f.user(f.expected.reply),f.assistant(resumeLive.clarification));
+ const initial=f.check();assert.equal(initial.status,'unverified',JSON.stringify(initial));assert.ok(initial.rubricDigest);
+ f.request.rubric={digest:initial.rubricDigest,reviewer:'saved native clarification control',checks:['summary','question','response','correction'].map(id=>({id,status:'passed',evidence:'saved single-question response',reason:'No approval or start; one clarification question and a trailing imperative sentence.'}))};
+ assert.equal(f.check().status,'passed',JSON.stringify(f.check()));
 });
