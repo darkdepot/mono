@@ -63,3 +63,24 @@ test('a resumed completed turn does not erase missing usage from an interrupted 
   assert.equal(result.worker.complete, false);
   assert.notEqual(result.measurable_total_status, 'measured');
 });
+
+test('a log whose counters never decrease carries thread totals and is counted once', () => {
+  const turn = (input, cached, output) => ({ type: 'turn.completed', usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: output } });
+  const { result } = measure([
+    { type: 'thread.started', thread_id: 'fixture' }, turn(100, 90, 10),
+    { type: 'thread.started', thread_id: 'fixture' }, turn(250, 220, 25),
+    { type: 'thread.started', thread_id: 'fixture' }, turn(400, 350, 40),
+  ]);
+  assert.equal(result.worker.attempts[0].counting, 'thread-total');
+  assert.equal(result.worker.usage.input_tokens, 400);
+  assert.equal(result.worker.usage.non_overlapping_total_tokens, 440);
+  assert.equal(result.worker.usage_status, 'measured');
+});
+
+test('a log that reports each run separately is still summed', () => {
+  const turn = (input, cached, output) => ({ type: 'turn.completed', usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: output } });
+  const { result } = measure([turn(100, 90, 10), turn(500, 450, 30), turn(40, 30, 5)]);
+  assert.equal(result.worker.attempts[0].counting, 'per-turn');
+  assert.equal(result.worker.usage.input_tokens, 640);
+  assert.equal(result.worker.usage.non_overlapping_total_tokens, 685);
+});

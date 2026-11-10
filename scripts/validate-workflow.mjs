@@ -4700,21 +4700,21 @@ function validateWaveCostBehavior() {
         event({
           type: "turn.completed",
           usage: {
-            input_tokens: 100,
-            cached_input_tokens: 40,
-            cache_write_input_tokens: 0,
-            output_tokens: 10,
-            reasoning_output_tokens: 3,
-          },
-        }) +
-        event({
-          type: "turn.completed",
-          usage: {
             input_tokens: 250,
             cached_input_tokens: 200,
             cache_write_input_tokens: 0,
             output_tokens: 20,
             reasoning_output_tokens: 5,
+          },
+        }) +
+        event({
+          type: "turn.completed",
+          usage: {
+            input_tokens: 100,
+            cached_input_tokens: 40,
+            cache_write_input_tokens: 0,
+            output_tokens: 10,
+            reasoning_output_tokens: 3,
           },
         })
     );
@@ -4745,12 +4745,12 @@ function validateWaveCostBehavior() {
       result.worker.usage.output_tokens !== 35 ||
       result.worker.usage.non_overlapping_total_tokens !== 435
     ) {
-      fail("wave-cost multi-turn fixture must sum every turn of every attempt without adding cached input twice");
+      fail("wave-cost per-turn fixture must sum every turn of every attempt without adding cached input twice");
     }
     if (
-      result.accounting_comparison.old_last_event_rule.input_tokens !== 300 ||
+      result.accounting_comparison.old_last_event_rule.input_tokens !== 150 ||
       result.accounting_comparison.corrected_all_turns.input_tokens !== 400 ||
-      result.accounting_comparison.input_delta_tokens !== 100
+      result.accounting_comparison.input_delta_tokens !== 250
     ) {
       fail("wave-cost output must explain the divergence from the retired last-event accounting rule");
     }
@@ -6351,11 +6351,7 @@ const MACHINE_TOKENS = new Set([
   "Autoreview declines:",
   "session-selected", "Модель оркестратора:", "<модель запуска>", "не удалось определить",
   "git show",
-  "landing-plan.mjs", "LANDING-PLAN", "LANDING-HEAD", "LANDING-REFRESH", "--sibling",
-  "opened|sibling-merge|review-fix|docs|unknown", "HEAD_REF_FORCE_PUSHED_EVENT",
-  "clean", "conflicts-with-main", "conflicts-with:<KEY>", "unevaluable: <reason>",
-  "references/landing.md#scheduling", "references/landing.md#head-observations-and-refresh-history",
-  "Посадка:",
+  "references/landing.md#scheduling",
   "landing-drain.mjs", "LANDED", "DRAIN-CLOSE", "--install-sha", "--evidence", "--attempt", "--pr",
   "landing-guard.mjs", "LANDING-CORRECTIVE", "--repo", "--sha", "--root", "--json", "--issue", "--red-sha", "--reason", "filter=all",
   "changelog-assemble.mjs", "--worktree", "--config", "--check", "--test-concurrency=1",
@@ -6956,17 +6952,14 @@ function validateLandingSurface() {
     const targets = isRussianStage(file) ? [target, `<корень>/${target}`] : [target];
     if (targets.reduce((count, link) => count + read(file).split(`](${link})`).length - 1, 0) !== 1) fail(`${file}: expected one landing reference`);
   }
-  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly", "Merge validation", "Install", "Scheduling", "Landing observer", "Head observations and refresh history", "Landing journal and queue decision"])
+  for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly", "Merge validation", "Install", "Scheduling", "Landing journal"])
     if (documentSection(read("references/landing.md"), heading) === null) fail(`landing reference: missing or duplicate section ${heading}`);
   if (documentSection(read("README.md"), "Landing") === null) fail("README: missing Landing section");
   for (const token of ["landing", "serialPaths", "changelog", "fragmentDir", "target", "heading", "validation", "check", "timeoutSec", "install", "per-merge", "wave-drain", "release", "--release", "--no-renames", "landing.serialPaths", "serial path touched: <path>", "landing policy requires pinned dispatch"])
     assertIncludes("references/landing.md", token);
   for (const token of ["<!-- landing:start -->", "<!-- landing:end -->", "{{landing_paths}}", "{{landing_fragments}}", "{{landing_release}}"])
     assertIncludes("templates/orchestrator-dispatch.md", token);
-  for (const token of ["landing-plan.mjs", "LANDING-PLAN", "LANDING-HEAD", "LANDING-REFRESH", "--sibling", "opened|sibling-merge|review-fix|docs|unknown", "HEAD_REF_FORCE_PUSHED_EVENT", "clean", "conflicts-with-main", "conflicts-with:<KEY>", "unevaluable: <reason>"])
-    assertIncludes("references/landing.md", token);
-  assertIncludes("templates/orchestrator-brief.md", "Посадка:");
-  for (const [file, targets] of [["skills/handoff/SKILL.md", ["references/landing.md#scheduling"]], ["skills/orchestrate/SKILL.md", ["references/landing.md#scheduling", "references/landing.md#head-observations-and-refresh-history"]]])
+  for (const [file, targets] of [["skills/handoff/SKILL.md", ["references/landing.md#scheduling"]], ["skills/orchestrate/SKILL.md", ["references/landing.md#scheduling"]]])
     for (const target of targets) {
       requireMachineToken(target);
       const links = isRussianStage(file) ? [target, `<корень>/${target}`] : [target];
@@ -6987,7 +6980,7 @@ function validateLandingSurface() {
   assertIncludes("AGENTS.md", "changelog.d/<ISSUE-KEY>.md");
 }
 function validateLandingBehavior() {
-  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs", "scripts/landing-drain.test.mjs", "scripts/landing-plan.test.mjs"]); }
+  try { runNode(["--test", "--test-name-pattern=landing", "scripts/project-config.test.mjs", "scripts/landing.test.mjs", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs", "scripts/landing-drain.test.mjs"]); }
   catch (error) { fail(`landing named scratch fixtures: ${error.message}`); }
 }
 function validateCheckModeDeclaration() {

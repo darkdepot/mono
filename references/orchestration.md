@@ -828,189 +828,6 @@ ship; broader process capability never widens the Issue. Standalone phase grants
 follow the worker contract. Hidden directories need exact grants. Disabled sandbox
 remains exceptional, recorded in the ledger with the owner mandate/reason.
 
-### Backup worker switch
-
-The owner may name `orchestration.backupTransport` in project config: `codex-cli`
-or `claude-cli`, distinct from the primary, and only with a managed CLI primary.
-Absence means no mandate. The value on the previous attempt's immutable BASE is
-the standing owner mandate; changing live config cannot grant it retroactively.
-
-Only the orchestrator decides to switch, using this dictionary:
-
-| Reason | Required decision |
-| --- | --- |
-| `subscription-exhausted` | The primary's subscription is exhausted |
-| `provider-refusal-after-recovery` | The primary's provider explicitly and persistently refuses after ordinary recovery on that same worker failed |
-
-There is no failure classifier. Task failure, stopped gates, unexplained silence,
-installation problems and config errors never authorize a switch. For the second
-reason, retained same-thread resume metadata and journal evidence after that
-resume are required. The orchestrator judges what the excerpt demonstrates.
-
-Run ordinary recovery/reconciliation first: settle queued obligations against
-Linear, capture and stop the process tree, preserve unfinished work, and retire
-the previous registry entry by the existing verified-retry procedure. Do not
-delete `attempts.json`, logs, dispatch pins or `attempt-records/`. Launch/resume
-retain a protected per-attempt entry and process incarnation/group history when
-a backup is configured. Missing history or process identity refuses switching.
-Run the installed stop command before retiring each registered incarnation:
-
-```bash
-node '<pack-root>/scripts/orchestrator/backup-switch.mjs' stop --root '<root>' --issue 'EXAMPLE-7'
-```
-
-Under the launch lock it sends `SIGSTOP` to the worker groups, recursively finds
-and freezes descendant groups, and requires stopped states before retaining the
-tree and start identities. A process disappearing before quiescence refuses the
-capture. Once process creation is quiescent, it records that proof and force-stops
-the captured processes leaf-to-root with `SIGKILL`, retaining the wrapper last.
-No `SIGCONT` occurs between capture and termination. An incomplete stop leaves
-the registered attempt, process observations and stopped processes for
-reconciliation; a pending stop cannot be retried into a new proof. Never treat it
-as successful retirement. Confirm process exit before removing the registry
-entry. The backup launch separately rechecks every identity and group for survivors.
-Retain captures across resumes; each incarnation requires this stop procedure.
-Missing/incomplete quiescence or stop evidence refuses switching, including an
-attempt that exited before its tree was captured. Reconcile missing evidence
-instead of claiming an unobserved tree stopped. Captured descendants and orphan group members refuse switching while live.
-Before spawning either managed transport, launch creates an opaque UUID v4
-marker, `MONO_ATTEMPT`, stored as `entry.attemptMarker` in the protected
-`attempt-records/<ISSUE>-a<N>.json` (and protected registry entry). Each attempt
-gets a different value; every continuation retains the same value. Both
-transports pass the pinned marker after environment filtering, replacing any
-inherited caller marker. The Claude journal runner and worker's child commands
-inherit it; managed settings do not override it. The marker identifies process
-ownership only: it grants no permissions and changes no sandbox, network or gate.
-Legacy attempts without a marker continue to use the other three traces.
-
-The process table returns PID, parent PID, group, start time, state and command,
-without environment. Start identities retain the legacy caller-locale format;
-Linux reads full UTF-8 command text separately. On macOS, the command column
-contains only the executable label from the kernel's separate path area. Raw
-arguments stay inside a private probe: an incarnation-checked exact-path query
-returns only `matched`, `absent` or `unavailable`, preserving literal references
-without returning argument/environment bytes. The query scans the kernel-reported
-argument region conservatively; a rewritten title can make that region ambiguous.
-A separate incarnation-checked reader returns only
-`matched`, `absent` or `unavailable`: macOS reads `ps` environment output for
-processes owned by the current user; Linux reads `/proc/<pid>/environ`. Environment
-bytes never leave that reader or appear in records, snapshots, journals or errors.
-An unavailable read is not evidence that the marker is absent. Successful macOS
-`ps` fallback output without readable arguments/environment is also unavailable.
-Because macOS `ps` flattens arguments and environment values, a candidate match
-is confirmed against NUL-delimited `KERN_PROCARGS2` entries by a private `python3`
-probe using the standard `ctypes` library. Its isolated `-I -S` invocation excludes
-workspace/user startup imports and respects the kernel's `ARG_MAX`. Marker
-and exact-path requests return only verdicts; command-table requests return only
-PID and executable label. A missing interpreter or denied kernel read returns
-`unavailable` for those queries. A marker-like argument or text inside another
-environment value is not a confirmed environment match. Empty/omitted environment
-data or a flattened candidate that cannot be confirmed is unavailable, rather
-than evidence of absence. Rewritten titles may remove argument separators while
-the kernel retains argc. An intact marker beyond that reported region still
-matches; a marker consumed into it is unavailable rather than absent. No raw
-arguments or environment leave the private probe, regardless of variable names.
-The fourth trace scans the whole command text for a literal worktree or
-attempt-artifact path. An occurrence counts when the character after the path
-is the end of the text, `/`, or outside `[A-Za-z0-9._-]`. Longer sibling paths
-such as `<worktree>-2` do not match. Quotes, comments, interpreter options and
-script syntax are not interpreted. Literal references inside inline comments,
-patterns or script bodies may conservatively block switching; that false
-positive is accepted. Process exclusions depend on identity, never command text.
-
-The launch record retains the pre-launch host PID/start-time baseline when a
-backup is configured. Missing baseline proof still refuses switching; never erase
-or broaden it. The snapshot does not make unrelated new processes remnants.
-At both stopped-tree reconciliation and backup launch, a live process blocks if
-it belongs to a captured group, its parent chain reaches a captured incarnation,
-its marker matches, or its command contains an exact reference to this attempt's
-worktree or artifact. A shared product root, incidental substring or longer path
-prefix is insufficient. New writer, captured-process and collector identities
-also retain `procStartEpoch`, observed with `LC_TIME=C` and `TZ=UTC`. Different
-independently observed UTC starts prove PID reuse; a locale or time-zone change
-in the legacy formatted `procStart` string does not. Legacy identities without
-that UTC observation can still be ruled out when the current UTC start is after
-the protected writer activity/capture time, or the collector lock's last write.
-Otherwise their PID/group signal remains and requires reconciliation. Stopped
-proofs preserve those original observation bounds as `observedByEpoch` rather
-than advancing them to the time of a later reconciliation. Recording a resume
-freezes legacy bounds before replacing the entry; each new writer retains its
-own registration bound. An unavailable original bound stays unavailable.
-The pre-launch baseline keeps its existing
-PID/formatted-start shape.
-Verified processes of the current control invocation are excluded after checking
-the registered previous-attempt collector and its checks, even when they descend
-from that controller. Another task's collector under the same root is not a remnant. The
-previous attempt's collector, its active gate and their descendants are checked
-separately. Refusals retain the existing text and identify the blocking PIDs.
-
-For a marked attempt, an unavailable marker read with no other trace allows the
-process to be ignored. The backup launch records
-`processOwnership.unavailableMarkerCount` in its protected launch/attempt entry;
-stopped-tree reconciliation records the same count in its retirement proof.
-No environment is recorded. This count is available for orchestrator
-reconciliation, as part of the accepted residual risk: an uncaptured orphan
-outside captured groups, with a cleared environment and neutral command, may
-remain undetected. Unrelated products, sessions, utilities and other tasks'
-collectors do not block switching.
-If the registered writer already exited, the command sends no signals: it
-requires all retained writer/descendant identities and groups to be absent and
-the attempt-ownership check to pass, then records `proof: already-stopped`.
-Launch repeats these checks. A clean natural exit still requires complete stop
-proof and absence of every surviving trace of the old attempt.
-
-Create a decision file outside worker grants and an evidence file containing a
-nonempty, verbatim contiguous excerpt from the previous attempt's JSONL journal.
-Keep both as history. Example decision (replace paths and Issue facts):
-
-```json
-{
-  "issue": "EXAMPLE-7",
-  "previousAttempt": 1,
-  "reason": "subscription-exhausted",
-  "backupTransport": "claude-cli",
-  "evidenceFile": "/absolute/orchestrator/switch-input/EXAMPLE-7-a1.txt"
-}
-```
-
-Add `--backup-switch /absolute/orchestrator/switch-input/EXAMPLE-7.json` to the
-ordinary installed `orchestrator/dispatch.mjs` command for [execution Issues](lifecycle.md#задачи-этапов), retaining the current
-snapshot, gates, verification, risk and complete write grants. A direct spawn
-request carries the same object in `backupSwitch` and its normalized record in
-the new attempt's pins. This record is the sole exception to selecting the
-BASE primary. The runtime adds both attempt numbers, both transports, both bases,
-the source journal and SHA-256 of the evidence bytes. It rechecks the record
-under the launch lock before registering the new attempt.
-
-The previous attempt must be the latest counted one and unregistered; its
-processes and descendants must be stopped. Both bases must retain the same
-backup and primary, and the resolved reviewer route must be unchanged (compare
-route values, not fingerprints that also include the whole config). The normal
-producer/reviewer pairing check still applies. The ordinary start gate requires
-a clean tree containing the new BASE: reconcile preserved edits/commits first,
-never discard work or bypass the gate to admit a dirty tree. New grants may not
-expand the previous worker's grants. The existing attempt cap is unchanged.
-
-On backup Codex, default to `worker-default`; `worker-complex` requires a recorded
-selection reason. On backup Claude Code, use `worker-claude` and `handshake: resume`.
-Every startup, phase, collection and ship gate still applies. The runtime retains
-the switch in `backup-switches/<KEY>.json`, the ledger, registry, dispatch and new
-attempt pins/journal. One switch per Issue; retain that marker through retirement.
-There is no automatic return or second switch. A stopped backup may resume its
-same session under the existing recovery rules.
-
-After dispatch, including a refused startup that retained an attempt, reconcile
-the switch record and write/read back a Russian Issue comment before advancing
-startup moves. Name the reason, evidence path and digest, previous/new workers
-and attempt numbers; include the complex-role reason when selected. Reconcile a
-lost comment response before writing another. Scripts never write Linear.
-
-Closeout training is orchestrator-owned: use a one-off root and a real managed
-attempt, with `"training": true` in the decision and a clearly marked reason in
-the ledger/Issue comment. Synthetic unit-test data proves refusal branches;
-training proves the actual launch path. Neither claims a live subscription-limit
-response; that remains a separate observation and must never be fabricated.
-
 ### Worker model selection
 
 For a new Codex worker, select [role:worker-default](model-policy.md#roles).
@@ -2085,11 +1902,13 @@ of a 1M-token window with no signal to the owner.
 
 Per-Issue collection, performed by the orchestrator:
 
-- Worker tokens: sum every Codex `turn.completed` or Claude Code `result.usage`
+- Worker tokens: count every Codex `turn.completed` or Claude Code `result.usage`
   event in every attempt log of
-  every stage (`logs/<ISSUE-KEY>-<stage>-a<attempt>.jsonl`). Each event is
-  per-turn, not cumulative — the observed input sequence 516,590 → 433,845
-  → 5,072,542 in one thread is the motivating evidence. Keep input, cached
+  every stage (`logs/<ISSUE-KEY>-<stage>-a<attempt>.jsonl`). A Codex log whose
+  counters never decrease reports thread totals (logs from 30.09.2026 on:
+  16.3M → 22.0M → 26.9M … 107.9M in one resumed thread), so its last event is
+  the attempt; a log that reports each run separately (516,590 → 433,845 →
+  5,072,542) is summed. `wave-cost.mjs` shows the choice as `counting`. Keep input, cached
   input, and output separate; cached input is a subset of input and must not
   be added to it again. Include respawned, parked, and failed attempts, and
   deduplicate attempt files by their canonical path. Claude cache reads and

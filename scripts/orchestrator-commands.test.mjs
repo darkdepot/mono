@@ -1541,7 +1541,6 @@ test("preapply AE12 named contracts on installed scratch", async t => {
     const config = path.join(repo, ".agents/mono-workflow.config.json"), policy = readJson(path.join(checkout, ".agents/mono-workflow.config.json"));
     policy.orchestration.transport = "codex-cli";
     policy.ideaGate = { since: '2026-10-17' };
-    delete policy.orchestration.backupTransport;
     policy.orchestration.preapply = { mandate: input.mandate };
     policy.orchestration.delivery = { ...policy.orchestration.delivery, attemptCap: 10 };
     policy.orchestration.dispatch = { product: "ae12", evidenceRoot: path.join(scratch, "evidence"), openDecisions: 0, lifecycle_moves: [], verification: { command: "node", args: ["scripts/verify.mjs"] } };
