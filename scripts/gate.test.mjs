@@ -198,7 +198,7 @@ test("preflight accepts only a v3 receipt with an accepted review, exact head/ba
   for (const [extra, refusal] of [
     [{ producer: 'gate-autoreview-v2' }, /old receipt format/],
     [{ head: "c".repeat(40) }, /stale review receipt/], [{ base: "c".repeat(40) }, /stale review receipt/],
-    [{ review: { outcome: 'not-converged' } }, /^review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 a\.mjs:3 Leftover$/],
+    [{ review: { outcome: 'not-converged' } }, /^review not-converged \(round 1 of 3\); fix and request the next round; 1 open: P2 a\.mjs:3 Leftover \(when: /],
     [{ review: { outcome: 'not-converged', round: 3 } }, /^needs-decision: review not-converged after round 3 of 3; 1 open/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed' } }, /^not-reviewed: role failed; no round spent, request this head once more$/],
     [{ review: { outcome: 'not-reviewed', round: null, reason: 'role failed', repeated: true } }, /^blocked: not-reviewed twice in a row on this head: role failed$/],

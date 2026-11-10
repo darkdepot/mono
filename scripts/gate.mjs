@@ -130,6 +130,9 @@ export function pinnedReviewRoute(request, base) {
 export const ROUND_LIMIT = 3;
 const ACCEPTED = ['clean', 'clean-with-successors'];
 const findingLine = finding => `${finding.weight} ${finding.file}:${finding.line} ${finding.title}`;
+// The worker fixes from this line alone: it may not be able to read the receipt.
+const clip = (text, limit) => { const flat = String(text ?? '').replace(/\s+/g, ' ').trim(); return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat; };
+const openLine = finding => `${findingLine(finding)} (when: ${clip(finding.trigger, 200) || 'n/a'}; why: ${clip(finding.reason, 300) || 'n/a'})`;
 const leftover = record => (record?.findings ?? []).filter(finding => !['closed', 'rejected'].includes(finding.status));
 // Rounds are counted per pins file from signed receipts; nothing else keeps a counter.
 // receipts: signature-verified history, any producer or issue. reuse: a completed round on this exact head.
@@ -158,7 +161,7 @@ function reviewRefusal(review) {
   if (review.outcome === 'not-reviewed') return review.repeated
     ? `blocked: not-reviewed twice in a row on this head: ${review.reason}`
     : `not-reviewed: ${review.reason}; no round spent, request this head once more`;
-  const open = leftover(review.record).map(findingLine), round = `round ${review.round} of ${ROUND_LIMIT}`;
+  const open = leftover(review.record).map(openLine), round = `round ${review.round} of ${ROUND_LIMIT}`;
   const list = `${open.length} open: ${open.slice(0, 20).join('; ')}`;
   return review.round === ROUND_LIMIT ? `needs-decision: review not-converged after ${round}; ${list}`
     : `review not-converged (${round}); fix and request the next round; ${list}`;
