@@ -6,6 +6,49 @@ This project follows Semantic Versioning. Breaking workflow or adapter contract 
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-11-10
+
+<!-- fragment: MONO-291 sha256:3153eaa6f0a3de999501babde8308ab3e891d103b4287e633620ef7f79110398 -->
+### Changed
+
+- Added a seedless six-stage release chain per host and a report that keeps client screenshots and host acceptance explicitly unverified until captured by the orchestrator.
+- Restored native window transports, trace checks and approval bindings for acceptance on versions before 0.43.0, retaining word replies and the window ban on current versions.
+- Fixed Claude discovery/synthetic-time false alarms, rendered Linear chip/link comparison, generic two-question window replies, driver-stop exit codes and exact team status UUID resolution; added regression controls.
+- Fixed host-reproduced background scout waits, named Idea approval bindings, missing-binding classification and explicitly labelled legacy choices; the async check rejects a summary stranded in commentary without relying on scenario anchors. Same-message consent questions allow following service prose while calls after the final message still fail.
+- Allowed explicit choice roles through both host drivers and bound offline Codex native answers to the exact window and every question; plain chat and unrelated replies remain unverified.
+- Kept the last visible pre-window Codex presentation across reasoning, delayed tool results and blank messages, with new tool work ending earlier progress; a short final instruction cannot replace that presentation, including with empty scenario anchors. Added anonymized regressions from all three fixed-version Codex controls.
+- Restricted optionless questions to non-target windows and made direct acceptance selection include the full catalog even with an empty or stage-only diff.
+- Excluded Claude child events from historical approval presentation lookups and last-visible-summary checks, preventing both false rejections and confirmation of scout-only text.
+- Preserved eligible Claude parent summaries when the approval window has a different message ID, without borrowing hidden scout text or summaries superseded by parent text or service work.
+- Made historical records fail closed on missing window checks or conversation judgments, with rubric input built from native exchanges; approval requires an actual approving option or exact scenario correction text, and offline Claude may use already verified receipt answers.
+- Selected historical record checks by the tested version, rejecting text-reply metadata before authorization; named corrections reuse the snapshot and canonical project-body checks, accepting only the authorized revised artifact.
+- Applied historical window, native-answer and rubric evidence checks to every scenario source, with failed results dominating missing evidence and all additional traces bound into the combined judgment. Codex refusals now use the native question reply envelope.
+- Fixed historical Idea project-body comparison for ordinary approvals, native issue team resolution without a team field, and preservation of known window failures across later missing evidence. Claude now waits through a pending scout notification and its progress-only parent turn before replying to the completed stage summary.
+- Corrected host-injected Skill/context turn handling, binding review re-preparation, and one bounded non-consent idle continuation in Claude. Codex historical checks distinguish service commentary from anchored presentations and allow only completed tool-only helper sources outside the owner rubric; clarification anchors use stems.
+- Targeted saved binding preparation to one chain stage without discarding earlier rubrics. Accepted native notification enqueue times, tool-name listings, same-message clarification prose, explicit Idea artifact bounds, recovered no-save patch errors and Linear self-closing issue mentions; missing review digests retain their evidence gap, and historical empty anchors affect only their own window.
+- Normalized percent-encoded link destinations that Linear stores for non-ASCII text. Kept the relaxed checks strict where they could pass a wrong run: a link query is not a clarifying question, a recovered patch must retry the same text, absolute artifact bounds apply to Idea only, and indexed access to tools keeps a name mention as an action.
+
+<!-- fragment: MONO-297 sha256:772e24ebfd64c2cb6bf95e5acbe53e33cb73c1adc6b8b85ec01cef31bc0b5e1f -->
+- Появился этап ручной проверки кода `mono:code-review`: читает готовую ветку, ничего в ней не меняет и не пишет в Linear.
+- За один круг ревьюер и независимый проверяющий из разных семейств моделей смотрят закреплённый дифф и копию файлов только для чтения.
+- Отчёт говорит, что проверено, что найдено, что осталось и можно ли идти дальше.
+- Опасную находку нельзя закрыть простым отклонением; непонятный ответ роли запрашивается ещё один раз.
+- Двоичные файлы перечисляются как непроверенные и не останавливают проверку текста.
+- Экран секретов убран: роли видят дифф как есть, через тех же провайдеров, что и исполнитель. С экраном проверка отказывала на каждом настоящем изменении.
+- Доставка по-прежнему идёт через Preflight; живые прогоны на обеих системах остаются проверкой на хосте.
+
+<!-- fragment: MONO-365 sha256:abdd510e4542ba4b947d38ea929101268b9dda7baf380f0a616e28a6ee39c898 -->
+Полный прогон проверок пака идёт быстрее: независимые шаги `scripts/verify.mjs` выполняются параллельно, состав проверок прежний. Самая длинная группа тестов доставки гоняет по четыре файла сразу, тесты исполнителя Claude по-прежнему по одному. `MONO_VERIFY_JOBS=1` возвращает запуск по одному шагу.
+
+Счётчик цены волны верно считает токены исполнителя Codex. С журналов от 30.09.2026 возобновлённая нить сообщает расход, накопленный за всю нить, и сложение ходов завышало цену примерно в 2,5 раза. Теперь журнал, в котором счётчики ни разу не убывают, считается по последнему значению, остальные складываются по ходам; способ виден в поле `counting` каждой попытки. Известное ограничение: старый журнал с отдельным учётом ходов, где значения случайно только росли, недосчитывает ранние ходы (обычно это короткий первый ход).
+
+<!-- fragment: MONO-366 sha256:b311b6c8529ed41444151f37de9d46a4a25dd2ac09a69f0e1f59005f5a66748d -->
+Из пака убраны два механизма, которыми не пользовались.
+
+Запасной исполнитель: `orchestration.backupTransport`, команда `backup-switch.mjs`, флаг `--backup-switch`, метка попытки `MONO_ATTEMPT`, записи `attempt-records/` и снимок всех процессов при каждом запуске. За месяц переключение понадобилось только при собственной приёмке. Чтобы сменить исполнителя, поменяйте `orchestration.transport` в конфиге проекта, влейте это изменение в main и запустите новую попытку: диспатч читает настройку с main, а не из локального файла. Ключ `backupTransport` в конфиге продукта больше не читается, его можно удалить.
+
+Наблюдатель посадки: команда `landing-plan.mjs` (`plan`, `head`, `harvest`), записи `LANDING-PLAN`, `LANDING-HEAD`, `LANDING-REFRESH` и строка «Посадка» в сводке владельцу. С 16.10.2026 наблюдатель не запускался. Правило нарезки остаётся: задачи, которые правят один файл, Handoff ставит в цепочку.
+
 ## [0.45.0] - 2026-11-08
 
 <!-- fragment: MONO-357 sha256:6a611d5a6b60996e4f94f403e118f11c28d69ad9dc106d6bc52217c1d337a05b -->
