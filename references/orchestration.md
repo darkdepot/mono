@@ -1224,8 +1224,11 @@ Parks:
 - blocked, `not-reviewed twice in a row`: restore both CLI logins, then amend to
   resume.
 
-`clean-with-successors` passes. After merge file successor Issues from the
-receipt's `review.successors` list; the gate line and ready certificate repeat it.
+`clean-with-successors` passes. Its candidates are older defects, minor P3
+leftovers from round 2 on (never data, security or gate bypass) and, on round 3,
+leftovers both roles call harmless. After merge decide which entries of the
+receipt's `review.successors` list become Issues; the gate line and ready
+certificate repeat the list.
 
 ## Delivery Write Barriers
 

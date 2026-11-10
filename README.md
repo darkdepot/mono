@@ -621,9 +621,12 @@ collection: a reviewer and an independent checker from different model families
 read the pinned diff of the committed head, then verification runs in the
 sandbox and one receipt is signed. A task gets at most three rounds per pins
 version. The worker fixes open findings and asks for the next round without
-waiting for anyone; after the third round harmless leftovers pass as successor
-candidates and anything else parks `needs-decision` for the orchestrator to
-narrow the contract, split the Issue or change the approach. There are no
+waiting for anyone. A fixed finding closes when the checker verifies the fix
+and the reviewer stops reporting it. Older defects, minor leftovers from the
+second round on (never about data, security or a gate bypass) and, after the
+third round, leftovers both roles call harmless pass as successor candidates;
+anything else left after the third round parks `needs-decision` for the
+orchestrator to narrow the contract, split the Issue or change the approach. There are no
 local-pass or collection caps, continue permits, class decisions or decline
 approvals. The collector host needs both the Codex and Claude CLIs logged in by
 subscription, from different model families; a single-family setup gives
@@ -1084,8 +1087,8 @@ exit 0 with its sandbox proof. Rounds are counted from signed receipts per pins
 file: three at most, the same head reuses its round, `not-reviewed` spends
 nothing, an accepted amendment opens a fresh three and a changed base keeps the
 count. Refusals are signed too and reach the worker as a `gate preflight: fail:`
-line. The orchestrator approves nothing between rounds and files successor
-Issues after merge from the receipt's list: [review rounds](references/orchestration.md#review-rounds),
+line. The orchestrator approves nothing between rounds and after merge decides
+which candidates from the receipt's list become Issues: [review rounds](references/orchestration.md#review-rounds),
 worker [round rule](references/review-admission.md). `decisions.mjs`,
 `review-ledger.mjs` and the dispatch pilot block stay in the pack but are off
 the delivery path.
@@ -1679,9 +1682,11 @@ Role stdout/stderr accumulate bounded raw Buffers (16 MiB/1 MiB) and decode once
 `scripts/code-review-real.test.mjs`, run by verify, runs the round over a fixed list of twenty real pack changes (including the 112-file 28f5de40) with stub roles. Every change must come back `clean` with each changed text file in the diff and in the export; CI fetches full history.
 
 Outcome vocabulary is `clean`, `clean-with-successors`, `not-converged`,
-`not-reviewed`; this first slice emits no successor admission. It reports
-successorKeys and keeps their obligations not-converged until the later stage
-owner implements confirmed successor IDs. No model selects a stage outcome.
+`not-reviewed`. The round itself reports successorKeys as `not-converged`; the
+collection gate decides which leftovers pass as successor candidates. A
+dangerous finding closes only by an agreed fix on a later head: the checker
+verifies it gone and the reviewer no longer reports it. No model selects a
+stage outcome.
 
 Roles [code-review](references/model-policy.md#roles) and
 [code-review-checker](references/model-policy.md#roles) resolve separately with
