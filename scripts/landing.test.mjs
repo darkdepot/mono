@@ -121,7 +121,6 @@ test("landing U2 installed dispatch validates release and reserves a single rele
     const config = JSON.parse(fs.readFileSync(".agents/mono-workflow.config.json"));
     config.orchestration.transport = "codex-cli";
     config.ideaGate = { since: '2026-10-17' };
-    delete config.orchestration.backupTransport;
     delete config.landing;
     config.orchestration.dispatch = { product: "landing", evidenceRoot: path.join(scratch, "evidence"), openDecisions: 0, lifecycle_moves: [], verification: { command: "node", args: ["scripts/verify.mjs"] } };
     const configFile = path.join(repo, ".agents/mono-workflow.config.json"); write(configFile, JSON.stringify(config)); write(path.join(repo, ".gitignore"), ".worktrees/\n");
