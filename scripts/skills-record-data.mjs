@@ -51,7 +51,8 @@ function recordExecCall(call,rows){
   const command=row.value.payload?.item;
   if(command?.type==='CommandExecution'&&Array.isArray(command.command)&&typeof command.command.at(-1)==='string')source=source.replaceAll(JSON.stringify(command.command.at(-1)),'null');
  }
- return new RegExp(`\\btools\\.${call.name}\\s*\\(`).test(source);
+ // Indexed, aliased or optional access to tools can still call by name.
+ return new RegExp(`\\btools\\.${call.name}\\s*\\(`).test(source)||/\btools\b(?!\s*\.\s*\w+\s*\()/.test(source);
 }
 export function nativeData(host,rows){
  const audit=auditRows(host,rows);

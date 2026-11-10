@@ -5,7 +5,7 @@ import { auditRows, parentTurns, completedTrace } from './skills-audit.mjs';
 import { MissingEvidence } from './skills-boundary.mjs';
 import { readJsonLines } from './transports/journal.mjs';
 
-import { validateReplies, textReply, isOwnerWindow, checkStageResponse, stageQuestion, progressOnly } from './skills-owner.mjs';
+import { validateReplies, textReply, isOwnerWindow, checkStageResponse, stageQuestion, progressOnly, asksOnce } from './skills-owner.mjs';
 
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 export const visibleText = text => typeof text === 'string' && text.replace(/[\s\p{Cf}\p{Variation_Selector}]/gu, '').length > 0;
@@ -124,7 +124,7 @@ export function textExchanges(host, rows, expectedReplies, {startLine=0,idleCont
     const response=turns.find(t=>t.line>turn.replyLine);
     if (!response) throw new Error(`stage did not continue after ${expected.id}`);
     if (expected.response!==undefined) checkStageResponse(expected,response.text);
-    if (expected.intent==='unclear'&&(response.text.match(/\?/g)??[]).length!==1) throw new Error(`stage did not clarify ${expected.id}`);
+    if (expected.intent==='unclear'&&!asksOnce(response.text)) throw new Error(`stage did not clarify ${expected.id}`);
     if (expected.intent==='correction'&&expected.correction.description&&!response.text.includes(expected.correction.description)) throw new Error(`stage did not name correction for ${expected.id}`);
     exchanges.push({...turn,expected,response,...(!index&&nudges.length?{nudges}:{})});cursor=turn.replyLine;
   }

@@ -2260,6 +2260,18 @@ test('continue9 saved Codex tool-name listing is not an unbound write or stage s
  sample.payload.input+='text(await tools.mcp__monotest__save_comment({}));';
  assert.equal(f.check().status,'unverified');
 });
+test('continue9 indexed tools access keeps a Codex tool-name mention as an action',t=>{
+ const f=textFixture(t,'codex','defer'),sample=structuredClone(resumeLive.toolNameListing);
+ sample.payload.input+='text(await tools["mcp__monotest__save_comment"]({}));';
+ f.events.splice(7,0,sample,{type:'response_item',payload:{type:'custom_tool_call_output',call_id:sample.payload.call_id,output:'tool descriptions'}});
+ assert.equal(f.check().status,'unverified',JSON.stringify(f.check()));
+});
+for(const mode of ['valid','wrong-destination','code'])test(`continue9 percent-encoded link destination normalization ${mode}`,t=>{
+ const f=fixture(t),original='See [запись](ССЫЛКА-СОГЛАСИЯ).',stored=d=>`See [запись](${encodeURI(d)}).`;
+ f.record.body=mode==='code'?'`'+original+'`':original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[{...f.record,body:mode==='code'?'`'+stored('ССЫЛКА-СОГЛАСИЯ')+'`':stored(mode==='wrong-destination'?'ССЫЛКА-ОТКАЗА':'ССЫЛКА-СОГЛАСИЯ')}]);
+ f.flush();const result=verifyTextRecords(f.request);assert.equal(result.status,mode==='valid'?'passed':'failed',JSON.stringify(result));
+});
 for(const mode of ['valid','wrong-key','code'])test(`continue9 saved self-closing issue chip normalization ${mode}`,t=>{
  const f=fixture(t),original='See MON-625.',chip=resumeLive.selfClosingMention;
  f.record.body=mode==='code'?'`'+original+'`':original;f.events[2].message.content[0].input.body=f.record.body;f.events[3].message.content[0].content=JSON.stringify(f.record);
@@ -2281,9 +2293,9 @@ for(const mode of ['valid','wrong-start','fragment','missing-end'])test(`continu
   assert.equal(verifyTextRecords(f.request).status,'passed',JSON.stringify(verifyTextRecords(f.request)));
  }
 });
-for(const mode of ['recovered','no-explicit-error','no-retry','wrong-target','no-fresh-read'])test(`continue9 explicit nothing-saved native error requires same-target successful retry and fresh read (${mode})`,t=>{
+for(const mode of ['recovered','no-explicit-error','no-retry','wrong-target','no-fresh-read','other-text'])test(`continue9 explicit nothing-saved native error requires same-target successful retry and fresh read (${mode})`,t=>{
  const f=textFixture(t,'claude','defer'),doc={id:'brief',projectId,title:'Brief',content:'Expected link.'},final={...doc,content:'Approval link.'};
- const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'MISSING',new_string:'Approval link.'}]});
+ const bad=f.call('bad-patch','mcp__monotest__save_document',{id:'brief',patch:[{op:'replace',old_string:'MISSING',new_string:mode==='other-text'?'Another record.':'Approval link.'}]});
  const error={type:'user',message:{content:[{...resumeLive.writeError,tool_use_id:'bad-patch'}]}};
  if(mode==='no-explicit-error')error.message.content[0].content='Error: network interrupted; save outcome unknown.';
  const retry=f.call('patch','mcp__monotest__save_document',{id:mode==='wrong-target'?'other':'brief',patch:[{op:'replace',old_string:'Expected link.',new_string:'Approval link.'}]});

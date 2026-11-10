@@ -94,4 +94,5 @@ test('continue9 saved clarification question need not be the final character',as
  assert.doesNotThrow(()=>checkStageResponse(expected,clarification));
  assert.throws(()=>checkStageResponse(expected,clarification+' Что ещё?'),/question/);
  assert.throws(()=>checkStageResponse(expected,clarification.replace('?','.')),/question/);
+ assert.throws(()=>checkStageResponse(expected,clarification.replace('?','.')+' https://linear.app/monotest/project/x?tab=overview'),/question/,'a link query is not a question');
 });

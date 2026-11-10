@@ -82,12 +82,15 @@ export function correctedVersion(shown, expected, actual) {
 
 export const isOwnerWindow = name => ['AskUserQuestion','request_user_input','request_user_input_async'].includes(name);
 
+// A lone '?' inside a link query is not a question to the owner.
+export const asksOnce = text => (text.match(/\?/g)??[]).length===1 && /\?(?![\p{L}\p{N}=&%#/])/u.test(text);
+
 export function checkStageResponse(expected, text) {
   if (anchored(expected)) {
     checkAnchors(expected.response,text,'stage response');
     if(expected.correction)checkAnchors({anchors:expected.correction.descriptionAnchors},text,'stage correction response');
     const questions=(text.match(/\?/g)??[]).length;
-    if (expected.response.question ? questions!==1 : questions!==0) throw new Error('stage response question differs from scenario policy');
+    if (expected.response.question ? !asksOnce(text) : questions!==0) throw new Error('stage response question differs from scenario policy');
     return;
   }
   if (!expected.response?.includes(text)) throw new Error('stage response differs from declared scenario policy');

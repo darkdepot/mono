@@ -31,8 +31,10 @@ function recoveredUnsavedWrite(data,call){
  if(!error||call.name!=='mcp__monotest__save_document')return false;
  const input=callInput(data.host,call);
  if(!text(input?.id)||!Array.isArray(input.patch))return false;
+ const wanted=input.patch.map(p=>p?.new_string);
  for(const retry of data.calls.filter(c=>c.line>error.line&&c.name===call.name)){
-  if(callInput(data.host,retry)?.id!==input.id)continue;
+  const again=callInput(data.host,retry);
+  if(again?.id!==input.id||!Array.isArray(again.patch)||!isDeepStrictEqual(again.patch.map(p=>p?.new_string),wanted))continue;
   let saved;try{saved=resultFor(data.host,retry,data.rows);}catch{continue;}
   if(idOf(saved.value)!==input.id)continue;
   for(const read of data.calls.filter(c=>c.line>saved.resultLine&&c.name==='mcp__monotest__get_document')){
@@ -60,7 +62,7 @@ function prose(value) {
    const label=all.match(/\blabel="([^"]+)"/)?.[1],key=all.match(/\bhref="https:\/\/linear\.app\/[^"\s]+\/issue\/([^/"#?]+)[^"]*"/)?.[1];
    return key&&label===key?key:all;
   }).replace(/<issue\b[^>]*\bhref="https:\/\/linear\.app\/[^"\s]+\/issue\/([^/"#?]+)[^"]*"[^>]*>([^<>]*)<\/issue>/g,(all,key,label)=>label.trim()===key?key:all)
-  .replace(/\[([^\]\n]+)\]\(<([^<>\s()]+)>\)/g,'[$1]($2)').replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1');
+  .replace(/\[([^\]\n]+)\]\(<([^<>\s()]+)>\)/g,'[$1]($2)').replace(/\]\(([^()\s<>]+)\)/g,(all,dest)=>{try{return `](${decodeURI(dest)})`;}catch{return all;}}).replace(/\[(https?:\/\/[^\]\s]+)\]\(\1\)/g,'$1');
 }
 function inlineProse(line,opened) {
  let result='',start=0,delimiter=opened;
@@ -553,6 +555,7 @@ function textApprovalCheck(request,write,data,dump,{createProject,packageStart,b
  if(presentation==='inline') {
   if(anchored(expected)&&(binding.artifactEnd!==undefined||binding.artifactStart!==undefined)) {
    const start=binding.artifactStart??0,end=binding.artifactEnd;
+   if(binding.artifactStart!==undefined&&expected.stage!=='idea')throw new Error('approval does not bind the complete displayed artifact');
    if(!Number.isInteger(start)||start<0||!Number.isInteger(end)||end<=start||end>exchange.text.length||exchange.text.slice(start,end)!==(binding.artifactStart===undefined?displayed(binding.text):binding.text)||!exchange.text.slice(end).split('\n').some(line=>line.trim()===exchange.question))throw new Error('approval does not bind the complete displayed artifact');
   }else if(exchange.text!==displayed(framing.before+binding.text+framing.after))throw new Error('approval does not bind the complete displayed artifact');
  }
