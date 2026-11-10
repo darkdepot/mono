@@ -563,13 +563,13 @@ console.log(JSON.stringify(a.includes('graphql')?{data:{repository:{pullRequest:
         atomicJson(amended, { pinsVersion: 1, fullSnapshot: { directory: resnapshot } });
         const resumeFile = path.join(path.dirname(pinsFile), 'resume.v1.md'); write(resumeFile, 'Narrow: only input.mjs.\n\n## Effective attempt pins\npinsVersion: 1\n');
         write(path.join(path.dirname(pinsFile), 'resume.v0.md'), 'A prepared amendment that was never delivered.\n');
-        entry.completed_amendments = { 1: { pinsVersion: 1, resumeFile } };
+        entry.completed_amendments = { 1: { pinsVersion: 1, resumeFile, change: { text: 'Narrow: only input.mjs.\n\n## issue-only note\nKept.' } } };
         entry.pinsVersion = 1; register();
         const next = { file: amended, digest: sha256File(amended) }, launchContract = receipt.review.contractDigest;
         receipt = await round(at(fourth, 2, next), 1, /review not-converged \(round 1 of 3\)/);
         assert.equal(receipt.review.record.rounds.length, 1, 'a new pins version opens a fresh three');
         assert.notEqual(receipt.review.contractDigest, launchContract, 'a full-snapshot amendment supplies the reviewed contract');
-        assert.equal(receipt.review.contractDigest, digest('# MONO-999\n\nNarrowed fixture contract.\n\n\n## Orchestrator amendment 1\nNarrow: only input.mjs.'), 'the reviewer reads the amendment text with the Issue');
+        assert.equal(receipt.review.contractDigest, digest('# MONO-999\n\nNarrowed fixture contract.\n\n\n## Orchestrator amendment 1\nNarrow: only input.mjs.\n\n## issue-only note\nKept.'), 'the reviewer reads the amendment text with the Issue');
         setReview(bin, { loggedOut: 'codex' });
         const fifth = commit('export const five = 5;\n');
         receipt = await round(at(fifth, 1, next), 1, /fail: not-reviewed: .*no round spent, request this head once more/);

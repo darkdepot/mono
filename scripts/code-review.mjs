@@ -10,6 +10,7 @@ export const DANGER_CASES = ['data', 'security', 'gate-bypass', 'gate-stall', 's
 const text = value => typeof value === 'string' && value.trim().length > 0;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
+export const STRICT_DANGER = ['data', 'security', 'gate-bypass'];
 const maximumDanger = (...values) => values.includes(true) ? true : values.some(value => value !== false) ? null : false;
 const savedDanger = finding => Object.hasOwn(finding, 'dangerMaximum') ? finding.dangerMaximum : finding.danger ?? null;
 // Size bounds: one role answer, and what a failed attempt may keep in the record.
@@ -559,14 +560,16 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
       const deletionEvidence = evidence?.deletionEvidence;
       // A fix closes a dangerous finding only when both roles agree on a later head: the checker
       // verified it gone and the reviewer, shown the open finding, no longer reports it.
+      // The fix may live in another file: the reviewer checks every open finding, so its silence is the agreement.
       // Once closed that way it stays closed until the reviewer reports it again or the checker stops rejecting it.
       const agreedFix = verdict.outcome === 'rejected' && verdict.closed === true && !!saved && saved.lastCheckedHead !== head &&
-        !reported.has(verdict.key) && !unreviewedFiles.has(finding.file) && (saved.status === 'closed' || covered.has(finding.file) || !!deletionEvidence);
+        !reported.has(verdict.key) && !unreviewedFiles.has(finding.file);
       const retained = (danger || unreviewedFiles.has(finding.file)) && verdict.outcome === 'rejected' && !agreedFix;
       return { ...verdict, outOfContract: !!saved?.outOfContract || verdict.outOfContract, riskRaised: !!saved?.riskRaised || verdict.riskRaised,
         ...(deletionEvidence ? { deletionEvidence } : {}), checkerDanger: verdict.danger, dangerMaximum, danger,
         origin: saved && savedDanger(saved) !== false ? saved.origin : verdict.origin,
-        dangerCase: danger ? verdict.dangerCase ?? saved?.dangerCase ?? 'unknown' : null,
+        // A data, security or gate-bypass case, once established, is not downgraded by a later uncertain verdict.
+        dangerCase: danger ? (STRICT_DANGER.includes(saved?.dangerCase) ? saved.dangerCase : verdict.dangerCase ?? saved?.dangerCase ?? 'unknown') : null,
         dangerReason: danger && verdict.danger === false ? 'Сохранена ранее отмеченная или неясная опасность. ' + verdict.dangerReason : verdict.dangerReason,
         ...(retained ? { outcome: 'unresolved', closed: false, rejectionUnproven: true, reason: (danger ? 'Отклонение опасной или неразмеченной находки оспаривается; находка остаётся открытой. ' : 'Содержимое файла не проверено; находка остаётся открытой. ') + verdict.reason } : {}) };
     });

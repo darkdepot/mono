@@ -9,7 +9,7 @@ import { execFileSync, spawnSync, spawn } from "node:child_process";
 import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER } from "./runtime.mjs";
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, registryEntry } from "./orchestrator/command-state.mjs";
 
-import { runReviewRound } from './code-review.mjs';
+import { runReviewRound, STRICT_DANGER } from './code-review.mjs';
 
 export { reviewEnvironment } from "./model-environment.mjs";
 
@@ -152,7 +152,6 @@ export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
 // - a minor (P3) leftover once the first fixes are in (round 2 on), unless it is about data, security or a gate letting work through;
 // - on the last round also any leftover both roles call harmless.
 // Everything else open means "fix and ask again", and on the last round stays not-converged.
-const STRICT_DANGER = ['data', 'security', 'gate-bypass'];
 export function roundOutcome(record, round) {
   const open = leftover(record), settled = finding => finding.outcome !== 'unresolved';
   const older = finding => finding.origin === 'pre-existing' && settled(finding);
@@ -169,8 +168,10 @@ function reviewRefusal(review) {
   if (review.outcome === 'not-reviewed') return review.repeated
     ? `blocked: not-reviewed twice in a row on this head: ${review.reason}`
     : `not-reviewed: ${review.reason}; no round spent, request this head once more`;
-  const open = leftover(review.record).map(openLine), round = `round ${review.round} of ${ROUND_LIMIT}`;
-  const list = `${open.length} open: ${open.join('; ')}`;
+  // The collector reads the last 64 KiB of gate output: keep the line inside it and say what was left out.
+  const all = leftover(review.record).map(openLine), round = `round ${review.round} of ${ROUND_LIMIT}`, open = [];
+  for (const line of all) { if (open.join('; ').length + line.length > 40000) break; open.push(line); }
+  const list = `${all.length} open: ${open.join('; ')}${open.length < all.length ? `; ${all.length - open.length} more in the next round` : ''}`;
   return review.round === ROUND_LIMIT ? `needs-decision: review not-converged after ${round}; ${list}`
     : `review not-converged (${round}); fix and request the next round; ${list}`;
 }
@@ -486,7 +487,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     const attempt = Number(/-a([1-9][0-9]*)$/.exec(path.basename(path.dirname(request.pins.file)))[1]);
     const registered = Object.values(registryEntry(path.dirname(path.dirname(path.dirname(request.pins.file))), pinnedIssue, attempt).completed_amendments ?? {});
     for (const record of registered.filter(item => item.pinsVersion <= (pins.pinsVersion ?? 0)).sort((a, b) => a.pinsVersion - b.pinsVersion))
-      contract += `\n\n## Orchestrator amendment ${record.pinsVersion}\n${fs.readFileSync(record.resumeFile, "utf8").split(/\n\n## (?:Effective attempt pins|issue-)/)[0]}`;
+      contract += `\n\n## Orchestrator amendment ${record.pinsVersion}\n${record.change?.text ?? fs.readFileSync(record.resumeFile, "utf8").split(/\n\n## (?:Effective attempt pins|issue-)/)[0]}`;
     contractDigest = digest(contract);
     return reviewHistory(signedHistory(evidenceRoot, request.pins.file), { pins: request.pins, head, base, contractDigest });
   };

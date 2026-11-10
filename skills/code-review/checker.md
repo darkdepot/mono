@@ -23,7 +23,7 @@ non-dangerous; code keeps a dangerous/unmarked one unresolved and open, even wit
 an exact codeQuote. Use unresolved for disputed danger. codeQuote may be empty.
 A verified fix differs: when a finding from an earlier round no longer holds on
 the pinned head, return outcome=rejected, closed=true and name the fixing code.
-Code closes it, dangerous or not, only if the reviewer also stopped reporting it.
+Code closes a dangerous one only if the reviewer also stopped reporting it.
 closed=true only for such a verified fix of the reported mechanism.
 The implementer cannot close findings.
 Closed/rejected keys reopen only with new evidence or a changed dependency;
