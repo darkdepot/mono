@@ -204,8 +204,8 @@ test('Mono config pins the confirmation window and CLI rejects a window at the e
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-delivery-config-'));
   try {
     const config = JSON.parse(fs.readFileSync('.agents/mono-workflow.config.json'));
-    assert.equal(config.orchestration.delivery.confirmationTimeoutSec, 1800);
-    assert.equal(config.orchestration.delivery.collectionTimeoutSec, 1500);
+    assert.equal(config.orchestration.delivery.confirmationTimeoutSec, 4500);
+    assert.equal(config.orchestration.delivery.collectionTimeoutSec, 3600);
     fs.mkdirSync(path.join(root, '.agents'));
     const file = path.join(root, '.agents/mono-workflow.config.json');
     const check = () => spawnSync(process.execPath, ['scripts/project-config.mjs', '--repo', root, '--check'], { encoding: 'utf8' });
