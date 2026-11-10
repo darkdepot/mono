@@ -121,8 +121,18 @@ function normalizedUsage(raw, source, errors) {
   return usage;
 }
 
+// A resumed Codex thread reports usage accumulated over the whole thread (logs
+// from 30.09.2026 on); older logs report each run separately. Counters that
+// never decrease across the turns of one log are the accumulated form, and
+// adding them up would count every earlier turn again.
+function reportsThreadTotals(series) {
+  const fields = ["input_tokens", "cached_input_tokens", "output_tokens"];
+  return series.length > 1
+    && series.every((current, index) => index === 0 || fields.every(field => current[field] >= series[index - 1][field]));
+}
+
 function attemptUsage(parsed, source) {
-  const usage = zeroUsage(), errors = [];
+  const usage = zeroUsage(), errors = [], series = [];
   let turns = 0, lastUsage = null, unfinished = false, interrupted = false;
   for (const { value, line } of parsed.events) {
     if (["thread.started", "turn.started"].includes(value?.type) && unfinished) interrupted = true;
@@ -132,15 +142,18 @@ function attemptUsage(parsed, source) {
     unfinished = false;
     const measured = normalizedUsage(value.usage, `${source}:${line}`, errors);
     if (!measured) continue;
-    addUsage(usage, measured);
+    series.push(measured);
     lastUsage = measured;
     turns += 1;
   }
+  const counting = reportsThreadTotals(series) ? "thread-total" : "per-turn";
+  if (counting === "thread-total") addUsage(usage, lastUsage);
+  else for (const measured of series) addUsage(usage, measured);
   errors.push(...parsed.errors.map(error => `${source}:${error}`));
   const status = errors.length ? unavailable("worker logs contain malformed JSON or invalid turn usage")
     : unfinished || interrupted ? "incomplete: attempt interrupted before final usage"
     : turns === 0 ? unavailable("worker log contains no usage events") : "measured";
-  return { usage: turns ? finalizeUsage(usage) : null, lastUsage, turns, status, complete: status === "measured", errors };
+  return { usage: turns ? finalizeUsage(usage) : null, lastUsage, turns, counting, status, complete: status === "measured", errors };
 }
 
 function transcriptUsage(parsed, issue, resolved) {

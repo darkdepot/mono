@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const DEFAULT_JOBS = 4;
 
 function usage(exitCode = 2) {
   console.error("Usage: node scripts/verify.mjs [--help|-h]");
@@ -58,34 +60,60 @@ const steps = [
   { label: "node --test release notes fixtures", cmd: "node", cmdArgs: ["--test", "scripts/release-notes.test.mjs", "scripts/worktree-fingerprint.test.mjs"] },
   { label: "node --test idea gate fixtures", cmd: "node", cmdArgs: ["--test", "scripts/idea-gate.test.mjs", "scripts/idea-record.test.mjs", "scripts/research-gate.test.mjs", "scripts/tech-gate.test.mjs", "scripts/route-gate.test.mjs", "scripts/design-gate.test.mjs"] },
   { label: "node --test watcher launch fixtures", cmd: "node", cmdArgs: ["--test", "scripts/watcher-launch.test.mjs", "scripts/design-snapshot.test.mjs", "scripts/chain-snapshot.test.mjs", "scripts/code-confirmation.test.mjs", "scripts/start-dispatch.test.mjs"] },
-  { label: "node --test delivery runtime fixtures", cmd: "node", cmdArgs: ["--test", "--test-concurrency=1", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs", "scripts/landing-drain.test.mjs", "scripts/landing-plan.test.mjs", "scripts/project-config.test.mjs", "scripts/gate.test.mjs", "scripts/collection-retry.test.mjs", "scripts/landing.test.mjs", "scripts/delivery-state.test.mjs", "scripts/implementation-report.test.mjs", "scripts/implement-evals.test.mjs", "scripts/delivery-runtime.test.mjs", "scripts/orchestrator-commands.test.mjs", "scripts/decisions.test.mjs", "scripts/review-ledger.test.mjs", "scripts/review-cap.test.mjs", "scripts/sandbox-contract.test.mjs", "scripts/plugin-layout.test.mjs", "scripts/wave-cost.test.mjs"] },
+  { label: "node --test delivery runtime fixtures", cmd: "node", cmdArgs: ["--test", "--test-concurrency=4", "scripts/changelog-assemble.test.mjs", "scripts/landing-guard.test.mjs", "scripts/landing-drain.test.mjs", "scripts/landing-plan.test.mjs", "scripts/project-config.test.mjs", "scripts/gate.test.mjs", "scripts/collection-retry.test.mjs", "scripts/landing.test.mjs", "scripts/delivery-state.test.mjs", "scripts/implementation-report.test.mjs", "scripts/implement-evals.test.mjs", "scripts/delivery-runtime.test.mjs", "scripts/orchestrator-commands.test.mjs", "scripts/decisions.test.mjs", "scripts/review-ledger.test.mjs", "scripts/review-cap.test.mjs", "scripts/sandbox-contract.test.mjs", "scripts/plugin-layout.test.mjs", "scripts/wave-cost.test.mjs"] },
   { label: "node --test Claude worker fixtures", cmd: "node", cmdArgs: ["--test", "--test-concurrency=1", "scripts/claude-worker.test.mjs", "scripts/claude-delivery.test.mjs"] },
   { label: "node scripts/validate-workflow.mjs", cmd: "node", cmdArgs: ["scripts/validate-workflow.mjs"] },
 ];
 
-const failures = [];
+// Steps do not depend on each other, so they run side by side; a step keeps
+// its own --test-concurrency for the files inside it. Those long steps start
+// first so the short ones fill the gaps. MONO_VERIFY_JOBS=1 brings back one
+// step at a time.
+const requestedJobs = Number(process.env.MONO_VERIFY_JOBS);
+const jobs = Number.isInteger(requestedJobs) && requestedJobs > 0
+  ? requestedJobs
+  : Math.max(1, Math.min(DEFAULT_JOBS, Math.floor(os.availableParallelism() / 4)));
 
-for (const step of steps) {
-  try {
-    execFileSync(step.cmd, step.cmdArgs, {
-      cwd: root,
-      stdio: "pipe",
+function runStep(step) {
+  return new Promise((resolve) => {
+    const out = [], err = [];
+    const child = spawn(step.cmd, step.cmdArgs, { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    child.stdout.on("data", (chunk) => out.push(chunk));
+    child.stderr.on("data", (chunk) => err.push(chunk));
+    const finish = (ok, extra = "") => resolve({
+      ok,
+      output: [Buffer.concat(out).toString().trimEnd(), Buffer.concat(err).toString().trimEnd(), extra].filter(Boolean).join("\n"),
     });
-    console.log(`PASS ${step.label}`);
-  } catch (err) {
-    console.log(`FAIL ${step.label}`);
-    const output = [err.stdout, err.stderr]
-      .map((b) => (b ? b.toString().trimEnd() : ""))
-      .filter(Boolean)
-      .join("\n");
-    if (output) {
-      for (const line of output.split("\n")) {
-        console.log(`  ${line}`);
-      }
-    }
+    child.on("error", (error) => finish(false, String(error)));
+    child.on("close", (code) => finish(code === 0));
+  });
+}
+
+const failures = [];
+const results = new Array(steps.length);
+const isLong = (step) => step.cmdArgs.some((arg) => arg.startsWith("--test-concurrency="));
+const queue = [...steps.keys()].sort((left, right) => Number(isLong(steps[right])) - Number(isLong(steps[left])));
+let reported = 0;
+
+function report() {
+  for (; reported < steps.length && results[reported]; reported += 1) {
+    const step = steps[reported], result = results[reported];
+    console.log(`${result.ok ? "PASS" : "FAIL"} ${step.label}`);
+    if (result.ok) continue;
+    if (result.output) for (const line of result.output.split("\n")) console.log(`  ${line}`);
     failures.push(step.label);
   }
 }
+
+async function worker() {
+  while (queue.length) {
+    const index = queue.shift();
+    results[index] = await runStep(steps[index]);
+    report();
+  }
+}
+
+await Promise.all(Array.from({ length: Math.min(jobs, steps.length) }, worker));
 
 const total = steps.length;
 if (failures.length === 0) {
