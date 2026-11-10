@@ -6,7 +6,7 @@ import { readJsonLines } from "./journal.mjs";
 
 const unavailable = reason => `unavailable: ${reason}`;
 
-function environment(route, source = process.env, { attemptMarker } = {}) {
+function environment(route, source = process.env) {
   const env = { ...source };
   delete env.MONO_ATTEMPT;
   if (route?.credentialEnv || route?.provider.endpoint) {
@@ -14,7 +14,6 @@ function environment(route, source = process.env, { attemptMarker } = {}) {
     const credential = route.credentialEnv ? { [route.credentialEnv]: source[route.credentialEnv] } : {};
     Object.assign(env, reviewEnvironment(route, credential));
   }
-  if (attemptMarker) env.MONO_ATTEMPT = attemptMarker;
   return env;
 }
 

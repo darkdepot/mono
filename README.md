@@ -993,7 +993,6 @@ Mono pilots product `models` overrides in [config](.agents/mono-workflow.config.
 In orchestrated mode, use the configured transport or documented runtime detection. The managed Codex CLI and Claude Code transports support one resumable worker session per Issue. The registry, mailbox and append-only ledger support recovery; write only observed events with their actual recording times. Start the installed watcher as a tracked background process after every session restart, before launching or resuming workers. Observe its stdout continuously for the whole wave (`persistent: true` or equivalent); periodic wakeups require a recorded degradation. No-change wakeups, including inspected false alarms and already-consumed reports, produce no owner message or routine ledger entry; actual monitoring recovery and healing remain recorded. A silent live writer with unfinished Codex/Claude commands defers stall using a fixed 60-minute best-effort diagnostic from first watcher observation (reset on watcher restart; observation and bounded scanning can affect timing), then emits one marked stall for progress inspection. Missing writer evidence, dead workers and protocol wait deadlines retain priority. It reports each changed phase file and writes `watcher.json` every tick; launches require a fresh pulse and the same live process, refusing without spending an attempt. Refused amendments can retry when their cause is resolved; the uncertain-launch marker is written at the real spawn boundary and retained only if a process may have started. Losing the session and watcher together during running work needs supervision from the surrounding environment. Dispatch prepares the evidence directory and immutable review dataset v1 by default, preserving existing versions (including histories without v1) and explicit dataset pins; a decline still requires an approved linked decision. `control.json.halt` stops new launches/resumes without interrupting running workers; persistent attempt limits bound retries. Keep compaction wiring outside product repos and carry exact next action, pending obligations and decisions through compaction.
 
 This repository delivers its own Issues on Codex, with `.agents/mono-workflow.config.json` set to `orchestration.transport: "codex-cli"`.
-This repository names Claude Code as its backup worker; switching requires the orchestrator's decision for one of the two reasons documented in [Naming a backup worker](#naming-a-backup-worker).
 
 `orchestration.transport: "claude-cli"` selects managed Claude Code launch/resume and the `worker-claude` role from immutable BASE; unchanged projects continue on Codex. It requires a native Anthropic route and positively confirmed subscription login, without provider keys or address overrides. Per-attempt settings bind file edits and shell writes to the approved grants, require the shell sandbox, close connectors and built-in web tools, and allow only GitHub network hosts. GitHub login is fetched outside the sandbox and passed as a real environment variable. Base-branch refresh preserves the sandbox proxy settings when the transport supplies its managed-worker hint. A private per-attempt GitHub CLI configuration directory is prepared inside the grants and reused on resume; both stored streams redact the login. GitHub CLI credential files and their resolved targets are read-denied to shell and file tools; resume retains those protections. Internal temporary paths must remain within short pinned grants; ungranted system fallbacks are denied. Startup requires the pinned session/model identity and a first successful response. Resume regenerates settings and retains the session, model and rights, refusing a live writer. Effort remains requested rather than observed. Start acknowledgement stops the worker; the orchestrator applies and reads back moves, then resumes the same session. Start handshake `wait` is refused. Phase and collection confirmations wait in the foreground under the raised Bash timeout ceiling and existing deadlines. Wait evidence binds session, attempt, current process instance and call ID; old calls cannot prove a resumed wait. The watcher uses log freshness, including command progress, and distinguishes completion without an attempt-correlated report from green/parked. Pre-PR review uses external collection on committed heads, without an in-worker pass; dispatch, launch record and ready certificate name both differences. Never print credential values: native session transcripts persist command output outside pack redaction. Live waits, expiry and collection are probed by the orchestrator at closeout.
 
@@ -1057,72 +1056,6 @@ Rolling the choice back is the same one setting in the other direction, with the
 boundary: running attempts keep their pins and finish on their original worker, while
 new launches go to Codex. Installation requirements for each worker are in
 [Project Policy](references/install.md#project-policy).
-
-### Naming a backup worker
-
-An owner can also set `orchestration.backupTransport` to `codex-cli` or
-`claude-cli`. It must differ from the primary, and the primary must be one of
-those two managed CLI workers. For example:
-
-```json
-{ "orchestration": { "transport": "codex-cli", "backupTransport": "claude-cli" } }
-```
-
-This is a standing mandate for the orchestrator to open one new attempt when
-the primary's subscription is exhausted (`subscription-exhausted`), or its
-provider explicitly and persistently refuses after recovery on that same worker
-(`provider-refusal-after-recovery`). The orchestrator chooses the reason and
-supplies a verbatim excerpt from the previous attempt's output. Task failure,
-stopped gates, unexplained silence, installation problems and config errors do
-not qualify; there is no automatic failure classifier.
-
-The orchestrator first reconciles outstanding writes and unfinished work,
-uses the installed `backup-switch.mjs stop` command before retiring the old writer.
-It freezes process creation, retains the tree (including separate process groups),
-then force-stops it without resuming it. The orchestrator proves exit and retires
-the registry entry. Captures remain across resumes; missing or incomplete stop
-evidence refuses switching. It then uses the
-ordinary dispatch command with `--backup-switch <absolute-decision-file>`.
-The previous launch retains its host PID/start-time snapshot; missing proof still
-refuses switching, and the snapshot must never be erased or broadened. A live
-process blocks switching only when it retains a trace of that attempt: a captured
-process group, a parent chain reaching a captured process, a matching
-`MONO_ATTEMPT` marker, or an exact reference to that attempt's worktree or artifact.
-Path references are literal matches with a trailing path boundary; longer sibling
-paths do not match. References inside inline comments or script text may block
-conservatively, without interpreting that language.
-Verified control-caller processes are excluded. Unrelated host processes and
-collectors for other tasks, even under the same product root, do not block; the
-previous attempt's collector and active checks are checked separately.
-If marker reading is unavailable and no other trace exists, a marked attempt
-allows switching and records the count in the launch record for reconciliation.
-An uncaptured orphan outside the captured groups, with a cleared environment and
-neutral command, may go undetected; this is the accepted residual risk.
-If the writer already exited, the command records its stopped state only after
-the same process and ownership checks; it sends no signals.
-The backup must have been named on the old attempt's base and remain the same
-on the new base; the reviewer route stays unchanged. A dirty unresolved copy,
-live old worker or descendant, exhausted attempt limit, or previous switch
-refuses the launch. Preserved work is reconciled into a clean tree before the
-ordinary start gate; rights, gates and attempt limits are never weakened.
-
-Backup Codex uses `worker-default` unless the orchestrator records a reason for
-`worker-complex`; backup Claude Code uses `worker-claude` and stop/resume startup.
-The normal producer/reviewer pairing check applies. The new attempt pins carry
-the switch and SHA-256 of its evidence. The ledger and attempt output retain the
-reason, evidence path/digest, previous/new workers and attempt numbers; the
-orchestrator writes and reads back the same facts in an Issue comment. One switch
-per Issue, with no automatic return; a stopped backup can resume its own session.
-
-The complete decision-file format and recovery procedure are in
-[Backup worker switch](references/orchestration.md#backup-worker-switch).
-At closeout the orchestrator practices the path in a one-off root on a real
-attempt with a marked training reason. That proves switching, while a real
-subscription-exhaustion response remains a separate observation.
-
-For config rollback, remove `backupTransport` before choosing the other primary
-or installing a pack that predates the setting. Existing attempts keep their
-pins; a config edit cannot authorize a switch retroactively.
 
 ## Cost
 
@@ -1561,14 +1494,8 @@ config fields in the Project Config section above.
 
 ## Landing
 
-The advisory `landing-plan.mjs` observer reports textual intersections among active
-committed branches and the fetched landing tip, without affecting gates. The
-owner status includes «Посадка». Handoff chains Issues that must edit the same file;
-the orchestrator consults the observer before expanding a wave. `head` records PR
-head observations; `harvest` records force-push events and their observable check
-durations once. Only those events count refreshes. A waiting-queue decision needs
-at least 30 landings and sibling-refresh cost exceeding estimated waiting;
-unknown history remains unknown. See [scheduling and accounting](references/landing.md#scheduling).
+Handoff chains Issues that must edit the same file; independent work stays parallel.
+See [scheduling](references/landing.md#scheduling).
 
 Products can opt in to a landing policy for parallel task delivery. The rule and
 operator instructions live in [Landing](references/landing.md), with a complete
