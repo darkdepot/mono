@@ -1764,13 +1764,13 @@ Linear, ограничения пробы, требования к хосту и
 [отдельный шаблон](templates/qa-output.md) описывает task/project, короткий и
 given-version сертификаты. Ожидания связывают id, точный текст и источник; scenario нельзя исключить или заменить no-behavior.
 
-Run before completing a change:
+Run before completing a change (independent steps run in parallel; `MONO_VERIFY_JOBS=1` runs one step at a time):
 
 ```bash
 node scripts/verify.mjs
 ```
 
-The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures. Independent steps run in parallel; `MONO_VERIFY_JOBS=1` runs one step at a time.
+The entry point includes `git diff --check`, syntax checks, artifact/workflow checks and isolated plugin runtime fixtures.
 Design approval regressions cover legacy `paper=`, new `canvas`/`tool`, mixed or
 incomplete fields and a damaged latest record through the shared reader and the
 `design`/`route` commands. Run them with
