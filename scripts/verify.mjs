@@ -90,26 +90,19 @@ function runStep(step) {
 }
 
 const failures = [];
-const results = new Array(steps.length);
 const isLong = (step) => step.cmdArgs.some((arg) => arg.startsWith("--test-concurrency="));
-const queue = [...steps.keys()].sort((left, right) => Number(isLong(steps[right])) - Number(isLong(steps[left])));
-let reported = 0;
+const queue = [...steps].sort((left, right) => Number(isLong(right)) - Number(isLong(left)));
 
-function report() {
-  for (; reported < steps.length && results[reported]; reported += 1) {
-    const step = steps[reported], result = results[reported];
+// Each result prints as soon as its step ends, so a long step never hides a
+// finished one or delays a failure message.
+async function worker() {
+  while (queue.length) {
+    const step = queue.shift();
+    const result = await runStep(step);
     console.log(`${result.ok ? "PASS" : "FAIL"} ${step.label}`);
     if (result.ok) continue;
     if (result.output) for (const line of result.output.split("\n")) console.log(`  ${line}`);
     failures.push(step.label);
-  }
-}
-
-async function worker() {
-  while (queue.length) {
-    const index = queue.shift();
-    results[index] = await runStep(steps[index]);
-    report();
   }
 }
 
