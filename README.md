@@ -630,10 +630,6 @@ subscription, from different model families; a single-family setup gives
 `not-reviewed`, and so does a logged-out CLI whose role has to run. See [review rounds](references/orchestration.md#review-rounds).
 Every collection requires a pinned request and correlated admission; unpinned
 legacy requests cannot start collections. Receipts of the previous format are not accepted.
-All pending admissions count when reserving and rechecking free capacity.
-Local passes use stable IDs across the Issue chain; cumulative reports do not
-recount passes in new attempts or successors. The ledger shows their clean or
-findings outcomes.
 
 Collections now share one deadline from phase publication through confirmation.
 Configure `orchestration.delivery.collectionTimeoutSec` (default 1500),

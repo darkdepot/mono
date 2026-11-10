@@ -472,7 +472,13 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     if (!pins || !request.pins) return null;
     const file = path.join(pins.fullSnapshot?.directory ?? path.join(path.dirname(request.pins.file), "snapshot"), `issue-${pinnedIssue}.md`);
     if (!pinnedIssue || !fs.existsSync(file)) return null;
-    contract = fs.readFileSync(file, "utf8"); contractDigest = digest(contract);
+    contract = fs.readFileSync(file, "utf8");
+    // Amendment texts narrow or correct the task: the reviewer must read them with the Issue.
+    for (let n = 1; n <= Number(/pins\.v(\d+)\.json$/.exec(request.pins.file)?.[1] ?? 0); n++) {
+      const resume = path.join(path.dirname(request.pins.file), `resume.v${n}.md`);
+      if (fs.existsSync(resume)) contract += `\n\n## Orchestrator amendment ${n}\n${fs.readFileSync(resume, "utf8").split(/\n\n## (?:Effective attempt pins|issue-)/)[0]}`;
+    }
+    contractDigest = digest(contract);
     return reviewHistory(signedHistory(evidenceRoot, request.pins.file), { pins: request.pins, head, base, contractDigest });
   };
   let receipt, verifiedReceiptFile = receiptFile;
