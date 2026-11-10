@@ -24,5 +24,7 @@ Successor candidates pass instead of blocking: an older defect the task did not
 introduce (any round); a minor P3 leftover from round 2 on, unless it is about
 data, security or a gate bypass; on round 3 also any leftover both roles call
 harmless. Out-of-contract or risk-raised fixes never pass. List candidates in
-the certificate and report; the orchestrator decides which become Issues after
-merge. Never weaken tests to converge.
+the certificate and report. After merge the orchestrator files every
+`must-file` one (an older dangerous defect, minor ones only for data, security
+or gate bypass) and decides on the rest. Never
+weaken tests to converge.

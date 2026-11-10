@@ -1088,7 +1088,7 @@ file: three at most, the same head reuses its round, `not-reviewed` spends
 nothing, an accepted amendment opens a fresh three and a changed base keeps the
 count. Refusals are signed too and reach the worker as a `gate preflight: fail:`
 line. The orchestrator approves nothing between rounds and after merge decides
-which candidates from the receipt's list become Issues: [review rounds](references/orchestration.md#review-rounds),
+which candidates from the receipt's list become Issues (every `must-file` one does): [review rounds](references/orchestration.md#review-rounds),
 worker [round rule](references/review-admission.md). `decisions.mjs`,
 `review-ledger.mjs` and the dispatch pilot block stay in the pack but are off
 the delivery path.

@@ -1226,9 +1226,12 @@ Parks:
 
 `clean-with-successors` passes. Its candidates are older defects, minor P3
 leftovers from round 2 on (never data, security or gate bypass) and, on round 3,
-leftovers both roles call harmless. After merge decide which entries of the
-receipt's `review.successors` list become Issues; the gate line and ready
-certificate repeat the list.
+leftovers both roles call harmless. After merge file every `must-file` entry of
+the receipt's `review.successors` list (an older dangerous defect; a minor one
+only for data, security or gate bypass) and decide
+which of the rest become Issues; the gate line and ready certificate repeat the
+list. The collection window (`collectionTimeoutSec`) must cover a round, which
+takes up to 25 minutes on a large risky change, plus verification and one rerun.
 
 ## Delivery Write Barriers
 

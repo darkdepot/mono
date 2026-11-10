@@ -156,12 +156,15 @@ export function roundOutcome(record, round) {
   const open = leftover(record), settled = finding => finding.outcome !== 'unresolved';
   const older = finding => finding.origin === 'pre-existing' && settled(finding);
   const minor = finding => round > 1 && finding.weight === 'P3' && !STRICT_DANGER.includes(finding.dangerCase);
+  // An older dangerous defect is filed after merge, not left to choice, unless it is a minor one outside the strict cases.
+  const mustFile = finding => older(finding) && finding.danger !== false && (finding.weight !== 'P3' || STRICT_DANGER.includes(finding.dangerCase));
   const harmless = finding => round >= ROUND_LIMIT && finding.danger === false && settled(finding);
   const stands = !open.length || record.findings.some(finding => finding.outOfContract || finding.riskRaised) ||
     !open.every(finding => older(finding) || minor(finding) || harmless(finding));
   // A clean round may still carry older harmless defects: they are listed, never dropped.
   if (!['not-converged', 'clean'].includes(record.outcome) || stands) return { outcome: record.outcome, successors: [] };
-  return { outcome: 'clean-with-successors', successors: open.map(finding => ({ key: finding.key, line: findingLine(finding), origin: finding.origin })) };
+  return { outcome: 'clean-with-successors', successors: open.map(finding => ({ key: finding.key, origin: finding.origin,
+    line: `${mustFile(finding) ? 'must-file ' : ''}${findingLine(finding)}` })) };
 }
 function reviewRefusal(review) {
   if (review.outcome === 'refused') return review.reason;

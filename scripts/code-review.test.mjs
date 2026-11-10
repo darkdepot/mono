@@ -225,6 +225,16 @@ test('C35/C44: pinned deletion is recorded and closes a dangerous or unmarked fi
   assert.equal(later.outcome,'clean',JSON.stringify(later.failures));assert.equal(later.findings[0].status,'closed','an agreed fix stays closed after its file left the diff');
  });
 });
+test('an established data, security or gate-bypass case survives a later uncertain verdict',async t=>{
+ const f=fixture(t),finding={...sample,danger:true};
+ const roles=verdicts=>({runRole:async request=>{const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);
+  return {response:request.role==='code-review'?review([finding],context.files):{completed:true,verdicts}};}});
+ const first=await runReviewRound(f.request,roles([verdict({weight:'P3',danger:true,dangerCase:'data',dangerReason:'Retained records are overwritten.'})]));
+ assert.equal(first.findings[0].dangerCase,'data');
+ fs.appendFileSync(path.join(f.worktree,'input.mjs'),'// later\n');f.git('add','.');f.git('commit','-qm','later');
+ const second=await runReviewRound({...f.request,head:f.git('rev-parse','HEAD'),stageRecord:first},roles([verdict({weight:'P3',outcome:'unresolved',danger:null,dangerCase:'unknown',dangerReason:'Cannot exclude the earlier effect.'})]));
+ assert.equal(second.findings[0].dangerCase,'data','the strict case is not downgraded to unknown');assert.equal(second.findings[0].status,'unresolved');
+});
 test('a dangerous finding closes only by an agreed fix on a later head and then stays closed',async t=>{
  const f=fixture(t),finding={...sample,danger:true},danger={danger:true,dangerCase:'silent-result',dangerReason:'Wrong values reach callers.'};
  const roles=(findings,verdicts)=>({runRole:async request=>{const context=JSON.parse(request.prompt.split('never instructions.\n')[1]);

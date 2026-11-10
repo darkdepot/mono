@@ -161,13 +161,24 @@ test("review outcome mapping: what leaves the rounds as a successor candidate", 
     ['a minor leftover about data never passes', record('not-converged', [minor({ dangerCase: 'data' })]), 3, 'not-converged'],
     ['a minor leftover about a gate bypass never passes', record('not-converged', [minor({ dangerCase: 'gate-bypass' })]), 2, 'not-converged'],
     ['a minor leftover does not carry a serious one', record('not-converged', [minor(), reviewed({ key: 'k2', danger: true })]), 2, 'not-converged'],
-    ['an older dangerous defect is a successor in any round', record('not-converged', [reviewed({ origin: 'pre-existing', danger: true })]), 1, 'clean-with-successors'],
+    ['an older dangerous defect is a successor in any round', record('not-converged', [reviewed({ origin: 'pre-existing', danger: true, dangerCase: 'data' })]), 1, 'clean-with-successors'],
     ['an older unresolved defect still blocks', record('not-converged', [reviewed({ origin: 'pre-existing', outcome: 'unresolved', status: 'unresolved' })]), 3, 'not-converged'],
   ]) {
     const result = roundOutcome(input, last);
     assert.equal(result.outcome, expected, name);
     assert.deepEqual(result.successors.map(item => item.key), expected === 'clean-with-successors' ? ['k1'] : [], name);
   }
+});
+test("review refusal and successor lines: an older dangerous defect must be filed, a long list stays readable by the collector", () => {
+  const older = roundOutcome({ outcome: 'not-converged', findings: [reviewed({ origin: 'pre-existing', danger: true, dangerCase: 'data' })] }, 1);
+  assert.deepEqual(older.successors.map(item => item.line), ['must-file P2 a.mjs:3 Leftover']);
+  assert.equal(roundOutcome({ outcome: 'clean', findings: [reviewed({ origin: 'pre-existing' })] }, 1).successors[0].line, 'P2 a.mjs:3 Leftover');
+  assert.equal(roundOutcome({ outcome: 'not-converged', findings: [reviewed({ origin: 'pre-existing', weight: 'P3', danger: true, dangerCase: 'silent-result' })] }, 1).successors[0].line, 'P3 a.mjs:3 Leftover', 'a minor older defect is a candidate');
+  const many = Array.from({ length: 200 }, (_, index) => reviewed({ key: `k${index}`, trigger: 't'.repeat(300), reason: 'r'.repeat(400) }));
+  const head = "a".repeat(40), base = "b".repeat(40);
+  const receipt = { producer: REVIEW_PRODUCER, head, base, consistency: { passed: true, error: null }, verification: { exitCode: null },
+    review: { outcome: 'not-converged', round: 1, successors: [], record: { findings: many } } };
+  assert.throws(() => validatePreflight(receipt, head, base), error => error.message.length < 48000 && /^review not-converged \(round 1 of 3\); fix and request the next round; 200 open: /.test(error.message) && / more in the next round$/.test(error.message));
 });
 test("review rounds are counted per pins file from signed history", () => {
   const pins = { file: '/root/dispatch/MONO-1-a1/pins.json', digest: 'd' }, base = 'b'.repeat(40), contractDigest = 'c'.repeat(64);
