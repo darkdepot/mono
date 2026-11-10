@@ -48,4 +48,4 @@ report the actual families. Never silently substitute a tool or model.
 
 Reviewer and checker see the diff, contract, rules and pinned files as they are,
 through the same providers as the coding worker; this stage does not screen for
-secrets. Binary files are listed as not reviewed and never block the text review.
+secrets.
