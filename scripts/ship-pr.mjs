@@ -36,7 +36,7 @@ export function scanBlob(file, content) {
 export function unpushedSecrets(worktree, remote) {
   const commits = git(worktree, 'rev-list', 'HEAD', '--not', `--remotes=${remote}`).split('\n').filter(Boolean);
   return commits.flatMap(commit => {
-    const files = git(worktree, '-c', 'core.quotePath=false', 'diff-tree', '--root', '-m', '--no-commit-id', '-r', '-z', '--name-only', '--diff-filter=AMCR', commit)
+    const files = git(worktree, '-c', 'core.quotePath=false', 'diff-tree', '--root', '-m', '--no-commit-id', '-r', '-z', '--name-only', '--diff-filter=AMCRT', commit)
       .split('\0').filter(Boolean);
     return [...new Set(files)].flatMap(file => {
       const size = Number(git(worktree, 'cat-file', '-s', `${commit}:${file}`));
@@ -81,7 +81,8 @@ const BOT = login => /\[bot\]$|greptile|devin/i.test(login ?? '');
 const URGENT = /\bP[01]\b|badges\/p[01]\.svg/i;
 const FAILED_RUNS = ['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE'];
 const marked = body => String(body ?? '').includes(SHIP_MARKER);
-const clip = (value, limit) => { const flat = String(value ?? '').trim(); return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat; };
+// A clipped remark names the digest of its full text, so an edit past the limit still changes the remark.
+const clip = (value, limit) => { const flat = String(value ?? '').trim(); return flat.length > limit ? `${flat.slice(0, limit - 90)}…\n[full text sha256 ${digest(flat)}]` : flat; };
 const firstLine = body => clip(String(body ?? '').replace(/<[^>]+>/g, ' ').split('\n').map(line => line.trim()).find(Boolean) ?? 'remark', 300);
 const remarkId = value => String(value).replace(/[^A-Za-z0-9_.:/-]/g, '-').slice(0, 200);
 // U3/U8: every open remark on the current head, with a stable id and a digest of its text.
@@ -126,13 +127,15 @@ export const requestRemark = ({ digest: _, ...remark }) => remark;
 // U4: the draft leaves only with no failed CI on the head and every remark settled: carried in the
 // prRemarks of the clean collection on this head (fixed and verified in the round), or confirmed by the
 // read-only pass on this head for exactly this text. An owner instruction is never settled by the pass.
+// A comment outside a thread has no head of its own: it was collected on the head before the fix.
+const settled = remark => ({ ...requestRemark(remark), head: null });
 export function readyBlockers({ head, remarks, sent = [], check = null }) {
-  const blockers = [], fixed = new Set(sent.map(item => canonical(item)));
+  const blockers = [], fixed = new Set(sent.map(item => canonical(settled(item))));
   const confirmed = check?.head === head ? new Set(check.remarks.filter(item => check.verdicts.some(verdict => verdict.id === item.id && verdict.verdict === 'confirmed'))
     .map(item => `${item.id}\0${item.digest}`)) : new Set();
   for (const remark of remarks) {
     if (remark.source === 'ci') { blockers.push(`failed CI on head: ${remark.title}`); continue; }
-    if (fixed.has(canonical(requestRemark(remark)))) continue;
+    if (fixed.has(canonical(settled(remark)))) continue;
     if (remark.source === 'owner') { blockers.push(`owner instruction not done; ask the owner one question: ${remark.title}`); continue; }
     if (confirmed.has(`${remark.id}\0${remark.digest}`)) continue;
     blockers.push(`remark not settled on this head: ${remark.title} (${remark.id})`);

@@ -161,7 +161,9 @@ export function roundOutcome(record, round) {
   // An older dangerous defect is filed after merge, not left to choice, unless it is a minor one outside the strict cases.
   const mustFile = finding => older(finding) && finding.danger !== false && (finding.weight !== 'P3' || STRICT_DANGER.includes(finding.dangerCase));
   const harmless = finding => round >= ROUND_LIMIT && finding.danger === false && settled(finding);
-  const stands = !open.length || record.findings.some(finding => finding.outOfContract || finding.riskRaised) ||
+  // An owner's instruction on the PR is done in the round or asked about; it never becomes a successor.
+  const ownerRemark = finding => finding.class === 'pr-remark' && finding.source === 'owner';
+  const stands = !open.length || record.findings.some(finding => finding.outOfContract || finding.riskRaised) || open.some(ownerRemark) ||
     !open.every(finding => older(finding) || minor(finding) || harmless(finding));
   // A clean round may still carry older harmless defects: they are listed, never dropped.
   if (!['not-converged', 'clean'].includes(record.outcome) || stands) return { outcome: record.outcome, successors: [] };

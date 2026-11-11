@@ -173,6 +173,9 @@ test("review refusal and successor lines: an older dangerous defect must be file
   const older = roundOutcome({ outcome: 'not-converged', findings: [reviewed({ origin: 'pre-existing', danger: true, dangerCase: 'data' })] }, 1);
   assert.deepEqual(older.successors.map(item => item.line), ['must-file P2 a.mjs:3 Leftover']);
   assert.equal(roundOutcome({ outcome: 'clean', findings: [reviewed({ origin: 'pre-existing' })] }, 1).successors[0].line, 'P2 a.mjs:3 Leftover');
+  const owner = reviewed({ class: 'pr-remark', source: 'owner', weight: 'P3', danger: false });
+  assert.deepEqual(roundOutcome({ outcome: 'not-converged', findings: [owner] }, 3), { outcome: 'not-converged', successors: [] }, 'an owner instruction never becomes a successor');
+  assert.equal(roundOutcome({ outcome: 'not-converged', findings: [{ ...owner, source: 'bot' }] }, 2).outcome, 'clean-with-successors', 'a minor bot remark follows the ordinary rules');
   assert.equal(roundOutcome({ outcome: 'not-converged', findings: [reviewed({ origin: 'pre-existing', weight: 'P3', danger: true, dangerCase: 'silent-result' })] }, 1).successors[0].line, 'P3 a.mjs:3 Leftover', 'a minor older defect is a candidate');
   const many = Array.from({ length: 200 }, (_, index) => reviewed({ key: `k${index}`, trigger: 't'.repeat(300), reason: 'r'.repeat(400) }));
   const head = "a".repeat(40), base = "b".repeat(40);

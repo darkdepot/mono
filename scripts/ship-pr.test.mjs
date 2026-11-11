@@ -39,6 +39,13 @@ test('secrets: whole files are read, binary-looking ones and diff attributes inc
   commit('.gitattributes', 'creds.txt -diff\n'); commit('creds.txt', `token=${awsKey}\n`); commit('blob.bin', `\0\0binary${privateKey}\n`);
   assert.deepEqual(unpushedSecrets(work, 'origin').map(item => [item.file, item.kind]).sort(), [['blob.bin', 'private key'], ['creds.txt', 'AWS access key']]);
 });
+test('secrets: a symlink replaced by a regular file is scanned', t => {
+  const { work, commit } = repo(t);
+  fs.symlinkSync('a.txt', path.join(work, 'link')); git(work, 'add', 'link'); git(work, '-c', 'user.name=t', '-c', 'user.email=t@e.invalid', 'commit', '-qm', 'link');
+  git(work, 'push', '-q', 'origin', 'HEAD:refs/heads/main'); git(work, 'fetch', '-q', 'origin');
+  fs.unlinkSync(path.join(work, 'link')); commit('link', `${awsKey}\n`);
+  assert.deepEqual(unpushedSecrets(work, 'origin').map(item => [item.file, item.kind]), [['link', 'AWS access key']]);
+});
 
 test('draft body carries the marker, the result title and the task link', () => {
   const body = draftBody({ issue: 'MONO-1', issueUrl: 'https://linear.app/x/issue/MONO-1', title: 'Задачи запускаются без ошибок' });
@@ -86,6 +93,12 @@ test('Ship\'s own reply in a thread does not change the remark digest', () => {
   assert.equal(read([]), read([{ id: 'C2', body: `${SHIP_MARKER}\nFixed`, author: { login: 'owner' } }]));
   assert.notEqual(read([]), read([{ id: 'C3', body: 'Still broken', author: { login: 'greptile-apps[bot]' } }]));
 });
+test('an edit past the clipping limit still changes the remark', () => {
+  const read = body => collectRemarks({ snapshot: snapshot({ botComments: [{ id: 'B1', body, updatedAt: 'u' }] }) })[0];
+  const long = 'x'.repeat(5000), first = read(long), second = read(long + ' fix this too');
+  assert.ok(first.body.length <= 4000); assert.notEqual(first.digest, second.digest); assert.notEqual(first.body, second.body);
+  assert.doesNotThrow(() => prRemarkFindings([requestRemark(first)]));
+});
 test('remark digest changes when the remark text changes', () => {
   const read = body => collectRemarks({ snapshot: snapshot({ botComments: [{ id: 'B1', body, updatedAt: 'u' }] }) })[0].digest;
   assert.notEqual(read('one'), read('two'));
@@ -105,6 +118,8 @@ test('ready: no failed CI, every remark carried in the clean collection or confi
   assert.match(readyBlockers({ head, remarks: [owner], check: { head, remarks: [{ id: 'I2', digest: owner.digest }], verdicts: [{ id: 'I2', verdict: 'confirmed', reason: 'r' }] } })[0],
     /owner instruction not done/, 'the read-only pass cannot decline an owner instruction');
   assert.deepEqual(readyBlockers({ head, remarks: [owner], sent: [requestRemark(owner)] }), [], 'an owner instruction done in a clean round');
+  assert.deepEqual(readyBlockers({ head, remarks: [owner], sent: [{ ...requestRemark(owner), head: older }] }), [], 'collected on the head before the fix');
+  assert.match(readyBlockers({ head, remarks: [owner], sent: [{ ...requestRemark(owner), body: 'other' }] })[0], /owner instruction/);
 });
 test('mention: once per head and only while the bot has not reported on it', () => {
   assert.equal(mentionNeeded({ snapshot: snapshot() }), true);
