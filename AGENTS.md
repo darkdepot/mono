@@ -10,7 +10,7 @@ Stages in `scripts/russian-stages.mjs` and `references/owner-dialog.md`: Russian
 
 - Linear holds the Project, PRD (what and why), Tech Spec (how), Issue (one-PR contract) and every owner approval as a comment. Obligations live in `references/contracts/`, shape in `templates/`.
 - GitHub holds branch, PR, review, CI and merge history.
-- Each skill's description and the README Skills table route between stages. The orchestrator launches the same pre-delivery stage sessions and answers as delegated owner; each stage writes and reads back its own Linear records. The orchestrator is the sole Linear writer for implement, preflight and ship workers, which queue mutations in reports. Ordinary Project work needs owner start after Handoff; delegated Project work allows orchestrator start with reason. Issue-only work needs owner approval through `mono:issue`.
+- Each skill's description and the [handbook](HANDBOOK.md#skills) Skills table route between stages. The orchestrator launches the same pre-delivery stage sessions and answers as delegated owner; each stage writes and reads back its own Linear records. The orchestrator is the sole Linear writer for implement, preflight and ship workers, which queue mutations in reports. Ordinary Project work needs owner start after Handoff; delegated Project work allows orchestrator start with reason. Issue-only work needs owner approval through `mono:issue`.
 
 ## Skill Design Rules
 
@@ -26,11 +26,11 @@ Stages in `scripts/russian-stages.mjs` and `references/owner-dialog.md`: Russian
 
 ## Change Discipline
 
-Open a Linear Issue before the first edit, so every change passes review and verification. Changes to skills, references and templates go through the orchestrator session, with affected README sections updated in the same PR. Each task adds `changelog.d/<ISSUE-KEY>.md`; releases assemble them per [Landing](references/landing.md#changelog-assembly).
+Open a Linear Issue before the first edit, so every change passes review and verification. Changes to skills, references and templates go through the orchestrator session, with affected [handbook](HANDBOOK.md) sections updated in the same PR. The README is the short introduction for people: change it only when what Mono is, how it is installed or how it is used changes, never for release or task notes. Upgrade steps for a release go to [UPGRADING](UPGRADING.md). Each task adds `changelog.d/<ISSUE-KEY>.md`; releases assemble them per [Landing](references/landing.md#changelog-assembly).
 
 ## Validation
 
-Run `node scripts/verify.mjs` before finishing; focused checks are in the README Validation section.
+Run `node scripts/verify.mjs` before finishing; focused checks are in the handbook [Validation](HANDBOOK.md#validation) section.
 
 ## Fixture Coupling
 

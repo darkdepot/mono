@@ -50,7 +50,7 @@ not. The plugin has the repository layout: `skills/`, `references/`, `templates/
 ## Plugin Updates
 
 This procedure is for machines running an orchestrator; user machines follow
-[Users without an orchestrator](../README.md#users-without-an-orchestrator).
+[Users without an orchestrator](../HANDBOOK.md#users-without-an-orchestrator).
 
 Only the installing orchestrator registers or updates the shared marketplace.
 Disable automatic updates. Install/update deliberately after a release task,
@@ -171,7 +171,7 @@ git rev-parse "v$(git show "$T:VERSION")^{commit}"
 ```
 
 Both tools' versions must equal `VERSION` at T and the tag must resolve to T,
-together with matching cache trees. [Migration](../README.md#migrate-from-the-local-installer)
+together with matching cache trees. [Migration](../HANDBOOK.md#migrate-from-the-local-installer)
 and [plugin live proof](landing.md#plugin-installation-proof) own their boundaries.
 
 ## Project Config Contract
@@ -180,7 +180,7 @@ Product repos keep only `.agents/mono-workflow.config.json`; never vendor skill
 bodies, wrappers, workflow lockfiles, checkers or updater CI. Use
 `scripts/project-config.mjs --repo /path/to/product --write --clean` for config
 migration and `--check` for shape, required fields, placeholders and forbidden files.
-Config fields/policies: [README](../README.md#project-config). Use null for absent
+Config fields/policies: [handbook](../HANDBOOK.md#project-config). Use null for absent
 workflows; absent deploy blocks. `workflows.deploy` has no Land alias.
 
 ## External Autoreview Helper
@@ -226,7 +226,7 @@ sandbox.
 ## Release Policy
 
 Use SemVer; pre-1.0 breaking minors require clear release notes. Plugin versions
-equal `VERSION`; only release tasks change them. Try unreleased code per README.
+equal `VERSION`; only release tasks change them. Try unreleased code per the [handbook](../HANDBOOK.md#machines-running-an-orchestrator).
 
 ### Release 0.44.0
 
