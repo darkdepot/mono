@@ -102,7 +102,7 @@ no-promotion handoff.
 
 Project start: by=owner; PC-019 allows by=orchestrator with reason/countercheck
 (model/version outside the fence in that comment) only with «Ведёт оркестратор»
-outside the last Idea approval fence or earlier explicit owner Project comment.
+outside the last Idea approval fence or an explicit owner Project comment.
 Delegated stale/legacy-migrate Idea needs a new owner button, confirmed record and
 fresh check. Legacy package/start or bundled approval can authorize code;
 «запускай реализацию» permits Delivery/branch/code; documents alone do not.

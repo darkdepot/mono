@@ -32,7 +32,7 @@ as the final message per `references/owner-dialog.md`. Prepare the Research plan
 (`skills/research/references/plan.md`). After verified recording, give one recording line
 and honor the selected start or deferral; no repeated summary. A later explicit start
 reuses verified approval of the same version. Ordinary Projects need owner start. Delegated Projects
-(PC-019: latest Idea delegation mark or earlier explicit owner decision) allow
+(PC-019: latest Idea delegation mark or explicit owner decision) allow
 orchestrator Research start after confirmed Idea approval. The Project stays in Idea until then.
 Idea approval is separate from the Handoff start.
 
@@ -55,7 +55,7 @@ A Project without Research routes here, except a package approved before
 Stage transitions: owner sessions continue in the same session after an authorized
 transition, except Design in a separate session whose parent ran Discovery.
 Ordinary Projects need owner Research/work start. Delegated Projects use the
-latest Idea delegation mark (or earlier explicit owner Project comment); only then
+latest Idea delegation mark (or explicit owner Project comment); only then
 may orchestrator start Research/work itself, `by=orchestrator` with reason and
 countercheck. Handoff asks about starting the shown package in a final text message. Delegation needs explicit owner words.
 Owner's explicit words «передай оркестратору» records `by=owner` and transfers work.
