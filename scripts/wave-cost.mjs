@@ -319,8 +319,8 @@ function receiptUsage(raw) {
 
 // Review cost comes from the gate's signed receipts: <evidenceRoot>/history/<runId>.json holds
 // {receipt, signature}, an HMAC-SHA256 over the canonical receipt with <evidenceRoot>/receipt.key.
-// A receipt repeats every earlier round of its pins file and a reused round repeats an earlier
-// receipt, so each round is counted once. Returns null when the Issue has no such receipt.
+// A receipt repeats every earlier round of its task attempt (amendments keep the record) and a reused
+// round repeats an earlier receipt, so each round is counted once. Returns null when the Issue has no such receipt.
 function collectReviewReceipts(evidenceRoot, issue) {
   const history = path.join(evidenceRoot, "history");
   const keyFile = path.join(evidenceRoot, "receipt.key");
@@ -346,7 +346,7 @@ function collectReviewReceipts(evidenceRoot, issue) {
     receipts += 1;
     const review = receipt.review;
     for (const round of review?.record?.rounds ?? []) {
-      rounds.set(canonical([pinsFile, review.record.contractDigest ?? null, round.base ?? null, round.number, round.head]), round.costs ?? []);
+      rounds.set(canonical([path.dirname(pinsFile), round]), round.costs ?? []);
     }
     if (review?.outcome === "not-reviewed") notReviewed.set(receipt.runId ?? name, review.costs ?? []);
   }

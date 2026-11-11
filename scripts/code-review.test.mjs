@@ -76,6 +76,20 @@ test('C50: scope and risk are the OR over all rounds before reopening shortcuts 
  });
 });
 
+test('an amended contract judges scope and risk objections again; same contract keeps them',async t=>{
+ for(const flag of ['outOfContract','riskRaised'])await t.test(flag,async t=>{
+  const f=fixture(t),first=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({outcome:'rejected',[flag]:true})]}));assert.equal(first.outcome,'not-converged');
+  const approved=responder({findings:[],verdicts:[verdict({outcome:'rejected',closed:true,[flag]:false})]});
+  const amended=await runReviewRound({...f.request,contract:'changed',stageRecord:first},approved);
+  assert.match(approved.calls.at(-1).prompt,/missing-validation/,'the objection goes back to the checker');
+  assert.deepEqual([amended.findings[0][flag],amended.outcome],[false,'clean'],'the amendment approved the disputed work');
+  const kept=await runReviewRound({...f.request,contract:'changed',stageRecord:first},responder({findings:[],verdicts:[verdict({outcome:'rejected',closed:true,[flag]:true})]}));
+  assert.deepEqual([kept.findings[0][flag],kept.outcome],[true,'not-converged'],'a raised objection stands');
+  const same=await runReviewRound({...f.request,stageRecord:first},responder({findings:[],verdicts:[verdict({outcome:'rejected',closed:true,[flag]:false})]}));
+  assert.deepEqual([same.findings[0][flag],same.outcome],[true,'not-converged'],'without an amendment the flag is sticky');
+ });
+});
+
 test('C45: executable BOM additions and removals remain visible in diff hunks and checker evidence',async t=>{
  for(const adding of [true,false])await t.test(adding?'add BOM':'remove BOM',async t=>{
   const f=fixture(t),file='run.sh',source='#!/bin/sh\nprintf "ok\\n"\n',before=(adding?'':'\ufeff')+source,after=(adding?'\ufeff':'')+source;
@@ -494,11 +508,14 @@ test('risk/scope expansion cannot be hidden by rejecting a finding; pre-existing
  const record=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({outcome:'rejected',[flag]:true})]}));assert.equal(record.outcome,'not-converged');}
  const record=await runReviewRound(f.request,responder({findings:[sample],verdicts:[verdict({origin:'pre-existing',danger:true,dangerCase:'data',dangerReason:'Existing deletion can lose user records.'})]}));assert.deepEqual(record.successorKeys,[key]);
 });
-test('three-round cap cannot reset by changing contract/base and failures preserve history',async t=>{
+test('three-round cap cannot reset by changing contract/base; an amended contract continues the record narrowly',async t=>{
  const f=fixture(t);let record;
- for(let i=1;i<=3;i++){record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[sample]}));assert.equal(record.rounds.length,i);}
+ for(let i=1;i<=3;i++){record=await runReviewRound({...f.request,stageRecord:record},responder({findings:[sample]}));assert.equal(record.rounds.length,i);assert.equal(record.round.scope,i===1?'full':'fixes-and-open-findings');}
  const runner=responder();const over=await runReviewRound({...f.request,stageRecord:record},runner);assert.equal(over.outcome,'not-reviewed');assert.equal(over.rounds.length,3);assert.equal(runner.calls.length,0);
- const mismatch=await runReviewRound({...f.request,contract:'changed',stageRecord:{...record,rounds:record.rounds.slice(0,1)}},runner);assert.equal(mismatch.outcome,'not-reviewed');
+ const amended=await runReviewRound({...f.request,contract:'changed',stageRecord:record},runner);assert.equal(amended.outcome,'not-reviewed');assert.equal(runner.calls.length,0,'an amendment does not reset the cap');
+ const continued=await runReviewRound({...f.request,contract:'changed',stageRecord:{...record,rounds:record.rounds.slice(0,1)}},responder({findings:[sample]}));
+ assert.deepEqual([continued.rounds.length,continued.round.scope,continued.outcome],[2,'fixes-and-open-findings','not-converged'],'the open finding survives the amendment');
+ const rebased=await runReviewRound({...f.request,stageRecord:{...record,base:'f'.repeat(40),rounds:record.rounds.slice(0,1)}},runner);assert.equal(rebased.outcome,'not-reviewed');assert.match(rebased.failures.at(-1).reason,/stage base changed/);
 });
 test('head or tree mutation invalidates response; later finding provenance comes from diff at ±2 lines',async t=>{
  const f=fixture(t),runner=responder();const mutated=await runReviewRound(f.request,{runRole:async req=>{fs.writeFileSync(path.join(f.worktree,'dirty.txt'),'changed');return runner.runRole(req);}});

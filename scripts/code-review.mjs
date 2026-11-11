@@ -478,9 +478,15 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
   try {
     requireValue(path.isAbsolute(worktree ?? '') && /^[a-f0-9]{40}$/.test(head) && /^[a-f0-9]{40}$/.test(base) && text(contract), 'absolute worktree, immutable head/base and task contract required');
     requireValue(['tiny', 'standard', 'deep', 'risky', 'riskyCritical'].includes(risk), 'unknown risk class');
-    requireValue(number <= 3, 'three-round limit reached; only a recorded contract change can reset the stage');
+    requireValue(number <= 3, 'three-round limit reached for this task attempt');
     const contractDigest = digest(contract);
-    requireValue(!record.contractDigest || (record.contractDigest === contractDigest && record.base === base), 'stage contract/base changed');
+    // An amended contract continues the record: open findings stay open and the next round stays narrow.
+    requireValue(!record.base || record.base === base, 'stage base changed');
+    // The amendment may approve disputed work, so scope and risk objections are judged again against it:
+    // they return to the checker this round and stand only if the checker raises them again.
+    const rejudge = new Set(record.contractDigest && record.contractDigest !== contractDigest
+      ? record.findings.filter(finding => finding.outOfContract || finding.riskRaised).map(finding => finding.key) : []);
+    record.findings = record.findings.map(finding => rejudge.has(finding.key) ? { ...finding, outOfContract: false, riskRaised: false } : finding);
     requireValue(git(worktree, ['rev-parse', 'HEAD']).trim() === head && !git(worktree, ['status', '--porcelain=v1', '--untracked-files=all']).trim(), 'review requires the clean pinned HEAD');
     requireValue(git(worktree, ['merge-base', base, head]).trim() === base, 'base must be an ancestor of the reviewed head');
     const identity = treeIdentity(worktree);
@@ -491,8 +497,10 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const changedFiles = (from, to) => git(worktree, ['diff', '--name-only', '--no-renames', '-z', from, to, '--']).split('\0').filter(Boolean);
     const previous = record.rounds.at(-1)?.head;
     const full = pinnedDiff(worktree, base, head, changedFiles(base, head));
-    const scopeFiles = number === 2 ? changedFiles(previous, head) : changedFiles(base, head);
-    const scoped = number === 2 ? pinnedDiff(worktree, previous, head, scopeFiles) : full;
+    // Only the first round reads the whole change; later rounds read the fixes since the last round and the open findings.
+    const narrow = number > 1;
+    const scopeFiles = narrow ? changedFiles(previous, head) : changedFiles(base, head);
+    const scoped = narrow ? pinnedDiff(worktree, previous, head, scopeFiles) : full;
     binaryFiles.push(...new Set([...full.binary, ...scoped.binary]));
     const binary = new Set(binaryFiles), files = scopeFiles.filter(file => !binary.has(file));
     const view = result => result.parts.filter(part => !binary.has(part.file)).map(part => part.diff).join('');
@@ -500,7 +508,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     exported = exportReviewTree(worktree, head, binary);
     const rulesFile = path.join(exported.root, 'AGENTS.md');
     const rules = fs.existsSync(rulesFile) ? fs.readFileSync(rulesFile, 'utf8') : '';
-    const context = { worktree: exported.root, symlinks: exported.symlinks, head, base, contract, rules, round: number, scope: number === 2 ? 'fixes-and-open-findings' : 'full', files, diff: view(scoped) };
+    const context = { worktree: exported.root, symlinks: exported.symlinks, head, base, contract, rules, round: number, scope: narrow ? 'fixes-and-open-findings' : 'full', files, diff: view(scoped) };
     const call = async (role, extra, parse) => {
       const prompt = promptFor(packRoot, role, { ...context, ...extra, unreviewedFiles: [...unreviewedFiles] });
       const cost = { role, engine: roles[role].engine, model: roles[role].model, family: roles[role].provider.id };
@@ -521,7 +529,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
         }
       }
     };
-    const open = record.findings.filter(finding => !['closed', 'rejected'].includes(finding.status) || savedDanger(finding) !== false || finding.outOfContract || finding.riskRaised);
+    const open = record.findings.filter(finding => !['closed', 'rejected'].includes(finding.status) || savedDanger(finding) !== false || finding.outOfContract || finding.riskRaised || rejudge.has(finding.key));
     const found = [], covered = new Set();
     const absorb = result => { result.reviewedFiles.forEach(file => covered.add(file)); found.push(...result.findings); };
     absorb(await call('code-review', { openFindings: open, pass: 'all-defects' }, parseReviewer));
@@ -588,7 +596,7 @@ export async function runReviewRound(input, { runRole = executeRole } = {}) {
     const current = [...merged.values()];
     const active = current.filter(finding => !['closed', 'rejected'].includes(finding.status));
     const blocking = active.filter(finding => finding.outcome === 'unresolved' || finding.origin !== 'pre-existing');
-    // Successor creation/signing belongs to T3. A round reports the obligation; it cannot manufacture permission.
+    // A round only lists successors; after merge the task's Linear writer files them (references/review-admission.md).
     const successors = active.filter(finding => (finding.origin === 'pre-existing' && finding.danger) || (number === 3 && blocking.includes(finding) && !finding.danger));
     const outcome = unreviewedFiles.size ? 'not-reviewed' : blocking.length || current.some(finding => finding.outOfContract || finding.riskRaised) || successors.length ? 'not-converged' : 'clean';
     const round = { number, head, base, scope: context.scope, checkerMergesSeparated: checker.mergesSeparated, binaryFiles, reviewedFiles: [...covered].filter(file => !unreviewedFiles.has(file)), findingKeys: checked.map(verdict => verdict.key), outcome, costs };

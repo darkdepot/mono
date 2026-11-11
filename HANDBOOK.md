@@ -14,8 +14,9 @@ This handbook is the complete rule reference and owner-rule index. Follow its li
 Code review before the PR is a read-only round inside the orchestrator's
 collection: a reviewer and an independent checker from different model families
 read the pinned diff of the committed head, then verification runs in the
-sandbox and one receipt is signed. A task gets at most three rounds per pins
-version. The worker fixes open findings and asks for the next round without
+sandbox and one receipt is signed. A task attempt gets at most three rounds;
+an amendment keeps the count, and every round after the first reads only the
+fixes and open findings. The worker fixes open findings and asks for the next round without
 waiting for anyone. A fixed finding closes when the checker verifies the fix
 and the reviewer stops reporting it. Older defects, minor leftovers from the
 second round on (never about data, security or a gate bypass) and, after the
@@ -755,12 +756,15 @@ The experimental comparison tooling has been retired. Production reviewer select
 
 The preflight and ship gates accept only a `gate-review-v3` receipt for the exact
 head and merge-base: review `clean` or `clean-with-successors`, then verification
-exit 0 with its sandbox proof. Rounds are counted from signed receipts per pins
-file: three at most, the same head reuses its round, `not-reviewed` spends
-nothing, an accepted amendment opens a fresh three and a changed base keeps the
-count. Refusals are signed too and reach the worker as a `gate preflight: fail:`
+exit 0 with its sandbox proof. Rounds are counted from signed receipts per task
+attempt over every pins version: three at most, the same head reuses its round,
+`not-reviewed` spends nothing, an accepted amendment keeps the count and the
+record, and a changed base starts a fresh record with the same count. Only round
+1 reads the whole change; later rounds read the fixes and open findings. After
+the limit the orchestrator splits the Issue or changes approach in a new attempt.
+Refusals are signed too and reach the worker as a `gate preflight: fail:`
 line. The orchestrator approves nothing between rounds and after merge decides
-which candidates from the receipt's list become Issues (every `must-file` one does): [review rounds](references/orchestration-delivery.md#review-rounds),
+which candidates from the receipt's list become Issues (every `must-file` one does; the task's Linear writer files them): [review rounds](references/orchestration-delivery.md#review-rounds),
 worker [round rule](references/review-admission.md).
 
 Collections retain validation and usage lines in bounded streaming output before signing. Receipts keep the raw usage of every review call: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. A call without usage stays null and counts as unmeasured, never as zero. Collection datasets are archived as immutable `<KEY>-review-scope.v<N>.md` files with `.sha256` sidecars, and receipts bind version and digest. Old receipts remain valid without usage or archive metadata; those inputs remain unavailable for reproduction.

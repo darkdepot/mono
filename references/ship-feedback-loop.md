@@ -30,7 +30,7 @@ changes restart quiet time. Use the installed gate, never another prose timer.
 
 Orchestrator's ship-fix amendment names the next ship-gate attempt: new
 head/stateFile/preflight proof, preserved old state, same task attempt. No machine bound on ship-gate attempts; the unchanged window waives nothing, costing time.
-The fixed head needs a new review round; the amendment's pins version opens a fresh three. Never reset old deadlines.
+The fixed head needs one narrow review round within the attempt's three. Never reset old deadlines.
 
 Required bots: attempt pins from orchestration.ship.botChecks (default
 ["Greptile Review"]). Only orchestrator accept.mjs amend --bot-unavailable "<reason>"

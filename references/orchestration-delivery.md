@@ -205,14 +205,15 @@ Claude CLIs logged in by subscription; a single-family setup gives
 runs only when the reviewer reports findings).
 
 Between rounds do nothing: the worker fixes open findings and requests the next
-round itself. At most three completed rounds per pins file, counted from signed
-receipts; the same head reuses its round; `not-reviewed` spends nothing.
+round itself. At most three completed rounds per task attempt, counted from
+signed receipts over every pins version; rounds after the first read only the
+fixes and open findings; the same head reuses its round; `not-reviewed` spends
+nothing.
 
 Parks:
 - needs-decision, `review not-converged after round 3` or `review round limit
-  reached`: narrow the contract, split the Issue or change the approach, then
-  `accept.mjs amend` (the new pins version opens a fresh three) or start a new
-  attempt.
+  reached`: split the Issue or change the approach in a new attempt; an amend
+  keeps the count and adds no rounds.
 - needs-decision, `verification failed on the reviewed head`: decide whether the
   code or the environment is wrong; a new request on the same head reuses the
   round and reruns only verification.
@@ -221,8 +222,9 @@ Parks:
 
 `clean-with-successors` passes. Its candidates are older defects, minor P3
 leftovers from round 2 on (never data, security or gate bypass) and, on round 3,
-leftovers both roles call harmless. After merge file every `must-file` entry of
-the receipt's `review.successors` list (an older dangerous defect; a minor one
+leftovers both roles call harmless. After merge the task's Linear writer (the
+worker through Linear MCP when it has access, otherwise the orchestrator) files
+every `must-file` entry of the receipt's `review.successors` list (an older dangerous defect; a minor one
 only for data, security or gate bypass) and decide
 which of the rest become Issues; the gate line and ready certificate repeat the
 list. The collection window (`collectionTimeoutSec`) must cover a round, which

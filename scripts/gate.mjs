@@ -133,18 +133,21 @@ const findingLine = finding => `${finding.weight} ${finding.file}:${finding.line
 const clip = (text, limit) => { const flat = String(text ?? '').replace(/\s+/g, ' ').trim(); return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat; };
 const openLine = finding => `${findingLine(finding)} (when: ${clip(finding.trigger, 200) || 'n/a'}; why: ${clip(finding.reason, 300) || 'n/a'})`;
 const leftover = record => (record?.findings ?? []).filter(finding => !['closed', 'rejected'].includes(finding.status));
-// Rounds are counted per pins file from signed receipts; nothing else keeps a counter.
+// Rounds are counted per task attempt (every pins version of one dispatch) from signed receipts;
+// an amendment keeps the count and the record, so a fix after the PR is one narrow round.
 // receipts: signature-verified history, any producer or issue. reuse: a completed round on this exact head.
+const sameAttempt = (file, pinsFile) => typeof file === 'string' && path.dirname(file) === path.dirname(pinsFile);
 export function reviewHistory(receipts, { pins, head, base, contractDigest }) {
-  const mine = receipts.filter(receipt => receipt?.producer === REVIEW_PRODUCER && receipt.pins?.file === pins.file && receipt.review)
+  const mine = receipts.filter(receipt => receipt?.producer === REVIEW_PRODUCER && sameAttempt(receipt.pins?.file, pins.file) && receipt.review)
     .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)));
   const completed = mine.filter(receipt => receipt.review.spent === true);
   const same = receipt => receipt.base === base && receipt.review.contractDigest === contractDigest;
-  const onHead = mine.filter(receipt => receipt.head === head && receipt.review.outcome !== 'refused');
+  // A failure streak belongs to one pins version: an amendment after restoring the CLIs may try again.
+  const onHead = mine.filter(receipt => receipt.head === head && receipt.pins.file === pins.file && receipt.review.outcome !== 'refused');
   let notReviewed = 0;
   for (let index = onHead.length - 1; index >= 0 && onHead[index].review.outcome === 'not-reviewed'; index--) notReviewed++;
   return { spent: completed.length, notReviewed, reuse: completed.findLast(receipt => receipt.head === head && same(receipt)) ?? null,
-    record: completed.findLast(same)?.review.record ?? null };
+    record: completed.findLast(receipt => receipt.base === base)?.review.record ?? null };
 }
 // What may leave the rounds as a successor candidate instead of blocking the PR:
 // - an older defect the task did not introduce (any round);
@@ -319,9 +322,9 @@ function evidenceKey(directory, create) {
   requireThat(key.length === 32, "invalid tool receipt key"); return key;
 }
 const sign = (key, value) => crypto.createHmac("sha256", key).update(canonical(value)).digest("hex");
-const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this pins file); narrow the contract, split or change approach`;
+const ROUND_LIMIT_REACHED = `review round limit reached (${ROUND_LIMIT} of ${ROUND_LIMIT} on this task attempt); split the Issue or change approach in a new attempt`;
 const NOT_REVIEWED_TWICE = "not-reviewed twice in a row on this head; check that both review CLIs are logged in";
-// Other issues' and older receipts share this folder: only this pins file is read further;
+// Other issues' and older receipts share this folder: only this attempt's pins files are read further;
 // unreadable or unsigned files are skipped, never counted.
 function signedHistory(evidenceRoot, pinsFile) {
   const history = path.join(evidenceRoot, "history");
@@ -330,7 +333,7 @@ function signedHistory(evidenceRoot, pinsFile) {
   return fs.readdirSync(history).filter(name => name.endsWith(".json")).flatMap(name => {
     try {
       const envelope = readJson(path.join(history, name));
-      return envelope.receipt?.pins?.file === pinsFile && envelope.signature === sign(key, envelope.receipt) ? [envelope.receipt] : [];
+      return sameAttempt(envelope.receipt?.pins?.file, pinsFile) && envelope.signature === sign(key, envelope.receipt) ? [envelope.receipt] : [];
     } catch { return []; }
   });
 }
@@ -817,7 +820,7 @@ preflight request: {product,collectionId,root,worktree,head,issue?,skillsRoot,ri
   Verification grants the worktree and one private temp directory per invocation, on macOS also the validated Darwin user temp root when available. workerWritableRoots never becomes collector grants.
   collect:true runs the read-only review round first (reviewer and checker from different model families, both CLIs logged in by subscription),
   then verification with evidence-write denial probes only after clean or clean-with-successors; one signed gate-review-v3 receipt per collectionId.
-  At most three completed rounds per pins file, counted from signed history; the same head reuses its round; not-reviewed spends nothing.
+  At most three completed rounds per task attempt (amendments keep the count), counted from signed history; rounds after the first review only the fixes and open findings; the same head reuses its round; not-reviewed spends nothing.
   Refusals are signed too: fix and request the next round, or park on a needs-decision:/blocked: line. Sandbox failure fails closed.
   The sandbox write boundary is the trust anchor; the key may be readable but receipts are not worker-writable.
 ship request: {preflight:<complete preflight collect:false request>, repo:"owner/repo", number:123, attempt:1, stateFile:"/absolute/file", judgmentFile:"/absolute/file", config:"/project/.agents/mono-workflow.config.json", watch:true, policy:{requiredChecks:[],nonBlockingChecks:[{name,reason}],botChecks:["Greptile Review"],botUnavailable:null}}

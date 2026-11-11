@@ -42,7 +42,7 @@ comments/certificates; apply worker snapshot/queue rules.
 4. Commit; run the pinned gate.mjs preflight collect:false, publish its returned
    request, confirm, rerun the gate.
 5. Follow the gate line per references/review-admission.md: open findings → fix,
-   check, commit, next round (three per pins file); `needs-decision:`/`blocked:`
+   check, commit, next round (three per attempt); `needs-decision:`/`blocked:`
    → park. No broad/release-sensitive rewrites or weakened tests.
 6. Reclassify fixes. Pass needs review clean|clean-with-successors and
    verification on this head; missing/hand-made/old/stale proof fails.

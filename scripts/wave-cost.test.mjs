@@ -147,6 +147,15 @@ test('a role call counts its boundary probe, and an unreadable probe leaves the 
   assert.equal(result.autoreview.usage.input_tokens, 2100);
   assert.equal(result.autoreview.usage.output_tokens, 105);
 });
+test('a record carried across an amendment counts its earlier rounds once', () => {
+  const first = round(1, '1', [cost('reviewer', 'codex', codexUsage)]), second = round(2, '2', [cost('reviewer', 'codex', codexUsage)]);
+  const record = (digest, rounds) => ({ schemaVersion: 1, contractDigest: digest.repeat(64), rounds, round: rounds.at(-1) });
+  const { result } = measureWithReceipts([
+    pins => receipt('r1', pins('MONO-999'), '1', { outcome: 'not-converged', spent: true, round: 1, record: record('c', [first]) }),
+    pins => receipt('r2', pins('MONO-999', 'pins.v1.json'), '2', { outcome: 'clean', spent: true, round: 2, record: record('e', [first, second]) }),
+  ]);
+  assert.deepEqual([result.autoreview.receipts.rounds, result.autoreview.receipts.calls], [2, 2]);
+});
 test('receipts without usage are unavailable, and an Issue without receipts keeps the helper-log wording', () => {
   const silent = measureWithReceipts([pins => receipt('r1', pins('MONO-999'), '1', { outcome: 'clean', spent: true, round: 1,
     record: { contractDigest: 'c'.repeat(64), rounds: [round(1, '1', [cost('reviewer', 'codex', null)])] } })]);
