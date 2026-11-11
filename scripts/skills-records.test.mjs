@@ -2531,19 +2531,19 @@ for(const [mode,status,reason] of [['other-result','failed',/mismatch for task\.
  const result=issuePatchFixture(t,mode);assert.equal(result.status,status,JSON.stringify(result));assert.match(result.reason,reason);
 });
 
-for(const mode of ['child-read','other-status'])test(`MONO-379 a child agent's issue read does not break status resolution (${mode})`,t=>{
+for(const mode of ['child-read','child-catalog-read','other-status'])test(`MONO-379 a child agent's issue read does not break status resolution (${mode})`,t=>{
  const f=fixture(t),team='00000000-0000-4000-8000-000000000002',statuses=[{id:'00000000-0000-4000-8000-000000000010',name:'Backlog',type:'backlog'},{id:'00000000-0000-4000-8000-000000000011',name:'Todo',type:'unstarted'}];
- const issue={id:'MON-1',uuid:'task',projectId,teamId:team,title:'Stage',description:'Body',status:mode==='other-status'?'Todo':'Backlog',labels:[]};
+ const issue={id:'MON-1',uuid:'task',projectId,teamId:team,title:'Stage',description:'Body',status:mode==='other-status'?'Todo':'Backlog',labels:[]},catalog=mode==='child-catalog-read';
  f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('issues','issues',[{id:'task'}]);f.save('issues/task/issue.json',issue);f.page('issues/task/comments','comments',[]);f.save(`statuses/${team}.json`,statuses);
  f.events.splice(0,f.events.length,
-  {type:'assistant',message:{content:[{type:'tool_use',id:'status',name:'mcp__monotest__save_issue',input:{id:'task',state:'backlog'}}]}},
-  {type:'user',message:{content:[{type:'tool_result',tool_use_id:'status',content:JSON.stringify(issue)}]}},
   {type:'assistant',message:{content:[{type:'tool_use',id:'check-agent',name:'Agent',input:{description:'Проверка задачи',prompt:'Прочитай задачу.'}}]}},
-  {type:'assistant',parent_tool_use_id:'check-agent',message:{content:[{type:'tool_use',id:'child-read',name:'mcp__monotest__get_issue',input:{id:'MON-1'}}]}},
-  {type:'user',parent_tool_use_id:'check-agent',message:{content:[{type:'tool_result',tool_use_id:'child-read',content:JSON.stringify(issue)}]}},
-  {type:'user',message:{content:[{type:'tool_result',tool_use_id:'check-agent',content:'Задача прочитана.'}]}});
+  {type:'assistant',parent_tool_use_id:'check-agent',message:{content:[{type:'tool_use',id:'child-read',name:catalog?'mcp__monotest__list_issue_statuses':'mcp__monotest__get_issue',input:catalog?{team:'Mono Test'}:{id:'MON-1'}}]}},
+  {type:'user',parent_tool_use_id:'check-agent',message:{content:[{type:'tool_result',tool_use_id:'child-read',content:JSON.stringify(catalog?statuses:issue)}]}},
+  {type:'user',message:{content:[{type:'tool_result',tool_use_id:'check-agent',content:'Задача прочитана.'}]}},
+  {type:'assistant',message:{content:[{type:'tool_use',id:'status',name:'mcp__monotest__save_issue',input:{id:'task',...(catalog?{team:'Mono Test'}:{}),state:'backlog'}}]}},
+  {type:'user',message:{content:[{type:'tool_result',tool_use_id:'status',content:JSON.stringify(issue)}]}});
  f.check();const result=verifyTextRecords(f.request);
- assert.equal(result.status,mode==='child-read'?'passed':'failed',JSON.stringify(result));
+ assert.equal(result.status,mode==='other-status'?'failed':'passed',JSON.stringify(result));
  if(mode==='other-status')assert.match(result.reason,/mismatch for task\.status/);
 });
 

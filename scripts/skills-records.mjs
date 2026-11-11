@@ -848,7 +848,8 @@ export function verifyRecords(request){
    }
    for(const call of write.data.calls.filter(c=>c.name===`mcp__monotest__${tool}`&&c.line<write.line)){
     if(!write.input.team||call.input.team!==write.input.team)continue;
-    const read=resultFor(write.data.host,call,write.data.rows);
+    // A catalog read without a native result, such as a child agent's, adds no aliases.
+    let read;try{read=resultFor(write.data.host,call,write.data.rows);}catch(error){if(error instanceof MissingEvidence)continue;throw error;}
     if(read.resultLine>=write.line)continue;
     const rows=Array.isArray(read.value)?read.value:read.value.labels;
     if(Array.isArray(rows))aliases.push(...rows);
@@ -861,7 +862,7 @@ export function verifyRecords(request){
    };
    // Updates without a team can use this record's native state history.
    for(const call of write.data.calls.filter(c=>field==='status'&&c.name==='mcp__monotest__get_issue')){
-    // These reads only add optional aliases; one without a native result, such as a child agent's, is not evidence here.
+    // These reads only add optional aliases too.
     let read;try{read=resultFor(write.data.host,call,write.data.rows);}catch(error){if(error instanceof MissingEvidence)continue;throw error;}
     if(idOf(read.value)===idOf(write.value))aliases.push(...(read.value.stateHistory??[]).map(row=>row.state));
    }
