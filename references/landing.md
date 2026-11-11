@@ -339,7 +339,7 @@ The tip, ancestry, branch and batch verification performed by landing scripts
 stays unchanged.
 
 The first plugin installation is the
-[one-time machine migration](../README.md#migrate-from-the-local-installer).
+[one-time machine migration](../HANDBOOK.md#migrate-from-the-local-installer).
 Each other product's own orchestrator confirms idle state and an empty registry
 and keeps its launches paused through migration; this product follows wave
 installation conditions above. The sequence is halt launches, check conditions,

@@ -626,7 +626,7 @@ function forEachMarkdownLine(text, visit) {
   }
 }
 
-// README validation is document structure and link addressability, never rule semantics.
+// Handbook validation is document structure and link addressability, never rule semantics.
 const README_SECTIONS = ["Workflow", "Gates", "Roles and Decisions", "Cost", "Plugin Installation", "Project Config", "Owner Rules", "Skills", "Documentation Map", "Principles", "Validation"];
 
 function markdownHeadings(text) {
@@ -656,12 +656,12 @@ function validateReadme() {
   if (JSON.stringify(visibleRuleLines?.filter((line) => line.startsWith("- "))) !== JSON.stringify(["- **K-01.** Visible [link](visible.md)"])) {
     fail("owner-rule-comment fixture must keep only the visible rule");
   }
-  const text = read("README.md");
+  const text = read("HANDBOOK.md");
   const headings = markdownHeadings(text);
   for (const title of README_SECTIONS) {
     requireMachineToken(title);
     if (headings.filter((h) => h.level === 2 && h.title === title).length !== 1) {
-      fail(`README.md: missing or duplicate required section ${title}`);
+      fail(`HANDBOOK.md: missing or duplicate required section ${title}`);
     }
   }
   const lines = documentSection(text.replace(/<!--[\s\S]*?-->/g, ""), "Owner Rules") || [];
@@ -670,12 +670,12 @@ function validateReadme() {
   for (const line of lines) {
     if (!line.startsWith("- ")) continue;
     const entry = /^- \*\*(K-\d{2})\.\*\*\s+(.+)$/.exec(line);
-    if (!entry) { fail(`README.md: malformed rule entry ${line.slice(0, 40)}`); continue; }
+    if (!entry) { fail(`HANDBOOK.md: malformed rule entry ${line.slice(0, 40)}`); continue; }
     const [, id, body] = entry;
-    if (seen.has(id)) fail(`README.md: duplicate rule ${id}`);
+    if (seen.has(id)) fail(`HANDBOOK.md: duplicate rule ${id}`);
     seen.add(id);
     const links = [...body.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)];
-    if (links.length === 0) fail(`README.md ${id}: missing rule link`);
+    if (links.length === 0) fail(`HANDBOOK.md ${id}: missing rule link`);
     for (const [, href] of links) {
       try {
         const parts = href.split("#");
@@ -686,15 +686,15 @@ function validateReadme() {
         if (!fs.lstatSync(absolute).isFile() || !fs.realpathSync(absolute).startsWith(fs.realpathSync(root) + path.sep)) throw new Error("target must be a regular repository file");
         if (!targets.has(file)) targets.set(file, new Set(markdownHeadings(read(file)).map((h) => h.slug)));
         if (!targets.get(file).has(anchor)) throw new Error("no such section");
-      } catch (error) { fail(`README.md ${id}: ${href}: ${error.message}`); }
+      } catch (error) { fail(`HANDBOOK.md ${id}: ${href}: ${error.message}`); }
     }
   }
   for (let n = 1; n <= 34; n++) {
     const id = `K-${String(n).padStart(2, "0")}`;
-    if (!seen.has(id)) fail(`README.md: missing rule ${id}`);
+    if (!seen.has(id)) fail(`HANDBOOK.md: missing rule ${id}`);
     seen.delete(id);
   }
-  for (const id of seen) fail(`README.md: unexpected rule ${id}`);
+  for (const id of seen) fail(`HANDBOOK.md: unexpected rule ${id}`);
 }
 
 function validateArtifactContractParity() {
@@ -5264,7 +5264,7 @@ function modelActiveFiles(base) {
     }
   }
   for (const directory of ["skills", "references", "templates", "scripts"]) walk(directory);
-  files.push("README.md");
+  files.push("README.md", "HANDBOOK.md", "UPGRADING.md");
   return files;
 }
 
@@ -5450,7 +5450,7 @@ function checkModelPolicy(base) {
 function validateModelPolicyFixtures() {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "mono-model-policy-"));
   try {
-    for (const name of ["skills", "agents", "references", "templates", "scripts", "evals/code-review", "AGENTS.md", "README.md"]) {
+    for (const name of ["skills", "agents", "references", "templates", "scripts", "evals/code-review", "AGENTS.md", "README.md", "HANDBOOK.md", "UPGRADING.md"]) {
       fs.cpSync(path.join(root, name), path.join(scratch, name), { recursive: true });
     }
     const script = path.join(scratch, "scripts/validate-workflow.mjs");
@@ -5874,12 +5874,12 @@ const STRING_PINS = [
   ["skills/idea/SKILL.md","mono:issue"],
   ["skills/issue/SKILL.md","references/contracts/issue.md"],
   ["templates/review-output.md","issue-only"],
-  ["README.md","mono:implement"],
-  ["README.md","mono:preflight"],
-  ["README.md","mono:deploy"],
-  ["README.md","autoreview"],
-  ["README.md","node scripts/project-config.mjs"],
-  ["README.md","~/.claude/skills"],
+  ["HANDBOOK.md","mono:implement"],
+  ["HANDBOOK.md","mono:preflight"],
+  ["HANDBOOK.md","mono:deploy"],
+  ["HANDBOOK.md","autoreview"],
+  ["HANDBOOK.md","node scripts/project-config.mjs"],
+  ["HANDBOOK.md","~/.claude/skills"],
   ["references/artifact-intake.md","read"],
   ["references/artifact-intake.md","unavailable"],
   ["references/artifact-intake.md","stale_or_ignored"],
@@ -5939,10 +5939,10 @@ const STRING_PINS = [
   ["skills/orchestrate/SKILL.md",".claude/settings.json"],
   ["skills/deploy/SKILL.md","workflows.qa"],
   ["skills/deploy/SKILL.md","qaAuth"],
-  ["README.md","\"qa\""],
-  ["README.md","cookie-import"],
-  ["README.md","test-account"],
-  ["README.md","owner-session"],
+  ["HANDBOOK.md","\"qa\""],
+  ["HANDBOOK.md","cookie-import"],
+  ["HANDBOOK.md","test-account"],
+  ["HANDBOOK.md","owner-session"],
   ["templates/deploy-output.md","Live QA:"],
   ["references/worker-contract.md","pass | deferred | not-run"],
   ["templates/orchestrator-dispatch.md","references/orchestration.md"],
@@ -6240,7 +6240,7 @@ const REQUIRED_HEADINGS = [
   ["references/contracts/issue.md","IS-001 — Issue routing"],
   ["references/contracts/issue.md","IS-003 — Internal helper boundary"],
   ["references/contracts/issue.md","IS-004 — Targeted-use eligibility"],
-  ["README.md","Principles"],
+  ["HANDBOOK.md","Principles"],
   ["AGENTS.md","Skill Design Rules"],
   ["examples/consumer-dogfood.md","Consumer Dogfood Example"],
   ["references/artifact-intake.md","Source Precedence"],
@@ -6254,7 +6254,7 @@ const REQUIRED_HEADINGS = [
   ["references/orchestration.md","Worker model selection"],
   ["references/install.md","Project Config Contract"],
   ["templates/orchestrator-brief.md","Эталоны первого продукта"],
-  ["README.md","Skills"],
+  ["HANDBOOK.md","Skills"],
 
   ["references/orchestration.md","Two-Phase Dispatch Handshake"],
   ["references/orchestration.md","Registry gate-list lifecycle"],
@@ -6277,7 +6277,7 @@ const REQUIRED_HEADINGS = [
   ["references/contracts/issue.md","Issue artifact contract"],
   ["references/questioning.md","Questioning Policy"],
   ["templates/orchestrator-brief.md","Шаблоны оркестратора: бриф и статус"],
-  ["README.md","Mono Agent Workflow"],
+  ["HANDBOOK.md","Mono Agent Workflow"],
   ["references/install.md","Plugin Installation and Compatibility"],
   ["templates/compact-instructions.md","Orchestrator Compaction Instructions"],
   ["templates/orchestrator-report.md","Worker Report And Ledger Shapes"],
@@ -6288,10 +6288,10 @@ const REQUIRED_HEADINGS = [
   ["templates/orchestrator-report.md","Model provenance"],
   ["references/lifecycle.md","Delivery"],
   ["references/lifecycle.md","Ship"],
-  ["README.md","Workflow"],
+  ["HANDBOOK.md","Workflow"],
   ["references/lifecycle.md","Preflight"],
   ["AGENTS.md","Fixture Coupling"],
-  ["README.md","Documentation Map"],
+  ["HANDBOOK.md","Documentation Map"],
   ["references/orchestration.md","Claude orchestrator"],
   ["templates/ship-status-ux.md","Статус ревью при наличии PR"],
   ["templates/ship-status-ux.md","Review timeline"],
@@ -6879,7 +6879,7 @@ function validateLandingSurface() {
   }
   for (const heading of ["Landing", "Shared paths", "Configuration", "Task fragment", "Release task", "Changelog assembly", "Merge validation", "Install", "Scheduling", "Landing journal"])
     if (documentSection(read("references/landing.md"), heading) === null) fail(`landing reference: missing or duplicate section ${heading}`);
-  if (documentSection(read("README.md"), "Landing") === null) fail("README: missing Landing section");
+  if (documentSection(read("HANDBOOK.md"), "Landing") === null) fail("HANDBOOK: missing Landing section");
   for (const token of ["landing", "serialPaths", "changelog", "fragmentDir", "target", "heading", "validation", "check", "timeoutSec", "install", "per-merge", "wave-drain", "release", "--release", "--no-renames", "landing.serialPaths", "serial path touched: <path>", "landing policy requires pinned dispatch"])
     assertIncludes("references/landing.md", token);
   for (const token of ["<!-- landing:start -->", "<!-- landing:end -->", "{{landing_paths}}", "{{landing_fragments}}", "{{landing_release}}"])
@@ -6890,7 +6890,7 @@ function validateLandingSurface() {
       const links = isRussianStage(file) ? [target, `<корень>/${target}`] : [target];
       if (links.reduce((count, link) => count + read(file).split(`](${link})`).length - 1, 0) !== 1) fail(`${file}: expected one landing rule reference`);
     }
-  assertIncludes("README.md", "references/landing.md"); assertIncludes("README.md", "examples/landing-config.json");
+  assertIncludes("HANDBOOK.md", "references/landing.md"); assertIncludes("HANDBOOK.md", "examples/landing-config.json");
   for (const token of ["changelog-assemble.mjs", "--worktree", "--config", "--check", "<!-- fragment: <KEY> sha256:<digest> -->"])
     assertIncludes("references/landing.md", token);
   for (const token of ["landing-guard.mjs", "LANDING-CORRECTIVE", "--repo", "--sha", "--root", "--json", "--issue", "--red-sha", "--reason", "filter=all"])
@@ -6990,7 +6990,7 @@ function validateDocumentBoundaries() {
     if (read(file).split("\n").some((line) => /^#{1,6}\s+/.test(line) && line.replace(/^#{1,6}\s+/, "").trim() === heading)) fail(`${file}: forbidden workflow heading ${heading}`);
   }
   for (const file of ["skills/ship/SKILL.md", "templates/ship-output.md"]) if (read(file).includes("pr-created")) fail(`${file}: retired terminal status pr-created`);
-  for (const file of ["skills/preflight/SKILL.md", "README.md", "CHANGELOG.md", "examples/consumer-dogfood.md"]) if (read(file).includes("`tiny` ->")) fail(`${file}: duplicate canonical autoreview route`);
+  for (const file of ["skills/preflight/SKILL.md", "README.md", "HANDBOOK.md", "UPGRADING.md", "CHANGELOG.md", "examples/consumer-dogfood.md"]) if (read(file).includes("`tiny` ->")) fail(`${file}: duplicate canonical autoreview route`);
   const dispatch = read("templates/orchestrator-dispatch.md");
   if (dispatch.includes("pass | deferred | not-run")) fail("dispatch duplicates the report's verification status dictionary");
   const report = read("templates/orchestrator-report.md") + read("references/worker-contract.md");
@@ -7031,7 +7031,7 @@ function validateAe6Fixtures() {
     if (failures.length === before) console.log(`PASS AE6 ${label}: red, restored green`);
   }
   try {
-    for (const name of ["skills", "agents", "references", "templates", "scripts", "evals/code-review", "AGENTS.md", "README.md", "CHANGELOG.md", "examples", "VERSION", ".claude-plugin", ".codex-plugin"]) {
+    for (const name of ["skills", "agents", "references", "templates", "scripts", "evals/code-review", "AGENTS.md", "README.md", "HANDBOOK.md", "UPGRADING.md", "CHANGELOG.md", "examples", "VERSION", ".claude-plugin", ".codex-plugin"]) {
       fs.cpSync(path.join(root, name), file(name), { recursive: true });
     }
     check();
@@ -7063,15 +7063,15 @@ function validateAe6Fixtures() {
     for (const field of ["head", "phase_result"]) negative(`worker report missing top-level ${field}`,
       () => change("references/worker-contract.md", text => text.replace(new RegExp(`^  "${field}":\\s*[^\\n]+\\n`, "m"), "")),
       "worker report: missing mandatory machine field");
-    negative("README rule target renamed", () => change("AGENTS.md", (text) => text.replace("## Change Discipline\n", "## Renamed fixture\n")), "README.md K-31:");
-    negative("README required section removed", () => change("README.md", (text) => text.replace("## Gates\n", "")), "README.md: missing or duplicate required section Gates");
-    negative("README target file missing", () => change("README.md", (text) => text.replace("AGENTS.md#change-discipline", "missing.md#change-discipline").replaceAll("AGENTS.md#change-discipline", "missing.md#change-discipline")), "README.md K-31:");
-    negative("README rule removed", () => change("README.md", (text) => text.replace(/^- \*\*K-31\.[^\n]+\n/m, "")), "README.md: missing rule K-31");
-    negative("README rule link removed", () => change("README.md", (text) => text.replace(/^(- \*\*K-31\.[^\n]*?)\[[^\]]+\]\([^)]+\)/m, "$1unlinked")), "README.md K-31: missing rule link");
-    negative("README target heading fenced", () => change("AGENTS.md", (text) => text.replace("## Change Discipline\n", "~~~text\n## Change Discipline\n~~~\n")), "README.md K-31:");
-    change("README.md", (text) => text.replace(/^(- \*\*K-31\.\*\* )/m, "$1In this pack, "));
+    negative("handbook rule target renamed", () => change("AGENTS.md", (text) => text.replace("## Change Discipline\n", "## Renamed fixture\n")), "HANDBOOK.md K-31:");
+    negative("handbook required section removed", () => change("HANDBOOK.md", (text) => text.replace("## Gates\n", "")), "HANDBOOK.md: missing or duplicate required section Gates");
+    negative("handbook target file missing", () => change("HANDBOOK.md", (text) => text.replace("AGENTS.md#change-discipline", "missing.md#change-discipline").replaceAll("AGENTS.md#change-discipline", "missing.md#change-discipline")), "HANDBOOK.md K-31:");
+    negative("handbook rule removed", () => change("HANDBOOK.md", (text) => text.replace(/^- \*\*K-31\.[^\n]+\n/m, "")), "HANDBOOK.md: missing rule K-31");
+    negative("handbook rule link removed", () => change("HANDBOOK.md", (text) => text.replace(/^(- \*\*K-31\.[^\n]*?)\[[^\]]+\]\([^)]+\)/m, "$1unlinked")), "HANDBOOK.md K-31: missing rule link");
+    negative("handbook target heading fenced", () => change("AGENTS.md", (text) => text.replace("## Change Discipline\n", "~~~text\n## Change Discipline\n~~~\n")), "HANDBOOK.md K-31:");
+    change("HANDBOOK.md", (text) => text.replace(/^(- \*\*K-31\.\*\* )/m, "$1In this pack, "));
     check(); restore(); check();
-    console.log("PASS README rule prose rewording: green");
+    console.log("PASS handbook rule prose rewording: green");
     change("scripts/russian-stages.mjs", text => text.replace(/(export const RUSSIAN_STAGES = )\[[^\]]*\]/, `$1${JSON.stringify([...RUSSIAN_STAGES, "issue"])}`));
     change("skills/issue/SKILL.md", text => text
       .replace(/^Read first:\n/m, "")
@@ -7196,9 +7196,9 @@ function validateMachineShapes() {
 }
 
 validateReadme();
-if (process.argv.includes("--readme-only")) {
+if (process.argv.includes("--handbook-only")) {
   if (failures.length) { console.error(failures.join("\n")); process.exit(1); }
-  console.log("README sections and 34 rule links passed.");
+  console.log("Handbook sections and 34 rule links passed.");
   process.exit(0);
 }
 
