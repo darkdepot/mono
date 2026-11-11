@@ -2032,7 +2032,7 @@ for(const op of ['insert_before','insert_after'])test(`MONO-358 codex: Brief ${o
 for(const state of ['unknown prior content','unsupported operation'])test(`MONO-357 patch ${state} stays unverified`,t=>{
  const f=textFixture(t,'codex','defer'),doc={id:'brief',projectId,title:'Brief',content:'Expected link.'};
  if(state==='unsupported operation')f.events.splice(7,0,f.call('brief','mcp__monotest__save_document',{projectId,title:doc.title,content:doc.content}),f.result('brief',doc));
- const patch=state==='unsupported operation'?[{op:'append',text:'New link.'}]:[{op:'replace',old_string:doc.content,new_string:'New link.'}];
+ const patch=state==='unsupported operation'?[{op:'move',text:'New link.'}]:[{op:'replace',old_string:doc.content,new_string:'New link.'}];
  f.events.splice(f.events.length-1,0,f.call('patch','mcp__monotest__save_document',{id:'brief',patch}),f.result('patch',{...doc,content:'New link.'}));
  f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',{...doc,content:'New link.'});
  const result=f.check();assert.equal(result.status,'unverified');assert.match(result.reason,/patch.*(?:prior content|unsupported)|unsupported.*patch/);
@@ -2504,7 +2504,7 @@ for(const [name,{written,stored,red}] of Object.entries(linearForms))test(`MONO-
 
 function issuePatchFixture(t,mode){
  const f=fixture(t),written='Проверить колонку.\n\n| Имя | Источник |\n| --- | --- |\n| check | `  rc-02 ` |',stored='Проверить колонку.\n\n| Имя | Источник |\n| -- | -- |\n| check | ` rc-02` |';
- const edit=mode==='unsupported'?{op:'append',text:'Ещё строка.'}:{op:'replace',old_string:mode==='missing-anchor'?'нет такой строки':mode==='ambiguous-anchor'?'|':'` rc-02`',new_string:'`"  rc-02 "`'};
+ const edit=mode==='unsupported'?{op:'move',text:'Ещё строка.'}:{op:'replace',old_string:mode==='missing-anchor'?'нет такой строки':mode==='ambiguous-anchor'?'|':'` rc-02`',new_string:'`"  rc-02 "`'};
  const patched=stored.replace('` rc-02`','`"  rc-02 "`'),issue={id:'MON-1',uuid:'task',projectId,title:'Stage',description:stored,status:'Todo',labels:[]},final={...issue,description:mode==='other-result'?patched.replace('check','other'):patched};
  const call=(id,input)=>({type:'assistant',message:{content:[{type:'tool_use',id,name:'mcp__monotest__save_issue',input}]}}),result=(id,value)=>({type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}});
  f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('issues','issues',[{id:'task'}]);f.save('issues/task/issue.json',final);f.page('issues/task/comments','comments',[]);
@@ -2540,7 +2540,7 @@ const liveQuestions={
  'idea/approve':{fits:['Утверждаешь это описание и начинаем исследование сразу?','Утверждаете это описание и начинаем Research?'],lacks:['Утверждаешь это описание?','Начинаем исследование сразу?']},
  'tech-evaluation/approve':{fits:['Утверждаешь страницу с обоими отступлениями, и начинаем Handoff сразу после записи?','Утверждаешь решение в таком виде и начинаем Handoff?'],lacks:['Утверждаешь страницу с обоими отступлениями?','Начинаем Handoff сразу после записи?']},
  'discovery/approve':{fits:['Утверждаешь этот PRD и начинаем Design?','Утверждаешь эти требования и начинаем дизайн?'],lacks:['Утверждаешь этот PRD?']},
- 'design/approve':{fits:['Утверждаешь показанный макет?','Утверждаешь эти экраны?'],lacks:['Утверждаешь?']},
+ 'design/approve':{fits:['Утверждаешь показанный макет?','Утверждаешь эти экраны?','Утверждаешь эту версию?','Утверждаешь показанную версию?'],lacks:['Какую ширину таблицы выбираем?','Согласен?']},
  'handoff/approve':{fits:['Начинаем работу по этой записи?','Даёшь старт?'],lacks:['Согласен?']}
 };
 for(const [key,{fits,lacks}] of Object.entries(liveQuestions))test(`MONO-379 question anchors of ${key} fit the live wording and still need every part`,async()=>{
@@ -2562,4 +2562,45 @@ for(const host of ['claude','codex'])for(const mode of ['whoami','write-without-
  const result=f.check();
  if(mode==='whoami')assert.equal(result.status,'passed',JSON.stringify(result));
  else{assert.equal(result.status,'unverified',JSON.stringify(result));assert.match(result.reason,/write result lacks record id/);}
+});
+
+// MONO-394: stops of a correct stage found by the third live chain.
+for(const mode of ['child-results','child-calls','parent-rows'])test(`MONO-394 parallel results of a child agent may be written out of order, other rows may not (${mode})`,t=>{
+ const f=fixture(t),issue={id:'MON-1',uuid:'task',projectId,title:'Stage',description:'Body',status:'Todo',labels:[]};
+ const child=value=>({...value,parent_tool_use_id:'check-agent'}),call=(id,name,input)=>({type:'assistant',message:{content:[{type:'tool_use',id,name,input}]}}),result=(id,value)=>({type:'user',message:{content:[{type:'tool_result',tool_use_id:id,content:JSON.stringify(value)}]}});
+ f.request.expectedRecords=[{type:'project'}];f.page('comments','comments',[]);f.page('issues','issues',[{id:'task'}]);f.save('issues/task/issue.json',issue);f.page('issues/task/comments','comments',[]);
+ f.events.splice(0,f.events.length,call('write','mcp__monotest__save_issue',{id:'task',title:'Stage'}),result('write',issue),call('check-agent','Agent',{description:'Проверка задачи',prompt:'Прочитай задачу.'}),
+  child(call('read-a','mcp__monotest__get_issue',{id:'MON-1'})),child(call('read-b','mcp__monotest__list_comments',{issueId:'MON-1'})),
+  child(result('read-a',issue)),child(result('read-b',{comments:[],hasNextPage:false})),result('check-agent','Задача прочитана.'));
+ f.flush();
+ const rows=fs.readFileSync(f.request.trace,'utf8').trim().split('\n').map(JSON.parse),[first,second]={'child-results':[5,6],'child-calls':[3,4],'parent-rows':[0,1]}[mode];
+ [rows[first].timestamp,rows[second].timestamp]=[rows[second].timestamp,rows[first].timestamp];
+ fs.writeFileSync(f.request.trace,rows.map(JSON.stringify).join('\n')+'\n');
+ const checked=verifyTextRecords(f.request);
+ if(mode==='child-results')assert.equal(checked.status,'passed',JSON.stringify(checked));
+ else{assert.equal(checked.status,'unverified',JSON.stringify(checked));assert.match(checked.reason,/invalid or reversed native trace time order/);}
+});
+
+for(const key of ['idea/approve','discovery/approve','design/approve','tech-evaluation/approve'])test(`MONO-394 response anchors of ${key} take both stems of the approval word`,async()=>{
+ const {checkAnchors}=await import('./skills-owner.mjs'),scenario=JSON.parse(fs.readFileSync(`evals/scenarios/${key}/scenario.json`,'utf8'));
+ for(const host of ['claude','codex']){
+  const policy=scenario.hosts[host].expectedReplies.at(-1).response;
+  for(const line of ['PRD утверждён, этап завершён и проверен.','Утверждение записал.','Макет утвердил, запись сделана.'])assert.doesNotThrow(()=>checkAnchors(policy,line,'stage response'),`${host}: ${line}`);
+  assert.throws(()=>checkAnchors(policy,'Готово, иду дальше.','stage response'),/stage response lacks scenario anchors/,host);
+ }
+});
+
+function edgePatchFixture(t,op,state='valid'){
+ const f=textFixture(t,'claude','defer'),content='## Суть сейчас\nСохраняем контекст.\n',added=state==='empty-text'?'':op==='append'?'\n## Отброшено\n\nПрежняя ширина.\n':'Обновлено 11.11.2026.\n\n';
+ const doc={id:'brief',projectId,title:'Brief',content},final={...doc,content:op==='append'?content+added:added+content};
+ const patch={id:'brief',patch:[{op,text:added}]},truncated={...doc,content:'Brief… (truncated, use `get_document` for full description)'};
+ f.events.splice(7,0,f.call('edge-prior','mcp__monotest__get_document',{id:'brief'}),f.result('edge-prior',doc),f.call('edge-patch','mcp__monotest__save_document',patch),f.result('edge-patch',truncated),f.call('edge-read-back','mcp__monotest__get_document',{id:'brief'}),f.result('edge-read-back',final));
+ f.page('documents','documents',[{id:'doc'},{id:'brief'}]);f.save('documents/brief.json',final);
+ return {...f,final,added};
+}
+for(const op of ['append','prepend'])test(`MONO-394 document patch ${op} adds its text at that end and is checked against the read-back`,t=>{
+ const f=edgePatchFixture(t,op),result=f.check();assert.equal(result.status,'passed',result.reason);
+ f.save('documents/brief.json',{...f.final,content:f.final.content.replace(f.added.trim().split('\n').at(-1),'Другой текст.')});
+ const changed=f.check();assert.equal(changed.status,'failed');assert.match(changed.reason,/mismatch.*brief\.content/);
+ const empty=edgePatchFixture(t,op,'empty-text').check();assert.equal(empty.status,'unverified');assert.match(empty.reason,/unsupported document patch/);
 });
