@@ -212,3 +212,19 @@ test('optionless legacy questions are exempt only when non-target, never in role
  fs.writeFileSync(trace,values.map(JSON.stringify).join('\n')+'\n');
  const wrong=check([expected]);assert.equal(wrong.status,'failed');for(const key of ['decision','advice','reason'])assert(wrong.windows[0].issues.includes(`question lacks scenario ${key}`));
 });
+
+// MONO-389: event order projected from a saved Claude Design trace (ids anonymized, bodies omitted). A command ran past
+// its timeout, moved to the background, and the stage stopped it itself before finishing the turn.
+for(const mode of ['stopped-by-stage','stopped-otherwise','other-task-stopped','still-running','completed-after-stop'])test(`MONO-389 a background command the stage stopped itself does not hold the turn (${mode})`,()=>{
+ const call=(id,name,input)=>({type:'assistant',parent_tool_use_id:null,message:{content:[{type:'tool_use',id,name,input}]}}),result=(id,content)=>({type:'user',parent_tool_use_id:null,message:{content:[{type:'tool_result',tool_use_id:id,content}]}});
+ const stop=mode==='stopped-otherwise'?[]:[call('stop','TaskStop',{task_id:mode==='other-task-stopped'?'cmd-2':'cmd-1'})];
+ const notice=mode==='still-running'?[]:[{type:'system',subtype:'task_notification',task_id:'cmd-1',status:mode==='completed-after-stop'?'completed':'stopped',tool_use_id:'gates'},{type:'system',subtype:'background_tasks_changed',tasks:[]}];
+ const events=[{type:'system',subtype:'init'},call('gates','Bash',{command:'node gates.mjs'}),
+  {type:'system',subtype:'task_started',task_id:'cmd-1',is_backgrounded:false,tool_use_id:'gates'},
+  {type:'system',subtype:'background_tasks_changed',tasks:[{task_id:'cmd-1'}]},
+  result('gates','Command did not complete within its 120s timeout and was moved to the background (ID: cmd-1).'),
+  ...stop,...notice,...(stop.length?[result('stop','Successfully stopped task: cmd-1')]:[]),
+  {type:'assistant',parent_tool_use_id:null,message:{content:[{type:'text',text:'Утверждение записал, дизайн закончил.'}]}},{type:'result',subtype:'success'}];
+ const rows=events.map((value,i)=>({value,line:i+1})),finished=mode==='stopped-by-stage';
+ assert.equal(completedTrace('claude',rows),finished);assert.equal(parentTurns('claude',rows).length,finished?1:0);
+});
