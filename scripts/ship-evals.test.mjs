@@ -16,7 +16,7 @@ test('Ship invocation graders require mono:ship and reject the foreign ship skil
     const pattern = new RegExp(/^input_match: '(.*)'$/m.exec(grader)[1]);
     assert.ok(pattern.test(JSON.stringify({ skill: 'mono:ship' })));
     for (const skill of ['ship', 'gstack:ship', 'mono:deploy']) assert.equal(pattern.test(JSON.stringify({ skill })), false);
-    if (['merge', 'implement'].includes(entry.name)) assert.match(grader, /min: 0\nmax: 0/);
+    if (['ship-merge', 'ship-implement'].includes(entry.name)) assert.match(grader, /min: 0\nmax: 0/);
     else {
       const foreign = fs.readFileSync(path.join(dir, 'graders/no-foreign-ship.md'), 'utf8');
       assert.match(foreign, /min: 0\nmax: 0/);
