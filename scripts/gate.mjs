@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync, spawn } from "node:child_process";
-import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER } from "./runtime.mjs";
+import { atomicJson, canonical, digest, readJson, flags, identity, isMain, deliveryConfig, shipBotChecks, withLock, resolvedLocation, validateEvidenceGrants, resolveRole, baseModelConfig, validateLanding, changedPaths, packLayout, REVIEW_PRODUCER, REVIEW_ROUND_ROLES } from "./runtime.mjs";
 import { checkCollectionRequest, pinnedShipPolicy, verifyIdeaArtifact, effectivePins, collectionPinsBinding, sha256File, registryEntry } from "./orchestrator/command-state.mjs";
 
 import { runReviewRound, prRemarkFindings, STRICT_DANGER } from './code-review.mjs';
@@ -109,22 +109,19 @@ export function startGate(request, { beforeSpawn = false } = {}) {
   return "pack identity, branch base and clean tree verified";
 }
 
-export function reviewRoute(skillsRoot, risk, critical, config = {}) {
-  const resolved = resolveRole('autoreview', config, { skillsRoot });
-  const effort = resolved.effortByRisk[critical ? 'riskyCritical' : risk];
-  requireThat(effort && (!critical || risk === 'risky'), 'unresolved final risk route');
-  const { effortByRisk, ...route } = resolved;
-  return { ...route, effort };
-}
-export function pinnedReviewRoute(request, base) {
+// Launch pins bind the review round roles (code-review, code-review-checker); an attempt launched by an
+// older pack pinned the legacy reviewer route instead and stays valid. Every pinned role must still resolve
+// to its fingerprint on the pinned BASE config.
+export function verifyModelPins(request, base) {
   const pins = request.modelRoutes;
   const config = baseModelConfig(request.worktree, pins?.base ?? base);
   if (pins) {
     requireThat(git(request.worktree, 'merge-base', base, pins.base) === pins.base, 'model route base is not an ancestor of the review base');
-    requireThat(pins.configDigest === digest(config) && pins.roles?.autoreview, 'model route config fingerprint mismatch');
+    const reviewer = REVIEW_ROUND_ROLES.every(role => pins.roles?.[role]) || pins.roles?.autoreview;
+    requireThat(pins.configDigest === digest(config) && reviewer, 'model route config fingerprint mismatch');
     for (const [role, route] of Object.entries(pins.roles)) requireThat(canonical(route) === canonical(resolveRole(role, config, { packRoot: request.packRoot, skillsRoot: request.skillsRoot })), `model route fingerprint mismatch: ${role}`);
   } else requireThat(config.models === undefined, 'modelRoutes launch pins required for product model overrides');
-  return reviewRoute(request.packRoot ?? request.skillsRoot, request.risk, request.critical, config);
+  requireThat(['tiny', 'standard', 'deep', 'risky'].includes(request.risk) && (!request.critical || request.risk === 'risky'), 'unresolved final risk route');
 }
 export const ROUND_LIMIT = 3;
 const ACCEPTED = ['clean', 'clean-with-successors'];
@@ -198,10 +195,10 @@ export function validatePreflight(receipt, head, base) {
 // refuses the result instead of silently dropping evidence used by validation.
 export function captureOutput({ tailBytes = 8192, retainedBytes = 1024 * 1024 } = {}) {
   let pending = "", tail = "", kept = "", retentionError = null, discarding = false;
-  const requiredPrefix = /^(autoreview target:|engine:|model:|thinking:|overall:|autoreview (?:chunked )?(?:clean|filtered|scoped-clean|findings|incorrect|incomplete):|(?:claude|codex) usage:|mono-boundary-denied:)/;
-  const requiredLine = line => requiredPrefix.test(line);
+  // The sandbox boundary marker proves the verification run was probed; everything else is diagnostics.
+  const requiredLine = line => line.startsWith("mono-boundary-denied:");
   const consume = line => {
-    if (requiredLine(line) || /^(?:bundle: [0-9]+ bytes; )?review passes: [0-9]+$/.test(line)) {
+    if (requiredLine(line)) {
       if (Buffer.byteLength(kept) + Buffer.byteLength(line) + 1 > retainedBytes) retentionError = "semantic output retention limit exceeded";
       else kept += line + "\n";
     } else tail = (tail + line + "\n").slice(-tailBytes);
@@ -245,38 +242,13 @@ export async function runCaptured(command, args, cwd, env = process.env) {
     });
   });
 }
-export function sandboxWriteRoots(sandbox) {
-  const profile = sandbox.args[sandbox.args.indexOf("-c") + 1];
-  return [...profile.matchAll(/("(?:\\.|[^"\\])*")="write"/gu)].map(match => JSON.parse(match[1]));
-}
 export async function runSandboxed(command, args, repo, evidenceRoot, {
-  env = process.env, reviewArtifacts = false, protectedPaths = {}, verificationWritableRoots = [], workerWritableRoots = []
+  env = process.env, protectedPaths = {}
 } = {}) {
-  const isolatedReview = process.platform === "darwin" && reviewArtifacts;
-  const excluded = [...Object.values(protectedPaths), evidenceRoot, repo, ...verificationWritableRoots, ...workerWritableRoots];
-  let tempRoot;
-  if (isolatedReview) {
-    const directory = path.join(os.homedir(), ".mono-agent-workflow", "review-tmp", `mono-review-${crypto.randomUUID()}`);
-    validateEvidenceGrants(directory, excluded, "collection private review directory");
-    // A dangling ancestor symlink must refuse, rather than be treated as a new directory.
-    let ancestor = path.dirname(directory);
-    for (;;) {
-      try { fs.lstatSync(ancestor); break; }
-      catch (error) { if (error.code !== "ENOENT") throw error; ancestor = path.dirname(ancestor); }
-    }
-    try { fs.realpathSync(ancestor); }
-    catch (error) { throw new Error(`collection private review directory canonical resolution failed: ${error.code}`); }
-    fs.mkdirSync(path.dirname(directory), { recursive: true, mode: 0o700 });
-    fs.mkdirSync(directory, { mode: 0o700 });
-    tempRoot = directory;
-  } else tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-sandbox-temp-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mono-sandbox-temp-"));
   try {
-  if (isolatedReview) {
-    tempRoot = fs.realpathSync(tempRoot);
-    validateEvidenceGrants(tempRoot, excluded, "collection private review directory");
-  }
   const roots = [...new Set([repo, tempRoot].map(resolvedLocation))];
-  if (process.platform === "darwin" && !reviewArtifacts) {
+  if (process.platform === "darwin") {
     let darwinTemp = null;
     try {
       const result = spawnSync("getconf", ["DARWIN_USER_TEMP_DIR"], { env, encoding: "utf8" });
@@ -291,8 +263,6 @@ export async function runSandboxed(command, args, repo, evidenceRoot, {
   validateEvidenceGrants(evidenceRoot, roots);
   const probe = path.join(evidenceRoot, `.write-boundary-${crypto.randomUUID()}`);
   const probeMarker = `mono-boundary-denied:${crypto.randomUUID()}`;
-  const jsonFile = path.join(tempRoot, "review.json"), statusFile = path.join(tempRoot, "status.json");
-  if (reviewArtifacts) args = [...args, "--json-output", jsonFile, "--status-output", statusFile];
   const launcher = `const fs=require('node:fs'),cp=require('node:child_process');
 const p=JSON.parse(process.argv[1]);let denied=false;
 try{fs.writeFileSync(p.probe,'boundary-probe',{flag:'wx'});fs.unlinkSync(p.probe);}
@@ -307,9 +277,7 @@ if(r.error)console.error(r.error.message);process.exit(r.status===null?1:r.statu
   const sandboxArgs = ["sandbox", "-C", repo, "-P", "mono-collector", "-c", profile,
     "--", process.execPath, "-e", launcher, JSON.stringify({ probe, probeMarker, command, args })];
   const result = await runCaptured("codex", sandboxArgs, repo, { ...env, TMPDIR: tempRoot, TMP: tempRoot, TEMP: tempRoot });
-  return { ...result, command, args, output: result.output + (reviewArtifacts ? "" : "\n" + result.diagnosticTail),
-    ...(reviewArtifacts ? { json: fs.existsSync(jsonFile) ? readJson(jsonFile) : null,
-      status: fs.existsSync(statusFile) ? readJson(statusFile) : null } : {}),
+  return { ...result, command, args, output: result.output + "\n" + result.diagnosticTail,
     sandbox: { command: "codex", args: sandboxArgs, mode: "workspace-write", tempRoot,
       probed: result.output.split("\n").includes(probeMarker) } };
   } finally { fs.rmSync(tempRoot, { recursive: true, force: true }); }
@@ -452,7 +420,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
   if (request.prRemarks !== undefined) prRemarkFindings(request.prRemarks);
   const evidenceRoot = preflightEvidenceRoot(request);
   validateEvidenceGrants(request.packRoot ?? request.skillsRoot, request.workerWritableRoots, 'packRoot');
-  validateEvidenceGrants(request.skillsRoot, request.workerWritableRoots, 'autoreview skillsRoot');
+  validateEvidenceGrants(request.skillsRoot, request.workerWritableRoots, 'installed skillsRoot');
   const repo = fs.realpathSync(request.worktree);
   cleanTree(repo);
   const head = git(repo, "rev-parse", "HEAD");
@@ -544,7 +512,7 @@ async function verifyPreflight(request, live = null, allowPending = false) {
     }
     requireThat(canonical({ command: receipt.verification?.command, args: receipt.verification?.args }) === canonical(request.verification), "receipt verification differs from dispatch request");
   }
-  pinnedReviewRoute(request, base);
+  verifyModelPins(request, base);
   validateEvidenceGrants(request.skillsRoot, [repo], "installed skillsRoot");
   const unchanged = () => {
     if (idea) verifyIdeaArtifact(idea, pinnedIssue ?? request.issue);

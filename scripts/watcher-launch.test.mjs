@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { copyPluginFixture } from './plugin-fixture.mjs';
 import { ideaDispatchFixture } from './fixtures/idea-dispatch.mjs';
 import { atomicJson } from './runtime.mjs';
-import { versionDataset } from './orchestrator/dispatch.mjs';
+import { createHash } from 'node:crypto';
 import { archiveReviewDataset } from './gate.mjs';
 
 const checkout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -177,91 +177,22 @@ test('launch-watcher-required through amendment resume', async t => {
   });
 });
 
-test('dispatch-default-dataset', async () => {
+test('dispatch-without-dataset', async () => {
   const f = fixture();
   try {
+    // Reviewers never read a dataset, so dispatch creates none; an explicit one stays pinned.
     pulse(f.root); const launched = JSON.parse(pass(f.dispatch()));
-    const pins = read(launched.pins.file), archive = pins.reviewDataset;
-    assert.equal(pins.reviewDatasetVersion, 1); assert.equal(fs.existsSync(f.evidence), true);
-    const bytes = fs.readFileSync(archive), digest = fs.readFileSync(archive + '.sha256');
-    assert.equal(digest.toString().trim(), pins.reviewDatasetDigest);
-    // The gate archives the dispatch pin as v1.
-    const binding = await archiveReviewDataset(archive, f.evidence);
-    assert.equal(binding.version, 1); assert.equal(binding.digest, pins.reviewDatasetDigest);
-    const stat = fs.statSync(archive); await f.retire();
-    pulse(f.root); pass(f.dispatch()); assert.deepEqual(fs.readFileSync(archive), bytes); assert.equal(fs.statSync(archive).mtimeMs, stat.mtimeMs);
-    await f.retire();
-    // A changed default source must select existing history without rewriting it.
-    const issueFile = path.join(f.scratch, 'snapshot', `issue-${f.issue}.md`);
-    put(issueFile, fs.readFileSync(issueFile, 'utf8').replace('Watcher fixture', 'Changed title'));
-    pulse(f.root); const third = JSON.parse(pass(f.dispatch()));
-    assert.equal(read(third.pins.file).reviewDataset, archive); assert.deepEqual(fs.readFileSync(archive + '.sha256'), digest);
-    await f.retire();
-    const source = path.join(f.scratch, 'new-scope.md'); put(source, '# Expanded review scope\n');
-    const latest = await versionDataset({ evidenceRoot: f.evidence, issue: f.issue, source });
-    assert.equal(latest.version, 2);
-    const latestBytes = fs.readFileSync(latest.archive), latestDigest = fs.readFileSync(latest.archive + '.sha256');
-    pulse(f.root); const newer = JSON.parse(pass(f.dispatch()));
-    assert.equal(read(newer.pins.file).reviewDataset, latest.archive); assert.equal(read(newer.pins.file).reviewDatasetVersion, 2);
-    assert.deepEqual(fs.readFileSync(archive), bytes); assert.deepEqual(fs.readFileSync(latest.archive), latestBytes);
-    assert.deepEqual(fs.readFileSync(latest.archive + '.sha256'), latestDigest);
+    const pins = read(launched.pins.file);
+    assert.equal(pins.reviewDataset, null); assert.equal(pins.reviewDatasetVersion, 0);
+    assert.equal(Object.hasOwn(pins, 'reviewDatasetDigest'), true); assert.equal(pins.reviewDatasetDigest, null);
+    assert.equal(fs.existsSync(path.join(f.evidence, 'datasets')), false);
     await f.retire();
     const explicit = path.join(f.evidence, 'explicit.md'); put(explicit, '# Explicit source\n');
     pulse(f.root); const fourth = JSON.parse(pass(f.dispatch('--review-dataset', explicit, '--review-dataset-version', '9')));
     assert.equal(read(fourth.pins.file).reviewDataset, explicit); assert.equal(read(fourth.pins.file).reviewDatasetVersion, 9);
+    assert.equal(read(fourth.pins.file).reviewDatasetDigest, createHash('sha256').update(fs.readFileSync(explicit)).digest('hex'));
     assert.equal(fs.readFileSync(explicit, 'utf8'), '# Explicit source\n');
   } finally { await f.cleanup(); }
-});
-
-test('dataset versions change only with bytes and stay immutable', async () => {
-  const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-datasets-')), source = path.join(evidenceRoot, 'source.md');
-  try {
-    put(source, '# Scope\n\nFrozen contract.\n');
-    for (const issue of ['MONO-999', 'A-1', 'A0-10']) {
-      const options = { evidenceRoot, issue, source };
-      put(source, '# Scope\n\nFrozen contract.\n');
-      const v1 = await versionDataset(options), first = fs.readFileSync(v1.archive);
-      assert.equal(path.basename(v1.archive), `${issue}-review-scope.v1.md`); assert.equal(v1.created, true);
-      assert.deepEqual(first, fs.readFileSync(source));
-      assert.deepEqual(await versionDataset(options), { ...v1, created: false });
-      assert.deepEqual(await versionDataset({ ...options, source: v1.archive }), { ...v1, created: false });
-      fs.appendFileSync(source, '\nNext version.\n');
-      const v2 = await versionDataset(options);
-      assert.equal(v2.version, 2); assert.notEqual(v2.digest, v1.digest); assert.deepEqual(fs.readFileSync(v1.archive), first);
-      fs.writeFileSync(v2.archive + '.sha256', '0'.repeat(64) + '\n');
-      await assert.rejects(versionDataset(options), /digest mismatch/);
-      assert.deepEqual(fs.readFileSync(v1.archive), first);
-    }
-  } finally { fs.rmSync(evidenceRoot, { recursive: true, force: true }); }
-});
-
-test('interrupted dataset publication recovers only an identical retry under the shared archive lock', async () => {
-  const evidenceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-datasets-')), issue = 'MONO-999', source = path.join(evidenceRoot, 'scope.md'), options = { evidenceRoot, issue, source };
-  try {
-    put(source, '# Scope\n\nStable input.\n');
-    const version = await versionDataset(options), bytes = fs.readFileSync(version.archive), mtime = fs.statSync(version.archive).mtimeMs;
-    fs.unlinkSync(version.archive + '.sha256'); // Crash after publishing the archive, before publishing its digest.
-    assert.deepEqual(await versionDataset(options), { ...version, created: false });
-    assert.deepEqual(fs.readFileSync(version.archive), bytes); assert.equal(fs.statSync(version.archive).mtimeMs, mtime);
-    assert.equal(fs.readFileSync(version.archive + '.sha256', 'utf8'), version.digest + '\n');
-    fs.unlinkSync(version.archive + '.sha256'); put(source, '# Scope\n\nDifferent input.\n');
-    await assert.rejects(versionDataset(options), /orphan dataset archive differs/);
-    assert.equal(fs.existsSync(version.archive + '.sha256'), false);
-    assert.deepEqual(fs.readFileSync(version.archive), bytes);
-    put(source, '# Scope\n\nStable input.\n');
-    assert.equal((await versionDataset(options)).created, false);
-    put(source, '# Scope\n\nDifferent input.\n');
-    assert.equal((await versionDataset(options)).version, 2);
-  } finally { fs.rmSync(evidenceRoot, { recursive: true, force: true }); }
-});
-
-test('invalid issue keys fail before evidence access in dataset versioning', async t => {
-  const calls = [];
-  for (const name of ['existsSync', 'readFileSync', 'readdirSync', 'realpathSync', 'lstatSync', 'mkdirSync', 'openSync'])
-    t.mock.method(fs, name, () => { calls.push(name); throw new Error('evidence accessed'); });
-  for (const issue of ['MONO-.*', 'MONO-0', 'MONO-01', 'mono-1', '1MONO-1', 'MONO-1/../../other', 'MONO-1|OTHER-2', ''])
-    await assert.rejects(versionDataset({ issue, evidenceRoot: '/unused', source: '/unused' }), /invalid issue/);
-  assert.deepEqual(calls, []);
 });
 
 test('launch-watcher-required after launch preparation and before amendment resume', async t => {
@@ -303,7 +234,7 @@ test('launch-watcher-required after launch preparation and before amendment resu
   });
 });
 
-test('dispatch-default-dataset with sparse immutable history', async () => {
+test('dispatch-without-dataset ignores immutable history', async () => {
   const f = fixture();
   try {
     fs.mkdirSync(f.evidence); const source = path.join(f.evidence, `${f.issue}-review-scope.v9.md`);
@@ -311,9 +242,7 @@ test('dispatch-default-dataset with sparse immutable history', async () => {
     const prior = await archiveReviewDataset(source, f.evidence);
     const bytes = fs.readFileSync(prior.archive), digest = fs.readFileSync(prior.archive + '.sha256');
     pulse(f.root); const result = JSON.parse(pass(f.dispatch())), pins = read(result.pins.file);
-    assert.equal(pins.reviewDataset, prior.archive); assert.equal(pins.reviewDatasetVersion, 9);
-    assert.equal(pins.reviewDatasetDigest, prior.digest);
-    assert.equal(fs.existsSync(path.join(f.evidence, 'datasets', `${f.issue}-review-scope.v1.md`)), false);
+    assert.equal(pins.reviewDataset, null); assert.equal(pins.reviewDatasetVersion, 0); assert.equal(pins.reviewDatasetDigest, null);
     assert.deepEqual(fs.readFileSync(prior.archive), bytes); assert.deepEqual(fs.readFileSync(prior.archive + '.sha256'), digest);
   } finally { await f.cleanup(); }
 });

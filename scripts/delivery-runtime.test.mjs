@@ -241,10 +241,26 @@ process.exit(r.status===null?1:r.status);` });
     write(gateRequest, { ...preflight, modelRoutes: defaultModelRoutes, collect: true }); pass(preflightCall());
     assert.deepEqual(json(receiptFile).receipt.modelRoutes, defaultModelRoutes);
     write(gateRequest, { ...preflight, modelRoutes: defaultModelRoutes }); pass(preflightCall());
-    const wrongDefaultPins = structuredClone(defaultModelRoutes);
-    wrongDefaultPins.roles.autoreview.fingerprint = '0'.repeat(64);
-    write(gateRequest, { ...preflight, modelRoutes: wrongDefaultPins, collect: true });
-    assert.match(preflightCall().stdout, /model route fingerprint mismatch/);
+    assert.deepEqual(Object.keys(defaultModelRoutes.roles).sort(), ['code-review', 'code-review-checker', 'worker-default']);
+    for (const role of ['code-review', 'code-review-checker']) {
+      const wrongDefaultPins = structuredClone(defaultModelRoutes);
+      wrongDefaultPins.roles[role].fingerprint = '0'.repeat(64);
+      write(gateRequest, { ...preflight, modelRoutes: wrongDefaultPins, collect: true });
+      assert.match(preflightCall().stdout, new RegExp(`model route fingerprint mismatch: ${role}`));
+    }
+    // An attempt launched before the review roles were pinned keeps its legacy reviewer pin through collection.
+    const legacyModelRoutes = resolveModelRoutes(repo, head, 'worker-default', { legacyReviewer: true });
+    assert.deepEqual(Object.keys(legacyModelRoutes.roles).sort(), ['autoreview', 'worker-default']);
+    write(gateRequest, { ...preflight, modelRoutes: legacyModelRoutes, collect: true }); pass(preflightCall());
+    assert.deepEqual(json(receiptFile).receipt.modelRoutes, legacyModelRoutes);
+    write(gateRequest, { ...preflight, modelRoutes: legacyModelRoutes }); pass(preflightCall());
+    const wrongLegacyPins = structuredClone(legacyModelRoutes);
+    wrongLegacyPins.roles.autoreview.fingerprint = '0'.repeat(64);
+    write(gateRequest, { ...preflight, modelRoutes: wrongLegacyPins, collect: true });
+    assert.match(preflightCall().stdout, /model route fingerprint mismatch: autoreview/);
+    const reviewerless = structuredClone(defaultModelRoutes); delete reviewerless.roles['code-review-checker'];
+    write(gateRequest, { ...preflight, modelRoutes: reviewerless, collect: true });
+    assert.match(preflightCall().stdout, /model route config fingerprint mismatch/);
     const old = { ...envelope.receipt, producer: "gate-autoreview-v2" };
     write(receiptFile, { receipt: old, signature: crypto.createHmac("sha256", fs.readFileSync(path.join(preflight.evidenceRoot, "receipt.key"))).update(canonical(old)).digest("hex") });
     write(gateRequest, preflight); assert.match(preflightCall().stdout, /old receipt format/, "receipts of the previous producer are refused");
@@ -686,7 +702,7 @@ const wait=setInterval(()=>{if(fs.existsSync(${JSON.stringify(threadReady)})){cl
     assert.deepEqual(entry.capsule.writable_roots, entry.workerWritableRoots);
     assert.equal(entry.capsule.head, head);
     assert.equal(entry.modelRoutes.roles['worker-default'].model, entry.model);
-    assert.match(entry.modelRoutes.roles.autoreview.fingerprint, /^[a-f0-9]{64}$/);
+    for (const role of ['code-review', 'code-review-checker']) assert.match(entry.modelRoutes.roles[role].fingerprint, /^[a-f0-9]{64}$/);
     assert.equal(entry.stage, "mono-deliver"); assert.equal(entry.attempt, 1);
     assert.equal(entry.model, "fixture-model"); assert.equal(entry.effort, "medium");
     const argv = json(capture); assert.ok(argv.includes(`model=${JSON.stringify(entry.model)}`));
@@ -893,13 +909,9 @@ console.log(JSON.stringify({type:'thread.started',thread_id:'grants-fixture'}));
     const regular = json(path.join(state, "workers.json"))["MONO-996"];
     for (const actual of [regular.writable_roots, regular.workerWritableRoots, regular.capsule.writable_roots, argsRoots(starts().at(-1).args)]) assert.deepEqual(actual, regularExpected);
 
-    const helperTarget = path.join(root, "helper-git");
-    const helper = path.join(skills, "autoreview/scripts/autoreview");
-    fs.mkdirSync(path.dirname(helper), { recursive: true }); fs.symlinkSync(helperTarget, helper);
     const guarded = [
       [path.join(root, "evidence/git"), /evidenceRoot must be outside/],
       [path.join(skills, "git"), /installed skillsRoot must be outside/],
-      [helperTarget, /autoreview helper real path must be outside/],
       [path.join(state, "git"), /only reports may be worker-writable/],
     ];
     for (const [index, [gitDir, reason]] of guarded.entries()) {
@@ -1086,29 +1098,35 @@ test('worker provider overrides preserve product credentials and replace only Co
 test('launch pins resolve BASE config and refuse unsupported transport before launch', async () => {
   const { resolveWorkerPins } = await import('./orchestrator/launch.mjs');
   const { requiredPairings, resolveModelRoutes } = await import('./runtime.mjs');
-  const { pinnedReviewRoute } = await import('./gate.mjs');
+  const { verifyModelPins } = await import('./gate.mjs');
   assert.equal(typeof resolveWorkerPins, 'function');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mono-base-models-'));
   const env = {...process.env,GIT_AUTHOR_NAME:'Fixture',GIT_AUTHOR_EMAIL:'fixture@example.invalid',GIT_COMMITTER_NAME:'Fixture',GIT_COMMITTER_EMAIL:'fixture@example.invalid'};
   try {
     pass(run('git',['init','-b','main'],root,env));
     const config={orchestration:{transport:'codex-cli'},models:{roles:{'worker-default':{engine:'codex',model:'example-worker',effort:'medium'}}}};
-    config.models.pairingAccepted=requiredPairings(config).map(pair=>({...pair,linearDecision:'https://linear.app/example/issue/TEST-1#comment',by:'owner',date:'2026-09-16'}));
+    config.models.pairingAccepted=[...requiredPairings(config),...requiredPairings(config,{reviewerRole:'code-review'})].map(pair=>({...pair,linearDecision:'https://linear.app/example/issue/TEST-1#comment',by:'owner',date:'2026-09-16'}));
     write(path.join(root,'.agents/mono-workflow.config.json'),config);
     pass(run('git',['add','.'],root,env));pass(run('git',['commit','-m','base config'],root,env));
     const base=pass(run('git',['rev-parse','HEAD'],root,env)).stdout.trim();
     const request={worktree:root,base,role:'worker-default',transport:'codex-cli'};
     const pins=resolveWorkerPins(request);
     assert.equal(pins.roles['worker-default'].model,'example-worker');assert.equal(pins.roles['worker-default'].effort,'medium');
-    assert.match(pins.roles.autoreview.fingerprint,/^[a-f0-9]{64}$/);
+    assert.deepEqual(Object.keys(pins.roles).sort(),['code-review','code-review-checker','worker-default']);
+    // A dispatch prepared before the review roles were pinned still launches with its legacy reviewer pin.
+    const legacy=resolveModelRoutes(root,base,'worker-default',{legacyReviewer:true});
+    assert.deepEqual(Object.keys(legacy.roles).sort(),['autoreview','worker-default']);
+    assert.deepEqual(resolveWorkerPins({...request,modelRoutes:legacy}),legacy);
+    assert.throws(()=>resolveWorkerPins({...request,modelRoutes:{...legacy,configDigest:'changed'}}),/fingerprint mismatch/);
     for(const transport of ['kimi','fallback','claude-code-desktop']) assert.throws(()=>resolveWorkerPins({...request,transport}),/transport/);
     assert.throws(()=>resolveWorkerPins({...request,role:'worker-claude'}),/role|transport/);
     write(path.join(root,'.agents/mono-workflow.config.json'),{models:{roles:{autoreview:{engine:'invalid'}}}});
     pass(run('git',['add','.'],root,env));pass(run('git',['commit','-m','diff changes config'],root,env));
     assert.deepEqual(resolveWorkerPins(request),pins);
-    const review=pinnedReviewRoute({worktree:root,modelRoutes:pins,risk:'risky',critical:null},base);
-    assert.equal(review.fingerprint,pins.roles.autoreview.fingerprint);
-    assert.throws(()=>pinnedReviewRoute({worktree:root,modelRoutes:{...pins,configDigest:'changed'},risk:'risky',critical:null},base),/fingerprint/);
+    for (const modelRoutes of [pins,legacy]) assert.doesNotThrow(()=>verifyModelPins({worktree:root,modelRoutes,risk:'risky',critical:null},base));
+    assert.throws(()=>verifyModelPins({worktree:root,modelRoutes:{...pins,configDigest:'changed'},risk:'risky',critical:null},base),/fingerprint/);
+    assert.throws(()=>verifyModelPins({worktree:root,modelRoutes:pins,risk:'deep',critical:'signal'},base),/unresolved final risk route/);
+    assert.throws(()=>verifyModelPins({worktree:root,modelRoutes:pins,risk:'riskyCritical',critical:null},base),/unresolved final risk route/);
     const voice=resolveModelRoutes(root,base,'second-voice');assert.equal(voice.roles['second-voice'].engine,'codex');
     for (const transport of ['fallback', 'claude-code-desktop']) {
       write(path.join(root,'.agents/mono-workflow.config.json'),{...config,orchestration:{transport}});

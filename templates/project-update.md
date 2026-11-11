@@ -202,7 +202,7 @@ rules about how an update is produced, which a published body cannot
 demonstrate on its own. When an update fails an invariant, the
 invariant is wrong and gets fixed — not the example.
 
-Two drafts that must fail. «Прошли preflight и autoreview, PR #812 смержен в
+Two drafts that must fail. «Прошли preflight и ревью, PR #812 смержен в
 main» breaks invariant 7 (workflow mechanics), invariant 8 (`#812` and a branch
 name), invariant 4 (it names the work, not a product state), and invariant 1 (no
 title, body, or chip). «06.09, вечер. Доставлено: I0, I9, I2… ревью r2 ready,

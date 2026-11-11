@@ -215,7 +215,7 @@ function validateReadBudgetFixtures() {
       write("references/nested.md", "Read `references/shared.md`.\n");
     });
     fixture("role links, relative paths and code examples", () => {
-      const paths = readingPaths("Resolve [role:autoreview](model-policy.md#roles).\n\n```md\nRead `references/example.md`.\n```\n");
+      const paths = readingPaths("Resolve [role:code-review](model-policy.md#roles).\n\n```md\nRead `references/example.md`.\n```\n");
       require(paths.join() === "model-policy.md", "role or fenced-example parsing differs");
     });
 
@@ -5173,10 +5173,12 @@ const REVIEW_ROUTES = new Map([
   ["risky", "high"], ["risky with critical escalation", "xhigh"],
 ]);
 const REVIEW_ROUND_ROLES = ["code-review", "code-review-checker"];
+// The legacy autoreview role keeps its routes in its policy effort cell (old pins must re-resolve byte for byte).
+const LEGACY_REVIEW_EFFORT = [...REVIEW_ROUTES].map(([key, effort]) => `${key === "risky with critical escalation" ? "riskyCritical" : key}: ${effort}`).join("; ");
 const NORMATIVE_MODEL_SECTIONS = [
   ["references/lifecycle.md", "Preflight", REVIEW_ROUND_ROLES],
   ["references/artifact-quality.md", "Preflight Certificate", REVIEW_ROUND_ROLES],
-  ["references/install.md", "Project Policy", ["autoreview"]],
+  ["references/install.md", "Project Policy", REVIEW_ROUND_ROLES],
 ];
 
 function executableModelIds(text) {
@@ -5239,7 +5241,7 @@ function policyRoles(text) {
     if (role === "orchestrator" ? model !== "session-selected" : ["idea-helper", "scout"].includes(role)
       ? !hosts || !(role === "scout" ? hosts[1] === "sonnet" : isModelId(hosts[1])) || !isModelId(hosts[2]) : !isModelId(model)) throw new Error(`invalid model id for ${role}`);
     if (role === "orchestrator" ? effort !== "n/a" : role === "autoreview"
-      ? effort !== "[Canonical Routes](autoreview-routing.md#canonical-routes)"
+      ? effort !== LEGACY_REVIEW_EFFORT
       : role === "scout" ? effort !== "claude-code: medium; codex: high"
       : !MODEL_EFFORTS.includes(effort)) throw new Error(`invalid effort source for ${role}`);
     roles.set(role, { model, effort, appliesTo, decidedBy, ...(hosts ? { hosts: { "claude-code": hosts[1], codex: hosts[2] } } : {}) });
@@ -5350,11 +5352,10 @@ function checkModelPolicy(base) {
     for (const [, role] of markers) {
       if (!roles.has(role)) errors.push(`${file}: unknown role ${role}`);
     }
-    // A route outside the canonical table is another authority, including
-    // tables appended after that section or copied into another consumer.
+    // A risk route table anywhere is another route authority: the only one is the
+    // legacy autoreview policy cell, and the review round roles have one effort each.
     const routeRows = (source) => [...source.matchAll(/^\s*\|\s*`?(?:tiny|standard|deep|risky)\b[^\n]*$/gm)].map((match) => match[0]);
-    const allowedRows = file === "references/autoreview-routing.md" ? routeRows(modelSection(text, "Canonical Routes")) : [];
-    if (routeRows(text).length !== allowedRows.length) errors.push(`${file}: route rows outside Canonical Routes`);
+    if (routeRows(text).length) errors.push(`${file}: route rows outside the policy`);
   }
   for (const [file, section, roles] of NORMATIVE_MODEL_SECTIONS) binding(file, modelSection(body(file), section), roles);
   const preflightFile = "skills/preflight/SKILL.md";
@@ -5395,33 +5396,6 @@ function checkModelPolicy(base) {
     const literalEffort = /(?:model_reasoning_effort\s*=\s*["']?|--effort\s+|(?:at|both sides at)\s+)(?:low|medium|high|xhigh)\b/i;
     if (literalEffort.test(body(file))) errors.push(`${file}: worker/Second Voice effort literal outside policy`);
   }
-  const routingFile = "references/autoreview-routing.md";
-  const routing = body(routingFile);
-  // These replace the former name-bearing recalibration and same-model pins:
-  // check bounded code tokens/relations, not a prescribed English sentence.
-  const recalibrationTokens = [...modelSection(routing, "Effort recalibration").matchAll(/`([^`]+)`/g)].map((match) => match[1]);
-  if (!["standard", "medium", "high"].every((token) => recalibrationTokens.includes(token))) errors.push(`${routingFile}: missing standard effort recalibration operands`);
-  const sameModel = modelSection(routing, "Same-model review");
-  if (!/`<worker-model>\s*=\s*<autoreview-model>`/.test(sameModel)) errors.push(`${routingFile}: missing resolved model equality condition`);
-  try {
-    const rows = modelTable(modelSection(routing, "Canonical Routes"), ["risk class", "role", "reasoning effort", "intended use"]);
-    const routes = new Map();
-    const classes = new Set();
-    for (const [riskCell, roleCell, effortCell] of rows) {
-      const key = riskCell.replaceAll("`", "");
-      if (routes.has(key)) errors.push(`${routingFile}: duplicate route ${key}`);
-      routes.set(key, effortCell.replaceAll("`", ""));
-      classes.add(key.split(" ")[0]);
-      binding(routingFile + ` route ${key}`, roleCell, ["autoreview"]);
-    }
-    if (rows.length !== 5 || classes.size !== 4 || routes.size !== 5 ||
-        [...REVIEW_ROUTES].some(([key, effort]) => routes.get(key) !== effort) ||
-        [...routes.keys()].some((key) => !REVIEW_ROUTES.has(key))) errors.push(`${routingFile}: route set must be exactly four classes, five unique routes and unchanged class efforts`);
-    for (const command of [...modelSection(routing, "Invocation").matchAll(/^<autoreview-helper>.*$/gm)].map((match) => match[0])) {
-      if (!command.includes("--engine <autoreview-engine> --model <autoreview-model> --thinking ")) errors.push(`${routingFile}: invocation must use explicit role model and route effort`);
-    }
-    if (!modelSection(routing, "Invocation").includes("--thinking <effort>")) errors.push(`${routingFile}: missing generic invocation`);
-  } catch (error) { errors.push(`${routingFile}: ${error.message}`); }
   const registryFile = "templates/orchestrator-report.md";
   try {
     const section = modelSection(body(registryFile), "Worker Registry");
@@ -5579,11 +5553,10 @@ function validateModelPolicyFixtures() {
     negative("AE3 wrong existing role", () => change("skills/preflight/SKILL.md", (text) => text.replace(marker("code-review"), marker("worker-default"))), "role binding must be code-review, code-review-checker");
     negative("AE4 duplicate role", () => change(MODEL_POLICY_PATH, (text) => row(text, "worker-default", (line) => `${line}\n${line}`)), "duplicate role worker-default");
     negative("AE4 unknown role", () => change("README.md", (text) => text + `\n${link("unknown-reviewer")}\n`), "unknown role unknown-reviewer");
-    negative("AE4 changed class effort", () => change("references/autoreview-routing.md", (text) => cell(text, "standard", 2, "high")), "route set must be exactly");
-    negative("AE4 sixth route", () => change("references/autoreview-routing.md", (text) => row(text, "tiny", (line) => line + "\n" + line.replace("`tiny`", "`standard` with extra escalation"))), "route set must be exactly");
-    negative("AE4 duplicate route", () => change("references/autoreview-routing.md", (text) => row(text, "tiny", (line) => `${line}\n${line}`)), "duplicate route tiny");
-    negative("review equality condition", () => change("references/autoreview-routing.md", (text) => text.replace(/<worker-model>\s*=\s*<autoreview-model>/, "<worker-model> != <autoreview-model>")), "missing resolved model equality condition");
-    negative("standard recalibration", () => change("references/autoreview-routing.md", (text) => text.replace(/(###\s+Effort recalibration[\s\S]*?)`high`/, "$1`low`")), "missing standard effort recalibration operands");
+    const legacyCell = roles.get("autoreview").effort;
+    negative("AE4 changed class effort", () => change(MODEL_POLICY_PATH, (text) => cell(text, "autoreview", 2, legacyCell.replace("standard: medium", "standard: high"))), "invalid effort source for autoreview");
+    negative("AE4 sixth route", () => change(MODEL_POLICY_PATH, (text) => cell(text, "autoreview", 2, `${legacyCell}; extra: high`)), "invalid effort source for autoreview");
+    negative("AE4 duplicate route", () => change(MODEL_POLICY_PATH, (text) => cell(text, "autoreview", 2, `tiny: low; ${legacyCell}`)), "invalid effort source for autoreview");
     for (const [name, , expected] of NORMATIVE_MODEL_SECTIONS) {
       negative(`normative reference ${name}`, () => change(name, (text) => text.replace(new RegExp(`\\[role:${expected[0]}\\]\\([^)]+\\)`, "g"), "reviewer")), `${name}: role binding must be ${expected.join(", ")}`);
     }
@@ -5609,11 +5582,8 @@ function validateModelPolicyFixtures() {
     runNode(["--test", "--test-name-pattern=launch pins resolve BASE", "scripts/delivery-runtime.test.mjs"], { cwd: scratch });
     console.log("PASS model role consumers: config, gate and immutable BASE launch pins");
     // Worker launch policy is exercised by the installed spawn/resume fixture in delivery-runtime.test.mjs; no shell-template prose pin.
-    negative("AE4 route outside canonical section", () => change("references/autoreview-routing.md", (text) => {
-      const tiny = text.split("\n").find((line) => rowKey(line) === "tiny");
-      if (!tiny) throw new Error("Fixture route tiny not found");
-      return `${text}\n${tiny}\n`;
-    }), "route rows outside Canonical Routes");
+    negative("AE4 route table outside the policy cell", () => change("references/readiness-gates.md",
+      (text) => `${text}\n| \`tiny\` | [role:code-review](model-policy.md#roles) | \`high\` | Copied route. |\n`), "route rows outside the policy");
     negative("Second Voice wrong branch", () => change("references/orchestration-stages.md", (text) => text.replace(marker("second-voice"), marker("second-voice-alt"))), "Second Voice/Claude: role binding must be second-voice");
     negative("registry provenance fields", () => change("templates/orchestrator-report.md", (text) => text.replace(/"effort_parameter"\s*:/, '"lost_effort_parameter":')), "missing model_launch provenance fields");
     negative("registry template model mismatch", () => change("templates/orchestrator-report.md", (text) => text.replace(/("model_parameter"\s*:)\s*"[^"]*"/, '$1 "runtime-alias"')), "codex-cli template provenance: codex launch pins differ");
@@ -5630,15 +5600,13 @@ function validateModelPolicyFixtures() {
     const voiceTemplate = modelCommand(modelSection(orchestration, "Claude orchestrator"), "codex exec");
     const voiceCommand = voiceTemplate.replaceAll("<second-voice-model>", changedRoles.get("second-voice").model)
       .replaceAll("<second-voice-effort>", changedRoles.get("second-voice").effort);
-    const routing = fs.readFileSync(file("references/autoreview-routing.md"), "utf8");
-    const reviewTemplate = modelCommand(modelSection(routing, "Invocation").split("Examples:")[0], "<autoreview-helper>");
-    const route = modelTable(modelSection(routing, "Canonical Routes"), ["risk class", "role", "reasoning effort", "intended use"]).find((row) => row[0] === "`risky`");
-    const reviewCommand = reviewTemplate.replaceAll("<autoreview-model>", changedRoles.get("autoreview").model)
-      .replaceAll("<autoreview-engine>", "claude").replaceAll("<effort>", route[2].replaceAll("`", ""));
+    // The legacy reviewer route is read by the runtime from the same policy cells.
+    const legacyRoute = roleDefaults(scratch).autoreview;
     if (!voiceCommand.includes(`model="${nextVoiceModel}"`) || !voiceCommand.includes(`model_reasoning_effort="${nextEffort}"`) ||
-        !reviewCommand.includes(`--model ${nextReviewModel} --thinking ${REVIEW_ROUTES.get("risky")}`)) fail("AE5 commands must consume changed model and effort cells");
+        legacyRoute.model !== nextReviewModel || legacyRoute.effortByRisk.risky !== REVIEW_ROUTES.get("risky") ||
+        legacyRoute.effortByRisk.riskyCritical !== REVIEW_ROUTES.get("risky with critical escalation")) fail("AE5 consumers must read changed model and effort cells");
     console.log(`PASS model-policy AE5 Second Voice: ${voiceCommand}`);
-    console.log(`PASS model-policy AE5 autoreview: ${reviewCommand}`);
+    console.log(`PASS model-policy AE5 legacy reviewer route: ${legacyRoute.model} ${JSON.stringify(legacyRoute.effortByRisk)}`);
     restore(); check();
 
     const legacy = { transport: "codex-cli" };
@@ -5879,7 +5847,6 @@ const STRING_PINS = [
   ["HANDBOOK.md","mono:implement"],
   ["HANDBOOK.md","mono:preflight"],
   ["HANDBOOK.md","mono:deploy"],
-  ["HANDBOOK.md","autoreview"],
   ["HANDBOOK.md","node scripts/project-config.mjs"],
   ["HANDBOOK.md","~/.claude/skills"],
   ["references/artifact-intake.md","read"],
@@ -5892,14 +5859,12 @@ const STRING_PINS = [
   ["references/readiness-gates.md","standard"],
   ["references/readiness-gates.md","deep"],
   ["references/readiness-gates.md","risky"],
-  ["references/readiness-gates.md","references/autoreview-routing.md"],
   ["references/review-rubric.md","Allowed review verdicts:"],
   ["references/review-rubric.md","ready"],
   ["references/review-rubric.md","advisory-ready"],
   ["references/review-rubric.md","needs-fixes"],
   ["references/review-rubric.md","blocked"],
   ["references/install.md",".agents/mono-workflow.config.json"],
-  ["references/install.md","references/autoreview-routing.md"],
   ["references/orchestration-dispatch.md","claude-code-desktop"],
   ["references/orchestration.md","deployApproval"],
   ["references/orchestration-dispatch.md","scope-drift-needs-handoff"],
@@ -5909,7 +5874,6 @@ const STRING_PINS = [
   ["references/orchestration.md","workers.json"],
   ["references/orchestration-dispatch.md","sandbox_workspace_write.network_access"],
   ["references/orchestration-dispatch.md","git worktree add"],
-  ["references/install.md","references/autoreview-routing.md"],
   ["references/install.md","\"orchestration\""],
   ["scripts/verify.mjs","watch-workers.mjs"],
   ["references/orchestration-dispatch.md","thread.started"],
@@ -6093,7 +6057,6 @@ const REQUIRED_HEADINGS = [
   ["references/worker-contract.md", "AFK Contract"],
   ["references/worker-contract.md", "Two-Phase Dispatch Handshake"],
   ["references/worker-contract.md", "Delivery Reports and Capsule"],
-  ["references/autoreview-routing.md", "Certificate Evidence"],
   ["skills/preflight/SKILL.md", "Workflow"],
   ["skills/deliver/SKILL.md", "Sequence and Recovery"],
   ["references/repair-machine.md","Class 2 effect fixture: snapshot-sync"],
@@ -6247,10 +6210,7 @@ const REQUIRED_HEADINGS = [
   ["examples/consumer-dogfood.md","Consumer Dogfood Example"],
   ["references/artifact-intake.md","Source Precedence"],
   ["references/artifact-intake.md","Configured Artifact Roots"],
-  ["references/autoreview-routing.md","Autoreview Role Routing"],
-  ["references/autoreview-routing.md","Canonical Routes"],
-  ["references/autoreview-routing.md","Reviewer capability"],
-  ["references/autoreview-routing.md","Same-model review"],
+  ["references/readiness-gates.md","Risk Classification"],
 
   ["references/orchestration-dispatch.md","Sandbox ladder"],
   ["references/orchestration-dispatch.md","Worker model selection"],
@@ -6664,7 +6624,6 @@ const MACHINE_TOKENS = new Set([
   "recorded-late",
   "references/artifact-intake.md",
   "references/artifact-quality.md",
-  "references/autoreview-routing.md",
   "references/contracts/issue.md",
   "references/human-friendly-output.md",
   "references/install.md",
@@ -6996,7 +6955,7 @@ function validateDocumentBoundaries() {
     if (read(file).split("\n").some((line) => /^#{1,6}\s+/.test(line) && line.replace(/^#{1,6}\s+/, "").trim() === heading)) fail(`${file}: forbidden workflow heading ${heading}`);
   }
   for (const file of ["skills/ship/SKILL.md", "templates/ship-output.md"]) if (read(file).includes("pr-created")) fail(`${file}: retired terminal status pr-created`);
-  for (const file of ["skills/preflight/SKILL.md", "README.md", "HANDBOOK.md", "UPGRADING.md", "CHANGELOG.md", "examples/consumer-dogfood.md"]) if (read(file).includes("`tiny` ->")) fail(`${file}: duplicate canonical autoreview route`);
+  for (const file of ["skills/preflight/SKILL.md", "README.md", "HANDBOOK.md", "UPGRADING.md", "CHANGELOG.md", "examples/consumer-dogfood.md"]) if (read(file).includes("`tiny` ->")) fail(`${file}: duplicate canonical review route`);
   const dispatch = read("templates/orchestrator-dispatch.md");
   if (dispatch.includes("pass | deferred | not-run")) fail("dispatch duplicates the report's verification status dictionary");
   const report = read("templates/orchestrator-report.md") + read("references/worker-contract.md");

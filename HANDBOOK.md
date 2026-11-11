@@ -677,7 +677,7 @@ This repository delivers its own Issues on Codex, with `.agents/mono-workflow.co
 
 `orchestration.transport: "claude-cli"` selects managed Claude Code launch/resume and the `worker-claude` role from immutable BASE; unchanged projects continue on Codex. It requires a native Anthropic route and positively confirmed subscription login, without provider keys or address overrides. Per-attempt settings bind file edits and shell writes to the approved grants, require the shell sandbox, close connectors and built-in web tools, and allow only GitHub network hosts. GitHub login is fetched outside the sandbox and passed as a real environment variable. Base-branch refresh preserves the sandbox proxy settings when the transport supplies its managed-worker hint. A private per-attempt GitHub CLI configuration directory is prepared inside the grants and reused on resume; both stored streams redact the login. GitHub CLI credential files and their resolved targets are read-denied to shell and file tools; resume retains those protections. Internal temporary paths must remain within short pinned grants; ungranted system fallbacks are denied. Startup requires the pinned session/model identity and a first successful response. Resume regenerates settings and retains the session, model and rights, refusing a live writer. Effort remains requested rather than observed. Start acknowledgement stops the worker; the orchestrator applies and reads back moves, then resumes the same session. Start handshake `wait` is refused. Phase and collection confirmations wait in the foreground under the raised Bash timeout ceiling and existing deadlines. Wait evidence binds session, attempt, current process instance and call ID; old calls cannot prove a resumed wait. The watcher uses log freshness, including command progress, and distinguishes completion without an attempt-correlated report from green/parked. Pre-PR review uses external collection on committed heads, without an in-worker pass; dispatch, launch record and ready certificate name both differences. Never print credential values: native session transcripts persist command output outside pack redaction. Live waits, expiry and collection are probed by the orchestrator at closeout.
 
-Launch and resume derive the worktree-specific and common Git directories from the requested worktree, canonicalize them, and require the complete effective grant set to match the dispatch pin exactly. A regular checkout contributes one Git directory. Git environment overrides cannot redirect these reads or the capsule HEAD; worker environment settings remain intact. The evidence, installed skills, autoreview helper and orchestrator paths remain guarded. Missing or extra pinned roots refuse launch. Compatible pack updates allow resume under [the versioning rule](references/install.md#compatibility); incompatible updates require a new attempt. Reports retain the task's original identity, and the watcher emits `phase-rejected` with the task and reason when a phase report differs.
+Launch and resume derive the worktree-specific and common Git directories from the requested worktree, canonicalize them, and require the complete effective grant set to match the dispatch pin exactly. A regular checkout contributes one Git directory. Git environment overrides cannot redirect these reads or the capsule HEAD; worker environment settings remain intact. The evidence, installed skills and orchestrator paths remain guarded. Missing or extra pinned roots refuse launch. Compatible pack updates allow resume under [the versioning rule](references/install.md#compatibility); incompatible updates require a new attempt. Reports retain the task's original identity, and the watcher emits `phase-rejected` with the task and reason when a phase report differs.
 
 Run `node --test scripts/worktree-sandbox.test.mjs` on the orchestrator host at deploy for the paired Git permission proof. It reports `deferred` inside a nested sandbox; outside one, missing Codex or sandbox startup failure fails the probe. This host check runs separately from the portable `verify.mjs` suite.
 
@@ -743,7 +743,7 @@ A wave's cost is telemetry, not a gate. Wait mode avoids an exit/resume cycle; s
 
 - Dispatch-to-green-PR and dispatch-to-merge elapsed time, independently selected from the `mono-deliver` report's top-level fields first, legacy `mono-ship` reports next, then ledger events. A green PR and a recorded merge are separate events: merge time never comes from delivery completion.
 - Review rounds from `mono-deliver.review_rounds` (including zero), falling back to legacy `mono-ship` forms. Invalid or missing values fall through; source fields identify the selected report or event. Only `green_at` proves green in a delivery report; legacy ship completion/report timestamps remain supported.
-- All measurable token use across worker turns and attempts (`turn.completed` for Codex, `result.usage` for Claude Code; cache creation and reads are included in normalized input), including parked and failed attempts, plus autoreviewer and orchestrator use where available; worker use is a diagnostic subtotal.
+- All measurable token use across worker turns and attempts (`turn.completed` for Codex, `result.usage` for Claude Code; cache creation and reads are included in normalized input), including parked and failed attempts, plus review and orchestrator use where available; worker use is a diagnostic subtotal.
 - Review cost from the signed `gate-review-v3` receipts in `<evidenceRoot>/history/` whose pins file belongs to the Issue (`--evidence-root`, by default the product's evidence folder): completed rounds, each counted once although later and reused receipts repeat it, runs that ended `not-reviewed`, and the tokens of every review call with measured coverage. Unsigned, forged and other Issues' receipts are skipped. An Issue without such receipts keeps the legacy scan of helper output in worker logs and its cost line. Final reports are selected by stage and Issue; retired registry entries and intermediate phase reports are excluded.
 - Actual pack bytes read, review rounds, model and effort.
 - Explicit unavailable components with reasons; never estimates presented as measurements.
@@ -767,7 +767,7 @@ line. The orchestrator approves nothing between rounds and after merge decides
 which candidates from the receipt's list become Issues (every `must-file` one does; the task's Linear writer files them): [review rounds](references/orchestration-delivery.md#review-rounds),
 worker [round rule](references/review-admission.md).
 
-Collections retain validation and usage lines in bounded streaming output before signing. Receipts keep the raw usage of every review call: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. A call without usage stays null and counts as unmeasured, never as zero. Collection datasets are archived as immutable `<KEY>-review-scope.v<N>.md` files with `.sha256` sidecars, and receipts bind version and digest. Old receipts remain valid without usage or archive metadata; those inputs remain unavailable for reproduction.
+Collections keep the sandbox probe line and a bounded verification output tail before signing. Receipts keep the raw usage of every review call: Claude input excludes both cache counters, whereas Codex input includes cached input and has no cache-write counter. A call without usage stays null and counts as unmeasured, never as zero. An explicit collection dataset is archived as an immutable `.v<N>.md` file with a `.sha256` sidecar, and receipts bind version and digest; dispatch creates none by default. Old receipts remain valid without usage or archive metadata; those inputs remain unavailable for reproduction.
 
 Count each attempt once: sum per-turn usage, or take the last event when a Codex log reports thread totals (its counters never decrease; `counting` shows which). Cached input is part of input, not another amount to add. An attempt without usage records is unavailable; an unfinished turn makes the attempt incomplete. A wave containing either has an incomplete total. Known completed-turn usage remains a partial subtotal, and absent attempt usage is null, never a measured zero. The static worker reading budget is a separate measure: one union of mandatory, conditional and nested readings, shared files counted once, bounded at **99,882 bytes** with bytes/4 shown as an approximation. The README and this handbook are outside the worker reading list. Explanatory rationale stays outside that list and adds no gates.
 
@@ -884,8 +884,7 @@ start tasks from the new installation. The installing orchestrator records
 the mismatch, corrects the source and repeats the full verification of both tools.
 Only the installing orchestrator registers or updates the shared marketplaces.
 
-Restart sessions after installation. The external `autoreview` helper remains a
-separate prerequisite in your tool's skills directory; its [pinned upstream source, installation and output-contract proof](references/install.md#external-autoreview-helper) are documented separately. Model/effort come from pack policy, with `--max-priority P2`. Pass the external directory as
+Restart sessions after installation. Model/effort come from pack policy. Pass the installed skills directory as
 `--skills-root` when dispatching. The plugin contains one copy of shared files:
 `skills/`, `references/`, `templates/` and `scripts/` have the repository layout.
 In Claude Code, invoke skills as `/mono:idea`, `/mono:handoff`, and so on; in Codex, run `/skills` and select the corresponding Mono skill.
@@ -973,7 +972,7 @@ After migration, the pack's deploy live pass uses [plugin installation proof](re
    .mono-agent-workflow.lock.json
    ```
 
-   Preserve other skills, including the external `autoreview` helper, and all
+   Preserve other skills and all
    product state. Do not use a wildcard deletion to remove an unexplained
    lookalike. The installing orchestrator registers the GitHub repository as
    the marketplace in both tools and installs using
@@ -1091,17 +1090,17 @@ node scripts/project-config.mjs --repo /path/to/product --project-name Product -
 node scripts/project-config.mjs --repo /path/to/product --check
 ```
 
-Configure product/team names, Linear/repository languages, narrow artifact roots, ship, documentation, review-feedback and deploy workflows, and the required `autoreviewHelper` prerequisite. `workflows.implementation` remains valid for existing configs but is no longer read by mono:implement; no external implementation engine or learnings helper is needed. Optional workflows may be `null`; a missing deploy workflow blocks deployment. Optional QA/authentication policy defines how live verification accesses the product; owner-session access requires permission. `--clean` removes legacy generated Mono and previous-brand workflow files while migrating project policy.
+Configure product/team names, Linear/repository languages, narrow artifact roots, ship, documentation, review-feedback and deploy workflows. The old `prerequisites.autoreviewHelper` field is no longer required and is accepted silently. `workflows.implementation` remains valid for existing configs but is no longer read by mono:implement; no external implementation engine or learnings helper is needed. Optional workflows may be `null`; a missing deploy workflow blocks deployment. Optional QA/authentication policy defines how live verification accesses the product; owner-session access requires permission. `--clean` removes legacy generated Mono and previous-brand workflow files while migrating project policy.
 
 Optional `models.roles` overrides model routes within the [role/transport matrix](references/model-policy.md#product-overrides).
-Autoreview accepts claude, kimi, pi or codex with `effortByRisk` for all five risk keys.
+The legacy `autoreview` role (old pins and configs only; it never runs) accepts claude, kimi, pi or codex with `effortByRisk` for all five risk keys.
 Worker Codex roles stay on Codex, worker Claude stays on Claude; Second Voice stays
 cross-vendor and the orchestrator is not overridable. The CLI worker launcher
 supports Codex workers and managed Claude Code workers selected by `orchestration.transport`. Native authentication uses null endpoint
 and credentialEnv; external credentials are environment variable **names**, never
 values. Pi supports native xai/google/minimax with a null endpoint, or OpenAI-compatible
 routing via `OPENAI_BASE_URL`; unsupported endpoint mappings are refused.
-Helpers that authenticate from the environment must declare `provider.credentialEnv` on `autoreview`; under the field-for-field rule, this is a pair change requiring a bound `pairingAccepted` record.
+Routes that authenticate from the environment must declare `provider.credentialEnv`; under the field-for-field rule, this is a pair change requiring a bound `pairingAccepted` record.
 
 Every changed producer/reviewer pair needs a `pairingAccepted` record with the exact
 producer and reviewer routes (including both providers, credential variable names
@@ -1186,7 +1185,7 @@ The following 34 numbered entries are the sole owner-rule index, transferred fro
 - **K-19.** Apply the project's deploy-approval policy (always, all except tiny, or never) to the exact code head, so yesterday's approval cannot authorize different code — [Project Config](HANDBOOK.md#project-config).
 - **K-20.** Grant issue-only delivery only when all nine conditions hold and the owner approves the exact Issue fingerprint, falling back to Project-first on doubt, so the shortcut cannot bypass its boundary — [Nine eligibility conditions](skills/issue/SKILL.md#when-issue-only-is-granted--the-nine-eligibility-conditions) and [Trust boundary](references/issue-only-lane.md#trust-boundary).
 - **K-21.** Invalidate approval whenever an approved issue-only body changes and obtain new review and fingerprint approval, so the approved text remains the executed contract — [Renewal recovery](skills/issue/SKILL.md#renewal-recovery).
-- **K-22.** Run code autoreview at every risk class using the policy's autoreview model and class-routed effort from low through the highest escalated route, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Canonical Routes](references/autoreview-routing.md#canonical-routes).
+- **K-22.** Run the code review round at every risk class with the policy's reviewer and checker from different model families, pinned at launch, so the reviewer has the capability and depth to challenge the author — [Roles](references/model-policy.md#roles) and [Review admission](references/review-admission.md#review-admission).
 - **K-23.** Classify work as tiny, standard, deep or risky to set artifact requirements and review depth, treating money, data, access, production and public interfaces as risky domains, so dangerous work cannot pass through a light process — [Risk Classification](references/readiness-gates.md#risk-classification).
 - **K-24.** Require package review before writing and formal pre-ship review for standard, deep and risky work, permitting only a recorded tiny advisory exception, so review can challenge decisions before they become accepted artifacts — [Review Gate Policy](references/readiness-gates.md#review-gate-policy).
 - **K-25.** Close an Issue only after merge, delivery and verification, except under an explicitly accepted merge-as-delivery policy, so closed work cannot silently fail to reach users — [Deploy](references/lifecycle.md#deploy).
@@ -1286,7 +1285,7 @@ this pack uses `/mono:ship` and `/mono:review`. Independent QA is `/mono:qa`, ne
 | Runtime and worker recovery | [Orchestration](references/orchestration.md) with its parts for [stages](references/orchestration-stages.md), [dispatch](references/orchestration-dispatch.md) and [delivery](references/orchestration-delivery.md), [worker contract](references/worker-contract.md), [dispatch](templates/orchestrator-dispatch.md), [report](templates/orchestrator-report.md), [compaction](templates/compact-instructions.md) |
 | Linear artifact templates | [Project](templates/project.md), [PRD](templates/prd.md), [Tech Spec](templates/tech-spec.md), [Issue](templates/issue.md), [project updates](templates/project-update.md); templates define form, contracts define obligations |
 | Review, check and delivery output | [Review](templates/review-output.md), [check](templates/check-output.md), [ship](templates/ship-output.md), [interactive ship status](templates/ship-status-ux.md), [deploy](templates/deploy-output.md); examples are placeholders, not evidence |
-| Installation and policy | [Install](references/install.md), [versioning](references/install.md), [models](references/model-policy.md), [autoreview routing](references/autoreview-routing.md) |
+| Installation and policy | [Install](references/install.md), [versioning](references/install.md), [models](references/model-policy.md), [risk classes](references/readiness-gates.md#risk-classification) |
 | Rationale outside worker reading | [Audience](references/rationale/audience.md), [review](references/rationale/review.md), [output](references/rationale/output.md), [delivery](references/rationale/delivery.md); explanation adds no obligations |
 | Worked examples and history | [Consumer dogfood](examples/consumer-dogfood.md), [profile regression](examples/profile-workbench-regression.md), [CHANGELOG](CHANGELOG.md) |
 
@@ -1366,7 +1365,7 @@ Roles [code-review](references/model-policy.md#roles) and
 [code-review-checker](references/model-policy.md#roles) resolve separately with
 native subscription auth and different known families. New circle pairing
 records use `requiredPairings(config,{reviewerRole:'code-review'})`; existing
-role-less records still refer to autoreview. New records bind the full checker
+role-less records still refer to the legacy `autoreview` role. New records bind the full checker
 route in `reviewer.checker`; either role change requires renewed acceptance.
 New circle launches also check changed producer routes against that pair.
 Pair acceptance cannot waive the

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
-import { runSandboxed, sandboxWriteRoots } from "./gate.mjs";
+import { runSandboxed } from "./gate.mjs";
 
 // Run outside a worker sandbox: nesting Seatbelt is unsupported on macOS.
 // Inside a worker/collector, explicitly skip the unsupported nested host proof.
@@ -34,9 +34,8 @@ process.stdout.write(fs.mkdtempSync(path.join(os.tmpdir(),'mono-sandbox-contract
   assert.equal(scratch.status, 0, scratch.stderr);
   const root = fs.realpathSync(scratch.stdout), repo = path.join(root, "repo"), evidence = path.join(root, "evidence");
   const protectedPaths = { "orchestrator root": path.join(root, "orchestrator"), skillsRoot: path.join(root, "skills"),
-    packRoot: path.join(root, "pack"), "autoreview helper real path": path.join(root, "helper", "autoreview") };
-  for (const dir of [repo, evidence, protectedPaths["orchestrator root"], protectedPaths.skillsRoot, protectedPaths.packRoot, path.dirname(protectedPaths["autoreview helper real path"])]) fs.mkdirSync(dir);
-  fs.writeFileSync(protectedPaths["autoreview helper real path"], "fixture helper");
+    packRoot: path.join(root, "pack") };
+  for (const dir of [repo, evidence, protectedPaths["orchestrator root"], protectedPaths.skillsRoot, protectedPaths.packRoot]) fs.mkdirSync(dir);
   return { root, repo, evidence, protectedPaths };
 }
 
@@ -113,40 +112,6 @@ final class ProofTests: XCTestCase {
     assert.match(result.output, /Executed 1 test/u);
     assert.deepEqual(fs.readdirSync(evidence), []);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
-test("real macOS collector denies a surviving verification descendant access to review artifacts", async t => {
-  if (!hostAvailable(t, true)) return;
-  const { root, repo, evidence, protectedPaths } = hostFixture();
-  const originalHome = process.env.HOME;
-  try {
-    // A fixture HOME keeps all scratch under os.tmpdir(), outside Darwin's grant.
-    process.env.HOME = path.join(root, "home");
-    const fixture = path.resolve("scripts/fixtures/collector-review-descendant.cjs");
-    const verification = await runSandboxed(process.execPath, [fixture, "verification"], repo, evidence, { protectedPaths });
-    assert.equal(verification.exitCode, 0, JSON.stringify(verification));
-    const ready = JSON.parse(fs.readFileSync(path.join(repo, ".orchestrator/descendant-ready.json")));
-    assert.doesNotThrow(() => process.kill(ready.pid, 0), "detached descendant survives verification completion");
-    const review = await runSandboxed(process.execPath, [fixture, "review"], repo, evidence, {
-      protectedPaths, reviewArtifacts: true, verificationWritableRoots: sandboxWriteRoots(verification.sandbox), workerWritableRoots: [repo]
-    });
-    assert.equal(review.exitCode, 1, JSON.stringify(review));
-    assert.equal(review.json.overall_correctness, "patch is incorrect");
-    assert.equal(review.json.findings[0].priority, 1);
-    assert.equal(review.status.status, "findings"); assert.equal(review.status.exit_code, 1);
-    const proof = JSON.parse(fs.readFileSync(path.join(repo, ".orchestrator/descendant-attempts.json")));
-    assert.equal(proof.parentAlive, false); assert.equal(proof.reviewAlive, true);
-    assert.deepEqual(proof.attempts.map(attempt => attempt.target), ["--json-output", "--status-output"].map(flag => review.args[review.args.indexOf(flag) + 1]));
-    assert.ok(proof.attempts.every(attempt => ["EPERM", "EACCES", "EROFS"].includes(attempt.result)));
-    assert.equal(verification.sandbox.probed, true); assert.equal(review.sandbox.probed, true);
-    assert.deepEqual(fs.readdirSync(evidence), []);
-    assert.equal(fs.existsSync(review.sandbox.tempRoot), false);
-  } finally {
-    if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
-    const ready = path.join(repo, ".orchestrator/descendant-ready.json");
-    if (fs.existsSync(ready)) { try { process.kill(JSON.parse(fs.readFileSync(ready)).pid, "SIGTERM"); } catch {} }
-    fs.rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test("Darwin host proof skips a non-authoritative managed Claude worker hint", () => {

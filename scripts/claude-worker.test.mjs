@@ -433,7 +433,8 @@ test("Claude pre-registration refusals preserve the attempt budget", async t => 
     { id: "anthropic", endpoint: null, credentialEnv: "ANTHROPIC_API_KEY" },
   ]) await t.test("incompatible-native-route-" + Object.keys(provider).at(-1), async () => {
     const config = { orchestration: { transport: "claude-cli" }, models: { roles: { "worker-claude": { provider } } } };
-    config.models.pairingAccepted = requiredPairings(config).map(pair => ({ ...pair,
+    // Both reviewer pairings are accepted, so the refusal comes from the native route rule itself.
+    config.models.pairingAccepted = [...requiredPairings(config), ...requiredPairings(config, { reviewerRole: "code-review" })].map(pair => ({ ...pair,
       linearDecision: "https://linear.app/example/issue/MONO-999#comment-approval", by: "owner", date: "2026-10-06" }));
     await fixture(async ({ start, registry }) => {
       await assert.rejects(start("success"), /native|endpoint|credential/);

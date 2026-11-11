@@ -238,18 +238,16 @@ test("preflight accepts only a v3 receipt with an accepted review, exact head/ba
   ]) assert.throws(() => validatePreflight(receipt(extra), head, base), { message: refusal });
 });
 
-test("stream retention preserves validation lines and usage beyond the diagnostic tail", async () => {
+test("stream retention keeps the sandbox probe line beyond the diagnostic tail", async () => {
   const gate = await import('./gate.mjs');
   assert.equal(typeof gate.captureOutput, 'function');
   const capture = gate.captureOutput({ tailBytes: 64 });
-  const header = 'autoreview target: branch\nengine: claude\nmodel: policy-model\nthinking: high\n';
-  for (const part of [header.slice(0, 15), header.slice(15), 'noise\n'.repeat(10000),
-    'claude usage: input_tokens=10 cache_read_input_tokens=20 cache_creation_input_tokens=30 output_tokens=4 cost_usd=0.100000\n',
-    'autoreview scoped-clean: no accepted/actionable findings in the selected Git scope and priority\noverall: patch is correct (0.9)\n']) capture.write(part);
+  const marker = 'mono-boundary-denied:fixture-probe';
+  for (const part of [marker.slice(0, 7), marker.slice(7) + '\n', 'noise\n'.repeat(10000),
+    'autoreview target: branch\nengine: claude\nclaude usage: input_tokens=10\noverall: patch is correct (0.9)\n']) capture.write(part);
   const result = capture.finish();
-  assert.ok(result.output.includes(header));
-  assert.ok(result.output.includes('claude usage: input_tokens=10 cache_read_input_tokens=20'));
-  assert.ok(result.output.length < 2000);
+  assert.equal(result.output, marker + '\n');
+  assert.ok(result.diagnosticTail.length <= 64);
 });
 
 test("dataset archives reuse identical bytes and refuse an explicit version overwrite", async () => {
@@ -268,13 +266,14 @@ test("dataset archives reuse identical bytes and refuse an explicit version over
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
 
-test('oversized diagnostic lines do not invalidate complete review evidence', async () => {
+test('oversized diagnostic lines do not invalidate the sandbox probe line', async () => {
   const {captureOutput}=await import('./gate.mjs');
   const capture=captureOutput({tailBytes:64});
   capture.write('diagnostic: '+ 'x'.repeat(2*1024*1024));capture.write('\n');
-  capture.write('autoreview target: branch\nengine: claude\nmodel: policy-model\nthinking: high\nautoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n');
+  capture.write('mono-boundary-denied:fixture-probe\n');
   const result=capture.finish();assert.equal(result.retentionError,null);assert.ok(result.diagnosticTail.length<=64);
-  const consumed=captureOutput();consumed.write('model: '+'x'.repeat(2*1024*1024)+'\n');assert.ok(consumed.finish().retentionError);
+  assert.equal(result.output,'mono-boundary-denied:fixture-probe\n');
+  const consumed=captureOutput();consumed.write('mono-boundary-denied:'+'x'.repeat(2*1024*1024)+'\n');assert.ok(consumed.finish().retentionError);
 });
 
 test('the collection lock remains held until its asynchronous action settles', async () => {
@@ -296,17 +295,15 @@ test('streamed commands receive EOF on stdin instead of hanging the collection',
   assert.equal(result.exitCode,0);
 });
 
-test('streamed JSON quoting helper syntax does not become helper evidence', async () => {
+test('a quoted probe marker does not become sandbox evidence', async () => {
   const {captureOutput}=await import('./gate.mjs');
   const capture=captureOutput({tailBytes:64});
-  const header='autoreview target: branch | engine: claude | model: policy-model | thinking: high';
-  capture.write(header+'\n');
-  capture.write(JSON.stringify({tool_result:header+'; review passes: 999'})+'\n');
-  capture.write(JSON.stringify({tool_result:'x'.repeat(2*1024*1024)+' | engine: quoted'})+'\n');
-  capture.write('bundle: 42 bytes; review passes: 1\nautoreview clean: no accepted/actionable findings reported\noverall: patch is correct (0.9)\n');
+  capture.write(JSON.stringify({tool_result:'mono-boundary-denied:quoted'})+'\n');
+  capture.write(JSON.stringify({tool_result:'x'.repeat(2*1024*1024)+' mono-boundary-denied:quoted'})+'\n');
+  capture.write('mono-boundary-denied:real\n');
   const result=capture.finish();
   assert.equal(result.retentionError,null);
-  assert.equal((result.output.match(/review passes:/g)||[]).length,1);
+  assert.equal(result.output,'mono-boundary-denied:real\n');
 });
 
 test("dataset archive recovers a missing digest only for identical source bytes", async () => {
@@ -382,7 +379,7 @@ console.log(process.env.MONO_FIXTURE_DARWIN_TEMP);
       git("init", "-b", "delivery"); git("add", ".gitignore"); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture");
       const head = git("rev-parse", "HEAD"), dataset = path.join(evidence, "datasets/fixture.md");
       write(dataset, "Approved U13 decisions.\n");
-      for (const policy of ["model-policy.md", "autoreview-routing.md"]) write(path.join(skills, "references", policy), fs.readFileSync(path.join("references", policy), "utf8"));
+      for (const policy of ["model-policy.md"]) write(path.join(skills, "references", policy), fs.readFileSync(path.join("references", policy), "utf8"));
       let pack = null;
       if (fixture.protected === "packRoot") {
         pack = path.join(scratch, "pack"); fs.mkdirSync(pack);
